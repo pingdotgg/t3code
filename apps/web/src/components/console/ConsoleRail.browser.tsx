@@ -86,16 +86,16 @@ vi.mock("~/editorPreferences", () => ({
   openInPreferredEditor: vi.fn(() => Promise.resolve()),
 }));
 
-const { default: WorkspaceRail } = await import("./WorkspaceRail");
+const { default: ConsoleRail } = await import("./ConsoleRail");
 
 // ----- shared fixtures -----
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-local");
-const THREAD_ID = ThreadId.make("thread-workspace-rail-test");
+const THREAD_ID = ThreadId.make("thread-console-rail-test");
 const VISIBILITY_KEY = "workbench:console:pane-visibility:v1";
 const COLLAPSED_KEY = "workbench:console:pane-collapsed:v1";
 
-type RailProps = React.ComponentProps<typeof WorkspaceRail>;
+type RailProps = React.ComponentProps<typeof ConsoleRail>;
 
 function defaultProps(overrides?: Partial<RailProps>): RailProps {
   return {
@@ -126,7 +126,7 @@ async function mountRail(overrides?: Partial<RailProps>) {
   host.style.cssText = "width: 480px; height: 720px; display: flex;";
   document.body.append(host);
 
-  const screen = await render(<WorkspaceRail {...props} />, { container: host });
+  const screen = await render(<ConsoleRail {...props} />, { container: host });
 
   return {
     screen,
@@ -156,7 +156,7 @@ function viewerOverlayCount(): number {
 
 // ----- behavior tests -----
 
-describe("WorkspaceRail (vertical stack model)", () => {
+describe("ConsoleRail (vertical stack model)", () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
@@ -381,7 +381,7 @@ describe("WorkspaceRail (vertical stack model)", () => {
 
 // ----- viewer (Phase 2: doc-tuned markdown + inline edit) -----
 
-describe("WorkspaceRail viewer (Phase 2)", () => {
+describe("ConsoleRail viewer (Phase 2)", () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
@@ -551,7 +551,7 @@ describe("WorkspaceRail viewer (Phase 2)", () => {
 
 // ----- visual snapshots -----
 
-describe("WorkspaceRail (visual snapshots)", () => {
+describe("ConsoleRail (visual snapshots)", () => {
   beforeEach(() => {
     window.localStorage.clear();
   });
@@ -619,6 +619,6 @@ describe("WorkspaceRail (visual snapshots)", () => {
       const text = document.body.textContent ?? "";
       expect(text).toContain("Tasks");
     });
-    await page.screenshot({ path: "__screenshots__/workspace-menu-open.png" });
+    await page.screenshot({ path: "__screenshots__/console-menu-open.png" });
   });
 });

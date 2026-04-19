@@ -3,7 +3,7 @@ import { useCallback } from "react";
 
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 
-import type { WorkspacePaneId, WorkspacePaneVisibilityMap } from "./types";
+import type { ConsolePaneId, ConsolePaneVisibilityMap } from "./consoleTypes";
 
 const VISIBILITY_STORAGE_KEY = "workbench:console:pane-visibility:v1";
 const COLLAPSED_STORAGE_KEY = "workbench:console:pane-collapsed:v1";
@@ -20,7 +20,7 @@ const CollapsedSchema = Schema.Struct({
   task: Schema.Boolean,
 });
 
-const DEFAULT_VISIBILITY: WorkspacePaneVisibilityMap = {
+const DEFAULT_VISIBILITY: ConsolePaneVisibilityMap = {
   // The Console should immediately surface the three core panes users rely
   // on most: files, recent edited files, and tasks.
   tree: true,
@@ -28,7 +28,7 @@ const DEFAULT_VISIBILITY: WorkspacePaneVisibilityMap = {
   task: true,
 };
 
-const DEFAULT_COLLAPSED: WorkspacePaneVisibilityMap = {
+const DEFAULT_COLLAPSED: ConsolePaneVisibilityMap = {
   tree: false,
   recent: false,
   task: false,
@@ -39,25 +39,25 @@ const DEFAULT_COLLAPSED: WorkspacePaneVisibilityMap = {
  * intentionally not in this map — it's not a stack card, it's the takeover
  * overlay triggered by selecting a file in the tree.
  */
-export function useWorkspacePaneVisibility(): [
-  WorkspacePaneVisibilityMap,
+export function useConsolePaneVisibility(): [
+  ConsolePaneVisibilityMap,
   (
     next:
-      | WorkspacePaneVisibilityMap
-      | ((prev: WorkspacePaneVisibilityMap) => WorkspacePaneVisibilityMap),
+      | ConsolePaneVisibilityMap
+      | ((prev: ConsolePaneVisibilityMap) => ConsolePaneVisibilityMap),
   ) => void,
-  (paneId: WorkspacePaneId) => void,
+  (paneId: ConsolePaneId) => void,
 ] {
-  const [visibility, setVisibility] = useLocalStorage<WorkspacePaneVisibilityMap, unknown>(
+  const [visibility, setVisibility] = useLocalStorage<ConsolePaneVisibilityMap, unknown>(
     VISIBILITY_STORAGE_KEY,
     DEFAULT_VISIBILITY,
-    VisibilitySchema as unknown as Schema.Codec<WorkspacePaneVisibilityMap, unknown>,
+    VisibilitySchema as unknown as Schema.Codec<ConsolePaneVisibilityMap, unknown>,
   );
 
   const togglePane = useCallback(
-    (paneId: WorkspacePaneId) => {
+    (paneId: ConsolePaneId) => {
       setVisibility((prev) => {
-        const next = { ...prev, [paneId]: !prev[paneId] } satisfies WorkspacePaneVisibilityMap;
+        const next = { ...prev, [paneId]: !prev[paneId] } satisfies ConsolePaneVisibilityMap;
         // Don't allow zero visible cards in the stack — keep tree as the
         // anchor so the rail body never goes empty.
         if (!next.tree && !next.recent && !next.task) {
@@ -77,18 +77,18 @@ export function useWorkspacePaneVisibility(): [
  * visibility — a card can be visible-but-collapsed (showing its title bar but
  * not its body), like Cowork's right-panel cards.
  */
-export function useWorkspacePaneCollapsed(): [
-  WorkspacePaneVisibilityMap,
-  (paneId: WorkspacePaneId) => void,
+export function useConsolePaneCollapsed(): [
+  ConsolePaneVisibilityMap,
+  (paneId: ConsolePaneId) => void,
 ] {
-  const [collapsed, setCollapsed] = useLocalStorage<WorkspacePaneVisibilityMap, unknown>(
+  const [collapsed, setCollapsed] = useLocalStorage<ConsolePaneVisibilityMap, unknown>(
     COLLAPSED_STORAGE_KEY,
     DEFAULT_COLLAPSED,
-    CollapsedSchema as unknown as Schema.Codec<WorkspacePaneVisibilityMap, unknown>,
+    CollapsedSchema as unknown as Schema.Codec<ConsolePaneVisibilityMap, unknown>,
   );
 
   const togglePaneCollapsed = useCallback(
-    (paneId: WorkspacePaneId) => {
+    (paneId: ConsolePaneId) => {
       setCollapsed((prev) => ({ ...prev, [paneId]: !prev[paneId] }));
     },
     [setCollapsed],
@@ -97,5 +97,5 @@ export function useWorkspacePaneCollapsed(): [
   return [collapsed, togglePaneCollapsed];
 }
 
-export const WORKSPACE_PANE_DEFAULT_VISIBILITY = DEFAULT_VISIBILITY;
-export const WORKSPACE_PANE_DEFAULT_COLLAPSED = DEFAULT_COLLAPSED;
+export const CONSOLE_PANE_DEFAULT_VISIBILITY = DEFAULT_VISIBILITY;
+export const CONSOLE_PANE_DEFAULT_COLLAPSED = DEFAULT_COLLAPSED;

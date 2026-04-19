@@ -7,25 +7,25 @@ import type { LucideIcon } from "lucide-react";
  *
  * Adding a new stack card (e.g. "instructions", "context", "scheduled") is a
  * matter of extending this union and registering a descriptor in
- * `WorkspaceRail`.
+ * `ConsoleRail`.
  */
-export type WorkspacePaneId = "tree" | "recent" | "task";
+export type ConsolePaneId = "tree" | "recent" | "task";
 
 /**
  * Visibility map for the stack cards. Collapsed-vs-expanded body state is
- * tracked separately (see `useWorkspacePaneCollapsed`).
+ * tracked separately (see `useConsolePaneCollapsed`).
  */
-export interface WorkspacePaneVisibilityMap {
+export interface ConsolePaneVisibilityMap {
   tree: boolean;
   recent: boolean;
   task: boolean;
 }
 
 /**
- * Descriptor the WorkspaceRail uses to render a stack card.
+ * Descriptor the ConsoleRail uses to render a stack card.
  */
-export interface WorkspacePaneDescriptor {
-  id: WorkspacePaneId;
+export interface ConsolePaneDescriptor {
+  id: ConsolePaneId;
   label: string;
   /** Short helper shown in the visibility-menu tooltip. */
   description: string;
@@ -33,4 +33,4 @@ export interface WorkspacePaneDescriptor {
 }
 
 /** Render order for the stack cards (top to bottom). */
-export const WORKSPACE_PANE_ORDER: ReadonlyArray<WorkspacePaneId> = ["tree", "recent", "task"];
+export const CONSOLE_PANE_ORDER: ReadonlyArray<ConsolePaneId> = ["tree", "recent", "task"];

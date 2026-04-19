@@ -47,17 +47,17 @@ import { toastManager } from "../ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
 import { PaneCard } from "./PaneCard";
-import { useWorkspacePaneCollapsed, useWorkspacePaneVisibility } from "./paneState";
+import { useConsolePaneCollapsed, useConsolePaneVisibility } from "./consolePaneState";
 import { RecentChangesPane } from "./RecentChangesPane";
 import { TaskPane } from "./TaskPane";
 import { TreePane, TreePaneRevealAction } from "./TreePane";
 import { ViewerPane, type ViewerDocumentMode } from "./ViewerPane";
 import {
-  WORKSPACE_PANE_ORDER,
-  type WorkspacePaneDescriptor,
-  type WorkspacePaneId,
-  type WorkspacePaneVisibilityMap,
-} from "./types";
+  CONSOLE_PANE_ORDER,
+  type ConsolePaneDescriptor,
+  type ConsolePaneId,
+  type ConsolePaneVisibilityMap,
+} from "./consoleTypes";
 
 function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
   const raw = fileDiff.name ?? fileDiff.prevName ?? "";
@@ -96,7 +96,7 @@ function firstFilePath(entries: ReadonlyArray<ProjectEntry> | undefined): string
   return entries?.find((entry) => entry.kind === "file")?.path ?? null;
 }
 
-function paneIconFor(id: WorkspacePaneId) {
+function paneIconFor(id: ConsolePaneId) {
   switch (id) {
     case "tree":
       return FilesIcon;
@@ -107,7 +107,7 @@ function paneIconFor(id: WorkspacePaneId) {
   }
 }
 
-function paneLabelFor(id: WorkspacePaneId) {
+function paneLabelFor(id: ConsolePaneId) {
   switch (id) {
     case "tree":
       return "Files";
@@ -118,7 +118,7 @@ function paneLabelFor(id: WorkspacePaneId) {
   }
 }
 
-function paneDescriptionFor(id: WorkspacePaneId) {
+function paneDescriptionFor(id: ConsolePaneId) {
   switch (id) {
     case "tree":
       return "Browse the project's folder tree";
@@ -141,7 +141,7 @@ function basenameOfPath(path: string | undefined): string {
   return separatorIndex >= 0 ? trimmed.slice(separatorIndex + 1) : trimmed;
 }
 
-interface WorkspaceRailProps {
+interface ConsoleRailProps {
   open: boolean;
   mode?: "sheet" | "sidebar";
   environmentId: EnvironmentId;
@@ -164,7 +164,7 @@ interface WorkspaceRailProps {
   onAddTextToChat?: (input: { path: string; text: string }) => void;
 }
 
-const WorkspaceRail = memo(function WorkspaceRail({
+const ConsoleRail = memo(function ConsoleRail({
   open,
   mode = "sidebar",
   environmentId,
@@ -185,10 +185,10 @@ const WorkspaceRail = memo(function WorkspaceRail({
   onClose,
   onOpenTurnDiff,
   onAddTextToChat,
-}: WorkspaceRailProps) {
+}: ConsoleRailProps) {
   // ----- pane visibility + collapse state -----
-  const [paneVisibility, , togglePane] = useWorkspacePaneVisibility();
-  const [paneCollapsed, togglePaneCollapsed] = useWorkspacePaneCollapsed();
+  const [paneVisibility, , togglePane] = useConsolePaneVisibility();
+  const [paneCollapsed, togglePaneCollapsed] = useConsolePaneCollapsed();
 
   // ----- shared cross-pane state -----
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -344,7 +344,7 @@ const WorkspaceRail = memo(function WorkspaceRail({
       threadId,
       fromTurnCount: 0,
       toTurnCount: conversationCheckpointTurnCount,
-      cacheScope: "workspace-rail",
+      cacheScope: "console-rail",
       enabled: open && artifacts.length > 0 && conversationCheckpointTurnCount !== null,
     }),
   );
@@ -355,7 +355,7 @@ const WorkspaceRail = memo(function WorkspaceRail({
       return new Map<string, FileDiffMetadata>();
     }
     try {
-      const parsed = parsePatchFiles(patch, buildPatchCacheKey(patch, "workspace-rail"));
+      const parsed = parsePatchFiles(patch, buildPatchCacheKey(patch, "console-rail"));
       const next = new Map<string, FileDiffMetadata>();
       for (const parsedPatch of parsed) {
         for (const file of parsedPatch.files) {
@@ -603,9 +603,9 @@ const WorkspaceRail = memo(function WorkspaceRail({
   );
 
   // ----- pane registry -----
-  const panes = useMemo<ReadonlyArray<WorkspacePaneDescriptor>>(
+  const panes = useMemo<ReadonlyArray<ConsolePaneDescriptor>>(
     () =>
-      WORKSPACE_PANE_ORDER.map((id) => ({
+      CONSOLE_PANE_ORDER.map((id) => ({
         id,
         label: paneLabelFor(id),
         description: paneDescriptionFor(id),
@@ -614,7 +614,7 @@ const WorkspaceRail = memo(function WorkspaceRail({
     [],
   );
 
-  const visibleIds = useMemo<ReadonlyArray<WorkspacePaneId>>(
+  const visibleIds = useMemo<ReadonlyArray<ConsolePaneId>>(
     () => panes.filter((p) => paneVisibility[p.id]).map((p) => p.id),
     [paneVisibility, panes],
   );
@@ -753,9 +753,9 @@ const WorkspaceRail = memo(function WorkspaceRail({
 
 interface RailHeaderProps {
   summary: string;
-  panes: ReadonlyArray<WorkspacePaneDescriptor>;
-  visibility: WorkspacePaneVisibilityMap;
-  onTogglePane: (id: WorkspacePaneId) => void;
+  panes: ReadonlyArray<ConsolePaneDescriptor>;
+  visibility: ConsolePaneVisibilityMap;
+  onTogglePane: (id: ConsolePaneId) => void;
   onClose: () => void;
 }
 
@@ -763,7 +763,7 @@ function RailHeader({ summary, panes, visibility, onTogglePane, onClose }: RailH
   return (
     <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border/60 px-3 [-webkit-app-region:no-drag]">
       <div className="flex min-w-0 items-center gap-2">
-        {/* Workspace pane picker — chip-styled trigger so it reads as
+        {/* Console pane picker — chip-styled trigger so it reads as
             interactive at a glance. Click opens a checkbox menu of available
             stack cards. */}
         <Menu>
@@ -844,4 +844,4 @@ function EmptyRailState({ onShowFiles }: { onShowFiles: () => void }) {
   );
 }
 
-export default WorkspaceRail;
+export default ConsoleRail;

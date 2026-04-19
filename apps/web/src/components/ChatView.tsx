@@ -132,7 +132,7 @@ import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
-import WorkspaceRail from "./workspace/WorkspaceRail";
+import ConsoleRail from "./console/ConsoleRail";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
@@ -678,12 +678,12 @@ export default function ChatView(props: ChatViewProps) {
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
-  // When true, the workspace rail breaks out of the flex row and overlays the
+  // When true, the console rail breaks out of the flex row and overlays the
   // chat column entirely (only the left sidebar stays visible). User toggles
   // this via the Expand button in the rail header.
-  const [workspaceRailExpanded, setWorkspaceRailExpanded] = useState(false);
-  const toggleWorkspaceRailExpanded = useCallback(() => {
-    setWorkspaceRailExpanded((prev) => !prev);
+  const [consoleRailExpanded, setConsoleRailExpanded] = useState(false);
+  const toggleConsoleRailExpanded = useCallback(() => {
+    setConsoleRailExpanded((prev) => !prev);
   }, []);
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
@@ -3388,7 +3388,7 @@ export default function ChatView(props: ChatViewProps) {
             className="w-auto min-h-0 flex-none bg-transparent"
             style={
               {
-                "--sidebar-width": workspaceRailExpanded ? "100%" : WORKSPACE_INLINE_DEFAULT_WIDTH,
+                "--sidebar-width": consoleRailExpanded ? "100%" : WORKSPACE_INLINE_DEFAULT_WIDTH,
               } as CSSProperties
             }
           >
@@ -3402,7 +3402,7 @@ export default function ChatView(props: ChatViewProps) {
               }}
             >
               {planSidebarOpen ? (
-                <WorkspaceRail
+                <ConsoleRail
                   open={planSidebarOpen}
                   activePlan={activePlan}
                   activeProposedPlan={sidebarProposedPlan}
@@ -3418,8 +3418,8 @@ export default function ChatView(props: ChatViewProps) {
                   focusedPath={workspacePanelFocusedPath}
                   threadId={activeThread.id}
                   mode="sidebar"
-                  expanded={workspaceRailExpanded}
-                  onToggleExpanded={toggleWorkspaceRailExpanded}
+                  expanded={consoleRailExpanded}
+                  onToggleExpanded={toggleConsoleRailExpanded}
                   onClose={closePlanSidebar}
                   onOpenTurnDiff={onOpenTurnDiff}
                   onAddTextToChat={addWorkspaceTextToComposer}
@@ -3452,7 +3452,7 @@ export default function ChatView(props: ChatViewProps) {
         ))}
       {shouldUsePlanSidebarSheet ? (
         <RightPanelSheet open={planSidebarOpen} onClose={closePlanSidebar}>
-          <WorkspaceRail
+          <ConsoleRail
             open={planSidebarOpen}
             activePlan={activePlan}
             activeProposedPlan={sidebarProposedPlan}

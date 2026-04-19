@@ -70,7 +70,7 @@ interface TaskPaneProps {
 
 /**
  * Body content of the Task card. The card chrome (icon + title + collapse +
- * close X) is provided by the surrounding `PaneCard` in `WorkspaceRail`.
+ * close X) is provided by the surrounding `PaneCard` in `ConsoleRail`.
  */
 export function TaskPane({
   workspaceRoot,
