@@ -1,5 +1,5 @@
 {
-  "name": "T3 Code Dev",
+  "name": "Workbench Dev",
   "image": "debian:bookworm",
   "features": {
     "ghcr.io/devcontainers-extra/features/bun:1": {},

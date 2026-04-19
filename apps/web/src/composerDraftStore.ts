@@ -45,7 +45,9 @@ import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@workbench/contracts/settings";
 
-export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
+export const COMPOSER_DRAFT_STORAGE_KEY = "workbench:composer-drafts:v1";
+// back-compat read for migration; remove in next major.
+const LEGACY_COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 const COMPOSER_DRAFT_STORAGE_VERSION = 5;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 const isRuntimeMode = Schema.is(RuntimeMode);
@@ -56,8 +58,29 @@ export type DraftId = typeof DraftId.Type;
 
 const COMPOSER_PERSIST_DEBOUNCE_MS = 300;
 
+const composerBaseStorage = (() => {
+  if (typeof localStorage === "undefined") return createMemoryStorage();
+  // back-compat read for migration; remove in next major.
+  return {
+    getItem: (name: string) => {
+      const fresh = localStorage.getItem(name);
+      if (fresh !== null) return fresh;
+      if (name === COMPOSER_DRAFT_STORAGE_KEY) {
+        return localStorage.getItem(LEGACY_COMPOSER_DRAFT_STORAGE_KEY);
+      }
+      return fresh;
+    },
+    setItem: (name: string, value: string) => {
+      localStorage.setItem(name, value);
+    },
+    removeItem: (name: string) => {
+      localStorage.removeItem(name);
+    },
+  };
+})();
+
 const composerDebouncedStorage = createDebouncedStorage(
-  typeof localStorage !== "undefined" ? localStorage : createMemoryStorage(),
+  composerBaseStorage,
   COMPOSER_PERSIST_DEBOUNCE_MS,
 );
 

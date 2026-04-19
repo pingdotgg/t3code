@@ -1,8 +1,9 @@
 # Keybindings
 
-Workbench reads keybindings from the current compatibility path:
+Workbench reads keybindings from:
 
-- `~/.t3/keybindings.json`
+- `~/.workbench/keybindings.json` (preferred)
+- `~/.t3/keybindings.json` (legacy fallback during the migration window)
 
 The file must be a JSON array of rules:
 

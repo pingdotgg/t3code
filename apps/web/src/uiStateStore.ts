@@ -1,8 +1,10 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
 
-const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
-const LEGACY_PERSISTED_STATE_KEYS = [
+const PERSISTED_STATE_KEY = "workbench:ui-state:v1";
+// back-compat read for migration; remove in next major.
+const LEGACY_PERSISTED_STATE_KEY = "t3code:ui-state:v1";
+const LEGACY_PROJECT_ONLY_KEYS = [
   "t3code:renderer-state:v8",
   "t3code:renderer-state:v7",
   "t3code:renderer-state:v6",
@@ -13,6 +15,10 @@ const LEGACY_PERSISTED_STATE_KEYS = [
   "codething:renderer-state:v3",
   "codething:renderer-state:v2",
   "codething:renderer-state:v1",
+] as const;
+const LEGACY_PERSISTED_STATE_KEYS = [
+  LEGACY_PERSISTED_STATE_KEY,
+  ...LEGACY_PROJECT_ONLY_KEYS,
 ] as const;
 
 interface PersistedUiState {
@@ -60,9 +66,12 @@ function readPersistedState(): UiState {
     return initialState;
   }
   try {
-    const raw = window.localStorage.getItem(PERSISTED_STATE_KEY);
+    const raw =
+      window.localStorage.getItem(PERSISTED_STATE_KEY) ??
+      // back-compat read for migration; remove in next major.
+      window.localStorage.getItem(LEGACY_PERSISTED_STATE_KEY);
     if (!raw) {
-      for (const legacyKey of LEGACY_PERSISTED_STATE_KEYS) {
+      for (const legacyKey of LEGACY_PROJECT_ONLY_KEYS) {
         const legacyRaw = window.localStorage.getItem(legacyKey);
         if (!legacyRaw) {
           continue;

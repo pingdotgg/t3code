@@ -38,7 +38,9 @@ export interface TerminalEventEntry {
   event: TerminalEvent;
 }
 
-const TERMINAL_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
+const TERMINAL_STATE_STORAGE_KEY = "workbench:terminal-state:v1";
+// back-compat read for migration; remove in next major.
+const LEGACY_TERMINAL_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
 const EMPTY_TERMINAL_EVENT_ENTRIES: ReadonlyArray<TerminalEventEntry> = [];
 const MAX_TERMINAL_EVENT_BUFFER = 200;
 
@@ -63,7 +65,20 @@ export function migratePersistedTerminalStateStoreState(
 }
 
 function createTerminalStateStorage() {
-  return resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined);
+  const base = resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined);
+  // back-compat read for migration; remove in next major.
+  return {
+    getItem: (name: string) => {
+      const fresh = base.getItem(name);
+      if (fresh !== null && fresh !== undefined) return fresh;
+      if (name === TERMINAL_STATE_STORAGE_KEY) {
+        return base.getItem(LEGACY_TERMINAL_STATE_STORAGE_KEY);
+      }
+      return fresh;
+    },
+    setItem: (name: string, value: string) => base.setItem(name, value),
+    removeItem: (name: string) => base.removeItem(name),
+  };
 }
 
 function normalizeTerminalIds(terminalIds: string[]): string[] {

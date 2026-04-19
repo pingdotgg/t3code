@@ -893,7 +893,7 @@ export function makeOpenCodeAdapterLive(_options?: OpenCodeAdapterLiveOptions) {
                 ...(server.external && serverPassword ? { serverPassword } : {}),
               });
               const openCodeSession = await client.session.create({
-                title: `T3 Code ${input.threadId}`,
+                title: `Workbench ${input.threadId}`,
                 permission: buildOpenCodePermissionRules(input.runtimeMode),
               });
               if (!openCodeSession.data) {

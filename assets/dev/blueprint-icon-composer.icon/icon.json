@@ -18,10 +18,10 @@
           }
         },
         {
-          "image-name": "T3.svg",
-          "name": "T3",
+          "image-name": "Workbench.svg",
+          "name": "Workbench",
           "position": {
-            "scale": 10,
+            "scale": 5,
             "translation-in-points": [0, 0]
           }
         },

@@ -8,7 +8,6 @@
     "directory": "apps/server"
   },
   "bin": {
-    "t3": "./dist/bin.mjs",
     "workbench": "./dist/bin.mjs"
   },
   "files": [

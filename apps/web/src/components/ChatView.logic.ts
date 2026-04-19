@@ -18,7 +18,26 @@ import {
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
-export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
+export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "workbench:last-invoked-script-by-project";
+// back-compat read for migration; remove in next major.
+export const LEGACY_LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
+
+// One-shot migration: lift any data sitting under the legacy key into the new
+// key so the `useLocalStorage` hook (which only ever reads `LAST_INVOKED_SCRIPT_BY_PROJECT_KEY`)
+// picks it up on first mount. Idempotent and safe to run on every module load.
+if (typeof window !== "undefined") {
+  try {
+    const existing = window.localStorage.getItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
+    if (!existing) {
+      const legacy = window.localStorage.getItem(LEGACY_LAST_INVOKED_SCRIPT_BY_PROJECT_KEY);
+      if (legacy) {
+        window.localStorage.setItem(LAST_INVOKED_SCRIPT_BY_PROJECT_KEY, legacy);
+      }
+    }
+  } catch {
+    // ignore — sandboxed iframes / disabled storage shouldn't crash UI bootstrapping.
+  }
+}
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);

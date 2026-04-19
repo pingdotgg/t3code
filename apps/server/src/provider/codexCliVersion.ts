@@ -21,5 +21,5 @@ export function isCodexCliVersionSupported(version: string): boolean {
 
 export function formatCodexCliUpgradeMessage(version: string | null): string {
   const versionLabel = version ? `v${version}` : "the installed version";
-  return `Codex CLI ${versionLabel} is too old for T3 Code. Upgrade to v${MINIMUM_CODEX_CLI_VERSION} or newer and restart T3 Code.`;
+  return `Codex CLI ${versionLabel} is too old for Workbench. Upgrade to v${MINIMUM_CODEX_CLI_VERSION} or newer and restart Workbench.`;
 }

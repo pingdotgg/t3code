@@ -14,7 +14,10 @@
         const DARK_BACKGROUND = "#161616";
         const themeColorMeta = document.querySelector('meta[name="theme-color"]');
         try {
-          const storedTheme = window.localStorage.getItem("t3code:theme");
+          // back-compat read for migration; remove in next major.
+          const storedTheme =
+            window.localStorage.getItem("workbench:theme") ??
+            window.localStorage.getItem("t3code:theme");
           const theme =
             storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
               ? storedTheme
