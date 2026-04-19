@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*.*.*"
+      - "!v*-nightly.*"
   schedule:
     - cron: "0 */3 * * *"
   workflow_dispatch:
@@ -41,7 +42,7 @@ jobs:
       - id: check
         name: Compare HEAD to last nightly tag
         run: |
-          last_nightly_tag=$(git tag --list 'nightly-v*' --sort=-creatordate | head -n 1)
+          last_nightly_tag=$(git tag --list 'v*-nightly.*' 'nightly-v*' --sort=-creatordate | head -n 1)
           if [[ -z "$last_nightly_tag" ]]; then
             echo "No previous nightly tag found. Proceeding with release."
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
