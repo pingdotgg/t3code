@@ -99,8 +99,8 @@ import {
   PLAN_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
   PLAN_INLINE_DEFAULT_WIDTH,
   PLAN_INLINE_SIDEBAR_MIN_WIDTH,
-  createComposerWidthValidator,
 } from "../rightPanelLayout";
+import { useResizeHandle } from "../hooks/useResizeHandle";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
@@ -716,18 +716,6 @@ export default function ChatView(props: ChatViewProps) {
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
   const terminalOpenByThreadRef = useRef<Record<string, boolean>>({});
-  const planSidebarWrapperRef = useRef<HTMLDivElement>(null);
-  const planResizeHandleRef = useRef<HTMLButtonElement>(null);
-  const planResizeSuppressClickRef = useRef(false);
-  const planResizeStateRef = useRef<{
-    moved: boolean;
-    pointerId: number;
-    pendingWidth: number;
-    startWidth: number;
-    startX: number;
-    rafId: number | null;
-    width: number;
-  } | null>(null);
 
   const terminalState = useTerminalStateStore((state) =>
     selectThreadTerminalState(state.terminalStateByThreadKey, routeThreadRef),
@@ -1940,104 +1928,20 @@ export default function ChatView(props: ChatViewProps) {
     planSidebarDismissedForTurnRef.current =
       activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
   }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
-  // Callback ref: restores persisted width when the wrapper mounts
-  const setPlanSidebarWrapperRef = useCallback((node: HTMLDivElement | null) => {
-    (planSidebarWrapperRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
-    if (!node) return;
-    const stored = localStorage.getItem(PLAN_INLINE_SIDEBAR_WIDTH_STORAGE_KEY);
-    if (!stored) return;
-    const parsed = Number(stored);
-    if (!Number.isFinite(parsed) || parsed < PLAN_INLINE_SIDEBAR_MIN_WIDTH) return;
-    node.style.setProperty("--plan-sidebar-width", `${parsed}px`);
-  }, []);
-  // Validates a candidate width by temporarily applying it and measuring composer overflow
-  const shouldAcceptPlanSidebarWidth = useCallback(
-    createComposerWidthValidator("--plan-sidebar-width"),
-    [],
-  );
-  const stopPlanResize = useCallback((pointerId: number) => {
-    const state = planResizeStateRef.current;
-    if (!state) return;
-    if (state.rafId !== null) cancelAnimationFrame(state.rafId);
-    if (Number.isFinite(state.width)) {
-      localStorage.setItem(PLAN_INLINE_SIDEBAR_WIDTH_STORAGE_KEY, String(state.width));
-    }
-    planResizeStateRef.current = null;
-    if (planResizeHandleRef.current?.hasPointerCapture(pointerId)) {
-      planResizeHandleRef.current.releasePointerCapture(pointerId);
-    }
-    document.body.style.removeProperty("cursor");
-    document.body.style.removeProperty("user-select");
-  }, []);
-  const handlePlanResizePointerDown = useCallback((e: React.PointerEvent<HTMLButtonElement>) => {
-    if (e.button !== 0) return;
-    const wrapper = planSidebarWrapperRef.current;
-    if (!wrapper) return;
-    const startWidth = wrapper.getBoundingClientRect().width;
-    const clamped = Math.max(PLAN_INLINE_SIDEBAR_MIN_WIDTH, startWidth);
-    wrapper.style.setProperty("--plan-sidebar-width", `${clamped}px`);
-    e.preventDefault();
-    e.stopPropagation();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    document.body.style.cursor = "col-resize";
-    document.body.style.userSelect = "none";
-    planResizeStateRef.current = {
-      moved: false,
-      pointerId: e.pointerId,
-      pendingWidth: clamped,
-      startWidth: clamped,
-      startX: e.clientX,
-      rafId: null,
-      width: clamped,
-    };
-  }, []);
-  const handlePlanResizePointerMove = useCallback(
-    (e: React.PointerEvent<HTMLButtonElement>) => {
-      const state = planResizeStateRef.current;
-      if (!state || state.pointerId !== e.pointerId) return;
-      e.preventDefault();
-      // right-side panel: dragging left (decreasing clientX) makes it wider
-      const delta = state.startX - e.clientX;
-      if (Math.abs(delta) > 2) state.moved = true;
-      state.pendingWidth = Math.max(PLAN_INLINE_SIDEBAR_MIN_WIDTH, state.startWidth + delta);
-      if (state.rafId !== null) return;
-      state.rafId = requestAnimationFrame(() => {
-        const s = planResizeStateRef.current;
-        const wrapper = planSidebarWrapperRef.current;
-        if (!s || !wrapper) return;
-        s.rafId = null;
-        const nextWidth = s.pendingWidth;
-        if (!shouldAcceptPlanSidebarWidth({ nextWidth, wrapper })) return;
-        wrapper.style.setProperty("--plan-sidebar-width", `${nextWidth}px`);
-        s.width = nextWidth;
-      });
-    },
-    [shouldAcceptPlanSidebarWidth],
-  );
-  const handlePlanResizeEndInteraction = useCallback(
-    (e: React.PointerEvent<HTMLButtonElement>) => {
-      const state = planResizeStateRef.current;
-      if (!state || state.pointerId !== e.pointerId) return;
-      e.preventDefault();
-      planResizeSuppressClickRef.current = state.moved;
-      stopPlanResize(e.pointerId);
-    },
-    [stopPlanResize],
-  );
-  const handlePlanResizeClick = useCallback((e: React.MouseEvent<HTMLButtonElement>) => {
-    if (planResizeSuppressClickRef.current) {
-      planResizeSuppressClickRef.current = false;
-      e.preventDefault();
-    }
-  }, []);
-  useEffect(() => {
-    return () => {
-      const state = planResizeStateRef.current;
-      if (state?.rafId != null) cancelAnimationFrame(state.rafId);
-      document.body.style.removeProperty("cursor");
-      document.body.style.removeProperty("user-select");
-    };
-  }, []);
+  const {
+    wrapperRef: planSidebarWrapperRef,
+    handleRef: planResizeHandleRef,
+    setWrapperRef: setPlanSidebarWrapperRef,
+    onPointerDown: handlePlanResizePointerDown,
+    onPointerMove: handlePlanResizePointerMove,
+    onPointerUp: handlePlanResizeEndInteraction,
+    onClick: handlePlanResizeClick,
+  } = useResizeHandle({
+    cssVarName: "--plan-sidebar-width",
+    storageKey: PLAN_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+    minWidth: PLAN_INLINE_SIDEBAR_MIN_WIDTH,
+    isDisabled: shouldUsePlanSidebarSheet,
+  });
 
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
