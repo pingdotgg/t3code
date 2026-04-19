@@ -6,7 +6,6 @@ import { cn } from "~/lib/utils";
 import type { WorkspaceTreeNode } from "../../lib/workspaceFileTree";
 import type { WorkspaceArtifact } from "../../workspaceArtifacts";
 import { Button } from "../ui/button";
-import { ScrollArea } from "../ui/scroll-area";
 import { VscodeEntryIcon } from "../chat/VscodeEntryIcon";
 
 interface TreePaneProps {
@@ -39,7 +38,7 @@ export function TreePane({
   onOpenTurnDiff,
 }: TreePaneProps) {
   return (
-    <ScrollArea className="min-h-0 max-h-[40vh]">
+    <div className="min-h-0 flex-1">
       <div className="space-y-2 p-3">
         {treeNodes.length ? (
           <WorkspaceTree
@@ -89,7 +88,7 @@ export function TreePane({
           </div>
         ) : null}
       </div>
-    </ScrollArea>
+    </div>
   );
 }
 

@@ -28,6 +28,22 @@ describe("buildWorkspaceFileTree", () => {
     });
   });
 
+  it("renders trailing-slash entries (submodules / nested git repos) as directories", () => {
+    const tree = buildWorkspaceFileTree({
+      entries: [
+        { path: "README.md", kind: "file" },
+        { path: "workbench/", kind: "file" },
+        { path: "workbench-pi-fix/", kind: "file" },
+      ],
+    });
+
+    expect(tree.map((node) => `${node.kind}:${node.name}`)).toEqual([
+      "directory:workbench",
+      "directory:workbench-pi-fix",
+      "file:README.md",
+    ]);
+  });
+
   it("marks changed files and bubbles that state up to parent directories", () => {
     const tree = buildWorkspaceFileTree({
       entries: [

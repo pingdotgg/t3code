@@ -2341,18 +2341,18 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron: boolean;
 }) {
   const wordmark = (
-    <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-      <SidebarTrigger className="shrink-0 md:hidden" />
+    <div className="flex min-w-0 items-center gap-1.5 overflow-hidden">
+      <SidebarTrigger className="shrink-0 text-muted-foreground/70 hover:text-foreground" />
       <Tooltip>
         <TooltipTrigger
           render={
             <Link
               aria-label="Go to tasks"
-              className="ml-1 flex min-w-0 max-w-full flex-1 cursor-pointer items-center gap-2 overflow-hidden rounded-2xl border border-border/60 bg-card/72 px-2.5 py-2 outline-hidden ring-ring shadow-[0_18px_40px_-34px_rgba(0,0,0,0.75)] transition-colors hover:text-foreground focus-visible:ring-2"
+              className="ml-0.5 flex min-w-0 max-w-full flex-1 cursor-pointer items-center gap-2 overflow-hidden rounded-2xl border border-border/60 bg-card/72 px-2.5 py-2 outline-hidden ring-ring shadow-[0_18px_40px_-34px_rgba(0,0,0,0.75)] transition-colors hover:text-foreground focus-visible:ring-2"
               to="/"
             >
-              <WorkbenchLogo aria-label="Workbench" className="size-4 shrink-0 text-foreground" />
-              <span className="truncate text-sm font-medium tracking-tight text-foreground/90">
+              <WorkbenchLogo aria-label="Workbench" className="size-6 shrink-0 text-foreground" />
+              <span className="truncate text-base font-semibold tracking-tight text-foreground/95">
                 {APP_BASE_NAME}
               </span>
               <span className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground/45">

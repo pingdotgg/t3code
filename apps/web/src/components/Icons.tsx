@@ -13,6 +13,107 @@ export const WorkbenchLogo: Icon = (props) => (
   </svg>
 );
 
+/**
+ * Animated workbench: bench top + legs stay put while the three blocks float
+ * up and back down on a 2.2s loop, slightly out of phase. Used on the splash
+ * screen and any other "agent is thinking" surface. Pure SVG SMIL — no JS,
+ * works in light + dark via `currentColor`.
+ */
+export const AnimatedWorkbenchLogo: Icon = (props) => {
+  const id = useId();
+  const filterId = `${id}-soft`;
+  return (
+    <svg {...props} viewBox="0 0 120 120" fill="none">
+      <defs>
+        <filter id={filterId} x="-20%" y="-20%" width="140%" height="140%">
+          <feGaussianBlur in="SourceAlpha" stdDeviation="0.6" result="blur" />
+          <feOffset dy="0.4" result="offsetBlur" />
+          <feMerge>
+            <feMergeNode in="offsetBlur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+      </defs>
+
+      <rect x="20" y="40" width="80" height="8" rx="1.5" fill="currentColor">
+        <animate
+          attributeName="opacity"
+          values="1;0.92;1"
+          dur="2.8s"
+          repeatCount="indefinite"
+        />
+      </rect>
+
+      <rect x="25" y="48" width="6" height="30" rx="1" fill="currentColor">
+        <animate
+          attributeName="opacity"
+          values="1;0.96;1"
+          dur="3.1s"
+          repeatCount="indefinite"
+        />
+      </rect>
+      <rect x="89" y="48" width="6" height="30" rx="1" fill="currentColor">
+        <animate
+          attributeName="opacity"
+          values="1;0.96;1"
+          dur="3.1s"
+          repeatCount="indefinite"
+        />
+      </rect>
+
+      <g filter={`url(#${filterId})`}>
+        <g>
+          <rect x="35" y="25" width="12" height="12" rx="1.5" fill="currentColor" />
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0; 0 -3; 0 0"
+            dur="2.2s"
+            repeatCount="indefinite"
+          />
+        </g>
+      </g>
+
+      <g filter={`url(#${filterId})`}>
+        <g>
+          <rect x="55" y="20" width="10" height="17" rx="1.5" fill="currentColor" />
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0; 0 -4; 0 0"
+            dur="2.2s"
+            begin="0.2s"
+            repeatCount="indefinite"
+          />
+        </g>
+      </g>
+
+      <g filter={`url(#${filterId})`}>
+        <g>
+          <rect x="70" y="28" width="15" height="9" rx="1.5" fill="currentColor" />
+          <animateTransform
+            attributeName="transform"
+            type="translate"
+            values="0 0; 0 -2.5; 0 0"
+            dur="2.2s"
+            begin="0.4s"
+            repeatCount="indefinite"
+          />
+        </g>
+      </g>
+
+      <rect x="34" y="81" width="52" height="2" rx="1" fill="currentColor" opacity="0.12">
+        <animate
+          attributeName="opacity"
+          values="0.08;0.2;0.08"
+          dur="2.8s"
+          repeatCount="indefinite"
+        />
+      </rect>
+    </svg>
+  );
+};
+
 export const GitHubIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 1024 1024" fill="none">
     <path

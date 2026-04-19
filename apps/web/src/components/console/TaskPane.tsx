@@ -1,5 +1,11 @@
 import type { TimestampFormat } from "@workbench/contracts/settings";
-import { ChevronDownIcon, ChevronRightIcon, Rows3Icon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  Loader2Icon,
+  Rows3Icon,
+} from "lucide-react";
 import { useState } from "react";
 
 import { cn } from "~/lib/utils";
@@ -17,7 +23,6 @@ import { formatTimestamp } from "../../timestampFormat";
 import ChatMarkdown from "../ChatMarkdown";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { ScrollArea } from "../ui/scroll-area";
 
 function compactWorkHeading(workEntry: WorkLogEntry): string {
   if (workEntry.requestKind === "command") return "Approval needed";
@@ -52,6 +57,28 @@ function compactWorkPreview(
     return workEntry.command.trim();
   }
   return null;
+}
+
+/**
+ * Filter out raw / generic tool-call entries that aren't meaningful to a
+ * non-technical reader. We keep entries that represent something a person
+ * would recognize as "the agent did X": file changes, commands, file reads,
+ * approvals, web searches, image reviews. Anything that would otherwise show
+ * up as a bare "Tool call" with opaque payload gets dropped.
+ */
+function isMeaningfulWorkEntry(entry: WorkLogEntry): boolean {
+  if (entry.requestKind) return true;
+  if (entry.changedFiles?.length) return true;
+  if (entry.command?.trim()) return true;
+  if (
+    entry.itemType === "file_change" ||
+    entry.itemType === "command_execution" ||
+    entry.itemType === "web_search" ||
+    entry.itemType === "image_view"
+  ) {
+    return true;
+  }
+  return false;
 }
 
 interface TaskPaneProps {
@@ -91,26 +118,17 @@ export function TaskPane({
   const displayedPlanMarkdown = planMarkdown ? stripDisplayedPlanMarkdown(planMarkdown) : null;
   const planTitle = planMarkdown ? proposedPlanTitle(planMarkdown) : null;
 
-  const hasContent = !!activePlan || !!activeProposedPlan || workEntries.length > 0;
+  const meaningfulWorkEntries = workEntries.filter(isMeaningfulWorkEntry);
+  const hasContent =
+    !!activePlan || !!activeProposedPlan || meaningfulWorkEntries.length > 0;
 
   return (
-    <ScrollArea className="min-h-0 max-h-[40vh]">
+    <div className="min-h-0 flex-1">
       <div className="space-y-3 p-3">
         {!hasContent ? (
           <div className="rounded-2xl border border-dashed border-border/60 bg-background/45 p-4 text-sm leading-6 text-muted-foreground/72">
-            No active task. When the agent proposes a plan or starts work, you'll see live status
-            and the task outline here.
-          </div>
-        ) : null}
-
-        {hasContent ? (
-          <div className="rounded-2xl border border-border/55 bg-background/55 p-4">
-            <p className="text-[11px] font-semibold tracking-[0.16em] text-muted-foreground/55 uppercase">
-              Current task
-            </p>
-            <p className="mt-2 text-sm text-muted-foreground/78">
-              Plan mode stays visible here while work is running.
-            </p>
+            No active task. When the agent proposes a plan or starts work, you'll see the steps and
+            their progress here.
           </div>
         ) : null}
 
@@ -121,30 +139,30 @@ export function TaskPane({
         ) : null}
 
         {activePlan?.steps.length ? (
-          <div className="space-y-2 rounded-2xl border border-border/55 bg-background/60 p-4">
-            {activePlan.steps.map((step) => (
-              <div key={`${step.status}:${step.step}`} className="flex items-start gap-3">
-                <span
-                  className={cn(
-                    "mt-1.5 size-2 shrink-0 rounded-full",
-                    step.status === "completed" && "bg-emerald-400",
-                    step.status === "inProgress" && "bg-blue-400",
-                    step.status === "pending" && "bg-muted-foreground/35",
-                  )}
-                />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm leading-6 text-foreground/86">{step.step}</p>
-                  <p className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground/55">
-                    {step.status === "inProgress"
-                      ? "In progress"
-                      : step.status === "completed"
-                        ? "Completed"
-                        : "Pending"}
+          <ol className="space-y-2.5 rounded-2xl border border-border/55 bg-background/60 p-4">
+            {activePlan.steps.map((step) => {
+              const isCompleted = step.status === "completed";
+              const isInProgress = step.status === "inProgress";
+              return (
+                <li
+                  key={`${step.status}:${step.step}`}
+                  className="flex items-start gap-3"
+                >
+                  <PlanStepStatusIcon status={step.status} />
+                  <p
+                    className={cn(
+                      "min-w-0 flex-1 text-sm leading-6",
+                      isCompleted && "text-muted-foreground/65 line-through",
+                      isInProgress && "font-medium text-foreground",
+                      !isCompleted && !isInProgress && "text-foreground/80",
+                    )}
+                  >
+                    {step.step}
                   </p>
-                </div>
-              </div>
-            ))}
-          </div>
+                </li>
+              );
+            })}
+          </ol>
         ) : null}
 
         {displayedPlanMarkdown && planMarkdown ? (
@@ -213,9 +231,12 @@ export function TaskPane({
           </div>
         ) : null}
 
-        {workEntries.length > 0 ? (
+        {meaningfulWorkEntries.length > 0 ? (
           <div className="space-y-2">
-            {workEntries
+            <p className="px-1 text-[11px] font-semibold tracking-[0.16em] text-muted-foreground/55 uppercase">
+              Recent activity
+            </p>
+            {meaningfulWorkEntries
               .slice(-6)
               .toReversed()
               .map((entry) => {
@@ -245,6 +266,35 @@ export function TaskPane({
           </div>
         ) : null}
       </div>
-    </ScrollArea>
+    </div>
+  );
+}
+
+function PlanStepStatusIcon({ status }: { status: "completed" | "inProgress" | "pending" }) {
+  if (status === "completed") {
+    return (
+      <span
+        aria-label="Completed"
+        className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+      >
+        <CheckIcon className="size-3" strokeWidth={3} />
+      </span>
+    );
+  }
+  if (status === "inProgress") {
+    return (
+      <span
+        aria-label="In progress"
+        className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-blue-500/15 text-blue-600 dark:text-blue-400"
+      >
+        <Loader2Icon className="size-3 animate-spin" />
+      </span>
+    );
+  }
+  return (
+    <span
+      aria-label="Pending"
+      className="mt-0.5 size-4 shrink-0 rounded-full border border-border/60"
+    />
   );
 }

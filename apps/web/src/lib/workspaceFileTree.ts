@@ -80,7 +80,14 @@ export function buildWorkspaceFileTree(input: {
   );
 
   for (const entry of sortedEntries) {
-    const segments = entry.path.split("/").filter((segment) => segment.length > 0);
+    // Submodules + nested git repos can come back from `git ls-files --others`
+    // as paths with a trailing slash (e.g. `workbench/`). The server tags them
+    // as `kind: "file"`, but they're really opaque directories — promote them
+    // here so the tree renders them with a folder name + icon instead of an
+    // empty-name file row.
+    const hasTrailingSlash = entry.path.endsWith("/");
+    const normalizedPath = hasTrailingSlash ? entry.path.slice(0, -1) : entry.path;
+    const segments = normalizedPath.split("/").filter((segment) => segment.length > 0);
     if (segments.length === 0) {
       continue;
     }
@@ -105,14 +112,14 @@ export function buildWorkspaceFileTree(input: {
     }
 
     const changed = changedPaths.has(entry.path);
-    if (entry.kind === "directory") {
+    if (entry.kind === "directory" || hasTrailingSlash) {
       const name = segments.at(-1)!;
       let next = current.directories.get(name);
       if (!next) {
         next = {
           kind: "directory",
           name,
-          path: entry.path,
+          path: normalizedPath,
           changed,
           directories: new Map(),
           files: [],
@@ -126,8 +133,8 @@ export function buildWorkspaceFileTree(input: {
 
     current.files.push({
       kind: "file",
-      name: basenameOf(entry.path),
-      path: entry.path,
+      name: basenameOf(normalizedPath),
+      path: normalizedPath,
       changed,
     });
   }

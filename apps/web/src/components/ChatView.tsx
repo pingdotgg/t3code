@@ -118,6 +118,7 @@ import {
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
+import { usePendingAutoSubmitStore } from "../pendingAutoSubmitStore";
 import {
   appendTerminalContextsToPrompt,
   formatTerminalContextLabel,
@@ -167,7 +168,7 @@ import { RightPanelSheet } from "./RightPanelSheet";
 import { deriveWorkspaceArtifacts } from "../workspaceArtifacts";
 import { COWORK_SHELL } from "../coworkShell";
 import { formatWorkspaceRelativePath, resolveWorkspaceSelectionPath } from "../filePathDisplay";
-import { Sidebar, SidebarProvider, SidebarRail } from "./ui/sidebar";
+import { Sidebar, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar } from "./ui/sidebar";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -677,6 +678,8 @@ export default function ChatView(props: ChatViewProps) {
   >({});
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
+  const { state: leftSidebarState } = useSidebar();
+  const isLeftSidebarCollapsed = leftSidebarState === "collapsed";
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   // When true, the console rail breaks out of the flex row and overlays the
   // chat column entirely (only the left sidebar stays visible). User toggles
@@ -2613,6 +2616,25 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
 
+  // Auto-submit on first mount when the splash composer requested it. We only
+  // consume the flag once a non-empty draft prompt has loaded, so the send
+  // doesn't fire with a blank prompt before the draft store hydrates. The
+  // setTimeout(0) defers to the next tick so the child composer's mount
+  // effects (which sync prompt -> promptRef) have already run.
+  const draftPromptForAutoSubmit = useComposerDraftStore((store) =>
+    routeKind === "draft" && draftId ? (store.getComposerDraft(draftId)?.prompt ?? "") : "",
+  );
+  useEffect(() => {
+    if (routeKind !== "draft" || !draftId) return;
+    if (draftPromptForAutoSubmit.trim().length === 0) return;
+    if (!usePendingAutoSubmitStore.getState().consume(draftId)) return;
+    const timer = window.setTimeout(() => {
+      void onSend();
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- onSend is recreated each render; we intentionally trigger only on draft + prompt readiness.
+  }, [draftId, draftPromptForAutoSubmit, routeKind]);
+
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread) return;
@@ -3174,7 +3196,15 @@ export default function ChatView(props: ChatViewProps) {
       {/* Top bar */}
       <header
         className={cn(
-          "border-b border-border px-3 sm:px-5",
+          "border-b border-border pr-3 sm:pr-5",
+          // When the left sidebar is open, the wordmark area inside the sidebar
+          // chrome already provides the macOS traffic-light inset. When the
+          // sidebar is collapsed, this header runs to the viewport edge — so
+          // we have to inset it ourselves and host the trigger here so it
+          // stays at the same x-position as when the sidebar is open.
+          isLeftSidebarCollapsed && isElectron
+            ? "pl-[80px] wco:pl-[calc(env(titlebar-area-x)+1em)]"
+            : "pl-3 sm:pl-5",
           isElectron
             ? cn(
                 "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]",
@@ -3184,6 +3214,9 @@ export default function ChatView(props: ChatViewProps) {
             : "py-2 sm:py-3",
         )}
       >
+        {isLeftSidebarCollapsed ? (
+          <SidebarTrigger className="mr-2 size-7 shrink-0 text-muted-foreground/70 hover:text-foreground" />
+        ) : null}
         <ChatHeader
           activeThreadEnvironmentId={activeThread.environmentId}
           activeThreadId={activeThread.id}

@@ -29,6 +29,7 @@ import { inferProjectTitleFromPath } from "../lib/projectPaths";
 import { readLocalApi } from "../localApi";
 import { readEnvironmentApi } from "../environmentApi";
 import { useComposerDraftStore } from "../composerDraftStore";
+import { usePendingAutoSubmitStore } from "../pendingAutoSubmitStore";
 import { formatProviderDisplayLabel, describeProviderAvailability } from "../coworkShell";
 import { isElectron } from "../env";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
@@ -59,7 +60,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "./ui/menu";
-import { SidebarInset, SidebarTrigger } from "./ui/sidebar";
+import { SidebarInset, SidebarTrigger, useSidebar } from "./ui/sidebar";
 import { Textarea } from "./ui/textarea";
 
 type AnyProviderOptions = ProviderModelOptions[ProviderKind];
@@ -170,6 +171,8 @@ export function NoActiveThreadState() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const providers = useServerProviders();
   const { handleNewThread } = useNewThreadHandler();
+  const { state: leftSidebarState } = useSidebar();
+  const isLeftSidebarCollapsed = leftSidebarState === "collapsed";
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const projects = useStore(useShallow((store) => selectProjectsAcrossEnvironments(store)));
   const projectGroupingSettings = useSettings((settings) => ({
@@ -349,6 +352,10 @@ export function NoActiveThreadState() {
       draftStore.setModelSelection(draftSession.draftId, modelSelection);
       draftStore.setStickyModelSelection(modelSelection);
       draftStore.setPrompt(draftSession.draftId, trimmedPrompt);
+      // Mark the draft for auto-submit so the new ChatView fires onSend on
+      // mount instead of leaving the user staring at their pre-populated
+      // prompt waiting for a second Enter.
+      usePendingAutoSubmitStore.getState().request(draftSession.draftId);
     } catch (error) {
       setErrorMessage(
         error instanceof Error ? error.message : "Could not open a task draft right now.",
@@ -373,19 +380,28 @@ export function NoActiveThreadState() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-transparent">
         <header
           className={cn(
-            "border-b border-border px-3 sm:px-5",
+            "border-b border-border pr-3 sm:pr-5",
+            // Match ChatView: when the left sidebar is open, the sidebar's own
+            // chrome header provides the macOS traffic-light inset. When it's
+            // collapsed, this header runs to the viewport edge — so we host
+            // the trigger here at the same x-position.
+            isLeftSidebarCollapsed && isElectron
+              ? "pl-[80px] wco:pl-[calc(env(titlebar-area-x)+1em)]"
+              : "pl-3 sm:pl-5",
             isElectron
               ? "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]"
               : "py-2 sm:py-3",
           )}
         >
+          {isLeftSidebarCollapsed ? (
+            <SidebarTrigger className="mr-2 size-7 shrink-0 text-muted-foreground/70 hover:text-foreground" />
+          ) : null}
           {isElectron ? (
             <span className="text-xs text-muted-foreground/50 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
               Start a task
             </span>
           ) : (
             <div className="flex items-center gap-2">
-              <SidebarTrigger className="size-7 shrink-0 md:hidden" />
               <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
                 Start a task
               </span>
@@ -399,60 +415,59 @@ export function NoActiveThreadState() {
             <div className="absolute right-[12%] top-24 h-72 w-72 rounded-full bg-[#fff4dd]/55 blur-3xl" />
           </div>
 
-          <div className="relative z-10 w-full max-w-5xl px-4 py-10 sm:px-6 sm:py-14">
-            <div className="mx-auto w-full max-w-4xl">
-              <h1 className="cowork-display text-center text-4xl leading-none text-foreground sm:text-6xl">
-                What are you working on today?
-              </h1>
+          <div className="relative z-10 mx-auto flex w-full max-w-[min(56rem,100%)] flex-col px-3 py-6 sm:px-6 sm:py-12">
+            <h1 className="cowork-display text-center leading-[1.05] text-foreground text-[clamp(2rem,6vw,3.75rem)]">
+              What are you working on today?
+            </h1>
 
-              <form
-                ref={formRef}
-                className="mx-auto mt-8 w-full max-w-4xl"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  if (isSubmitting) {
-                    return;
-                  }
-                  void handleSubmit();
-                }}
-              >
-                <div className="rounded-[30px] border border-border/55 bg-card/80 p-2 shadow-[0_28px_80px_-46px_rgba(0,0,0,0.55)] backdrop-blur-xl">
-                  <div className="rounded-[24px] bg-background/88">
-                    <div className="relative">
-                      <Textarea
-                        ref={textareaRef}
-                        value={prompt}
-                        onChange={(event) => {
-                          setPrompt(event.target.value);
-                          if (errorMessage) {
-                            setErrorMessage(null);
-                          }
-                        }}
-                        onKeyDown={(event) => {
-                          if (
-                            event.key !== "Enter" ||
-                            event.shiftKey ||
-                            event.nativeEvent.isComposing
-                          ) {
-                            return;
-                          }
-                          event.preventDefault();
-                          formRef.current?.requestSubmit();
-                        }}
-                        placeholder="Describe a task, or type / for shortcuts"
-                        unstyled
-                        className="min-h-[168px] rounded-[24px] border-0 bg-transparent px-7 py-6 pr-20 text-[16px] leading-7 text-foreground shadow-none before:shadow-none focus-visible:border-0 focus-visible:ring-0 sm:min-h-[184px] sm:text-[18px]"
-                      />
+            <form
+              ref={formRef}
+              className="mt-6 w-full sm:mt-8"
+              onSubmit={(event) => {
+                event.preventDefault();
+                if (isSubmitting) {
+                  return;
+                }
+                void handleSubmit();
+              }}
+            >
+              <div className="rounded-[28px] border border-border/55 bg-card/80 p-2 shadow-[0_28px_80px_-46px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+                <div className="rounded-[22px] bg-background/88">
+                  <div className="relative">
+                    <Textarea
+                      ref={textareaRef}
+                      value={prompt}
+                      onChange={(event) => {
+                        setPrompt(event.target.value);
+                        if (errorMessage) {
+                          setErrorMessage(null);
+                        }
+                      }}
+                      onKeyDown={(event) => {
+                        if (
+                          event.key !== "Enter" ||
+                          event.shiftKey ||
+                          event.nativeEvent.isComposing
+                        ) {
+                          return;
+                        }
+                        event.preventDefault();
+                        formRef.current?.requestSubmit();
+                      }}
+                      placeholder="Describe a task, or type / for shortcuts"
+                      unstyled
+                      className="min-h-[140px] w-full rounded-[22px] border-0 bg-transparent px-5 py-5 pr-16 leading-7 text-foreground shadow-none text-[clamp(0.95rem,1.6vw,1.125rem)] before:shadow-none focus-visible:border-0 focus-visible:ring-0 sm:min-h-[184px] sm:px-7 sm:py-6 sm:pr-20"
+                    />
 
-                      <Button
-                        type="submit"
-                        size="icon"
-                        className="absolute bottom-5 right-5 size-11 rounded-full shadow-[0_20px_40px_-20px_rgba(37,99,235,0.95)]"
-                        disabled={isSubmitting || prompt.trim().length === 0 || !selectedProject}
-                      >
-                        <ArrowUpIcon className="size-4.5" />
-                      </Button>
-                    </div>
+                    <Button
+                      type="submit"
+                      size="icon"
+                      className="absolute bottom-3 right-3 size-10 rounded-full shadow-[0_20px_40px_-20px_rgba(37,99,235,0.95)] sm:bottom-5 sm:right-5 sm:size-11"
+                      disabled={isSubmitting || prompt.trim().length === 0 || !selectedProject}
+                    >
+                      <ArrowUpIcon className="size-4.5" />
+                    </Button>
+                  </div>
 
                     <div className="border-t border-border/55 px-4 py-3 sm:px-5">
                       <div className="flex flex-wrap items-center gap-2.5">
@@ -664,7 +679,6 @@ export function NoActiveThreadState() {
                   </p>
                 ) : null}
               </form>
-            </div>
           </div>
         </Empty>
       </div>
