@@ -507,10 +507,10 @@ const probeClaudeCapabilities = (binaryPath: string) => {
   const abort = new AbortController();
   return Effect.tryPromise(async () => {
     const q = claudeQuery({
+      // Never yield — we only need initialization data, not a conversation.
+      // This prevents any prompt from reaching the Anthropic API.
+      // oxlint-disable-next-line require-yield
       prompt: (async function* (): AsyncGenerator<SDKUserMessage> {
-        yield* [] as ReadonlyArray<SDKUserMessage>;
-        // Never yield — we only need initialization data, not a conversation.
-        // This prevents any prompt from reaching the Anthropic API.
         await waitForAbortSignal(abort.signal);
       })(),
       options: {
