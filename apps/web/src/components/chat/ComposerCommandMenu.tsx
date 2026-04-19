@@ -8,7 +8,7 @@ import { BotIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
-import { type AtelierSlashCommand } from "./atelierSlashCommands";
+import { type WorkbenchSlashCommand } from "./workbenchSlashCommands";
 import { formatProviderSkillInstallSource } from "~/providerSkillPresentation";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
@@ -40,8 +40,8 @@ export type ComposerCommandItem =
     }
   | {
       id: string;
-      type: "atelier-slash-command";
-      command: AtelierSlashCommand;
+      type: "workbench-slash-command";
+      command: WorkbenchSlashCommand;
       label: string;
       description: string;
     }
@@ -108,12 +108,12 @@ function groupCommandItems(
   }
 
   const builtInItems = items.filter((item) => item.type === "slash-command");
-  const atelierItems = items.filter((item) => item.type === "atelier-slash-command");
+  const workbenchItems = items.filter((item) => item.type === "workbench-slash-command");
   const providerItems = items.filter((item) => item.type === "provider-slash-command");
 
   const groups: ComposerCommandGroup[] = [];
-  if (atelierItems.length > 0) {
-    groups.push({ id: "atelier", label: "Shortcuts", items: atelierItems });
+  if (workbenchItems.length > 0) {
+    groups.push({ id: "workbench", label: "Shortcuts", items: workbenchItems });
   }
   if (builtInItems.length > 0) {
     groups.push({ id: "built-in", label: "Built-in", items: builtInItems });
@@ -257,7 +257,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "slash-command" ? (
         <BotIcon className="size-4 shrink-0 text-muted-foreground/80" />
       ) : null}
-      {props.item.type === "atelier-slash-command" ? (
+      {props.item.type === "workbench-slash-command" ? (
         <BotIcon className="size-4 shrink-0 text-muted-foreground/80" />
       ) : null}
       {props.item.type === "provider-slash-command" ? (

@@ -69,7 +69,7 @@ import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
-import { ATELIER_SLASH_COMMANDS } from "./atelierSlashCommands";
+import { WORKBENCH_SLASH_COMMANDS } from "./workbenchSlashCommands";
 import {
   getComposerProviderControls,
   getComposerProviderState,
@@ -755,9 +755,9 @@ export const ChatComposer = memo(
             description: "Switch this thread back to normal build mode",
           },
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
-        const atelierSlashCommandItems = ATELIER_SLASH_COMMANDS.map((entry) => ({
-          id: `atelier-slash-command:${entry.command}`,
-          type: "atelier-slash-command" as const,
+        const workbenchSlashCommandItems = WORKBENCH_SLASH_COMMANDS.map((entry) => ({
+          id: `workbench-slash-command:${entry.command}`,
+          type: "workbench-slash-command" as const,
           command: entry,
           label: entry.label,
           description: entry.description,
@@ -774,7 +774,7 @@ export const ChatComposer = memo(
         );
         const query = composerTrigger.query.trim().toLowerCase();
         const slashCommandItems = [
-          ...atelierSlashCommandItems,
+          ...workbenchSlashCommandItems,
           ...builtInSlashCommandItems,
           ...providerSlashCommandItems,
         ];
@@ -1438,8 +1438,8 @@ export const ChatComposer = memo(
           }
           return;
         }
-        if (item.type === "atelier-slash-command") {
-          // Atelier shortcuts expand the `/name` the user typed into a
+        if (item.type === "workbench-slash-command") {
+          // Workbench shortcuts expand the `/name` the user typed into a
           // full prompt template. The trailing space in the template ends
           // right where the cursor should sit so the user can keep typing
           // their specifics (filename, topic, etc.) straight into the

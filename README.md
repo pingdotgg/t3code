@@ -13,13 +13,15 @@ Workbench is a minimal web GUI for coding agents (currently Codex and Claude, mo
 
 ### Run without installing
 
+During the identity migration, the CLI entrypoint still uses `t3` for compatibility:
+
 ```bash
 npx t3
 ```
 
 ### Desktop app
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
+Install the latest version of the Workbench desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:
 
 #### Windows (`winget`)
 

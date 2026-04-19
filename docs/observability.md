@@ -1,12 +1,18 @@
 # Observability
 
-T3 Code has one server-side observability model:
+Workbench has one server-side observability model:
 
 - pretty logs go to stdout for humans
 - completed spans go to a local NDJSON trace file
 - traces and metrics can also be exported over OTLP to a real backend like Grafana LGTM
 
 The local trace file is the persisted source of truth. There is no separate persisted server log file anymore.
+
+During the deeper identity migration, observability still uses the compatibility CLI/env/data-dir names:
+
+- CLI: `t3`
+- env vars: `T3CODE_*`
+- default home: `~/.t3`
 
 ## Where To Find Things
 
@@ -141,7 +147,7 @@ macOS app bundle example:
 T3CODE_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
 T3CODE_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
 T3CODE_OTLP_SERVICE_NAME=t3-desktop \
-"/Applications/T3 Code.app/Contents/MacOS/T3 Code"
+"/Applications/Workbench.app/Contents/MacOS/Workbench"
 ```
 
 Direct binary example:

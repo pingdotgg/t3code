@@ -1,5 +1,5 @@
 /**
- * Atelier-owned slash commands — backend-agnostic shortcuts that expand to
+ * Workbench-owned slash commands — backend-agnostic shortcuts that expand to
  * structured prompt templates at composition time. Selecting one replaces
  * the user's `/name` typing with the `prompt` text below and places the
  * cursor at the end so they can keep typing details.
@@ -17,7 +17,7 @@
  * When adding a new command, keep it under ~3 short sentences — anything
  * longer belongs in a skill (which we'll formalize in a later slice).
  */
-export interface AtelierSlashCommand {
+export interface WorkbenchSlashCommand {
   /** Bare slug, without leading slash. Used as the item id. */
   readonly command: string;
   /** Menu label, typically `/${command}`. */
@@ -28,7 +28,7 @@ export interface AtelierSlashCommand {
   readonly prompt: string;
 }
 
-export const ATELIER_SLASH_COMMANDS: ReadonlyArray<AtelierSlashCommand> = [
+export const WORKBENCH_SLASH_COMMANDS: ReadonlyArray<WorkbenchSlashCommand> = [
   {
     command: "summarize",
     label: "/summarize",

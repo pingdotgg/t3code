@@ -1,6 +1,6 @@
 # Keybindings
 
-T3 Code reads keybindings from:
+Workbench reads keybindings from the current compatibility path:
 
 - `~/.t3/keybindings.json`
 

@@ -1,6 +1,6 @@
 # Remote Access
 
-Use this when you want to connect to a T3 Code server from another device such as a phone, tablet, or separate desktop app.
+Use this when you want to connect to a Workbench server from another device such as a phone, tablet, or separate desktop app.
 
 ## Recommended Setup
 
@@ -28,6 +28,8 @@ If you are already running the desktop app and want to make it reachable from ot
 ### Option 2: Headless Server (CLI)
 
 Use this when you want to run the server without a GUI, for example on a remote machine over SSH.
+
+The CLI command still uses `t3` during the migration:
 
 Run the server with `t3 serve`.
 

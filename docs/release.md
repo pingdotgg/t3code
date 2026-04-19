@@ -1,6 +1,6 @@
 # Release Checklist
 
-This document covers the unified release workflow for stable and nightly desktop releases.
+This document covers the unified release workflow for stable and nightly Workbench desktop releases.
 
 ## What the workflow does
 
@@ -67,7 +67,8 @@ This document covers the unified release workflow for stable and nightly desktop
 ## 0) npm OIDC trusted publishing setup (CLI)
 
 The workflow publishes the CLI with `npm publish` from `apps/server` after bumping
-the package version to the release tag version.
+the package version to the release tag version. The package name and command are
+still `t3` during the migration.
 
 Checklist:
 

@@ -9,14 +9,14 @@ import type { ComposerCommandItem } from "./ComposerCommandMenu";
 function scoreSlashCommandItem(
   item: Extract<
     ComposerCommandItem,
-    { type: "slash-command" | "atelier-slash-command" | "provider-slash-command" }
+    { type: "slash-command" | "workbench-slash-command" | "provider-slash-command" }
   >,
   query: string,
 ): number | null {
   const primaryValue =
     item.type === "slash-command"
       ? item.command.toLowerCase()
-      : item.type === "atelier-slash-command"
+      : item.type === "workbench-slash-command"
         ? item.command.command.toLowerCase()
         : item.command.name.toLowerCase();
   const description = item.description.toLowerCase();
@@ -53,14 +53,14 @@ export function searchSlashCommandItems(
   items: ReadonlyArray<
     Extract<
       ComposerCommandItem,
-      { type: "slash-command" | "atelier-slash-command" | "provider-slash-command" }
+      { type: "slash-command" | "workbench-slash-command" | "provider-slash-command" }
     >
   >,
   query: string,
 ): Array<
   Extract<
     ComposerCommandItem,
-    { type: "slash-command" | "atelier-slash-command" | "provider-slash-command" }
+    { type: "slash-command" | "workbench-slash-command" | "provider-slash-command" }
   >
 > {
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\/+/ });
@@ -71,7 +71,7 @@ export function searchSlashCommandItems(
   const ranked: Array<{
     item: Extract<
       ComposerCommandItem,
-      { type: "slash-command" | "atelier-slash-command" | "provider-slash-command" }
+      { type: "slash-command" | "workbench-slash-command" | "provider-slash-command" }
     >;
     score: number;
     tieBreaker: string;
@@ -91,7 +91,7 @@ export function searchSlashCommandItems(
         tieBreaker:
           item.type === "slash-command"
             ? `0\u0000${item.command}`
-            : item.type === "atelier-slash-command"
+            : item.type === "workbench-slash-command"
               ? `1\u0000${item.command.command}`
               : `2\u0000${item.command.name}\u0000${item.provider}`,
       },
