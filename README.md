@@ -18,6 +18,18 @@ T3 Code is a minimal web GUI for coding agents (currently Codex and Claude, more
 npx t3
 ```
 
+### Android / Termux
+
+Run T3 Code on Android through Termux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/timm-u/t3code/main/scripts/install-termux.sh | sh
+cd ~/t3code-termux
+npm start
+```
+
+For provider setup, native module rebuilds, and the Termux Codex CLI fork, see [docs/termux.md](./docs/termux.md).
+
 ### Desktop app
 
 Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/t3code/releases), or from your favorite package registry:

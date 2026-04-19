@@ -35,6 +35,7 @@
     "start:desktop": "turbo run start --filter=@t3tools/desktop",
     "start:marketing": "turbo run preview --filter=@t3tools/marketing",
     "start:mock-update-server": "node scripts/mock-update-server.ts",
+    "termux:install": "sh scripts/install-termux.sh",
     "build": "turbo run build",
     "build:marketing": "turbo run build --filter=@t3tools/marketing",
     "build:desktop": "turbo run build --filter=@t3tools/desktop --filter=t3",

@@ -182,4 +182,21 @@ describe("fixPath", () => {
     expect(readPath).not.toHaveBeenCalled();
     expect(env.PATH).toBe("C:\\Windows\\System32");
   });
+
+  it("hydrates PATH on Android using the Termux shell", () => {
+    const env: NodeJS.ProcessEnv = {
+      SHELL: "/data/data/com.termux/files/usr/bin/sh",
+      PATH: "/data/data/com.termux/files/usr/bin",
+    };
+    const readPath = vi.fn(() => "/data/data/com.termux/files/usr/bin:/system/bin");
+
+    fixPath({
+      env,
+      platform: "android",
+      readPath,
+    });
+
+    expect(readPath).toHaveBeenCalledWith("/data/data/com.termux/files/usr/bin/sh");
+    expect(env.PATH).toBe("/data/data/com.termux/files/usr/bin:/system/bin");
+  });
 });

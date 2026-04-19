@@ -178,6 +178,10 @@ describe("listLoginShellCandidates", () => {
   it("falls back to the platform default when no shells are available", () => {
     expect(listLoginShellCandidates("linux", undefined, "")).toEqual(["/bin/bash"]);
   });
+
+  it("falls back to PATH-resolved sh on Android", () => {
+    expect(listLoginShellCandidates("android", undefined, "")).toEqual(["sh"]);
+  });
 });
 
 describe("mergePathEntries", () => {

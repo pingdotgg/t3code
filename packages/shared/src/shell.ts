@@ -44,7 +44,13 @@ export function listLoginShellCandidates(
   userShell = readUserLoginShell(),
 ): ReadonlyArray<string> {
   const fallbackShell =
-    platform === "darwin" ? "/bin/zsh" : platform === "linux" ? "/bin/bash" : undefined;
+    platform === "darwin"
+      ? "/bin/zsh"
+      : platform === "linux"
+        ? "/bin/bash"
+        : platform === "android"
+          ? "sh"
+          : undefined;
   const seen = new Set<string>();
   const candidates: string[] = [];
 

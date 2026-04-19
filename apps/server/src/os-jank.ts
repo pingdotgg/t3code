@@ -53,7 +53,7 @@ export function fixPath(
       return;
     }
 
-    if (platform !== "darwin" && platform !== "linux") return;
+    if (platform !== "darwin" && platform !== "linux" && platform !== "android") return;
 
     let shellPath: string | undefined;
     for (const shell of listLoginShellCandidates(platform, env.SHELL, options.userShell)) {
