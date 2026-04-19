@@ -375,12 +375,56 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     };
   });
 
+  /**
+   * Quick scan for `.git` directories in any immediate subdirectory of the
+   * workspace root. We use this as a routing signal: when the user opens a
+   * folder that itself is a git repo *and* contains nested git repos
+   * (submodules, sibling project checkouts, etc.), `git ls-files` won't
+   * recurse into the nested repos — it returns them as opaque entries
+   * (e.g. `workbench/`). The user then can't browse INTO those folders from
+   * the file tree. Routing those workspaces through the filesystem walk
+   * instead lets the tree walk every directory the gitignore allows.
+   *
+   * Depth is capped at 1 (immediate subdirs only) for speed: a typical
+   * workspace has a small handful of top-level dirs to check, and the file
+   * tree only ever needs to walk INTO immediate subdirs to expose nested
+   * project structure. Walking deeper would inflate the cost without
+   * affecting the routing decision.
+   */
+  const detectNestedGitRepos = Effect.fn("WorkspaceEntries.detectNestedGitRepos")(function* (
+    cwd: string,
+  ): Effect.fn.Return<boolean, never> {
+    return yield* Effect.promise(async () => {
+      let dirents: Dirent[];
+      try {
+        dirents = await fsPromises.readdir(cwd, { withFileTypes: true });
+      } catch {
+        return false;
+      }
+      for (const dirent of dirents) {
+        if (!dirent.isDirectory()) continue;
+        if (IGNORED_DIRECTORY_NAMES.has(dirent.name)) continue;
+        const candidate = path.join(cwd, dirent.name, ".git");
+        try {
+          await fsPromises.access(candidate);
+          return true;
+        } catch {
+          // not a nested repo, keep scanning
+        }
+      }
+      return false;
+    });
+  });
+
   const buildWorkspaceIndex = Effect.fn("WorkspaceEntries.buildWorkspaceIndex")(function* (
     cwd: string,
   ): Effect.fn.Return<WorkspaceIndex, WorkspaceEntriesError> {
-    const gitIndexed = yield* buildWorkspaceIndexFromGit(cwd);
-    if (gitIndexed) {
-      return gitIndexed;
+    const hasNestedRepos = yield* detectNestedGitRepos(cwd);
+    if (!hasNestedRepos) {
+      const gitIndexed = yield* buildWorkspaceIndexFromGit(cwd);
+      if (gitIndexed) {
+        return gitIndexed;
+      }
     }
     return yield* buildWorkspaceIndexFromFilesystem(cwd);
   });

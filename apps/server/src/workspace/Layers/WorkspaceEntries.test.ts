@@ -200,6 +200,40 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
       }),
     );
 
+    it.effect(
+      "walks into nested git repos so users can browse their contents",
+      () =>
+        Effect.gen(function* () {
+          // Parent repo with a nested untracked git repo inside it. Without
+          // the nested-.git detection, `git ls-files` in the parent returns
+          // the nested directory as a single opaque entry and inner files
+          // stay hidden. With the detection, the workspace falls through to
+          // the filesystem walk and exposes the nested repo's contents.
+          const parent = yield* makeTempDir({
+            prefix: "t3code-workspace-nested-repo-",
+            git: true,
+          });
+          yield* writeTextFile(parent, "parent-file.ts", "export {};");
+
+          // Build the nested repo manually so it lives inside `parent` but is
+          // its own independent git work tree.
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const nestedAbs = path.join(parent, "nested-repo");
+          yield* fileSystem.makeDirectory(nestedAbs, { recursive: true });
+          const gitCore = yield* GitCore;
+          yield* gitCore.initRepo({ cwd: nestedAbs });
+          yield* writeTextFile(parent, "nested-repo/inner.ts", "export {};");
+
+          const result = yield* searchWorkspaceEntries({ cwd: parent, query: "", limit: 100 });
+          const paths = result.entries.map((entry) => entry.path);
+
+          expect(paths).toContain("parent-file.ts");
+          expect(paths).toContain("nested-repo");
+          expect(paths).toContain("nested-repo/inner.ts");
+        }),
+    );
+
     it.effect("excludes .convex in non-git workspaces", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-non-git-convex-" });
@@ -241,7 +275,10 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
           { concurrency: "unbounded" },
         );
 
-        expect(rootReadCount).toBe(1);
+        // 1 readdir for the nested-git-repo detection probe + 1 readdir for
+        // the filesystem walk's root scan = 2 per build. The cache still
+        // dedupes the 3 concurrent searches into a single build.
+        expect(rootReadCount).toBe(2);
       }),
     );
 
