@@ -54,7 +54,7 @@ it.effect("parses keybinding rules", () =>
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
 
     const parsedModelPickerToggle = yield* decode(KeybindingRule, {
-      key: "mod+m",
+      key: "mod+shift+m",
       command: "modelPicker.toggle",
     });
     assert.strictEqual(parsedModelPickerToggle.command, "modelPicker.toggle");

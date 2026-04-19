@@ -25,6 +25,7 @@ import {
 } from "../../keybindings";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
+import { TooltipProvider } from "../ui/tooltip";
 
 type ModelPickerItem = {
   slug: string;
@@ -362,7 +363,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!viewport || viewport.scrollHeight <= viewport.clientHeight) {
         return;
       }
-      viewport.dispatchEvent(new Event("scroll"));
+      const originalScrollTop = viewport.scrollTop;
+      const maxScrollTop = viewport.scrollHeight - viewport.clientHeight;
+      if (maxScrollTop <= 0) {
+        return;
+      }
+      viewport.scrollTop = Math.min(originalScrollTop + 1, maxScrollTop);
+      viewport.scrollTop = originalScrollTop;
     };
 
     queueMicrotask(measureScrollArea);
@@ -381,135 +388,139 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   }, [filteredModelKeys]);
 
   return (
-    <div
-      className={cn(
-        "relative flex h-screen max-h-96 w-screen max-w-100 overflow-hidden rounded-lg border bg-popover not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
-        isLocked ? "flex-col" : "flex-row",
-      )}
-    >
-      {/* Locked provider header (only shown in locked mode) */}
-      {isLocked && LockedProviderIcon && props.lockedProvider && (
-        <div className="flex items-center gap-2 px-4 py-3 border-b">
-          <LockedProviderIcon
-            className={cn(
-              "size-5 shrink-0",
-              providerIconClassName(props.lockedProvider, "text-muted-foreground/85"),
-            )}
-          />
-          <span className="font-medium text-sm">
-            {props.lockedProvider === "opencode"
-              ? PROVIDER_DISPLAY_NAMES.opencode
-              : getProviderLabel(props.lockedProvider, "")}
-          </span>
-        </div>
-      )}
-
-      {/* Sidebar (only in unlocked mode) */}
-      {showSidebar && (
-        <ModelPickerSidebar
-          selectedProvider={selectedProvider}
-          onSelectProvider={handleSelectProvider}
-          {...(props.providers && { providers: props.providers })}
-        />
-      )}
-
-      {/* Main content area */}
-      <Combobox
-        inline
-        items={allModelKeys}
-        filteredItems={filteredModelKeys}
-        filter={null}
-        autoHighlight
-        open
-        value={`${props.provider}:${props.model}`}
-        onItemHighlighted={(modelKey) => {
-          highlightedModelKeyRef.current = typeof modelKey === "string" ? modelKey : null;
-        }}
-        onValueChange={(modelKey) => {
-          if (typeof modelKey !== "string") {
-            return;
-          }
-          const [provider, slug] = modelKey.split(":") as [ProviderKind, string];
-          handleModelSelect(slug, provider);
-        }}
+    <TooltipProvider delay={0}>
+      <div
+        className={cn(
+          "relative flex h-screen max-h-96 w-screen max-w-100 overflow-hidden rounded-lg border bg-popover not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
+          isLocked ? "flex-col" : "flex-row",
+        )}
       >
-        <div
-          className={cn(
-            "flex min-h-0 flex-1 flex-col overflow-hidden",
-            isLocked ? "min-w-0" : showSidebar && "border-l",
-          )}
-        >
-          {/* Search bar */}
-          <div className="border-b px-3 py-2">
-            <ComboboxInput
-              ref={searchInputRef}
-              className="[&_input]:font-sans rounded-md"
-              inputClassName="border-0 shadow-none ring-0 focus-visible:ring-0"
-              placeholder="Search models..."
-              showTrigger={false}
-              startAddon={<SearchIcon className="size-4 shrink-0 text-muted-foreground/50" />}
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  props.onRequestClose?.();
-                  return;
-                }
-                if (e.key === "Enter" && highlightedModelKeyRef.current) {
-                  (e as typeof e & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
-                  e.preventDefault();
-                  e.stopPropagation();
-                  const [provider, slug] = highlightedModelKeyRef.current.split(":") as [
-                    ProviderKind,
-                    string,
-                  ];
-                  handleModelSelect(slug, provider);
-                  return;
-                }
-                e.stopPropagation();
-              }}
-              onMouseDown={(e) => e.stopPropagation()}
-              onTouchStart={(e) => e.stopPropagation()}
-              size="sm"
+        {/* Locked provider header (only shown in locked mode) */}
+        {isLocked && LockedProviderIcon && props.lockedProvider && (
+          <div className="flex items-center gap-2 px-4 py-3 border-b">
+            <LockedProviderIcon
+              className={cn(
+                "size-5 shrink-0",
+                providerIconClassName(props.lockedProvider, "text-muted-foreground/85"),
+              )}
             />
+            <span className="font-medium text-sm">
+              {props.lockedProvider === "opencode"
+                ? PROVIDER_DISPLAY_NAMES.opencode
+                : getProviderLabel(props.lockedProvider, "")}
+            </span>
           </div>
+        )}
 
-          {/* Model list */}
+        {/* Sidebar (only in unlocked mode) */}
+        {showSidebar && (
+          <ModelPickerSidebar
+            selectedProvider={selectedProvider}
+            onSelectProvider={handleSelectProvider}
+            {...(props.providers && { providers: props.providers })}
+          />
+        )}
+
+        {/* Main content area */}
+        <Combobox
+          inline
+          items={allModelKeys}
+          filteredItems={filteredModelKeys}
+          filter={null}
+          autoHighlight
+          open
+          value={`${props.provider}:${props.model}`}
+          onItemHighlighted={(modelKey) => {
+            highlightedModelKeyRef.current = typeof modelKey === "string" ? modelKey : null;
+          }}
+          onValueChange={(modelKey) => {
+            if (typeof modelKey !== "string") {
+              return;
+            }
+            const [provider, slug] = modelKey.split(":") as [ProviderKind, string];
+            handleModelSelect(slug, provider);
+          }}
+        >
           <div
-            ref={listRegionRef}
-            className="relative min-h-0 flex-1 before:pointer-events-none before:absolute before:inset-0 before:bg-muted/40"
+            className={cn(
+              "flex min-h-0 flex-1 flex-col overflow-hidden",
+              isLocked ? "min-w-0" : showSidebar && "border-l",
+            )}
           >
-            <ComboboxList className="model-picker-list size-full divide-y px-2 py-1">
-              {filteredModelKeys.map((modelKey, index) => {
-                const model = filteredModelByKey.get(modelKey);
-                if (!model) {
-                  return null;
-                }
-                return (
-                  <ModelListRow
-                    key={modelKey}
-                    index={index}
-                    value={modelKey}
-                    slug={model.slug}
-                    name={model.name}
-                    provider={model.provider}
-                    isFavorite={favoritesSet.has(modelKey)}
-                    showProvider={!isLocked}
-                    showNewBadge={isModelPickerNewModel(model.provider, model.slug)}
-                    jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
-                    onToggleFavorite={() => toggleFavorite(model.provider, model.slug)}
-                  />
-                );
-              })}
-            </ComboboxList>
+            {/* Search bar */}
+            <div className="border-b px-3 py-2">
+              <ComboboxInput
+                ref={searchInputRef}
+                className="[&_input]:font-sans rounded-md"
+                inputClassName="border-0 shadow-none ring-0 focus-visible:ring-0"
+                placeholder="Search models..."
+                showTrigger={false}
+                startAddon={<SearchIcon className="size-4 shrink-0 text-muted-foreground/50" />}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    props.onRequestClose?.();
+                    return;
+                  }
+                  if (e.key === "Enter" && highlightedModelKeyRef.current) {
+                    (
+                      e as typeof e & { preventBaseUIHandler?: () => void }
+                    ).preventBaseUIHandler?.();
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const [provider, slug] = highlightedModelKeyRef.current.split(":") as [
+                      ProviderKind,
+                      string,
+                    ];
+                    handleModelSelect(slug, provider);
+                    return;
+                  }
+                  e.stopPropagation();
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onTouchStart={(e) => e.stopPropagation()}
+                size="sm"
+              />
+            </div>
+
+            {/* Model list */}
+            <div
+              ref={listRegionRef}
+              className="relative min-h-0 flex-1 before:pointer-events-none before:absolute before:inset-0 before:bg-muted/40"
+            >
+              <ComboboxList className="model-picker-list size-full divide-y px-2 py-1">
+                {filteredModelKeys.map((modelKey, index) => {
+                  const model = filteredModelByKey.get(modelKey);
+                  if (!model) {
+                    return null;
+                  }
+                  return (
+                    <ModelListRow
+                      key={modelKey}
+                      index={index}
+                      value={modelKey}
+                      slug={model.slug}
+                      name={model.name}
+                      provider={model.provider}
+                      isFavorite={favoritesSet.has(modelKey)}
+                      showProvider={!isLocked}
+                      showNewBadge={isModelPickerNewModel(model.provider, model.slug)}
+                      jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
+                      onToggleFavorite={() => toggleFavorite(model.provider, model.slug)}
+                    />
+                  );
+                })}
+              </ComboboxList>
+            </div>
+            <ComboboxEmpty className="not-empty:py-6 empty:h-0 text-xs font-normal leading-snug">
+              No models found
+            </ComboboxEmpty>
           </div>
-          <ComboboxEmpty className="not-empty:py-6 empty:h-0 text-xs font-normal leading-snug">
-            No models found
-          </ComboboxEmpty>
-        </div>
-      </Combobox>
-    </div>
+        </Combobox>
+      </div>
+    </TooltipProvider>
   );
 });

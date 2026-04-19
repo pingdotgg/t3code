@@ -1,7 +1,7 @@
 import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { Clock3Icon, SparklesIcon, StarIcon } from "lucide-react";
-import { Gemini } from "../Icons";
+import { Gemini, GithubCopilotIcon } from "../Icons";
 import {
   AVAILABLE_PROVIDER_OPTIONS,
   PROVIDER_ICON_BY_PROVIDER,
@@ -34,9 +34,9 @@ const SELECTED_BUTTON_CLASS = "bg-background text-foreground shadow-sm";
 const SELECTED_INDICATOR_CLASS =
   "pointer-events-none absolute -right-1 top-1/2 z-10 h-5 w-0.5 -translate-y-1/2 rounded-l-full bg-primary";
 const BADGE_BASE_CLASS =
-  "pointer-events-none absolute -right-0.5 top-0.5 z-10 flex size-3.5 items-center justify-center rounded-full bg-background/95 shadow-sm ring-1";
-const NEW_BADGE_CLASS = `${BADGE_BASE_CLASS} text-amber-600 ring-amber-300/70 dark:text-amber-300 dark:ring-amber-400/40`;
-const SOON_BADGE_CLASS = `${BADGE_BASE_CLASS} text-muted-foreground ring-border/80`;
+  "pointer-events-none absolute -right-0.5 top-0.5 z-10 flex size-3.5 items-center justify-center rounded-full bg-transparent shadow-sm ";
+const NEW_BADGE_CLASS = `${BADGE_BASE_CLASS} text-amber-600  dark:text-amber-300 `;
+const SOON_BADGE_CLASS = `${BADGE_BASE_CLASS} text-muted-foreground `;
 
 /** Opens toward the rail so the list stays readable (not over the model names). */
 const PICKER_TOOLTIP_SIDE = "left" as const;
@@ -187,6 +187,32 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
         />
         <TooltipPopup side={PICKER_TOOLTIP_SIDE} align="center" className={PICKER_TOOLTIP_CLASS}>
           Gemini — Coming soon
+        </TooltipPopup>
+      </Tooltip>
+      {/* Github Copilot button (coming soon) */}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span className="relative block w-full">
+              <button
+                className={cn(
+                  "relative isolate flex w-full aspect-square items-center justify-center rounded opacity-50 cursor-not-allowed transition-colors hover:bg-transparent",
+                )}
+                disabled
+                type="button"
+                data-model-picker-provider="github-copilot-coming-soon"
+                aria-label="Github Copilot — coming soon"
+              >
+                <GithubCopilotIcon className="size-5 text-muted-foreground/85" aria-hidden />
+                <span className={SOON_BADGE_CLASS} aria-hidden>
+                  <Clock3Icon className="size-2" />
+                </span>
+              </button>
+            </span>
+          }
+        />
+        <TooltipPopup side={PICKER_TOOLTIP_SIDE} align="center" className={PICKER_TOOLTIP_CLASS}>
+          Github Copilot — Coming soon
         </TooltipPopup>
       </Tooltip>
     </div>

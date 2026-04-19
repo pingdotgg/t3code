@@ -48,7 +48,6 @@ import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { getServerConfig } from "../rpc/serverState";
 import { getRouter } from "../router";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
-import { readShortcutModifierState } from "../shortcutModifierState";
 import { selectBootstrapCompleteForActiveEnvironment, useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
@@ -5595,130 +5594,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("toggles the model picker from the desktop menu action bridge", async () => {
-    let menuActionListener: ((action: string) => void) | null = null;
-    window.desktopBridge = {
-      getAppBranding: () => null,
-      getLocalEnvironmentBootstrap: () => ({
-        label: "Local environment",
-        httpBaseUrl: "http://localhost:3000",
-        wsBaseUrl: "ws://localhost:3000",
-      }),
-      getClientSettings: vi.fn().mockResolvedValue(null),
-      setClientSettings: vi.fn().mockResolvedValue(undefined),
-      getSavedEnvironmentRegistry: vi.fn().mockResolvedValue([]),
-      setSavedEnvironmentRegistry: vi.fn().mockResolvedValue(undefined),
-      getSavedEnvironmentSecret: vi.fn().mockResolvedValue(null),
-      setSavedEnvironmentSecret: vi.fn().mockResolvedValue(false),
-      removeSavedEnvironmentSecret: vi.fn().mockResolvedValue(undefined),
-      getServerExposureState: vi.fn().mockResolvedValue({
-        mode: "local-only",
-        endpointUrl: null,
-        advertisedHost: null,
-      }),
-      setServerExposureMode: vi.fn().mockResolvedValue({
-        mode: "local-only",
-        endpointUrl: null,
-        advertisedHost: null,
-      }),
-      pickFolder: vi.fn().mockResolvedValue(null),
-      confirm: vi.fn().mockResolvedValue(true),
-      setTheme: vi.fn().mockResolvedValue(undefined),
-      showContextMenu: vi.fn().mockResolvedValue(null),
-      openExternal: vi.fn().mockResolvedValue(true),
-      onMenuAction: (listener) => {
-        menuActionListener = listener;
-        return () => {
-          menuActionListener = null;
-        };
-      },
-      getUpdateState: vi.fn().mockResolvedValue(null),
-      setUpdateChannel: vi.fn().mockResolvedValue(null),
-      checkForUpdate: vi.fn().mockResolvedValue({ ok: true }),
-      downloadUpdate: vi.fn().mockResolvedValue({ ok: true }),
-      installUpdate: vi.fn().mockResolvedValue({ ok: true }),
-      onUpdateState: vi.fn(() => () => undefined),
-    } as NonNullable<typeof window.desktopBridge>;
-
-    const mounted = await mountChatView({
-      viewport: DEFAULT_VIEWPORT,
-      snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-desktop-model-picker-target" as MessageId,
-        targetText: "desktop menu action thread",
-      }),
-      configureFixture: (nextFixture) => {
-        nextFixture.serverConfig = {
-          ...nextFixture.serverConfig,
-          keybindings: [
-            {
-              command: "modelPicker.toggle",
-              shortcut: {
-                key: "m",
-                metaKey: false,
-                ctrlKey: false,
-                shiftKey: false,
-                altKey: false,
-                modKey: true,
-              },
-              whenAst: {
-                type: "not",
-                node: { type: "identifier", name: "terminalFocus" },
-              },
-            },
-          ],
-        };
-      },
-    });
-
-    try {
-      await waitForServerConfigToApply();
-      expect(menuActionListener).not.toBeNull();
-      if (!menuActionListener) {
-        throw new Error("Desktop menu action listener was not registered.");
-      }
-
-      (menuActionListener as (action: string) => void)("toggle-model-picker");
-
-      await vi.waitFor(() => {
-        expect(document.querySelector(".model-picker-list")).not.toBeNull();
-      });
-
-      await vi.waitFor(() => {
-        expect(readShortcutModifierState()).toEqual({
-          metaKey: true,
-          ctrlKey: false,
-          altKey: false,
-          shiftKey: false,
-        });
-      });
-
-      (menuActionListener as (action: string) => void)("toggle-model-picker");
-
-      await vi.waitFor(() => {
-        expect(document.querySelector(".model-picker-list")).toBeNull();
-      });
-
-      (menuActionListener as (action: string) => void)("toggle-model-picker");
-
-      await vi.waitFor(() => {
-        expect(document.querySelector(".model-picker-list")).not.toBeNull();
-      });
-
-      (menuActionListener as (action: string) => void)("clear-shortcut-hints");
-
-      await vi.waitFor(() => {
-        expect(readShortcutModifierState()).toEqual({
-          metaKey: false,
-          ctrlKey: false,
-          altKey: false,
-          shiftKey: false,
-        });
-      });
-    } finally {
-      await mounted.cleanup();
-    }
-  });
-
   it("toggles the model picker and shows jump keys immediately from the shortcut", async () => {
     const snapshot = createSnapshotForTargetUser({
       targetMessageId: "msg-user-model-picker-shortcut-target" as MessageId,
@@ -5753,7 +5628,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
                 key: "m",
                 metaKey: false,
                 ctrlKey: true,
-                shiftKey: false,
+                shiftKey: true,
                 altKey: false,
                 modKey: false,
               },
@@ -5843,6 +5718,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         new KeyboardEvent("keydown", {
           key: "m",
           ctrlKey: true,
+          shiftKey: true,
           bubbles: true,
           cancelable: true,
         }),
@@ -5866,6 +5742,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         new KeyboardEvent("keydown", {
           key: "m",
           ctrlKey: true,
+          shiftKey: true,
           bubbles: true,
           cancelable: true,
         }),

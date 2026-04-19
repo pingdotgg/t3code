@@ -5,15 +5,12 @@ import ThreadSidebar from "./Sidebar";
 import { Sidebar, SidebarProvider, SidebarRail } from "./ui/sidebar";
 import {
   clearShortcutModifierState,
-  setShortcutModifierState,
   syncShortcutModifierStateFromKeyboardEvent,
 } from "../shortcutModifierState";
 
 const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
 const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
 const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
-export const TOGGLE_MODEL_PICKER_EVENT = "t3:toggle-model-picker";
-
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
 
@@ -48,26 +45,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     const unsubscribe = onMenuAction((action) => {
       if (action === "open-settings") {
         void navigate({ to: "/settings" });
-        return;
       }
-      if (action === "toggle-model-picker") {
-        setShortcutModifierState({
-          metaKey: true,
-          ctrlKey: false,
-          altKey: false,
-          shiftKey: false,
-        });
-        window.dispatchEvent(
-          new CustomEvent(TOGGLE_MODEL_PICKER_EVENT, {
-            detail: null,
-          }),
-        );
-        return;
-      }
-      if (action !== "clear-shortcut-hints") {
-        return;
-      }
-      clearShortcutModifierState();
     });
 
     return () => {

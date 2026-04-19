@@ -220,7 +220,6 @@ let aboutCommitHashCache: string | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
-let pendingNativeModelPickerShortcutRelease = false;
 let backendObservabilitySettings = readPersistedBackendObservabilitySettings();
 let desktopSettings = readDesktopSettings(DESKTOP_SETTINGS_PATH, app.getVersion());
 let desktopServerExposureMode: DesktopServerExposureMode = desktopSettings.serverExposureMode;
@@ -859,25 +858,6 @@ function dispatchMenuAction(action: string): void {
   }
 
   send();
-}
-
-function shouldOverrideNativeModelPickerShortcut(input: {
-  type?: string;
-  key: string;
-  meta: boolean;
-  control: boolean;
-  alt: boolean;
-  shift: boolean;
-}): boolean {
-  return (
-    process.platform === "darwin" &&
-    input.type === "keyDown" &&
-    input.meta &&
-    !input.control &&
-    !input.alt &&
-    !input.shift &&
-    input.key.toLowerCase() === "m"
-  );
 }
 
 function handleCheckForUpdatesMenuClick(): void {
@@ -1999,27 +1979,6 @@ function createWindow(): BrowserWindow {
     );
 
     Menu.buildFromTemplate(menuTemplate).popup({ window });
-  });
-
-  window.webContents.on("before-input-event", (event, input) => {
-    if (
-      pendingNativeModelPickerShortcutRelease &&
-      process.platform === "darwin" &&
-      ((input.type === "keyUp" && !input.meta) ||
-        (input.type === "keyUp" && input.key.toLowerCase() === "meta"))
-    ) {
-      pendingNativeModelPickerShortcutRelease = false;
-      dispatchMenuAction("clear-shortcut-hints");
-      return;
-    }
-
-    if (!shouldOverrideNativeModelPickerShortcut(input)) {
-      return;
-    }
-
-    event.preventDefault();
-    pendingNativeModelPickerShortcutRelease = true;
-    dispatchMenuAction("toggle-model-picker");
   });
 
   window.webContents.setWindowOpenHandler(({ url }) => {
