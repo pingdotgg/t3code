@@ -456,7 +456,8 @@ export function NoActiveThreadState() {
                       }}
                       placeholder="Describe a task, or type / for shortcuts"
                       unstyled
-                      className="min-h-[140px] max-h-[40vh] w-full overflow-y-auto rounded-[22px] border-0 bg-transparent px-5 py-5 pr-16 leading-7 text-foreground shadow-none text-[clamp(0.95rem,1.6vw,1.125rem)] before:shadow-none focus-visible:border-0 focus-visible:ring-0 sm:min-h-[184px] sm:px-7 sm:py-6 sm:pr-20"
+                      style={{ minHeight: "140px", maxHeight: "40vh" }}
+                      className="w-full rounded-[22px] border-0 bg-transparent shadow-none before:shadow-none focus-visible:border-0 focus-visible:ring-0 [&_textarea]:overflow-y-auto [&_textarea]:px-5 [&_textarea]:py-5 [&_textarea]:pr-16 [&_textarea]:text-foreground [&_textarea]:leading-7 [&_textarea]:text-[clamp(0.95rem,1.6vw,1.125rem)] sm:[&_textarea]:px-7 sm:[&_textarea]:py-6 sm:[&_textarea]:pr-20"
                     />
 
                     <Button
