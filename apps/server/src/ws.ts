@@ -457,6 +457,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 cwd: bootstrap.prepareWorktree.projectCwd,
                 branch: bootstrap.prepareWorktree.baseBranch,
                 newBranch: bootstrap.prepareWorktree.branch,
+                ...(bootstrap.prepareWorktree.fetchLatestOrigin ? { fetchLatestOrigin: true } : {}),
                 path: null,
               });
               targetWorktreePath = worktree.worktree.path;

@@ -700,6 +700,9 @@ export default function ChatView(props: ChatViewProps) {
   const [pendingServerThreadEnvMode, setPendingServerThreadEnvMode] =
     useState<DraftThreadEnvMode | null>(null);
   const [pendingServerThreadBranch, setPendingServerThreadBranch] = useState<string | null>();
+  const [pendingServerThreadFetchLatestOrigin, setPendingServerThreadFetchLatestOrigin] = useState<
+    boolean | null
+  >(null);
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useLocalStorage(
     LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
     {},
@@ -2101,6 +2104,11 @@ export default function ChatView(props: ChatViewProps) {
     canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
       ? pendingServerThreadBranch
       : (activeThread?.branch ?? null);
+  const activeThreadFetchLatestOrigin = canOverrideServerThreadEnvMode
+    ? (pendingServerThreadFetchLatestOrigin ?? false)
+    : isLocalDraftThread
+      ? (draftThread?.fetchLatestOriginOnWorktreeCreate ?? false)
+      : false;
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
     isGitRepo,
@@ -2109,6 +2117,7 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     setPendingServerThreadEnvMode(null);
     setPendingServerThreadBranch(undefined);
+    setPendingServerThreadFetchLatestOrigin(null);
   }, [activeThread?.id]);
 
   useEffect(() => {
@@ -2117,6 +2126,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     setPendingServerThreadEnvMode(null);
     setPendingServerThreadBranch(undefined);
+    setPendingServerThreadFetchLatestOrigin(null);
   }, [canOverrideServerThreadEnvMode]);
 
   useEffect(() => {
@@ -2441,6 +2451,11 @@ export default function ChatView(props: ChatViewProps) {
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
         ? activeThreadBranch
         : null;
+    const fetchLatestOriginForWorktree =
+      isFirstMessage &&
+      sendEnvMode === "worktree" &&
+      !activeThread.worktreePath &&
+      activeThreadFetchLatestOrigin;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
@@ -2594,6 +2609,7 @@ export default function ChatView(props: ChatViewProps) {
                       projectCwd: activeProject.cwd,
                       baseBranch: baseBranchForWorktree,
                       branch: buildTemporaryWorktreeBranchName(),
+                      ...(fetchLatestOriginForWorktree ? { fetchLatestOrigin: true } : {}),
                     },
                     runSetupScript: true,
                   }
@@ -3390,6 +3406,9 @@ export default function ChatView(props: ChatViewProps) {
                 ? {
                     activeThreadBranchOverride: activeThreadBranch,
                     onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
+                    fetchLatestOriginOverride: activeThreadFetchLatestOrigin,
+                    onFetchLatestOriginOverrideChange: (fetchLatestOrigin: boolean) =>
+                      setPendingServerThreadFetchLatestOrigin(fetchLatestOrigin),
                   }
                 : {})}
               envLocked={envLocked}

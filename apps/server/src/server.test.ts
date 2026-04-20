@@ -3612,6 +3612,69 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("passes fetchLatestOrigin through bootstrap worktree creation when requested", () =>
+    Effect.gen(function* () {
+      const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
+        Effect.succeed({
+          worktree: {
+            branch: "t3code/bootstrap-branch",
+            path: "/tmp/bootstrap-worktree",
+          },
+        }),
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          gitCore: {
+            createWorktree,
+          },
+          orchestrationEngine: {
+            dispatch: () => Effect.succeed({ sequence: 1 }),
+            readEvents: () => Stream.empty,
+          },
+        },
+      });
+
+      const createdAt = new Date().toISOString();
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make("cmd-bootstrap-turn-start-fetch-origin"),
+            threadId: ThreadId.make("thread-bootstrap-fetch-origin"),
+            message: {
+              messageId: MessageId.make("msg-bootstrap-fetch-origin"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              prepareWorktree: {
+                projectCwd: "/tmp/project",
+                baseBranch: "main",
+                branch: "t3code/bootstrap-branch",
+                fetchLatestOrigin: true,
+              },
+            },
+            createdAt,
+          }),
+        ),
+      );
+
+      assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
+        cwd: "/tmp/project",
+        branch: "main",
+        newBranch: "t3code/bootstrap-branch",
+        fetchLatestOrigin: true,
+        path: null,
+      });
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("records setup-script failures without aborting bootstrap turn start", () =>
     Effect.gen(function* () {
       const dispatchedCommands: Array<OrchestrationCommand> = [];

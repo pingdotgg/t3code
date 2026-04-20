@@ -42,6 +42,7 @@ import {
   ComboboxStatus,
   ComboboxTrigger,
 } from "./ui/combobox";
+import { Switch } from "./ui/switch";
 import { toastManager } from "./ui/toast";
 
 interface BranchToolbarBranchSelectorProps {
@@ -52,6 +53,8 @@ interface BranchToolbarBranchSelectorProps {
   effectiveEnvModeOverride?: "local" | "worktree";
   activeThreadBranchOverride?: string | null;
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
+  fetchLatestOriginOverride?: boolean;
+  onFetchLatestOriginOverrideChange?: (fetchLatestOrigin: boolean) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
 }
@@ -83,6 +86,8 @@ export function BranchToolbarBranchSelector({
   effectiveEnvModeOverride,
   activeThreadBranchOverride,
   onActiveThreadBranchOverrideChange,
+  fetchLatestOriginOverride,
+  onFetchLatestOriginOverrideChange,
   onCheckoutPullRequestRequest,
   onComposerFocusRequest,
 }: BranchToolbarBranchSelectorProps) {
@@ -118,6 +123,10 @@ export function BranchToolbarBranchSelector({
     activeThreadBranchOverride !== undefined
       ? activeThreadBranchOverride
       : (serverThread?.branch ?? draftThread?.branch ?? null);
+  const fetchLatestOrigin =
+    fetchLatestOriginOverride !== undefined
+      ? fetchLatestOriginOverride
+      : (draftThread?.fetchLatestOriginOnWorktreeCreate ?? false);
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const activeProjectCwd = activeProject?.cwd ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
@@ -233,7 +242,6 @@ export function BranchToolbarBranchSelector({
     activeThreadBranch,
     currentGitBranch,
   });
-  const branchNames = useMemo(() => branches.map((branch) => branch.name), [branches]);
   const branchByName = useMemo(
     () => new Map(branches.map((branch) => [branch.name, branch] as const)),
     [branches],
@@ -249,6 +257,7 @@ export function BranchToolbarBranchSelector({
   const createBranchItemValue = canCreateBranch
     ? `__create_new_branch__:${trimmedBranchQuery}`
     : null;
+  const branchNames = useMemo(() => branches.map((branch) => branch.name), [branches]);
   const branchPickerItems = useMemo(() => {
     const items = [...branchNames];
     if (createBranchItemValue && !hasExactBranchMatch) {
@@ -285,6 +294,16 @@ export function BranchToolbarBranchSelector({
   const [isBranchActionPending, startBranchActionTransition] = useTransition();
   const shouldVirtualizeBranchList = filteredBranchPickerItems.length > 40;
   const totalBranchCount = branchesSearchData?.pages[0]?.totalCount ?? 0;
+  const hasOriginRemote =
+    branchesSearchData?.pages[0]?.hasOriginRemote ??
+    branchStatusQuery.data?.hasOriginRemote ??
+    false;
+  const selectedBaseBranch = resolvedActiveBranch ? branchByName.get(resolvedActiveBranch) : null;
+  const shouldShowFetchLatestOriginToggle =
+    isSelectingWorktreeBase &&
+    hasOriginRemote &&
+    resolvedActiveBranch !== null &&
+    !(selectedBaseBranch?.isRemote ?? resolvedActiveBranch.startsWith("origin/"));
   const branchStatusText = isBranchesSearchPending
     ? "Loading branches..."
     : isFetchingNextPage
@@ -305,14 +324,32 @@ export function BranchToolbarBranchSelector({
     });
   };
 
+  const selectWorktreeBaseBranch = (branchName: string) => {
+    if (!isSelectingWorktreeBase || isBranchActionPending) return;
+    setThreadBranch(branchName, null);
+    setIsBranchMenuOpen(false);
+    onComposerFocusRequest?.();
+  };
+
+  const setFetchLatestOriginForWorktreeCreate = useCallback(
+    (nextFetchLatestOrigin: boolean) => {
+      if (hasServerThread) {
+        onFetchLatestOriginOverrideChange?.(nextFetchLatestOrigin);
+        return;
+      }
+      setDraftThreadContext(draftId ?? threadRef, {
+        fetchLatestOriginOnWorktreeCreate: nextFetchLatestOrigin,
+      });
+    },
+    [draftId, hasServerThread, onFetchLatestOriginOverrideChange, setDraftThreadContext, threadRef],
+  );
+
   const selectBranch = (branch: GitBranch) => {
     const api = readEnvironmentApi(environmentId);
     if (!api || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
 
     if (isSelectingWorktreeBase) {
-      setThreadBranch(branch.name, null);
-      setIsBranchMenuOpen(false);
-      onComposerFocusRequest?.();
+      selectWorktreeBaseBranch(branch.name);
       return;
     }
 
@@ -591,6 +628,17 @@ export function BranchToolbarBranchSelector({
             onChange={(event) => setBranchQuery(event.target.value)}
           />
         </div>
+        {shouldShowFetchLatestOriginToggle ? (
+          <label className="flex min-w-0 items-center justify-between gap-3 border-b px-3 py-2">
+            <span className="min-w-0 truncate text-sm">Fetch latest origin before creation</span>
+            <Switch
+              className="shrink-0"
+              checked={fetchLatestOrigin}
+              aria-label="Fetch latest origin before creation"
+              onCheckedChange={(checked) => setFetchLatestOriginForWorktreeCreate(Boolean(checked))}
+            />
+          </label>
+        ) : null}
         <ComboboxEmpty>No branches found.</ComboboxEmpty>
 
         {shouldVirtualizeBranchList ? (

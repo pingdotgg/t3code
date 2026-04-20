@@ -40,6 +40,15 @@ function writeTextFile(
   });
 }
 
+function readTextFile(
+  filePath: string,
+): Effect.Effect<string, PlatformError.PlatformError, FileSystem.FileSystem> {
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    return yield* fileSystem.readFileString(filePath);
+  });
+}
+
 function removePath(
   targetPath: string,
 ): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> {
@@ -659,7 +668,31 @@ it.layer(TestLayer)("git integration", (it) => {
             "feature/demo",
             "origin/feature/remote-only",
           ]);
+          expect(result.branches.find((branch) => branch.name === "feature/demo")?.originRef).toBe(
+            "origin/feature/demo",
+          );
         }),
+    );
+
+    it.effect("matches branch queries against tracked origin refs for local branches", () =>
+      Effect.gen(function* () {
+        const remote = yield* makeTmpDir();
+        const tmp = yield* makeTmpDir();
+
+        yield* git(remote, ["init", "--bare"]);
+        const { initialBranch } = yield* initRepoWithCommit(tmp);
+        yield* git(tmp, ["remote", "add", "origin", remote]);
+        yield* git(tmp, ["push", "-u", "origin", initialBranch]);
+
+        const result = yield* (yield* GitCore).listBranches({
+          cwd: tmp,
+          query: "origin/",
+          limit: 10,
+        });
+
+        expect(result.branches.map((branch) => branch.name)).toEqual([initialBranch]);
+        expect(result.branches[0]?.originRef).toBe(`origin/${initialBranch}`);
+      }),
     );
   });
 
@@ -1358,6 +1391,40 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(branchOutput).toBe("feature/existing-worktree");
 
         yield* (yield* GitCore).removeWorktree({ cwd: tmp, path: wtPath });
+      }),
+    );
+
+    it.effect("can base a new worktree on the latest fetched origin branch", () =>
+      Effect.gen(function* () {
+        const remote = yield* makeTmpDir();
+        const source = yield* makeTmpDir();
+        const updater = yield* makeTmpDir();
+
+        yield* git(remote, ["init", "--bare"]);
+        const { initialBranch } = yield* initRepoWithCommit(source);
+        yield* git(source, ["remote", "add", "origin", remote]);
+        yield* git(source, ["push", "-u", "origin", initialBranch]);
+
+        yield* git(updater, ["clone", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* writeTextFile(path.join(updater, "README.md"), "latest from origin\n");
+        yield* git(updater, ["add", "README.md"]);
+        yield* git(updater, ["commit", "-m", "advance origin"]);
+        yield* git(updater, ["push", "origin", initialBranch]);
+
+        const wtPath = path.join(source, "wt-origin-latest");
+        yield* (yield* GitCore).createWorktree({
+          cwd: source,
+          branch: initialBranch,
+          newBranch: "wt-origin-latest",
+          fetchLatestOrigin: true,
+          path: wtPath,
+        });
+
+        expect(yield* readTextFile(path.join(wtPath, "README.md"))).toBe("latest from origin\n");
+
+        yield* (yield* GitCore).removeWorktree({ cwd: source, path: wtPath });
       }),
     );
 

@@ -2617,6 +2617,110 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("can fetch the latest origin ref before creating a worktree", async () => {
+    const snapshot = addThreadToSnapshot(createDraftOnlySnapshot(), THREAD_ID);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...snapshot,
+        threads: snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID ? Object.assign({}, thread, { session: null }) : thread,
+        ),
+      },
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.gitListBranches) {
+          return {
+            isRepo: true,
+            hasOriginRemote: true,
+            nextCursor: null,
+            totalCount: 1,
+            branches: [
+              {
+                name: "main",
+                originRef: "origin/main",
+                current: true,
+                isDefault: true,
+                worktreePath: null,
+              },
+            ],
+          };
+        }
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      (await waitForButtonByText("Current checkout")).click();
+      await page.getByText("New worktree", { exact: true }).click();
+      await page.getByText("From main", { exact: true }).click();
+      await page.getByRole("switch", { name: "Fetch latest origin before creation" }).click();
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                bootstrap?: {
+                  prepareWorktree?: {
+                    baseBranch?: string;
+                    fetchLatestOrigin?: boolean;
+                  };
+                };
+              }
+            | undefined;
+
+          expect(findButtonByText("From main")).toBeTruthy();
+          expect(turnStartRequest?.bootstrap?.prepareWorktree?.fetchLatestOrigin).not.toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Ship it");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                bootstrap?: {
+                  prepareWorktree?: {
+                    baseBranch?: string;
+                    fetchLatestOrigin?: boolean;
+                  };
+                };
+              }
+            | undefined;
+
+          expect(turnStartRequest?.bootstrap?.prepareWorktree?.baseBranch).toBe("main");
+          expect(turnStartRequest?.bootstrap?.prepareWorktree?.fetchLatestOrigin).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("clears pending worktree overrides when switching empty server threads", async () => {
     const secondThreadId = "thread-browser-test-second" as ThreadId;
     const snapshot = addThreadToSnapshot(createDraftOnlySnapshot(), THREAD_ID);

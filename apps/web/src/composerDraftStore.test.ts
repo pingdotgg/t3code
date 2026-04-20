@@ -791,6 +791,28 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("stores the fetch-latest-origin flag on an existing draft thread", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      branch: "main",
+      worktreePath: null,
+      envMode: "worktree",
+    });
+    store.setDraftThreadContext(draftId, {
+      fetchLatestOriginOnWorktreeCreate: true,
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
+      environmentId: TEST_ENVIRONMENT_ID,
+      projectId,
+      branch: "main",
+      worktreePath: null,
+      envMode: "worktree",
+      fetchLatestOriginOnWorktreeCreate: true,
+    });
+  });
+
   it("preserves existing branch and worktree when setProjectDraftThreadId receives undefined", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, {
@@ -863,6 +885,7 @@ describe("composerDraftStore project draft thread mapping", () => {
       branch: null,
       worktreePath: null,
       envMode: "local",
+      fetchLatestOriginOnWorktreeCreate: false,
     });
   });
 
@@ -885,6 +908,7 @@ describe("composerDraftStore project draft thread mapping", () => {
       branch: null,
       worktreePath: null,
       envMode: "local",
+      fetchLatestOriginOnWorktreeCreate: false,
     });
   });
 });

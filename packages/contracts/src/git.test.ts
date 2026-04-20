@@ -2,14 +2,18 @@ import { describe, expect, it } from "vitest";
 import { Schema } from "effect";
 
 import {
+  GitBranch,
   GitCreateWorktreeInput,
+  GitListBranchesResult,
   GitPreparePullRequestThreadInput,
   GitRunStackedActionResult,
   GitRunStackedActionInput,
   GitResolvePullRequestResult,
 } from "./git.ts";
 
+const decodeBranch = Schema.decodeUnknownSync(GitBranch);
 const decodeCreateWorktreeInput = Schema.decodeUnknownSync(GitCreateWorktreeInput);
+const decodeListBranchesResult = Schema.decodeUnknownSync(GitListBranchesResult);
 const decodePreparePullRequestThreadInput = Schema.decodeUnknownSync(
   GitPreparePullRequestThreadInput,
 );
@@ -27,6 +31,31 @@ describe("GitCreateWorktreeInput", () => {
 
     expect(parsed.newBranch).toBeUndefined();
     expect(parsed.branch).toBe("feature/existing");
+  });
+
+  it("accepts an optional fetch-latest-origin flag", () => {
+    const parsed = decodeCreateWorktreeInput({
+      cwd: "/repo",
+      branch: "main",
+      fetchLatestOrigin: true,
+      path: "/tmp/worktree",
+    });
+
+    expect(parsed.fetchLatestOrigin).toBe(true);
+  });
+});
+
+describe("GitBranch", () => {
+  it("accepts optional origin refs for local branches", () => {
+    const parsed = decodeBranch({
+      name: "main",
+      originRef: "origin/main",
+      current: true,
+      isDefault: true,
+      worktreePath: null,
+    });
+
+    expect(parsed.originRef).toBe("origin/main");
   });
 });
 
@@ -58,6 +87,28 @@ describe("GitResolvePullRequestResult", () => {
 
     expect(parsed.pullRequest.number).toBe(42);
     expect(parsed.pullRequest.headBranch).toBe("feature/pr-threads");
+  });
+});
+
+describe("GitListBranchesResult", () => {
+  it("decodes branches that expose an origin tracking ref", () => {
+    const parsed = decodeListBranchesResult({
+      branches: [
+        {
+          name: "main",
+          originRef: "origin/main",
+          current: true,
+          isDefault: true,
+          worktreePath: null,
+        },
+      ],
+      isRepo: true,
+      hasOriginRemote: true,
+      nextCursor: null,
+      totalCount: 1,
+    });
+
+    expect(parsed.branches[0]?.originRef).toBe("origin/main");
   });
 });
 

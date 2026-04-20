@@ -165,6 +165,7 @@ const PersistedDraftThreadState = Schema.Struct({
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
+  fetchLatestOriginOnWorktreeCreate: Schema.optionalKey(Schema.Boolean),
   promotedTo: Schema.optionalKey(
     Schema.NullOr(
       Schema.Struct({
@@ -225,6 +226,7 @@ export interface DraftSessionState {
   branch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
+  fetchLatestOriginOnWorktreeCreate?: boolean;
   promotedTo?: ScopedThreadRef | null;
 }
 
@@ -286,6 +288,7 @@ interface ComposerDraftStoreState {
       worktreePath?: string | null;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
+      fetchLatestOriginOnWorktreeCreate?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
     },
@@ -300,6 +303,7 @@ interface ComposerDraftStoreState {
       worktreePath?: string | null;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
+      fetchLatestOriginOnWorktreeCreate?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
     },
@@ -313,6 +317,7 @@ interface ComposerDraftStoreState {
       projectRef?: ScopedProjectRef;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
+      fetchLatestOriginOnWorktreeCreate?: boolean;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
     },
@@ -1067,6 +1072,7 @@ function createDraftThreadState(
     worktreePath?: string | null;
     createdAt?: string;
     envMode?: DraftThreadEnvMode;
+    fetchLatestOriginOnWorktreeCreate?: boolean;
     runtimeMode?: RuntimeMode;
     interactionMode?: ProviderInteractionMode;
   },
@@ -1087,6 +1093,12 @@ function createDraftThreadState(
         ? null
         : (existingThread?.branch ?? null)
       : (options.branch ?? null);
+  const fetchLatestOriginOnWorktreeCreate =
+    options?.fetchLatestOriginOnWorktreeCreate === undefined
+      ? projectChanged
+        ? false
+        : (existingThread?.fetchLatestOriginOnWorktreeCreate ?? false)
+      : options.fetchLatestOriginOnWorktreeCreate;
   return {
     threadId,
     environmentId: projectRef.environmentId,
@@ -1105,6 +1117,7 @@ function createDraftThreadState(
         : projectChanged
           ? "local"
           : (existingThread?.envMode ?? "local")),
+    fetchLatestOriginOnWorktreeCreate,
     promotedTo: null,
   };
 }
@@ -1136,6 +1149,8 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
+    (left.fetchLatestOriginOnWorktreeCreate ?? false) ===
+      (right.fetchLatestOriginOnWorktreeCreate ?? false) &&
     scopedThreadRefsEqual(left.promotedTo, right.promotedTo)
   );
 }
@@ -1277,6 +1292,8 @@ function normalizePersistedDraftThreads(
         branch: typeof branch === "string" ? branch : null,
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
+        fetchLatestOriginOnWorktreeCreate:
+          candidateDraftThread.fetchLatestOriginOnWorktreeCreate === true,
         promotedTo,
       };
     }
@@ -1322,6 +1339,7 @@ function normalizePersistedDraftThreads(
           branch: null,
           worktreePath: null,
           envMode: "local",
+          fetchLatestOriginOnWorktreeCreate: false,
           promotedTo: null,
         };
       } else if (
@@ -1826,6 +1844,8 @@ function toHydratedDraftThreadState(
     branch: persistedDraftThread.branch,
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
+    fetchLatestOriginOnWorktreeCreate:
+      persistedDraftThread.fetchLatestOriginOnWorktreeCreate ?? false,
     promotedTo: persistedDraftThread.promotedTo
       ? scopeThreadRef(
           persistedDraftThread.promotedTo.environmentId as EnvironmentId,
@@ -2031,6 +2051,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   : projectChanged
                     ? "local"
                     : (existing.envMode ?? "local")),
+              fetchLatestOriginOnWorktreeCreate:
+                options.fetchLatestOriginOnWorktreeCreate === undefined
+                  ? projectChanged
+                    ? false
+                    : (existing.fetchLatestOriginOnWorktreeCreate ?? false)
+                  : options.fetchLatestOriginOnWorktreeCreate,
               promotedTo: existing.promotedTo ?? null,
             };
             const isUnchanged =
@@ -2043,6 +2069,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.branch === existing.branch &&
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
+              (nextDraftThread.fetchLatestOriginOnWorktreeCreate ?? false) ===
+                (existing.fetchLatestOriginOnWorktreeCreate ?? false) &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
             if (isUnchanged) {
               return state;

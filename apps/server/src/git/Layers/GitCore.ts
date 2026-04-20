@@ -213,7 +213,11 @@ function filterBranchesForListQuery(
   }
 
   const normalizedQuery = query.toLowerCase();
-  return branches.filter((branch) => branch.name.toLowerCase().includes(normalizedQuery));
+  return branches.filter(
+    (branch) =>
+      branch.name.toLowerCase().includes(normalizedQuery) ||
+      branch.originRef?.toLowerCase().includes(normalizedQuery) === true,
+  );
 }
 
 function paginateBranches(input: {
@@ -1868,28 +1872,6 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       }
     }
 
-    const localBranches = localBranchResult.stdout
-      .split("\n")
-      .map(parseBranchLine)
-      .filter((branch): branch is { name: string; current: boolean } => branch !== null)
-      .map((branch) => ({
-        name: branch.name,
-        current: branch.current,
-        isRemote: false,
-        isDefault: branch.name === defaultBranch,
-        worktreePath: worktreeMap.get(branch.name) ?? null,
-      }))
-      .toSorted((a, b) => {
-        const aPriority = a.current ? 0 : a.isDefault ? 1 : 2;
-        const bPriority = b.current ? 0 : b.isDefault ? 1 : 2;
-        if (aPriority !== bPriority) return aPriority - bPriority;
-
-        const aLastCommit = branchLastCommit.get(a.name) ?? 0;
-        const bLastCommit = branchLastCommit.get(b.name) ?? 0;
-        if (aLastCommit !== bLastCommit) return bLastCommit - aLastCommit;
-        return a.name.localeCompare(b.name);
-      });
-
     const remoteBranches =
       remoteBranchResult.code === 0
         ? remoteBranchResult.stdout
@@ -1925,6 +1907,38 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
             })
         : [];
 
+    const originRemoteRefs = new Set(
+      remoteBranches
+        .filter((branch) => branch.remoteName === "origin")
+        .map((branch) => branch.name),
+    );
+
+    const localBranches = localBranchResult.stdout
+      .split("\n")
+      .map(parseBranchLine)
+      .filter((branch): branch is { name: string; current: boolean } => branch !== null)
+      .map((branch) => {
+        const originRef = `origin/${branch.name}`;
+        return {
+          name: branch.name,
+          current: branch.current,
+          isRemote: false,
+          originRef: originRemoteRefs.has(originRef) ? originRef : undefined,
+          isDefault: branch.name === defaultBranch,
+          worktreePath: worktreeMap.get(branch.name) ?? null,
+        };
+      })
+      .toSorted((a, b) => {
+        const aPriority = a.current ? 0 : a.isDefault ? 1 : 2;
+        const bPriority = b.current ? 0 : b.isDefault ? 1 : 2;
+        if (aPriority !== bPriority) return aPriority - bPriority;
+
+        const aLastCommit = branchLastCommit.get(a.name) ?? 0;
+        const bLastCommit = branchLastCommit.get(b.name) ?? 0;
+        if (aLastCommit !== bLastCommit) return bLastCommit - aLastCommit;
+        return a.name.localeCompare(b.name);
+      });
+
     const branches = paginateBranches({
       branches: filterBranchesForListQuery(
         dedupeRemoteBranchesWithLocalMatches([...localBranches, ...remoteBranches]),
@@ -1949,9 +1963,29 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
       const sanitizedBranch = targetBranch.replace(/\//g, "-");
       const repoName = path.basename(input.cwd);
       const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
+      let baseRef = input.branch;
+
+      if (input.fetchLatestOrigin) {
+        yield* executeGit(
+          "GitCore.createWorktree.fetchLatestOrigin",
+          input.cwd,
+          [
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "origin",
+            `+refs/heads/${input.branch}:refs/remotes/origin/${input.branch}`,
+          ],
+          {
+            fallbackErrorMessage: `git fetch origin ${input.branch} failed`,
+          },
+        );
+        baseRef = `origin/${input.branch}`;
+      }
+
       const args = input.newBranch
-        ? ["worktree", "add", "-b", input.newBranch, worktreePath, input.branch]
-        : ["worktree", "add", worktreePath, input.branch];
+        ? ["worktree", "add", "-b", input.newBranch, worktreePath, baseRef]
+        : ["worktree", "add", worktreePath, baseRef];
 
       yield* executeGit("GitCore.createWorktree", input.cwd, args, {
         fallbackErrorMessage: "git worktree add failed",
