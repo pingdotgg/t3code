@@ -168,7 +168,11 @@ import { CommandDialogTrigger } from "./ui/command";
 import { readEnvironmentApi } from "../environmentApi";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
-import { derivePhysicalProjectKey, deriveProjectGroupingOverrideKey } from "../logicalProject";
+import {
+  derivePhysicalProjectKey,
+  deriveProjectGroupingOverrideKey,
+  getProjectOrderKey,
+} from "../logicalProject";
 import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
@@ -2708,7 +2712,7 @@ export default function Sidebar() {
     return orderItemsByPreferredIds({
       items: projects,
       preferredIds: projectOrder,
-      getId: (project) => scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+      getId: getProjectOrderKey,
     });
   }, [projectOrder, projects]);
 
