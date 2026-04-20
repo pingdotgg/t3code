@@ -29,6 +29,7 @@ npm start
 ```
 
 For provider setup, native module rebuilds, and the Termux Codex CLI fork, see [docs/termux.md](./docs/termux.md).
+The Termux installer defaults to the `nightly` npm dist tag.
 
 ### Desktop app
 
