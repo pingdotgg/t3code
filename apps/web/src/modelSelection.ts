@@ -34,6 +34,11 @@ export interface AppModelOption {
   isCustom: boolean;
 }
 
+export interface PickerModelOption {
+  slug: string;
+  name: string;
+}
+
 const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConfig> = {
   codex: {
     provider: "codex",
@@ -157,6 +162,102 @@ export function getAppModelOptions(
   return options;
 }
 
+function normalizeConfiguredModelSlugs(
+  models: Iterable<string | null | undefined>,
+  provider: ProviderKind,
+): string[] {
+  const normalizedModels: string[] = [];
+  const seen = new Set<string>();
+
+  for (const candidate of models) {
+    const normalized = normalizeModelSlug(candidate, provider);
+    if (!normalized || normalized.length > MAX_CUSTOM_MODEL_LENGTH || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    normalizedModels.push(normalized);
+  }
+
+  return normalizedModels;
+}
+
+export function getConfiguredFavoriteModelOptions(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+  provider: ProviderKind,
+): PickerModelOption[] {
+  if (provider !== "pi") {
+    return [];
+  }
+
+  const options = getAppModelOptions(settings, providers, provider);
+  if (options.length === 0) {
+    return [];
+  }
+
+  const optionsBySlug = new Map(options.map((option) => [option.slug, option] as const));
+  return normalizeConfiguredModelSlugs(settings.providers.pi.favoriteModels, provider)
+    .map((slug) => optionsBySlug.get(slug))
+    .filter((option): option is AppModelOption => option !== undefined)
+    .map(({ slug, name }) => ({ slug, name }));
+}
+
+export function getPreferredPickerModelOptions(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+  provider: ProviderKind,
+  selectedModel?: string | null,
+): PickerModelOption[] {
+  const options = getAppModelOptions(settings, providers, provider, selectedModel).map(
+    ({ slug, name }) => ({ slug, name }),
+  );
+  if (provider !== "pi") {
+    return options;
+  }
+
+  const favorites = getConfiguredFavoriteModelOptions(settings, providers, provider);
+  if (favorites.length === 0) {
+    return options;
+  }
+
+  const selectedSlug = resolveSelectableModel(provider, selectedModel, options);
+  if (!selectedSlug || favorites.some((option) => option.slug === selectedSlug)) {
+    return favorites;
+  }
+
+  const selectedOption = options.find((option) => option.slug === selectedSlug);
+  return selectedOption ? [...favorites, selectedOption] : favorites;
+}
+
+export function resolveProviderDefaultModel(
+  provider: ProviderKind,
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+): string {
+  const resolvedProvider = resolveSelectableProvider(providers, provider);
+  const options = getAppModelOptions(settings, providers, resolvedProvider).map(
+    ({ slug, name }) => ({ slug, name }),
+  );
+  const preferredOptions = getPreferredPickerModelOptions(settings, providers, resolvedProvider);
+  const fallbackOptions =
+    resolvedProvider === "pi" && preferredOptions.length > 0 ? preferredOptions : options;
+  const configuredDefault =
+    resolvedProvider === "pi"
+      ? resolveSelectableModel(
+          resolvedProvider,
+          settings.providers.pi.defaultModel,
+          fallbackOptions,
+        )
+      : null;
+
+  return (
+    configuredDefault ??
+    fallbackOptions[0]?.slug ??
+    getDefaultServerModel(providers, resolvedProvider)
+  );
+}
+
 export function resolveAppModelSelection(
   provider: ProviderKind,
   settings: UnifiedSettings,
@@ -167,7 +268,7 @@ export function resolveAppModelSelection(
   const options = getAppModelOptions(settings, providers, resolvedProvider, selectedModel);
   return (
     resolveSelectableModel(resolvedProvider, selectedModel, options) ??
-    getDefaultServerModel(providers, resolvedProvider)
+    resolveProviderDefaultModel(resolvedProvider, settings, providers)
   );
 }
 
@@ -178,31 +279,31 @@ export function getCustomModelOptionsByProvider(
   selectedModel?: string | null,
 ): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
   return {
-    codex: getAppModelOptions(
+    codex: getPreferredPickerModelOptions(
       settings,
       providers,
       "codex",
       selectedProvider === "codex" ? selectedModel : undefined,
     ),
-    claudeAgent: getAppModelOptions(
+    claudeAgent: getPreferredPickerModelOptions(
       settings,
       providers,
       "claudeAgent",
       selectedProvider === "claudeAgent" ? selectedModel : undefined,
     ),
-    cursor: getAppModelOptions(
+    cursor: getPreferredPickerModelOptions(
       settings,
       providers,
       "cursor",
       selectedProvider === "cursor" ? selectedModel : undefined,
     ),
-    opencode: getAppModelOptions(
+    opencode: getPreferredPickerModelOptions(
       settings,
       providers,
       "opencode",
       selectedProvider === "opencode" ? selectedModel : undefined,
     ),
-    pi: getAppModelOptions(
+    pi: getPreferredPickerModelOptions(
       settings,
       providers,
       "pi",

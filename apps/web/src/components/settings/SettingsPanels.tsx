@@ -44,8 +44,11 @@ import {
 } from "../../lib/desktopUpdateReactQuery";
 import {
   MAX_CUSTOM_MODEL_LENGTH,
+  getAppModelOptions,
+  getConfiguredFavoriteModelOptions,
   getCustomModelOptionsByProvider,
   resolveAppModelSelectionState,
+  resolveProviderDefaultModel,
 } from "../../modelSelection";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { useShallow } from "zustand/react/shallow";
@@ -58,6 +61,7 @@ import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampForm
 import { cn } from "../../lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Checkbox } from "../ui/checkbox";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { Input } from "../ui/input";
@@ -94,6 +98,8 @@ const THEME_OPTIONS = [
     label: "Dark",
   },
 ] as const;
+
+const PI_AUTO_DEFAULT_MODEL_VALUE = "__auto__";
 
 interface PiBackendStatus {
   readonly id: string;
@@ -760,6 +766,8 @@ export function GeneralSettingsPanel() {
       settings.providers.pi.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.pi.binaryPath ||
       settings.providers.pi.defaultProvider !==
         DEFAULT_UNIFIED_SETTINGS.providers.pi.defaultProvider ||
+      settings.providers.pi.defaultModel !== DEFAULT_UNIFIED_SETTINGS.providers.pi.defaultModel ||
+      settings.providers.pi.favoriteModels.length > 0 ||
       settings.providers.pi.customModels.length > 0,
     ),
   });
@@ -825,6 +833,34 @@ export function GeneralSettingsPanel() {
     serverProviders,
     textGenProvider,
     textGenModel,
+  );
+  const piAvailableModelOptions = useMemo(
+    () => getAppModelOptions(settings, serverProviders, "pi"),
+    [serverProviders, settings],
+  );
+  const piFavoriteModelOptions = useMemo(
+    () => getConfiguredFavoriteModelOptions(settings, serverProviders, "pi"),
+    [serverProviders, settings],
+  );
+  const piDefaultModelOptions = useMemo(
+    () =>
+      piFavoriteModelOptions.length > 0
+        ? piFavoriteModelOptions
+        : piAvailableModelOptions.map(({ slug, name }) => ({ slug, name })),
+    [piAvailableModelOptions, piFavoriteModelOptions],
+  );
+  const piConfiguredDefaultModel = useMemo(
+    () => normalizeModelSlug(settings.providers.pi.defaultModel, "pi"),
+    [settings.providers.pi.defaultModel],
+  );
+  const piDefaultSelectValue =
+    piConfiguredDefaultModel &&
+    piDefaultModelOptions.some((option) => option.slug === piConfiguredDefaultModel)
+      ? piConfiguredDefaultModel
+      : PI_AUTO_DEFAULT_MODEL_VALUE;
+  const piResolvedDefaultModel = useMemo(
+    () => resolveProviderDefaultModel("pi", settings, serverProviders),
+    [serverProviders, settings],
   );
   const isGitWritingModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -947,15 +983,31 @@ export function GeneralSettingsPanel() {
 
   const removeCustomModel = useCallback(
     (provider: ProviderKind, slug: string) => {
+      const nextProviderSettings =
+        provider === "pi"
+          ? {
+              ...settings.providers[provider],
+              customModels: settings.providers[provider].customModels.filter(
+                (model) => model !== slug,
+              ),
+              favoriteModels: settings.providers.pi.favoriteModels.filter(
+                (model) => model !== slug,
+              ),
+              defaultModel:
+                normalizeModelSlug(settings.providers.pi.defaultModel, "pi") === slug
+                  ? ""
+                  : settings.providers.pi.defaultModel,
+            }
+          : {
+              ...settings.providers[provider],
+              customModels: settings.providers[provider].customModels.filter(
+                (model) => model !== slug,
+              ),
+            };
       updateSettings({
         providers: {
           ...settings.providers,
-          [provider]: {
-            ...settings.providers[provider],
-            customModels: settings.providers[provider].customModels.filter(
-              (model) => model !== slug,
-            ),
-          },
+          [provider]: nextProviderSettings,
         },
       });
       setCustomModelErrorByProvider((existing) => ({
@@ -1677,6 +1729,181 @@ export function GeneralSettingsPanel() {
                             : 0
                         }
                       />
+                    ) : null}
+
+                    {providerCard.provider === "pi" ? (
+                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-xs font-medium text-foreground">
+                              Preferred models
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              Choose which Pi models appear by default in the splash and composer
+                              pickers.
+                            </div>
+                          </div>
+                          {piFavoriteModelOptions.length > 0 ? (
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="ghost"
+                              onClick={() =>
+                                updateSettings({
+                                  providers: {
+                                    ...settings.providers,
+                                    pi: {
+                                      ...settings.providers.pi,
+                                      favoriteModels: [],
+                                    },
+                                  },
+                                })
+                              }
+                            >
+                              Clear
+                            </Button>
+                          ) : null}
+                        </div>
+
+                        <label htmlFor="provider-install-pi-default-model" className="mt-3 block">
+                          <span className="text-xs font-medium text-foreground">Default model</span>
+                          <Select
+                            value={piDefaultSelectValue}
+                            onValueChange={(value) =>
+                              updateSettings({
+                                providers: {
+                                  ...settings.providers,
+                                  pi: {
+                                    ...settings.providers.pi,
+                                    defaultModel:
+                                      value == null || value === PI_AUTO_DEFAULT_MODEL_VALUE
+                                        ? ""
+                                        : value,
+                                  },
+                                },
+                              })
+                            }
+                          >
+                            <SelectTrigger
+                              id="provider-install-pi-default-model"
+                              className="mt-1.5 w-full"
+                              aria-label="Default Pi model"
+                            >
+                              <SelectValue>
+                                {piDefaultSelectValue === PI_AUTO_DEFAULT_MODEL_VALUE
+                                  ? `Automatic (${
+                                      piDefaultModelOptions.find(
+                                        (option) => option.slug === piResolvedDefaultModel,
+                                      )?.name ?? piResolvedDefaultModel
+                                    })`
+                                  : (piDefaultModelOptions.find(
+                                      (option) => option.slug === piDefaultSelectValue,
+                                    )?.name ?? piDefaultSelectValue)}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectPopup align="end" alignItemWithTrigger={false}>
+                              <SelectItem hideIndicator value={PI_AUTO_DEFAULT_MODEL_VALUE}>
+                                {`Automatic (${
+                                  piDefaultModelOptions.find(
+                                    (option) => option.slug === piResolvedDefaultModel,
+                                  )?.name ?? piResolvedDefaultModel
+                                })`}
+                              </SelectItem>
+                              {piDefaultModelOptions.map((option) => (
+                                <SelectItem hideIndicator key={option.slug} value={option.slug}>
+                                  {option.name}
+                                </SelectItem>
+                              ))}
+                            </SelectPopup>
+                          </Select>
+                          <span className="mt-1 block text-xs text-muted-foreground">
+                            {piFavoriteModelOptions.length > 0
+                              ? "Automatic uses the first preferred model."
+                              : "Automatic uses the first available Pi model."}
+                          </span>
+                        </label>
+
+                        <div className="mt-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-xs font-medium text-foreground">
+                              Visible in picker
+                            </div>
+                            <div className="text-[11px] text-muted-foreground">
+                              {piFavoriteModelOptions.length} selected
+                            </div>
+                          </div>
+
+                          {piAvailableModelOptions.length === 0 ? (
+                            <div className="mt-2 rounded-md border border-dashed border-border/60 px-3 py-2 text-xs text-muted-foreground">
+                              Pi has not reported any available models yet. Sign in or refresh the
+                              provider status to load them.
+                            </div>
+                          ) : (
+                            <div className="mt-2 max-h-44 overflow-y-auto rounded-md border border-border/60 bg-background/60">
+                              {piAvailableModelOptions.map((model) => {
+                                const isChecked = piFavoriteModelOptions.some(
+                                  (option) => option.slug === model.slug,
+                                );
+                                const isResolvedDefault = piResolvedDefaultModel === model.slug;
+
+                                return (
+                                  <label
+                                    key={model.slug}
+                                    className="flex cursor-pointer items-center gap-2 border-b border-border/40 px-3 py-2 last:border-b-0"
+                                  >
+                                    <Checkbox
+                                      checked={isChecked}
+                                      onCheckedChange={(checked) => {
+                                        const nextFavoriteSlugs = new Set(
+                                          piFavoriteModelOptions.map((option) => option.slug),
+                                        );
+                                        if (checked) {
+                                          nextFavoriteSlugs.add(model.slug);
+                                        } else {
+                                          nextFavoriteSlugs.delete(model.slug);
+                                        }
+                                        const orderedFavoriteModels = piAvailableModelOptions
+                                          .map((option) => option.slug)
+                                          .filter((slug) => nextFavoriteSlugs.has(slug));
+                                        const nextDefaultModel =
+                                          orderedFavoriteModels.length > 0 &&
+                                          piConfiguredDefaultModel &&
+                                          !orderedFavoriteModels.includes(piConfiguredDefaultModel)
+                                            ? ""
+                                            : settings.providers.pi.defaultModel;
+
+                                        updateSettings({
+                                          providers: {
+                                            ...settings.providers,
+                                            pi: {
+                                              ...settings.providers.pi,
+                                              favoriteModels: orderedFavoriteModels,
+                                              defaultModel: nextDefaultModel,
+                                            },
+                                          },
+                                        });
+                                      }}
+                                    />
+                                    <span className="min-w-0 flex-1 truncate text-xs text-foreground/90">
+                                      {model.name}
+                                    </span>
+                                    {isResolvedDefault ? (
+                                      <Badge variant="secondary" size="sm" className="shrink-0">
+                                        Default
+                                      </Badge>
+                                    ) : null}
+                                    {model.isCustom ? (
+                                      <span className="shrink-0 text-[10px] text-muted-foreground">
+                                        custom
+                                      </span>
+                                    ) : null}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     ) : null}
 
                     <div className="border-t border-border/60 px-4 py-3 sm:px-5">

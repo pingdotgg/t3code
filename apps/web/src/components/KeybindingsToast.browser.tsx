@@ -111,6 +111,8 @@ function createBaseServerConfig(): ServerConfig {
           enabled: true,
           binaryPath: "",
           defaultProvider: "",
+          defaultModel: "",
+          favoriteModels: [],
           customModels: [],
         },
       },

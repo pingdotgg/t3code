@@ -112,6 +112,8 @@ export const PiSettings = Schema.Struct({
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   binaryPath: makeBinaryPathSetting("pi"),
   defaultProvider: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  defaultModel: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  favoriteModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type PiSettings = typeof PiSettings.Type;
@@ -264,6 +266,8 @@ const PiSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   binaryPath: Schema.optionalKey(Schema.String),
   defaultProvider: Schema.optionalKey(Schema.String),
+  defaultModel: Schema.optionalKey(Schema.String),
+  favoriteModels: Schema.optionalKey(Schema.Array(Schema.String)),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 

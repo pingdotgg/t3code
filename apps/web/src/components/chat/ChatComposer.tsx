@@ -39,6 +39,7 @@ import {
   expandCollapsedComposerCursor,
   replaceTextRange,
 } from "../../composer-logic";
+import { getCustomModelOptionsByProvider } from "../../modelSelection";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
 import {
   type ComposerImageAttachment,
@@ -609,13 +610,16 @@ export const ChatComposer = memo(
     const selectedModelForPicker = selectedModel;
     const modelOptionsByProvider = useMemo(
       () =>
-        new Map<ProviderKind, ReadonlyArray<ServerProvider["models"][number]>>(
-          providerStatuses.map((provider) => [provider.provider, provider.models]),
+        getCustomModelOptionsByProvider(
+          settings,
+          providerStatuses,
+          selectedProvider,
+          selectedModelForPicker,
         ),
-      [providerStatuses],
+      [providerStatuses, selectedModelForPicker, selectedProvider, settings],
     );
     const selectedModelForPickerWithCustomFallback = useMemo(() => {
-      const currentOptions = modelOptionsByProvider.get(selectedProvider) ?? [];
+      const currentOptions = modelOptionsByProvider[selectedProvider] ?? [];
       return currentOptions.some((option) => option.slug === selectedModelForPicker)
         ? selectedModelForPicker
         : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
@@ -633,7 +637,7 @@ export const ChatComposer = memo(
         pickerProviders
           .filter((provider) => lockedProvider === null || provider.provider === lockedProvider)
           .flatMap((provider) =>
-            (modelOptionsByProvider.get(provider.provider) ?? []).map(({ slug, name }) => ({
+            (modelOptionsByProvider[provider.provider] ?? []).map(({ slug, name }) => ({
               provider: provider.provider,
               providerLabel: formatProviderDisplayLabel(provider.provider),
               slug,

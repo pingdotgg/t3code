@@ -31,7 +31,7 @@ import { DeepMutable } from "effect/Types";
 import { createModelSelection, normalizeModelSlug } from "@workbench/shared/model";
 import { useMemo } from "react";
 import { getLocalStorageItem } from "./hooks/useLocalStorage";
-import { resolveAppModelSelection } from "./modelSelection";
+import { resolveAppModelSelection, resolveProviderDefaultModel } from "./modelSelection";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type ChatImageAttachment } from "./types";
 import {
   type TerminalContextDraft,
@@ -42,7 +42,6 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
 import { createDebouncedStorage, createMemoryStorage } from "./lib/storage";
-import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@workbench/contracts/settings";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "workbench:composer-drafts:v1";
@@ -824,11 +823,19 @@ export function deriveEffectiveComposerModelState(input: {
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
+  const matchingThreadModelSelection =
+    input.threadModelSelection?.provider === input.selectedProvider
+      ? input.threadModelSelection
+      : null;
+  const matchingProjectModelSelection =
+    input.projectModelSelection?.provider === input.selectedProvider
+      ? input.projectModelSelection
+      : null;
   const baseModel =
     normalizeModelSlug(
-      input.threadModelSelection?.model ?? input.projectModelSelection?.model,
+      matchingThreadModelSelection?.model ?? matchingProjectModelSelection?.model,
       input.selectedProvider,
-    ) ?? getDefaultServerModel(input.providers, input.selectedProvider);
+    ) ?? resolveProviderDefaultModel(input.selectedProvider, input.settings, input.providers);
   const activeSelection = input.draft?.modelSelectionByProvider?.[input.selectedProvider];
   const selectedModel = activeSelection?.model
     ? resolveAppModelSelection(
@@ -840,8 +847,8 @@ export function deriveEffectiveComposerModelState(input: {
     : baseModel;
   const modelOptions =
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
-    providerModelOptionsFromSelection(input.threadModelSelection) ??
-    providerModelOptionsFromSelection(input.projectModelSelection) ??
+    providerModelOptionsFromSelection(matchingThreadModelSelection) ??
+    providerModelOptionsFromSelection(matchingProjectModelSelection) ??
     null;
 
   return {

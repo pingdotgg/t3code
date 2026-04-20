@@ -40,11 +40,12 @@ import { isElectron } from "../env";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
+import { getProviderModels, resolveSelectableProvider } from "../providerModels";
 import {
-  getDefaultServerModel,
-  getProviderModels,
-  resolveSelectableProvider,
-} from "../providerModels";
+  getCustomModelOptionsByProvider,
+  resolveAppModelSelection,
+  resolveProviderDefaultModel,
+} from "../modelSelection";
 import { useServerProviders } from "../rpc/serverState";
 import { PROVIDER_OPTIONS } from "../session-logic";
 import { selectProjectsAcrossEnvironments, useStore } from "../store";
@@ -52,6 +53,7 @@ import { useUiStateStore } from "../uiStateStore";
 import type { Project } from "../types";
 import { cn } from "~/lib/utils";
 import { orderItemsByPreferredIds } from "./Sidebar.logic";
+import { ProviderModelPicker } from "./chat/ProviderModelPicker";
 import { TraitsPicker } from "./chat/TraitsPicker";
 import { Button } from "./ui/button";
 import { Empty } from "./ui/empty";
@@ -152,7 +154,7 @@ function resolveAssistantOptions(providers: ReadonlyArray<ServerProvider>) {
     }));
   }
 
-  return [...providers].sort(
+  return [...providers].toSorted(
     (left, right) => PROVIDER_MENU_ORDER[left.provider] - PROVIDER_MENU_ORDER[right.provider],
   );
 }
@@ -178,12 +180,13 @@ export function NoActiveThreadState() {
   const { handleNewThread } = useNewThreadHandler();
   const { state: leftSidebarState } = useSidebar();
   const isLeftSidebarCollapsed = leftSidebarState === "collapsed";
+  const settings = useSettings((settings) => settings);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const projects = useStore(useShallow((store) => selectProjectsAcrossEnvironments(store)));
-  const projectGroupingSettings = useSettings((settings) => ({
+  const projectGroupingSettings = {
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
     sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
-  }));
+  };
   const orderedProjects = useMemo(
     () =>
       orderItemsByPreferredIds({
@@ -196,6 +199,9 @@ export function NoActiveThreadState() {
   const assistantOptions = useMemo(() => resolveAssistantOptions(providers), [providers]);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [requestedProvider, setRequestedProvider] = useState<ProviderKind>("claudeAgent");
+  const [requestedModelByProvider, setRequestedModelByProvider] = useState<
+    Partial<Record<ProviderKind, string>>
+  >({});
   const [prompt, setPrompt] = useState("");
   const [interactionMode, setInteractionMode] = useState<ProviderInteractionMode>("default");
   const [runtimeMode, setRuntimeMode] = useState<RuntimeMode>("full-access");
@@ -362,12 +368,24 @@ export function NoActiveThreadState() {
     [providers, requestedProvider],
   );
   const selectedModel = useMemo(
-    () => getDefaultServerModel(providers, selectedProvider),
-    [providers, selectedProvider],
+    () =>
+      requestedModelByProvider[selectedProvider]
+        ? resolveAppModelSelection(
+            selectedProvider,
+            settings,
+            providers,
+            requestedModelByProvider[selectedProvider],
+          )
+        : resolveProviderDefaultModel(selectedProvider, settings, providers),
+    [providers, requestedModelByProvider, selectedProvider, settings],
   );
   const selectedProviderModels = useMemo(
     () => getProviderModels(providers, selectedProvider),
     [providers, selectedProvider],
+  );
+  const pickerModelOptionsByProvider = useMemo(
+    () => getCustomModelOptionsByProvider(settings, providers, selectedProvider, selectedModel),
+    [providers, selectedModel, selectedProvider, settings],
   );
   const selectedModelOptions = modelOptionsByProvider[selectedProvider];
   const accessModeCopy = ACCESS_MODE_COPY[runtimeMode];
@@ -585,9 +603,7 @@ export function NoActiveThreadState() {
               <div
                 className={cn(
                   "rounded-[28px] border bg-card/80 p-2 shadow-[0_28px_80px_-46px_rgba(0,0,0,0.55)] backdrop-blur-xl transition-colors",
-                  isDragOver
-                    ? "border-blue-400/70 bg-blue-500/5"
-                    : "border-border/55",
+                  isDragOver ? "border-blue-400/70 bg-blue-500/5" : "border-border/55",
                 )}
               >
                 <div className="rounded-[22px] bg-background/88">
@@ -679,90 +695,104 @@ export function NoActiveThreadState() {
                     </div>
                   </div>
 
-                    <div className="border-t border-border/55 px-4 py-3 sm:px-5">
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <Menu>
-                          <MenuTrigger
-                            render={
-                              <LandingPillButton
-                                type="button"
-                                disabled={orderedProjects.length === 0}
-                                className="justify-start"
-                              />
+                  <div className="border-t border-border/55 px-4 py-3 sm:px-5">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <Menu>
+                        <MenuTrigger
+                          render={
+                            <LandingPillButton
+                              type="button"
+                              disabled={orderedProjects.length === 0}
+                              className="justify-start"
+                            />
+                          }
+                        >
+                          <FolderOpenIcon aria-hidden="true" className="size-4 opacity-75" />
+                          <span className="truncate">Folder: {projectLabel(selectedProject)}</span>
+                          <ChevronDownIcon aria-hidden="true" className="size-3.5 opacity-55" />
+                        </MenuTrigger>
+                        <MenuPopup align="start" className="w-[min(28rem,calc(100vw-2rem))]">
+                          {orderedProjects.length === 0 ? (
+                            <MenuItem disabled>No folders available</MenuItem>
+                          ) : (
+                            <MenuRadioGroup
+                              value={selectedProject ? projectKey(selectedProject) : ""}
+                              onValueChange={(value) => setSelectedProjectId(value)}
+                            >
+                              {orderedProjects.map((project) => (
+                                <MenuRadioItem
+                                  key={projectKey(project)}
+                                  value={projectKey(project)}
+                                >
+                                  <div className="min-w-0">
+                                    <div className="truncate font-medium">{project.name}</div>
+                                    <div className="truncate text-xs text-muted-foreground/80">
+                                      {project.cwd}
+                                    </div>
+                                  </div>
+                                </MenuRadioItem>
+                              ))}
+                            </MenuRadioGroup>
+                          )}
+                          <MenuSeparator />
+                          <MenuItem onClick={() => void handleBrowseForFolder()}>
+                            <FolderPlusIcon aria-hidden="true" className="size-4 opacity-75" />
+                            <span>Open a folder…</span>
+                          </MenuItem>
+                        </MenuPopup>
+                      </Menu>
+
+                      <ProviderModelPicker
+                        provider={selectedProvider}
+                        model={selectedModel}
+                        lockedProvider={null}
+                        providers={providers}
+                        modelOptionsByProvider={pickerModelOptionsByProvider}
+                        triggerVariant="ghost"
+                        triggerClassName="h-10 rounded-full border border-border/60 bg-background/84 px-4 text-[15px] text-foreground shadow-[0_10px_30px_-24px_rgba(0,0,0,0.55)] hover:bg-background/96"
+                        onProviderModelChange={(provider, model) => {
+                          setRequestedProvider(provider);
+                          setRequestedModelByProvider((current) => ({
+                            ...current,
+                            [provider]: model,
+                          }));
+                        }}
+                      />
+
+                      <TraitsPicker
+                        provider={selectedProvider}
+                        models={selectedProviderModels}
+                        model={selectedModel}
+                        prompt={prompt}
+                        onPromptChange={setPrompt}
+                        modelOptions={selectedModelOptions}
+                        onModelOptionsChange={(nextOptions) => {
+                          setModelOptionsByProvider((current) => ({
+                            ...current,
+                            [selectedProvider]: nextOptions,
+                          }));
+                        }}
+                        triggerVariant="ghost"
+                        triggerClassName="h-10 rounded-full border border-border/60 bg-background/84 px-4 text-[15px] text-foreground shadow-[0_10px_30px_-24px_rgba(0,0,0,0.55)] hover:bg-background/96"
+                      />
+
+                      <Menu>
+                        <MenuTrigger
+                          render={<LandingPillButton type="button" className="justify-start" />}
+                        >
+                          <WrenchIcon aria-hidden="true" className="size-4 opacity-75" />
+                          <span>{INTERACTION_MODE_COPY[interactionMode].label}</span>
+                          <ChevronDownIcon aria-hidden="true" className="size-3.5 opacity-55" />
+                        </MenuTrigger>
+                        <MenuPopup align="start">
+                          <MenuRadioGroup
+                            value={interactionMode}
+                            onValueChange={(value) =>
+                              setInteractionMode(value as ProviderInteractionMode)
                             }
                           >
-                            <FolderOpenIcon aria-hidden="true" className="size-4 opacity-75" />
-                            <span className="truncate">
-                              Folder: {projectLabel(selectedProject)}
-                            </span>
-                            <ChevronDownIcon aria-hidden="true" className="size-3.5 opacity-55" />
-                          </MenuTrigger>
-                          <MenuPopup align="start" className="w-[min(28rem,calc(100vw-2rem))]">
-                            {orderedProjects.length === 0 ? (
-                              <MenuItem disabled>No folders available</MenuItem>
-                            ) : (
-                              <MenuRadioGroup
-                                value={selectedProject ? projectKey(selectedProject) : ""}
-                                onValueChange={(value) => setSelectedProjectId(value)}
-                              >
-                                {orderedProjects.map((project) => (
-                                  <MenuRadioItem
-                                    key={projectKey(project)}
-                                    value={projectKey(project)}
-                                  >
-                                    <div className="min-w-0">
-                                      <div className="truncate font-medium">{project.name}</div>
-                                      <div className="truncate text-xs text-muted-foreground/80">
-                                        {project.cwd}
-                                      </div>
-                                    </div>
-                                  </MenuRadioItem>
-                                ))}
-                              </MenuRadioGroup>
-                            )}
-                            <MenuSeparator />
-                            <MenuItem onClick={() => void handleBrowseForFolder()}>
-                              <FolderPlusIcon aria-hidden="true" className="size-4 opacity-75" />
-                              <span>Open a folder…</span>
-                            </MenuItem>
-                          </MenuPopup>
-                        </Menu>
-
-                        <TraitsPicker
-                          provider={selectedProvider}
-                          models={selectedProviderModels}
-                          model={selectedModel}
-                          prompt={prompt}
-                          onPromptChange={setPrompt}
-                          modelOptions={selectedModelOptions}
-                          onModelOptionsChange={(nextOptions) => {
-                            setModelOptionsByProvider((current) => ({
-                              ...current,
-                              [selectedProvider]: nextOptions,
-                            }));
-                          }}
-                          triggerVariant="ghost"
-                          triggerClassName="h-10 rounded-full border border-border/60 bg-background/84 px-4 text-[15px] text-foreground shadow-[0_10px_30px_-24px_rgba(0,0,0,0.55)] hover:bg-background/96"
-                        />
-
-                        <Menu>
-                          <MenuTrigger
-                            render={<LandingPillButton type="button" className="justify-start" />}
-                          >
-                            <WrenchIcon aria-hidden="true" className="size-4 opacity-75" />
-                            <span>{INTERACTION_MODE_COPY[interactionMode].label}</span>
-                            <ChevronDownIcon aria-hidden="true" className="size-3.5 opacity-55" />
-                          </MenuTrigger>
-                          <MenuPopup align="start">
-                            <MenuRadioGroup
-                              value={interactionMode}
-                              onValueChange={(value) =>
-                                setInteractionMode(value as ProviderInteractionMode)
-                              }
-                            >
-                              {(
-                                Object.keys(INTERACTION_MODE_COPY) as ProviderInteractionMode[]
-                              ).map((mode) => (
+                            {(Object.keys(INTERACTION_MODE_COPY) as ProviderInteractionMode[]).map(
+                              (mode) => (
                                 <MenuRadioItem key={mode} value={mode}>
                                   <div className="min-w-0">
                                     <div className="font-medium">
@@ -773,122 +803,123 @@ export function NoActiveThreadState() {
                                     </div>
                                   </div>
                                 </MenuRadioItem>
-                              ))}
-                            </MenuRadioGroup>
-                          </MenuPopup>
-                        </Menu>
+                              ),
+                            )}
+                          </MenuRadioGroup>
+                        </MenuPopup>
+                      </Menu>
 
-                        <Menu>
-                          <MenuTrigger
-                            render={<LandingPillButton type="button" className="justify-start" />}
+                      <Menu>
+                        <MenuTrigger
+                          render={<LandingPillButton type="button" className="justify-start" />}
+                        >
+                          <accessModeCopy.Icon aria-hidden="true" className="size-4 opacity-75" />
+                          <span>{accessModeCopy.label}</span>
+                          <ChevronDownIcon aria-hidden="true" className="size-3.5 opacity-55" />
+                        </MenuTrigger>
+                        <MenuPopup align="start" className="w-[min(22rem,calc(100vw-2rem))]">
+                          <MenuRadioGroup
+                            value={runtimeMode}
+                            onValueChange={(value) => setRuntimeMode(value as RuntimeMode)}
                           >
-                            <accessModeCopy.Icon aria-hidden="true" className="size-4 opacity-75" />
-                            <span>{accessModeCopy.label}</span>
-                            <ChevronDownIcon aria-hidden="true" className="size-3.5 opacity-55" />
-                          </MenuTrigger>
-                          <MenuPopup align="start" className="w-[min(22rem,calc(100vw-2rem))]">
-                            <MenuRadioGroup
-                              value={runtimeMode}
-                              onValueChange={(value) => setRuntimeMode(value as RuntimeMode)}
-                            >
-                              {(Object.keys(ACCESS_MODE_COPY) as RuntimeMode[]).map((mode) => {
-                                const option = ACCESS_MODE_COPY[mode];
-                                return (
-                                  <MenuRadioItem key={mode} value={mode}>
-                                    <div className="min-w-0">
-                                      <div className="inline-flex items-center gap-2 font-medium">
-                                        <option.Icon className="size-3.5 text-muted-foreground" />
-                                        {option.label}
-                                      </div>
-                                      <div className="text-xs text-muted-foreground/80">
-                                        {option.description}
-                                      </div>
-                                    </div>
-                                  </MenuRadioItem>
-                                );
-                              })}
-                            </MenuRadioGroup>
-                          </MenuPopup>
-                        </Menu>
-
-                        {/*
-                         * Assistant chip lives at the far right of the
-                         * composer footer, with the provider's own glyph
-                         * inside so the chip matches what the in-thread
-                         * composer ProviderModelPicker shows. `ms-auto`
-                         * pushes it to the right without breaking wrapping
-                         * on narrow widths.
-                         */}
-                        <Menu>
-                          <MenuTrigger
-                            render={
-                              <LandingPillButton type="button" className="ms-auto justify-start" />
-                            }
-                          >
-                            {(() => {
-                              const AssistantIcon = providerIconFor(selectedProvider);
+                            {(Object.keys(ACCESS_MODE_COPY) as RuntimeMode[]).map((mode) => {
+                              const option = ACCESS_MODE_COPY[mode];
                               return (
-                                <AssistantIcon aria-hidden="true" className="size-4 opacity-85" />
-                              );
-                            })()}
-                            <span className="truncate">
-                              Assistant: {formatProviderDisplayLabel(selectedProvider)}
-                            </span>
-                            <ChevronDownIcon aria-hidden="true" className="size-3.5 opacity-55" />
-                          </MenuTrigger>
-                          <MenuPopup align="start" className="w-[min(22rem,calc(100vw-2rem))]">
-                            <MenuGroup>
-                              {assistantOptions.map((provider) => {
-                                const isReady =
-                                  provider.enabled &&
-                                  provider.installed &&
-                                  provider.status === "ready";
-                                const OptionIcon = providerIconFor(provider.provider);
-                                return (
-                                  <MenuItem
-                                    key={provider.provider}
-                                    disabled={!isReady}
-                                    onClick={() => {
-                                      if (!isReady) return;
-                                      setRequestedProvider(provider.provider);
-                                    }}
-                                  >
-                                    <OptionIcon
-                                      aria-hidden="true"
-                                      className="size-4 shrink-0 opacity-85"
-                                    />
-                                    <div className="min-w-0 flex-1">
-                                      <div className="font-medium">
-                                        {formatProviderDisplayLabel(provider.provider)}
-                                      </div>
-                                      {!isReady ? (
-                                        <div className="truncate text-xs text-muted-foreground/80">
-                                          {describeProviderAvailability(provider)}
-                                        </div>
-                                      ) : null}
+                                <MenuRadioItem key={mode} value={mode}>
+                                  <div className="min-w-0">
+                                    <div className="inline-flex items-center gap-2 font-medium">
+                                      <option.Icon className="size-3.5 text-muted-foreground" />
+                                      {option.label}
                                     </div>
-                                    {provider.provider === selectedProvider ? (
-                                      <span className="text-xs text-muted-foreground/75">
-                                        Selected
-                                      </span>
+                                    <div className="text-xs text-muted-foreground/80">
+                                      {option.description}
+                                    </div>
+                                  </div>
+                                </MenuRadioItem>
+                              );
+                            })}
+                          </MenuRadioGroup>
+                        </MenuPopup>
+                      </Menu>
+
+                      {/*
+                       * Assistant chip lives at the far right of the
+                       * composer footer, with the provider's own glyph
+                       * inside so the chip matches what the in-thread
+                       * composer ProviderModelPicker shows. `ms-auto`
+                       * pushes it to the right without breaking wrapping
+                       * on narrow widths.
+                       */}
+                      <Menu>
+                        <MenuTrigger
+                          render={
+                            <LandingPillButton type="button" className="ms-auto justify-start" />
+                          }
+                        >
+                          {(() => {
+                            const AssistantIcon = providerIconFor(selectedProvider);
+                            return (
+                              <AssistantIcon aria-hidden="true" className="size-4 opacity-85" />
+                            );
+                          })()}
+                          <span className="truncate">
+                            Assistant: {formatProviderDisplayLabel(selectedProvider)}
+                          </span>
+                          <ChevronDownIcon aria-hidden="true" className="size-3.5 opacity-55" />
+                        </MenuTrigger>
+                        <MenuPopup align="start" className="w-[min(22rem,calc(100vw-2rem))]">
+                          <MenuGroup>
+                            {assistantOptions.map((provider) => {
+                              const isReady =
+                                provider.enabled &&
+                                provider.installed &&
+                                provider.status === "ready";
+                              const OptionIcon = providerIconFor(provider.provider);
+                              return (
+                                <MenuItem
+                                  key={provider.provider}
+                                  disabled={!isReady}
+                                  onClick={() => {
+                                    if (!isReady) return;
+                                    setRequestedProvider(provider.provider);
+                                  }}
+                                >
+                                  <OptionIcon
+                                    aria-hidden="true"
+                                    className="size-4 shrink-0 opacity-85"
+                                  />
+                                  <div className="min-w-0 flex-1">
+                                    <div className="font-medium">
+                                      {formatProviderDisplayLabel(provider.provider)}
+                                    </div>
+                                    {!isReady ? (
+                                      <div className="truncate text-xs text-muted-foreground/80">
+                                        {describeProviderAvailability(provider)}
+                                      </div>
                                     ) : null}
-                                  </MenuItem>
-                                );
-                              })}
-                            </MenuGroup>
-                          </MenuPopup>
-                        </Menu>
-                      </div>
+                                  </div>
+                                  {provider.provider === selectedProvider ? (
+                                    <span className="text-xs text-muted-foreground/75">
+                                      Selected
+                                    </span>
+                                  ) : null}
+                                </MenuItem>
+                              );
+                            })}
+                          </MenuGroup>
+                        </MenuPopup>
+                      </Menu>
                     </div>
                   </div>
                 </div>
+              </div>
 
-                {errorMessage ? (
-                  <p role="alert" className="mt-3 text-sm text-foreground/72">
-                    {errorMessage}
-                  </p>
-                ) : null}
-              </form>
+              {errorMessage ? (
+                <p role="alert" className="mt-3 text-sm text-foreground/72">
+                  {errorMessage}
+                </p>
+              ) : null}
+            </form>
           </div>
         </Empty>
       </div>
