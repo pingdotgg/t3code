@@ -123,6 +123,15 @@ function splitPatch(patch: Partial<UnifiedSettings>): {
  * only re-render when the slice they care about changes.
  */
 
+/**
+ * Non-hook accessor for the current merged client settings snapshot.
+ * Used by non-React code paths (e.g. runtime services) that need the latest
+ * settings without subscribing.
+ */
+export function getClientSettings(): ClientSettings {
+  return getClientSettingsSnapshot();
+}
+
 export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings) => T): T {
   const serverSettings = useServerSettings();
   const clientSettings = useSyncExternalStore(
