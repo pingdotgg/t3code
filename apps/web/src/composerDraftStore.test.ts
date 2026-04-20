@@ -91,7 +91,7 @@ function resetComposerDraftStore() {
 }
 
 function modelSelection(
-  provider: "codex" | "claudeAgent",
+  provider: "codex" | "claudeAgent" | "cursor",
   model: string,
   options?: ModelSelection["options"],
 ): ModelSelection {
@@ -561,6 +561,49 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(draftByKey(draftId)).toBeUndefined();
   });
 
+  it("revokes draft image blob URLs when clearing a project's draft thread", () => {
+    const store = useComposerDraftStore.getState();
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    const revokeSpy = vi.fn<(url: string) => void>();
+    URL.revokeObjectURL = revokeSpy;
+
+    try {
+      store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+      store.addImage(draftId, makeImage({ id: "img-project-clear", previewUrl: "blob:clear" }));
+
+      store.clearProjectDraftThreadId(projectRef);
+
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)).toBeNull();
+      expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
+      expect(revokeSpy).toHaveBeenCalledWith("blob:clear");
+    } finally {
+      URL.revokeObjectURL = originalRevokeObjectUrl;
+    }
+  });
+
+  it("revokes draft image blob URLs when clearing a matching project draft thread by id", () => {
+    const store = useComposerDraftStore.getState();
+    const originalRevokeObjectUrl = URL.revokeObjectURL;
+    const revokeSpy = vi.fn<(url: string) => void>();
+    URL.revokeObjectURL = revokeSpy;
+
+    try {
+      store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+      store.addImage(
+        draftId,
+        makeImage({ id: "img-project-clear-by-id", previewUrl: "blob:clear-by-id" }),
+      );
+
+      store.clearProjectDraftThreadById(projectRef, draftId);
+
+      expect(useComposerDraftStore.getState().getDraftThreadByProjectRef(projectRef)).toBeNull();
+      expect(useComposerDraftStore.getState().getDraftThread(draftId)).toBeNull();
+      expect(revokeSpy).toHaveBeenCalledWith("blob:clear-by-id");
+    } finally {
+      URL.revokeObjectURL = originalRevokeObjectUrl;
+    }
+  });
+
   it("clears orphaned composer drafts when remapping a project to a new draft thread", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId });
@@ -959,6 +1002,60 @@ describe("composerDraftStore modelSelection", () => {
     );
   });
 
+  it("keeps explicit Cursor reset overrides on the selection", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setModelSelection(
+      threadRef,
+      modelSelection("cursor", "claude-opus-4-6", {
+        reasoning: "xhigh",
+        fastMode: true,
+        thinking: false,
+      }),
+    );
+
+    store.setProviderModelOptions(threadRef, "cursor", {
+      reasoning: "medium",
+      fastMode: false,
+      thinking: true,
+    });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "claude-opus-4-6", {
+        reasoning: "medium",
+        fastMode: false,
+        thinking: true,
+      }),
+    );
+  });
+
+  it("preserves the selected Cursor model when only traits change", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setProviderModelOptions(
+      threadRef,
+      "cursor",
+      {
+        reasoning: "high",
+      },
+      {
+        model: "gpt-5.4",
+        persistSticky: true,
+      },
+    );
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "gpt-5.4", {
+        reasoning: "high",
+      }),
+    );
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "gpt-5.4", {
+        reasoning: "high",
+      }),
+    );
+  });
+
   it("updates only the draft when sticky persistence is omitted", () => {
     const store = useComposerDraftStore.getState();
 
@@ -1129,6 +1226,24 @@ describe("composerDraftStore sticky composer settings", () => {
       modelSelection("codex", "gpt-5.4"),
     );
     expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("codex");
+  });
+
+  it("drops empty cursor model options when normalizing sticky state", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setStickyModelSelection(
+      modelSelection("cursor", "gpt-5.4", {
+        reasoning: undefined,
+        fastMode: undefined,
+        thinking: undefined,
+        contextWindow: undefined,
+      }),
+    );
+
+    expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.cursor).toEqual(
+      modelSelection("cursor", "gpt-5.4"),
+    );
+    expect(useComposerDraftStore.getState().stickyActiveProvider).toBe("cursor");
   });
 
   it("applies sticky activeProvider to new drafts", () => {
