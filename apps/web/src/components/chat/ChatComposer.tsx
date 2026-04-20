@@ -6,6 +6,7 @@ import type {
   ProviderApprovalDecision,
   ProviderInteractionMode,
   ProviderKind,
+  ResolvedKeybindingsConfig,
   RuntimeMode,
   ScopedThreadRef,
   ServerProvider,
@@ -59,7 +60,7 @@ import {
   shouldUseCompactComposerFooter,
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
-import { AVAILABLE_PROVIDER_OPTIONS, ProviderModelPicker } from "./ProviderModelPicker";
+import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -317,6 +318,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
 export interface ChatComposerHandle {
   focusAtEnd: () => void;
   focusAt: (cursor: number) => void;
+  openModelPicker: () => void;
+  toggleModelPicker: () => void;
+  isModelPickerOpen: () => boolean;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -410,6 +414,8 @@ export interface ChatComposerProps {
   // Misc
   resolvedTheme: "light" | "dark";
   settings: UnifiedSettings;
+  keybindings: ResolvedKeybindingsConfig;
+  terminalOpen: boolean;
   gitCwd: string | null;
 
   // Refs the parent needs kept in sync
@@ -497,6 +503,8 @@ export const ChatComposer = memo(
       activeThreadActivities,
       resolvedTheme,
       settings,
+      keybindings,
+      terminalOpen,
       gitCwd,
       promptRef,
       composerImagesRef,
@@ -622,23 +630,6 @@ export const ChatComposer = memo(
         ? selectedModelForPicker
         : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
     }, [modelOptionsByProvider, selectedModelForPicker, selectedProvider]);
-    const searchableModelOptions = useMemo(
-      () =>
-        AVAILABLE_PROVIDER_OPTIONS.filter(
-          (option) => lockedProvider === null || option.value === lockedProvider,
-        ).flatMap((option) =>
-          modelOptionsByProvider[option.value].map(({ slug, name }) => ({
-            provider: option.value,
-            providerLabel: option.label,
-            slug,
-            name,
-            searchSlug: slug.toLowerCase(),
-            searchName: name.toLowerCase(),
-            searchProvider: option.label.toLowerCase(),
-          })),
-        ),
-      [lockedProvider, modelOptionsByProvider],
-    );
 
     // ------------------------------------------------------------------
     // Context window
@@ -664,6 +655,7 @@ export const ChatComposer = memo(
     const [isDragOverComposer, setIsDragOverComposer] = useState(false);
     const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
     const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
+    const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
 
     // ------------------------------------------------------------------
     // Refs
@@ -782,31 +774,8 @@ export const ChatComposer = memo(
             (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
         }));
       }
-      return searchableModelOptions
-        .filter(({ searchSlug, searchName, searchProvider }) => {
-          const query = composerTrigger.query.trim().toLowerCase();
-          if (!query) return true;
-          return (
-            searchSlug.includes(query) ||
-            searchName.includes(query) ||
-            searchProvider.includes(query)
-          );
-        })
-        .map(({ provider, providerLabel, slug, name }) => ({
-          id: `model:${provider}:${slug}`,
-          type: "model",
-          provider,
-          model: slug,
-          label: name,
-          description: `${providerLabel} · ${slug}`,
-        }));
-    }, [
-      composerTrigger,
-      searchableModelOptions,
-      selectedProvider,
-      selectedProviderStatus,
-      workspaceEntries,
-    ]);
+      return [];
+    }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries]);
 
     const composerMenuOpen = Boolean(composerTrigger);
     const composerMenuSearchKey = composerTrigger
@@ -1276,7 +1245,7 @@ export const ChatComposer = memo(
         rangeStart: number,
         rangeEnd: number,
         replacement: string,
-        options?: { expectedText?: string },
+        options?: { expectedText?: string; focusEditorAfterReplace?: boolean },
       ): boolean => {
         const currentText = promptRef.current;
         const safeStart = Math.max(0, Math.min(currentText.length, rangeStart));
@@ -1305,9 +1274,11 @@ export const ChatComposer = memo(
         }
         setComposerCursor(nextCursor);
         setComposerTrigger(detectComposerTrigger(next.text, nextExpandedCursor));
-        window.requestAnimationFrame(() => {
-          composerEditorRef.current?.focusAt(nextCursor);
-        });
+        if (options?.focusEditorAfterReplace !== false) {
+          window.requestAnimationFrame(() => {
+            composerEditorRef.current?.focusAt(nextCursor);
+          });
+        }
         return true;
       },
       [
@@ -1377,20 +1348,13 @@ export const ChatComposer = memo(
         }
         if (item.type === "slash-command") {
           if (item.command === "model") {
-            const replacement = "/model ";
-            const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
-              snapshot.value,
-              trigger.rangeEnd,
-              replacement,
-            );
-            const applied = applyPromptReplacement(
-              trigger.rangeStart,
-              replacementRangeEnd,
-              replacement,
-              { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
-            );
+            const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+              expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+              focusEditorAfterReplace: false,
+            });
             if (applied) {
               setComposerHighlightedItemId(null);
+              setIsComposerModelPickerOpen(true);
             }
             return;
           }
@@ -1439,20 +1403,8 @@ export const ChatComposer = memo(
           }
           return;
         }
-        onProviderModelSelect(item.provider, item.model);
-        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
-          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
-        });
-        if (applied) {
-          setComposerHighlightedItemId(null);
-        }
       },
-      [
-        applyPromptReplacement,
-        handleInteractionModeChange,
-        onProviderModelSelect,
-        resolveActiveComposerTrigger,
-      ],
+      [applyPromptReplacement, handleInteractionModeChange, resolveActiveComposerTrigger],
     );
 
     const onComposerMenuItemHighlighted = useCallback(
@@ -1633,6 +1585,13 @@ export const ChatComposer = memo(
         focusAt: (cursor: number) => {
           composerEditorRef.current?.focusAt(cursor);
         },
+        openModelPicker: () => {
+          setIsComposerModelPickerOpen(true);
+        },
+        toggleModelPicker: () => {
+          setIsComposerModelPickerOpen((open) => !open);
+        },
+        isModelPickerOpen: () => isComposerModelPickerOpen,
         readSnapshot: () => {
           return readComposerSnapshot();
         },
@@ -1710,6 +1669,7 @@ export const ChatComposer = memo(
         promptRef,
         composerImagesRef,
         composerTerminalContextsRef,
+        isComposerModelPickerOpen,
         readComposerSnapshot,
         selectedModel,
         selectedModelOptionsForDispatch,
@@ -1925,13 +1885,19 @@ export const ChatComposer = memo(
                     model={selectedModelForPickerWithCustomFallback}
                     lockedProvider={lockedProvider}
                     providers={providerStatuses}
+                    keybindings={keybindings}
                     modelOptionsByProvider={modelOptionsByProvider}
+                    terminalOpen={terminalOpen}
+                    open={isComposerModelPickerOpen}
                     {...(composerProviderState.modelPickerIconClassName
                       ? {
                           activeProviderIconClassName:
                             composerProviderState.modelPickerIconClassName,
                         }
                       : {})}
+                    onOpenChange={(open) => {
+                      setIsComposerModelPickerOpen(open);
+                    }}
                     onProviderModelChange={onProviderModelSelect}
                   />
 

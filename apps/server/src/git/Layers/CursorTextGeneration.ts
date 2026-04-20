@@ -16,7 +16,12 @@ import {
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "../Prompts.ts";
-import { sanitizeCommitSubject, sanitizePrTitle, sanitizeThreadTitle } from "../Utils.ts";
+import {
+  extractJsonObject,
+  sanitizeCommitSubject,
+  sanitizePrTitle,
+  sanitizeThreadTitle,
+} from "../Utils.ts";
 import {
   applyCursorAcpModelSelection,
   makeCursorAcpRuntime,
@@ -24,54 +29,6 @@ import {
 import { ServerSettingsService } from "../../serverSettings.ts";
 
 const CURSOR_TIMEOUT_MS = 180_000;
-
-function extractJsonObject(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    return trimmed;
-  }
-
-  const start = trimmed.indexOf("{");
-  if (start < 0) {
-    return trimmed;
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaping = false;
-  for (let index = start; index < trimmed.length; index += 1) {
-    const char = trimmed[index];
-    if (inString) {
-      if (escaping) {
-        escaping = false;
-      } else if (char === "\\") {
-        escaping = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return trimmed.slice(start, index + 1);
-      }
-    }
-  }
-
-  return trimmed.slice(start);
-}
 
 function mapCursorAcpError(
   operation:
