@@ -40,7 +40,12 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const activeProvider = props.lockedProvider ?? props.provider;
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
   const selectedProviderOptions = props.modelOptionsByProvider[activeProvider];
-  const selectedModel = selectedProviderOptions.find((option) => option.slug === props.model);
+  // If the current slug belongs to a different provider (for example after a provider
+  // switch or disable), prefer the active provider's first option so the trigger icon
+  // and label stay in sync instead of showing a stale foreign slug.
+  const selectedModel =
+    selectedProviderOptions.find((option) => option.slug === props.model) ??
+    selectedProviderOptions[0];
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
   const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
   const triggerSubtitle = selectedModel?.subProvider;

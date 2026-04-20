@@ -416,6 +416,45 @@ describe("ProviderModelPicker", () => {
     }
   });
 
+  it("falls back to the active provider's first model when props.model belongs to another provider (#1982)", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const onProviderModelChange = vi.fn();
+    const modelOptionsByProvider = {
+      claudeAgent: [
+        { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
+        { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+      ],
+      codex: [{ slug: "gpt-5-codex", name: "GPT-5 Codex" }],
+      cursor: [],
+      opencode: [],
+    } as const;
+    const screen = await render(
+      <ProviderModelPicker
+        provider="claudeAgent"
+        model="gpt-5-codex"
+        lockedProvider={null}
+        providers={TEST_PROVIDERS}
+        modelOptionsByProvider={modelOptionsByProvider}
+        onProviderModelChange={onProviderModelChange}
+      />,
+      { container: host },
+    );
+
+    try {
+      const trigger = document.querySelector<HTMLElement>(
+        '[data-chat-provider-model-picker="true"]',
+      );
+      expect(trigger).not.toBeNull();
+      const label = trigger?.textContent ?? "";
+      expect(label).not.toContain("gpt-5-codex");
+      expect(label).toContain("Claude Opus 4.6");
+    } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
   it("uses the trigger label for locked opencode rows", async () => {
     const providers: ReadonlyArray<ServerProvider> = [
       buildOpenCodeProvider([
