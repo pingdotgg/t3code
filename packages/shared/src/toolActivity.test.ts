@@ -99,6 +99,29 @@ describe("toolActivity", () => {
     ).toEqual(["http://localhost:3000"]);
   });
 
+  it("treats 127.0.0.1 and [::1] as localhost equivalents for dedup", () => {
+    const urls = extractLocalhostUrlsFromText(
+      "Local: http://localhost:3000 Loopback: http://127.0.0.1:3000 IPv6: http://[::1]:3000",
+      "output",
+    );
+    expect(urls).toHaveLength(1);
+    expect(urls[0]?.href).toBe("http://localhost:3000");
+    expect(urls[0]?.url).toBe("http://localhost:3000");
+  });
+
+  it("normalizes 127.0.0.1 href but preserves the original visible url", () => {
+    const urls = extractLocalhostUrlsFromText("http://127.0.0.1:5173/", "detail");
+    expect(urls).toEqual([
+      {
+        url: "http://127.0.0.1:5173/",
+        href: "http://localhost:5173/",
+        host: "127.0.0.1",
+        port: 5173,
+        source: "detail",
+      },
+    ]);
+  });
+
   it("normalizes command tools to a stable ran-command label", () => {
     expect(
       deriveToolActivityPresentation({

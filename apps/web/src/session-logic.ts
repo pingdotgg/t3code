@@ -581,11 +581,18 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       : null;
   const title = extractToolTitle(payload);
   const itemType = extractWorkLogItemType(payload);
-  const commandActivity =
-    itemType === "command_execution"
-      ? extractToolCommandActivity({ payload, title, itemType })
-      : null;
-  const commandPreview = commandActivity ?? extractToolCommand(payload);
+  // Run URL/output extraction for every tool kind so Monitor/tail and other
+  // log-style tools can surface localhost URLs in the timeline — matching the
+  // sidebar's `deriveSidebarAgentCommandStatus`, which already widens beyond
+  // command_execution. Keep `commandPreview` narrow for non-command tools so
+  // details like `/tmp/app.ts` aren't inferred as commands.
+  const commandActivity = extractToolCommandActivity({
+    payload,
+    title,
+    itemType: itemType ?? "command_execution",
+  });
+  const commandPreview =
+    itemType === "command_execution" ? commandActivity : extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
   const isTaskActivity = activity.kind === "task.progress" || activity.kind === "task.completed";
   const taskSummary =

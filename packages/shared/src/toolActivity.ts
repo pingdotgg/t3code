@@ -57,7 +57,13 @@ function stripTrailingUrlPunctuation(value: string): string {
 }
 
 function hrefForLocalhostUrl(url: string, host: string): string {
-  return host === "0.0.0.0" ? url.replace("://0.0.0.0:", "://localhost:") : url;
+  if (host === "localhost") {
+    return url;
+  }
+  // Treat all loopback hosts as equivalent for dedup so an agent that prints
+  // both "http://localhost:5173" and "http://127.0.0.1:5173" yields a single
+  // chip. The visible `url` field preserves the original spelling.
+  return url.replace(`://${host}:`, "://localhost:");
 }
 
 export function extractLocalhostUrlsFromText(
