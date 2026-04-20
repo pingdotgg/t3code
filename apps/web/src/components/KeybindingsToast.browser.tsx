@@ -163,6 +163,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
           runtimeMode: "full-access",
           activeTurnId: null,
           lastError: null,
+          compacting: false,
           updatedAt: NOW_ISO,
         },
       },

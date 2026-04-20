@@ -102,6 +102,7 @@ describe("MessagesTimeline", () => {
         workspaceRoot={undefined}
         isSendBusy={false}
         isPreparingWorktree={false}
+        isCompacting={false}
         onSubagentSelect={() => {}}
         editingUserMessageId={null}
         editingUserMessageText=""
@@ -165,6 +166,7 @@ describe("MessagesTimeline", () => {
         workspaceRoot={undefined}
         isSendBusy={false}
         isPreparingWorktree={false}
+        isCompacting={false}
         onSubagentSelect={() => {}}
         editingUserMessageId={null}
         editingUserMessageText=""

@@ -23,6 +23,7 @@ import {
   ApprovalRequestId,
   type CanonicalItemType,
   type CanonicalRequestType,
+  CLAUDE_COMPACTING_REASON,
   EventId,
   type ProviderApprovalDecision,
   ProviderItemId,
@@ -2234,7 +2235,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           type: "session.state.changed",
           payload: {
             state: message.status === "compacting" ? "waiting" : "running",
-            reason: `status:${message.status ?? "active"}`,
+            reason:
+              message.status === "compacting"
+                ? CLAUDE_COMPACTING_REASON
+                : `status:${message.status ?? "active"}`,
             detail: message,
           },
         });

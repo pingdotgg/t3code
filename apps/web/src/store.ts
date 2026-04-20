@@ -122,6 +122,7 @@ function mapSession(session: OrchestrationSession): ThreadSession {
     activeTurnId: session.activeTurnId ?? undefined,
     createdAt: session.updatedAt,
     updatedAt: session.updatedAt,
+    compacting: session.compacting,
     ...(session.lastError ? { lastError: session.lastError } : {}),
   };
 }
@@ -1426,6 +1427,7 @@ function applyEnvironmentOrchestrationEvent(
                 status: "closed",
                 orchestrationStatus: "stopped",
                 activeTurnId: undefined,
+                compacting: false,
                 updatedAt: event.payload.createdAt,
               },
               updatedAt: event.occurredAt,

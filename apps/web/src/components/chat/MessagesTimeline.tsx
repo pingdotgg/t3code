@@ -154,6 +154,7 @@ interface MessagesTimelineProps {
   workspaceRoot: string | undefined;
   isSendBusy: boolean;
   isPreparingWorktree: boolean;
+  isCompacting: boolean;
   onSubagentSelect: (taskId: string) => void;
   pendingApprovals?: ReadonlyArray<PendingApproval>;
   editingUserMessageId: MessageId | null;
@@ -209,6 +210,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   workspaceRoot,
   isSendBusy,
   isPreparingWorktree,
+  isCompacting,
   onSubagentSelect,
   pendingApprovals,
   editingUserMessageId,
@@ -617,9 +619,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               ? "Preparing worktree\u2026"
               : isSendBusy
                 ? "Starting\u2026"
-                : row.createdAt
-                  ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
-                  : "Working\u2026"}
+                : isCompacting
+                  ? "Compacting\u2026"
+                  : row.createdAt
+                    ? `Working for ${formatWorkingTimer(row.createdAt, nowIso) ?? "0s"}`
+                    : "Working\u2026"}
           </span>
         </div>
       )}

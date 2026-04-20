@@ -339,6 +339,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             runtimeMode: "approval-required",
             activeTurnId: asTurnId("turn-1"),
             lastError: null,
+            compacting: false,
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
         },

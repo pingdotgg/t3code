@@ -820,6 +820,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   runtimeMode: row.runtimeMode,
                   activeTurnId: row.activeTurnId,
                   lastError: row.lastError,
+                  compacting: false,
                   updatedAt: row.updatedAt,
                 });
               }
@@ -1120,6 +1121,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               runtimeMode: row.runtimeMode,
               activeTurnId: row.activeTurnId,
               lastError: row.lastError,
+              compacting: false,
               updatedAt: row.updatedAt,
             });
           }
@@ -1312,6 +1314,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 runtimeMode: sessionRowOpt.value.runtimeMode,
                 activeTurnId: sessionRowOpt.value.activeTurnId,
                 lastError: sessionRowOpt.value.lastError,
+                compacting: false,
                 updatedAt: sessionRowOpt.value.updatedAt,
               }
             : null;

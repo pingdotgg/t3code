@@ -1780,6 +1780,7 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
             runtimeMode: "approval-required",
             activeTurnId: turnId,
             lastError: null,
+            compacting: false,
             updatedAt: sessionSetAt,
           },
         },

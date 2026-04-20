@@ -406,6 +406,7 @@ describe("resolveThreadStatusPill", () => {
       createdAt: "2026-03-09T10:00:00.000Z",
       updatedAt: "2026-03-09T10:00:00.000Z",
       orchestrationStatus: "running" as const,
+      compacting: false,
     },
   };
 

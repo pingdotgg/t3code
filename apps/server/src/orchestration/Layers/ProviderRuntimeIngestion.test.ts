@@ -9,6 +9,7 @@ import type {
 } from "@marcode/contracts";
 import {
   ApprovalRequestId,
+  CLAUDE_COMPACTING_REASON,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
@@ -269,6 +270,7 @@ describe("ProviderRuntimeIngestion", () => {
           activeTurnId: null,
           updatedAt: createdAt,
           lastError: null,
+          compacting: false,
         },
         createdAt,
       }),
@@ -494,6 +496,7 @@ describe("ProviderRuntimeIngestion", () => {
           activeTurnId: null,
           updatedAt: seededAt,
           lastError: null,
+          compacting: false,
         },
         createdAt: seededAt,
       }),
@@ -792,6 +795,7 @@ describe("ProviderRuntimeIngestion", () => {
           activeTurnId: null,
           updatedAt: createdAt,
           lastError: null,
+          compacting: false,
         },
         createdAt,
       }),
@@ -827,6 +831,7 @@ describe("ProviderRuntimeIngestion", () => {
           activeTurnId: null,
           updatedAt: createdAt,
           lastError: null,
+          compacting: false,
         },
         createdAt,
       }),
@@ -979,6 +984,7 @@ describe("ProviderRuntimeIngestion", () => {
           activeTurnId: null,
           updatedAt: createdAt,
           lastError: null,
+          compacting: false,
         },
         createdAt,
       }),
@@ -1132,6 +1138,7 @@ describe("ProviderRuntimeIngestion", () => {
           activeTurnId: null,
           updatedAt: createdAt,
           lastError: null,
+          compacting: false,
         },
         createdAt,
       }),
@@ -1167,6 +1174,7 @@ describe("ProviderRuntimeIngestion", () => {
           activeTurnId: null,
           updatedAt: createdAt,
           lastError: null,
+          compacting: false,
         },
         createdAt,
       }),
@@ -2379,5 +2387,254 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime still processed");
+  });
+
+  describe("compacting flag", () => {
+    it("flips compacting=true on Claude session.state.changed with compacting reason", async () => {
+      const harness = await createHarness();
+
+      harness.emit({
+        type: "session.state.changed",
+        eventId: asEventId("evt-claude-compacting-start"),
+        provider: "claudeAgent",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        payload: {
+          state: "waiting",
+          reason: CLAUDE_COMPACTING_REASON,
+        },
+      });
+
+      const thread = await waitForThread(
+        harness.engine,
+        (entry) => entry.session?.compacting === true,
+      );
+      expect(thread.session?.compacting).toBe(true);
+      expect(thread.session?.status).toBe("running");
+    });
+
+    it("flips compacting=true on Codex item.started with context_compaction itemType", async () => {
+      const harness = await createHarness();
+
+      harness.emit({
+        type: "item.started",
+        eventId: asEventId("evt-codex-compaction-start"),
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        turnId: asTurnId("turn-compaction"),
+        itemId: asItemId("item-compaction"),
+        payload: {
+          itemType: "context_compaction",
+          status: "in_progress",
+        },
+      });
+
+      const thread = await waitForThread(
+        harness.engine,
+        (entry) => entry.session?.compacting === true,
+      );
+      expect(thread.session?.compacting).toBe(true);
+    });
+
+    it("flips compacting=false on Claude thread.state.changed state=compacted", async () => {
+      const harness = await createHarness();
+
+      harness.emit({
+        type: "session.state.changed",
+        eventId: asEventId("evt-claude-compact-start"),
+        provider: "claudeAgent",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        payload: {
+          state: "waiting",
+          reason: CLAUDE_COMPACTING_REASON,
+        },
+      });
+
+      await waitForThread(harness.engine, (entry) => entry.session?.compacting === true);
+
+      harness.emit({
+        type: "thread.state.changed",
+        eventId: asEventId("evt-claude-compacted"),
+        provider: "claudeAgent",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        payload: {
+          state: "compacted",
+        },
+      });
+
+      const thread = await waitForThread(
+        harness.engine,
+        (entry) => entry.session?.compacting === false,
+      );
+      expect(thread.session?.compacting).toBe(false);
+    });
+
+    it("flips compacting=false on Codex item.completed success", async () => {
+      const harness = await createHarness();
+
+      harness.emit({
+        type: "item.started",
+        eventId: asEventId("evt-codex-compaction-start-ok"),
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        turnId: asTurnId("turn-compaction-ok"),
+        itemId: asItemId("item-compaction-ok"),
+        payload: {
+          itemType: "context_compaction",
+          status: "in_progress",
+        },
+      });
+
+      await waitForThread(harness.engine, (entry) => entry.session?.compacting === true);
+
+      harness.emit({
+        type: "item.completed",
+        eventId: asEventId("evt-codex-compaction-completed"),
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        turnId: asTurnId("turn-compaction-ok"),
+        itemId: asItemId("item-compaction-ok"),
+        payload: {
+          itemType: "context_compaction",
+          status: "completed",
+        },
+      });
+
+      const thread = await waitForThread(
+        harness.engine,
+        (entry) => entry.session?.compacting === false,
+      );
+      expect(thread.session?.compacting).toBe(false);
+    });
+
+    it("flips compacting=false on Codex item.completed failure", async () => {
+      const harness = await createHarness();
+
+      harness.emit({
+        type: "item.started",
+        eventId: asEventId("evt-codex-compaction-start-fail"),
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        turnId: asTurnId("turn-compaction-fail"),
+        itemId: asItemId("item-compaction-fail"),
+        payload: {
+          itemType: "context_compaction",
+          status: "in_progress",
+        },
+      });
+
+      await waitForThread(harness.engine, (entry) => entry.session?.compacting === true);
+
+      harness.emit({
+        type: "item.completed",
+        eventId: asEventId("evt-codex-compaction-failed"),
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        createdAt: new Date().toISOString(),
+        turnId: asTurnId("turn-compaction-fail"),
+        itemId: asItemId("item-compaction-fail"),
+        payload: {
+          itemType: "context_compaction",
+          status: "failed",
+        },
+      });
+
+      const thread = await waitForThread(
+        harness.engine,
+        (entry) => entry.session?.compacting === false,
+      );
+      expect(thread.session?.compacting).toBe(false);
+    });
+
+    it("clears compacting on turn.started / turn.completed / session.exited safety events", async () => {
+      for (const scenario of [
+        {
+          label: "turn.started",
+          emit: (harness: Awaited<ReturnType<typeof createHarness>>) =>
+            harness.emit({
+              type: "turn.started",
+              eventId: asEventId("evt-safety-turn-started"),
+              provider: "claudeAgent",
+              threadId: asThreadId("thread-1"),
+              createdAt: new Date().toISOString(),
+              turnId: asTurnId("turn-safety-started"),
+            }),
+        },
+        {
+          label: "turn.completed",
+          emit: (harness: Awaited<ReturnType<typeof createHarness>>) =>
+            harness.emit({
+              type: "turn.completed",
+              eventId: asEventId("evt-safety-turn-completed"),
+              provider: "claudeAgent",
+              threadId: asThreadId("thread-1"),
+              createdAt: new Date().toISOString(),
+              payload: { state: "completed" },
+            }),
+        },
+        {
+          label: "session.exited",
+          emit: (harness: Awaited<ReturnType<typeof createHarness>>) =>
+            harness.emit({
+              type: "session.exited",
+              eventId: asEventId("evt-safety-session-exited"),
+              provider: "claudeAgent",
+              threadId: asThreadId("thread-1"),
+              createdAt: new Date().toISOString(),
+            }),
+        },
+        {
+          label: "session.state.changed/error",
+          emit: (harness: Awaited<ReturnType<typeof createHarness>>) =>
+            harness.emit({
+              type: "session.state.changed",
+              eventId: asEventId("evt-safety-session-error"),
+              provider: "claudeAgent",
+              threadId: asThreadId("thread-1"),
+              createdAt: new Date().toISOString(),
+              payload: { state: "error", reason: "boom" },
+            }),
+        },
+      ]) {
+        const harness = await createHarness();
+
+        harness.emit({
+          type: "session.state.changed",
+          eventId: asEventId(`evt-pre-${scenario.label}`),
+          provider: "claudeAgent",
+          threadId: asThreadId("thread-1"),
+          createdAt: new Date().toISOString(),
+          payload: {
+            state: "waiting",
+            reason: CLAUDE_COMPACTING_REASON,
+          },
+        });
+
+        await waitForThread(harness.engine, (entry) => entry.session?.compacting === true);
+
+        scenario.emit(harness);
+
+        const thread = await waitForThread(
+          harness.engine,
+          (entry) => entry.session?.compacting === false,
+        );
+        expect(thread.session?.compacting, `safety clear on ${scenario.label}`).toBe(false);
+
+        if (scope) {
+          await Effect.runPromise(Scope.close(scope, Exit.void));
+          scope = null;
+        }
+        if (runtime) {
+          await runtime.dispose();
+          runtime = null;
+        }
+      }
+    });
   });
 });

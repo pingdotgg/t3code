@@ -1,6 +1,7 @@
 import {
   ApprovalRequestId,
   type AssistantDeliveryMode,
+  CLAUDE_COMPACTING_REASON,
   CommandId,
   MessageId,
   type OrchestrationEvent,
@@ -142,6 +143,39 @@ function orchestrationSessionStatusFromRuntimeState(
     case "error":
       return "error";
   }
+}
+
+function deriveNextCompacting(event: ProviderRuntimeEvent, previous: boolean): boolean {
+  if (event.type === "session.state.changed" && event.payload.reason === CLAUDE_COMPACTING_REASON) {
+    return true;
+  }
+  if (event.type === "item.started" && event.payload.itemType === "context_compaction") {
+    return true;
+  }
+
+  if (event.type === "item.completed" && event.payload.itemType === "context_compaction") {
+    return false;
+  }
+  if (event.type === "thread.state.changed" && event.payload.state === "compacted") {
+    return false;
+  }
+
+  if (
+    event.type === "turn.started" ||
+    event.type === "turn.completed" ||
+    event.type === "turn.aborted" ||
+    event.type === "session.exited"
+  ) {
+    return false;
+  }
+  if (
+    event.type === "session.state.changed" &&
+    (event.payload.state === "error" || event.payload.reason !== CLAUDE_COMPACTING_REASON)
+  ) {
+    return false;
+  }
+
+  return previous;
 }
 
 function requestKindFromCanonicalRequestType(
@@ -967,13 +1001,21 @@ const make = Effect.fn("make")(function* () {
         ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)
         : null;
 
+    const isCompactionItemLifecycleEvent =
+      (event.type === "item.started" || event.type === "item.completed") &&
+      event.payload.itemType === "context_compaction";
+    const isCompactedThreadStateEvent =
+      event.type === "thread.state.changed" && event.payload.state === "compacted";
+
     if (
       event.type === "session.started" ||
       event.type === "session.state.changed" ||
       event.type === "session.exited" ||
       event.type === "thread.started" ||
       event.type === "turn.started" ||
-      event.type === "turn.completed"
+      event.type === "turn.completed" ||
+      isCompactionItemLifecycleEvent ||
+      isCompactedThreadStateEvent
     ) {
       const nextActiveTurnId =
         event.type === "turn.started"
@@ -1002,6 +1044,11 @@ const make = Effect.fn("make")(function* () {
             // Provider thread/session start notifications can arrive during an
             // active turn; preserve turn-running state in that case.
             return activeTurnId !== null ? "running" : "ready";
+          default:
+            // Compaction lifecycle events (item.started/completed with
+            // context_compaction, or thread.state.changed=compacted) only
+            // toggle `compacting` — preserve the current session status.
+            return thread.session?.status ?? (activeTurnId !== null ? "running" : "ready");
         }
       })();
       const lastError =
@@ -1043,6 +1090,7 @@ const make = Effect.fn("make")(function* () {
             runtimeMode: thread.session?.runtimeMode ?? "full-access",
             activeTurnId: nextActiveTurnId,
             lastError,
+            compacting: deriveNextCompacting(event, thread.session?.compacting ?? false),
             updatedAt: now,
           },
           createdAt: now,
@@ -1213,6 +1261,7 @@ const make = Effect.fn("make")(function* () {
             runtimeMode: thread.session?.runtimeMode ?? "full-access",
             activeTurnId: eventTurnId ?? null,
             lastError: runtimeErrorMessage,
+            compacting: thread.session?.compacting ?? false,
             updatedAt: now,
           },
           createdAt: now,
