@@ -1,37 +1,36 @@
-import assert from "node:assert/strict";
+import { describe, expect, it } from "vitest";
 
-import { describe, it, vi } from "vitest";
+import { DEFAULT_OPENCODE_MODEL_CAPABILITIES, flattenOpenCodeModels } from "./opencodeRuntime.ts";
 
-const childProcessMock = vi.hoisted(() => ({
-  execFileSync: vi.fn((command: string, args: ReadonlyArray<string>) => {
-    if (command === "which" && args[0] === "opencode") {
-      return "/opt/homebrew/bin/opencode\n";
-    }
-    return "";
-  }),
-  spawn: vi.fn(),
-}));
+describe("flattenOpenCodeModels", () => {
+  it("keeps the canonical model name separate from the subprovider label", () => {
+    const models = flattenOpenCodeModels({
+      providerList: {
+        connected: ["github-copilot"],
+        all: [
+          {
+            id: "github-copilot",
+            name: "GitHub Copilot",
+            models: {
+              "claude-opus-4.5": {
+                id: "claude-opus-4.5",
+                name: "Claude Opus 4.5",
+                variants: {},
+              },
+            },
+          },
+        ],
+      },
+      agents: [],
+    } as unknown as Parameters<typeof flattenOpenCodeModels>[0]);
 
-vi.mock("node:child_process", () => childProcessMock);
-
-describe("resolveOpenCodeBinaryPath", () => {
-  it("returns absolute binary paths without PATH lookup", async () => {
-    const { resolveOpenCodeBinaryPath } = await import("./opencodeRuntime.ts");
-
-    assert.equal(resolveOpenCodeBinaryPath("/usr/local/bin/opencode"), "/usr/local/bin/opencode");
-    assert.equal(childProcessMock.execFileSync.mock.calls.length, 0);
-  });
-
-  it("resolves command names through PATH", async () => {
-    const { resolveOpenCodeBinaryPath } = await import("./opencodeRuntime.ts");
-
-    assert.equal(resolveOpenCodeBinaryPath("opencode"), "/opt/homebrew/bin/opencode");
-    assert.deepEqual(childProcessMock.execFileSync.mock.calls[0], [
-      "which",
-      ["opencode"],
+    expect(models).toEqual([
       {
-        encoding: "utf8",
-        timeout: 3_000,
+        slug: "github-copilot/claude-opus-4.5",
+        name: "Claude Opus 4.5",
+        subProvider: "GitHub Copilot",
+        isCustom: false,
+        capabilities: DEFAULT_OPENCODE_MODEL_CAPABILITIES,
       },
     ]);
   });

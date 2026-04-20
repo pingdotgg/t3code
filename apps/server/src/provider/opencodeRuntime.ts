@@ -558,7 +558,8 @@ export function flattenOpenCodeModels(
     for (const model of Object.values(provider.models)) {
       models.push({
         slug: toOpenCodeModelSlug(provider.id, model.id),
-        name: `${provider.name} · ${model.name}`,
+        name: model.name,
+        subProvider: provider.name,
         isCustom: false,
         capabilities: openCodeCapabilitiesForModel({
           providerID: provider.id,

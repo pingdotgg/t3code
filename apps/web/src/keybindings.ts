@@ -2,8 +2,10 @@ import {
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
+  MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
   type ResolvedKeybindingsConfig,
   THREAD_JUMP_KEYBINDING_COMMANDS,
+  type ModelPickerJumpKeybindingCommand,
   type ThreadJumpKeybindingCommand,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "./lib/utils";
@@ -12,6 +14,13 @@ export interface ShortcutEventLike {
   type?: string;
   code?: string;
   key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+}
+
+export interface ShortcutModifierStateLike {
   metaKey: boolean;
   ctrlKey: boolean;
   shiftKey: boolean;
@@ -71,7 +80,7 @@ function resolveEventKeys(event: ShortcutEventLike): Set<string> {
 }
 
 function matchesShortcutModifiers(
-  event: ShortcutEventLike,
+  event: ShortcutModifierStateLike,
   shortcut: KeybindingShortcut,
   platform = navigator.platform,
 ): boolean {
@@ -270,12 +279,59 @@ export function shouldShowThreadJumpHints(
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
+  return shouldShowThreadJumpHintsForModifiers(event, keybindings, options);
+}
+
+export function shouldShowThreadJumpHintsForModifiers(
+  modifiers: ShortcutModifierStateLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
   const platform = resolvePlatform(options);
 
   for (const command of THREAD_JUMP_KEYBINDING_COMMANDS) {
     const shortcut = findEffectiveShortcutForCommand(keybindings, command, options);
     if (!shortcut) continue;
-    if (matchesShortcutModifiers(event, shortcut, platform)) {
+    if (matchesShortcutModifiers(modifiers, shortcut, platform)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function modelPickerJumpCommandForIndex(
+  index: number,
+): ModelPickerJumpKeybindingCommand | null {
+  return MODEL_PICKER_JUMP_KEYBINDING_COMMANDS[index] ?? null;
+}
+
+export function modelPickerJumpIndexFromCommand(command: string): number | null {
+  const index = MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.indexOf(
+    command as ModelPickerJumpKeybindingCommand,
+  );
+  return index === -1 ? null : index;
+}
+
+export function shouldShowModelPickerJumpHints(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return shouldShowModelPickerJumpHintsForModifiers(event, keybindings, options);
+}
+
+export function shouldShowModelPickerJumpHintsForModifiers(
+  modifiers: ShortcutModifierStateLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  const platform = resolvePlatform(options);
+
+  for (const command of MODEL_PICKER_JUMP_KEYBINDING_COMMANDS) {
+    const shortcut = findEffectiveShortcutForCommand(keybindings, command, options);
+    if (!shortcut) continue;
+    if (matchesShortcutModifiers(modifiers, shortcut, platform)) {
       return true;
     }
   }
