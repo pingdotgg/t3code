@@ -72,10 +72,12 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
+import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime.ts";
 import {
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http.ts";
+import { NetService } from "@t3tools/shared/Net";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -225,6 +227,7 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
 
 const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
+  Layer.provideMerge(OpenCodeRuntimeLive),
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
@@ -243,6 +246,7 @@ const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(AnalyticsServiceLayerLive),
   Layer.provideMerge(OpenLive),
   Layer.provideMerge(ServerLifecycleEventsLive),
+  Layer.provide(NetService.layer),
 );
 
 const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(

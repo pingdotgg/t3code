@@ -25,13 +25,14 @@ import {
   sanitizeThreadTitle,
 } from "../Utils.ts";
 import {
-  createOpenCodeSdkClient,
+  OpenCodeRuntime,
   type OpenCodeServerConnection,
   type OpenCodeServerProcess,
+  openCodeRuntimeErrorDetail,
   parseOpenCodeModelSlug,
-  startOpenCodeServerProcess,
   toOpenCodeFileParts,
 } from "../../provider/opencodeRuntime.ts";
+import { NetService } from "@t3tools/shared/Net";
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL_MS = 30_000;
 
@@ -87,7 +88,9 @@ interface SharedOpenCodeTextGenerationServerState {
 
 const makeOpenCodeTextGeneration = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;
+  const netService = yield* NetService;
   const serverSettingsService = yield* ServerSettingsService;
+  const openCodeRuntime = yield* OpenCodeRuntime;
   const idleFiberScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
     Scope.close(scope, Exit.void),
   );
@@ -170,15 +173,21 @@ const makeOpenCodeTextGeneration = Effect.gen(function* () {
           }
         }
 
-        const server = yield* Effect.tryPromise({
-          try: () => startOpenCodeServerProcess({ binaryPath: input.binaryPath }),
-          catch: (cause) =>
-            new TextGenerationError({
-              operation: input.operation,
-              detail: cause instanceof Error ? cause.message : "Failed to start OpenCode server.",
-              cause,
-            }),
-        });
+        const server = yield* openCodeRuntime
+          .startOpenCodeServerProcess({
+            binaryPath: input.binaryPath,
+          })
+          .pipe(
+            Effect.provideService(NetService, netService),
+            Effect.mapError(
+              (cause) =>
+                new TextGenerationError({
+                  operation: input.operation,
+                  detail: openCodeRuntimeErrorDetail(cause),
+                  cause,
+                }),
+            ),
+          );
 
         sharedServerState.server = server;
         sharedServerState.binaryPath = input.binaryPath;
@@ -264,7 +273,7 @@ const makeOpenCodeTextGeneration = Effect.gen(function* () {
     const runAgainstServer = (server: Pick<OpenCodeServerConnection, "url">) =>
       Effect.tryPromise({
         try: async () => {
-          const client = createOpenCodeSdkClient({
+          const client = openCodeRuntime.createOpenCodeSdkClient({
             baseUrl: server.url,
             directory: input.cwd,
             ...(settings.serverUrl.length > 0 && settings.serverPassword
@@ -304,8 +313,7 @@ const makeOpenCodeTextGeneration = Effect.gen(function* () {
         catch: (cause) =>
           new TextGenerationError({
             operation: input.operation,
-            detail:
-              cause instanceof Error ? cause.message : "OpenCode text generation request failed.",
+            detail: openCodeRuntimeErrorDetail(cause),
             cause,
           }),
       });

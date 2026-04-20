@@ -3,13 +3,18 @@ import assert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
-import { beforeEach, vi } from "vitest";
+import { beforeEach } from "vitest";
 
 import { ThreadId } from "@t3tools/contracts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { OpenCodeAdapter } from "../Services/OpenCodeAdapter.ts";
+import {
+  OpenCodeRuntime,
+  OpenCodeRuntimeError,
+  type OpenCodeRuntimeShape,
+} from "../opencodeRuntime.ts";
 import {
   appendOpenCodeAssistantTextDelta,
   makeOpenCodeAdapterLive,
@@ -18,16 +23,16 @@ import {
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 
-const runtimeMock = vi.hoisted(() => {
-  type MessageEntry = {
-    info: {
-      id: string;
-      role: "user" | "assistant";
-    };
-    parts: Array<unknown>;
+type MessageEntry = {
+  info: {
+    id: string;
+    role: "user" | "assistant";
   };
+  parts: Array<unknown>;
+};
 
-  const state = {
+const runtimeMock = {
+  state: {
     startCalls: [] as string[],
     sessionCreateUrls: [] as string[],
     authHeaders: [] as Array<string | null>,
@@ -38,44 +43,35 @@ const runtimeMock = vi.hoisted(() => {
     closeError: null as Error | null,
     messages: [] as MessageEntry[],
     subscribedEvents: [] as unknown[],
-  };
+  },
+  reset() {
+    this.state.startCalls.length = 0;
+    this.state.sessionCreateUrls.length = 0;
+    this.state.authHeaders.length = 0;
+    this.state.abortCalls.length = 0;
+    this.state.closeCalls.length = 0;
+    this.state.revertCalls.length = 0;
+    this.state.promptAsyncError = null;
+    this.state.closeError = null;
+    this.state.messages = [];
+    this.state.subscribedEvents = [];
+  },
+};
 
-  return {
-    state,
-    reset() {
-      state.startCalls.length = 0;
-      state.sessionCreateUrls.length = 0;
-      state.authHeaders.length = 0;
-      state.abortCalls.length = 0;
-      state.closeCalls.length = 0;
-      state.revertCalls.length = 0;
-      state.promptAsyncError = null;
-      state.closeError = null;
-      state.messages = [];
-      state.subscribedEvents = [];
-    },
-  };
-});
-
-vi.mock("../opencodeRuntime.ts", async () => {
-  const actual =
-    await vi.importActual<typeof import("../opencodeRuntime.ts")>("../opencodeRuntime.ts");
-
-  return {
-    ...actual,
-    startOpenCodeServerProcess: vi.fn(async ({ binaryPath }: { binaryPath: string }) => {
+const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
+  startOpenCodeServerProcess: ({ binaryPath }) =>
+    Effect.sync(() => {
       runtimeMock.state.startCalls.push(binaryPath);
       return {
         url: "http://127.0.0.1:4301",
-        process: {
-          once() {},
-        },
+        exitCode: Effect.never,
         close() {},
       };
     }),
-    connectToOpenCodeServer: vi.fn(async ({ serverUrl }: { serverUrl?: string }) => ({
+  connectToOpenCodeServer: ({ serverUrl }) =>
+    Effect.sync(() => ({
       url: serverUrl ?? "http://127.0.0.1:4301",
-      process: null,
+      exitCode: null,
       external: Boolean(serverUrl),
       close() {
         runtimeMock.state.closeCalls.push(serverUrl ?? "http://127.0.0.1:4301");
@@ -84,59 +80,64 @@ vi.mock("../opencodeRuntime.ts", async () => {
         }
       },
     })),
-    createOpenCodeSdkClient: vi.fn(
-      ({ baseUrl, serverPassword }: { baseUrl: string; serverPassword?: string }) => ({
-        session: {
-          create: vi.fn(async () => {
-            runtimeMock.state.sessionCreateUrls.push(baseUrl);
-            runtimeMock.state.authHeaders.push(
-              serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
-            );
-            return { data: { id: `${baseUrl}/session` } };
-          }),
-          abort: vi.fn(async ({ sessionID }: { sessionID: string }) => {
-            runtimeMock.state.abortCalls.push(sessionID);
-          }),
-          promptAsync: vi.fn(async () => {
-            if (runtimeMock.state.promptAsyncError) {
-              throw runtimeMock.state.promptAsyncError;
-            }
-          }),
-          messages: vi.fn(async () => ({ data: runtimeMock.state.messages })),
-          revert: vi.fn(
-            async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
-              runtimeMock.state.revertCalls.push({
-                sessionID,
-                ...(messageID ? { messageID } : {}),
-              });
-              if (!messageID) {
-                runtimeMock.state.messages = [];
-                return;
-              }
+  runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
+  createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
+    ({
+      session: {
+        create: async () => {
+          runtimeMock.state.sessionCreateUrls.push(baseUrl);
+          runtimeMock.state.authHeaders.push(
+            serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
+          );
+          return { data: { id: `${baseUrl}/session` } };
+        },
+        abort: async ({ sessionID }: { sessionID: string }) => {
+          runtimeMock.state.abortCalls.push(sessionID);
+        },
+        promptAsync: async () => {
+          if (runtimeMock.state.promptAsyncError) {
+            throw runtimeMock.state.promptAsyncError;
+          }
+        },
+        messages: async () => ({ data: runtimeMock.state.messages }),
+        revert: async ({ sessionID, messageID }: { sessionID: string; messageID?: string }) => {
+          runtimeMock.state.revertCalls.push({
+            sessionID,
+            ...(messageID ? { messageID } : {}),
+          });
+          if (!messageID) {
+            runtimeMock.state.messages = [];
+            return;
+          }
 
-              const targetIndex = runtimeMock.state.messages.findIndex(
-                (entry) => entry.info.id === messageID,
-              );
-              runtimeMock.state.messages =
-                targetIndex >= 0
-                  ? runtimeMock.state.messages.slice(0, targetIndex + 1)
-                  : runtimeMock.state.messages;
-            },
-          ),
+          const targetIndex = runtimeMock.state.messages.findIndex(
+            (entry) => entry.info.id === messageID,
+          );
+          runtimeMock.state.messages =
+            targetIndex >= 0
+              ? runtimeMock.state.messages.slice(0, targetIndex + 1)
+              : runtimeMock.state.messages;
         },
-        event: {
-          subscribe: vi.fn(async () => ({
-            stream: (async function* () {
-              for (const event of runtimeMock.state.subscribedEvents) {
-                yield event;
-              }
-            })(),
-          })),
-        },
+      },
+      event: {
+        subscribe: async () => ({
+          stream: (async function* () {
+            for (const event of runtimeMock.state.subscribedEvents) {
+              yield event;
+            }
+          })(),
+        }),
+      },
+    }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+  loadOpenCodeInventory: () =>
+    Effect.fail(
+      new OpenCodeRuntimeError({
+        operation: "loadOpenCodeInventory",
+        detail: "OpenCodeRuntimeTestDouble.loadOpenCodeInventory not used in this test",
+        cause: null,
       }),
     ),
-  };
-});
+};
 
 const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory, {
   upsert: () => Effect.void,
@@ -148,6 +149,7 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
 });
 
 const OpenCodeAdapterTestLayer = makeOpenCodeAdapterLive().pipe(
+  Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
   Layer.provideMerge(
     ServerSettingsService.layerTest({
@@ -374,7 +376,10 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         close: () => Effect.void,
       };
 
-      const adapterLayer = makeOpenCodeAdapterLive({ nativeEventLogger }).pipe(
+      const adapterLayer = makeOpenCodeAdapterLive({
+        nativeEventLogger,
+      }).pipe(
+        Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
         Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
         Layer.provideMerge(
           ServerSettingsService.layerTest({
@@ -450,7 +455,10 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         close: () => Effect.void,
       };
 
-      const adapterLayer = makeOpenCodeAdapterLive({ nativeEventLogger }).pipe(
+      const adapterLayer = makeOpenCodeAdapterLive({
+        nativeEventLogger,
+      }).pipe(
+        Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
         Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
         Layer.provideMerge(
           ServerSettingsService.layerTest({
