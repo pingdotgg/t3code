@@ -9,7 +9,6 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import * as AcpError from "../errors.ts";
 
 const encoder = new TextEncoder();
-const decoder = new TextDecoder();
 
 export const makeChildStdio = (handle: ChildProcessSpawner.ChildProcessHandle) =>
   Stdio.make({
@@ -25,6 +24,7 @@ export const makeChildStdio = (handle: ChildProcessSpawner.ChildProcessHandle) =
 export const makeInMemoryStdio = Effect.fn("makeInMemoryStdio")(function* () {
   const input = yield* Queue.unbounded<Uint8Array, Cause.Done<void>>();
   const output = yield* Queue.unbounded<string>();
+  const decoder = new TextDecoder();
 
   return {
     stdio: Stdio.make({
@@ -32,7 +32,10 @@ export const makeInMemoryStdio = Effect.fn("makeInMemoryStdio")(function* () {
       stdin: Stream.fromQueue(input),
       stdout: () =>
         Sink.forEach((chunk: string | Uint8Array) =>
-          Queue.offer(output, typeof chunk === "string" ? chunk : decoder.decode(chunk)),
+          Queue.offer(
+            output,
+            typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true }),
+          ),
         ),
       stderr: () => Sink.drain,
     }),
