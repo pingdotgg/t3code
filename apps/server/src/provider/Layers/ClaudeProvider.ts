@@ -481,7 +481,7 @@ function dedupeSlashCommands(
   return [...commandsByName.values()];
 }
 
-export function waitForAbortSignal(signal: AbortSignal): Promise<void> {
+function waitForAbortSignal(signal: AbortSignal): Promise<void> {
   if (signal.aborted) {
     return Promise.resolve();
   }
