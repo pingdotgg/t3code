@@ -701,4 +701,21 @@ describe("GeneralSettingsPanel observability", () => {
 
     expect(openInEditor).toHaveBeenCalledWith("/repo/project/.t3/logs", "cursor");
   });
+
+  it("shows an OpenCode server URL field in provider settings", async () => {
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByLabelText("Toggle OpenCode details").click();
+
+    await expect.element(page.getByText("OpenCode server URL")).toBeInTheDocument();
+    await expect.element(page.getByPlaceholder("http://127.0.0.1:4096")).toBeInTheDocument();
+    await expect.element(page.getByText("OpenCode server password")).toBeInTheDocument();
+    await expect.element(page.getByPlaceholder("Server password")).toBeInTheDocument();
+  });
 });
