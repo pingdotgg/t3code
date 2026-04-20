@@ -397,40 +397,54 @@ function parseDirtyWorktreeFiles(stderr: string): string[] | null {
     .filter((line) => line.length > 0);
 }
 
-function buildTrackedPathPrefixes(paths: readonly string[]): Set<string> {
-  const prefixes = new Set<string>();
-
-  for (const path of paths) {
-    const segments = path
-      .trim()
-      .split("/")
-      .filter((segment) => segment.length > 0);
-    let prefix = "";
-
-    for (const segment of segments) {
-      prefix = prefix.length > 0 ? `${prefix}/${segment}` : segment;
-      prefixes.add(prefix);
-    }
-  }
-
-  return prefixes;
+interface TrackedPathIndex {
+  readonly files: ReadonlySet<string>;
+  readonly directories: ReadonlySet<string>;
 }
 
-function pathConflictsWithTrackedPrefixes(
-  path: string,
-  trackedPrefixes: ReadonlySet<string>,
-): boolean {
-  const segments = path
+function splitPathSegments(path: string): string[] {
+  return path
     .trim()
     .split("/")
     .filter((segment) => segment.length > 0);
-  let prefix = "";
+}
 
-  for (const segment of segments) {
-    prefix = prefix.length > 0 ? `${prefix}/${segment}` : segment;
-    if (trackedPrefixes.has(prefix)) {
-      return true;
+function buildTrackedPathIndex(paths: readonly string[]): TrackedPathIndex {
+  const files = new Set<string>();
+  const directories = new Set<string>();
+
+  for (const path of paths) {
+    const segments = splitPathSegments(path);
+    if (segments.length === 0) continue;
+    files.add(segments.join("/"));
+
+    // Record only strict ancestor directories; the leaf is a file, not a dir.
+    let prefix = "";
+    for (let i = 0; i < segments.length - 1; i++) {
+      prefix = prefix.length > 0 ? `${prefix}/${segments[i]!}` : segments[i]!;
+      directories.add(prefix);
     }
+  }
+
+  return { files, directories };
+}
+
+// Reports a conflict only when an ignored path would collide with git's
+// checkout: same-path file collision, ignored file living at a path git wants
+// to populate as a directory, or an ancestor of the ignored path being a
+// tracked file (file/directory conflict).
+function pathConflictsWithTrackedIndex(path: string, index: TrackedPathIndex): boolean {
+  const segments = splitPathSegments(path);
+  if (segments.length === 0) return false;
+
+  const fullPath = segments.join("/");
+  if (index.files.has(fullPath)) return true;
+  if (index.directories.has(fullPath)) return true;
+
+  let prefix = "";
+  for (let i = 0; i < segments.length - 1; i++) {
+    prefix = prefix.length > 0 ? `${prefix}/${segments[i]!}` : segments[i]!;
+    if (index.files.has(prefix)) return true;
   }
 
   return false;
@@ -2371,9 +2385,9 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
                   return [];
                 }
 
-                const trackedPrefixes = buildTrackedPathPrefixes(trackedPaths);
+                const trackedIndex = buildTrackedPathIndex(trackedPaths);
                 return ignoredFiles.filter((path) =>
-                  pathConflictsWithTrackedPrefixes(path, trackedPrefixes),
+                  pathConflictsWithTrackedIndex(path, trackedIndex),
                 );
               }),
             );

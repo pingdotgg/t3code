@@ -393,8 +393,11 @@ export class GitCheckoutDirtyWorktreeError extends Schema.TaggedErrorClass<GitCh
   },
 ) {
   override get message(): string {
-    const fileList = this.conflictingFiles.join(", ");
-    return `Uncommitted changes block checkout to ${this.branch}: ${fileList}`;
+    // Use a newline-separated list so that file paths containing a
+    // `", "` sequence round-trip safely through the error message. The
+    // structured `conflictingFiles` field remains the authoritative source.
+    const fileList = this.conflictingFiles.map((file) => `  - ${file}`).join("\n");
+    return `Uncommitted changes block checkout to ${this.branch}:\n${fileList}`;
   }
 }
 

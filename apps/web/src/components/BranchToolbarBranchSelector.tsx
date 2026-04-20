@@ -55,7 +55,11 @@ function toBranchActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
 }
 
-const DIRTY_WORKTREE_ERROR_PATTERN = /Uncommitted changes block checkout to ([^:]+): (.+)/;
+// Matches the server-side message produced by `GitCheckoutDirtyWorktreeError`.
+// Files are emitted one per line prefixed with "  - ", so we can parse them
+// unambiguously even when a path contains a comma.
+const DIRTY_WORKTREE_ERROR_PATTERN =
+  /Uncommitted changes block checkout to ([^:\n]+):\n([\s\S]+)/;
 
 function readDirtyWorktreeDetails(
   error: unknown,
@@ -89,6 +93,8 @@ function readDirtyWorktreeDetails(
 }
 
 function parseDirtyWorktreeError(error: unknown): { branch: string; files: string[] } | null {
+  // Structured field is authoritative — preserves exact file paths regardless
+  // of whether they contain delimiters used by the human-readable message.
   const dirtyWorktree = readDirtyWorktreeDetails(error);
   if (dirtyWorktree) {
     return {
@@ -108,9 +114,14 @@ function parseDirtyWorktreeError(error: unknown): { branch: string; files: strin
         : String(error);
   const match = DIRTY_WORKTREE_ERROR_PATTERN.exec(detail);
   if (!match?.[1] || !match[2]) return null;
+  const files = match[2]
+    .split("\n")
+    .map((line) => line.replace(/^\s*-\s*/, "").trim())
+    .filter((line) => line.length > 0);
+  if (files.length === 0) return null;
   return {
-    branch: match[1],
-    files: match[2].split(", ").map((f) => f.trim()),
+    branch: match[1].trim(),
+    files,
   };
 }
 
@@ -454,11 +465,18 @@ export function BranchToolbarBranchSelector({
     ],
   );
   const [resolvedActiveBranch, setOptimisticBranch] = useState(canonicalActiveBranch);
-  useEffect(() => {
-    setOptimisticBranch(canonicalActiveBranch);
-  }, [canonicalActiveBranch]);
   const [isBranchActionPending, setIsBranchActionPending] = useState(false);
   const isBranchActionPendingRef = useRef(false);
+  // Preserve the optimistic value while a branch action is in flight. A mid-
+  // flight git status refresh can briefly report the pre-checkout branch, and
+  // syncing that back into `resolvedActiveBranch` would cause the trigger to
+  // flicker from the target branch → old branch → target branch. Only adopt
+  // the canonical value once the action settles (mimics useOptimistic/
+  // useTransition semantics).
+  useEffect(() => {
+    if (isBranchActionPending) return;
+    setOptimisticBranch(canonicalActiveBranch);
+  }, [canonicalActiveBranch, isBranchActionPending]);
   const shouldVirtualizeBranchList = filteredBranchPickerItems.length > 40;
   const totalBranchCount = branchesSearchData?.pages[0]?.totalCount ?? 0;
   const branchStatusText = isBranchesSearchPending

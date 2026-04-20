@@ -1843,6 +1843,48 @@ it.layer(TestLayer)("git integration", (it) => {
         expect(result.failure.dirtyWorktree?.conflictingFiles).toContain("ignored/output.log");
       }),
     );
+
+    it.effect(
+      "does not treat ignored files under a tracked directory as conflicts",
+      () =>
+        Effect.gen(function* () {
+          // Regression for a previous over-broad prefix match that flagged any
+          // ignored file whose ancestor directory was tracked (e.g. `src/` →
+          // `src/debug.log`) as a checkout conflict, preventing Stash & Switch
+          // from working in typical monorepos.
+          const tmp = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(tmp);
+          const core = yield* GitCore;
+
+          yield* writeTextFile(path.join(tmp, ".gitignore"), "*.log\n");
+          yield* makeDirectory(path.join(tmp, "src"));
+          yield* writeTextFile(path.join(tmp, "src/index.ts"), "export {};\n");
+          yield* git(tmp, ["add", "."]);
+          yield* git(tmp, ["commit", "-m", "add source tree"]);
+
+          yield* core.createBranch({ cwd: tmp, branch: "other" });
+          yield* writeTextFile(path.join(tmp, "src/index.ts"), "export const a = 1;\n");
+          yield* git(tmp, ["add", "src/index.ts"]);
+          yield* git(tmp, ["commit", "-m", "edit on initial branch"]);
+
+          // Ignored file lives under a tracked directory but is NOT itself a
+          // tracked path on `other` — it must not be flagged.
+          yield* writeTextFile(path.join(tmp, "src/debug.log"), "local logs\n");
+
+          const result = yield* Effect.result(
+            core.stashAndCheckout({ cwd: tmp, branch: "other" }),
+          );
+          expect(result._tag).toBe("Success");
+
+          const branches = yield* core.listBranches({ cwd: tmp });
+          expect(branches.branches.find((b) => b.current)!.name).toBe("other");
+
+          // The ignored file is preserved (stash -u does not include ignored).
+          expect(existsSync(path.join(tmp, "src/debug.log"))).toBe(true);
+
+          yield* core.checkoutBranch({ cwd: tmp, branch: initialBranch });
+        }),
+    );
   });
 
   describe("stashDrop", () => {
