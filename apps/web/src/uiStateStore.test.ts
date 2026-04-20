@@ -507,4 +507,56 @@ describe("uiStateStore persistence round-trip", () => {
       kB: false,
     });
   });
+
+  it("preserves manual project order across restart", () => {
+    const projectA = { key: "kOrderA", logicalKey: "kOrderA", cwd: "/order-projA" };
+    const projectB = { key: "kOrderB", logicalKey: "kOrderB", cwd: "/order-projB" };
+    const projectC = { key: "kOrderC", logicalKey: "kOrderC", cwd: "/order-projC" };
+
+    let state = syncProjects(makeUiState(), [projectA, projectB, projectC]);
+    state = reorderProjects(state, [projectC.key], [projectA.key]);
+    expect(state.projectOrder).toEqual([projectC.key, projectA.key, projectB.key]);
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.projectOrderCwds).toEqual([projectC.cwd, projectA.cwd, projectB.cwd]);
+
+    hydratePersistedProjectState(persisted);
+    // Fresh state (empty projectOrder) so syncProjects derives order from
+    // persistedProjectOrderCwds rather than the in-memory projectOrder branch.
+    const rehydrated = syncProjects(makeUiState(), [projectA, projectB, projectC]);
+
+    expect(rehydrated.projectOrder).toEqual([projectC.key, projectA.key, projectB.key]);
+  });
+
+  it("preserves expand state across restart when project's logical key changes", () => {
+    // After restart, in-memory previousExpandedById is empty, so the
+    // previousLogicalKey-to-state bridge in syncProjects cannot help. The
+    // persisted-cwd fallback is the only mechanism that can carry collapse
+    // state across a restart that also flips a project into a new logical
+    // group (e.g. late-arriving repo metadata). This locks in that path.
+    const physicalKey = "env-local:/lk-restart-proj";
+    const previousLogicalKey = physicalKey;
+    const cwd = "/lk-restart-proj";
+
+    let state = syncProjects(makeUiState(), [
+      { key: physicalKey, logicalKey: previousLogicalKey, cwd },
+    ]);
+    state = setProjectExpanded(state, previousLogicalKey, false);
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    hydratePersistedProjectState(persisted);
+
+    const nextLogicalKey = "lk-restart-canonical";
+    const rehydrated = syncProjects(makeUiState(), [
+      { key: physicalKey, logicalKey: nextLogicalKey, cwd },
+    ]);
+
+    expect(rehydrated.projectExpandedById[nextLogicalKey]).toBe(false);
+  });
 });
