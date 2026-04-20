@@ -32,6 +32,7 @@ import {
   type CodexAccountSnapshot,
 } from "./provider/codexAccount.ts";
 import { buildCodexInitializeParams, killCodexChildProcess } from "./provider/codexAppServer.ts";
+import { expandHomePath } from "./pathExpansion.ts";
 
 export { buildCodexInitializeParams } from "./provider/codexAppServer.ts";
 export { readCodexAccountSnapshot, resolveCodexModelForAccount } from "./provider/codexAccount.ts";
@@ -493,7 +494,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         cwd: resolvedCwd,
         env: {
           ...process.env,
-          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
+          ...(codexHomePath ? { CODEX_HOME: expandHomePath(codexHomePath) } : {}),
         },
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
@@ -1571,7 +1572,7 @@ function assertSupportedCodexCliVersion(input: {
     cwd: input.cwd,
     env: {
       ...process.env,
-      ...(input.homePath ? { CODEX_HOME: input.homePath } : {}),
+      ...(input.homePath ? { CODEX_HOME: expandHomePath(input.homePath) } : {}),
     },
     encoding: "utf8",
     shell: process.platform === "win32",
