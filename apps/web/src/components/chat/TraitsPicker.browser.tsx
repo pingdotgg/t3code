@@ -630,7 +630,11 @@ describe("TraitsPicker (Codex)", () => {
 
 // ── OpenCode TraitsPicker tests ───────────────────────────────────────
 
-async function mountOpenCodePicker(props: { model?: string; options?: OpenCodeModelOptions }) {
+async function mountOpenCodePicker(props: {
+  model?: string;
+  options?: OpenCodeModelOptions;
+  models?: ServerProvider["models"];
+}) {
   const threadId = ThreadId.make("thread-opencode-traits");
   const threadRef = scopeThreadRef(LOCAL_ENVIRONMENT_ID, threadId);
   const threadKey = scopedThreadKey(threadRef);
@@ -665,7 +669,7 @@ async function mountOpenCodePicker(props: { model?: string; options?: OpenCodeMo
   const screen = await render(
     <TraitsPicker
       provider="opencode"
-      models={findTestProvider("opencode").models}
+      models={props.models ?? findTestProvider("opencode").models}
       threadRef={threadRef}
       model={model}
       prompt=""
@@ -710,6 +714,41 @@ describe("TraitsPicker (OpenCode)", () => {
       const text = document.body.textContent ?? "";
       expect(text).toContain("Medium · Plan");
       expect(text).not.toContain("Medium · plan");
+    });
+  });
+
+  it("does not show a leading separator when only agent options are available", async () => {
+    await using _ = await mountOpenCodePicker({
+      model: "openai/gpt-5.4",
+      models: [
+        {
+          slug: "openai/gpt-5.4",
+          name: "OpenAI · GPT-5.4",
+          isCustom: false,
+          capabilities: {
+            reasoningEffortLevels: [],
+            supportsFastMode: false,
+            supportsThinkingToggle: false,
+            contextWindowOptions: [],
+            promptInjectedEffortLevels: [],
+            variantOptions: [],
+            agentOptions: [
+              { value: "build", label: "Build", isDefault: true },
+              { value: "plan", label: "Plan" },
+            ],
+          },
+        },
+      ],
+    });
+
+    await page.getByRole("button").click();
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Agent");
+      expect(text).toContain("Build (default)");
+      expect(text).toContain("Plan");
+      expect(document.querySelectorAll('[data-slot="menu-separator"]')).toHaveLength(0);
     });
   });
 });
