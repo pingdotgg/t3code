@@ -270,6 +270,31 @@ describe("uiStateStore pure functions", () => {
     expect(next.projectExpandedById[logicalKey]).toBe(false);
   });
 
+  it("syncProjects preserves expand state when a project's logical key changes", () => {
+    // Example: late-arriving repo metadata flips grouping identity from the
+    // physical key to a canonical repository key. The row did not actually
+    // change, so the user's collapse choice must carry over.
+    const physicalKey = "env-local:/repo/project";
+    const previousLogicalKey = physicalKey;
+    const nextLogicalKey = "repo-canonical-key";
+
+    const initial = syncProjects(makeUiState(), [
+      { key: physicalKey, logicalKey: previousLogicalKey, cwd: "/repo/project" },
+    ]);
+
+    expect(initial.projectExpandedById[previousLogicalKey]).toBe(true);
+
+    const afterCollapse = {
+      ...initial,
+      projectExpandedById: { [previousLogicalKey]: false },
+    };
+    const next = syncProjects(afterCollapse, [
+      { key: physicalKey, logicalKey: nextLogicalKey, cwd: "/repo/project" },
+    ]);
+
+    expect(next.projectExpandedById[nextLogicalKey]).toBe(false);
+  });
+
   it("syncThreads prunes missing thread UI state", () => {
     const thread1 = ThreadId.make("thread-1");
     const thread2 = ThreadId.make("thread-2");

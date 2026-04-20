@@ -57,6 +57,7 @@ const persistedExpandedProjectCwds = new Set<string>();
 const persistedProjectOrderCwds: string[] = [];
 const currentProjectCwdById = new Map<string, string>();
 const currentProjectCwdsByLogicalKey = new Map<string, string[]>();
+const currentLogicalKeyByPhysicalKey = new Map<string, string>();
 let legacyKeysCleanedUp = false;
 
 function readPersistedState(): UiState {
@@ -212,9 +213,12 @@ function nestedBooleanRecordsEqual(
 
 export function syncProjects(state: UiState, projects: readonly SyncProjectInput[]): UiState {
   const previousProjectCwdById = new Map(currentProjectCwdById);
+  const previousLogicalKeyByPhysicalKey = new Map(currentLogicalKeyByPhysicalKey);
   currentProjectCwdById.clear();
+  currentLogicalKeyByPhysicalKey.clear();
   for (const project of projects) {
     currentProjectCwdById.set(project.key, project.cwd);
+    currentLogicalKeyByPhysicalKey.set(project.key, project.logicalKey);
   }
   currentProjectCwdsByLogicalKey.clear();
   for (const project of projects) {
@@ -225,6 +229,23 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
       }
     } else {
       currentProjectCwdsByLogicalKey.set(project.logicalKey, [project.cwd]);
+    }
+  }
+  // Build reverse map: for each new logical key, which previous logical keys
+  // did its member projects live under? Lets us preserve expand state when a
+  // project's logical key changes (e.g. late-arriving repo metadata flips the
+  // group identity).
+  const previousLogicalKeysByNewLogicalKey = new Map<string, Set<string>>();
+  for (const project of projects) {
+    const previousLogicalKey = previousLogicalKeyByPhysicalKey.get(project.key);
+    if (!previousLogicalKey || previousLogicalKey === project.logicalKey) {
+      continue;
+    }
+    const set = previousLogicalKeysByNewLogicalKey.get(project.logicalKey);
+    if (set) {
+      set.add(previousLogicalKey);
+    } else {
+      previousLogicalKeysByNewLogicalKey.set(project.logicalKey, new Set([previousLogicalKey]));
     }
   }
   const cwdMappingChanged =
@@ -239,8 +260,21 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
   const mappedProjects = projects.map((project, index) => {
     if (!(project.logicalKey in nextExpandedById)) {
       const groupCwds = currentProjectCwdsByLogicalKey.get(project.logicalKey) ?? [project.cwd];
+      const fallbackFromPreviousLogicalKey = (() => {
+        const previousKeys = previousLogicalKeysByNewLogicalKey.get(project.logicalKey);
+        if (!previousKeys) {
+          return undefined;
+        }
+        for (const previousKey of previousKeys) {
+          if (previousKey in previousExpandedById) {
+            return previousExpandedById[previousKey];
+          }
+        }
+        return undefined;
+      })();
       const expanded =
         previousExpandedById[project.logicalKey] ??
+        fallbackFromPreviousLogicalKey ??
         (persistedExpandedProjectCwds.size > 0
           ? groupCwds.some((cwd) => persistedExpandedProjectCwds.has(cwd))
           : true);
