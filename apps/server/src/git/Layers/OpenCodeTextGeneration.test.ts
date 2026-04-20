@@ -17,7 +17,9 @@ const runtimeMock = vi.hoisted(() => {
     promptUrls: [] as string[],
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
-    promptResult: undefined as { data?: { info?: { structured?: unknown } } } | undefined,
+    promptResult: undefined as
+      | { data?: { info?: { error?: unknown }; parts?: Array<{ type: string; text?: string }> } }
+      | undefined,
   };
 
   return {
@@ -63,12 +65,15 @@ vi.mock("../../provider/opencodeRuntime.ts", async () => {
             return (
               runtimeMock.state.promptResult ?? {
                 data: {
-                  info: {
-                    structured: {
-                      subject: "Improve OpenCode reuse",
-                      body: "Reuse one server for the full action.",
+                  parts: [
+                    {
+                      type: "text",
+                      text: JSON.stringify({
+                        subject: "Improve OpenCode reuse",
+                        body: "Reuse one server for the full action.",
+                      }),
                     },
-                  },
+                  ],
                 },
               }
             );
@@ -198,7 +203,7 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationLive", (it) => 
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("returns a typed missing-output error when OpenCode omits info.structured", () =>
+  it.effect("returns a typed empty-output error when OpenCode returns no text parts", () =>
     Effect.gen(function* () {
       runtimeMock.state.promptResult = { data: {} };
       const textGeneration = yield* TextGeneration;
@@ -213,7 +218,67 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationLive", (it) => 
         })
         .pipe(Effect.flip);
 
-      expect(error.message).toContain("OpenCode returned no structured output.");
+      expect(error.message).toContain("OpenCode returned empty output.");
+    }),
+  );
+
+  it.effect("parses JSON returned as plain text output", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.promptResult = {
+        data: {
+          parts: [
+            {
+              type: "text",
+              text: 'Here is the result:\n{"subject":"Tighten OpenCode parsing","body":"Handle JSON text output locally."}',
+            },
+          ],
+        },
+      };
+      const textGeneration = yield* TextGeneration;
+
+      const result = yield* textGeneration.generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "feature/opencode-reuse",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+      });
+
+      expect(result).toEqual({
+        subject: "Tighten OpenCode parsing",
+        body: "Handle JSON text output locally.",
+      });
+    }),
+  );
+
+  it.effect("surfaces the upstream OpenCode structured-output error message", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.promptResult = {
+        data: {
+          info: {
+            error: {
+              name: "StructuredOutputError",
+              data: {
+                message: "Model did not produce structured output",
+                retries: 2,
+              },
+            },
+          },
+        },
+      };
+      const textGeneration = yield* TextGeneration;
+
+      const error = yield* textGeneration
+        .generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/opencode-reuse",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        })
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("Model did not produce structured output");
     }),
   );
 });

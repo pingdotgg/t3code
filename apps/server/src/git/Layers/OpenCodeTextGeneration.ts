@@ -19,10 +19,10 @@ import {
 } from "../Prompts.ts";
 import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
 import {
+  extractJsonObject,
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
-  toJsonSchemaObject,
 } from "../Utils.ts";
 import {
   createOpenCodeSdkClient,
@@ -34,6 +34,49 @@ import {
 } from "../../provider/opencodeRuntime.ts";
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL_MS = 30_000;
+
+function getOpenCodePromptErrorMessage(error: unknown): string | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const message =
+    "data" in error &&
+    error.data &&
+    typeof error.data === "object" &&
+    "message" in error.data &&
+    typeof error.data.message === "string"
+      ? error.data.message.trim()
+      : "";
+  if (message.length > 0) {
+    return message;
+  }
+
+  if ("name" in error && typeof error.name === "string") {
+    const name = error.name.trim();
+    return name.length > 0 ? name : null;
+  }
+
+  return null;
+}
+
+function getOpenCodeTextResponse(parts: ReadonlyArray<unknown> | undefined): string {
+  return (parts ?? [])
+    .flatMap((part) => {
+      if (!part || typeof part !== "object") {
+        return [];
+      }
+      if (!("type" in part) || part.type !== "text") {
+        return [];
+      }
+      if (!("text" in part) || typeof part.text !== "string") {
+        return [];
+      }
+      return [part.text];
+    })
+    .join("")
+    .trim();
+}
 
 interface SharedOpenCodeTextGenerationServerState {
   server: OpenCodeServerProcess | null;
@@ -245,17 +288,18 @@ const makeOpenCodeTextGeneration = Effect.gen(function* () {
             ...(input.modelSelection.options?.variant
               ? { variant: input.modelSelection.options.variant }
               : {}),
-            format: {
-              type: "json_schema",
-              schema: toJsonSchemaObject(input.outputSchemaJson) as Record<string, unknown>,
-            },
             parts: [{ type: "text", text: input.prompt }, ...fileParts],
           });
-          const structured = result.data?.info?.structured;
-          if (structured === undefined) {
-            throw new Error("OpenCode returned no structured output.");
+          const info = result.data?.info;
+          const errorMessage = getOpenCodePromptErrorMessage(info?.error);
+          if (errorMessage) {
+            throw new Error(errorMessage);
           }
-          return structured;
+          const rawText = getOpenCodeTextResponse(result.data?.parts);
+          if (rawText.length === 0) {
+            throw new Error("OpenCode returned empty output.");
+          }
+          return rawText;
         },
         catch: (cause) =>
           new TextGenerationError({
@@ -266,7 +310,7 @@ const makeOpenCodeTextGeneration = Effect.gen(function* () {
           }),
       });
 
-    const structuredOutput =
+    const rawOutput =
       settings.serverUrl.length > 0
         ? yield* runAgainstServer({ url: settings.serverUrl })
         : yield* Effect.acquireUseRelease(
@@ -278,7 +322,9 @@ const makeOpenCodeTextGeneration = Effect.gen(function* () {
             releaseSharedServer,
           );
 
-    return yield* Schema.decodeUnknownEffect(input.outputSchemaJson)(structuredOutput).pipe(
+    return yield* Schema.decodeEffect(Schema.fromJsonString(input.outputSchemaJson))(
+      extractJsonObject(rawOutput),
+    ).pipe(
       Effect.catchTag("SchemaError", (cause) =>
         Effect.fail(
           new TextGenerationError({
