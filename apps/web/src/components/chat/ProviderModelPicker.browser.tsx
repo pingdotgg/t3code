@@ -387,7 +387,7 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("shows the real copilot provider without the coming-soon copilot badge item", async () => {
+  it("shows only the real copilot provider in the sidebar", async () => {
     const providers: ReadonlyArray<ServerProvider> = [
       TEST_PROVIDERS[0]!,
       buildCopilotProvider([
