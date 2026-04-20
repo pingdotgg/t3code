@@ -42,14 +42,6 @@ const useShortcutModifierStateStore = create<{
     ),
 }));
 
-const useModelPickerOpenStore = create<{
-  open: boolean;
-  setOpen: (open: boolean) => void;
-}>((set) => ({
-  open: false,
-  setOpen: (open) => set((current) => (current.open === open ? current : { open })),
-}));
-
 export function useShortcutModifierState(): ShortcutModifierState {
   return useShortcutModifierStateStore((store) => store.state);
 }
@@ -101,12 +93,4 @@ export function clearShortcutModifierState(): void {
 
 export function readShortcutModifierState(): ShortcutModifierState {
   return useShortcutModifierStateStore.getState().state;
-}
-
-export function useModelPickerOpen(): boolean {
-  return useModelPickerOpenStore((store) => store.open);
-}
-
-export function setModelPickerOpen(open: boolean): void {
-  useModelPickerOpenStore.getState().setOpen(open);
 }

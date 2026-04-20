@@ -80,7 +80,8 @@ import {
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
-import { useModelPickerOpen, useShortcutModifierState } from "../shortcutModifierState";
+import { useModelPickerOpen } from "../modelPickerOpenState";
+import { useShortcutModifierState } from "../shortcutModifierState";
 import { useGitStatus } from "../lib/gitStatusState";
 import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";

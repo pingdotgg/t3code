@@ -17,7 +17,7 @@ import {
   getTriggerDisplayModelLabel,
   getTriggerDisplayModelName,
 } from "./providerIconUtils";
-import { setModelPickerOpen } from "../../shortcutModifierState";
+import { setModelPickerOpen } from "../../modelPickerOpenState";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   provider: ProviderKind;
