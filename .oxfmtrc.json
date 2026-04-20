@@ -13,5 +13,13 @@
     "apps/web/src/lib/vendor/qrcodegen.ts",
     "*.icon/**"
   ],
-  "sortPackageJson": {}
+  "sortPackageJson": {},
+  "overrides": [
+    {
+      "files": [".devcontainer/devcontainer.json"],
+      "options": {
+        "trailingComma": "none"
+      }
+    }
+  ]
 }
