@@ -39,6 +39,7 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   type ContextMenuItem,
   DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE,
   type DesktopUpdateState,
   type EnvironmentId,
   ProjectId,
@@ -1266,7 +1267,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const overrideKey = deriveProjectGroupingOverrideKey(member);
       setProjectGroupingTarget(member);
       setProjectGroupingSelection(
-        projectGroupingSettings.sidebarProjectGroupingOverrides[overrideKey] ?? "inherit",
+        projectGroupingSettings.sidebarProjectGroupingOverrides?.[overrideKey] ?? "inherit",
       );
     },
     [projectGroupingSettings.sidebarProjectGroupingOverrides],
@@ -2089,7 +2090,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 <SelectTrigger className="w-full" aria-label="Project grouping rule">
                   <SelectValue>
                     {projectGroupingSelection === "inherit"
-                      ? `Use global default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
+                      ? `Use global default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode ?? DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE]})`
                       : PROJECT_GROUPING_MODE_LABELS[projectGroupingSelection]}
                   </SelectValue>
                 </SelectTrigger>

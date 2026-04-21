@@ -1,5 +1,9 @@
 import { scopedProjectKey, scopeProjectRef } from "@marcode/client-runtime";
-import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@marcode/contracts";
+import {
+  DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE,
+  type ScopedProjectRef,
+  type SidebarProjectGroupingMode,
+} from "@marcode/contracts";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 import type { Project } from "./types";
 
@@ -70,8 +74,9 @@ export function resolveProjectGroupingMode(
   settings: ProjectGroupingSettings,
 ): SidebarProjectGroupingMode {
   return (
-    settings.sidebarProjectGroupingOverrides[deriveProjectGroupingOverrideKey(project)] ??
-    settings.sidebarProjectGroupingMode
+    settings.sidebarProjectGroupingOverrides?.[deriveProjectGroupingOverrideKey(project)] ??
+    settings.sidebarProjectGroupingMode ??
+    DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE
   );
 }
 
