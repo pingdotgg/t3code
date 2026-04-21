@@ -11,6 +11,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
   buildServerProvider,
+  nonEmptyTrimmed,
   parseGenericCliVersion,
   providerModelsFromSettings,
 } from "../providerSnapshot.ts";
@@ -204,10 +205,16 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
     }
 
     for (const model of Object.values(provider.models)) {
+      const name = nonEmptyTrimmed(model.name);
+      if (!name) {
+        continue;
+      }
+
+      const subProvider = nonEmptyTrimmed(provider.name);
       models.push({
         slug: `${provider.id}/${model.id}`,
-        name: model.name,
-        subProvider: provider.name,
+        name,
+        ...(subProvider ? { subProvider } : {}),
         isCustom: false,
         capabilities: openCodeCapabilitiesForModel({
           providerID: provider.id,
