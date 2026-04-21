@@ -19,6 +19,10 @@
       "types": "./src/protocol.ts",
       "import": "./src/protocol.ts"
     },
+    "./replay": {
+      "types": "./src/replay.ts",
+      "import": "./src/replay.ts"
+    },
     "./errors": {
       "types": "./src/errors.ts",
       "import": "./src/errors.ts"
