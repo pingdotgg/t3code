@@ -90,6 +90,7 @@ vi.mock("~/components/ui/toast", () => ({
     promise: toastPromiseSpy,
     update: toastUpdateSpy,
   },
+  stackedThreadToast: vi.fn((options: unknown) => options),
 }));
 
 vi.mock("~/editorPreferences", () => ({

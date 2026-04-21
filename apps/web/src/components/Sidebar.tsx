@@ -94,7 +94,7 @@ import {
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
-import { toastManager } from "./ui/toast";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { Kbd } from "./ui/kbd";
@@ -950,11 +950,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     },
     onError: (error) => {
-      toastManager.add({
-        type: "error",
-        title: "Failed to copy thread ID",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy thread ID",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
     },
   });
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{
@@ -968,11 +970,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     },
     onError: (error) => {
-      toastManager.add({
-        type: "error",
-        title: "Failed to copy path",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy path",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
     },
   });
   const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
@@ -989,11 +993,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     }
 
     void api.shell.openExternal(prUrl).catch((error) => {
-      toastManager.add({
-        type: "error",
-        title: "Unable to open PR link",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to open PR link",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
     });
   }, []);
   const sidebarThreads = useStore(
@@ -1299,72 +1305,73 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const memberProjectRef = scopeProjectRef(member.environmentId, member.id);
       const memberThreadCount = memberThreadCountByPhysicalKey.get(member.physicalProjectKey) ?? 0;
       if (memberThreadCount > 0) {
-        const warningToastId = toastManager.add({
-          type: "warning",
-          title: "Project is not empty",
-          description: "Delete all threads in this project before removing it.",
-          data: {
-            actionLayout: "stacked-end",
+        const warningToastId = toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Project is not empty",
+            description: "Delete all threads in this project before removing it.",
             actionVariant: "destructive",
-          },
-          actionProps: {
-            children: "Delete anyway",
-            onClick: () => {
-              void (async () => {
-                toastManager.close(warningToastId);
-                await new Promise<void>((resolve) => {
-                  window.setTimeout(resolve, 180);
-                });
+            actionProps: {
+              children: "Delete anyway",
+              onClick: () => {
+                void (async () => {
+                  toastManager.close(warningToastId);
+                  await new Promise<void>((resolve) => {
+                    window.setTimeout(resolve, 180);
+                  });
 
-                const latestProjectThreads = selectSidebarThreadsForProjectRefs(
-                  useStore.getState(),
-                  [memberProjectRef],
-                );
-                const confirmed = await api.dialogs.confirm(
-                  latestProjectThreads.length > 0
-                    ? [
-                        `Remove project "${member.name}" and delete its ${latestProjectThreads.length} thread${
-                          latestProjectThreads.length === 1 ? "" : "s"
-                        }?`,
-                        `Path: ${member.cwd}`,
-                        ...(member.environmentLabel
-                          ? [`Environment: ${member.environmentLabel}`]
-                          : []),
-                        "This permanently clears conversation history for those threads.",
-                        "This removes only this project entry.",
-                        "This action cannot be undone.",
-                      ].join("\n")
-                    : [
-                        `Remove project "${member.name}"?`,
-                        `Path: ${member.cwd}`,
-                        ...(member.environmentLabel
-                          ? [`Environment: ${member.environmentLabel}`]
-                          : []),
-                        "This removes only this project entry.",
-                      ].join("\n"),
-                );
-                if (!confirmed) {
-                  return;
-                }
+                  const latestProjectThreads = selectSidebarThreadsForProjectRefs(
+                    useStore.getState(),
+                    [memberProjectRef],
+                  );
+                  const confirmed = await api.dialogs.confirm(
+                    latestProjectThreads.length > 0
+                      ? [
+                          `Remove project "${member.name}" and delete its ${latestProjectThreads.length} thread${
+                            latestProjectThreads.length === 1 ? "" : "s"
+                          }?`,
+                          `Path: ${member.cwd}`,
+                          ...(member.environmentLabel
+                            ? [`Environment: ${member.environmentLabel}`]
+                            : []),
+                          "This permanently clears conversation history for those threads.",
+                          "This removes only this project entry.",
+                          "This action cannot be undone.",
+                        ].join("\n")
+                      : [
+                          `Remove project "${member.name}"?`,
+                          `Path: ${member.cwd}`,
+                          ...(member.environmentLabel
+                            ? [`Environment: ${member.environmentLabel}`]
+                            : []),
+                          "This removes only this project entry.",
+                        ].join("\n"),
+                  );
+                  if (!confirmed) {
+                    return;
+                  }
 
-                await removeProject(member, { force: true });
-              })().catch((error) => {
-                const message =
-                  error instanceof Error ? error.message : "Unknown error removing project.";
-                console.error("Failed to remove project", {
-                  projectId: member.id,
-                  environmentId: member.environmentId,
-                  error,
+                  await removeProject(member, { force: true });
+                })().catch((error) => {
+                  const message =
+                    error instanceof Error ? error.message : "Unknown error removing project.";
+                  console.error("Failed to remove project", {
+                    projectId: member.id,
+                    environmentId: member.environmentId,
+                    error,
+                  });
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: `Failed to remove "${member.name}"`,
+                      description: message,
+                    }),
+                  );
                 });
-                toastManager.add({
-                  type: "error",
-                  title: `Failed to remove "${member.name}"`,
-                  description: message,
-                });
-              });
+              },
             },
-          },
-        });
+          }),
+        );
         return;
       }
 
@@ -1388,11 +1395,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           environmentId: member.environmentId,
           error,
         });
-        toastManager.add({
-          type: "error",
-          title: `Failed to remove "${member.name}"`,
-          description: message,
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Failed to remove "${member.name}"`,
+            description: message,
+          }),
+        );
       }
     },
     [memberThreadCountByPhysicalKey, removeProject],
@@ -1705,11 +1714,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       try {
         await archiveThread(threadRef);
       } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: "Failed to archive thread",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to archive thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
       }
     },
     [archiveThread],
@@ -1757,11 +1768,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           title: trimmed,
         });
       } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: "Failed to rename thread",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to rename thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
       }
       finishRename();
     },
@@ -1794,11 +1807,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
     const api = readEnvironmentApi(projectRenameTarget.environmentId);
     if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Failed to rename project",
-        description: "Project API unavailable.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to rename project",
+          description: "Project API unavailable.",
+        }),
+      );
       return;
     }
 
@@ -1811,11 +1826,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
       closeProjectRenameDialog();
     } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Failed to rename project",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to rename project",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
     }
   }, [closeProjectRenameDialog, projectRenameTarget, projectRenameTitle]);
 
@@ -1885,11 +1902,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
       if (clicked === "copy-path") {
         if (!threadWorkspacePath) {
-          toastManager.add({
-            type: "error",
-            title: "Path unavailable",
-            description: "This thread does not have a workspace path to copy.",
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Path unavailable",
+              description: "This thread does not have a workspace path to copy.",
+            }),
+          );
           return;
         }
         copyPathToClipboard(threadWorkspacePath, { path: threadWorkspacePath });
@@ -3220,18 +3239,22 @@ export default function Sidebar() {
           if (!shouldToastDesktopUpdateActionResult(result)) return;
           const actionError = getDesktopUpdateActionError(result);
           if (!actionError) return;
-          toastManager.add({
-            type: "error",
-            title: "Could not download update",
-            description: actionError,
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not download update",
+              description: actionError,
+            }),
+          );
         })
         .catch((error) => {
-          toastManager.add({
-            type: "error",
-            title: "Could not start update download",
-            description: error instanceof Error ? error.message : "An unexpected error occurred.",
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not start update download",
+              description: error instanceof Error ? error.message : "An unexpected error occurred.",
+            }),
+          );
         });
       return;
     }
@@ -3247,18 +3270,22 @@ export default function Sidebar() {
           if (!shouldToastDesktopUpdateActionResult(result)) return;
           const actionError = getDesktopUpdateActionError(result);
           if (!actionError) return;
-          toastManager.add({
-            type: "error",
-            title: "Could not install update",
-            description: actionError,
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not install update",
+              description: actionError,
+            }),
+          );
         })
         .catch((error) => {
-          toastManager.add({
-            type: "error",
-            title: "Could not install update",
-            description: error instanceof Error ? error.message : "An unexpected error occurred.",
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not install update",
+              description: error instanceof Error ? error.message : "An unexpected error occurred.",
+            }),
+          );
         });
     }
   }, [desktopUpdateButtonAction, desktopUpdateButtonDisabled, desktopUpdateState]);

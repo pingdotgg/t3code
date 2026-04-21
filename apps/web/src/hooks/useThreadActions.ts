@@ -20,7 +20,7 @@ import {
 import { useTerminalStateStore } from "../terminalStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
-import { toastManager } from "../components/ui/toast";
+import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useSettings } from "./useSettings";
 
 export function useThreadActions() {
@@ -225,11 +225,13 @@ export function useThreadActions() {
           worktreePath: orphanedWorktreePath,
           error,
         });
-        toastManager.add({
-          type: "error",
-          title: "Thread deleted, but worktree removal failed",
-          description: `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`,
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Thread deleted, but worktree removal failed",
+            description: `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`,
+          }),
+        );
       }
     },
     [
