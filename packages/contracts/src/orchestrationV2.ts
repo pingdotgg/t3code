@@ -1,0 +1,937 @@
+import { Schema } from "effect";
+
+import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
+  CommandId,
+  ContextHandoffId,
+  EventId,
+  MessageId,
+  NodeId,
+  NonNegativeInt,
+  PlanId,
+  PositiveInt,
+  ProjectId,
+  ProviderSessionId,
+  ProviderThreadId,
+  ProviderTurnId,
+  RawEventId,
+  RunAttemptId,
+  RunId,
+  RuntimeItemId,
+  RuntimeRequestId,
+  ThreadId,
+  TrimmedNonEmptyString,
+  TurnItemId,
+} from "./baseSchemas.ts";
+import {
+  ChatAttachment,
+  ModelSelection,
+  ProviderApprovalDecision,
+  ProviderInteractionMode,
+  ProviderKind,
+  ProviderUserInputAnswers,
+  RuntimeMode,
+} from "./orchestration.ts";
+
+export const OrchestrationV2NativeRefStrength = Schema.Literals(["strong", "weak", "none"]);
+export type OrchestrationV2NativeRefStrength = typeof OrchestrationV2NativeRefStrength.Type;
+
+export const OrchestrationV2ProviderRef = Schema.Struct({
+  provider: ProviderKind,
+  nativeId: Schema.NullOr(TrimmedNonEmptyString),
+  strength: OrchestrationV2NativeRefStrength,
+  fingerprint: Schema.optional(TrimmedNonEmptyString),
+  ordinal: Schema.optional(NonNegativeInt),
+});
+export type OrchestrationV2ProviderRef = typeof OrchestrationV2ProviderRef.Type;
+
+export const OrchestrationV2SessionCapabilities = Schema.Struct({
+  supportsMultipleProviderThreadsPerSession: Schema.Boolean,
+  supportsModelSwitchInSession: Schema.Boolean,
+  supportsProviderSwitchingViaHandoff: Schema.Boolean,
+  supportsRuntimeModeSwitchInSession: Schema.Boolean,
+  pendingRequestsSurviveRestart: Schema.Boolean,
+});
+export type OrchestrationV2SessionCapabilities = typeof OrchestrationV2SessionCapabilities.Type;
+
+export const OrchestrationV2ThreadCapabilities = Schema.Struct({
+  canCreateEmptyThread: Schema.Boolean,
+  canReadThreadSnapshot: Schema.Boolean,
+  canRollbackThread: Schema.Boolean,
+  canForkThread: Schema.Boolean,
+  canForkFromTurn: Schema.Boolean,
+  canForkFromSubagentThread: Schema.Boolean,
+  exposesNativeThreadId: Schema.Boolean,
+});
+export type OrchestrationV2ThreadCapabilities = typeof OrchestrationV2ThreadCapabilities.Type;
+
+export const OrchestrationV2TurnCapabilities = Schema.Struct({
+  exposesNativeTurnId: Schema.Boolean,
+  emitsTurnStarted: Schema.Boolean,
+  emitsTurnCompleted: Schema.Boolean,
+  supportsInterrupt: Schema.Boolean,
+  supportsActiveSteering: Schema.Boolean,
+  supportsSteeringByInterruptRestart: Schema.Boolean,
+  supportsQueuedMessages: Schema.Boolean,
+  terminalStatusQuality: Schema.Literals(["strong", "weak", "none"]),
+});
+export type OrchestrationV2TurnCapabilities = typeof OrchestrationV2TurnCapabilities.Type;
+
+export const OrchestrationV2StreamingCapabilities = Schema.Struct({
+  streamsAssistantText: Schema.Boolean,
+  streamsReasoning: Schema.Boolean,
+  streamsToolOutput: Schema.Boolean,
+  streamsPlanText: Schema.Boolean,
+  emitsMessageCompleted: Schema.Boolean,
+});
+export type OrchestrationV2StreamingCapabilities = typeof OrchestrationV2StreamingCapabilities.Type;
+
+export const OrchestrationV2ToolCapabilities = Schema.Struct({
+  exposesToolItemIds: Schema.Boolean,
+  emitsToolStarted: Schema.Boolean,
+  emitsToolCompleted: Schema.Boolean,
+  emitsToolOutput: Schema.Boolean,
+  supportsMcpTools: Schema.Boolean,
+  supportsDynamicToolCallbacks: Schema.Boolean,
+});
+export type OrchestrationV2ToolCapabilities = typeof OrchestrationV2ToolCapabilities.Type;
+
+export const OrchestrationV2ApprovalCapabilities = Schema.Struct({
+  supportsCommandApproval: Schema.Boolean,
+  supportsFileReadApproval: Schema.Boolean,
+  supportsFileChangeApproval: Schema.Boolean,
+  supportsApplyPatchApproval: Schema.Boolean,
+  approvalsHaveNativeRequestIds: Schema.Boolean,
+  approvalCallbacksAreLiveOnly: Schema.Boolean,
+  approvalsCanOriginateFromSubagents: Schema.Boolean,
+});
+export type OrchestrationV2ApprovalCapabilities = typeof OrchestrationV2ApprovalCapabilities.Type;
+
+export const OrchestrationV2PlanningCapabilities = Schema.Struct({
+  emitsPlanUpdated: Schema.Boolean,
+  emitsTodoList: Schema.Boolean,
+  emitsProposedPlan: Schema.Boolean,
+  supportsStructuredQuestions: Schema.Boolean,
+  planDeltasHaveItemIds: Schema.Boolean,
+});
+export type OrchestrationV2PlanningCapabilities = typeof OrchestrationV2PlanningCapabilities.Type;
+
+export const OrchestrationV2SubagentCapabilities = Schema.Struct({
+  supportsSubagents: Schema.Boolean,
+  exposesSubagentThreadIds: Schema.Boolean,
+  emitsSubagentLifecycle: Schema.Boolean,
+  canWaitForSubagents: Schema.Boolean,
+  canCloseSubagents: Schema.Boolean,
+  canForkSubagentThread: Schema.Boolean,
+});
+export type OrchestrationV2SubagentCapabilities = typeof OrchestrationV2SubagentCapabilities.Type;
+
+export const OrchestrationV2ContextCapabilities = Schema.Struct({
+  acceptsSystemContext: Schema.Boolean,
+  acceptsDeveloperContext: Schema.Boolean,
+  acceptsSyntheticUserContext: Schema.Boolean,
+  canGenerateSummaries: Schema.Boolean,
+  canConsumeHandoffSummaries: Schema.Boolean,
+  supportsDeltaHandoff: Schema.Boolean,
+  supportsFullThreadHandoff: Schema.Boolean,
+  maxRecommendedHandoffChars: Schema.NullOr(PositiveInt),
+});
+export type OrchestrationV2ContextCapabilities = typeof OrchestrationV2ContextCapabilities.Type;
+
+export const OrchestrationV2CheckpointCapabilities = Schema.Struct({
+  appCanCheckpointFilesystem: Schema.Boolean,
+  supportsNestedCheckpointScopes: Schema.Boolean,
+  providerCanRollbackConversation: Schema.Boolean,
+  providerRollbackReturnsSnapshot: Schema.Boolean,
+  providerCanReadConversationSnapshot: Schema.Boolean,
+});
+export type OrchestrationV2CheckpointCapabilities =
+  typeof OrchestrationV2CheckpointCapabilities.Type;
+
+export const OrchestrationV2IdentityCapabilities = Schema.Struct({
+  nativeThreadIds: OrchestrationV2NativeRefStrength,
+  nativeTurnIds: OrchestrationV2NativeRefStrength,
+  nativeItemIds: OrchestrationV2NativeRefStrength,
+  nativeRequestIds: OrchestrationV2NativeRefStrength,
+});
+export type OrchestrationV2IdentityCapabilities = typeof OrchestrationV2IdentityCapabilities.Type;
+
+export const OrchestrationV2ProviderCapabilities = Schema.Struct({
+  sessions: OrchestrationV2SessionCapabilities,
+  threads: OrchestrationV2ThreadCapabilities,
+  turns: OrchestrationV2TurnCapabilities,
+  streaming: OrchestrationV2StreamingCapabilities,
+  tools: OrchestrationV2ToolCapabilities,
+  approvals: OrchestrationV2ApprovalCapabilities,
+  planning: OrchestrationV2PlanningCapabilities,
+  subagents: OrchestrationV2SubagentCapabilities,
+  context: OrchestrationV2ContextCapabilities,
+  checkpointing: OrchestrationV2CheckpointCapabilities,
+  identity: OrchestrationV2IdentityCapabilities,
+});
+export type OrchestrationV2ProviderCapabilities = typeof OrchestrationV2ProviderCapabilities.Type;
+
+export const OrchestrationV2AppThread = Schema.Struct({
+  id: ThreadId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  defaultProvider: ProviderKind,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  activeProviderThreadId: Schema.NullOr(ProviderThreadId),
+  forkedFrom: Schema.NullOr(
+    Schema.Union([
+      Schema.Struct({ type: Schema.Literal("run"), threadId: ThreadId, runId: RunId }),
+      Schema.Struct({ type: Schema.Literal("node"), nodeId: NodeId }),
+      Schema.Struct({
+        type: Schema.Literal("provider_thread"),
+        providerThreadId: ProviderThreadId,
+        providerTurnId: Schema.optional(ProviderTurnId),
+      }),
+    ]),
+  ),
+  createdAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
+  archivedAt: Schema.NullOr(Schema.DateTimeUtc),
+  deletedAt: Schema.NullOr(Schema.DateTimeUtc),
+});
+export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
+
+export const OrchestrationV2RunStatus = Schema.Literals([
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+  "completed",
+  "interrupted",
+  "failed",
+  "cancelled",
+  "rolled_back",
+]);
+export type OrchestrationV2RunStatus = typeof OrchestrationV2RunStatus.Type;
+
+export const OrchestrationV2Run = Schema.Struct({
+  id: RunId,
+  threadId: ThreadId,
+  ordinal: PositiveInt,
+  provider: ProviderKind,
+  providerThreadId: Schema.NullOr(ProviderThreadId),
+  userMessageId: MessageId,
+  rootNodeId: Schema.NullOr(NodeId),
+  activeAttemptId: Schema.NullOr(RunAttemptId),
+  status: OrchestrationV2RunStatus,
+  requestedAt: Schema.DateTimeUtc,
+  startedAt: Schema.NullOr(Schema.DateTimeUtc),
+  completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  checkpointId: Schema.NullOr(CheckpointId),
+  contextHandoffId: Schema.NullOr(ContextHandoffId),
+  sourcePlanRef: Schema.optional(
+    Schema.Struct({
+      threadId: ThreadId,
+      planId: PlanId,
+    }),
+  ),
+});
+export type OrchestrationV2Run = typeof OrchestrationV2Run.Type;
+
+export const OrchestrationV2RunAttempt = Schema.Struct({
+  id: RunAttemptId,
+  runId: RunId,
+  attemptOrdinal: PositiveInt,
+  rootNodeId: NodeId,
+  provider: ProviderKind,
+  providerThreadId: ProviderThreadId,
+  providerTurnId: Schema.NullOr(ProviderTurnId),
+  reason: Schema.Literals(["initial", "steering_restart", "retry", "provider_recovery"]),
+  status: Schema.Literals([
+    "pending",
+    "running",
+    "completed",
+    "interrupted",
+    "failed",
+    "cancelled",
+    "superseded",
+  ]),
+  startedAt: Schema.NullOr(Schema.DateTimeUtc),
+  completedAt: Schema.NullOr(Schema.DateTimeUtc),
+});
+export type OrchestrationV2RunAttempt = typeof OrchestrationV2RunAttempt.Type;
+
+export const OrchestrationV2ExecutionNode = Schema.Struct({
+  id: NodeId,
+  threadId: ThreadId,
+  runId: Schema.NullOr(RunId),
+  parentNodeId: Schema.NullOr(NodeId),
+  rootNodeId: NodeId,
+  kind: Schema.Literals([
+    "root_turn",
+    "assistant_message",
+    "reasoning",
+    "plan",
+    "todo_list",
+    "tool_call",
+    "approval_request",
+    "user_input_request",
+    "subagent",
+    "hook",
+    "system",
+  ]),
+  status: Schema.Literals([
+    "pending",
+    "running",
+    "waiting",
+    "completed",
+    "interrupted",
+    "failed",
+    "cancelled",
+    "rolled_back",
+  ]),
+  countsForRun: Schema.Boolean,
+  providerThreadId: Schema.NullOr(ProviderThreadId),
+  providerTurnId: Schema.NullOr(ProviderTurnId),
+  runtimeItemId: Schema.NullOr(RuntimeItemId),
+  runtimeRequestId: Schema.NullOr(RuntimeRequestId),
+  checkpointScopeId: Schema.NullOr(CheckpointScopeId),
+  startedAt: Schema.NullOr(Schema.DateTimeUtc),
+  completedAt: Schema.NullOr(Schema.DateTimeUtc),
+});
+export type OrchestrationV2ExecutionNode = typeof OrchestrationV2ExecutionNode.Type;
+
+export const OrchestrationV2CheckpointScope = Schema.Struct({
+  id: CheckpointScopeId,
+  threadId: ThreadId,
+  runId: Schema.NullOr(RunId),
+  nodeId: NodeId,
+  parentScopeId: Schema.NullOr(CheckpointScopeId),
+  providerThreadId: Schema.NullOr(ProviderThreadId),
+  kind: Schema.Literals(["root_run", "subagent", "tool", "provider_thread", "manual"]),
+  ordinalWithinParent: NonNegativeInt,
+  advancesAppRunCount: Schema.Boolean,
+  cwd: TrimmedNonEmptyString,
+  createdAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2CheckpointScope = typeof OrchestrationV2CheckpointScope.Type;
+
+export const OrchestrationV2ProviderSession = Schema.Struct({
+  id: ProviderSessionId,
+  provider: ProviderKind,
+  status: Schema.Literals(["starting", "ready", "running", "waiting", "stopped", "error"]),
+  cwd: TrimmedNonEmptyString,
+  model: Schema.NullOr(TrimmedNonEmptyString),
+  capabilities: OrchestrationV2ProviderCapabilities,
+  createdAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
+  lastError: Schema.NullOr(Schema.String),
+});
+export type OrchestrationV2ProviderSession = typeof OrchestrationV2ProviderSession.Type;
+
+export const OrchestrationV2ProviderThread = Schema.Struct({
+  id: ProviderThreadId,
+  provider: ProviderKind,
+  providerSessionId: Schema.NullOr(ProviderSessionId),
+  appThreadId: Schema.NullOr(ThreadId),
+  ownerNodeId: Schema.NullOr(NodeId),
+  nativeThreadRef: Schema.NullOr(OrchestrationV2ProviderRef),
+  status: Schema.Literals(["not_loaded", "idle", "active", "archived", "closed", "error"]),
+  firstRunOrdinal: Schema.NullOr(PositiveInt),
+  lastRunOrdinal: Schema.NullOr(PositiveInt),
+  handoffIds: Schema.Array(ContextHandoffId),
+  forkedFrom: Schema.NullOr(
+    Schema.Struct({
+      providerThreadId: ProviderThreadId,
+      providerTurnId: Schema.optional(ProviderTurnId),
+      checkpointId: Schema.optional(CheckpointId),
+    }),
+  ),
+  createdAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2ProviderThread = typeof OrchestrationV2ProviderThread.Type;
+
+export const OrchestrationV2ContextHandoff = Schema.Struct({
+  id: ContextHandoffId,
+  threadId: ThreadId,
+  targetRunId: RunId,
+  fromProviderThreadIds: Schema.Array(ProviderThreadId),
+  toProviderThreadId: ProviderThreadId,
+  coveredRunOrdinals: Schema.Struct({
+    from: PositiveInt,
+    to: PositiveInt,
+  }),
+  strategy: Schema.Literals([
+    "delta_since_target_last_seen",
+    "full_thread_summary",
+    "checkpoint_summary",
+    "manual_context",
+  ]),
+  status: Schema.Literals(["pending", "ready", "failed", "superseded"]),
+  summaryMessageId: Schema.NullOr(MessageId),
+  summaryText: Schema.String,
+  createdByProvider: Schema.NullOr(ProviderKind),
+  createdAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2ContextHandoff = typeof OrchestrationV2ContextHandoff.Type;
+
+export const OrchestrationV2ProviderTurn = Schema.Struct({
+  id: ProviderTurnId,
+  providerThreadId: ProviderThreadId,
+  nodeId: NodeId,
+  runAttemptId: Schema.NullOr(RunAttemptId),
+  nativeTurnRef: Schema.NullOr(OrchestrationV2ProviderRef),
+  ordinal: PositiveInt,
+  status: Schema.Literals([
+    "pending",
+    "running",
+    "completed",
+    "interrupted",
+    "failed",
+    "cancelled",
+  ]),
+  startedAt: Schema.NullOr(Schema.DateTimeUtc),
+  completedAt: Schema.NullOr(Schema.DateTimeUtc),
+});
+export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
+
+export const OrchestrationV2RuntimeItem = Schema.Struct({
+  id: RuntimeItemId,
+  nodeId: NodeId,
+  providerTurnId: Schema.NullOr(ProviderTurnId),
+  nativeItemRef: Schema.NullOr(OrchestrationV2ProviderRef),
+  ordinal: PositiveInt,
+  kind: Schema.Literals([
+    "assistant_message",
+    "reasoning",
+    "plan",
+    "todo_list",
+    "command_execution",
+    "file_change",
+    "mcp_tool_call",
+    "dynamic_tool_call",
+    "collab_agent_tool_call",
+    "web_search",
+    "unknown",
+  ]),
+  status: Schema.Literals(["pending", "running", "completed", "failed", "cancelled"]),
+  title: Schema.NullOr(Schema.String),
+  detail: Schema.NullOr(Schema.String),
+});
+export type OrchestrationV2RuntimeItem = typeof OrchestrationV2RuntimeItem.Type;
+
+export const OrchestrationV2RuntimeRequest = Schema.Struct({
+  id: RuntimeRequestId,
+  nodeId: NodeId,
+  providerTurnId: Schema.NullOr(ProviderTurnId),
+  runtimeItemId: Schema.NullOr(RuntimeItemId),
+  nativeRequestRef: Schema.NullOr(OrchestrationV2ProviderRef),
+  kind: Schema.Literals([
+    "command_approval",
+    "file_read_approval",
+    "file_change_approval",
+    "dynamic_tool_call",
+    "user_input",
+    "auth_refresh",
+  ]),
+  status: Schema.Literals(["pending", "resolved", "expired", "cancelled"]),
+  responseCapability: Schema.Union([
+    Schema.Struct({ type: Schema.Literal("live"), providerSessionId: ProviderSessionId }),
+    Schema.Struct({ type: Schema.Literal("not_resumable"), reason: Schema.String }),
+  ]),
+  createdAt: Schema.DateTimeUtc,
+  resolvedAt: Schema.NullOr(Schema.DateTimeUtc),
+});
+export type OrchestrationV2RuntimeRequest = typeof OrchestrationV2RuntimeRequest.Type;
+
+export const OrchestrationV2ConversationMessage = Schema.Struct({
+  id: MessageId,
+  threadId: ThreadId,
+  runId: Schema.NullOr(RunId),
+  nodeId: Schema.NullOr(NodeId),
+  role: Schema.Literals(["user", "assistant", "system"]),
+  text: Schema.String,
+  attachments: Schema.Array(ChatAttachment),
+  streaming: Schema.Boolean,
+  createdAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2ConversationMessage = typeof OrchestrationV2ConversationMessage.Type;
+
+export const OrchestrationV2PlanArtifact = Schema.Struct({
+  id: PlanId,
+  threadId: ThreadId,
+  runId: Schema.NullOr(RunId),
+  nodeId: NodeId,
+  kind: Schema.Literals(["proposed_plan", "todo_list", "questions"]),
+  status: Schema.Literals(["draft", "active", "completed", "superseded"]),
+  markdown: Schema.optional(Schema.String),
+  steps: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: TrimmedNonEmptyString,
+        text: TrimmedNonEmptyString,
+        status: Schema.Literals(["pending", "running", "completed"]),
+      }),
+    ),
+  ),
+  questions: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: TrimmedNonEmptyString,
+        header: TrimmedNonEmptyString,
+        question: TrimmedNonEmptyString,
+        options: Schema.Array(
+          Schema.Struct({
+            label: TrimmedNonEmptyString,
+            description: TrimmedNonEmptyString,
+          }),
+        ),
+      }),
+    ),
+  ),
+});
+export type OrchestrationV2PlanArtifact = typeof OrchestrationV2PlanArtifact.Type;
+
+export const OrchestrationV2CheckpointFileSummary = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  kind: TrimmedNonEmptyString,
+  additions: NonNegativeInt,
+  deletions: NonNegativeInt,
+});
+export type OrchestrationV2CheckpointFileSummary = typeof OrchestrationV2CheckpointFileSummary.Type;
+
+export const OrchestrationV2Checkpoint = Schema.Struct({
+  id: CheckpointId,
+  threadId: ThreadId,
+  scopeId: CheckpointScopeId,
+  runId: Schema.NullOr(RunId),
+  nodeId: NodeId,
+  parentCheckpointId: Schema.NullOr(CheckpointId),
+  ordinalWithinScope: PositiveInt,
+  appRunOrdinal: Schema.NullOr(PositiveInt),
+  ref: CheckpointRef,
+  status: Schema.Literals(["ready", "missing", "error"]),
+  files: Schema.Array(OrchestrationV2CheckpointFileSummary),
+  capturedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2Checkpoint = typeof OrchestrationV2Checkpoint.Type;
+
+export const OrchestrationV2TurnItemStatus = Schema.Literals([
+  "pending",
+  "running",
+  "waiting",
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+export type OrchestrationV2TurnItemStatus = typeof OrchestrationV2TurnItemStatus.Type;
+
+const OrchestrationV2TurnItemBaseFields = {
+  id: TurnItemId,
+  threadId: ThreadId,
+  runId: Schema.NullOr(RunId),
+  nodeId: Schema.NullOr(NodeId),
+  providerThreadId: Schema.NullOr(ProviderThreadId),
+  providerTurnId: Schema.NullOr(ProviderTurnId),
+  runtimeItemId: Schema.NullOr(RuntimeItemId),
+  parentItemId: Schema.NullOr(TurnItemId),
+  ordinal: NonNegativeInt,
+  status: OrchestrationV2TurnItemStatus,
+  title: Schema.NullOr(Schema.String),
+  startedAt: Schema.NullOr(Schema.DateTimeUtc),
+  completedAt: Schema.NullOr(Schema.DateTimeUtc),
+  updatedAt: Schema.DateTimeUtc,
+} as const;
+
+export const OrchestrationV2FileSearchResult = Schema.Struct({
+  fileName: TrimmedNonEmptyString,
+  line: Schema.optional(PositiveInt),
+  column: Schema.optional(PositiveInt),
+  preview: Schema.optional(Schema.String),
+});
+export type OrchestrationV2FileSearchResult = typeof OrchestrationV2FileSearchResult.Type;
+
+export const OrchestrationV2WebSearchResult = Schema.Struct({
+  title: Schema.optional(Schema.String),
+  url: Schema.optional(TrimmedNonEmptyString),
+  snippet: Schema.optional(Schema.String),
+});
+export type OrchestrationV2WebSearchResult = typeof OrchestrationV2WebSearchResult.Type;
+
+export const OrchestrationV2TurnItem = Schema.Union([
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("user_message"),
+    messageId: MessageId,
+    text: Schema.String,
+    attachments: Schema.Array(ChatAttachment),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("assistant_message"),
+    messageId: MessageId,
+    text: Schema.String,
+    streaming: Schema.Boolean,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("reasoning"),
+    text: Schema.String,
+    streaming: Schema.Boolean,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("plan"),
+    planId: PlanId,
+    planKind: Schema.Literals(["proposed_plan", "todo_list", "questions"]),
+    markdown: Schema.optional(Schema.String),
+    steps: Schema.optional(
+      Schema.Array(
+        Schema.Struct({
+          id: TrimmedNonEmptyString,
+          text: TrimmedNonEmptyString,
+          status: Schema.Literals(["pending", "running", "completed"]),
+        }),
+      ),
+    ),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("file_change"),
+    fileName: TrimmedNonEmptyString,
+    additions: Schema.optional(NonNegativeInt),
+    deletions: Schema.optional(NonNegativeInt),
+    diffStr: Schema.optional(Schema.String),
+    oldStr: Schema.optional(Schema.String),
+    newStr: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("command_execution"),
+    input: Schema.String,
+    output: Schema.optional(Schema.String),
+    exitCode: Schema.optional(Schema.Int),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("file_search"),
+    pattern: Schema.optional(Schema.String),
+    results: Schema.optional(Schema.Array(OrchestrationV2FileSearchResult)),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("web_search"),
+    patterns: Schema.optional(Schema.Array(Schema.String)),
+    results: Schema.optional(Schema.Array(OrchestrationV2WebSearchResult)),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("approval_request"),
+    requestId: RuntimeRequestId,
+    requestKind: Schema.Literals([
+      "command_approval",
+      "file_read_approval",
+      "file_change_approval",
+      "dynamic_tool_call",
+      "user_input",
+      "auth_refresh",
+    ]),
+    prompt: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("checkpoint"),
+    checkpointId: CheckpointId,
+    scopeId: CheckpointScopeId,
+    files: Schema.Array(OrchestrationV2CheckpointFileSummary),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("compaction"),
+    provider: Schema.NullOr(ProviderKind),
+    summary: Schema.optional(Schema.String),
+    beforeTokenCount: Schema.optional(NonNegativeInt),
+    afterTokenCount: Schema.optional(NonNegativeInt),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("handoff"),
+    contextHandoffId: ContextHandoffId,
+    fromProviderThreadIds: Schema.Array(ProviderThreadId),
+    toProviderThreadId: ProviderThreadId,
+    fromProviders: Schema.Array(ProviderKind),
+    toProvider: ProviderKind,
+    strategy: Schema.Literals([
+      "delta_since_target_last_seen",
+      "full_thread_summary",
+      "checkpoint_summary",
+      "manual_context",
+    ]),
+    summary: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("fork"),
+    source: Schema.Union([
+      Schema.Struct({ type: Schema.Literal("run"), threadId: ThreadId, runId: RunId }),
+      Schema.Struct({ type: Schema.Literal("node"), nodeId: NodeId }),
+      Schema.Struct({
+        type: Schema.Literal("provider_thread"),
+        providerThreadId: ProviderThreadId,
+        providerTurnId: Schema.optional(ProviderTurnId),
+      }),
+    ]),
+    targetThreadId: ThreadId,
+    providerThreadId: Schema.optional(ProviderThreadId),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("dynamic_tool"),
+    toolName: Schema.NullOr(TrimmedNonEmptyString),
+    input: Schema.Unknown,
+    output: Schema.optional(Schema.Unknown),
+  }),
+]);
+export type OrchestrationV2TurnItem = typeof OrchestrationV2TurnItem.Type;
+
+export const OrchestrationV2RawProviderEvent = Schema.Struct({
+  id: RawEventId,
+  provider: ProviderKind,
+  providerSessionId: ProviderSessionId,
+  sequence: PositiveInt,
+  direction: Schema.Literals(["incoming", "outgoing"]),
+  messageKind: Schema.Literals(["request", "response", "notification", "error"]),
+  method: Schema.NullOr(TrimmedNonEmptyString),
+  jsonRpcId: Schema.NullOr(Schema.Union([Schema.String, Schema.Number])),
+  payload: Schema.Unknown,
+  observedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2RawProviderEvent = typeof OrchestrationV2RawProviderEvent.Type;
+
+const OrchestrationV2EventBase = Schema.Struct({
+  id: EventId,
+  threadId: ThreadId,
+  runId: Schema.optional(RunId),
+  nodeId: Schema.optional(NodeId),
+  provider: Schema.optional(ProviderKind),
+  rawEventId: Schema.optional(RawEventId),
+  occurredAt: Schema.DateTimeUtc,
+});
+
+export const OrchestrationV2DomainEvent = Schema.Union([
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("thread.created"),
+    payload: OrchestrationV2AppThread,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run.created"),
+    payload: OrchestrationV2Run,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run.updated"),
+    payload: OrchestrationV2Run,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run-attempt.created"),
+    payload: OrchestrationV2RunAttempt,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("node.updated"),
+    payload: OrchestrationV2ExecutionNode,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("provider-thread.updated"),
+    payload: OrchestrationV2ProviderThread,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("provider-turn.updated"),
+    payload: OrchestrationV2ProviderTurn,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("runtime-item.updated"),
+    payload: OrchestrationV2RuntimeItem,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("runtime-request.updated"),
+    payload: OrchestrationV2RuntimeRequest,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("message.updated"),
+    payload: OrchestrationV2ConversationMessage,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("plan.updated"),
+    payload: OrchestrationV2PlanArtifact,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("checkpoint-scope.created"),
+    payload: OrchestrationV2CheckpointScope,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("checkpoint.captured"),
+    payload: OrchestrationV2Checkpoint,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("context-handoff.updated"),
+    payload: OrchestrationV2ContextHandoff,
+  }),
+]);
+export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
+
+export const OrchestrationV2ThreadProjection = Schema.Struct({
+  thread: OrchestrationV2AppThread,
+  runs: Schema.Array(OrchestrationV2Run),
+  attempts: Schema.Array(OrchestrationV2RunAttempt),
+  nodes: Schema.Array(OrchestrationV2ExecutionNode),
+  providerSessions: Schema.Array(OrchestrationV2ProviderSession),
+  providerThreads: Schema.Array(OrchestrationV2ProviderThread),
+  providerTurns: Schema.Array(OrchestrationV2ProviderTurn),
+  runtimeItems: Schema.Array(OrchestrationV2RuntimeItem),
+  runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequest),
+  messages: Schema.Array(OrchestrationV2ConversationMessage),
+  plans: Schema.Array(OrchestrationV2PlanArtifact),
+  turnItems: Schema.Array(OrchestrationV2TurnItem),
+  checkpointScopes: Schema.Array(OrchestrationV2CheckpointScope),
+  checkpoints: Schema.Array(OrchestrationV2Checkpoint),
+  contextHandoffs: Schema.Array(OrchestrationV2ContextHandoff),
+  updatedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
+
+export const OrchestrationV2Command = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("thread.create"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    projectId: ProjectId,
+    title: TrimmedNonEmptyString,
+    modelSelection: ModelSelection,
+    runtimeMode: RuntimeMode,
+    interactionMode: ProviderInteractionMode,
+    branch: Schema.NullOr(TrimmedNonEmptyString),
+    worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("message.dispatch"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageId: MessageId,
+    text: Schema.String,
+    attachments: Schema.Array(ChatAttachment),
+    modelSelection: Schema.optional(ModelSelection),
+    dispatchMode: Schema.Union([
+      Schema.Struct({ type: Schema.Literal("steer_active"), targetRunId: RunId }),
+      Schema.Struct({ type: Schema.Literal("restart_active"), targetRunId: RunId }),
+      Schema.Struct({ type: Schema.Literal("queue_after_active") }),
+      Schema.Struct({ type: Schema.Literal("start_immediately") }),
+    ]),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("run.interrupt"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("runtime-request.respond"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    requestId: RuntimeRequestId,
+    decision: Schema.optional(ProviderApprovalDecision),
+    answers: Schema.optional(ProviderUserInputAnswers),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("checkpoint.rollback"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    scopeId: CheckpointScopeId,
+    checkpointId: CheckpointId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.fork"),
+    commandId: CommandId,
+    source: Schema.Union([
+      Schema.Struct({ type: Schema.Literal("run"), threadId: ThreadId, runId: RunId }),
+      Schema.Struct({ type: Schema.Literal("node"), nodeId: NodeId }),
+      Schema.Struct({
+        type: Schema.Literal("provider_thread"),
+        providerThreadId: ProviderThreadId,
+        providerTurnId: Schema.optional(ProviderTurnId),
+      }),
+    ]),
+    targetThreadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("provider.switch"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    provider: ProviderKind,
+    modelSelection: ModelSelection,
+  }),
+]);
+export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
+
+export const ProviderReplayEntry = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("expect_outbound"),
+    label: Schema.optional(TrimmedNonEmptyString),
+    frame: Schema.Unknown,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("emit_inbound"),
+    label: Schema.optional(TrimmedNonEmptyString),
+    frame: Schema.Unknown,
+    afterMs: Schema.optional(NonNegativeInt),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("runtime_exit"),
+    status: Schema.Literals(["success", "error", "cancelled"]),
+    error: Schema.optional(Schema.Unknown),
+  }),
+]);
+export type ProviderReplayEntry = typeof ProviderReplayEntry.Type;
+
+export const ProviderReplayTranscript = Schema.Struct({
+  provider: ProviderKind,
+  protocol: TrimmedNonEmptyString,
+  version: TrimmedNonEmptyString,
+  scenario: TrimmedNonEmptyString,
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+  entries: Schema.Array(ProviderReplayEntry),
+});
+export type ProviderReplayTranscript = typeof ProviderReplayTranscript.Type;
+
+export const ProviderReplayTranscriptHeader = Schema.Struct({
+  type: Schema.Literal("transcript_start"),
+  provider: ProviderKind,
+  protocol: TrimmedNonEmptyString,
+  version: TrimmedNonEmptyString,
+  scenario: TrimmedNonEmptyString,
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+});
+export type ProviderReplayTranscriptHeader = typeof ProviderReplayTranscriptHeader.Type;
+
+export const ProviderReplayNdjsonRecord = Schema.Union([
+  ProviderReplayTranscriptHeader,
+  ProviderReplayEntry,
+]);
+export type ProviderReplayNdjsonRecord = typeof ProviderReplayNdjsonRecord.Type;
