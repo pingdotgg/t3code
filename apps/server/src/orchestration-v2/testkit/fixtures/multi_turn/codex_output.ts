@@ -34,6 +34,6 @@ export function assertMultiTurnOutput(
     "Respond with exactly: second fixture turn complete",
   ]);
   assert.equal(projection.turnItems.filter((item) => item.type === "user_message").length, 2);
-  assertAssistantTextIncludes(projection, "multi-turn fixture first response");
-  assertAssistantTextIncludes(projection, "multi-turn fixture second response");
+  assertAssistantTextIncludes(projection, "first fixture turn complete");
+  assertAssistantTextIncludes(projection, "second fixture turn complete");
 }

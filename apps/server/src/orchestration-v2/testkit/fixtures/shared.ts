@@ -17,7 +17,10 @@ import {
   type ProviderReplayTranscript,
 } from "@t3tools/contracts";
 
-import type { OrchestratorV2ScenarioResult } from "../OrchestratorScenario.ts";
+import type {
+  OrchestratorV2ScenarioResult,
+  OrchestratorV2ScenarioStep,
+} from "../OrchestratorScenario.ts";
 
 export const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok";
 export const TOOL_CALL_WRITE_PROMPT =
@@ -69,6 +72,7 @@ export interface OrchestratorReplayFixture {
 
 export interface MaterializedOrchestratorFixtureInput {
   readonly commands: ReadonlyArray<OrchestrationV2Command>;
+  readonly steps: ReadonlyArray<OrchestratorV2ScenarioStep>;
   readonly projectionThreadIds: ReadonlyArray<ThreadId>;
 }
 
@@ -157,32 +161,68 @@ export function materializeFixtureInput(input: {
   readonly modelSelection: ModelSelection;
 }): MaterializedOrchestratorFixtureInput {
   const ids = fixtureIds(input.scenario);
-  const commands: Array<OrchestrationV2Command> = [
+  const commands: Array<OrchestrationV2Command> = [];
+  const steps: Array<OrchestratorV2ScenarioStep> = [];
+  let messageIndex = 0;
+  const activeRunDispatchKeys = new Set<string>();
+
+  const pushDispatch = (
+    command: OrchestrationV2Command,
+    options: {
+      readonly await?: boolean;
+      readonly key?: string;
+      readonly advanceClockAfter?: boolean;
+    } = {},
+  ) => {
+    commands.push(command);
+    steps.push({
+      type: "dispatch",
+      command,
+      await: options.await ?? true,
+      ...(options.key === undefined ? {} : { key: options.key }),
+    });
+    if (options.advanceClockAfter ?? true) {
+      steps.push({ type: "advance_clock", duration: "1 millis" });
+    }
+  };
+
+  pushDispatch(
     createThreadCommand({
       scenario: input.scenario,
       ids,
       modelSelection: input.modelSelection,
     }),
-  ];
-  let messageIndex = 0;
+  );
 
-  for (const step of input.fixtureInput.steps) {
+  for (const [stepIndex, step] of input.fixtureInput.steps.entries()) {
     switch (step.type) {
       case "message":
         messageIndex += 1;
-        commands.push(
-          dispatchMessageCommand({
-            scenario: input.scenario,
-            ids,
-            modelSelection: input.modelSelection,
-            text: step.text,
-            index: messageIndex,
-          }),
-        );
+        {
+          const nextStep = input.fixtureInput.steps[stepIndex + 1];
+          const shouldRunInBackground =
+            nextStep !== undefined &&
+            (nextStep.type === "steer" || nextStep.type === "interrupt") &&
+            nextStep.targetRunIndex === messageIndex;
+          const key = `run:${messageIndex}`;
+          pushDispatch(
+            dispatchMessageCommand({
+              scenario: input.scenario,
+              ids,
+              modelSelection: input.modelSelection,
+              text: step.text,
+              index: messageIndex,
+            }),
+            shouldRunInBackground ? { await: false, key } : undefined,
+          );
+          if (shouldRunInBackground) {
+            activeRunDispatchKeys.add(key);
+          }
+        }
         break;
       case "steer":
         messageIndex += 1;
-        commands.push(
+        pushDispatch(
           dispatchMessageCommand({
             scenario: input.scenario,
             ids,
@@ -195,17 +235,27 @@ export function materializeFixtureInput(input: {
             },
           }),
         );
+        if (activeRunDispatchKeys.delete(`run:${step.targetRunIndex}`)) {
+          steps.push({ type: "await", key: `run:${step.targetRunIndex}` });
+        }
         break;
       case "interrupt":
-        commands.push({
-          type: "run.interrupt",
-          commandId: commandId(input.scenario, `interrupt-${step.targetRunIndex}`),
-          threadId: ids.threadId,
-          runId: runId(input.scenario, step.targetRunIndex),
-        });
+        pushDispatch(
+          {
+            type: "run.interrupt",
+            commandId: commandId(input.scenario, `interrupt-${step.targetRunIndex}`),
+            threadId: ids.threadId,
+            runId: runId(input.scenario, step.targetRunIndex),
+          },
+          { advanceClockAfter: false },
+        );
+        if (activeRunDispatchKeys.delete(`run:${step.targetRunIndex}`)) {
+          steps.push({ type: "await", key: `run:${step.targetRunIndex}` });
+        }
+        steps.push({ type: "advance_clock", duration: "1 millis" });
         break;
       case "rollback":
-        commands.push({
+        pushDispatch({
           type: "checkpoint.rollback",
           commandId: commandId(input.scenario, `rollback-${step.checkpointSuffix}`),
           threadId: ids.threadId,
@@ -216,8 +266,13 @@ export function materializeFixtureInput(input: {
     }
   }
 
+  if (activeRunDispatchKeys.size > 0) {
+    steps.push({ type: "await_all" });
+  }
+
   return {
     commands,
+    steps,
     projectionThreadIds: [ids.threadId],
   };
 }

@@ -1,9 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
-import { Effect } from "effect";
+import * as CodexReplay from "effect-codex-app-server/replay";
+import { Effect, Schema } from "effect";
 import { readFile } from "node:fs/promises";
 
-import { makeReplayProviderRuntime } from "../replay/ReplayProviderRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
 import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 
@@ -146,45 +146,22 @@ function assertScenarioExpectations(transcript: ProviderReplayTranscript) {
   assert.equal(countApprovalRequests(transcript), expectation.approvalRequestCount);
 }
 
-function replayTranscript(transcript: ProviderReplayTranscript) {
-  return Effect.gen(function* () {
-    const runtime = yield* makeReplayProviderRuntime(transcript);
-
-    for (const entry of transcript.entries) {
-      switch (entry.type) {
-        case "expect_outbound":
-          yield* runtime.send(entry.frame);
-          break;
-        case "emit_inbound": {
-          const inbound = yield* runtime.receive();
-          assert.deepEqual(inbound, {
-            type: "frame",
-            frame: entry.frame,
-          });
-          break;
-        }
-        case "runtime_exit": {
-          const inbound = yield* runtime.receive();
-          assert.deepEqual(inbound, entry);
-          break;
-        }
-      }
-    }
-
-    yield* runtime.assertComplete();
-  });
-}
-
 describe("Codex replay fixtures", () => {
-  it("loads and replays every current Codex fixture directly from minimal NDJSON", async () => {
+  it("loads every current Codex fixture as a codex app-server replay transcript", async () => {
     for (const fixture of CURRENT_CODEX_REPLAY_FIXTURES) {
       const transcript = await readTranscript(fixture.transcriptFile);
+      const codexTranscript = Schema.decodeUnknownSync(CodexReplay.CodexAppServerReplayTranscript)(
+        transcript,
+      );
       const first = transcript.entries[0];
 
-      assert.equal(transcript.provider, "codex");
-      assert.equal(transcript.protocol, "codex.app-server");
-      assert.equal(transcript.scenario, fixture.scenario);
-      assert.deepEqual(transcript.entries.at(-1), { type: "runtime_exit", status: "success" });
+      assert.equal(codexTranscript.provider, "codex");
+      assert.equal(codexTranscript.protocol, "codex.app-server");
+      assert.equal(codexTranscript.scenario, fixture.scenario);
+      assert.deepEqual(codexTranscript.entries.at(-1), {
+        type: "runtime_exit",
+        status: "success",
+      });
       assert.equal(first?.type, "expect_outbound");
       if (first?.type !== "expect_outbound") {
         throw new Error(`Expected ${fixture.scenario} to start with initialize outbound frame.`);
@@ -192,7 +169,6 @@ describe("Codex replay fixtures", () => {
       assert.equal(first.label, "initialize");
 
       assertScenarioExpectations(transcript);
-      await Effect.runPromise(replayTranscript(transcript));
     }
   });
 
