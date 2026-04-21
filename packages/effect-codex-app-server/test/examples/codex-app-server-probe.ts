@@ -1,15 +1,12 @@
-import { randomUUID } from "node:crypto";
-
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Deferred, FileSystem, Path, PlatformError, Scope } from "effect";
+import { Deferred, FileSystem, Path, PlatformError } from "effect";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 
 import * as CodexClient from "../../src/client.ts";
 import type * as CodexRpc from "../../src/_generated/meta.gen.ts";
 
-const SCHEMA_VERSION = 2;
 const DEFAULT_OUT_DIR = "test/fixtures/codex-app-server-probes";
 const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok";
 const TOOL_CALL_WRITE_PROMPT =
@@ -34,7 +31,6 @@ type ScenarioName = (typeof SCENARIO_NAMES)[number];
 type TurnStartParams = CodexRpc.ClientRequestParamsByMethod["turn/start"];
 type TurnStartInput = TurnStartParams["input"];
 type TurnStartResponse = CodexRpc.ClientRequestResponsesByMethod["turn/start"];
-type ThreadStartResponse = CodexRpc.ClientRequestResponsesByMethod["thread/start"];
 type SandboxPolicy = NonNullable<TurnStartParams["sandboxPolicy"]>;
 type ApprovalPolicy = NonNullable<TurnStartParams["approvalPolicy"]>;
 
@@ -82,9 +78,11 @@ interface ProbeScenario {
 
 interface Recorder {
   readonly path: string;
+  readonly setVersion: (version: string) => Effect.Effect<void>;
   readonly writeRecord: (
     record: Record<string, unknown>,
   ) => Effect.Effect<void, PlatformError.PlatformError>;
+  readonly flush: () => Effect.Effect<void, PlatformError.PlatformError>;
 }
 
 function readArgValue(name: string): string | undefined {
@@ -169,16 +167,25 @@ function protocolId(payload: unknown): string | number | undefined {
   return typeof payload.id === "string" || typeof payload.id === "number" ? payload.id : undefined;
 }
 
-function protocolParams(payload: unknown): unknown {
-  return isRecord(payload) && "params" in payload ? payload.params : undefined;
-}
-
 function protocolResult(payload: unknown): unknown {
   return isRecord(payload) && "result" in payload ? payload.result : undefined;
 }
 
-function protocolError(payload: unknown): unknown {
-  return isRecord(payload) && "error" in payload ? payload.error : undefined;
+function inferCodexVersion(payload: unknown): string | undefined {
+  const result = protocolResult(payload);
+  if (!isRecord(result)) {
+    return undefined;
+  }
+
+  if (typeof result.userAgent === "string") {
+    const match = result.userAgent.match(/effect-codex-app-server-probe\/(\S+)/u);
+    if (match?.[1]) {
+      return match[1];
+    }
+  }
+
+  const thread = result.thread;
+  return isRecord(thread) && typeof thread.cliVersion === "string" ? thread.cliVersion : undefined;
 }
 
 function turnInput(prompt: string): TurnStartInput {
@@ -356,13 +363,20 @@ function scenarios(): ReadonlyArray<ProbeScenario> {
         {
           name: "immediate-steer",
           description: "Start a turn, then immediately steer the active root turn.",
+          turnDefaults: {
+            approvalPolicy: "never",
+            sandboxPolicy: workspaceWriteSandbox(),
+          },
           steps: [
             {
               type: "steeredTurn",
               label: "steered",
-              prompt:
-                "Start answering about package metadata. Keep the response brief but do not finish instantly.",
+              prompt: TOOL_CALL_WRITE_PROMPT,
               steer: "Actually, respond with exactly: steering fixture observed",
+              turnOverrides: {
+                approvalPolicy: "on-request",
+                sandboxPolicy: readOnlyFullAccessSandbox(),
+              },
             },
           ],
         },
@@ -430,45 +444,52 @@ function scenarios(): ReadonlyArray<ProbeScenario> {
   ];
 }
 
-function makeRecorder(
-  outPath: string,
-): Effect.Effect<Recorder, PlatformError.PlatformError, FileSystem.FileSystem | Scope.Scope> {
+function makeRecorder({
+  outPath,
+  scenario,
+}: {
+  readonly outPath: string;
+  readonly scenario: ProbeScenario;
+}): Effect.Effect<Recorder, PlatformError.PlatformError, FileSystem.FileSystem> {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const logFile = yield* fs.open(outPath, {
-      flag: process.env.CODEX_PROBE_APPEND === "1" ? "a" : "w",
-    });
-    const encoder = new TextEncoder();
-    let sequence = 0;
+    let version = "unknown";
+    const records: Array<Record<string, unknown>> = [];
+    const setVersion = (nextVersion: string) =>
+      Effect.sync(() => {
+        version = nextVersion;
+      });
     const writeRecord = (record: Record<string, unknown>) =>
       Effect.sync(() => {
-        sequence += 1;
-        return JSON.stringify({
-          schemaVersion: SCHEMA_VERSION,
-          seq: sequence,
-          observedAt: new Date().toISOString(),
-          ...record,
-        });
-      }).pipe(
-        Effect.flatMap((line) => logFile.write(encoder.encode(`${line}\n`))),
-        Effect.asVoid,
+        records.push(record);
+      });
+    const flush = () =>
+      fs.writeFileString(
+        outPath,
+        `${[
+          {
+            type: "transcript_start",
+            provider: "codex",
+            protocol: "codex.app-server",
+            version,
+            scenario: scenario.name,
+            metadata: {
+              source: "codex-app-server-probe",
+              fileName: scenario.fileName,
+              description: scenario.description,
+            },
+          },
+          ...records,
+        ]
+          .map((record) => JSON.stringify(record))
+          .join("\n")}\n`,
       );
 
-    return { path: outPath, writeRecord };
+    return { path: outPath, setVersion, writeRecord, flush };
   });
 }
 
-function makeCodexLayer({
-  recorder,
-  scenarioName,
-  runId,
-  runLabel,
-}: {
-  readonly recorder: Recorder;
-  readonly scenarioName: ScenarioName;
-  readonly runId: string;
-  readonly runLabel: string;
-}) {
+function makeCodexLayer({ recorder }: { readonly recorder: Recorder }) {
   const clientRequestMethodById = new Map<string, string>();
   const serverRequestMethodById = new Map<string, string>();
 
@@ -508,34 +529,41 @@ function makeCodexLayer({
         }
       }
 
-      return recorder
-        .writeRecord({
-          source: "protocol",
-          scenarioName,
-          runId,
-          runLabel,
-          direction: event.direction,
-          stage: event.stage,
-          messageKind,
-          method,
-          correlatedRequestMethod,
-          id,
-          params: protocolParams(event.payload),
-          result: protocolResult(event.payload),
-          error: protocolError(event.payload),
-          payload: event.payload,
-        })
-        .pipe(Effect.ignore);
+      const version = inferCodexVersion(event.payload);
+      const updateVersion = version ? recorder.setVersion(version) : Effect.void;
+
+      const label = method ?? correlatedRequestMethod;
+      const record =
+        event.direction === "outgoing"
+          ? {
+              type: "expect_outbound",
+              ...(label ? { label } : {}),
+              frame: event.payload,
+            }
+          : {
+              type: "emit_inbound",
+              ...(label ? { label } : {}),
+              frame: event.payload,
+            };
+
+      return Effect.gen(function* () {
+        yield* updateVersion;
+        yield* recorder.writeRecord(record);
+      }).pipe(Effect.ignore);
     },
   });
 }
 
 function installProbeHandlers({
   client,
+  startTurn,
   completeTurn,
+  beforeApprovalResponse,
 }: {
   readonly client: CodexClient.CodexAppServerClientShape;
+  readonly startTurn: (turnId: string) => Effect.Effect<void>;
   readonly completeTurn: (turnId: string) => Effect.Effect<void>;
+  readonly beforeApprovalResponse: () => Effect.Effect<void>;
 }) {
   return Effect.all(
     [
@@ -555,16 +583,18 @@ function installProbeHandlers({
         }),
       ),
       client.handleServerRequest("item/commandExecution/requestApproval", () =>
-        Effect.succeed({ decision: "accept" }),
+        beforeApprovalResponse().pipe(Effect.as({ decision: "accept" })),
       ),
       client.handleServerRequest("item/fileChange/requestApproval", () =>
-        Effect.succeed({ decision: "accept" }),
+        beforeApprovalResponse().pipe(Effect.as({ decision: "accept" })),
       ),
       client.handleServerRequest("item/permissions/requestApproval", (payload) =>
-        Effect.succeed({
-          permissions: payload.permissions,
-          scope: "turn" as const,
-        }),
+        beforeApprovalResponse().pipe(
+          Effect.as({
+            permissions: payload.permissions,
+            scope: "turn" as const,
+          }),
+        ),
       ),
       client.handleServerRequest("mcpServer/elicitation/request", () =>
         Effect.succeed({ action: "accept" }),
@@ -589,6 +619,9 @@ function installProbeHandlers({
       client.handleUnknownServerRequest((method) =>
         Effect.die(new Error(`Unhandled Codex app-server request in probe: ${method}`)),
       ),
+      client.handleServerNotification("turn/started", (payload) =>
+        startTurn(payload.turn.id).pipe(Effect.ignore),
+      ),
       client.handleServerNotification("turn/completed", (payload) =>
         completeTurn(payload.turn.id).pipe(Effect.ignore),
       ),
@@ -598,9 +631,7 @@ function installProbeHandlers({
 }
 
 function runProbeSession({
-  scenario,
   run,
-  runIndex,
   recorder,
 }: {
   readonly scenario: ProbeScenario;
@@ -609,9 +640,18 @@ function runProbeSession({
   readonly recorder: Recorder;
 }) {
   return Effect.gen(function* () {
-    const runId = randomUUID();
-    const runLabel = `${scenario.name}/${run.name}`;
+    const startedTurns = new Map<string, Deferred.Deferred<void>>();
     const completedTurns = new Map<string, Deferred.Deferred<void>>();
+    let approvalGate: Deferred.Deferred<void> | undefined;
+    const getStarted = (turnId: string) => {
+      const existing = startedTurns.get(turnId);
+      if (existing) {
+        return Effect.succeed(existing);
+      }
+      return Deferred.make<void>().pipe(
+        Effect.tap((deferred) => Effect.sync(() => startedTurns.set(turnId, deferred))),
+      );
+    };
     const getCompletion = (turnId: string) => {
       const existing = completedTurns.get(turnId);
       if (existing) {
@@ -621,28 +661,19 @@ function runProbeSession({
         Effect.tap((deferred) => Effect.sync(() => completedTurns.set(turnId, deferred))),
       );
     };
+    const startTurn = (turnId: string) =>
+      getStarted(turnId).pipe(Effect.flatMap((deferred) => Deferred.succeed(deferred, void 0)));
     const completeTurn = (turnId: string) =>
       getCompletion(turnId).pipe(Effect.flatMap((deferred) => Deferred.succeed(deferred, void 0)));
-
-    yield* recorder.writeRecord({
-      source: "probe",
-      event: "run.started",
-      scenarioName: scenario.name,
-      runId,
-      runIndex,
-      runLabel,
-      runName: run.name,
-      description: run.description,
-      prompt: run.prompt,
-      turnDefaults: run.turnDefaults,
-    });
+    const beforeApprovalResponse = () =>
+      approvalGate ? Deferred.await(approvalGate) : Effect.void;
 
     yield* Effect.gen(function* () {
       const client = yield* CodexClient.CodexAppServerClient;
 
-      yield* installProbeHandlers({ client, completeTurn });
+      yield* installProbeHandlers({ client, startTurn, completeTurn, beforeApprovalResponse });
 
-      const initialized = yield* client.request("initialize", {
+      yield* client.request("initialize", {
         clientInfo: {
           name: "effect-codex-app-server-probe",
           title: "Effect Codex App Server Probe",
@@ -654,45 +685,15 @@ function runProbeSession({
         },
       });
 
-      yield* recorder.writeRecord({
-        source: "probe",
-        event: "initialize.completed",
-        scenarioName: scenario.name,
-        runId,
-        runLabel,
-        result: initialized,
-      });
-
       yield* client.notify("initialized", undefined);
 
       const thread = yield* client.request("thread/start", {});
-      yield* recorder.writeRecord({
-        source: "probe",
-        event: "thread.started",
-        scenarioName: scenario.name,
-        runId,
-        runLabel,
-        threadId: thread.thread.id,
-        result: thread satisfies ThreadStartResponse,
-      });
 
       for (const [stepIndex, step] of run.steps.entries()) {
         if (step.type === "rollback") {
-          const rollback = yield* client.request("thread/rollback", {
+          yield* client.request("thread/rollback", {
             threadId: thread.thread.id,
             numTurns: step.numTurns,
-          });
-          yield* recorder.writeRecord({
-            source: "probe",
-            event: "thread.rollback.completed",
-            scenarioName: scenario.name,
-            runId,
-            runLabel,
-            stepIndex,
-            stepLabel: step.label,
-            threadId: thread.thread.id,
-            numTurns: step.numTurns,
-            result: rollback,
           });
           continue;
         }
@@ -704,100 +705,47 @@ function runProbeSession({
           threadId: thread.thread.id,
         };
 
+        if (step.type === "steeredTurn") {
+          approvalGate = yield* Deferred.make<void>();
+        }
+
         const turn = yield* client.request("turn/start", turnParams);
         const turnId = getTurnId(turn);
+        const started = yield* getStarted(turnId);
         yield* getCompletion(turnId);
-        yield* recorder.writeRecord({
-          source: "probe",
-          event: "turn.started",
-          scenarioName: scenario.name,
-          runId,
-          runLabel,
-          stepIndex,
-          stepLabel: step.label,
-          stepType: step.type,
-          threadId: thread.thread.id,
-          turnId,
-          turnStartParams: turnParams,
-          result: turn,
-        });
 
         if (step.type === "steeredTurn") {
-          const steer = yield* client.request("turn/steer", {
+          yield* Deferred.await(started);
+          yield* client.request("turn/steer", {
             expectedTurnId: turnId,
             input: turnInput(step.steer),
             threadId: thread.thread.id,
           });
-          yield* recorder.writeRecord({
-            source: "probe",
-            event: "turn.steered",
-            scenarioName: scenario.name,
-            runId,
-            runLabel,
-            stepIndex,
-            stepLabel: step.label,
-            threadId: thread.thread.id,
-            expectedTurnId: turnId,
-            steerText: step.steer,
-            result: steer,
-          });
+          if (approvalGate) {
+            yield* Deferred.succeed(approvalGate, void 0);
+            approvalGate = undefined;
+          }
         }
 
         if (step.type === "interruptedTurn") {
           yield* Effect.sleep(`${step.interruptAfterMs} millis`);
-          const interrupt = yield* client.request("turn/interrupt", {
+          yield* client.request("turn/interrupt", {
             threadId: thread.thread.id,
             turnId,
-          });
-          yield* recorder.writeRecord({
-            source: "probe",
-            event: "turn.interrupted",
-            scenarioName: scenario.name,
-            runId,
-            runLabel,
-            stepIndex,
-            stepLabel: step.label,
-            threadId: thread.thread.id,
-            turnId,
-            interruptAfterMs: step.interruptAfterMs,
-            result: interrupt,
           });
         }
 
         const completed = yield* getCompletion(turnId);
         yield* Deferred.await(completed);
-        yield* recorder.writeRecord({
-          source: "probe",
-          event: "turn.completed.observed",
-          scenarioName: scenario.name,
-          runId,
-          runLabel,
-          stepIndex,
-          stepLabel: step.label,
-          threadId: thread.thread.id,
-          turnId,
-        });
+        void stepIndex;
       }
     }).pipe(
       Effect.provide(
         makeCodexLayer({
           recorder,
-          scenarioName: scenario.name,
-          runId,
-          runLabel,
         }),
       ),
     );
-
-    yield* recorder.writeRecord({
-      source: "probe",
-      event: "run.completed",
-      scenarioName: scenario.name,
-      runId,
-      runIndex,
-      runLabel,
-      runName: run.name,
-    });
   });
 }
 
@@ -809,29 +757,7 @@ function runScenario({
   readonly outPath: string;
 }) {
   return Effect.gen(function* () {
-    const recorder = yield* makeRecorder(outPath);
-    yield* recorder.writeRecord({
-      source: "probe",
-      event: "fixture.started",
-      scenarioName: scenario.name,
-      description: scenario.description,
-      fileName: scenario.fileName,
-      replayContract: {
-        directionPerspective: "client",
-        outgoing: "client_to_app_server_expected",
-        incoming: "app_server_to_client_replay",
-        responsesCorrelatedBy: "correlatedRequestMethod",
-        lifecycleRoot:
-          "root turnId from turn/start response; subagent turns are child activity unless a later protocol adds explicit parentage",
-      },
-      runs: scenario.runs.map((run) => ({
-        name: run.name,
-        description: run.description,
-        prompt: run.prompt,
-        turnDefaults: run.turnDefaults,
-        steps: run.steps,
-      })),
-    });
+    const recorder = yield* makeRecorder({ outPath, scenario });
 
     yield* Console.log(`Writing ${scenario.name} probe events to ${recorder.path}`);
 
@@ -842,10 +768,10 @@ function runScenario({
     );
 
     yield* recorder.writeRecord({
-      source: "probe",
-      event: "fixture.completed",
-      scenarioName: scenario.name,
+      type: "runtime_exit",
+      status: "success",
     });
+    yield* recorder.flush();
   });
 }
 
