@@ -22,6 +22,8 @@ import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { readLocalApi } from "../localApi";
+import { useDesktopOpenProjectPathSubscription } from "../hooks/useDesktopOpenProjectPathSubscription";
+import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -213,6 +215,9 @@ function EventRouter() {
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
     sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
   }));
+  const sidebarThreadSortOrder = useSettings((s) => s.sidebarThreadSortOrder);
+  const defaultThreadEnvMode = useSettings((s) => s.defaultThreadEnvMode);
+  const { handleNewThread } = useNewThreadHandler();
   const readPathname = useEffectEvent(() => pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
   const seenServerConfigUpdateIdRef = useRef(getServerConfigUpdatedNotification()?.id ?? 0);
@@ -339,6 +344,14 @@ function EventRouter() {
       disposedRef.current = true;
     };
   }, []);
+
+  useDesktopOpenProjectPathSubscription({
+    isDisposed: () => disposedRef.current,
+    sidebarThreadSortOrder,
+    defaultThreadEnvMode,
+    navigate,
+    handleNewThread,
+  });
 
   useServerWelcomeSubscription(handleWelcome);
   useServerConfigUpdatedSubscription(handleServerConfigUpdated);

@@ -1015,7 +1015,7 @@ export async function addSavedEnvironment(input: {
 export async function ensureEnvironmentConnectionBootstrapped(
   environmentId: EnvironmentId,
 ): Promise<void> {
-  await environmentConnections.get(environmentId)?.ensureBootstrapped();
+  await requireEnvironmentConnection(environmentId).ensureBootstrapped();
 }
 
 export function startEnvironmentConnectionService(queryClient: QueryClient): () => void {

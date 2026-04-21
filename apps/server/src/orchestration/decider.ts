@@ -10,6 +10,7 @@ import {
   listThreadsByProjectId,
   requireProject,
   requireProjectAbsent,
+  requireProjectWorkspaceRootAbsent,
   requireThread,
   requireThreadArchived,
   requireThreadAbsent,
@@ -98,6 +99,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         readModel,
         command,
         projectId: command.projectId,
+      });
+      yield* requireProjectWorkspaceRootAbsent({
+        readModel,
+        command,
+        workspaceRoot: command.workspaceRoot,
       });
 
       return {

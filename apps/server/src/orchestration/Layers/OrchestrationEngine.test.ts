@@ -1024,4 +1024,44 @@ describe("OrchestrationEngine", () => {
 
     await system.dispose();
   });
+
+  it("rejects duplicate active project workspace roots", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-root-1"),
+        projectId: asProjectId("project-root-1"),
+        title: "Project Root 1",
+        workspaceRoot: "/tmp/project-root",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-root-2"),
+          projectId: asProjectId("project-root-2"),
+          title: "Project Root 2",
+          workspaceRoot: "/tmp/project-root",
+          defaultModelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("already used by project 'project-root-1'");
+
+    await system.dispose();
+  });
 });

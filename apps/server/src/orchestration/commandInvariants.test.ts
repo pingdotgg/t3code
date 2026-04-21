@@ -11,9 +11,11 @@ import {
 import { Effect } from "effect";
 
 import {
+  findActiveProjectByWorkspaceRoot,
   findThreadById,
   listThreadsByProjectId,
   requireNonNegativeInteger,
+  requireProjectWorkspaceRootAbsent,
   requireThread,
   requireThreadAbsent,
 } from "./commandInvariants.ts";
@@ -123,6 +125,51 @@ describe("commandInvariants", () => {
     expect(
       listThreadsByProjectId(readModel, ProjectId.make("project-b")).map((thread) => thread.id),
     ).toEqual([ThreadId.make("thread-2")]);
+  });
+
+  it("requires active project workspace roots to be unique for create flows", async () => {
+    expect(findActiveProjectByWorkspaceRoot(readModel, "/tmp/project-a")?.id).toBe(
+      ProjectId.make("project-a"),
+    );
+    await Effect.runPromise(
+      requireProjectWorkspaceRootAbsent({
+        readModel,
+        command: {
+          type: "project.create",
+          commandId: CommandId.make("cmd-project-new-root"),
+          projectId: ProjectId.make("project-c"),
+          title: "Project C",
+          workspaceRoot: "/tmp/project-c",
+          defaultModelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          createdAt: now,
+        },
+        workspaceRoot: "/tmp/project-c",
+      }),
+    );
+
+    await expect(
+      Effect.runPromise(
+        requireProjectWorkspaceRootAbsent({
+          readModel,
+          command: {
+            type: "project.create",
+            commandId: CommandId.make("cmd-project-duplicate-root"),
+            projectId: ProjectId.make("project-duplicate-root"),
+            title: "Project Duplicate Root",
+            workspaceRoot: "/tmp/project-a",
+            defaultModelSelection: {
+              provider: "codex",
+              model: "gpt-5-codex",
+            },
+            createdAt: now,
+          },
+          workspaceRoot: "/tmp/project-a",
+        }),
+      ),
+    ).rejects.toThrow("already used by project 'project-a'");
   });
 
   it("requires existing thread", async () => {

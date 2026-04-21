@@ -73,6 +73,7 @@ import {
   reduceDesktopUpdateStateOnNoUpdate,
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine.ts";
+import { parseFolderFromArgv } from "./projectPathArg.ts";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch.ts";
 import { resolveDesktopAppBranding } from "./appBranding.ts";
 
@@ -84,6 +85,7 @@ const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
+const OPEN_PROJECT_PATH_CHANNEL = "desktop:open-project-path";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_SET_CHANNEL_CHANNEL = "desktop:update-set-channel";
@@ -200,7 +202,18 @@ type LinuxDesktopNamedApp = Electron.App & {
   setDesktopName?: (desktopName: string) => void;
 };
 
+function parseProjectPathFromElectronArgv(argv: readonly string[], cwd?: string): string | null {
+  // Electron populates app.isPackaged synchronously before main module
+  // initialization continues, so cold-start argv parsing can safely choose the
+  // packaged vs unpackaged leading-positionals skip count here.
+  return parseFolderFromArgv(argv, {
+    ...(cwd !== undefined ? { cwd } : {}),
+    skipLeadingPositionalArgs: app.isPackaged ? 1 : 2,
+  });
+}
+
 let mainWindow: BrowserWindow | null = null;
+let pendingProjectPath: string | null = parseProjectPathFromElectronArgv(process.argv);
 let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
 let backendBindHost = DESKTOP_LOOPBACK_HOST;
@@ -860,6 +873,54 @@ function dispatchMenuAction(action: string): void {
   send();
 }
 
+function tryRealpathDirectory(input: string): string | null {
+  try {
+    const real = FS.realpathSync.native(input);
+    return FS.statSync(real).isDirectory() ? real : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveOrCreateTargetWindow(): BrowserWindow {
+  const existingWindow =
+    BrowserWindow.getFocusedWindow() ?? mainWindow ?? BrowserWindow.getAllWindows()[0];
+  if (existingWindow) return existingWindow;
+  const created = createWindow();
+  mainWindow = created;
+  return created;
+}
+
+function revealMainWindowOrCreate(): void {
+  if (isQuitting) return;
+  const target = resolveOrCreateTargetWindow();
+  if (target.webContents.isLoadingMainFrame()) {
+    target.webContents.once("did-finish-load", () => {
+      if (!target.isDestroyed()) revealWindow(target);
+    });
+    return;
+  }
+  revealWindow(target);
+}
+
+function forwardProjectPathToRenderer(path: string): void {
+  if (isQuitting) return;
+  const targetWindow = resolveOrCreateTargetWindow();
+
+  const send = () => {
+    if (targetWindow.isDestroyed()) return;
+    targetWindow.webContents.send(OPEN_PROJECT_PATH_CHANNEL, path);
+    revealWindow(targetWindow);
+  };
+
+  if (targetWindow.webContents.isLoadingMainFrame()) {
+    targetWindow.webContents.once("did-finish-load", send);
+    return;
+  }
+
+  send();
+}
+
 function handleCheckForUpdatesMenuClick(): void {
   const hasUpdateFeedConfig =
     readAppUpdateYml() !== null || Boolean(process.env.T3CODE_DESKTOP_MOCK_UPDATES);
@@ -1379,8 +1440,10 @@ function startBackend(): void {
   }
 
   const captureBackendLogs = !isDevelopment;
+  const initialProjectPath = pendingProjectPath;
+  const backendCwd = initialProjectPath ?? resolveBackendCwd();
   const child = ChildProcess.spawn(process.execPath, [backendEntry, "--bootstrap-fd", "3"], {
-    cwd: resolveBackendCwd(),
+    cwd: backendCwd,
     // In Electron main, process.execPath points to the Electron binary.
     // Run the child in Node mode so this backend process does not become a GUI app instance.
     env: {
@@ -1401,6 +1464,9 @@ function startBackend(): void {
         t3Home: BASE_DIR,
         host: backendBindHost,
         desktopBootstrapToken: backendBootstrapToken,
+        ...(initialProjectPath
+          ? { cwd: initialProjectPath, autoBootstrapProjectFromCwd: true }
+          : {}),
         ...(backendObservabilitySettings.otlpTracesUrl
           ? { otlpTracesUrl: backendObservabilitySettings.otlpTracesUrl }
           : {}),
@@ -1415,6 +1481,8 @@ function startBackend(): void {
     scheduleBackendRestart("missing desktop bootstrap pipe");
     return;
   }
+  // Consumed. Later second-instance / open-file events route through IPC.
+  pendingProjectPath = null;
   const listeningDetector = new ServerListeningDetector();
   backendListeningDetector = listeningDetector;
   backendProcess = child;
@@ -1426,7 +1494,7 @@ function startBackend(): void {
   };
   writeBackendSessionBoundary(
     "START",
-    `pid=${child.pid ?? "unknown"} port=${backendPort} cwd=${resolveBackendCwd()}`,
+    `pid=${child.pid ?? "unknown"} port=${backendPort} cwd=${backendCwd}`,
   );
   captureBackendOutput(child);
 
@@ -2031,6 +2099,49 @@ function createWindow(): BrowserWindow {
 app.setPath("userData", resolveUserDataPath());
 
 configureAppIdentity();
+
+// Single-instance lock: a second `open -a "T3 Code" /path` from the terminal
+// must activate this process with the new folder instead of spawning a
+// duplicate. `requestSingleInstanceLock` returns false in the second process,
+// which we exit immediately; the first process receives `second-instance`.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, argv, cwd) => {
+    const forwarded = parseProjectPathFromElectronArgv(argv, cwd);
+    if (forwarded) {
+      if (app.isReady()) {
+        forwardProjectPathToRenderer(forwarded);
+      } else {
+        // Startup is still in flight. Keep the latest launch target as the
+        // cold-start bootstrap target; opening every queued path would need a
+        // separate multi-open queue and UX.
+        pendingProjectPath = forwarded;
+      }
+      return;
+    }
+    // No folder arg — user just relaunched the app (e.g. `T3Code` with no
+    // args on Windows/Linux). Respect that by surfacing an existing window or
+    // creating one. macOS LaunchServices handles this natively, but on other
+    // platforms we'd otherwise silently drop the relaunch.
+    if (app.isReady()) {
+      revealMainWindowOrCreate();
+    }
+  });
+
+  // macOS LaunchServices: `open -a "T3 Code" <dir>` and Finder dock drops.
+  // Can fire before whenReady, so buffer into pendingProjectPath in that case.
+  app.on("open-file", (event, path) => {
+    event.preventDefault();
+    const real = tryRealpathDirectory(path);
+    if (!real) return;
+    if (app.isReady()) {
+      forwardProjectPathToRenderer(real);
+    } else {
+      pendingProjectPath = real;
+    }
+  });
+}
 
 async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap start");
