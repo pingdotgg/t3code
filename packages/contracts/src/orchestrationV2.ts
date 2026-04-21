@@ -776,6 +776,11 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("turn-item.updated"),
+    payload: OrchestrationV2TurnItem,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("plan.updated"),
     payload: OrchestrationV2PlanArtifact,
   }),
