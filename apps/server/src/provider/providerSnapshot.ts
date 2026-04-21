@@ -13,6 +13,8 @@ import { normalizeModelSlug } from "@t3tools/shared/model";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 
 export const DEFAULT_TIMEOUT_MS = 4_000;
+// Auth status checks involve disk/network lookups and can be slow on first run (especially Windows)
+export const AUTH_PROBE_TIMEOUT_MS = 10_000;
 
 export interface CommandResult {
   readonly stdout: string;
