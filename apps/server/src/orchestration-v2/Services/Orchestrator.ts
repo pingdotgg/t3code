@@ -44,10 +44,24 @@ export class OrchestratorDomainEventStreamError extends Schema.TaggedErrorClass<
   }
 }
 
+export class OrchestratorProviderAdapterError extends Schema.TaggedErrorClass<OrchestratorProviderAdapterError>()(
+  "OrchestratorProviderAdapterError",
+  {
+    commandId: CommandId,
+    provider: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Provider adapter failed while dispatching orchestration command ${this.commandId}.`;
+  }
+}
+
 export const OrchestratorV2Error = Schema.Union([
   OrchestratorDispatchError,
   OrchestratorProjectionError,
   OrchestratorDomainEventStreamError,
+  OrchestratorProviderAdapterError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
 
