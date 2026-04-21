@@ -541,3 +541,66 @@ V2 should expose separate projections:
 - Pending requests: actionable approvals/user input.
 
 The UI can remain simple while the graph remains precise.
+
+## Turn Item Projection
+
+The frontend should not reconstruct display order by merging `messages`, `runtimeItems`, `plans`, checkpoints, approvals, and activities itself. V2 should expose an ordered `turnItems` projection for thread detail rendering.
+
+`turnItems` are projection records, not the canonical source of truth. The canonical graph remains normalized in runs, attempts, nodes, runtime items, requests, messages, plans, and checkpoints. The projection reducer is responsible for turning that graph into a deterministic display stream.
+
+Known common tools should have structured item variants so the frontend can render stable custom components without parsing provider text:
+
+```ts
+type TurnItem =
+  | UserMessage
+  | AssistantMessage
+  | Reasoning
+  | Plan
+  | FileChange
+  | CommandExecution
+  | FileSearch
+  | WebSearch
+  | ApprovalRequest
+  | Checkpoint
+  | Compaction
+  | Handoff
+  | Fork
+  | DynamicTool;
+```
+
+Examples:
+
+```ts
+type FileChange = {
+  type: "file_change";
+  fileName: string;
+  additions?: number;
+  deletions?: number;
+  diffStr?: string;
+  oldStr?: string;
+  newStr?: string;
+};
+
+type CommandExecution = {
+  type: "command_execution";
+  input: string;
+  status: TurnItemStatus;
+  output?: string;
+  exitCode?: number;
+};
+
+type DynamicTool = {
+  type: "dynamic_tool";
+  toolName: string | null;
+  input: unknown;
+  output?: unknown;
+};
+```
+
+Compaction, handoff, and fork are orchestration lifecycle items, not dynamic tools:
+
+- `compaction`: one item can transition from `running` with title like "Compacting context..." to `completed` with title like "Compacted context".
+- `handoff`: records the context bridge from one or more source provider threads/providers to a target provider thread/provider.
+- `fork`: records that the user or system created a new app thread from a run, node, or provider thread.
+
+The UI can render known variants with deterministic components and render `dynamic_tool` as expandable JSON input/output. Each turn item keeps refs back to `runId`, `nodeId`, `providerTurnId`, and `runtimeItemId` so debug views can jump from the display stream back into the graph.
