@@ -69,6 +69,9 @@ export function createWsNativeApi(): MarCodeNativeApi {
       browseDirectories: rpcClient.projects.browseDirectories,
       writeFile: rpcClient.projects.writeFile,
     },
+    filesystem: {
+      browse: rpcClient.filesystem.browse,
+    },
     shell: {
       openInEditor: (cwd, editor) => rpcClient.shell.openInEditor({ cwd, editor }),
       openExternal: async (url) => {

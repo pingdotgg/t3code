@@ -41,8 +41,8 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE,
   type DesktopUpdateState,
-  type EnvironmentId,
   ProjectId,
+  type ScopedProjectRef,
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
   type ThreadEnvMode,
@@ -90,7 +90,6 @@ import { useShortcutModifierState } from "../shortcutModifierState";
 import { useGitStatus } from "../lib/gitStatusState";
 import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
-import { DirectoryBrowserDialog } from "./chat/DirectoryBrowserDialog";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 
 import { useThreadActions } from "../hooks/useThreadActions";
@@ -150,7 +149,7 @@ import {
   SidebarTrigger,
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
-import { isNonEmpty as isNonEmptyString } from "effect/String";
+import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
@@ -2572,6 +2571,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                   <button
                     type="button"
                     aria-label="Add project"
+                    data-testid="sidebar-add-project-trigger"
                     className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
                     onClick={handleStartAddProject}
                   />
@@ -2681,7 +2681,6 @@ export default function Sidebar() {
   const sidebarThreadSortOrder = useSettings((s) => s.sidebarThreadSortOrder);
   const sidebarProjectSortOrder = useSettings((s) => s.sidebarProjectSortOrder);
   const defaultThreadEnvMode = useSettings((s) => s.defaultThreadEnvMode);
-  const addProjectBaseDirectory = useSettings((s) => s.addProjectBaseDirectory);
   const sidebarProjectGroupingMode = useSettings((s) => s.sidebarProjectGroupingMode);
   const projectGroupingSettings = useSettings((settings) => ({
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
@@ -2696,8 +2695,7 @@ export default function Sidebar() {
   });
   const routeThreadKey = routeThreadRef ? scopedThreadKey(routeThreadRef) : null;
   const keybindings = useServerKeybindings();
-  const [isAddingProject, setIsAddingProject] = useState(false);
-  const [isAddProjectDialogOpen, setIsAddProjectDialogOpen] = useState(false);
+  const openAddProjectCommandPalette = useCommandPaletteStore((store) => store.openAddProject);
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<string>
   >(() => new Set());
@@ -2836,97 +2834,9 @@ export default function Sidebar() {
   const newThreadShortcutLabel =
     shortcutLabelForCommand(keybindings, "chat.newLocal", newThreadShortcutLabelOptions) ??
     shortcutLabelForCommand(keybindings, "chat.new", newThreadShortcutLabelOptions);
-  const focusMostRecentThreadForProject = useCallback(
-    (projectRef: { environmentId: EnvironmentId; projectId: ProjectId }) => {
-      const physicalKey = scopedProjectKey(
-        scopeProjectRef(projectRef.environmentId, projectRef.projectId),
-      );
-      const logicalKey = physicalToLogicalKey.get(physicalKey) ?? physicalKey;
-      const latestThread = sortThreads(
-        (threadsByProjectKey.get(logicalKey) ?? []).filter((thread) => thread.archivedAt === null),
-        sidebarThreadSortOrder,
-      )[0];
-      if (!latestThread) return;
-
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(latestThread.environmentId, latestThread.id)),
-      });
-    },
-    [sidebarThreadSortOrder, navigate, threadsByProjectKey, physicalToLogicalKey],
-  );
-
-  const addProjectFromInput = useCallback(
-    async (rawCwd: string) => {
-      const cwd = rawCwd.trim();
-      if (!cwd || isAddingProject) return;
-      const api = activeEnvironmentId ? readEnvironmentApi(activeEnvironmentId) : undefined;
-      if (!api) return;
-
-      setIsAddingProject(true);
-
-      const existing = projects.find((project) => project.cwd === cwd);
-      if (existing) {
-        focusMostRecentThreadForProject({
-          environmentId: existing.environmentId,
-          projectId: existing.id,
-        });
-        setIsAddingProject(false);
-        return;
-      }
-
-      const projectId = newProjectId();
-      const title = cwd.split(/[/\\]/).findLast(isNonEmptyString) ?? cwd;
-      try {
-        await api.orchestration.dispatchCommand({
-          type: "project.create",
-          commandId: newCommandId(),
-          projectId,
-          title,
-          workspaceRoot: cwd,
-          defaultModelSelection: {
-            provider: "codex",
-            model: DEFAULT_MODEL_BY_PROVIDER.codex,
-          },
-          createdAt: new Date().toISOString(),
-        });
-        if (activeEnvironmentId !== null) {
-          await handleNewThread(scopeProjectRef(activeEnvironmentId, projectId), {
-            envMode: defaultThreadEnvMode,
-          }).catch(() => undefined);
-        }
-      } catch (error) {
-        const description =
-          error instanceof Error ? error.message : "An error occurred while adding the project.";
-        toastManager.add({
-          type: "error",
-          title: "Failed to add project",
-          description,
-        });
-      } finally {
-        setIsAddingProject(false);
-      }
-    },
-    [
-      focusMostRecentThreadForProject,
-      activeEnvironmentId,
-      handleNewThread,
-      isAddingProject,
-      projects,
-      defaultThreadEnvMode,
-    ],
-  );
-
   const handleStartAddProject = useCallback(() => {
-    setIsAddProjectDialogOpen(true);
-  }, []);
-
-  const handleConfirmAddProject = useCallback(
-    async (absolutePath: string) => {
-      await addProjectFromInput(absolutePath);
-    },
-    [addProjectFromInput],
-  );
+    openAddProjectCommandPalette();
+  }, [openAddProjectCommandPalette]);
 
   const navigateToThread = useCallback(
     (threadRef: ScopedThreadRef) => {
@@ -3408,20 +3318,6 @@ export default function Sidebar() {
           <SidebarChromeFooter />
         </>
       )}
-
-      <DirectoryBrowserDialog
-        open={isAddProjectDialogOpen}
-        onOpenChange={setIsAddProjectDialogOpen}
-        environmentId={activeEnvironmentId}
-        initialPath={
-          addProjectBaseDirectory && addProjectBaseDirectory.trim().length > 0
-            ? addProjectBaseDirectory
-            : "~/"
-        }
-        title="Add Project"
-        confirmLabel="Add Project"
-        onConfirm={handleConfirmAddProject}
-      />
     </>
   );
 }

@@ -3,6 +3,8 @@ import type { EnvironmentId, EnvironmentApi } from "@marcode/contracts";
 import type { WsRpcClient } from "./rpc/wsRpcClient";
 import { readEnvironmentConnection } from "./environments/runtime";
 
+const environmentApiOverridesForTests = new Map<EnvironmentId, EnvironmentApi>();
+
 export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
   return {
     terminal: {
@@ -18,6 +20,9 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       searchEntries: rpcClient.projects.searchEntries,
       browseDirectories: rpcClient.projects.browseDirectories,
       writeFile: rpcClient.projects.writeFile,
+    },
+    filesystem: {
+      browse: rpcClient.filesystem.browse,
     },
     git: {
       pull: rpcClient.git.pull,
@@ -70,6 +75,11 @@ export function readEnvironmentApi(environmentId: EnvironmentId): EnvironmentApi
     return undefined;
   }
 
+  const overriddenApi = environmentApiOverridesForTests.get(environmentId);
+  if (overriddenApi) {
+    return overriddenApi;
+  }
+
   const connection = readEnvironmentConnection(environmentId);
   return connection ? createEnvironmentApi(connection.client) : undefined;
 }
@@ -80,4 +90,15 @@ export function ensureEnvironmentApi(environmentId: EnvironmentId): EnvironmentA
     throw new Error(`Environment API not found for environment ${environmentId}`);
   }
   return api;
+}
+
+export function __setEnvironmentApiOverrideForTests(
+  environmentId: EnvironmentId,
+  api: EnvironmentApi,
+): void {
+  environmentApiOverridesForTests.set(environmentId, api);
+}
+
+export function __resetEnvironmentApiOverridesForTests(): void {
+  environmentApiOverridesForTests.clear();
 }

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef } from "react";
 import { FolderIcon, FolderPlusIcon, ImageIcon, PlusIcon, XIcon } from "lucide-react";
 import type { EnvironmentId, ThreadId, RuntimeMode } from "@marcode/contracts";
 import { Button } from "../ui/button";
@@ -18,7 +18,7 @@ import { readNativeApi } from "~/nativeApi";
 import { newCommandId } from "~/lib/utils";
 import { basenameOfPath } from "~/vscode-icons";
 import { toastManager } from "~/components/ui/toast";
-import { DirectoryBrowserDialog } from "./DirectoryBrowserDialog";
+import { useCommandPaletteStore } from "~/commandPaletteStore";
 
 interface ComposerAttachmentsPopoverProps {
   threadId: ThreadId;
@@ -45,7 +45,7 @@ export function ComposerAttachmentsPopover({
 }: ComposerAttachmentsPopoverProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const menuHandleRef = useRef(MenuCreateHandle());
-  const [isDirBrowserOpen, setIsDirBrowserOpen] = useState(false);
+  const openAddFolder = useCommandPaletteStore((store) => store.openAddFolder);
 
   const count = additionalDirectories.length;
 
@@ -78,35 +78,50 @@ export function ComposerAttachmentsPopover({
     [threadId, onLocalDirectoriesChange],
   );
 
-  const handleOpenDirBrowser = useCallback(() => {
-    menuHandleRef.current.close();
-    setIsDirBrowserOpen(true);
-  }, []);
-
-  const handleConfirmDirectory = useCallback(
-    async (absolutePath: string) => {
-      try {
-        if (!additionalDirectories.includes(absolutePath)) {
-          await dispatchMetaUpdate([...additionalDirectories, absolutePath]);
-        }
-      } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: "Failed to add folder",
-          description:
-            error instanceof Error
-              ? error.message
-              : "An unexpected error occurred while adding the folder.",
-        });
-      }
-    },
-    [additionalDirectories, dispatchMetaUpdate],
-  );
-
   // Initial path for the Add folder dialog: project cwd with "/../" so the
   // browser opens at the parent of the project directory (e.g. project
   // "/personal/marcode" → dialog opens at "/personal").
-  const dirBrowserInitialPath = projectCwd ? `${projectCwd.replace(/\/+$/, "")}/../` : "~/";
+  const addFolderInitialPath = projectCwd ? `${projectCwd.replace(/\/+$/, "")}/../` : "~/";
+
+  const handleOpenAddFolder = useCallback(() => {
+    menuHandleRef.current.close();
+    if (!environmentId) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to add folder",
+        description: "No environment is available for this thread.",
+      });
+      return;
+    }
+    const currentDirectories = [...additionalDirectories];
+    openAddFolder({
+      environmentId,
+      initialPath: addFolderInitialPath,
+      onConfirm: async (absolutePath) => {
+        if (currentDirectories.includes(absolutePath)) {
+          return;
+        }
+        try {
+          await dispatchMetaUpdate([...currentDirectories, absolutePath]);
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Failed to add folder",
+            description:
+              error instanceof Error
+                ? error.message
+                : "An unexpected error occurred while adding the folder.",
+          });
+        }
+      },
+    });
+  }, [
+    additionalDirectories,
+    addFolderInitialPath,
+    dispatchMetaUpdate,
+    environmentId,
+    openAddFolder,
+  ]);
 
   const removeDirectory = useCallback(
     (path: string) => {
@@ -144,7 +159,7 @@ export function ComposerAttachmentsPopover({
               <ImageIcon className="size-4" />
               Attach image
             </MenuItem>
-            <MenuItem closeOnClick={false} onClick={handleOpenDirBrowser}>
+            <MenuItem closeOnClick={false} onClick={handleOpenAddFolder}>
               <FolderPlusIcon className="size-4" />
               Add folder
             </MenuItem>
@@ -198,16 +213,6 @@ export function ComposerAttachmentsPopover({
         multiple
         className="hidden"
         onChange={handleFileChange}
-      />
-
-      <DirectoryBrowserDialog
-        open={isDirBrowserOpen}
-        onOpenChange={setIsDirBrowserOpen}
-        environmentId={environmentId}
-        initialPath={dirBrowserInitialPath}
-        title="Add folder"
-        confirmLabel="Add folder"
-        onConfirm={handleConfirmDirectory}
       />
     </>
   );

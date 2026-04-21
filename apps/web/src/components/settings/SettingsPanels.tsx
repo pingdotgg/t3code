@@ -391,7 +391,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["New thread mode"]
         : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
-        ? ["Add Project base directory"]
+        ? ["Add project base directory"]
         : []),
       ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
         ? ["Archive confirmation"]
@@ -408,6 +408,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.addProjectBaseDirectory,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
+      settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
@@ -1331,13 +1332,13 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Add Project base directory"
-          description="Directory the Add Project browser starts in. Leave empty to start at your home folder."
+          title="Add project base directory"
+          description="Directory the Add project browser starts in. Leave empty to start at your home folder."
           resetAction={
             settings.addProjectBaseDirectory !==
             DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
               <SettingResetButton
-                label="Add Project base directory"
+                label="add project base directory"
                 onClick={() =>
                   updateSettings({
                     addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
@@ -1353,7 +1354,7 @@ export function GeneralSettingsPanel() {
               onChange={(event) => updateSettings({ addProjectBaseDirectory: event.target.value })}
               placeholder="~/"
               spellCheck={false}
-              aria-label="Add Project base directory"
+              aria-label="Add project base directory"
             />
           }
         />
