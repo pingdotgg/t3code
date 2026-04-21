@@ -4,6 +4,7 @@ import type {
   OrchestrationSessionStatus,
   ProjectId,
   ThreadId,
+  TurnId,
 } from "@marcode/contracts";
 import type { Project, Thread } from "./types";
 
@@ -65,6 +66,37 @@ function isThreadSuppressed(threadId: ThreadId): boolean {
     return false;
   }
   return true;
+}
+
+// Tracks turn ids the user has locally interrupted via the Stop button, so the
+// in-chat "Working…" indicator can clear immediately without waiting for a
+// provider-emitted turn.completed event (which may be slow, dropped, or hang).
+// Scoped per-turnId so a follow-up message starts a new turn with a new id
+// that is NOT in this set — the indicator re-appears correctly on send.
+// Snapshot is swapped (not mutated) on write so React's useSyncExternalStore
+// detects the change via reference equality.
+let locallyInterruptedTurnIds: ReadonlySet<TurnId> = new Set();
+const locallyInterruptedListeners = new Set<() => void>();
+
+export function markTurnLocallyInterrupted(turnId: TurnId): void {
+  if (locallyInterruptedTurnIds.has(turnId)) return;
+  locallyInterruptedTurnIds = new Set([...locallyInterruptedTurnIds, turnId]);
+  for (const listener of locallyInterruptedListeners) listener();
+}
+
+export function subscribeToLocallyInterruptedTurns(listener: () => void): () => void {
+  locallyInterruptedListeners.add(listener);
+  return () => {
+    locallyInterruptedListeners.delete(listener);
+  };
+}
+
+export function getLocallyInterruptedTurnsSnapshot(): ReadonlySet<TurnId> {
+  return locallyInterruptedTurnIds;
+}
+
+export function isTurnLocallyInterrupted(turnId: TurnId): boolean {
+  return locallyInterruptedTurnIds.has(turnId);
 }
 
 export function deriveTurnNotificationTriggers(

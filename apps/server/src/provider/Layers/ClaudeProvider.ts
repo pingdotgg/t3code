@@ -88,6 +88,23 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     } satisfies ModelCapabilities,
   },
   {
+    slug: "claude-opus-4-5",
+    name: "Opus 4.5",
+    isCustom: false,
+    capabilities: {
+      reasoningEffortLevels: [
+        { value: "low", label: "Low" },
+        { value: "medium", label: "Medium" },
+        { value: "high", label: "High", isDefault: true },
+        { value: "max", label: "Max" },
+      ],
+      supportsFastMode: true,
+      supportsThinkingToggle: false,
+      contextWindowOptions: [],
+      promptInjectedEffortLevels: [],
+    } satisfies ModelCapabilities,
+  },
+  {
     slug: "claude-sonnet-4-6",
     name: "Sonnet 4.6",
     isCustom: false,

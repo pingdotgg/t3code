@@ -34,7 +34,16 @@ import {
 import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@marcode/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@marcode/shared/projectScripts";
 import { truncate } from "@marcode/shared/String";
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
@@ -80,7 +89,12 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { markThreadUserStopped } from "../turnNotification";
+import {
+  getLocallyInterruptedTurnsSnapshot,
+  markThreadUserStopped,
+  markTurnLocallyInterrupted,
+  subscribeToLocallyInterruptedTurns,
+} from "../turnNotification";
 import {
   type AppState,
   selectProjectsAcrossEnvironments,
@@ -154,7 +168,7 @@ import {
 import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelection } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { deriveLogicalProjectKey } from "../logicalProject";
+import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
@@ -454,6 +468,7 @@ interface SubmitComposerTurnInput {
 interface ChatViewProps {
   threadId: ThreadId;
   environmentId?: EnvironmentId;
+  reserveTitleBarControlInset?: boolean;
 }
 
 interface TerminalLaunchContext {
@@ -713,7 +728,11 @@ function PersistentThreadTerminalDrawer({
   );
 }
 
-export default function ChatView({ threadId, environmentId: environmentIdProp }: ChatViewProps) {
+export default function ChatView({
+  threadId,
+  environmentId: environmentIdProp,
+  reserveTitleBarControlInset = true,
+}: ChatViewProps) {
   const { isMobile, state: sidebarState } = useSidebar();
   const sidebarVisible = !isMobile && sidebarState === "expanded";
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -1125,6 +1144,63 @@ export default function ChatView({ threadId, environmentId: environmentIdProp }:
   );
   const activeProject = useProjectById(activeThread?.projectId);
 
+  // Compute the list of environments this logical project spans, used to
+  // drive the environment picker in BranchToolbar.
+  const allProjects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const savedEnvironmentRegistry = useSavedEnvironmentRegistryStore((s) => s.byId);
+  const savedEnvironmentRuntimeById = useSavedEnvironmentRuntimeStore((s) => s.byId);
+  const projectGroupingSettings = useSettings((settings) => ({
+    sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
+    sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
+  }));
+  const logicalProjectEnvironments = useMemo(() => {
+    if (!activeProject) return [];
+    const logicalKey = deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings);
+    const memberProjects = allProjects.filter(
+      (p) => deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) === logicalKey,
+    );
+    const seen = new Set<string>();
+    const envs: Array<{
+      environmentId: EnvironmentId;
+      projectId: ProjectId;
+      label: string;
+      isPrimary: boolean;
+    }> = [];
+    for (const p of memberProjects) {
+      if (seen.has(p.environmentId)) continue;
+      seen.add(p.environmentId);
+      const isPrimary = p.environmentId === primaryEnvironmentId;
+      const savedRecord = savedEnvironmentRegistry[p.environmentId];
+      const runtimeState = savedEnvironmentRuntimeById[p.environmentId];
+      const label = resolveEnvironmentOptionLabel({
+        isPrimary,
+        environmentId: p.environmentId,
+        runtimeLabel: runtimeState?.descriptor?.label ?? null,
+        savedLabel: savedRecord?.label ?? null,
+      });
+      envs.push({
+        environmentId: p.environmentId,
+        projectId: p.id,
+        label,
+        isPrimary,
+      });
+    }
+    // Sort: primary first, then alphabetical
+    envs.sort((a, b) => {
+      if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
+      return a.label.localeCompare(b.label);
+    });
+    return envs;
+  }, [
+    activeProject,
+    allProjects,
+    projectGroupingSettings,
+    primaryEnvironmentId,
+    savedEnvironmentRegistry,
+    savedEnvironmentRuntimeById,
+  ]);
+  const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
+
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
       if (!canCheckoutPullRequestIntoThread) {
@@ -1380,13 +1456,24 @@ export default function ChatView({ threadId, environmentId: environmentIdProp }:
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError: activeThread?.error,
   });
-  const hasInFlightTurn = Boolean(activeLatestTurn && !activeLatestTurn.completedAt);
+  const locallyInterruptedTurns = useSyncExternalStore(
+    subscribeToLocallyInterruptedTurns,
+    getLocallyInterruptedTurnsSnapshot,
+    getLocallyInterruptedTurnsSnapshot,
+  );
+  const isLatestTurnLocallyInterrupted = Boolean(
+    activeLatestTurn && locallyInterruptedTurns.has(activeLatestTurn.turnId),
+  );
+  const hasInFlightTurn =
+    !isLatestTurnLocallyInterrupted && Boolean(activeLatestTurn && !activeLatestTurn.completedAt);
   const isSessionStarting = activeThread?.session?.orchestrationStatus === "starting";
   const lastActiveMessage = activeThread?.messages[activeThread.messages.length - 1];
-  const hasPendingAssistantResponse = Boolean(
-    lastActiveMessage?.role === "user" &&
-    (!activeLatestTurn || Boolean(activeLatestTurn.completedAt)),
-  );
+  const hasPendingAssistantResponse =
+    !isLatestTurnLocallyInterrupted &&
+    Boolean(
+      lastActiveMessage?.role === "user" &&
+      (!activeLatestTurn || Boolean(activeLatestTurn.completedAt)),
+    );
   const isWorking =
     phase === "running" ||
     isSendBusy ||
@@ -3671,6 +3758,7 @@ export default function ChatView({ threadId, environmentId: environmentIdProp }:
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
+        quotedContexts: composerQuotedContexts,
       });
       promptRef.current = "";
       clearComposerDraftContent(threadRef);
@@ -3729,6 +3817,9 @@ export default function ChatView({ threadId, environmentId: environmentIdProp }:
     const api = readNativeApi();
     if (!api || !activeThread) return;
     markThreadUserStopped(activeThread.id);
+    if (activeLatestTurn?.turnId) {
+      markTurnLocallyInterrupted(activeLatestTurn.turnId);
+    }
     await api.orchestration.dispatchCommand({
       type: "thread.turn.interrupt",
       commandId: newCommandId(),
@@ -4774,7 +4865,13 @@ export default function ChatView({ threadId, environmentId: environmentIdProp }:
         className={cn(
           "border-b border-border",
           isElectron && !sidebarVisible ? "pr-3 sm:pr-5 pl-[90px]" : "px-3 sm:px-5",
-          isElectron ? "drag-region flex h-[52px] items-center" : "py-2 sm:py-3",
+          isElectron
+            ? cn(
+                "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]",
+                reserveTitleBarControlInset &&
+                  "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
+              )
+            : "py-2 sm:py-3",
         )}
       >
         <ChatHeader

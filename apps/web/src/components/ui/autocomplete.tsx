@@ -14,12 +14,14 @@ function AutocompleteInput({
   showTrigger = false,
   showClear = false,
   startAddon,
+  startAddonInteractive = false,
   size,
   ...props
 }: Omit<AutocompletePrimitive.Input.Props, "size"> & {
   showTrigger?: boolean;
   showClear?: boolean;
   startAddon?: React.ReactNode;
+  startAddonInteractive?: boolean;
   size?: "sm" | "default" | "lg" | number;
   ref?: React.Ref<HTMLInputElement>;
 }) {
@@ -29,8 +31,11 @@ function AutocompleteInput({
     <div className="relative not-has-[>*.w-full]:w-fit w-full text-foreground has-disabled:opacity-64">
       {startAddon && (
         <div
-          aria-hidden="true"
-          className="[&_svg]:-mx-0.5 pointer-events-none absolute inset-y-0 start-px z-10 flex items-center ps-[calc(--spacing(3)-1px)] opacity-80 has-[+[data-size=sm]]:ps-[calc(--spacing(2.5)-1px)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4"
+          {...(startAddonInteractive ? {} : { "aria-hidden": true })}
+          className={cn(
+            "[&_svg]:-mx-0.5 absolute inset-y-0 start-px z-10 flex items-center ps-[calc(--spacing(3)-1px)] opacity-80 has-[+[data-size=sm]]:ps-[calc(--spacing(2.5)-1px)] [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4",
+            startAddonInteractive ? "pointer-events-auto" : "pointer-events-none",
+          )}
           data-slot="autocomplete-start-addon"
         >
           {startAddon}

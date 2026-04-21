@@ -1,4 +1,4 @@
-import { DiffIcon, QuoteIcon, XIcon } from "lucide-react";
+import { CornerDownRightIcon, DiffIcon, XIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import {
@@ -18,7 +18,7 @@ interface QuotedContextInlineChipProps {
 
 export function QuotedContextInlineChip(props: QuotedContextInlineChipProps) {
   const { preview, tooltipText, isDiff, onRemove } = props;
-  const Icon = isDiff ? DiffIcon : QuoteIcon;
+  const Icon = isDiff ? DiffIcon : CornerDownRightIcon;
 
   return (
     <Tooltip>

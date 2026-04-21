@@ -53,6 +53,9 @@ const rpcClientMock = {
     browseDirectories: vi.fn(),
     writeFile: vi.fn(),
   },
+  filesystem: {
+    browse: vi.fn(),
+  },
   shell: {
     openInEditor: vi.fn(),
   },
@@ -435,6 +438,25 @@ describe("wsApi", () => {
     });
   });
 
+  it("forwards filesystem browse requests to the RPC client", async () => {
+    rpcClientMock.filesystem.browse.mockResolvedValue({
+      parentPath: "/tmp/project/",
+      entries: [],
+    });
+    const { createEnvironmentApi } = await import("./environmentApi");
+
+    const api = createEnvironmentApi(rpcClientMock as never);
+    await api.filesystem.browse({
+      partialPath: "/tmp/project/",
+      cwd: "/tmp/project",
+    });
+
+    expect(rpcClientMock.filesystem.browse).toHaveBeenCalledWith({
+      partialPath: "/tmp/project/",
+      cwd: "/tmp/project",
+    });
+  });
+
   it("forwards full-thread diff requests to the orchestration RPC", async () => {
     rpcClientMock.orchestration.getFullThreadDiff.mockResolvedValue({ diff: "patch" });
     const { createEnvironmentApi } = await import("./environmentApi");
@@ -497,6 +519,19 @@ describe("wsApi", () => {
     expect(showContextMenu).toHaveBeenCalledWith(items, undefined);
   });
 
+  it("forwards folder picker options to the desktop bridge", async () => {
+    const pickFolder = vi.fn().mockResolvedValue("/tmp/project");
+    getWindowForTest().desktopBridge = makeDesktopBridge({ pickFolder });
+
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi(rpcClientMock as never);
+
+    await expect(api.dialogs.pickFolder({ initialPath: "/tmp/workspace" })).resolves.toBe(
+      "/tmp/project",
+    );
+    expect(pickFolder).toHaveBeenCalledWith({ initialPath: "/tmp/workspace" });
+  });
+
   it("falls back to the browser context menu helper when the desktop bridge is missing", async () => {
     showContextMenuFallbackMock.mockResolvedValue("rename");
     const { createLocalApi } = await import("./localApi");
@@ -509,14 +544,30 @@ describe("wsApi", () => {
   });
 
   it("reads and writes persistence through the desktop bridge when available", async () => {
-    const getClientSettings = vi.fn().mockResolvedValue({
+    const clientSettings = {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       diffWordWrap: true,
       favorites: [],
-      sidebarProjectSortOrder: "manual",
-      sidebarThreadSortOrder: "created_at",
-      timestampFormat: "24-hour",
+      sidebarProjectGroupingMode: "repository_path" as const,
+      sidebarProjectGroupingOverrides: {
+        "environment-local:/tmp/project": "separate" as const,
+      },
+      sidebarProjectSortOrder: "manual" as const,
+      sidebarThreadSortOrder: "created_at" as const,
+      timestampFormat: "24-hour" as const,
+      turnNotificationMode: "off" as const,
+      turnNotificationSoundId: "default",
+      turnNotificationCustomSounds: [],
+      turnNotificationAdvancedSounds: false,
+      turnNotificationSoundMap: {
+        "turn-events": "default",
+        "approval-needed": "default",
+        "user-input-needed": "default",
+      },
+    };
+    const getClientSettings = vi.fn().mockResolvedValue({
+      ...clientSettings,
     });
     const setClientSettings = vi.fn().mockResolvedValue(undefined);
     const getSavedEnvironmentRegistry = vi.fn().mockResolvedValue([]);
@@ -538,24 +589,7 @@ describe("wsApi", () => {
     const api = createLocalApi(rpcClientMock as never);
 
     await api.persistence.getClientSettings();
-    await api.persistence.setClientSettings({
-      confirmThreadArchive: true,
-      confirmThreadDelete: false,
-      diffWordWrap: true,
-      favorites: [],
-      sidebarProjectSortOrder: "manual",
-      sidebarThreadSortOrder: "created_at",
-      timestampFormat: "24-hour",
-      turnNotificationMode: "off",
-      turnNotificationSoundId: "default",
-      turnNotificationCustomSounds: [],
-      turnNotificationAdvancedSounds: false,
-      turnNotificationSoundMap: {
-        "turn-events": "default",
-        "approval-needed": "default",
-        "user-input-needed": "default",
-      },
-    });
+    await api.persistence.setClientSettings(clientSettings);
     await api.persistence.getSavedEnvironmentRegistry();
     await api.persistence.setSavedEnvironmentRegistry([]);
     await api.persistence.getSavedEnvironmentSecret(EnvironmentId.make("environment-local"));
@@ -566,24 +600,7 @@ describe("wsApi", () => {
     await api.persistence.removeSavedEnvironmentSecret(EnvironmentId.make("environment-local"));
 
     expect(getClientSettings).toHaveBeenCalledWith();
-    expect(setClientSettings).toHaveBeenCalledWith({
-      confirmThreadArchive: true,
-      confirmThreadDelete: false,
-      diffWordWrap: true,
-      favorites: [],
-      sidebarProjectSortOrder: "manual",
-      sidebarThreadSortOrder: "created_at",
-      timestampFormat: "24-hour",
-      turnNotificationMode: "off",
-      turnNotificationSoundId: "default",
-      turnNotificationCustomSounds: [],
-      turnNotificationAdvancedSounds: false,
-      turnNotificationSoundMap: {
-        "turn-events": "default",
-        "approval-needed": "default",
-        "user-input-needed": "default",
-      },
-    });
+    expect(setClientSettings).toHaveBeenCalledWith(clientSettings);
     expect(getSavedEnvironmentRegistry).toHaveBeenCalledWith();
     expect(setSavedEnvironmentRegistry).toHaveBeenCalledWith([]);
     expect(getSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local");
@@ -594,16 +611,19 @@ describe("wsApi", () => {
   it("falls back to browser storage for persistence when the desktop bridge is missing", async () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi(rpcClientMock as never);
-
-    await api.persistence.setClientSettings({
+    const clientSettings = {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       diffWordWrap: true,
       favorites: [],
-      sidebarProjectSortOrder: "manual",
-      sidebarThreadSortOrder: "created_at",
-      timestampFormat: "24-hour",
-      turnNotificationMode: "off",
+      sidebarProjectGroupingMode: "repository_path" as const,
+      sidebarProjectGroupingOverrides: {
+        "environment-local:/tmp/project": "separate" as const,
+      },
+      sidebarProjectSortOrder: "manual" as const,
+      sidebarThreadSortOrder: "created_at" as const,
+      timestampFormat: "24-hour" as const,
+      turnNotificationMode: "off" as const,
       turnNotificationSoundId: "default",
       turnNotificationCustomSounds: [],
       turnNotificationAdvancedSounds: false,
@@ -612,7 +632,9 @@ describe("wsApi", () => {
         "approval-needed": "default",
         "user-input-needed": "default",
       },
-    });
+    };
+
+    await api.persistence.setClientSettings(clientSettings);
     await api.persistence.setSavedEnvironmentRegistry([
       {
         environmentId: EnvironmentId.make("environment-local"),
@@ -628,24 +650,7 @@ describe("wsApi", () => {
       "bearer-token",
     );
 
-    await expect(api.persistence.getClientSettings()).resolves.toEqual({
-      confirmThreadArchive: true,
-      confirmThreadDelete: false,
-      diffWordWrap: true,
-      favorites: [],
-      sidebarProjectSortOrder: "manual",
-      sidebarThreadSortOrder: "created_at",
-      timestampFormat: "24-hour",
-      turnNotificationAdvancedSounds: false,
-      turnNotificationCustomSounds: [],
-      turnNotificationMode: "off",
-      turnNotificationSoundId: "default",
-      turnNotificationSoundMap: {
-        "approval-needed": "default",
-        "turn-events": "default",
-        "user-input-needed": "default",
-      },
-    });
+    await expect(api.persistence.getClientSettings()).resolves.toEqual(clientSettings);
     await expect(api.persistence.getSavedEnvironmentRegistry()).resolves.toEqual([
       {
         environmentId: EnvironmentId.make("environment-local"),

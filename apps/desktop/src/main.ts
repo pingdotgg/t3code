@@ -10,6 +10,7 @@ declare const __EMBEDDED_MARCODE_JIRA_TOKEN_PROXY_URL__: string;
 import {
   app,
   BrowserWindow,
+  type BrowserWindowConstructorOptions,
   clipboard,
   dialog,
   ipcMain,
@@ -20,7 +21,7 @@ import {
   safeStorage,
   shell,
 } from "electron";
-import type { MenuItemConstructorOptions } from "electron";
+import type { MenuItemConstructorOptions, OpenDialogOptions } from "electron";
 import type {
   ClientSettings,
   DesktopTheme,
@@ -123,8 +124,72 @@ const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
+
+function resolvePickFolderDefaultPath(rawOptions: unknown): string | undefined {
+  if (typeof rawOptions !== "object" || rawOptions === null) {
+    return undefined;
+  }
+
+  const { initialPath } = rawOptions as { initialPath?: unknown };
+  if (typeof initialPath !== "string") {
+    return undefined;
+  }
+
+  const trimmedPath = initialPath.trim();
+  if (trimmedPath.length === 0) {
+    return undefined;
+  }
+
+  if (trimmedPath === "~") {
+    return OS.homedir();
+  }
+
+  if (trimmedPath.startsWith("~/") || trimmedPath.startsWith("~\\")) {
+    return Path.join(OS.homedir(), trimmedPath.slice(2));
+  }
+
+  return Path.resolve(trimmedPath);
+}
 const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
 const DESKTOP_REQUIRED_PORT_PROBE_HOSTS = ["0.0.0.0", "::"] as const;
+function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextMenuItem[] {
+  const normalizedItems: ContextMenuItem[] = [];
+
+  for (const sourceItem of source) {
+    if (typeof sourceItem.id !== "string" || typeof sourceItem.label !== "string") {
+      continue;
+    }
+
+    const normalizedItem: ContextMenuItem = {
+      id: sourceItem.id,
+      label: sourceItem.label,
+      destructive: sourceItem.destructive === true,
+      disabled: sourceItem.disabled === true,
+    };
+
+    if (sourceItem.children) {
+      const normalizedChildren = normalizeContextMenuItems(sourceItem.children);
+      if (normalizedChildren.length === 0) {
+        continue;
+      }
+      normalizedItem.children = normalizedChildren;
+    }
+
+    normalizedItems.push(normalizedItem);
+  }
+
+  return normalizedItems;
+}
+
+const TITLEBAR_HEIGHT = 40;
+const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
+const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
+const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
+
+type WindowTitleBarOptions = Pick<
+  BrowserWindowConstructorOptions,
+  "titleBarOverlay" | "titleBarStyle" | "trafficLightPosition"
+>;
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 type LinuxDesktopNamedApp = Electron.App & {
@@ -1500,15 +1565,16 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
-  ipcMain.handle(PICK_FOLDER_CHANNEL, async () => {
+  ipcMain.handle(PICK_FOLDER_CHANNEL, async (_event, rawOptions: unknown) => {
     const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
+    const defaultPath = resolvePickFolderDefaultPath(rawOptions);
+    const openDialogOptions: OpenDialogOptions = {
+      properties: ["openDirectory", "createDirectory"],
+      ...(defaultPath ? { defaultPath } : {}),
+    };
     const result = owner
-      ? await dialog.showOpenDialog(owner, {
-          properties: ["openDirectory", "createDirectory"],
-        })
-      : await dialog.showOpenDialog({
-          properties: ["openDirectory", "createDirectory"],
-        });
+      ? await dialog.showOpenDialog(owner, openDialogOptions)
+      : await dialog.showOpenDialog(openDialogOptions);
     if (result.canceled) return null;
     return result.filePaths[0] ?? null;
   });
@@ -1537,14 +1603,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle(
     CONTEXT_MENU_CHANNEL,
     async (_event, items: ContextMenuItem[], position?: { x: number; y: number }) => {
-      const normalizedItems = items
-        .filter((item) => typeof item.id === "string" && typeof item.label === "string")
-        .map((item) => ({
-          id: item.id,
-          label: item.label,
-          destructive: item.destructive === true,
-          disabled: item.disabled === true,
-        }));
+      const normalizedItems = normalizeContextMenuItems(items);
       if (normalizedItems.length === 0) {
         return null;
       }
@@ -1565,28 +1624,37 @@ function registerIpcHandlers(): void {
       if (!window) return null;
 
       return new Promise<string | null>((resolve) => {
-        const template: MenuItemConstructorOptions[] = [];
-        let hasInsertedDestructiveSeparator = false;
-        for (const item of normalizedItems) {
-          if (item.destructive && !hasInsertedDestructiveSeparator && template.length > 0) {
-            template.push({ type: "separator" });
-            hasInsertedDestructiveSeparator = true;
-          }
-          const itemOption: MenuItemConstructorOptions = {
-            label: item.label,
-            enabled: !item.disabled,
-            click: () => resolve(item.id),
-          };
-          if (item.destructive) {
-            const destructiveIcon = getDestructiveMenuIcon();
-            if (destructiveIcon) {
-              itemOption.icon = destructiveIcon;
+        const buildTemplate = (
+          entries: readonly ContextMenuItem[],
+        ): MenuItemConstructorOptions[] => {
+          const template: MenuItemConstructorOptions[] = [];
+          let hasInsertedDestructiveSeparator = false;
+          for (const item of entries) {
+            if (item.destructive && !hasInsertedDestructiveSeparator && template.length > 0) {
+              template.push({ type: "separator" });
+              hasInsertedDestructiveSeparator = true;
             }
+            const itemOption: MenuItemConstructorOptions = {
+              label: item.label,
+              enabled: !item.disabled,
+            };
+            if (item.children && item.children.length > 0) {
+              itemOption.submenu = buildTemplate(item.children);
+            } else {
+              itemOption.click = () => resolve(item.id);
+            }
+            if (item.destructive && (!item.children || item.children.length === 0)) {
+              const destructiveIcon = getDestructiveMenuIcon();
+              if (destructiveIcon) {
+                itemOption.icon = destructiveIcon;
+              }
+            }
+            template.push(itemOption);
           }
-          template.push(itemOption);
-        }
+          return template;
+        };
 
-        const menu = Menu.buildFromTemplate(template);
+        const menu = Menu.buildFromTemplate(buildTemplate(normalizedItems));
         menu.popup({
           window,
           ...popupPosition,
@@ -1686,6 +1754,46 @@ function saveWindowState(window: BrowserWindow): void {
   writeWindowState(WINDOW_STATE_PATH, lastWindowState);
 }
 
+function getWindowTitleBarOptions(): WindowTitleBarOptions {
+  if (process.platform === "darwin") {
+    return {
+      titleBarStyle: "hiddenInset",
+      trafficLightPosition: { x: 16, y: 18 },
+    };
+  }
+
+  return {
+    titleBarStyle: "hidden",
+    titleBarOverlay: {
+      color: TITLEBAR_COLOR,
+      height: TITLEBAR_HEIGHT,
+      symbolColor: nativeTheme.shouldUseDarkColors
+        ? TITLEBAR_DARK_SYMBOL_COLOR
+        : TITLEBAR_LIGHT_SYMBOL_COLOR,
+    },
+  };
+}
+
+function syncWindowAppearance(window: BrowserWindow): void {
+  if (window.isDestroyed()) {
+    return;
+  }
+
+  window.setBackgroundColor(getInitialWindowBackgroundColor());
+  const { titleBarOverlay } = getWindowTitleBarOptions();
+  if (typeof titleBarOverlay === "object") {
+    window.setTitleBarOverlay(titleBarOverlay);
+  }
+}
+
+function syncAllWindowAppearance(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    syncWindowAppearance(window);
+  }
+}
+
+nativeTheme.on("updated", syncAllWindowAppearance);
+
 function createWindow(options?: { deferLoad?: boolean }): BrowserWindow {
   const restoredBounds = resolveWindowBounds(lastWindowState);
 
@@ -1698,8 +1806,7 @@ function createWindow(options?: { deferLoad?: boolean }): BrowserWindow {
     backgroundColor: getInitialWindowBackgroundColor(),
     ...getIconOption(),
     title: APP_DISPLAY_NAME,
-    titleBarStyle: "hiddenInset",
-    trafficLightPosition: { x: 16, y: 18 },
+    ...getWindowTitleBarOptions(),
     webPreferences: {
       preload: Path.join(__dirname, "preload.js"),
       contextIsolation: true,

@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { Duration, Effect, FileSystem, Layer } from "effect";
@@ -9,6 +11,10 @@ import {
   makeRepositoryIdentityResolver,
   RepositoryIdentityResolverLive,
 } from "./RepositoryIdentityResolver.ts";
+
+const normalizePathSeparators = (value: string) => value.replaceAll("\\", "/");
+const normalizeResolvedPath = (value: string) =>
+  normalizePathSeparators(realpathSync.native(value));
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
   Effect.promise(() => runProcess("git", ["-C", cwd, ...args]));
@@ -41,10 +47,32 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
       expect(identity).not.toBeNull();
       expect(identity?.canonicalKey).toBe("github.com/marcodehq/marcode");
+      expect(normalizeResolvedPath(identity?.rootPath ?? "")).toBe(normalizeResolvedPath(cwd));
       expect(identity?.displayName).toBe("marcodehq/marcode");
       expect(identity?.provider).toBe("github");
       expect(identity?.owner).toBe("marcodehq");
       expect(identity?.name).toBe("marcode");
+    }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
+  );
+
+  it.effect("returns the git top-level root path when resolving from a nested workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const repoRoot = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "marcode-repository-identity-nested-root-test-",
+      });
+      const nestedWorkspace = `${repoRoot}/packages/web`;
+
+      yield* fileSystem.makeDirectory(nestedWorkspace, { recursive: true });
+      yield* git(repoRoot, ["init"]);
+      yield* git(repoRoot, ["remote", "add", "origin", "git@github.com:MarCodeHQ/marcode.git"]);
+
+      const resolver = yield* RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve(nestedWorkspace);
+
+      expect(identity).not.toBeNull();
+      expect(identity?.canonicalKey).toBe("github.com/marcodehq/marcode");
+      expect(normalizeResolvedPath(identity?.rootPath ?? "")).toBe(normalizeResolvedPath(repoRoot));
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
   );
 
@@ -69,24 +97,24 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
   );
 
-  it.effect("prefers upstream over origin when both remotes are configured", () =>
+  it.effect("prefers origin over upstream so forks surface their own name", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cwd = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "marcode-repository-identity-upstream-test-",
+        prefix: "marcode-repository-identity-origin-priority-test-",
       });
 
       yield* git(cwd, ["init"]);
-      yield* git(cwd, ["remote", "add", "origin", "git@github.com:julius/marcode.git"]);
+      yield* git(cwd, ["remote", "add", "origin", "git@github.com:tyulyukov/marcode.git"]);
       yield* git(cwd, ["remote", "add", "upstream", "git@github.com:MarCodeHQ/marcode.git"]);
 
       const resolver = yield* RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(cwd);
 
       expect(identity).not.toBeNull();
-      expect(identity?.locator.remoteName).toBe("upstream");
-      expect(identity?.canonicalKey).toBe("github.com/marcodehq/marcode");
-      expect(identity?.displayName).toBe("marcodehq/marcode");
+      expect(identity?.locator.remoteName).toBe("origin");
+      expect(identity?.canonicalKey).toBe("github.com/tyulyukov/marcode");
+      expect(identity?.displayName).toBe("tyulyukov/marcode");
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
   );
 

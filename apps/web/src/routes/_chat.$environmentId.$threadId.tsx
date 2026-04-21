@@ -276,7 +276,11 @@ function ChatThreadRouteView() {
     return (
       <>
         <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-          <ChatView threadId={threadRef.threadId} environmentId={threadRef.environmentId} />
+          <ChatView
+            threadId={threadRef.threadId}
+            environmentId={threadRef.environmentId}
+            reserveTitleBarControlInset={!diffOpen}
+          />
         </SidebarInset>
         <DiffPanelInlineSidebar
           diffOpen={diffOpen}

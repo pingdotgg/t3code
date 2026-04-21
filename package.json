@@ -38,6 +38,7 @@
     "typecheck": "turbo run typecheck",
     "lint": "oxlint --report-unused-disable-directives",
     "test": "turbo run test",
+    "test:process-reaper": "bun run --cwd apps/server test:process-reaper",
     "test:desktop-smoke": "turbo run smoke-test --filter=@marcode/desktop",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",

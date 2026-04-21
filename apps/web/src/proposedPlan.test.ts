@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { MessageId, TurnId } from "@marcode/contracts";
 
 import {
   buildCollapsedProposedPlanPreviewMarkdown,
@@ -9,6 +10,14 @@ import {
   resolvePlanFollowUpSubmission,
   stripDisplayedPlanMarkdown,
 } from "./proposedPlan";
+import type { QuotedContext } from "./lib/quotedContext";
+
+const sampleQuotedContext: QuotedContext = {
+  id: "ctx-1",
+  messageId: "msg-1" as MessageId,
+  turnId: "turn-1" as TurnId,
+  text: "assistant said this",
+};
 
 describe("proposedPlanTitle", () => {
   it("reads the first markdown heading as the plan title", () => {
@@ -69,6 +78,7 @@ describe("resolvePlanFollowUpSubmission", () => {
       resolvePlanFollowUpSubmission({
         draftText: "   ",
         planMarkdown: "## Ship it\n\n- step 1\n",
+        quotedContexts: [],
       }),
     ).toEqual({
       text: "PLEASE IMPLEMENT THIS PLAN:\n## Ship it\n\n- step 1",
@@ -81,10 +91,37 @@ describe("resolvePlanFollowUpSubmission", () => {
       resolvePlanFollowUpSubmission({
         draftText: "Refine step 2 first",
         planMarkdown: "## Ship it\n\n- step 1\n",
+        quotedContexts: [],
       }),
     ).toEqual({
       text: "Refine step 2 first",
       interactionMode: "plan",
+    });
+  });
+
+  it("prepends quoted contexts in refine mode when the user adds a follow-up prompt", () => {
+    expect(
+      resolvePlanFollowUpSubmission({
+        draftText: "Refine step 2 first",
+        planMarkdown: "## Ship it\n\n- step 1\n",
+        quotedContexts: [sampleQuotedContext],
+      }),
+    ).toEqual({
+      text: '<quoted_context message_id="msg-1">\nassistant said this\n</quoted_context>\n\nRefine step 2 first',
+      interactionMode: "plan",
+    });
+  });
+
+  it("prepends quoted contexts in implement mode when the draft text is empty", () => {
+    expect(
+      resolvePlanFollowUpSubmission({
+        draftText: "",
+        planMarkdown: "## Ship it\n\n- step 1\n",
+        quotedContexts: [sampleQuotedContext],
+      }),
+    ).toEqual({
+      text: '<quoted_context message_id="msg-1">\nassistant said this\n</quoted_context>\n\nPLEASE IMPLEMENT THIS PLAN:\n## Ship it\n\n- step 1',
+      interactionMode: "default",
     });
   });
 });

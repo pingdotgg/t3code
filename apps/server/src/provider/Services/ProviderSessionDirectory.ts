@@ -22,6 +22,10 @@ export interface ProviderRuntimeBinding {
   readonly runtimeMode?: RuntimeMode;
 }
 
+export interface ProviderRuntimeBindingWithMetadata extends ProviderRuntimeBinding {
+  readonly lastSeenAt: string;
+}
+
 export type ProviderSessionDirectoryReadError = ProviderSessionDirectoryPersistenceError;
 
 export type ProviderSessionDirectoryWriteError =
@@ -47,6 +51,11 @@ export interface ProviderSessionDirectoryShape {
 
   readonly listThreadIds: () => Effect.Effect<
     ReadonlyArray<ThreadId>,
+    ProviderSessionDirectoryPersistenceError
+  >;
+
+  readonly listBindings: () => Effect.Effect<
+    ReadonlyArray<ProviderRuntimeBindingWithMetadata>,
     ProviderSessionDirectoryPersistenceError
   >;
 }

@@ -19,6 +19,7 @@ import {
   type SDKUserMessage,
   ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { parseCliArgs } from "@marcode/shared/cliArgs";
 import {
   ApprovalRequestId,
   type CanonicalItemType,
@@ -86,6 +87,7 @@ type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
   "command_output" | "file_change_output"
 >;
+type ClaudeSdkEffort = NonNullable<ClaudeQueryOptions["effort"]>;
 
 type PromptQueueItem =
   | {
@@ -237,11 +239,17 @@ function normalizeClaudeStreamMessages(cause: Cause.Cause<Error>): ReadonlyArray
 
 function getEffectiveClaudeAgentEffort(
   effort: ClaudeAgentEffort | null | undefined,
-): Exclude<ClaudeAgentEffort, "ultrathink"> | null {
+): ClaudeSdkEffort | null {
   if (!effort) {
     return null;
   }
-  return effort === "ultrathink" ? null : effort;
+  if (effort === "ultrathink") {
+    return null;
+  }
+  if (effort === "xhigh") {
+    return "max";
+  }
+  return effort;
 }
 
 function isClaudeInterruptedMessage(message: string): boolean {
@@ -525,7 +533,10 @@ function isTodoTool(toolName: string): boolean {
   return toolName.toLowerCase().includes("todowrite");
 }
 
-type PlanStep = { step: string; status: "pending" | "inProgress" | "completed" };
+type PlanStep = {
+  step: string;
+  status: "pending" | "inProgress" | "completed";
+};
 
 function extractPlanStepsFromTodoInput(input: Record<string, unknown>): PlanStep[] | null {
   // TodoWrite format: { todos: [{ content, status, activeForm? }] }
@@ -1106,7 +1117,11 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     ((input: {
       readonly prompt: AsyncIterable<SDKUserMessage>;
       readonly options: ClaudeQueryOptions;
-    }) => query({ prompt: input.prompt, options: input.options }) as ClaudeQueryRuntime);
+    }) =>
+      query({
+        prompt: input.prompt,
+        options: input.options,
+      }) as ClaudeQueryRuntime);
 
   const sessions = new Map<ThreadId, ClaudeSessionContext>();
   const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
@@ -1145,7 +1160,11 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(typeof message.session_id === "string"
             ? { providerThreadId: message.session_id }
             : {}),
-          ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+          ...(context.turnState
+            ? {
+                turnId: asCanonicalTurnId(context.turnState.turnId),
+              }
+            : {}),
           ...(itemId ? { itemId: ProviderItemId.make(itemId) } : {}),
           payload: message,
         },
@@ -1632,7 +1651,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             input: tool.input,
           },
         },
-        providerRefs: nativeProviderRefs(context, { providerItemId: tool.itemId }),
+        providerRefs: nativeProviderRefs(context, {
+          providerItemId: tool.itemId,
+        }),
         raw: {
           source: "claude.sdk.message",
           method: "claude/result",
@@ -1755,7 +1776,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           threadId: context.session.threadId,
           turnId: context.turnState.turnId,
           ...(assistantBlockEntry?.block
-            ? { itemId: asRuntimeItemId(assistantBlockEntry.block.itemId) }
+            ? {
+                itemId: asRuntimeItemId(assistantBlockEntry.block.itemId),
+              }
             : {}),
           payload: {
             streamKind,
@@ -1814,7 +1837,11 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           provider: PROVIDER,
           createdAt: stamp.createdAt,
           threadId: context.session.threadId,
-          ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+          ...(context.turnState
+            ? {
+                turnId: asCanonicalTurnId(context.turnState.turnId),
+              }
+            : {}),
           itemId: asRuntimeItemId(nextTool.itemId),
           payload: {
             itemType: nextTool.itemType,
@@ -1826,7 +1853,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               input: nextTool.input,
             },
           },
-          providerRefs: nativeProviderRefs(context, { providerItemId: nextTool.itemId }),
+          providerRefs: nativeProviderRefs(context, {
+            providerItemId: nextTool.itemId,
+          }),
           raw: {
             source: "claude.sdk.message",
             method: "claude/stream_event/content_block_delta/input_json_delta",
@@ -1844,7 +1873,11 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               provider: PROVIDER,
               createdAt: planStamp.createdAt,
               threadId: context.session.threadId,
-              ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+              ...(context.turnState
+                ? {
+                    turnId: asCanonicalTurnId(context.turnState.turnId),
+                  }
+                : {}),
               payload: {
                 plan: planSteps,
               },
@@ -1924,7 +1957,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             input: toolInput,
           },
         },
-        providerRefs: nativeProviderRefs(context, { providerItemId: tool.itemId }),
+        providerRefs: nativeProviderRefs(context, {
+          providerItemId: tool.itemId,
+        }),
         raw: {
           source: "claude.sdk.message",
           method: "claude/stream_event/content_block_start",
@@ -2021,7 +2056,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(tool.detail ? { detail: tool.detail } : {}),
           data: toolData,
         },
-        providerRefs: nativeProviderRefs(context, { providerItemId: tool.itemId }),
+        providerRefs: nativeProviderRefs(context, {
+          providerItemId: tool.itemId,
+        }),
         raw: {
           source: "claude.sdk.message",
           method: "claude/user",
@@ -2044,7 +2081,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             streamKind,
             delta: toolResult.text,
           },
-          providerRefs: nativeProviderRefs(context, { providerItemId: tool.itemId }),
+          providerRefs: nativeProviderRefs(context, {
+            providerItemId: tool.itemId,
+          }),
           raw: {
             source: "claude.sdk.message",
             method: "claude/user",
@@ -2070,7 +2109,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(completedDetail ? { detail: completedDetail } : {}),
           data: toolData,
         },
-        providerRefs: nativeProviderRefs(context, { providerItemId: tool.itemId }),
+        providerRefs: nativeProviderRefs(context, {
+          providerItemId: tool.itemId,
+        }),
         raw: {
           source: "claude.sdk.message",
           method: "claude/user",
@@ -2458,7 +2499,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         payload: {
           summary: message.summary,
           ...(message.preceding_tool_use_ids.length > 0
-            ? { precedingToolUseIds: message.preceding_tool_use_ids }
+            ? {
+                precedingToolUseIds: message.preceding_tool_use_ids,
+              }
             : {}),
         },
       });
@@ -2676,6 +2719,27 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         });
       }
 
+      const existingContext = sessions.get(input.threadId);
+      if (existingContext) {
+        yield* Effect.logWarning("claude.session.replacing", {
+          threadId: input.threadId,
+          existingSessionStatus: existingContext.session.status,
+          reason: "startSession called with existing active session",
+        });
+        yield* stopSessionInternal(existingContext, {
+          emitExitEvent: false,
+        }).pipe(
+          // Replacement cleanup is best-effort: never block the new session on
+          // either typed failures or unexpected defects from tearing down the old one.
+          Effect.catchCause((cause) =>
+            Effect.logWarning("claude.session.replace.stop-failed", {
+              threadId: input.threadId,
+              cause,
+            }),
+          ),
+        );
+      }
+
       const startedAt = yield* nowIso;
       const resumeState = readClaudeResumeState(input.resumeCursor);
       const threadId = input.threadId;
@@ -2711,7 +2775,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const handleAskUserQuestion = Effect.fn("handleAskUserQuestion")(function* (
         context: ClaudeSessionContext,
         toolInput: Record<string, unknown>,
-        callbackOptions: { readonly signal: AbortSignal; readonly toolUseID?: string },
+        callbackOptions: {
+          readonly signal: AbortSignal;
+          readonly toolUseID?: string;
+        },
       ) {
         const requestId = ApprovalRequestId.make(yield* Random.nextUUIDv4);
 
@@ -2747,7 +2814,11 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           provider: PROVIDER,
           createdAt: requestedStamp.createdAt,
           threadId: context.session.threadId,
-          ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+          ...(context.turnState
+            ? {
+                turnId: asCanonicalTurnId(context.turnState.turnId),
+              }
+            : {}),
           requestId: asRuntimeRequestId(requestId),
           payload: { questions },
           providerRefs: nativeProviderRefs(context, {
@@ -2756,7 +2827,10 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           raw: {
             source: "claude.sdk.permission",
             method: "canUseTool/AskUserQuestion",
-            payload: { toolName: "AskUserQuestion", input: toolInput },
+            payload: {
+              toolName: "AskUserQuestion",
+              input: toolInput,
+            },
           },
         });
 
@@ -2771,7 +2845,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           pendingUserInputs.delete(requestId);
           runFork(Deferred.succeed(answersDeferred, {} as ProviderUserInputAnswers));
         };
-        callbackOptions.signal.addEventListener("abort", onAbort, { once: true });
+        callbackOptions.signal.addEventListener("abort", onAbort, {
+          once: true,
+        });
 
         // Block until the user provides answers.
         const answers = yield* Deferred.await(answersDeferred);
@@ -2785,7 +2861,11 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           provider: PROVIDER,
           createdAt: resolvedStamp.createdAt,
           threadId: context.session.threadId,
-          ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+          ...(context.turnState
+            ? {
+                turnId: asCanonicalTurnId(context.turnState.turnId),
+              }
+            : {}),
           requestId: asRuntimeRequestId(requestId),
           payload: { answers },
           providerRefs: nativeProviderRefs(context, {
@@ -2955,7 +3035,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             behavior: "allow",
             updatedInput: toolInput,
             ...(decision === "acceptForSession" && pendingApproval.suggestions
-              ? { updatedPermissions: [...pendingApproval.suggestions] }
+              ? {
+                  updatedPermissions: [...pendingApproval.suggestions],
+                }
               : {}),
           } satisfies PermissionResult;
         }
@@ -2985,6 +3067,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ),
       );
       const claudeBinaryPath = claudeSettings.binaryPath;
+      const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
       const modelSelection =
         input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
       const caps = getClaudeModelCapabilities(modelSelection?.model);
@@ -3033,6 +3116,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(computedAdditionalDirs.length > 0
           ? { additionalDirectories: computedAdditionalDirs }
           : {}),
+        ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
       };
 
       const queryRuntime = yield* Effect.try({

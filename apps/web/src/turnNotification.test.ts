@@ -1,11 +1,15 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import type { ThreadId, ProjectId, OrchestrationEvent } from "@marcode/contracts";
+import type { ThreadId, ProjectId, OrchestrationEvent, TurnId } from "@marcode/contracts";
 import {
   BUILT_IN_SOUNDS,
   reasonToEventGroup,
   buildNotificationContent,
   deriveTurnNotificationTriggers,
+  getLocallyInterruptedTurnsSnapshot,
+  isTurnLocallyInterrupted,
   markThreadUserStopped,
+  markTurnLocallyInterrupted,
+  subscribeToLocallyInterruptedTurns,
 } from "./turnNotification";
 import type { Thread, Project } from "./types";
 
@@ -164,5 +168,49 @@ describe("deriveTurnNotificationTriggers", () => {
     );
     expect(triggersAfter).toHaveLength(1);
     expect(triggersAfter[0]!.reason).toBe("turn-completed");
+  });
+});
+
+describe("locally interrupted turn tracker", () => {
+  it("marks a turn as locally interrupted", () => {
+    const turnId = "turn-interrupted-1" as TurnId;
+    expect(isTurnLocallyInterrupted(turnId)).toBe(false);
+    markTurnLocallyInterrupted(turnId);
+    expect(isTurnLocallyInterrupted(turnId)).toBe(true);
+  });
+
+  it("keeps follow-up turns unaffected (different turnId)", () => {
+    const interruptedTurn = "turn-interrupted-2" as TurnId;
+    const followUpTurn = "turn-followup-2" as TurnId;
+    markTurnLocallyInterrupted(interruptedTurn);
+    expect(isTurnLocallyInterrupted(interruptedTurn)).toBe(true);
+    // A brand-new turn id (what happens when the user sends a follow-up
+    // message) must NOT inherit the interrupted flag — otherwise the in-chat
+    // "Working…" indicator would stay hidden for the new turn.
+    expect(isTurnLocallyInterrupted(followUpTurn)).toBe(false);
+  });
+
+  it("notifies subscribers and swaps snapshot reference on write", () => {
+    const turnId = "turn-interrupted-3" as TurnId;
+    const listener = vi.fn();
+    const unsubscribe = subscribeToLocallyInterruptedTurns(listener);
+
+    const before = getLocallyInterruptedTurnsSnapshot();
+    markTurnLocallyInterrupted(turnId);
+    const after = getLocallyInterruptedTurnsSnapshot();
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    // useSyncExternalStore relies on reference equality to detect changes —
+    // the snapshot set must be a new object, not the mutated original.
+    expect(after).not.toBe(before);
+    expect(after.has(turnId)).toBe(true);
+
+    // Re-marking the same turn is a no-op: no listener call, same reference.
+    markTurnLocallyInterrupted(turnId);
+    const afterSecond = getLocallyInterruptedTurnsSnapshot();
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(afterSecond).toBe(after);
+
+    unsubscribe();
   });
 });

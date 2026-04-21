@@ -391,7 +391,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["New thread mode"]
         : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
-        ? ["Add Project base directory"]
+        ? ["Add project base directory"]
         : []),
       ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
         ? ["Archive confirmation"]
@@ -408,6 +408,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.addProjectBaseDirectory,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
+      settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
@@ -939,7 +940,8 @@ export function GeneralSettingsPanel() {
     claudeAgent: Boolean(
       settings.providers.claudeAgent.binaryPath !==
         DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
-      settings.providers.claudeAgent.customModels.length > 0,
+      settings.providers.claudeAgent.customModels.length > 0 ||
+      settings.providers.claudeAgent.launchArgs !== "",
     ),
   });
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
@@ -1330,13 +1332,13 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Add Project base directory"
-          description="Directory the Add Project browser starts in. Leave empty to start at your home folder."
+          title="Add project base directory"
+          description="Directory the Add project browser starts in. Leave empty to start at your home folder."
           resetAction={
             settings.addProjectBaseDirectory !==
             DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
               <SettingResetButton
-                label="Add Project base directory"
+                label="add project base directory"
                 onClick={() =>
                   updateSettings({
                     addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
@@ -1352,7 +1354,7 @@ export function GeneralSettingsPanel() {
               onChange={(event) => updateSettings({ addProjectBaseDirectory: event.target.value })}
               placeholder="~/"
               spellCheck={false}
-              aria-label="Add Project base directory"
+              aria-label="Add project base directory"
             />
           }
         />
@@ -1688,6 +1690,37 @@ export function GeneralSettingsPanel() {
                               {providerCard.homeDescription}
                             </span>
                           ) : null}
+                        </label>
+                      </div>
+                    ) : null}
+
+                    {providerCard.provider === "claudeAgent" ? (
+                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+                        <label htmlFor="provider-install-claudeAgent-launch-args" className="block">
+                          <span className="text-xs font-medium text-foreground">
+                            Launch arguments
+                          </span>
+                          <Input
+                            id="provider-install-claudeAgent-launch-args"
+                            className="mt-1.5"
+                            value={settings.providers.claudeAgent.launchArgs}
+                            onChange={(event) =>
+                              updateSettings({
+                                providers: {
+                                  ...settings.providers,
+                                  claudeAgent: {
+                                    ...settings.providers.claudeAgent,
+                                    launchArgs: event.target.value,
+                                  },
+                                },
+                              })
+                            }
+                            placeholder="e.g. --chrome"
+                            spellCheck={false}
+                          />
+                          <span className="mt-1 block text-xs text-muted-foreground">
+                            Additional CLI arguments passed to Claude Code on session start.
+                          </span>
                         </label>
                       </div>
                     ) : null}

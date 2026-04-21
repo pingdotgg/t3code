@@ -137,6 +137,9 @@ vi.mock("../../environments/runtime", () => {
         browseDirectories: vi.fn().mockResolvedValue({ directories: [] }),
         writeFile: vi.fn().mockResolvedValue({}),
       },
+      filesystem: {
+        browse: vi.fn().mockResolvedValue({ parentPath: "/", entries: [] }),
+      },
       terminal: {
         open: vi.fn().mockResolvedValue({}),
         write: vi.fn().mockResolvedValue({}),

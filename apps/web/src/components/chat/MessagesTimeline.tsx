@@ -79,6 +79,7 @@ import {
   formatInlineTerminalContextLabel,
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
+import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 
 const EMPTY_EDIT_IMAGES: ComposerImageAttachment[] = [];
 
@@ -422,7 +423,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               )}
               <div className="space-y-0.5">
                 {visibleEntries.map((workEntry) => (
-                  <SimpleWorkEntryRow key={`work-row:${workEntry.id}`} workEntry={workEntry} />
+                  <SimpleWorkEntryRow
+                    key={`work-row:${workEntry.id}`}
+                    workEntry={workEntry}
+                    workspaceRoot={workspaceRoot}
+                  />
                 ))}
               </div>
             </div>
@@ -1239,15 +1244,17 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
 
 function workEntryPreview(
   workEntry: Pick<TimelineWorkEntry, "detail" | "command" | "changedFiles">,
+  workspaceRoot: string | undefined,
 ) {
   if (workEntry.command) return workEntry.command;
   if (workEntry.detail) return workEntry.detail;
   if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
   const [firstPath] = workEntry.changedFiles ?? [];
   if (!firstPath) return null;
+  const displayPath = formatWorkspaceRelativePath(firstPath, workspaceRoot);
   return workEntry.changedFiles!.length === 1
-    ? firstPath
-    : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
+    ? displayPath
+    : `${displayPath} +${workEntry.changedFiles!.length - 1} more`;
 }
 
 function workEntryRawCommand(
@@ -1302,12 +1309,13 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
 
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
+  workspaceRoot: string | undefined;
 }) {
-  const { workEntry } = props;
+  const { workEntry, workspaceRoot } = props;
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
-  const preview = workEntryPreview(workEntry);
+  const preview = workEntryPreview(workEntry, workspaceRoot);
   const rawCommand = workEntryRawCommand(workEntry);
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
@@ -1366,15 +1374,18 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       </div>
       {hasChangedFiles && !previewIsChangedFiles && (
         <div className="mt-1 flex flex-wrap gap-1 pl-6">
-          {workEntry.changedFiles?.slice(0, 4).map((filePath) => (
-            <span
-              key={`${workEntry.id}:${filePath}`}
-              className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
-              title={filePath}
-            >
-              {filePath}
-            </span>
-          ))}
+          {workEntry.changedFiles?.slice(0, 4).map((filePath) => {
+            const displayPath = formatWorkspaceRelativePath(filePath, workspaceRoot);
+            return (
+              <span
+                key={`${workEntry.id}:${filePath}`}
+                className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
+                title={displayPath}
+              >
+                {displayPath}
+              </span>
+            );
+          })}
           {(workEntry.changedFiles?.length ?? 0) > 4 && (
             <span className="px-1 text-[10px] text-muted-foreground/55">
               +{(workEntry.changedFiles?.length ?? 0) - 4}

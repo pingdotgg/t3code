@@ -24,6 +24,11 @@ import { AnchoredToastProvider, ToastProvider, toastManager } from "../component
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { readLocalApi } from "../localApi";
 import { useRuntimeToolOutputStore } from "../runtimeToolOutputStore";
+import { useSettings } from "../hooks/useSettings";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  derivePhysicalProjectKeyFromPath,
+} from "../logicalProject";
 import {
   getServerConfigUpdatedNotification,
   ServerConfigUpdatedNotification,
@@ -226,6 +231,10 @@ function EventRouter() {
   const setActiveEnvironmentId = useStore((store) => store.setActiveEnvironmentId);
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
+  const projectGroupingSettings = useSettings((settings) => ({
+    sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
+    sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
+  }));
   const readPathname = useEffectEvent(() => pathname);
   const handledBootstrapThreadIdRef = useRef<string | null>(null);
   const seenServerConfigUpdateIdRef = useRef(getServerConfigUpdatedNotification()?.id ?? 0);
@@ -248,14 +257,21 @@ function EventRouter() {
       if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
         return;
       }
-      useUiStateStore
-        .getState()
-        .setProjectExpanded(
-          scopedProjectKey(
-            scopeProjectRef(payload.environment.environmentId, payload.bootstrapProjectId),
-          ),
-          true,
+      const bootstrapEnvironmentState =
+        useStore.getState().environmentStateById[payload.environment.environmentId];
+      const bootstrapProject =
+        bootstrapEnvironmentState?.projectById[payload.bootstrapProjectId] ?? null;
+      const bootstrapProjectKey =
+        (bootstrapProject
+          ? deriveLogicalProjectKeyFromSettings(bootstrapProject, projectGroupingSettings)
+          : null) ??
+        (serverConfig?.cwd
+          ? derivePhysicalProjectKeyFromPath(payload.environment.environmentId, serverConfig.cwd)
+          : null) ??
+        scopedProjectKey(
+          scopeProjectRef(payload.environment.environmentId, payload.bootstrapProjectId),
         );
+      useUiStateStore.getState().setProjectExpanded(bootstrapProjectKey, true);
 
       if (readPathname() !== "/") {
         return;

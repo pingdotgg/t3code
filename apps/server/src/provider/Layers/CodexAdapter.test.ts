@@ -146,6 +146,7 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
   getBinding: () => Effect.succeed(Option.none()),
   remove: () => Effect.void,
   listThreadIds: () => Effect.succeed([]),
+  listBindings: () => Effect.succeed([]),
 });
 
 const validationManager = new FakeCodexManager();

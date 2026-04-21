@@ -1,3 +1,5 @@
+import { appendQuotedContextsToPrompt, type QuotedContext } from "./lib/quotedContext";
+
 export function proposedPlanTitle(planMarkdown: string): string | null {
   const heading = planMarkdown.match(/^\s{0,3}#{1,6}\s+(.+)$/m)?.[1]?.trim();
   return heading && heading.length > 0 ? heading : null;
@@ -74,21 +76,22 @@ export function buildPlanImplementationPrompt(planMarkdown: string): string {
   return `PLEASE IMPLEMENT THIS PLAN:\n${planMarkdown.trim()}`;
 }
 
-export function resolvePlanFollowUpSubmission(input: { draftText: string; planMarkdown: string }): {
+export function resolvePlanFollowUpSubmission(input: {
+  draftText: string;
+  planMarkdown: string;
+  quotedContexts: ReadonlyArray<QuotedContext>;
+}): {
   text: string;
   interactionMode: "default" | "plan";
 } {
   const trimmedDraftText = input.draftText.trim();
-  if (trimmedDraftText.length > 0) {
-    return {
-      text: trimmedDraftText,
-      interactionMode: "plan",
-    };
-  }
-
+  const hasDraftText = trimmedDraftText.length > 0;
+  const baseText = hasDraftText
+    ? trimmedDraftText
+    : buildPlanImplementationPrompt(input.planMarkdown);
   return {
-    text: buildPlanImplementationPrompt(input.planMarkdown),
-    interactionMode: "default",
+    text: appendQuotedContextsToPrompt(baseText, input.quotedContexts),
+    interactionMode: hasDraftText ? "plan" : "default",
   };
 }
 

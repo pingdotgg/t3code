@@ -59,6 +59,14 @@
     "./qrCode": {
       "types": "./src/qrCode.ts",
       "import": "./src/qrCode.ts"
+    },
+    "./path": {
+      "types": "./src/path.ts",
+      "import": "./src/path.ts"
+    },
+    "./cliArgs": {
+      "types": "./src/cliArgs.ts",
+      "import": "./src/cliArgs.ts"
     }
   },
   "scripts": {

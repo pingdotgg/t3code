@@ -3,6 +3,7 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import React, {
   Children,
   Suspense,
+  type MouseEvent as ReactMouseEvent,
   isValidElement,
   use,
   useCallback,
@@ -17,13 +18,17 @@ import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { toastManager } from "./ui/toast";
 import { openInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { useTheme } from "../hooks/useTheme";
-import { resolveMarkdownFileLinkTarget, rewriteMarkdownFileUriHref } from "../markdown-links";
+import { resolveMarkdownFileLinkMeta, rewriteMarkdownFileUriHref } from "../markdown-links";
 import { readLocalApi } from "../localApi";
+import { cn } from "../lib/utils";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -236,34 +241,289 @@ function SuspenseShikiCodeBlock({
   );
 }
 
+interface MarkdownFileLinkProps {
+  href: string;
+  targetPath: string;
+  displayPath: string;
+  filePath: string;
+  label: string;
+  theme: "light" | "dark";
+  className?: string | undefined;
+}
+
+const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
+const MARKDOWN_FILE_LINK_CLASS_NAME =
+  "chat-markdown-file-link relative top-[2px] max-w-full no-underline";
+const MARKDOWN_FILE_LINK_ICON_CLASS_NAME = "chat-markdown-file-link-icon size-3.5 shrink-0";
+const MARKDOWN_FILE_LINK_LABEL_CLASS_NAME = "chat-markdown-file-link-label truncate";
+
+function pathParentSegments(path: string): string[] {
+  const normalized = path.replaceAll("\\", "/");
+  const segments = normalized.split("/").filter((segment) => segment.length > 0);
+  return segments.slice(0, -1);
+}
+
+function buildFileLinkParentSuffixByPath(filePaths: ReadonlyArray<string>): Map<string, string> {
+  const groups = new Map<string, Set<string>>();
+  for (const filePath of filePaths) {
+    const pathSegments = filePath
+      .replaceAll("\\", "/")
+      .split("/")
+      .filter((segment) => segment.length > 0);
+    const basename = pathSegments[pathSegments.length - 1];
+    if (!basename) continue;
+    const group = groups.get(basename) ?? new Set<string>();
+    group.add(filePath);
+    groups.set(basename, group);
+  }
+
+  const suffixByPath = new Map<string, string>();
+  for (const group of groups.values()) {
+    const uniquePaths = [...group];
+    if (uniquePaths.length < 2) continue;
+
+    const parentSegmentsByPath = new Map(
+      uniquePaths.map((filePath) => [filePath, pathParentSegments(filePath)]),
+    );
+    const minUniqueDepthByPath = new Map<string, number>();
+
+    for (const filePath of uniquePaths) {
+      const segments = parentSegmentsByPath.get(filePath) ?? [];
+      let resolvedDepth = segments.length;
+      for (let depth = 1; depth <= segments.length; depth += 1) {
+        const candidate = segments.slice(-depth).join("/");
+        const collision = uniquePaths.some((otherPath) => {
+          if (otherPath === filePath) return false;
+          const otherSegments = parentSegmentsByPath.get(otherPath) ?? [];
+          return otherSegments.slice(-depth).join("/") === candidate;
+        });
+        if (!collision) {
+          resolvedDepth = depth;
+          break;
+        }
+      }
+      minUniqueDepthByPath.set(filePath, resolvedDepth);
+    }
+
+    for (const filePath of uniquePaths) {
+      const segments = parentSegmentsByPath.get(filePath) ?? [];
+      if (segments.length === 0) continue;
+      const minUniqueDepth = minUniqueDepthByPath.get(filePath) ?? 1;
+      const suffixDepth = Math.min(segments.length, Math.max(minUniqueDepth, 2));
+      suffixByPath.set(filePath, segments.slice(-suffixDepth).join("/"));
+    }
+  }
+
+  return suffixByPath;
+}
+
+function extractMarkdownLinkHrefs(text: string): string[] {
+  const hrefs: string[] = [];
+  for (const match of text.matchAll(MARKDOWN_LINK_HREF_PATTERN)) {
+    const href = match[1]?.trim();
+    if (!href) continue;
+    hrefs.push(href);
+  }
+  return hrefs;
+}
+
+function normalizeMarkdownLinkHrefKey(href: string): string {
+  return rewriteMarkdownFileUriHref(href.trim()) ?? href.trim();
+}
+
+const MarkdownFileLink = memo(function MarkdownFileLink({
+  href,
+  targetPath,
+  displayPath,
+  filePath,
+  label,
+  theme,
+  className,
+}: MarkdownFileLinkProps) {
+  const handleOpen = useCallback(() => {
+    const api = readLocalApi();
+    if (!api) {
+      toastManager.add({
+        type: "error",
+        title: "Open in editor is unavailable",
+      });
+      return;
+    }
+
+    void openInPreferredEditor(api, targetPath).catch((error) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to open file",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      });
+    });
+  }, [targetPath]);
+
+  const handleCopy = useCallback((value: string, title: string) => {
+    if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
+      toastManager.add({
+        type: "error",
+        title: `Failed to copy ${title.toLowerCase()}`,
+        description: "Clipboard API unavailable.",
+      });
+      return;
+    }
+
+    void navigator.clipboard.writeText(value).then(
+      () => {
+        toastManager.add({
+          type: "success",
+          title: `${title} copied`,
+          description: value,
+        });
+      },
+      (error) => {
+        toastManager.add({
+          type: "error",
+          title: `Failed to copy ${title.toLowerCase()}`,
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      },
+    );
+  }, []);
+
+  const handleContextMenu = useCallback(
+    async (event: ReactMouseEvent<HTMLAnchorElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const api = readLocalApi();
+      if (!api) return;
+
+      const clicked = await api.contextMenu.show(
+        [
+          { id: "open", label: "Open in editor" },
+          { id: "copy-relative", label: "Copy relative path" },
+          { id: "copy-full", label: "Copy full path" },
+        ] as const,
+        { x: event.clientX, y: event.clientY },
+      );
+
+      if (clicked === "open") {
+        handleOpen();
+        return;
+      }
+      if (clicked === "copy-relative") {
+        handleCopy(displayPath, "Relative path");
+        return;
+      }
+      if (clicked === "copy-full") {
+        handleCopy(targetPath, "Full path");
+      }
+    },
+    [displayPath, handleCopy, handleOpen, targetPath],
+  );
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <a
+            href={href}
+            className={cn(MARKDOWN_FILE_LINK_CLASS_NAME, className)}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              handleOpen();
+            }}
+            onContextMenu={handleContextMenu}
+          >
+            <VscodeEntryIcon
+              pathValue={filePath}
+              kind="file"
+              theme={theme}
+              className={cn(MARKDOWN_FILE_LINK_ICON_CLASS_NAME, "text-current")}
+            />
+            <span className={MARKDOWN_FILE_LINK_LABEL_CLASS_NAME}>{label}</span>
+          </a>
+        }
+      />
+      <TooltipPopup
+        side="top"
+        className="max-w-[min(40rem,calc(100vw-2rem))] font-mono text-[11px] leading-tight"
+      >
+        <div className="markdown-file-link-tooltip-scroll overflow-x-auto whitespace-nowrap">
+          {displayPath}
+        </div>
+      </TooltipPopup>
+    </Tooltip>
+  );
+}, areMarkdownFileLinkPropsEqual);
+
+function areMarkdownFileLinkPropsEqual(
+  previous: Readonly<MarkdownFileLinkProps>,
+  next: Readonly<MarkdownFileLinkProps>,
+): boolean {
+  return (
+    previous.href === next.href &&
+    previous.targetPath === next.targetPath &&
+    previous.displayPath === next.displayPath &&
+    previous.filePath === next.filePath &&
+    previous.label === next.label &&
+    previous.theme === next.theme &&
+    previous.className === next.className
+  );
+}
+
 function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const markdownFileLinkMetaByHref = useMemo(() => {
+    const metaByHref = new Map<
+      string,
+      NonNullable<ReturnType<typeof resolveMarkdownFileLinkMeta>>
+    >();
+    for (const href of extractMarkdownLinkHrefs(text)) {
+      const normalizedHref = normalizeMarkdownLinkHrefKey(href);
+      if (metaByHref.has(normalizedHref)) continue;
+      const meta = resolveMarkdownFileLinkMeta(normalizedHref, cwd);
+      if (meta) {
+        metaByHref.set(normalizedHref, meta);
+      }
+    }
+    return metaByHref;
+  }, [cwd, text]);
+  const fileLinkParentSuffixByPath = useMemo(() => {
+    const filePaths = [...markdownFileLinkMetaByHref.values()].map((meta) => meta.filePath);
+    return buildFileLinkParentSuffixByPath(filePaths);
+  }, [markdownFileLinkMetaByHref]);
   const markdownUrlTransform = useCallback((href: string) => {
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   }, []);
   const markdownComponents = useMemo<Components>(
     () => ({
       a({ node: _node, href, ...props }) {
-        const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
-        if (!targetPath) {
+        const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
+        const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+        if (!fileLinkMeta) {
           return <a {...props} href={href} target="_blank" rel="noopener noreferrer" />;
         }
 
+        const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
+        const labelParts = [fileLinkMeta.basename];
+        if (typeof parentSuffix === "string" && parentSuffix.length > 0) {
+          labelParts.push(parentSuffix);
+        }
+        if (fileLinkMeta.line) {
+          labelParts.push(
+            `L${fileLinkMeta.line}${fileLinkMeta.column ? `:C${fileLinkMeta.column}` : ""}`,
+          );
+        }
+
         return (
-          <a
-            {...props}
-            href={href}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              const api = readLocalApi();
-              if (api) {
-                void openInPreferredEditor(api, targetPath);
-              } else {
-                console.warn("Native API not found. Unable to open file in editor.");
-              }
-            }}
+          <MarkdownFileLink
+            href={href ?? fileLinkMeta.targetPath}
+            targetPath={fileLinkMeta.targetPath}
+            displayPath={fileLinkMeta.displayPath}
+            filePath={fileLinkMeta.filePath}
+            label={labelParts.join(" · ")}
+            theme={resolvedTheme}
+            className={props.className}
           />
         );
       },
@@ -289,7 +549,13 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
         );
       },
     }),
-    [cwd, diffThemeName, isStreaming],
+    [
+      diffThemeName,
+      fileLinkParentSuffixByPath,
+      isStreaming,
+      markdownFileLinkMetaByHref,
+      resolvedTheme,
+    ],
   );
 
   return (

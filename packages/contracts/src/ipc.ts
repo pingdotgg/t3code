@@ -20,6 +20,7 @@ import type {
   GitWorkingTreeDiffInput,
   GitWorkingTreeDiffResult,
 } from "./git";
+import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem";
 import type {
   ProjectBrowseDirectoriesInput,
   ProjectBrowseDirectoriesResult,
@@ -77,6 +78,7 @@ export interface ContextMenuItem<T extends string = string> {
   label: string;
   destructive?: boolean;
   disabled?: boolean;
+  children?: readonly ContextMenuItem<T>[];
 }
 
 export type DesktopUpdateStatus =
@@ -149,6 +151,10 @@ export interface DesktopServerExposureState {
   advertisedHost: string | null;
 }
 
+export interface PickFolderOptions {
+  initialPath?: string | null;
+}
+
 export interface DesktopBridge {
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
   getClientSettings: () => Promise<ClientSettings | null>;
@@ -162,7 +168,7 @@ export interface DesktopBridge {
   removeSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<void>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;
   setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;
-  pickFolder: () => Promise<string | null>;
+  pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
   showContextMenu: <T extends string>(
@@ -191,7 +197,7 @@ export interface DesktopBridge {
  */
 export interface LocalApi {
   dialogs: {
-    pickFolder: () => Promise<string | null>;
+    pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
     confirm: (message: string) => Promise<boolean>;
   };
   shell: {
@@ -249,6 +255,9 @@ export interface EnvironmentApi {
       input: ProjectBrowseDirectoriesInput,
     ) => Promise<ProjectBrowseDirectoriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+  };
+  filesystem: {
+    browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
   };
   git: {
     listBranches: (input: GitListBranchesInput) => Promise<GitListBranchesResult>;
