@@ -253,18 +253,21 @@ function nestedBooleanRecordsEqual(
 }
 
 export function syncProjects(state: UiState, projects: readonly SyncProjectInput[]): UiState {
+  const normalizedProjects = projects.map((project) => ({
+    ...project,
+    cwd: normalizeProjectPathForComparison(project.cwd),
+  }));
   const previousProjectCwdById = new Map(currentProjectCwdById);
   const previousLogicalKeyByPhysicalKey = new Map(currentLogicalKeyByPhysicalKey);
   currentProjectCwdById.clear();
   currentLogicalKeyByPhysicalKey.clear();
-  for (const project of projects) {
-    currentProjectCwdById.set(project.key, normalizeProjectPathForComparison(project.cwd));
+  for (const project of normalizedProjects) {
+    currentProjectCwdById.set(project.key, project.cwd);
     currentLogicalKeyByPhysicalKey.set(project.key, project.logicalKey);
   }
   currentProjectCwdsByLogicalKey.clear();
   const currentProjectCwdSetsByLogicalKey = new Map<string, Set<string>>();
-  for (const project of projects) {
-    const normalizedCwd = normalizeProjectPathForComparison(project.cwd);
+  for (const project of normalizedProjects) {
     const cwds = currentProjectCwdsByLogicalKey.get(project.logicalKey);
     if (cwds) {
       let cwdSet = currentProjectCwdSetsByLogicalKey.get(project.logicalKey);
@@ -272,13 +275,13 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
         cwdSet = new Set(cwds);
         currentProjectCwdSetsByLogicalKey.set(project.logicalKey, cwdSet);
       }
-      if (!cwdSet.has(normalizedCwd)) {
-        cwdSet.add(normalizedCwd);
-        cwds.push(normalizedCwd);
+      if (!cwdSet.has(project.cwd)) {
+        cwdSet.add(project.cwd);
+        cwds.push(project.cwd);
       }
     } else {
-      currentProjectCwdsByLogicalKey.set(project.logicalKey, [normalizedCwd]);
-      currentProjectCwdSetsByLogicalKey.set(project.logicalKey, new Set([normalizedCwd]));
+      currentProjectCwdsByLogicalKey.set(project.logicalKey, [project.cwd]);
+      currentProjectCwdSetsByLogicalKey.set(project.logicalKey, new Set([project.cwd]));
     }
   }
   // Build reverse map: for each new logical key, which previous logical keys
@@ -286,7 +289,7 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
   // project's logical key changes (e.g. late-arriving repo metadata flips the
   // group identity).
   const previousLogicalKeysByNewLogicalKey = new Map<string, Set<string>>();
-  for (const project of projects) {
+  for (const project of normalizedProjects) {
     const previousLogicalKey = previousLogicalKeyByPhysicalKey.get(project.key);
     if (!previousLogicalKey || previousLogicalKey === project.logicalKey) {
       continue;
@@ -300,14 +303,14 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
   }
   const cwdMappingChanged =
     previousProjectCwdById.size !== currentProjectCwdById.size ||
-    projects.some((project) => previousProjectCwdById.get(project.key) !== project.cwd);
+    normalizedProjects.some((project) => previousProjectCwdById.get(project.key) !== project.cwd);
 
   const nextExpandedById: Record<string, boolean> = {};
   const previousExpandedById = state.projectExpandedById;
   const persistedOrderByCwd = new Map(
     persistedProjectOrderCwds.map((cwd, index) => [cwd, index] as const),
   );
-  const mappedProjects = projects.map((project, index) => {
+  const mappedProjects = normalizedProjects.map((project, index) => {
     if (!(project.logicalKey in nextExpandedById)) {
       const groupCwds = currentProjectCwdsByLogicalKey.get(project.logicalKey) ?? [project.cwd];
       const fallbackFromPreviousLogicalKey = (() => {
@@ -342,7 +345,7 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
     }
     return {
       id: project.key,
-      cwd: normalizeProjectPathForComparison(project.cwd),
+      cwd: project.cwd,
       incomingIndex: index,
     };
   });

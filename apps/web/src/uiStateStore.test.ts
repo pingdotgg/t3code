@@ -284,6 +284,27 @@ describe("uiStateStore pure functions", () => {
     expect(next.projectExpandedById[project1]).toBe(false);
   });
 
+  it("syncProjects is a no-op when only cwd formatting changes", () => {
+    const projectKey = "env-local:c:\\work\\repo\\project";
+    const initialState = syncProjects(makeUiState(), [
+      {
+        key: projectKey,
+        logicalKey: projectKey,
+        cwd: "C:\\Work\\Repo\\Project\\",
+      },
+    ]);
+
+    const next = syncProjects(initialState, [
+      {
+        key: projectKey,
+        logicalKey: projectKey,
+        cwd: "c:/work/repo/project",
+      },
+    ]);
+
+    expect(next).toBe(initialState);
+  });
+
   it("syncProjects keys projectExpandedById by the logical key, not the physical key", () => {
     // In repository grouping mode, multiple physical projects (different
     // environments or different repo-relative paths) collapse into one
