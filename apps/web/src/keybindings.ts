@@ -47,6 +47,7 @@ const TERMINAL_WORD_FORWARD = "\u001bf";
 const TERMINAL_LINE_START = "\u0001";
 const TERMINAL_LINE_END = "\u0005";
 const TERMINAL_DELETE_TO_LINE_START = "\u0015";
+const LETTER_EVENT_CODE_PATTERN = /^Key([A-Z])$/;
 const EVENT_CODE_KEY_ALIASES: Readonly<Record<string, readonly string[]>> = {
   BracketLeft: ["["],
   BracketRight: ["]"],
@@ -71,10 +72,18 @@ function normalizeEventKey(key: string): string {
 function resolveEventKeys(event: ShortcutEventLike): Set<string> {
   const keys = new Set([normalizeEventKey(event.key)]);
   const aliases = event.code ? EVENT_CODE_KEY_ALIASES[event.code] : undefined;
-  if (!aliases) return keys;
+  if (aliases) {
+    for (const alias of aliases) {
+      keys.add(alias);
+    }
+  }
 
-  for (const alias of aliases) {
-    keys.add(alias);
+  // Option-modified letter shortcuts can surface a symbol or dead key in `event.key`
+  // even though the physical letter key is still the user's intended shortcut.
+  const letterCodeMatch =
+    event.altKey && event.code ? LETTER_EVENT_CODE_PATTERN.exec(event.code) : null;
+  if (letterCodeMatch?.[1]) {
+    keys.add(letterCodeMatch[1].toLowerCase());
   }
   return keys;
 }

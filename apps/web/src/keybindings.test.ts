@@ -590,6 +590,40 @@ describe("resolveShortcutCommand", () => {
       "thread.next",
     );
   });
+
+  it("matches option-modified letter shortcuts using the physical key code", () => {
+    const keybindings = compile([
+      {
+        shortcut: {
+          key: "s",
+          metaKey: true,
+          ctrlKey: true,
+          shiftKey: true,
+          altKey: true,
+          modKey: false,
+        },
+        command: "terminal.toggle",
+      },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({
+          key: "Í",
+          code: "KeyS",
+          metaKey: true,
+          ctrlKey: true,
+          shiftKey: true,
+          altKey: true,
+        }),
+        keybindings,
+        {
+          platform: "MacIntel",
+        },
+      ),
+      "terminal.toggle",
+    );
+  });
 });
 
 describe("formatShortcutLabel", () => {

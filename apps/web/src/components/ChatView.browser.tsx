@@ -4062,6 +4062,70 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("opens the terminal from an option-modified explicit shortcut using the physical letter key", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-terminal-option-shortcut-test" as MessageId,
+        targetText: "terminal option shortcut test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "terminal.toggle",
+              shortcut: {
+                key: "s",
+                metaKey: true,
+                ctrlKey: true,
+                shiftKey: true,
+                altKey: true,
+                modKey: false,
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Í",
+          code: "KeyS",
+          metaKey: true,
+          ctrlKey: true,
+          shiftKey: true,
+          altKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalOpen,
+          );
+          expect(openRequest).toMatchObject({
+            _tag: WS_METHODS.terminalOpen,
+            threadId: THREAD_ID,
+            cwd: "/repo/project",
+            env: {
+              T3CODE_PROJECT_ROOT: "/repo/project",
+            },
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("does not consume chat.new when there is no project context", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
