@@ -3747,6 +3747,7 @@ export default function ChatView({
       const followUp = resolvePlanFollowUpSubmission({
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
+        quotedContexts: composerQuotedContexts,
       });
       promptRef.current = "";
       clearComposerDraftContent(threadRef);
