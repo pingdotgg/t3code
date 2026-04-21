@@ -159,6 +159,17 @@ interface ClaudeSessionContext {
   lastKnownContextWindow: number | undefined;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   /**
+   * Input-side token sum (input + cache-read + cache-creation) of the
+   * most recent Anthropic API call captured from `SDKAssistantMessage`.
+   * This is the authoritative current-context-size signal for the ring:
+   * unlike `result.usage` (session-cumulative) or `task_progress.usage`
+   * (SDK-opaque `total_tokens` only), each assistant frame carries the
+   * exact per-call prompt breakdown. Refreshed on every assistant frame;
+   * cleared after each turn's completion event so the next turn starts
+   * without stale carry-over.
+   */
+  lastApiCallInputSideTokens: number | undefined;
+  /**
    * Cumulative per-class token counts emitted in the prior turn's
    * `result.usage`. Claude's SDK reports `result.usage` as a running total
    * across every API call in the session, so per-turn cost requires
@@ -425,6 +436,15 @@ export interface ClaudeTurnCompleteUsageInput {
   readonly taskSnapshot: ThreadTokenUsageSnapshot | undefined;
   readonly contextWindow?: number | undefined;
   readonly priorCumulative?: ClaudeUsageBreakdown | undefined;
+  /**
+   * Input-side token sum (input + cache-read + cache-creation) from the
+   * *last* Anthropic API call on this turn.  When available, this is the
+   * authoritative current-context-size signal for the ring — the
+   * cumulative `resultUsage` is a session-wide sum and over-reports
+   * multi-call turns, and the task-snapshot fallback only exposes an
+   * opaque SDK `total_tokens`.
+   */
+  readonly lastApiCallInputSide?: number | undefined;
 }
 
 export interface ClaudeTurnCompleteUsageResult {
@@ -478,18 +498,31 @@ export function buildClaudeTurnCompleteUsage(
   // billed but not persisted into the context, so including them over-
   // reports the ring for long-output turns.
   const lastInputSideTokens = deltaInput + deltaCached + deltaCacheCreation;
-  const cumulativeInputSideTokens =
-    cumulative.inputTokens + cumulative.cachedInputTokens + cumulative.cacheCreationInputTokens;
-  const cumulativeUsedFallback =
-    cumulativeInputSideTokens > 0 ? cumulativeInputSideTokens : cumulative.totalTokens;
-  // Prefer the freshest task snapshot (captured per-API-call → matches the
-  // real current context size).  Fall back to the cumulative input-side.
-  const usedTokens = input.taskSnapshot?.usedTokens ?? cumulativeUsedFallback;
-  // `lastUsedTokens` mirrors `usedTokens` at turn scope.  When this turn
-  // actually consumed prompt tokens, use its input-side delta; otherwise
-  // fall back to the cumulative read so we never report 0 for a turn that
-  // still had billable activity.
-  const lastUsedTokens = lastInputSideTokens > 0 ? lastInputSideTokens : cumulativeUsedFallback;
+  // `resultUsage` is a session-wide cumulative across every API call on
+  // the thread (not just this turn!), so summing its input-side classes
+  // inflates the ring proportionally to turn count.  We only fall back
+  // to it when nothing else is available, using the per-turn *delta*
+  // input-side — which represents just the tokens added this turn.
+  const deltaUsedFallback =
+    lastInputSideTokens > 0 ? lastInputSideTokens : cumulative.totalTokens;
+  // Priority order for `usedTokens` (authoritative → approximate):
+  //   1. `lastApiCallInputSide`  — exact current context size, captured
+  //      from the last assistant frame's per-call `usage`.
+  //   2. `taskSnapshot.usedTokens` — SDK-opaque `total_tokens` from the
+  //      freshest `task_progress`/`task_notification` snapshot.  Better
+  //      than cumulative-input but not class-accurate.
+  //   3. `deltaUsedFallback` — per-turn delta input-side.  Last-ditch
+  //      when neither above is present (unusual — no assistant frames +
+  //      no task events means a no-content turn).
+  const usedTokens =
+    input.lastApiCallInputSide !== undefined && input.lastApiCallInputSide > 0
+      ? input.lastApiCallInputSide
+      : (input.taskSnapshot?.usedTokens ?? deltaUsedFallback);
+  // `lastUsedTokens` is the per-turn echo of `usedTokens`.  Prefer the
+  // per-turn input-side delta (tokens *added* this turn); fall back to
+  // the same resolved `usedTokens` so we never emit 0 for a turn that
+  // clearly had activity.
+  const lastUsedTokens = lastInputSideTokens > 0 ? lastInputSideTokens : usedTokens;
 
   const snapshot: ThreadTokenUsageSnapshot = {
     usedTokens,
@@ -1553,18 +1586,30 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
     // `result.usage` reports running totals across every API call in the
     // session. We combine it with the freshest per-call task snapshot (for
-    // `usedTokens` — the real current-context value) and with the prior
-    // turn's cumulative snapshot (to derive this turn's per-class deltas).
+    // the SDK's opaque `total_tokens`) and with the prior turn's cumulative
+    // snapshot (to derive this turn's per-class deltas). The preferred
+    // `usedTokens` source, however, is the input-side token sum of the
+    // *last Anthropic API call* in this turn — captured directly from the
+    // freshest `SDKAssistantMessage.usage` via `context.lastApiCallInputSideTokens`.
+    // That number is the only one that tracks current context size
+    // precisely for multi-call turns (Opus, extended thinking, heavy tool
+    // use), because `result.usage` is session-cumulative and the
+    // task-event `usage` only exposes an opaque `total_tokens`.
     const turnUsage = buildClaudeTurnCompleteUsage({
       resultUsage: result?.usage,
       taskSnapshot: context.lastKnownTokenUsage,
       contextWindow: resultContextWindow ?? context.lastKnownContextWindow,
       priorCumulative: context.lastTurnCumulativeUsage,
+      lastApiCallInputSide: context.lastApiCallInputSideTokens,
     });
     const usageSnapshot = turnUsage.snapshot;
     if (turnUsage.nextCumulative !== undefined) {
       context.lastTurnCumulativeUsage = turnUsage.nextCumulative;
     }
+    // Clear per-turn scratch so the next turn starts without stale
+    // carry-over — `lastApiCallInputSideTokens` is captured fresh from
+    // the next turn's assistant frames.
+    context.lastApiCallInputSideTokens = undefined;
 
     const turnState = context.turnState;
     if (!turnState) {
@@ -2142,6 +2187,64 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     if (context.turnState) {
       context.turnState.items.push(message.message);
       yield* backfillAssistantTextBlocksFromSnapshot(context, message);
+    }
+
+    // Capture the per-API-call input-side token count from this assistant
+    // frame and emit it as the freshest `usedTokens` for the
+    // context-window ring. Each `SDKAssistantMessage` carries Anthropic's
+    // native per-call usage (`message.message.usage`), so
+    // `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`
+    // is the tokens *currently* in the prompt window — much more accurate
+    // than the SDK-opaque `total_tokens` on `task_progress` (which lacks
+    // per-class breakdown) or the session-cumulative `result.usage`
+    // (which grows with every API call in the turn).
+    const perCallBreakdown = parseClaudeUsageBreakdown(
+      (message.message as { usage?: unknown }).usage,
+    );
+    if (perCallBreakdown) {
+      const inputSide =
+        perCallBreakdown.inputTokens +
+        perCallBreakdown.cachedInputTokens +
+        perCallBreakdown.cacheCreationInputTokens;
+      if (inputSide > 0) {
+        context.lastApiCallInputSideTokens = inputSide;
+        const maxTokens = context.lastKnownContextWindow;
+        const ringSnapshot: ThreadTokenUsageSnapshot = {
+          usedTokens: inputSide,
+          lastUsedTokens: inputSide,
+          ...(perCallBreakdown.inputTokens > 0
+            ? { inputTokens: perCallBreakdown.inputTokens }
+            : {}),
+          ...(perCallBreakdown.cachedInputTokens > 0
+            ? { cachedInputTokens: perCallBreakdown.cachedInputTokens }
+            : {}),
+          ...(perCallBreakdown.cacheCreationInputTokens > 0
+            ? { cacheCreationInputTokens: perCallBreakdown.cacheCreationInputTokens }
+            : {}),
+          ...(perCallBreakdown.outputTokens > 0
+            ? { outputTokens: perCallBreakdown.outputTokens }
+            : {}),
+          ...(typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0
+            ? { maxTokens }
+            : {}),
+        };
+        context.lastKnownTokenUsage = ringSnapshot;
+        const usageStamp = yield* makeEventStamp();
+        yield* offerRuntimeEvent({
+          type: "thread.token-usage.updated",
+          eventId: usageStamp.eventId,
+          provider: PROVIDER,
+          createdAt: usageStamp.createdAt,
+          threadId: context.session.threadId,
+          ...(context.turnState
+            ? { turnId: asCanonicalTurnId(context.turnState.turnId) }
+            : {}),
+          payload: {
+            usage: ringSnapshot,
+          },
+          providerRefs: nativeProviderRefs(context),
+        });
+      }
     }
 
     context.lastAssistantUuid = message.uuid;
@@ -3070,6 +3173,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         turnState: undefined,
         lastKnownContextWindow: undefined,
         lastKnownTokenUsage: undefined,
+        lastApiCallInputSideTokens: undefined,
         lastTurnCumulativeUsage: undefined,
         lastAssistantUuid: resumeState?.resumeSessionAt,
         lastThreadStartedId: undefined,

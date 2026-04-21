@@ -154,6 +154,61 @@ describe("buildClaudeTurnCompleteUsage", () => {
     expect(res.nextCumulative).toBeUndefined();
   });
 
+  it("prefers lastApiCallInputSide over the task snapshot for usedTokens", () => {
+    // Session-cumulative result.usage reports big numbers (multiple calls
+    // have run across the whole session), but only the last API call's
+    // input-side count matters for the ring. The SDK's opaque
+    // `task_progress.total_tokens` (via taskSnapshot.usedTokens) is less
+    // trustworthy than the per-call input-side captured from
+    // `SDKAssistantMessage.usage`, so the per-call value wins.
+    const res = buildClaudeTurnCompleteUsage({
+      resultUsage: {
+        input_tokens: 10_000, // session cumulative across many calls
+        cache_read_input_tokens: 150_000,
+        cache_creation_input_tokens: 5_000,
+        output_tokens: 20_000,
+      },
+      taskSnapshot: { usedTokens: 999_999, lastUsedTokens: 999_999 },
+      contextWindow: 200_000,
+      priorCumulative: undefined,
+      lastApiCallInputSide: 48_000,
+    });
+    expect(res.snapshot!.usedTokens).toBe(48_000);
+    // totalProcessedTokens still tracks billing-side cumulative for
+    // informational display ("tokens processed so far").
+    expect(res.snapshot!.totalProcessedTokens).toBe(185_000);
+  });
+
+  it("does NOT fall back to cumulative input-side for usedTokens", () => {
+    // Previously we added `input + cached + cacheCreation` from
+    // `result.usage` when no task snapshot was available.  That sum is
+    // *session-cumulative* in Claude's SDK — it over-reports for any
+    // multi-call turn.  With no task snapshot and no last-API-call
+    // capture, we now fall back to the per-turn delta input-side
+    // (first turn → equals cumulative; subsequent turns → just this
+    // turn's additions).
+    const res = buildClaudeTurnCompleteUsage({
+      resultUsage: {
+        input_tokens: 5_000,
+        cache_read_input_tokens: 200_000,
+        cache_creation_input_tokens: 10_000,
+        output_tokens: 3_000,
+      },
+      taskSnapshot: undefined,
+      contextWindow: 200_000,
+      priorCumulative: {
+        inputTokens: 4_000,
+        cachedInputTokens: 180_000,
+        cacheCreationInputTokens: 8_000,
+        outputTokens: 2_500,
+        totalTokens: 194_500,
+      },
+    });
+    // Per-turn input-side delta = 1_000 + 20_000 + 2_000 = 23_000.
+    expect(res.snapshot!.usedTokens).toBe(23_000);
+    expect(res.snapshot!.lastUsedTokens).toBe(23_000);
+  });
+
   it("clamps negative deltas to zero when cumulative goes backwards", () => {
     const prior = {
       inputTokens: 1_000,

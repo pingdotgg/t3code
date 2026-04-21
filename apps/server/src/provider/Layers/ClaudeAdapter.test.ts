@@ -1544,6 +1544,75 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect(
+    "emits thread token usage from assistant frame usage (per-call input side)",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+          Stream.runCollect,
+          Effect.forkChild,
+        );
+
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: THREAD_ID,
+          input: "hello",
+          attachments: [],
+        });
+
+        // Assistant frame carrying Anthropic-native per-call usage.
+        // input (fresh) + cache_read + cache_creation = 80 + 45_000 + 2_000
+        // = 47_080 — the current context-window fill, unlike the
+        // session-cumulative `result.usage` which would grow across calls.
+        harness.query.emit({
+          type: "assistant",
+          session_id: "sdk-session-assistant-usage",
+          uuid: "assistant-usage-1",
+          parent_tool_use_id: null,
+          message: {
+            id: "assistant-message-usage",
+            content: [{ type: "text", text: "ok" }],
+            usage: {
+              input_tokens: 80,
+              cache_read_input_tokens: 45_000,
+              cache_creation_input_tokens: 2_000,
+              output_tokens: 12,
+            },
+          },
+        } as unknown as SDKMessage);
+
+        const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const usageEvent = runtimeEvents.find(
+          (event) => event.type === "thread.token-usage.updated",
+        );
+        assert.equal(usageEvent?.type, "thread.token-usage.updated");
+        if (usageEvent?.type === "thread.token-usage.updated") {
+          assert.deepEqual(usageEvent.payload, {
+            usage: {
+              usedTokens: 47_080,
+              lastUsedTokens: 47_080,
+              inputTokens: 80,
+              cachedInputTokens: 45_000,
+              cacheCreationInputTokens: 2_000,
+              outputTokens: 12,
+            },
+          });
+        }
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
   it.effect("emits Claude context window on result completion usage snapshots", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
@@ -1754,13 +1823,17 @@ describe("ClaudeAdapterLive", () => {
         const finalUsageEvent = usageEvents.at(-1);
         assert.equal(finalUsageEvent?.type, "thread.token-usage.updated");
         if (finalUsageEvent?.type === "thread.token-usage.updated") {
-          // Task snapshot drives usedTokens (real current-context); result
-          // cumulative drives totalProcessedTokens. lastUsedTokens reports
-          // the turn's total (cumulative since there's no prior turn).
+          // Task snapshot drives `usedTokens` (SDK-opaque current context,
+          // 190k), `totalProcessedTokens` carries the billing-side
+          // cumulative (535k). `lastUsedTokens` mirrors `usedTokens`
+          // because the per-turn delta input-side is zero (this test's
+          // result has only `total_tokens`, no breakdown) and we now
+          // refuse to fall back to the session-cumulative sum, which
+          // would inflate the ring over multi-call turns.
           assert.deepEqual(finalUsageEvent.payload, {
             usage: {
               usedTokens: 190000,
-              lastUsedTokens: 535000,
+              lastUsedTokens: 190000,
               totalProcessedTokens: 535000,
               maxTokens: 200000,
             },
