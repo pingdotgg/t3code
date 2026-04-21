@@ -19,6 +19,7 @@ import {
   type SDKUserMessage,
   ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
+import { parseCliArgs } from "@marcode/shared/cliArgs";
 import {
   ApprovalRequestId,
   type CanonicalItemType,
@@ -2992,6 +2993,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ),
       );
       const claudeBinaryPath = claudeSettings.binaryPath;
+      const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
       const modelSelection =
         input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
       const caps = getClaudeModelCapabilities(modelSelection?.model);
@@ -3040,6 +3042,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(computedAdditionalDirs.length > 0
           ? { additionalDirectories: computedAdditionalDirs }
           : {}),
+        ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
       };
 
       const queryRuntime = yield* Effect.try({
