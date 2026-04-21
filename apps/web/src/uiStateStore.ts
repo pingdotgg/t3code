@@ -1,5 +1,6 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
+import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 const LEGACY_PERSISTED_STATE_KEYS = [
@@ -145,18 +146,22 @@ export function hydratePersistedProjectState(parsed: PersistedUiState): void {
   persistedProjectStateUsesLegacyShape = !Array.isArray(parsed.collapsedProjectCwds);
   for (const cwd of parsed.collapsedProjectCwds ?? []) {
     if (typeof cwd === "string" && cwd.length > 0) {
-      persistedCollapsedProjectCwds.add(cwd);
+      persistedCollapsedProjectCwds.add(normalizeProjectPathForComparison(cwd));
     }
   }
   for (const cwd of parsed.expandedProjectCwds ?? []) {
     if (typeof cwd === "string" && cwd.length > 0) {
-      persistedExpandedProjectCwds.add(cwd);
+      persistedExpandedProjectCwds.add(normalizeProjectPathForComparison(cwd));
     }
   }
   for (const cwd of parsed.projectOrderCwds ?? []) {
-    if (typeof cwd === "string" && cwd.length > 0 && !persistedProjectOrderCwdSet.has(cwd)) {
-      persistedProjectOrderCwdSet.add(cwd);
-      persistedProjectOrderCwds.push(cwd);
+    if (typeof cwd !== "string" || cwd.length === 0) {
+      continue;
+    }
+    const normalizedCwd = normalizeProjectPathForComparison(cwd);
+    if (!persistedProjectOrderCwdSet.has(normalizedCwd)) {
+      persistedProjectOrderCwdSet.add(normalizedCwd);
+      persistedProjectOrderCwds.push(normalizedCwd);
     }
   }
 }
@@ -253,12 +258,13 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
   currentProjectCwdById.clear();
   currentLogicalKeyByPhysicalKey.clear();
   for (const project of projects) {
-    currentProjectCwdById.set(project.key, project.cwd);
+    currentProjectCwdById.set(project.key, normalizeProjectPathForComparison(project.cwd));
     currentLogicalKeyByPhysicalKey.set(project.key, project.logicalKey);
   }
   currentProjectCwdsByLogicalKey.clear();
   const currentProjectCwdSetsByLogicalKey = new Map<string, Set<string>>();
   for (const project of projects) {
+    const normalizedCwd = normalizeProjectPathForComparison(project.cwd);
     const cwds = currentProjectCwdsByLogicalKey.get(project.logicalKey);
     if (cwds) {
       let cwdSet = currentProjectCwdSetsByLogicalKey.get(project.logicalKey);
@@ -266,13 +272,13 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
         cwdSet = new Set(cwds);
         currentProjectCwdSetsByLogicalKey.set(project.logicalKey, cwdSet);
       }
-      if (!cwdSet.has(project.cwd)) {
-        cwdSet.add(project.cwd);
-        cwds.push(project.cwd);
+      if (!cwdSet.has(normalizedCwd)) {
+        cwdSet.add(normalizedCwd);
+        cwds.push(normalizedCwd);
       }
     } else {
-      currentProjectCwdsByLogicalKey.set(project.logicalKey, [project.cwd]);
-      currentProjectCwdSetsByLogicalKey.set(project.logicalKey, new Set([project.cwd]));
+      currentProjectCwdsByLogicalKey.set(project.logicalKey, [normalizedCwd]);
+      currentProjectCwdSetsByLogicalKey.set(project.logicalKey, new Set([normalizedCwd]));
     }
   }
   // Build reverse map: for each new logical key, which previous logical keys
@@ -336,7 +342,7 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
     }
     return {
       id: project.key,
-      cwd: project.cwd,
+      cwd: normalizeProjectPathForComparison(project.cwd),
       incomingIndex: index,
     };
   });

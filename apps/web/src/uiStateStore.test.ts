@@ -607,4 +607,30 @@ describe("uiStateStore persistence round-trip", () => {
 
     expect(rehydrated.projectExpandedById[nextLogicalKey]).toBe(false);
   });
+
+  it("rehydrates collapsed projects when Windows cwd formatting changes across restart", () => {
+    const initialProject = {
+      key: "win-kA",
+      logicalKey: "win-kA",
+      cwd: "C:\\Work\\Repo\\Project\\",
+    };
+    const restartedProject = {
+      key: "win-kA",
+      logicalKey: "win-kA",
+      cwd: "c:/work/repo/project",
+    };
+
+    let state = syncProjects(makeUiState(), [initialProject]);
+    state = setProjectExpanded(state, initialProject.logicalKey, false);
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    hydratePersistedProjectState(persisted);
+
+    const rehydrated = syncProjects(makeUiState(), [restartedProject]);
+
+    expect(rehydrated.projectExpandedById[restartedProject.logicalKey]).toBe(false);
+  });
 });
