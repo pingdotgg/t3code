@@ -1,5 +1,6 @@
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
+import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
 export const PERSISTED_STATE_KEY = "t3code:ui-state:v1";
 const LEGACY_PERSISTED_STATE_KEYS = [
@@ -132,17 +133,21 @@ export function hydratePersistedProjectState(parsed: PersistedUiState): void {
   persistedProjectStateUsesLegacyShape = !Array.isArray(parsed.collapsedProjectCwds);
   for (const cwd of parsed.collapsedProjectCwds ?? []) {
     if (typeof cwd === "string" && cwd.length > 0) {
-      persistedCollapsedProjectCwds.add(cwd);
+      persistedCollapsedProjectCwds.add(normalizeProjectPathForComparison(cwd));
     }
   }
   for (const cwd of parsed.expandedProjectCwds ?? []) {
     if (typeof cwd === "string" && cwd.length > 0) {
-      persistedExpandedProjectCwds.add(cwd);
+      persistedExpandedProjectCwds.add(normalizeProjectPathForComparison(cwd));
     }
   }
   for (const cwd of parsed.projectOrderCwds ?? []) {
-    if (typeof cwd === "string" && cwd.length > 0 && !persistedProjectOrderCwds.includes(cwd)) {
-      persistedProjectOrderCwds.push(cwd);
+    if (typeof cwd !== "string" || cwd.length === 0) {
+      continue;
+    }
+    const normalizedCwd = normalizeProjectPathForComparison(cwd);
+    if (!persistedProjectOrderCwds.includes(normalizedCwd)) {
+      persistedProjectOrderCwds.push(normalizedCwd);
     }
   }
 }
@@ -238,18 +243,19 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
   currentProjectCwdById.clear();
   currentLogicalKeyByPhysicalKey.clear();
   for (const project of projects) {
-    currentProjectCwdById.set(project.key, project.cwd);
+    currentProjectCwdById.set(project.key, normalizeProjectPathForComparison(project.cwd));
     currentLogicalKeyByPhysicalKey.set(project.key, project.logicalKey);
   }
   currentProjectCwdsByLogicalKey.clear();
   for (const project of projects) {
+    const normalizedCwd = normalizeProjectPathForComparison(project.cwd);
     const cwds = currentProjectCwdsByLogicalKey.get(project.logicalKey);
     if (cwds) {
-      if (!cwds.includes(project.cwd)) {
-        cwds.push(project.cwd);
+      if (!cwds.includes(normalizedCwd)) {
+        cwds.push(normalizedCwd);
       }
     } else {
-      currentProjectCwdsByLogicalKey.set(project.logicalKey, [project.cwd]);
+      currentProjectCwdsByLogicalKey.set(project.logicalKey, [normalizedCwd]);
     }
   }
   // Build reverse map: for each new logical key, which previous logical keys
@@ -313,7 +319,7 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
     }
     return {
       id: project.key,
-      cwd: project.cwd,
+      cwd: normalizeProjectPathForComparison(project.cwd),
       incomingIndex: index,
     };
   });
