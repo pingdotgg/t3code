@@ -7,6 +7,7 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 
 import {
+  CODEX_ASK_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
@@ -117,6 +118,41 @@ describe("buildTurnStartParams", () => {
           model: "gpt-5.3-codex",
           reasoning_effort: "medium",
           developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
+    });
+  });
+
+  it("maps ask interaction mode onto default collaboration mode with ask instructions", () => {
+    const params = Effect.runSync(
+      buildTurnStartParams({
+        threadId: "provider-thread-1",
+        runtimeMode: "approval-required",
+        prompt: "Explain the current implementation",
+        model: "gpt-5.3-codex",
+        interactionMode: "ask",
+      }),
+    );
+
+    assert.deepStrictEqual(params, {
+      threadId: "provider-thread-1",
+      approvalPolicy: "untrusted",
+      sandboxPolicy: {
+        type: "readOnly",
+      },
+      input: [
+        {
+          type: "text",
+          text: "Explain the current implementation",
+        },
+      ],
+      model: "gpt-5.3-codex",
+      collaborationMode: {
+        mode: "default",
+        settings: {
+          model: "gpt-5.3-codex",
+          reasoning_effort: "medium",
+          developer_instructions: CODEX_ASK_MODE_DEVELOPER_INSTRUCTIONS,
         },
       },
     });

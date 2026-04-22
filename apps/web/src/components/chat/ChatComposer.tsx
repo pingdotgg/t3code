@@ -130,6 +130,27 @@ const runtimeModeConfig: Record<
 };
 
 const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
+const interactionModeConfig: Record<
+  ProviderInteractionMode,
+  { label: string; description: string; icon: LucideIcon }
+> = {
+  default: {
+    label: "Build",
+    description: "Explore and implement changes.",
+    icon: BotIcon,
+  },
+  ask: {
+    label: "Ask",
+    description: "Read/explain only. No writes.",
+    icon: CircleAlertIcon,
+  },
+  plan: {
+    label: "Plan",
+    description: "Research and propose a plan without implementing.",
+    icon: ListTodoIcon,
+  },
+};
+const interactionModeOptions = Object.keys(interactionModeConfig) as ProviderInteractionMode[];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 
@@ -165,13 +186,17 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
+  runtimeModeLocked: boolean;
+  runtimeModeLockReason?: string | undefined;
   showPlanToggle: boolean;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
-  onToggleInteractionMode: () => void;
+  onInteractionModeChange: (mode: ProviderInteractionMode) => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
   onTogglePlanSidebar: () => void;
 }) {
+  const interactionModeOption = interactionModeConfig[props.interactionMode];
+  const InteractionModeIcon = interactionModeOption.icon;
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
 
@@ -181,23 +206,43 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
       {props.showInteractionModeToggle ? (
         <>
-          <Button
-            variant="ghost"
-            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-            size="sm"
-            type="button"
-            onClick={props.onToggleInteractionMode}
-            title={
-              props.interactionMode === "plan"
-                ? "Plan mode — click to return to normal build mode"
-                : "Default mode — click to enter plan mode"
-            }
+          <Select
+            value={props.interactionMode}
+            onValueChange={(value) => {
+              if (!value || value === props.interactionMode) return;
+              props.onInteractionModeChange(value as ProviderInteractionMode);
+            }}
           >
-            <BotIcon />
-            <span className="sr-only sm:not-sr-only">
-              {props.interactionMode === "plan" ? "Plan" : "Build"}
-            </span>
-          </Button>
+            <SelectTrigger
+              variant="ghost"
+              size="sm"
+              className="font-medium"
+              aria-label="Interaction mode"
+              title={interactionModeOption.description}
+            >
+              <InteractionModeIcon className="size-4" />
+              <SelectValue>{interactionModeOption.label}</SelectValue>
+            </SelectTrigger>
+            <SelectPopup alignItemWithTrigger={false}>
+              {interactionModeOptions.map((mode) => {
+                const option = interactionModeConfig[mode];
+                const OptionIcon = option.icon;
+                return (
+                  <SelectItem key={mode} value={mode} className="min-w-64 py-2">
+                    <div className="grid min-w-0 gap-0.5">
+                      <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                        <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                        {option.label}
+                      </span>
+                      <span className="text-muted-foreground text-xs leading-4">
+                        {option.description}
+                      </span>
+                    </div>
+                  </SelectItem>
+                );
+              })}
+            </SelectPopup>
+          </Select>
 
           <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
         </>
@@ -212,7 +257,9 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           size="sm"
           className="font-medium"
           aria-label="Runtime mode"
-          title={runtimeModeOption.description}
+          title={
+            props.runtimeModeLocked ? props.runtimeModeLockReason : runtimeModeOption.description
+          }
         >
           <RuntimeModeIcon className="size-4" />
           <SelectValue>{runtimeModeOption.label}</SelectValue>
@@ -221,15 +268,18 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           {runtimeModeOptions.map((mode) => {
             const option = runtimeModeConfig[mode];
             const OptionIcon = option.icon;
+            const disabled = props.runtimeModeLocked && mode !== "approval-required";
             return (
-              <SelectItem key={mode} value={mode} className="min-w-64 py-2">
+              <SelectItem key={mode} value={mode} className="min-w-64 py-2" disabled={disabled}>
                 <div className="grid min-w-0 gap-0.5">
                   <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
                     <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
                     {option.label}
                   </span>
                   <span className="text-muted-foreground text-xs leading-4">
-                    {option.description}
+                    {disabled
+                      ? `${option.description} Unavailable in ASK mode.`
+                      : option.description}
                   </span>
                 </div>
               </SelectItem>
@@ -405,6 +455,8 @@ export interface ChatComposerProps {
   // Mode
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
+  runtimeModeLocked: boolean;
+  runtimeModeLockReason?: string | undefined;
 
   // Provider / model
   lockedProvider: ProviderKind | null;
@@ -503,6 +555,8 @@ export const ChatComposer = memo(
       planSidebarOpen,
       runtimeMode,
       interactionMode,
+      runtimeModeLocked,
+      runtimeModeLockReason,
       lockedProvider,
       providerStatuses,
       activeProjectDefaultModelSelection,
@@ -741,6 +795,13 @@ export const ChatComposer = memo(
             command: "plan",
             label: "/plan",
             description: "Switch this thread into plan mode",
+          },
+          {
+            id: "slash:ask",
+            type: "slash-command",
+            command: "ask",
+            label: "/ask",
+            description: "Switch this thread into read-only ask mode",
           },
           {
             id: "slash:default",
@@ -1369,7 +1430,9 @@ export const ChatComposer = memo(
             }
             return;
           }
-          void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+          void handleInteractionModeChange(
+            item.command === "plan" ? "plan" : item.command === "ask" ? "ask" : "default",
+          );
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
           });
@@ -1940,11 +2003,13 @@ export const ChatComposer = memo(
                         planSidebarLabel={planSidebarLabel}
                         planSidebarOpen={planSidebarOpen}
                         runtimeMode={runtimeMode}
+                        runtimeModeLocked={runtimeModeLocked}
+                        runtimeModeLockReason={runtimeModeLockReason}
                         showInteractionModeToggle={
                           composerProviderControls.showInteractionModeToggle
                         }
                         traitsMenuContent={providerTraitsMenuContent}
-                        onToggleInteractionMode={toggleInteractionMode}
+                        onInteractionModeChange={handleInteractionModeChange}
                         onTogglePlanSidebar={togglePlanSidebar}
                         onRuntimeModeChange={handleRuntimeModeChange}
                       />
@@ -1965,10 +2030,12 @@ export const ChatComposer = memo(
                           }
                           interactionMode={interactionMode}
                           runtimeMode={runtimeMode}
+                          runtimeModeLocked={runtimeModeLocked}
+                          runtimeModeLockReason={runtimeModeLockReason}
                           showPlanToggle={showPlanSidebarToggle}
                           planSidebarLabel={planSidebarLabel}
                           planSidebarOpen={planSidebarOpen}
-                          onToggleInteractionMode={toggleInteractionMode}
+                          onInteractionModeChange={handleInteractionModeChange}
                           onRuntimeModeChange={handleRuntimeModeChange}
                           onTogglePlanSidebar={togglePlanSidebar}
                         />

@@ -17,7 +17,13 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 
-async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: string }) {
+async function mountMenu(props?: {
+  modelSelection?: ModelSelection;
+  prompt?: string;
+  interactionMode?: "default" | "ask" | "plan";
+  runtimeMode?: "approval-required" | "auto-accept-edits" | "full-access";
+  runtimeModeLocked?: boolean;
+}) {
   const threadId = ThreadId.make("thread-compact-menu");
   const threadRef = scopeThreadRef(LOCAL_ENVIRONMENT_ID, threadId);
   const threadKey = scopedThreadKey(threadRef);
@@ -122,10 +128,11 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
   const screen = await render(
     <CompactComposerControlsMenu
       activePlan={false}
-      interactionMode="default"
+      interactionMode={props?.interactionMode ?? "default"}
       planSidebarLabel="Plan"
       planSidebarOpen={false}
-      runtimeMode="approval-required"
+      runtimeMode={props?.runtimeMode ?? "approval-required"}
+      runtimeModeLocked={props?.runtimeModeLocked ?? false}
       showInteractionModeToggle
       traitsMenuContent={
         <TraitsMenuContent
@@ -138,7 +145,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
           onPromptChange={onPromptChange}
         />
       }
-      onToggleInteractionMode={vi.fn()}
+      onInteractionModeChange={vi.fn()}
       onTogglePlanSidebar={vi.fn()}
       onRuntimeModeChange={vi.fn()}
     />,
@@ -269,6 +276,24 @@ describe("CompactComposerControlsMenu", () => {
     });
   });
 
+  it("locks access controls while ask mode is active", async () => {
+    await using _ = await mountMenu({
+      interactionMode: "ask",
+      runtimeMode: "approval-required",
+      runtimeModeLocked: true,
+    });
+
+    await page.getByLabelText("More composer controls").click();
+
+    await vi.waitFor(() => {
+      const text = document.body.textContent ?? "";
+      expect(text).toContain("Build");
+      expect(text).toContain("Ask");
+      expect(text).toContain("Read/explain only. No writes.");
+      expect(text).toContain("ASK mode locks access to Supervised.");
+    });
+  });
+
   it("can hide the interaction mode section", async () => {
     const host = document.createElement("div");
     document.body.append(host);
@@ -279,8 +304,9 @@ describe("CompactComposerControlsMenu", () => {
         planSidebarLabel="Plan"
         planSidebarOpen={false}
         runtimeMode="approval-required"
+        runtimeModeLocked={false}
         showInteractionModeToggle={false}
-        onToggleInteractionMode={vi.fn()}
+        onInteractionModeChange={vi.fn()}
         onTogglePlanSidebar={vi.fn()}
         onRuntimeModeChange={vi.fn()}
       />,
@@ -292,7 +318,7 @@ describe("CompactComposerControlsMenu", () => {
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
       expect(text).not.toContain("Mode");
-      expect(text).not.toContain("Chat");
+      expect(text).not.toContain("Build");
       expect(text).not.toContain("Plan");
       expect(text).toContain("Access");
       expect(text).toContain("Supervised");

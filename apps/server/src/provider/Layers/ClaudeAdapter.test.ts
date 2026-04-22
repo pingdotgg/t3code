@@ -2844,6 +2844,30 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("restores the base permission mode on sendTurn when interactionMode is ask", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "explain this code",
+        interactionMode: "ask",
+        attachments: [],
+      });
+
+      assert.deepEqual(harness.query.setPermissionModeCalls, ["bypassPermissions"]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect.each<{ runtimeMode: RuntimeMode; expectedBase: PermissionMode }>([
     { runtimeMode: "full-access", expectedBase: "bypassPermissions" },
     { runtimeMode: "approval-required", expectedBase: "default" },

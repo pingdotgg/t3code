@@ -28,6 +28,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+  CODEX_ASK_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
 
@@ -303,15 +304,20 @@ function buildCodexCollaborationMode(input: {
     return undefined;
   }
   const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL_BY_PROVIDER.codex;
+  const mode: EffectCodexSchema.V2TurnStartParams__ModeKind =
+    input.interactionMode === "plan" ? "plan" : "default";
+  const developerInstructions =
+    input.interactionMode === "plan"
+      ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
+      : input.interactionMode === "ask"
+        ? CODEX_ASK_MODE_DEVELOPER_INSTRUCTIONS
+        : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
   return {
-    mode: input.interactionMode,
+    mode,
     settings: {
       model,
       reasoning_effort: input.effort ?? "medium",
-      developer_instructions:
-        input.interactionMode === "plan"
-          ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
-          : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      developer_instructions: developerInstructions,
     },
   };
 }

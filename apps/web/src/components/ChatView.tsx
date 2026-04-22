@@ -799,9 +799,14 @@ export default function ChatView(props: ChatViewProps) {
   );
   const isServerThread = routeKind === "server" && serverThread !== undefined;
   const activeThread = isServerThread ? serverThread : localDraftThread;
-  const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
   const interactionMode =
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
+  const rawRuntimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
+  const runtimeMode = interactionMode === "ask" ? ("approval-required" as const) : rawRuntimeMode;
+  const runtimeModeLocked = interactionMode === "ask";
+  const runtimeModeLockReason = runtimeModeLocked
+    ? "ASK mode locks access to Supervised."
+    : undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
@@ -1931,6 +1936,9 @@ export default function ChatView(props: ChatViewProps) {
 
   const handleRuntimeModeChange = useCallback(
     (mode: RuntimeMode) => {
+      if (interactionMode === "ask" && mode !== "approval-required") {
+        return;
+      }
       if (mode === runtimeMode) return;
       setComposerDraftRuntimeMode(composerDraftTarget, mode);
       if (isLocalDraftThread) {
@@ -1939,6 +1947,7 @@ export default function ChatView(props: ChatViewProps) {
       scheduleComposerFocus();
     },
     [
+      interactionMode,
       isLocalDraftThread,
       runtimeMode,
       scheduleComposerFocus,
@@ -1951,18 +1960,27 @@ export default function ChatView(props: ChatViewProps) {
   const handleInteractionModeChange = useCallback(
     (mode: ProviderInteractionMode) => {
       if (mode === interactionMode) return;
+      const shouldForceSupervised = mode === "ask" && rawRuntimeMode !== "approval-required";
       setComposerDraftInteractionMode(composerDraftTarget, mode);
+      if (shouldForceSupervised) {
+        setComposerDraftRuntimeMode(composerDraftTarget, "approval-required");
+      }
       if (isLocalDraftThread) {
-        setDraftThreadContext(composerDraftTarget, { interactionMode: mode });
+        setDraftThreadContext(composerDraftTarget, {
+          interactionMode: mode,
+          ...(shouldForceSupervised ? { runtimeMode: "approval-required" as const } : {}),
+        });
       }
       scheduleComposerFocus();
     },
     [
       interactionMode,
       isLocalDraftThread,
+      rawRuntimeMode,
       scheduleComposerFocus,
       composerDraftTarget,
       setComposerDraftInteractionMode,
+      setComposerDraftRuntimeMode,
       setDraftThreadContext,
     ],
   );
@@ -3591,6 +3609,8 @@ export default function ChatView(props: ChatViewProps) {
               planSidebarOpen={planSidebarOpen}
               runtimeMode={runtimeMode}
               interactionMode={interactionMode}
+              runtimeModeLocked={runtimeModeLocked}
+              runtimeModeLockReason={runtimeModeLockReason}
               lockedProvider={lockedProvider}
               providerStatuses={providerStatuses as ServerProvider[]}
               activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}

@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type OrchestrationEvent,
   ProviderKind,
+  type ProviderInteractionMode,
   type OrchestrationSession,
   ThreadId,
   type ProviderSession,
@@ -398,7 +399,7 @@ const make = Effect.gen(function* () {
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
     readonly runtimeMode?: RuntimeMode;
-    readonly interactionMode?: "default" | "plan";
+    readonly interactionMode?: ProviderInteractionMode;
     readonly createdAt: string;
   }) {
     const thread = yield* resolveThread(input.threadId);

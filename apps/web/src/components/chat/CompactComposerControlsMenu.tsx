@@ -18,12 +18,21 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   planSidebarLabel: string;
   planSidebarOpen: boolean;
   runtimeMode: RuntimeMode;
+  runtimeModeLocked: boolean;
+  runtimeModeLockReason?: string | undefined;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
-  onToggleInteractionMode: () => void;
+  onInteractionModeChange: (mode: ProviderInteractionMode) => void;
   onTogglePlanSidebar: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
+  const interactionModeDescription =
+    props.interactionMode === "ask"
+      ? "Read/explain only. No writes."
+      : props.interactionMode === "plan"
+        ? "Research and propose a plan without implementing."
+        : "Explore and implement changes.";
+
   return (
     <Menu>
       <MenuTrigger
@@ -48,20 +57,29 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
         {props.showInteractionModeToggle ? (
           <>
             <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Mode</div>
+            <div className="px-2 pb-1 text-muted-foreground/70 text-xs">
+              {interactionModeDescription}
+            </div>
             <MenuRadioGroup
               value={props.interactionMode}
               onValueChange={(value) => {
                 if (!value || value === props.interactionMode) return;
-                props.onToggleInteractionMode();
+                props.onInteractionModeChange(value as ProviderInteractionMode);
               }}
             >
-              <MenuRadioItem value="default">Chat</MenuRadioItem>
+              <MenuRadioItem value="default">Build</MenuRadioItem>
+              <MenuRadioItem value="ask">Ask</MenuRadioItem>
               <MenuRadioItem value="plan">Plan</MenuRadioItem>
             </MenuRadioGroup>
             <MenuDivider />
           </>
         ) : null}
         <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Access</div>
+        {props.runtimeModeLocked ? (
+          <div className="px-2 pb-1 text-muted-foreground/70 text-xs">
+            {props.runtimeModeLockReason ?? "ASK mode locks access to Supervised."}
+          </div>
+        ) : null}
         <MenuRadioGroup
           value={props.runtimeMode}
           onValueChange={(value) => {
@@ -70,8 +88,12 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
           }}
         >
           <MenuRadioItem value="approval-required">Supervised</MenuRadioItem>
-          <MenuRadioItem value="auto-accept-edits">Auto-accept edits</MenuRadioItem>
-          <MenuRadioItem value="full-access">Full access</MenuRadioItem>
+          <MenuRadioItem value="auto-accept-edits" disabled={props.runtimeModeLocked}>
+            Auto-accept edits
+          </MenuRadioItem>
+          <MenuRadioItem value="full-access" disabled={props.runtimeModeLocked}>
+            Full access
+          </MenuRadioItem>
         </MenuRadioGroup>
         {props.activePlan ? (
           <>

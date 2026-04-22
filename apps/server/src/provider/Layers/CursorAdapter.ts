@@ -198,6 +198,15 @@ function resolveRequestedModeId(input: {
     return findModeByAliases(modeState.availableModes, ACP_PLAN_MODE_ALIASES)?.id;
   }
 
+  if (input.interactionMode === "ask") {
+    return (
+      findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
+      findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
+      modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
+      modeState.currentModeId
+    );
+  }
+
   if (input.runtimeMode === "approval-required") {
     return (
       findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??

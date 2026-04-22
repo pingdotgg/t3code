@@ -969,7 +969,7 @@ function createSnapshotWithQueuedTurns(options?: {
     messageId: MessageId;
     text: string;
     attachmentIds?: string[];
-    interactionMode?: "default" | "plan";
+    interactionMode?: "default" | "ask" | "plan";
     runtimeMode?: "approval-required" | "full-access";
   }>;
   includeRunningTurn?: boolean;
@@ -1460,7 +1460,7 @@ async function expectComposerActionsContained(): Promise<void> {
 }
 
 async function waitForInteractionModeButton(
-  expectedLabel: "Build" | "Plan",
+  expectedLabel: "Build" | "Ask" | "Plan",
 ): Promise<HTMLButtonElement> {
   return waitForElement(
     () =>
@@ -2913,8 +2913,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const initialModeButton = await waitForInteractionModeButton("Build");
-      expect(initialModeButton.title).toContain("enter plan mode");
+      await waitForInteractionModeButton("Build");
 
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -2926,7 +2925,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       await waitForLayout();
 
-      expect((await waitForInteractionModeButton("Build")).title).toContain("enter plan mode");
+      await waitForInteractionModeButton("Build");
 
       const composerEditor = await waitForComposerEditor();
       composerEditor.focus();
@@ -2941,9 +2940,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         async () => {
-          expect((await waitForInteractionModeButton("Plan")).title).toContain(
-            "return to normal build mode",
-          );
+          await waitForInteractionModeButton("Plan");
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -2959,7 +2956,119 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         async () => {
-          expect((await waitForInteractionModeButton("Build")).title).toContain("enter plan mode");
+          await waitForInteractionModeButton("Build");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps ask mode on the active thread until the next send", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-ask-thread" as MessageId,
+        targetText: "ask thread target",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      wsRequests.length = 0;
+
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "/ask");
+      await waitForLayout();
+
+      const modeSwitchButton = await waitForSendButton();
+      expect(modeSwitchButton.disabled).toBe(false);
+      modeSwitchButton.click();
+
+      await vi.waitFor(
+        async () => {
+          await waitForInteractionModeButton("Ask");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(
+        wsRequests.some((request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand),
+      ).toBe(false);
+
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Explain the current thread only");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const runtimeModeSet = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.runtime-mode.set",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                threadId?: string;
+                runtimeMode?: string;
+              }
+            | undefined;
+          const interactionModeSet = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.interaction-mode.set",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                threadId?: string;
+                interactionMode?: string;
+              }
+            | undefined;
+          const turnStart = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                threadId?: string;
+                runtimeMode?: string;
+                interactionMode?: string;
+              }
+            | undefined;
+
+          expect(runtimeModeSet).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.runtime-mode.set",
+            threadId: THREAD_ID,
+            runtimeMode: "approval-required",
+          });
+          expect(interactionModeSet).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.interaction-mode.set",
+            threadId: THREAD_ID,
+            interactionMode: "ask",
+          });
+          expect(turnStart).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.turn.start",
+            threadId: THREAD_ID,
+            runtimeMode: "approval-required",
+            interactionMode: "ask",
+          });
         },
         { timeout: 8_000, interval: 16 },
       );

@@ -300,6 +300,10 @@ describe("parseStandaloneComposerSlashCommand", () => {
     expect(parseStandaloneComposerSlashCommand(" /plan ")).toBe("plan");
   });
 
+  it("parses standalone /ask command", () => {
+    expect(parseStandaloneComposerSlashCommand("/ask")).toBe("ask");
+  });
+
   it("parses standalone /default command", () => {
     expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
   });
