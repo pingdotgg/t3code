@@ -30,12 +30,6 @@ const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" vi
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 
-export const browserApiCorsLayer = HttpRouter.cors({
-  allowedMethods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["authorization", "b3", "traceparent", "content-type"],
-  maxAge: 600,
-});
-
 export function isLoopbackHostname(hostname: string): boolean {
   const normalizedHostname = hostname
     .trim()
@@ -43,6 +37,78 @@ export function isLoopbackHostname(hostname: string): boolean {
     .replace(/^\[(.*)\]$/, "$1");
   return LOOPBACK_HOSTNAMES.has(normalizedHostname);
 }
+
+/**
+ * Origins allowed to call browser credentialed API routes (cookies / `fetch(..., { credentials })`).
+ * Must echo a concrete `Access-Control-Allow-Origin` (never `*`) when credentials are enabled.
+ */
+export function isAllowedBrowserApiCorsOrigin(origin: string | undefined): boolean {
+  if (origin === undefined || origin.length === 0) {
+    return false;
+  }
+
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return false;
+  }
+
+  const host = url.hostname;
+  if (isLoopbackHostname(host)) {
+    return true;
+  }
+
+  if (host.endsWith(".localhost")) {
+    return true;
+  }
+
+  if (host.includes(":")) {
+    const normalized = host.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+    if (normalized === "::1") {
+      return true;
+    }
+    // IPv6 unique local (fc00::/7)
+    if (normalized.startsWith("fc") || normalized.startsWith("fd")) {
+      return true;
+    }
+    return false;
+  }
+
+  const octets = host.split(".").map((part) => Number(part));
+  if (octets.length !== 4 || octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+    return false;
+  }
+
+  const [a, b] = octets;
+  if (a === 10) {
+    return true;
+  }
+  if (a === 172 && b >= 16 && b <= 31) {
+    return true;
+  }
+  if (a === 192 && b === 168) {
+    return true;
+  }
+  // Tailscale CGNAT (100.64.0.0/10)
+  if (a === 100 && b >= 64 && b <= 127) {
+    return true;
+  }
+
+  return false;
+}
+
+export const browserApiCorsLayer = HttpRouter.cors({
+  allowedMethods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["authorization", "b3", "traceparent", "content-type"],
+  maxAge: 600,
+  credentials: true,
+  allowedOrigins: isAllowedBrowserApiCorsOrigin as (origin: string) => boolean,
+});
 
 export function resolveDevRedirectUrl(devUrl: URL, requestUrl: URL): string {
   const redirectUrl = new URL(devUrl.toString());
