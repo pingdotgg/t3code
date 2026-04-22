@@ -1142,11 +1142,11 @@ export default function ChatView({
   const activeProject = useProjectById(activeThread?.projectId);
 
   useEffect(() => {
-    if (routeKind !== "server") {
+    if (!activeThreadEnvironmentId) {
       return;
     }
-    return retainThreadDetailSubscription(environmentId, threadId);
-  }, [environmentId, routeKind, threadId]);
+    return retainThreadDetailSubscription(activeThreadEnvironmentId, threadId);
+  }, [activeThreadEnvironmentId, threadId]);
 
   // Compute the list of environments this logical project spans, used to
   // drive the environment picker in BranchToolbar.

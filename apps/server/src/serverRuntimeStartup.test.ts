@@ -140,6 +140,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
               workspaceRoot: "/tmp/startup-project",
               defaultModelSelection: getAutoBootstrapDefaultModelSelection(),
               scripts: [],
+              jiraBoard: null,
               createdAt: "2026-01-01T00:00:00.000Z",
               updatedAt: "2026-01-01T00:00:00.000Z",
               deletedAt: null,
