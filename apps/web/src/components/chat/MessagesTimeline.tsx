@@ -14,7 +14,7 @@ import {
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { deriveTimelineEntries, formatElapsed, type PendingApproval } from "../../session-logic";
 import { type ChatMessage, type TurnDiffSummary } from "../../types";
-import { type ComposerImageAttachment, useComposerDraftStore } from "../../composerDraftStore";
+import { type ComposerImageAttachment } from "../../composerDraftStore";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import {
   BotIcon,
@@ -218,8 +218,6 @@ interface MessagesTimelineProps {
   onIsAtEndChange: (isAtEnd: boolean) => void;
 }
 
-let timelineHasMountedInSession = false;
-
 export const MessagesTimeline = memo(function MessagesTimeline({
   threadId,
   hasMessages,
@@ -264,20 +262,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onReplyToSelection,
   onIsAtEndChange,
 }: MessagesTimelineProps) {
-  const [skipInitialFadeIn] = useState(() => {
-    const draftStore = useComposerDraftStore.getState();
-    for (const draft of Object.values(draftStore.draftThreadsByThreadKey)) {
-      if (draft.promotedTo?.threadId === threadId) {
-        return true;
-      }
-    }
-    if (timelineHasMountedInSession) {
-      return true;
-    }
-    timelineHasMountedInSession = true;
-    return false;
-  });
-
   const rows = useMemo(
     () =>
       deriveMessagesTimelineRows({
@@ -350,7 +334,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     return fresh.size === 0 ? EMPTY_STRING_SET : fresh;
   }, [rows, threadId, isHydrating]);
 
+  const hasFinishedInitialScrollRef = useRef(false);
   const handleScroll = useCallback(() => {
+    if (!hasFinishedInitialScrollRef.current) return;
     const state = listRef.current?.getState?.();
     if (state) {
       onIsAtEndChange(state.isAtEnd);
@@ -359,21 +345,45 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   const hasAutoScrolledOnMountRef = useRef(false);
   useEffect(() => {
-    if (hasAutoScrolledOnMountRef.current || rows.length === 0) return;
+    if (rows.length === 0) return;
+    if (hasAutoScrolledOnMountRef.current) return;
     hasAutoScrolledOnMountRef.current = true;
 
     onIsAtEndChange(true);
-    const frameIds: number[] = [];
+
+    let cancelled = false;
+    let completed = false;
+    let rafId: number | null = null;
+
     const scheduleScroll = (depth: number) => {
-      const id = window.requestAnimationFrame(() => {
+      rafId = window.requestAnimationFrame(() => {
+        rafId = null;
+        if (cancelled) return;
         void listRef.current?.scrollToEnd?.({ animated: false });
-        if (depth > 0) scheduleScroll(depth - 1);
+        if (depth > 0) {
+          scheduleScroll(depth - 1);
+        } else {
+          completed = true;
+          hasFinishedInitialScrollRef.current = true;
+          const state = listRef.current?.getState?.();
+          if (state) {
+            onIsAtEndChange(state.isAtEnd);
+          }
+        }
       });
-      frameIds.push(id);
     };
+
     scheduleScroll(2);
+
     return () => {
-      for (const id of frameIds) window.cancelAnimationFrame(id);
+      cancelled = true;
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      if (!completed) {
+        hasAutoScrolledOnMountRef.current = false;
+      }
     };
   }, [listRef, onIsAtEndChange, rows.length]);
 
@@ -493,16 +503,14 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         data={rows}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
-        estimatedItemSize={90}
+        estimatedItemSize={160}
+        getEstimatedItemSize={estimateRowSize}
         initialScrollAtEnd
         maintainScrollAtEnd
         maintainScrollAtEndThreshold={0.1}
         maintainVisibleContentPosition
         onScroll={handleScroll}
-        className={cn(
-          "h-full overflow-x-hidden overscroll-y-contain",
-          !skipInitialFadeIn && "timeline-fade-in",
-        )}
+        className="h-full overflow-x-hidden overscroll-y-contain"
         ListHeaderComponent={<div className="h-3 sm:h-4" />}
         ListFooterComponent={<div className="h-3 sm:h-4" />}
       />
@@ -512,6 +520,37 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
 function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
+}
+
+function estimateRowSize(item: MessagesTimelineRow): number {
+  switch (item.kind) {
+    case "message": {
+      const text = item.message.text ?? "";
+      if (item.message.role === "user") {
+        const lines = Math.max(1, Math.ceil(text.length / 70));
+        return 80 + lines * 22;
+      }
+      const lines = Math.max(1, Math.ceil(text.length / 60));
+      return 110 + lines * 24;
+    }
+    case "proposed-plan":
+      return 280;
+    case "file-change":
+      return 200;
+    case "command":
+      return 140;
+    case "agent-group":
+      return 160;
+    case "exploration":
+    case "web-search":
+    case "web-fetch":
+    case "mcp-tool":
+      return 110;
+    case "work":
+      return 60 + Math.min(item.groupedEntries.length, 6) * 28;
+    case "working":
+      return 50;
+  }
 }
 
 // ---------------------------------------------------------------------------
