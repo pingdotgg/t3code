@@ -599,6 +599,51 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const suspendSession: ProviderServiceShape["suspendSession"] = Effect.fn("suspendSession")(
+    function* (rawInput) {
+      const input = yield* decodeInputOrValidationError({
+        operation: "ProviderService.suspendSession",
+        schema: ProviderStopSessionInput,
+        payload: rawInput,
+      });
+      let metricProvider = "unknown";
+      return yield* Effect.gen(function* () {
+        const routed = yield* resolveRoutableSession({
+          threadId: input.threadId,
+          operation: "ProviderService.suspendSession",
+          allowRecovery: false,
+        });
+        metricProvider = routed.adapter.provider;
+        yield* Effect.annotateCurrentSpan({
+          "provider.operation": "suspend-session",
+          "provider.kind": routed.adapter.provider,
+          "provider.thread_id": input.threadId,
+        });
+        if (routed.isActive) {
+          yield* routed.adapter.stopSession(routed.threadId);
+        }
+        yield* directory.upsert({
+          threadId: input.threadId,
+          provider: routed.adapter.provider,
+          status: "stopped",
+          runtimePayload: {
+            activeTurnId: null,
+            lastRuntimeEvent: "provider.suspendSession",
+            lastRuntimeEventAt: new Date().toISOString(),
+          },
+        });
+      }).pipe(
+        withMetrics({
+          counter: providerSessionsTotal,
+          outcomeAttributes: () =>
+            providerMetricAttributes(metricProvider, {
+              operation: "suspend",
+            }),
+        }),
+      );
+    },
+  );
+
   const listSessions: ProviderServiceShape["listSessions"] = Effect.fn("listSessions")(
     function* () {
       const sessionsByProvider = yield* Effect.forEach(adapters, (adapter) =>
@@ -730,6 +775,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToRequest,
     respondToUserInput,
     stopSession,
+    suspendSession,
     listSessions,
     getCapabilities,
     rollbackConversation,

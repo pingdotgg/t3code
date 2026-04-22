@@ -72,8 +72,23 @@ export interface ProviderServiceShape {
 
   /**
    * Stop a provider session.
+   *
+   * Intentional termination: tears down the adapter session and removes the
+   * persisted binding (including `resumeCursor`). Use for user-driven stops
+   * and thread deletions.
    */
   readonly stopSession: (
+    input: ProviderStopSessionInput,
+  ) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Suspend a provider session.
+   *
+   * Idle cleanup: tears down the adapter session but preserves the persisted
+   * `resumeCursor` so the next `startSession` for this thread resumes the
+   * conversation. Use for reaper-style inactivity sweeps.
+   */
+  readonly suspendSession: (
     input: ProviderStopSessionInput,
   ) => Effect.Effect<void, ProviderServiceError>;
 

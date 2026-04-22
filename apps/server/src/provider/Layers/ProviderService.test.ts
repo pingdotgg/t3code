@@ -685,6 +685,56 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("suspendSession preserves the persisted resumeCursor so the next start resumes", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+      const directory = yield* ProviderSessionDirectory;
+      const threadId = asThreadId("thread-suspend-preserves-resume");
+
+      const initial = yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        cwd: "/tmp/project-suspend",
+        runtimeMode: "full-access",
+      });
+
+      routing.codex.stopSession.mockClear();
+      routing.codex.startSession.mockClear();
+
+      yield* provider.suspendSession({ threadId });
+
+      assert.deepEqual(routing.codex.stopSession.mock.calls, [[threadId]]);
+
+      const bindingAfterSuspend = yield* directory.getBinding(threadId);
+      assert.equal(Option.isSome(bindingAfterSuspend), true);
+      if (Option.isSome(bindingAfterSuspend)) {
+        assert.equal(bindingAfterSuspend.value.status, "stopped");
+        assert.deepEqual(bindingAfterSuspend.value.resumeCursor, initial.resumeCursor);
+      }
+
+      yield* provider.startSession(threadId, {
+        provider: "codex",
+        threadId,
+        cwd: "/tmp/project-suspend",
+        runtimeMode: "full-access",
+      });
+
+      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      const resumedStartInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
+      if (resumedStartInput && typeof resumedStartInput === "object") {
+        const startPayload = resumedStartInput as {
+          provider?: string;
+          resumeCursor?: unknown;
+          threadId?: string;
+        };
+        assert.equal(startPayload.provider, "codex");
+        assert.equal(startPayload.threadId, threadId);
+        assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
+      }
+    }),
+  );
+
   it.effect("recovers stale sessions for sendTurn using persisted cwd", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
