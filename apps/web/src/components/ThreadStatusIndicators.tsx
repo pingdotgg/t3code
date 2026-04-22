@@ -20,6 +20,8 @@ export interface PrStatusIndicator {
   label: string;
   colorClass: string;
   tooltip: string;
+  tooltipLead: string;
+  tooltipTitle: string;
   url: string;
 }
 
@@ -35,14 +37,29 @@ export function prStatusIndicator(
   pr: ThreadPr,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
 ): PrStatusIndicator | null {
+function formatPrState(state: NonNullable<ThreadPr>["state"]): string {
+  return state.charAt(0).toUpperCase() + state.slice(1);
+}
+
+function formatPrStatusLead(
+  pr: NonNullable<ThreadPr>,
+  changeRequestShortName: string,
+): string {
+  return `${changeRequestShortName} #${pr.number} - ${formatPrState(pr.state)}`;
+}
   if (!pr) return null;
   const presentation = resolveChangeRequestPresentation(provider);
+
+  const tooltipLead = formatPrStatusLead(pr, presentation.shortName);
+  const tooltip = `${tooltipLead}: ${pr.title}`;
 
   if (pr.state === "open") {
     return {
       label: `${presentation.shortName} open`,
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      tooltip: `#${pr.number} ${presentation.shortName} open: ${pr.title}`,
+      tooltip,
+      tooltipLead,
+      tooltipTitle: pr.title,
       url: pr.url,
     };
   }
@@ -50,7 +67,9 @@ export function prStatusIndicator(
     return {
       label: `${presentation.shortName} closed`,
       colorClass: "text-zinc-500 dark:text-zinc-400/80",
-      tooltip: `#${pr.number} ${presentation.shortName} closed: ${pr.title}`,
+      tooltip,
+      tooltipLead,
+      tooltipTitle: pr.title,
       url: pr.url,
     };
   }
@@ -58,7 +77,9 @@ export function prStatusIndicator(
     return {
       label: `${presentation.shortName} merged`,
       colorClass: "text-violet-600 dark:text-violet-300/90",
-      tooltip: `#${pr.number} ${presentation.shortName} merged: ${pr.title}`,
+      tooltip,
+      tooltipLead,
+      tooltipTitle: pr.title,
       url: pr.url,
     };
   }
@@ -67,6 +88,16 @@ export function prStatusIndicator(
 
 export function ChangeRequestStatusIcon({ className }: { className?: string }) {
   return <GitPullRequestIcon className={className} />;
+}
+
+export function PrStatusTooltipContent({ status }: { status: PrStatusIndicator }) {
+  return (
+    <span className="flex max-w-[min(34rem,calc(100vw-2rem))] items-stretch overflow-hidden whitespace-nowrap">
+      <span className="shrink-0 pr-2 font-medium">{status.tooltipLead}</span>
+      <span className="min-h-4 shrink-0 border-border/70 border-l" aria-hidden="true" />
+      <span className="min-w-0 truncate pl-2">{status.tooltipTitle}</span>
+    </span>
+  );
 }
 
 export function resolveThreadPr(input: {
@@ -195,7 +226,9 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
           >
             <ChangeRequestStatusIcon className="size-3" />
           </TooltipTrigger>
-          <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+          <TooltipPopup side="top">
+            <PrStatusTooltipContent status={prStatus} />
+          </TooltipPopup>
         </Tooltip>
       ) : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}

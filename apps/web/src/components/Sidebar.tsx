@@ -13,6 +13,7 @@ import {
 import {
   ChangeRequestStatusIcon,
   prStatusIndicator,
+  PrStatusTooltipContent,
   resolveThreadPr,
   terminalStatusFromRunningIds,
   ThreadStatusLabel,
@@ -566,7 +567,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   </button>
                 }
               />
-              <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+              <TooltipPopup side="top">
+                <PrStatusTooltipContent status={prStatus} />
+              </TooltipPopup>
             </Tooltip>
           )}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
