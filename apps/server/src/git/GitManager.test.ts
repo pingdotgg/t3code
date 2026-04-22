@@ -2526,6 +2526,35 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     }),
   );
 
+  it.effect("accepts fork PR metadata when origin is the fork checkout remote", () =>
+    Effect.sync(() => {
+      const headContext = {
+        headBranch: "t3code/git-audit-stability",
+        headRepositoryNameWithOwner: "justsomelegs/t3code",
+        headRepositoryOwnerLogin: "justsomelegs",
+        isCrossRepository: false,
+      };
+
+      expect(
+        matchesBranchHeadContext(
+          {
+            number: 2284,
+            title: "Improve branch mismatch warnings",
+            url: "https://github.com/pingdotgg/t3code/pull/2284",
+            baseRefName: "main",
+            headRefName: "t3code/git-audit-stability",
+            state: "open",
+            updatedAt: null,
+            isCrossRepository: true,
+            headRepositoryNameWithOwner: "justsomelegs/t3code",
+            headRepositoryOwnerLogin: "justsomelegs",
+          },
+          headContext,
+        ),
+      ).toBe(true);
+    }),
+  );
+
   it.effect("creates PR when one does not already exist", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
