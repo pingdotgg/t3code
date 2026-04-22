@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import * as nodePath from "node:path";
-import { type ServerProvider, ServerProvider as ServerProviderSchema } from "@t3tools/contracts";
+import { type ServerProvider, ServerProvider as ServerProviderSchema } from "@harness/contracts";
 import { Cause, Effect, FileSystem, Path, Schema } from "effect";
 
 export const PROVIDER_CACHE_IDS = [
@@ -97,7 +98,8 @@ export const writeProviderStatusCache = (input: {
   readonly filePath: string;
   readonly provider: ServerProvider;
 }) => {
-  const tempPath = `${input.filePath}.${process.pid}.${Date.now()}.tmp`;
+  // Unique per write so concurrent persist calls never share a temp (pid+ms can collide).
+  const tempPath = `${input.filePath}.${randomUUID()}.tmp`;
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;

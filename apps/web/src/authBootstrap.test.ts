@@ -1,4 +1,4 @@
-import type { DesktopBridge } from "@t3tools/contracts";
+import type { DesktopBridge } from "@harness/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 function jsonResponse(body: unknown, init?: ResponseInit) {
@@ -30,7 +30,7 @@ function installTestBrowser(url: string) {
   };
 
   vi.stubGlobal("window", testWindow);
-  vi.stubGlobal("document", { title: "T3 Code" });
+  vi.stubGlobal("document", { title: "Harness" });
 
   return testWindow;
 }

@@ -1,5 +1,5 @@
-import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime";
-import { ThreadId, type TerminalEvent } from "@t3tools/contracts";
+import { scopeThreadRef, scopedThreadKey } from "@harness/client-runtime";
+import { ThreadId, type TerminalEvent } from "@harness/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {

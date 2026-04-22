@@ -5,7 +5,7 @@ import {
   ClientSettingsSchema,
   type ClientSettings,
   type PersistedSavedEnvironmentRecord,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import { Predicate } from "effect";
 import * as Schema from "effect/Schema";
 

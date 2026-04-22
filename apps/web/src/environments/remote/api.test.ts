@@ -188,7 +188,7 @@ describe("remote environment api", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "https://remote.example.com/.well-known/t3/environment",
+      "https://remote.example.com/.well-known/harness/environment",
       {
         method: "GET",
         headers: {},

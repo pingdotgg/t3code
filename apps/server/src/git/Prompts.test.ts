@@ -7,7 +7,7 @@ import {
   buildThreadTitlePrompt,
 } from "./Prompts.ts";
 import { normalizeCliError, sanitizeThreadTitle } from "./Utils.ts";
-import { TextGenerationError } from "@t3tools/contracts";
+import { TextGenerationError } from "@harness/contracts";
 
 describe("buildCommitMessagePrompt", () => {
   it("includes staged patch and summary in the prompt", () => {

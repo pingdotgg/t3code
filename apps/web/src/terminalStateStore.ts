@@ -5,8 +5,8 @@
  * API constrained to store actions/selectors.
  */
 
-import { parseScopedThreadKey, scopedThreadKey } from "@t3tools/client-runtime";
-import { type ScopedThreadRef, type TerminalEvent } from "@t3tools/contracts";
+import { parseScopedThreadKey, scopedThreadKey } from "@harness/client-runtime";
+import { type ScopedThreadRef, type TerminalEvent } from "@harness/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { resolveStorage } from "./lib/storage";
@@ -38,7 +38,7 @@ export interface TerminalEventEntry {
   event: TerminalEvent;
 }
 
-const TERMINAL_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
+const TERMINAL_STATE_STORAGE_KEY = "harness:terminal-state:v1";
 const EMPTY_TERMINAL_EVENT_ENTRIES: ReadonlyArray<TerminalEventEntry> = [];
 const MAX_TERMINAL_EVENT_BUFFER = 200;
 

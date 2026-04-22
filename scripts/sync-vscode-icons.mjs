@@ -123,7 +123,7 @@ function buildLanguageAssociations(manifest, languages) {
 }
 
 async function main() {
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "t3-vscode-icons-sync-"));
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "harness-vscode-icons-sync-"));
   try {
     const vsixPath = await downloadVsix(tmpDir);
     const manifest = await extractManifestFromVsix(vsixPath);

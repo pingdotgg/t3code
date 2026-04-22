@@ -6,7 +6,7 @@
  *
  * @module ProviderRegistry
  */
-import type { ProviderKind, ServerProvider } from "@t3tools/contracts";
+import type { ProviderKind, ServerProvider } from "@harness/contracts";
 import { Context } from "effect";
 import type { Effect, Stream } from "effect";
 
@@ -28,5 +28,5 @@ export interface ProviderRegistryShape {
 }
 
 export class ProviderRegistry extends Context.Service<ProviderRegistry, ProviderRegistryShape>()(
-  "t3/provider/Services/ProviderRegistry",
+  "harness/provider/Services/ProviderRegistry",
 ) {}

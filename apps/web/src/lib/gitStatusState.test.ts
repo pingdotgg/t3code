@@ -1,4 +1,4 @@
-import { EnvironmentId, type GitStatusResult } from "@t3tools/contracts";
+import { EnvironmentId, type GitStatusResult } from "@harness/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { WsRpcClient } from "../rpc/wsRpcClient";

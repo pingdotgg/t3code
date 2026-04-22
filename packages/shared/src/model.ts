@@ -10,7 +10,7 @@ import {
   type OpenCodeModelOptions,
   type ProviderKind,
   type ProviderModelOptions,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 
 export interface SelectableModelOption {
   slug: string;

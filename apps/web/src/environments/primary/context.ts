@@ -2,15 +2,15 @@ import {
   attachEnvironmentDescriptor,
   createKnownEnvironment,
   type KnownEnvironment,
-} from "@t3tools/client-runtime";
-import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
+} from "@harness/client-runtime";
+import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@harness/contracts";
 import { create } from "zustand";
 
 import { BootstrapHttpError, retryTransientBootstrap } from "./auth";
 
 import { readPrimaryEnvironmentTarget, resolvePrimaryEnvironmentHttpUrl } from "./target";
 
-const SERVER_ENVIRONMENT_DESCRIPTOR_PATH = "/.well-known/t3/environment";
+const SERVER_ENVIRONMENT_DESCRIPTOR_PATH = "/.well-known/harness/environment";
 
 interface PrimaryEnvironmentBootstrapState {
   readonly descriptor: ExecutionEnvironmentDescriptor | null;

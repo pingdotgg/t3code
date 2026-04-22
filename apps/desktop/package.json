@@ -1,11 +1,11 @@
 {
-  "name": "@t3tools/desktop",
+  "name": "@harness/desktop",
   "version": "0.0.20",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
-    "dev": "bun run --parallel dev:bundle dev:electron",
+    "dev": "node scripts/dev-supervisor.mjs",
     "dev:bundle": "tsdown --watch",
     "dev:electron": "node scripts/dev-electron.mjs",
     "build": "tsdown",
@@ -20,13 +20,13 @@
     "electron-updater": "^6.6.2"
   },
   "devDependencies": {
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/shared": "workspace:*",
+    "@harness/contracts": "workspace:*",
+    "@harness/shared": "workspace:*",
     "@types/node": "catalog:",
     "effect-acp": "workspace:*",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
-  "productName": "T3 Code (Alpha)"
+  "productName": "Harness (Alpha)"
 }

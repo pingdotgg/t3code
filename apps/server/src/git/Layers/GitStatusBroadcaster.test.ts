@@ -5,7 +5,7 @@ import type {
   GitStatusRemoteResult,
   GitStatusResult,
   GitStatusStreamEvent,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import { describe } from "vitest";
 
 import { GitStatusBroadcaster } from "../Services/GitStatusBroadcaster.ts";

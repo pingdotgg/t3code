@@ -1,4 +1,4 @@
-import { type ProviderKind } from "@t3tools/contracts";
+import { type ProviderKind } from "@harness/contracts";
 import { memo } from "react";
 import { StarIcon } from "lucide-react";
 import {

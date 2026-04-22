@@ -1,7 +1,7 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer, Option, Schema, Struct } from "effect";
-import { ChatAttachment } from "@t3tools/contracts";
+import { ChatAttachment } from "@harness/contracts";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 import {

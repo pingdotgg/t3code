@@ -1,4 +1,4 @@
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId } from "@harness/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { useThreadSelectionStore } from "./threadSelectionStore";

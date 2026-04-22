@@ -1,6 +1,6 @@
 import { networkInterfaces } from "node:os";
 
-import { QrCode } from "@t3tools/shared/qrCode";
+import { QrCode } from "@harness/shared/qrCode";
 import { Effect } from "effect";
 import { HttpServer } from "effect/unstable/http";
 
@@ -121,7 +121,7 @@ export const renderTerminalQrCode = (value: string, margin = 2): string => {
 
 export const formatHeadlessServeOutput = (accessInfo: HeadlessServeAccessInfo): string =>
   [
-    "T3 Code server is ready.",
+    "Harness server is ready.",
     `Connection string: ${accessInfo.connectionString}`,
     `Token: ${accessInfo.token}`,
     `Pairing URL: ${accessInfo.pairingUrl}`,

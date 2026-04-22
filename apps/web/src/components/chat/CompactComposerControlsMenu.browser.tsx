@@ -3,8 +3,8 @@ import {
   EnvironmentId,
   ModelSelection,
   ThreadId,
-} from "@t3tools/contracts";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+} from "@harness/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@harness/client-runtime";
 import "../../index.css";
 
 import { page } from "vitest/browser";

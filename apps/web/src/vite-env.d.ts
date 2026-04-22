@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { DesktopBridge, LocalApi } from "@t3tools/contracts";
+import type { DesktopBridge, LocalApi } from "@harness/contracts";
 
 interface ImportMetaEnv {
   readonly APP_VERSION: string;

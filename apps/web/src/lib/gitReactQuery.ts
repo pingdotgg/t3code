@@ -3,7 +3,7 @@ import {
   type GitActionProgressEvent,
   type GitStackedAction,
   type ThreadId,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import {
   infiniteQueryOptions,
   mutationOptions,

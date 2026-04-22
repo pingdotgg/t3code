@@ -1,4 +1,4 @@
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type { ServerProviderSkill } from "@harness/contracts";
 
 function titleCaseWords(value: string): string {
   return value

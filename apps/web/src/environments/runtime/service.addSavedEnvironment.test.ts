@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId } from "@harness/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockResolveRemotePairingTarget = vi.fn();

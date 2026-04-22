@@ -1,6 +1,6 @@
 import type * as EffectAcpSchema from "effect-acp/schema";
-import { deriveToolActivityPresentation } from "@t3tools/shared/toolActivity";
-import type { ToolLifecycleItemType } from "@t3tools/contracts";
+import { deriveToolActivityPresentation } from "@harness/shared/toolActivity";
+import type { ToolLifecycleItemType } from "@harness/contracts";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

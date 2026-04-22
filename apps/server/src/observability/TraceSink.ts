@@ -1,4 +1,4 @@
-import { RotatingFileSink } from "@t3tools/shared/logging";
+import { RotatingFileSink } from "@harness/shared/logging";
 import { Effect } from "effect";
 
 import type { TraceRecord } from "./TraceRecord.ts";

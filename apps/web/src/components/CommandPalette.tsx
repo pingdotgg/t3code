@@ -1,12 +1,12 @@
 "use client";
 
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
+import { scopeProjectRef, scopeThreadRef } from "@harness/client-runtime";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
   type EnvironmentId,
   type FilesystemBrowseResult,
   type ProjectId,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {

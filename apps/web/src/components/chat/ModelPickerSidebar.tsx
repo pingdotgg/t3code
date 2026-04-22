@@ -1,4 +1,4 @@
-import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
+import { type ProviderKind, type ServerProvider } from "@harness/contracts";
 import { memo } from "react";
 import { Clock3Icon, SparklesIcon, StarIcon } from "lucide-react";
 import { Gemini, GithubCopilotIcon } from "../Icons";

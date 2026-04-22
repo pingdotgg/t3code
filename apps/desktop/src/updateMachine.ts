@@ -2,7 +2,7 @@ import type {
   DesktopRuntimeInfo,
   DesktopUpdateChannel,
   DesktopUpdateState,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 
 import { getCanRetryAfterDownloadFailure, nextStatusAfterDownloadFailure } from "./updateState.ts";
 

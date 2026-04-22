@@ -22,7 +22,7 @@ const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(GitCoreLive),
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3-workspace-files-test-",
+      prefix: "harness-workspace-files-test-",
     }),
   ),
   Layer.provideMerge(NodeServices.layer),
@@ -31,7 +31,7 @@ const TestLayer = Layer.empty.pipe(
 const makeTempDir = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.makeTempDirectoryScoped({
-    prefix: "t3code-workspace-files-",
+    prefix: "harness-workspace-files-",
   });
 });
 

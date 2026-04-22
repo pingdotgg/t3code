@@ -24,7 +24,7 @@ export interface AnalyticsServiceShape {
 }
 
 export class AnalyticsService extends Context.Service<AnalyticsService, AnalyticsServiceShape>()(
-  "t3/telemetry/Services/AnalyticsService",
+  "harness/telemetry/Services/AnalyticsService",
 ) {
   static readonly layerTest = Layer.succeed(AnalyticsService, {
     record: () => Effect.void,

@@ -4,7 +4,7 @@ import * as readline from "node:readline";
 import type { Readable } from "node:stream";
 
 import { Data, Effect, Option, Predicate, Result, Schema } from "effect";
-import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import { decodeJsonResult } from "@harness/shared/schemaJson";
 
 class BootstrapError extends Data.TaggedError("BootstrapError")<{
   readonly message: string;

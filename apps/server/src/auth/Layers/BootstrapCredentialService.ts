@@ -1,4 +1,4 @@
-import type { AuthPairingLink } from "@t3tools/contracts";
+import type { AuthPairingLink } from "@harness/contracts";
 import { DateTime, Duration, Effect, Layer, PubSub, Ref, Stream } from "effect";
 import { Option } from "effect";
 

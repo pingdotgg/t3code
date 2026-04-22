@@ -22,16 +22,16 @@ import {
   type GitStatusLocalResult,
   type GitStatusRemoteResult,
   ModelSelection,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import {
   detectGitHostingProviderFromRemoteUrl,
   mergeGitStatusParts,
   resolveAutoFeatureBranchName,
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
-} from "@t3tools/shared/git";
+} from "@harness/shared/git";
 
-import { GitManagerError } from "@t3tools/contracts";
+import { GitManagerError } from "@harness/contracts";
 import {
   GitManager,
   type GitActionProgressReporter,
@@ -45,7 +45,7 @@ import { TextGeneration } from "../Services/TextGeneration.ts";
 import { ProjectSetupScriptRunner } from "../../project/Services/ProjectSetupScriptRunner.ts";
 import { extractBranchNameFromRemoteRef } from "../remoteRefs.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import type { GitManagerServiceError } from "@t3tools/contracts";
+import type { GitManagerServiceError } from "@harness/contracts";
 import {
   decodeGitHubPullRequestListJson,
   formatGitHubJsonDecodeError,
@@ -141,7 +141,7 @@ function resolvePullRequestWorktreeLocalBranchName(
 
   const sanitizedHeadBranch = sanitizeBranchFragment(pullRequest.headBranch).trim();
   const suffix = sanitizedHeadBranch.length > 0 ? sanitizedHeadBranch : "head";
-  return `t3code/pr-${pullRequest.number}/${suffix}`;
+  return `harness/pr-${pullRequest.number}/${suffix}`;
 }
 
 function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
@@ -1255,7 +1255,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       modelSelection,
     });
 
-    const bodyFile = path.join(tempDir, `t3code-pr-body-${process.pid}-${randomUUID()}.md`);
+    const bodyFile = path.join(tempDir, `harness-pr-body-${process.pid}-${randomUUID()}.md`);
     yield* fileSystem
       .writeFileString(bodyFile, generated.body)
       .pipe(

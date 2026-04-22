@@ -1,4 +1,4 @@
-import type { AuthClientMetadata, AuthClientMetadataDeviceType } from "@t3tools/contracts";
+import type { AuthClientMetadata, AuthClientMetadataDeviceType } from "@harness/contracts";
 import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as Crypto from "node:crypto";
 

@@ -4,14 +4,14 @@ import type { Dirent } from "node:fs";
 
 import { Cache, Duration, Effect, Exit, Layer, Option, Path } from "effect";
 
-import { type FilesystemBrowseInput, type ProjectEntry } from "@t3tools/contracts";
-import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { type FilesystemBrowseInput, type ProjectEntry } from "@harness/contracts";
+import { isExplicitRelativePath, isWindowsAbsolutePath } from "@harness/shared/path";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
   type RankedSearchResult,
-} from "@t3tools/shared/searchRanking";
+} from "@harness/shared/searchRanking";
 
 import { GitCore } from "../../git/Services/GitCore.ts";
 import {

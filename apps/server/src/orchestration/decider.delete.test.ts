@@ -7,7 +7,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 

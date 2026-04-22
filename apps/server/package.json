@@ -1,14 +1,14 @@
 {
-  "name": "t3",
+  "name": "harness",
   "version": "0.0.20",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pingdotgg/t3code",
+    "url": "https://github.com/pingdotgg/harness",
     "directory": "apps/server"
   },
   "bin": {
-    "t3": "./dist/bin.mjs"
+    "harness": "./dist/bin.mjs"
   },
   "files": [
     "dist"
@@ -38,9 +38,9 @@
   "devDependencies": {
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
-    "@t3tools/contracts": "workspace:*",
-    "@t3tools/shared": "workspace:*",
-    "@t3tools/web": "workspace:*",
+    "@harness/contracts": "workspace:*",
+    "@harness/shared": "workspace:*",
+    "@harness/web": "workspace:*",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "effect-acp": "workspace:*",

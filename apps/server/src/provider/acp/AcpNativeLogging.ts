@@ -1,4 +1,4 @@
-import type { ProviderKind, ThreadId } from "@t3tools/contracts";
+import type { ProviderKind, ThreadId } from "@harness/contracts";
 import { Cause, Effect } from "effect";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 

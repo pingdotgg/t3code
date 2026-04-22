@@ -32,7 +32,7 @@ describe("TraceSink", () => {
   it.effect("flushes buffered records on close", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-trace-sink-"));
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-trace-sink-"));
         const tracePath = path.join(tempDir, "server.trace.ndjson");
 
         try {
@@ -66,7 +66,7 @@ describe("TraceSink", () => {
   it.effect("rotates the trace file when the configured max size is exceeded", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-trace-sink-"));
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-trace-sink-"));
         const tracePath = path.join(tempDir, "server.trace.ndjson");
 
         try {
@@ -109,7 +109,7 @@ describe("TraceSink", () => {
   it.effect("drops only the invalid record when serialization fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-trace-sink-"));
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-trace-sink-"));
         const tracePath = path.join(tempDir, "server.trace.ndjson");
 
         try {

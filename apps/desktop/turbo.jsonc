@@ -7,16 +7,16 @@
       "outputs": ["dist-electron/**"],
     },
     "dev": {
-      "dependsOn": ["t3#build"],
+      "dependsOn": ["harness#build"],
       "persistent": true,
     },
     "start": {
-      "dependsOn": ["build", "@t3tools/web#build", "t3#build"],
+      "dependsOn": ["build", "@harness/web#build", "harness#build"],
       "cache": false,
       "persistent": true,
     },
     "smoke-test": {
-      "dependsOn": ["build", "@t3tools/web#build", "t3#build"],
+      "dependsOn": ["build", "@harness/web#build", "harness#build"],
       "cache": false,
       "outputs": [],
     },

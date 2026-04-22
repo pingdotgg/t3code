@@ -2,7 +2,7 @@ import {
   type ProviderKind,
   type ResolvedKeybindingsConfig,
   type ServerProvider,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import { memo, useEffect, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ChevronDownIcon } from "lucide-react";

@@ -1,8 +1,8 @@
-import type { DesktopAppBranding, DesktopAppStageLabel } from "@t3tools/contracts";
+import type { DesktopAppBranding, DesktopAppStageLabel } from "@harness/contracts";
 
 import { isNightlyDesktopVersion } from "./updateChannels.ts";
 
-const APP_BASE_NAME = "T3 Code";
+const APP_BASE_NAME = "Harness";
 
 export function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;

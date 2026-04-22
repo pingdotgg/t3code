@@ -3,7 +3,7 @@ import {
   OrchestrationDispatchCommandError,
   OrchestrationGetSnapshotError,
   type OrchestrationReadModel,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import { Effect } from "effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 

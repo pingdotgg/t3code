@@ -1,4 +1,4 @@
-import { type CursorModelOptions, type CursorSettings } from "@t3tools/contracts";
+import { type CursorModelOptions, type CursorSettings } from "@harness/contracts";
 import { Effect, Layer, Scope } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";

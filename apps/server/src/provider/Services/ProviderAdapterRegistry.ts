@@ -7,7 +7,7 @@
  *
  * @module ProviderAdapterRegistry
  */
-import type { ProviderKind } from "@t3tools/contracts";
+import type { ProviderKind } from "@harness/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 
@@ -37,6 +37,6 @@ export interface ProviderAdapterRegistryShape {
 export class ProviderAdapterRegistry extends Context.Service<
   ProviderAdapterRegistry,
   ProviderAdapterRegistryShape
->()("t3/provider/Services/ProviderAdapterRegistry") {}
+>()("harness/provider/Services/ProviderAdapterRegistry") {}
 
 // Dummy comment for workflow testing.

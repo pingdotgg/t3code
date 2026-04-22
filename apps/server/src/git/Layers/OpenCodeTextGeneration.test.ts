@@ -2,7 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Duration, Effect, Layer } from "effect";
 import { TestClock } from "effect/testing";
-import { NetService } from "@t3tools/shared/Net";
+import { NetService } from "@harness/shared/Net";
 import { beforeEach, expect } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
@@ -116,7 +116,7 @@ const OpenCodeTextGenerationTestLayer = OpenCodeTextGenerationLive.pipe(
   ),
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3code-opencode-text-generation-test-",
+      prefix: "harness-opencode-text-generation-test-",
     }),
   ),
   Layer.provideMerge(NetService.layer),
@@ -138,7 +138,7 @@ const OpenCodeTextGenerationExistingServerTestLayer = OpenCodeTextGenerationLive
   ),
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3code-opencode-text-generation-existing-server-test-",
+      prefix: "harness-opencode-text-generation-existing-server-test-",
     }),
   ),
   Layer.provideMerge(NetService.layer),

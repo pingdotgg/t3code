@@ -76,7 +76,7 @@ import {
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http.ts";
-import { NetService } from "@t3tools/shared/Net";
+import { NetService } from "@harness/shared/Net";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {

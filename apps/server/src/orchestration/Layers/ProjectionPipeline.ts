@@ -3,7 +3,7 @@ import {
   type ChatAttachment,
   type OrchestrationEvent,
   ThreadId,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 

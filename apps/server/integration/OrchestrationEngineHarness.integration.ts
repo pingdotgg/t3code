@@ -6,7 +6,7 @@ import {
   ProviderKind,
   type OrchestrationEvent,
   type OrchestrationThread,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import {
   Effect,
   Exit,
@@ -242,7 +242,7 @@ export const makeOrchestrationIntegrationHarness = (
         } as typeof ProviderAdapterRegistry.Service)
       : null;
     const rootDir = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: "t3-orchestration-integration-",
+      prefix: "harness-orchestration-integration-",
     });
     const workspaceDir = path.join(rootDir, "workspace");
     const { stateDir, dbPath } = yield* deriveServerPaths(rootDir, undefined).pipe(

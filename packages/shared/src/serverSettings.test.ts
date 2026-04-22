@@ -1,4 +1,4 @@
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@harness/contracts";
 import { describe, expect, it } from "vitest";
 import {
   applyServerSettingsPatch,

@@ -34,4 +34,4 @@ export interface ThreadDeletionReactorShape {
 export class ThreadDeletionReactor extends Context.Service<
   ThreadDeletionReactor,
   ThreadDeletionReactorShape
->()("t3/orchestration/Services/ThreadDeletionReactor") {}
+>()("harness/orchestration/Services/ThreadDeletionReactor") {}

@@ -13,7 +13,7 @@ const ClaudeTextGenerationTestLayer = ClaudeTextGenerationLive.pipe(
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3code-claude-text-generation-test-",
+      prefix: "harness-claude-text-generation-test-",
     }),
   ),
   Layer.provideMerge(NodeServices.layer),
@@ -78,7 +78,7 @@ function withFakeClaudeEnv<A, E, R>(
   return Effect.acquireUseRelease(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-text-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "harness-claude-text-" });
       const binDir = yield* makeFakeClaudeBinary(tempDir);
       const previousPath = process.env.PATH;
       const previousOutput = process.env.T3_FAKE_CLAUDE_OUTPUT;

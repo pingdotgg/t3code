@@ -4,7 +4,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import { describe, expect, it } from "vitest";
 
 import {

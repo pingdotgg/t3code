@@ -14,7 +14,7 @@ import type {
   FilesystemBrowseResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 
 export class WorkspaceEntriesError extends Schema.TaggedErrorClass<WorkspaceEntriesError>()(
   "WorkspaceEntriesError",
@@ -67,5 +67,5 @@ export interface WorkspaceEntriesShape {
  * WorkspaceEntries - Service tag for cached workspace entry search.
  */
 export class WorkspaceEntries extends Context.Service<WorkspaceEntries, WorkspaceEntriesShape>()(
-  "t3/workspace/Services/WorkspaceEntries",
+  "harness/workspace/Services/WorkspaceEntries",
 ) {}

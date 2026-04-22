@@ -34,7 +34,7 @@ const readTraceRecords = (tracePath: string): Array<EffectTraceRecord> =>
 describe("LocalFileTracer", () => {
   it.effect("writes nested spans to disk and captures log messages as span events", () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-local-tracer-"));
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-local-tracer-"));
       const tracePath = path.join(tempDir, "server.trace.ndjson");
 
       try {
@@ -92,7 +92,7 @@ describe("LocalFileTracer", () => {
 
   it.effect("serializes interrupted spans with an interrupted exit status", () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-local-tracer-"));
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-local-tracer-"));
       const tracePath = path.join(tempDir, "server.trace.ndjson");
 
       try {

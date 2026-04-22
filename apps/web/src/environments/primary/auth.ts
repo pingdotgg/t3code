@@ -8,7 +8,7 @@ import type {
   AuthRevokePairingLinkInput,
   AuthSessionId,
   AuthSessionState,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 
 import {
   getPairingTokenFromUrl,

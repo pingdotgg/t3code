@@ -22,7 +22,9 @@ const makeServerConfigLayer = (
         ...overrides,
       } satisfies ServerConfigShape;
     }),
-  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-auth-session-test-" })));
+  ).pipe(
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "harness-auth-session-test-" })),
+  );
 
 const makeSessionCredentialLayer = (
   overrides?: Partial<Pick<ServerConfigShape, "desktopBootstrapToken">>,

@@ -8,9 +8,9 @@
  */
 import { Context } from "effect";
 import type { Effect } from "effect";
-import type { ChatAttachment, ModelSelection } from "@t3tools/contracts";
+import type { ChatAttachment, ModelSelection } from "@harness/contracts";
 
-import type { TextGenerationError } from "@t3tools/contracts";
+import type { TextGenerationError } from "@harness/contracts";
 
 /** Providers that support git text generation (commit messages, PR content, branch names). */
 export type TextGenerationProvider = "codex" | "claudeAgent" | "cursor" | "opencode";
@@ -119,5 +119,5 @@ export interface TextGenerationShape {
  * TextGeneration - Service tag for commit and PR text generation.
  */
 export class TextGeneration extends Context.Service<TextGeneration, TextGenerationShape>()(
-  "t3/git/Services/TextGeneration",
+  "harness/git/Services/TextGeneration",
 ) {}

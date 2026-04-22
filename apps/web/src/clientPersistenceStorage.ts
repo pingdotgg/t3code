@@ -4,13 +4,13 @@ import {
   type ClientSettings,
   type EnvironmentId as EnvironmentIdValue,
   type PersistedSavedEnvironmentRecord,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import * as Schema from "effect/Schema";
 
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
-export const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
-export const SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY = "t3code:saved-environment-registry:v1";
+export const CLIENT_SETTINGS_STORAGE_KEY = "harness:client-settings:v1";
+export const SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY = "harness:saved-environment-registry:v1";
 
 const BrowserSavedEnvironmentRecordSchema = Schema.Struct({
   environmentId: EnvironmentId,

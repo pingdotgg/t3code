@@ -1,6 +1,6 @@
 # Remote Architecture
 
-This document describes the target architecture for first-class remote environments in T3 Code.
+This document describes the target architecture for first-class remote environments in Harness.
 
 It is intentionally architecture-first. It does not define a complete implementation plan or user-facing rollout checklist. The goal is to establish the core model so remote support can be added without another broad rewrite.
 
@@ -8,7 +8,7 @@ It is intentionally architecture-first. It does not define a complete implementa
 
 - Treat remote environments as first-class product primitives, not special cases.
 - Support multiple ways to reach the same environment.
-- Keep the T3 server as the execution boundary.
+- Keep the Harness server as the execution boundary.
 - Let desktop, mobile, and web all share the same conceptual model.
 - Avoid introducing a local control plane unless product pressure proves it is necessary.
 
@@ -21,7 +21,7 @@ It is intentionally architecture-first. It does not define a complete implementa
 
 ## High-level architecture
 
-T3 already has a clean runtime boundary: the client talks to a T3 server over HTTP/WebSocket, and the server owns orchestration, providers, terminals, git, and filesystem operations.
+Harness already has a clean runtime boundary: the client talks to a Harness server over HTTP/WebSocket, and the server owns orchestration, providers, terminals, git, and filesystem operations.
 
 Remote support should preserve that boundary.
 
@@ -44,10 +44,10 @@ Remote support should preserve that boundary.
 │ - desktop-managed ssh bootstrap + forward   │
 └───────────────┬──────────────────────────────┘
                 │
-                │ connects to one T3 server
+                │ connects to one Harness server
                 │
 ┌───────────────▼──────────────────────────────┐
-│ Execution environment = one T3 server       │
+│ Execution environment = one Harness server       │
 │                                              │
 │ - environment identity                       │
 │ - provider state                             │
@@ -56,13 +56,13 @@ Remote support should preserve that boundary.
 └──────────────────────────────────────────────┘
 ```
 
-The important decision is that remoteness is expressed at the environment connection layer, not by splitting the T3 runtime itself.
+The important decision is that remoteness is expressed at the environment connection layer, not by splitting the Harness runtime itself.
 
 ## Domain model
 
 ### ExecutionEnvironment
 
-An `ExecutionEnvironment` is one running T3 server instance.
+An `ExecutionEnvironment` is one running Harness server instance.
 
 It is the unit that owns:
 
@@ -101,7 +101,7 @@ This is the key abstraction that keeps SSH from taking over the model.
 
 A single environment may have many endpoints:
 
-- `wss://t3.example.com`
+- `wss://harness.example.com`
 - `ws://10.0.0.25:3773`
 - a tunneled relay URL
 - a desktop-managed SSH tunnel that resolves to a local forwarded WebSocket URL
@@ -128,7 +128,7 @@ That means:
 
 Access methods answer one question:
 
-How does the client speak WebSocket to a T3 server?
+How does the client speak WebSocket to a Harness server?
 
 They do not answer:
 
@@ -141,7 +141,7 @@ They do not answer:
 Examples:
 
 - `ws://10.0.0.15:3773`
-- `wss://t3.example.com`
+- `wss://harness.example.com`
 
 This is the base model and should be the first-class default.
 
@@ -149,7 +149,7 @@ Benefits:
 
 - works for desktop, mobile, and web
 - no client-specific process management required
-- best fit for hosted or self-managed remote T3 deployments
+- best fit for hosted or self-managed remote Harness deployments
 
 ### 2. Tunneled WebSocket access
 
@@ -161,7 +161,7 @@ Examples:
 
 This is still direct WebSocket access from the client's perspective. The difference is that the route is mediated by a tunnel or relay.
 
-For T3, tunnels are best modeled as another `AccessEndpoint`, not as a different kind of environment.
+For Harness, tunnels are best modeled as another `AccessEndpoint`, not as a different kind of environment.
 
 This is especially useful when:
 
@@ -178,7 +178,7 @@ The desktop main process can use SSH to:
 
 - reach a machine
 - probe it
-- launch or reuse a remote T3 server
+- launch or reuse a remote Harness server
 - establish a local port forward
 
 After that, the renderer should still connect using an ordinary WebSocket URL against the forwarded local port.
@@ -189,7 +189,7 @@ This keeps the renderer transport model consistent with every other access metho
 
 Launch methods answer a different question:
 
-How does a T3 server come to exist on the target machine?
+How does a Harness server come to exist on the target machine?
 
 Launch and access should stay separate in the design.
 
@@ -197,7 +197,7 @@ Launch and access should stay separate in the design.
 
 The simplest launch method is no launch at all.
 
-The user or operator already runs T3 on the target machine, and the client connects through a direct or tunneled WebSocket endpoint.
+The user or operator already runs Harness on the target machine, and the client connects through a direct or tunneled WebSocket endpoint.
 
 This should be the first remote mode shipped because it validates the environment model with minimal extra machinery.
 
@@ -213,23 +213,23 @@ Useful ideas to borrow from Zed:
 - reconnect-friendly launcher behavior
 - desktop-owned connection UX
 
-What should be different in T3:
+What should be different in Harness:
 
 - no custom stdio/socket proxy protocol between renderer and remote runtime
 - no attempt to make the remote runtime look like an editor transport
 - keep the final client-to-server connection as WebSocket
 
-The recommended T3 flow is:
+The recommended Harness flow is:
 
 1. Desktop connects over SSH.
-2. Desktop probes the remote machine and verifies T3 availability.
-3. Desktop launches or reuses a remote T3 server.
+2. Desktop probes the remote machine and verifies Harness availability.
+3. Desktop launches or reuses a remote Harness server.
 4. Desktop establishes local port forwarding.
 5. Renderer connects to the forwarded WebSocket endpoint as a normal environment.
 
 ### 3. Client-managed local publish
 
-This is the inverse of remote launch: a local T3 server is already running, and the client publishes it through a tunnel.
+This is the inverse of remote launch: a local Harness server is already running, and the client publishes it through a tunnel.
 
 This is useful for:
 
@@ -244,7 +244,7 @@ These concerns are easy to conflate, but separating them prevents architectural 
 
 Examples:
 
-- A manually hosted T3 server might be reached through direct `wss`.
+- A manually hosted Harness server might be reached through direct `wss`.
 - The same server might also be reachable through a tunnel.
 - An SSH-managed server might be launched over SSH but then reached through forwarded WebSocket.
 - A local desktop server might be published through a tunnel for mobile.
@@ -263,7 +263,7 @@ That means:
 - tunnel exposure should not rely on obscurity
 - client-saved endpoints should carry enough auth metadata to reconnect safely
 
-T3 already supports a WebSocket auth token on the server. That should become a first-class part of environment access rather than remaining an incidental query parameter convention.
+Harness already supports a WebSocket auth token on the server. That should become a first-class part of environment access rather than remaining an incidental query parameter convention.
 
 For publicly reachable environments, authenticated access should be treated as required.
 
@@ -282,14 +282,14 @@ The important mismatch is transport shape.
 
 Zed needs a custom proxy/server protocol because its remote boundary sits below the editor and project runtime.
 
-T3 should not copy that part.
+Harness should not copy that part.
 
-T3 already has the right runtime boundary:
+Harness already has the right runtime boundary:
 
-- one T3 server per environment
+- one Harness server per environment
 - ordinary HTTP/WebSocket between client and environment
 
-So T3 should borrow Zed's launch discipline, not its transport protocol.
+So Harness should borrow Zed's launch discipline, not its transport protocol.
 
 ## Recommended rollout
 

@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/client-runtime",
+  "name": "@harness/client-runtime",
   "version": "0.0.0-alpha.1",
   "private": true,
   "type": "module",
@@ -15,7 +15,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@t3tools/contracts": "workspace:*"
+    "@harness/contracts": "workspace:*"
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",

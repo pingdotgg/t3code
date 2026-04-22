@@ -3,7 +3,7 @@ import {
   type EnvironmentId,
   type GitManagerServiceError,
   type GitStatusResult,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import { Cause } from "effect";
 import { Atom } from "effect/unstable/reactivity";
 import { useEffect } from "react";

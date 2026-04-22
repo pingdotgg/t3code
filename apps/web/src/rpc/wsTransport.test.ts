@@ -1,4 +1,4 @@
-import { DEFAULT_SERVER_SETTINGS, WS_METHODS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, WS_METHODS } from "@harness/contracts";
 import { Stream } from "effect";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -219,7 +219,7 @@ describe("WsTransport", () => {
         closeCode: 1006,
         closeReason: "server unavailable",
         hasConnected: false,
-        lastError: "Unable to connect to the T3 server WebSocket.",
+        lastError: "Unable to connect to the Harness server WebSocket.",
         phase: "disconnected",
       });
     });

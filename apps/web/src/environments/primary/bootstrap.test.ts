@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId } from "@harness/contracts";
 
 import {
   getPrimaryKnownEnvironment,
@@ -97,7 +97,7 @@ describe("environmentBootstrap", () => {
     ]);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith("http://localhost/.well-known/t3/environment");
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost/.well-known/harness/environment");
   });
 
   it("uses https descriptor urls when the primary environment uses wss", async () => {
@@ -107,7 +107,9 @@ describe("environmentBootstrap", () => {
     vi.stubEnv("VITE_WS_URL", "wss://remote.example.com");
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
-    expect(fetchMock).toHaveBeenCalledWith("https://remote.example.com/.well-known/t3/environment");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://remote.example.com/.well-known/harness/environment",
+    );
   });
 
   it("derives the websocket url when only VITE_HTTP_URL is configured", async () => {
@@ -116,7 +118,9 @@ describe("environmentBootstrap", () => {
     vi.stubEnv("VITE_HTTP_URL", "https://remote.example.com");
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
-    expect(fetchMock).toHaveBeenCalledWith("https://remote.example.com/.well-known/t3/environment");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://remote.example.com/.well-known/harness/environment",
+    );
     expect(getPrimaryKnownEnvironment()?.target).toEqual({
       httpBaseUrl: "https://remote.example.com/",
       wsBaseUrl: "wss://remote.example.com/",
@@ -129,7 +133,9 @@ describe("environmentBootstrap", () => {
     vi.stubEnv("VITE_WS_URL", "wss://remote.example.com");
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
-    expect(fetchMock).toHaveBeenCalledWith("https://remote.example.com/.well-known/t3/environment");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://remote.example.com/.well-known/harness/environment",
+    );
     expect(getPrimaryKnownEnvironment()?.target).toEqual({
       httpBaseUrl: "https://remote.example.com/",
       wsBaseUrl: "wss://remote.example.com/",
@@ -142,7 +148,7 @@ describe("environmentBootstrap", () => {
     installTestBrowser("http://localhost:5735/");
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
-    expect(fetchMock).toHaveBeenCalledWith("http://localhost:5735/.well-known/t3/environment");
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost:5735/.well-known/harness/environment");
   });
 
   it("uses the vite proxy for desktop-managed loopback descriptor requests during local dev", async () => {
@@ -165,6 +171,6 @@ describe("environmentBootstrap", () => {
     });
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
-    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:5733/.well-known/t3/environment");
+    expect(fetchMock).toHaveBeenCalledWith("http://127.0.0.1:5733/.well-known/harness/environment");
   });
 });

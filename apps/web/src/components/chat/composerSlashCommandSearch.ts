@@ -2,7 +2,7 @@ import {
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
-} from "@t3tools/shared/searchRanking";
+} from "@harness/shared/searchRanking";
 
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 

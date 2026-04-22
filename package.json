@@ -1,5 +1,5 @@
 {
-  "name": "@t3tools/monorepo",
+  "name": "@harness/monorepo",
   "private": true,
   "workspaces": {
     "packages": [
@@ -29,22 +29,22 @@
     "dev": "node scripts/dev-runner.ts dev",
     "dev:server": "node scripts/dev-runner.ts dev:server",
     "dev:web": "node scripts/dev-runner.ts dev:web",
-    "dev:marketing": "turbo run dev --filter=@t3tools/marketing",
+    "dev:marketing": "turbo run dev --filter=@harness/marketing",
     "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
-    "start": "turbo run start --filter=t3",
-    "start:desktop": "turbo run start --filter=@t3tools/desktop",
-    "start:marketing": "turbo run preview --filter=@t3tools/marketing",
+    "start": "turbo run start --filter=harness",
+    "start:desktop": "turbo run start --filter=@harness/desktop",
+    "start:marketing": "turbo run preview --filter=@harness/marketing",
     "start:mock-update-server": "node scripts/mock-update-server.ts",
     "build": "turbo run build",
-    "build:marketing": "turbo run build --filter=@t3tools/marketing",
-    "build:desktop": "turbo run build --filter=@t3tools/desktop --filter=t3",
+    "build:marketing": "turbo run build --filter=@harness/marketing",
+    "build:desktop": "turbo run build --filter=@harness/desktop --filter=harness",
     "typecheck": "turbo run typecheck",
     "lint": "oxlint --report-unused-disable-directives",
     "test": "turbo run test",
-    "test:desktop-smoke": "turbo run smoke-test --filter=@t3tools/desktop",
+    "test:desktop-smoke": "turbo run smoke-test --filter=@harness/desktop",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
-    "build:contracts": "turbo run build --filter=@t3tools/contracts",
+    "build:contracts": "turbo run build --filter=@harness/contracts",
     "dist:desktop:artifact": "node scripts/build-desktop-artifact.ts",
     "dist:desktop:dmg": "node scripts/build-desktop-artifact.ts --platform mac --target dmg",
     "dist:desktop:dmg:arm64": "node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch arm64",
@@ -58,11 +58,11 @@
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },
   "devDependencies": {
-    "@types/node": "catalog:",
+    "@types/node": "^24.12.2",
     "oxfmt": "^0.40.0",
-    "oxlint": "^1.55.0",
-    "turbo": "^2.3.3",
-    "vitest": "catalog:"
+    "oxlint": "^1.61.0",
+    "turbo": "^2.9.6",
+    "vitest": "^4.1.5"
   },
   "overrides": {
     "@effect/atom-react": "catalog:",

@@ -3,8 +3,8 @@ import type {
   OrchestrationReadModel,
   ProjectId,
   ThreadId,
-} from "@t3tools/contracts";
-import { OrchestrationCommand } from "@t3tools/contracts";
+} from "@harness/contracts";
+import { OrchestrationCommand } from "@harness/contracts";
 import {
   Cause,
   Deferred,

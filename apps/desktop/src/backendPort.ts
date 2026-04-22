@@ -1,5 +1,5 @@
 import * as Effect from "effect/Effect";
-import { NetService } from "@t3tools/shared/Net";
+import { NetService } from "@harness/shared/Net";
 
 export const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;

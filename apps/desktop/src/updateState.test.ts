@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopUpdateState } from "@harness/contracts";
 
 import {
   getCanRetryAfterDownloadFailure,
@@ -113,7 +113,7 @@ describe("getAutoUpdateDisabledReason", () => {
         disabledByEnv: true,
         hasUpdateFeedConfig: true,
       }),
-    ).toContain("T3CODE_DISABLE_AUTO_UPDATE");
+    ).toContain("HARNESS_DISABLE_AUTO_UPDATE");
   });
 
   it("reports linux non-AppImage builds as disabled", () => {

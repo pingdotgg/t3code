@@ -1,4 +1,4 @@
-import type { EnvironmentId, GitResolvePullRequestResult, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, GitResolvePullRequestResult, ThreadId } from "@harness/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";

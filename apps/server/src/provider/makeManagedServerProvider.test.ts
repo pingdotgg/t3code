@@ -1,5 +1,5 @@
 import { describe, it, assert } from "@effect/vitest";
-import type { ServerProvider } from "@t3tools/contracts";
+import type { ServerProvider } from "@harness/contracts";
 import { Deferred, Effect, Fiber, PubSub, Ref, Stream } from "effect";
 
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";

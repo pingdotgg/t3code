@@ -32,7 +32,9 @@ export type TypeId = "~local/sqlite-node/SqliteClient";
 /**
  * SqliteClient - Effect service tag for the sqlite SQL client.
  */
-export const SqliteClient = Context.Service<Client.SqlClient>("t3/persistence/NodeSqliteClient");
+export const SqliteClient = Context.Service<Client.SqlClient>(
+  "harness/persistence/NodeSqliteClient",
+);
 
 export interface SqliteClientConfig {
   readonly filename: string;

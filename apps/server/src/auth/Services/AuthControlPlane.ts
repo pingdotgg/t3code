@@ -3,7 +3,7 @@ import type {
   AuthClientSession,
   AuthPairingLink,
   AuthSessionId,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import { Data, DateTime, Duration, Effect, Context } from "effect";
 import type { SessionRole } from "./SessionCredentialService.ts";
 
@@ -65,5 +65,5 @@ export interface AuthControlPlaneShape {
 }
 
 export class AuthControlPlane extends Context.Service<AuthControlPlane, AuthControlPlaneShape>()(
-  "t3/AuthControlPlane",
+  "harness/AuthControlPlane",
 ) {}

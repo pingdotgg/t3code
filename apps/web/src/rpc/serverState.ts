@@ -9,7 +9,7 @@ import {
   type ServerProvider,
   type ServerProviderUpdatedPayload,
   type ServerSettings,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useRef } from "react";
 

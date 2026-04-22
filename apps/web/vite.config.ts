@@ -2,14 +2,14 @@ import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import { defineConfig } from "vite";
+import { createLogger, defineConfig, type LogOptions, type Logger } from "vite";
 import pkg from "./package.json" with { type: "json" };
 
 const port = Number(process.env.PORT ?? 5733);
 const host = process.env.HOST?.trim() || "localhost";
 const configuredHttpUrl = process.env.VITE_HTTP_URL?.trim();
 const configuredWsUrl = process.env.VITE_WS_URL?.trim();
-const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
+const sourcemapEnv = process.env.HARNESS_WEB_SOURCEMAP?.trim().toLowerCase();
 
 const buildSourcemap =
   sourcemapEnv === "0" || sourcemapEnv === "false"
@@ -41,7 +41,36 @@ function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
 
 const devProxyTarget = resolveDevProxyTarget(configuredWsUrl);
 
+/** Desktop `bun run dev:desktop`: Vite and Electron start in parallel; the backend is not listening yet. */
+function createHarnessViteLogger(): Logger {
+  const base = createLogger();
+  const isDesktopDev = process.env.HARNESS_DESKTOP_DEV === "1";
+  const isBenignProxyNoise = (msg: string) => {
+    if (!isDesktopDev) {
+      return false;
+    }
+    // Vite may split "http proxy error: …" and "Error: connect ECONNREFUSED" across lines.
+    if (msg.includes("http proxy error")) {
+      return true;
+    }
+    return msg.includes("ECONNREFUSED") && (msg.includes("127.0.0.1") || msg.includes("localhost"));
+  };
+  const withFilter =
+    (fn: (msg: string, options?: LogOptions) => void) => (msg: string, options?: LogOptions) => {
+      if (isBenignProxyNoise(msg)) {
+        return;
+      }
+      fn(msg, options);
+    };
+  return {
+    ...base,
+    warn: withFilter(base.warn.bind(base)),
+    error: withFilter(base.error.bind(base)),
+  };
+}
+
 export default defineConfig({
+  customLogger: createHarnessViteLogger(),
   plugins: [
     tanstackRouter(),
     react(),

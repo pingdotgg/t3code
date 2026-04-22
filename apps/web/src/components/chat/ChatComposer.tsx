@@ -12,12 +12,12 @@ import type {
   ServerProvider,
   ThreadId,
   TurnId,
-} from "@t3tools/contracts";
+} from "@harness/contracts";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-} from "@t3tools/contracts";
-import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+} from "@harness/contracts";
+import { createModelSelection, normalizeModelSlug } from "@harness/shared/model";
 import {
   forwardRef,
   memo,
@@ -97,7 +97,7 @@ import {
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { resolveSelectableProvider, getProviderModels } from "../../providerModels";
-import type { UnifiedSettings } from "@t3tools/contracts/settings";
+import type { UnifiedSettings } from "@harness/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
@@ -1701,8 +1701,12 @@ export const ChatComposer = memo(
         >
           <div
             className={cn(
-              "rounded-[20px] border bg-card transition-colors duration-200 has-focus-visible:border-ring/45",
-              isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border",
+              "rounded-[20px] border transition-colors duration-200 backdrop-blur-md",
+              "border-gray-200/50 bg-white/95 shadow-[0_3px_8px_rgba(0,0,0,0.1),0_2px_4px_rgba(0,0,0,0.06)]",
+              "dark:border-transparent dark:bg-zinc-900/80 dark:shadow-[inset_0_1px_2px_rgba(255,255,255,0.2),inset_0_-4px_30px_rgba(47,44,48,0.9),0_4px_16px_rgba(0,0,0,0.4)]",
+              "focus-within:border-ring/45 focus-within:shadow-[0_3px_12px_rgba(0,0,0,0.12),0_2px_6px_rgba(0,0,0,0.08)]",
+              "dark:focus-within:border-ring/45 dark:focus-within:shadow-[inset_0_1px_2px_rgba(255,255,255,0.22),inset_0_-4px_30px_rgba(47,44,48,0.9),0_4px_20px_rgba(0,0,0,0.5)]",
+              isDragOverComposer && "border-primary/70 !bg-accent/30",
               composerProviderState.composerSurfaceClassName,
             )}
           >
@@ -1860,9 +1864,16 @@ export const ChatComposer = memo(
               />
             </div>
 
+            {/* Separator — independent element so you can bevel, gradient, inset shadow, etc. */}
+            <div
+              aria-hidden
+              data-chat-composer-footer-separator
+              className="pointer-events-none h-[2px] w-full shrink-0 bg-foreground/10 border-t border-black"
+            />
+
             {/* Bottom toolbar */}
             {activePendingApproval ? (
-              <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 sm:px-3 sm:pb-3">
+              <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 pt-2.5 sm:px-3 sm:pb-3 sm:pt-3">
                 <ComposerPendingApprovalActions
                   requestId={activePendingApproval.requestId}
                   isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
@@ -1874,7 +1885,7 @@ export const ChatComposer = memo(
                 data-chat-composer-footer="true"
                 data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
                 className={cn(
-                  "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 sm:px-3 sm:pb-3",
+                  "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 pt-2.5 sm:px-3 sm:pb-3 sm:pt-3",
                   isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                 )}
               >
