@@ -589,7 +589,11 @@ export function BranchToolbarBranchSelector({
   });
 
   // PR pill shown next to the branch selector when the active branch has one.
-  const branchPr = resolveThreadPr(resolvedActiveBranch, branchStatusQuery.data ?? null);
+  const branchPr = resolveThreadPr({
+    threadBranch: resolvedActiveBranch,
+    gitStatus: branchStatusQuery.data ?? null,
+    hasDedicatedWorktree: activeWorktreePath !== null,
+  });
   const branchPrStatus = prStatusIndicator(branchPr, branchStatusQuery.data?.sourceControlProvider);
   // Action-oriented tooltip (the pill opens the PR), distinct from the sidebar's
   // state-description tooltip.

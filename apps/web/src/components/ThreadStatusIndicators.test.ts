@@ -1,7 +1,7 @@
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { resolveThreadPr } from "./ThreadStatusIndicators";
+import { prStatusIndicator, resolveThreadPr } from "./ThreadStatusIndicators";
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {
@@ -59,5 +59,15 @@ describe("resolveThreadPr", () => {
         hasDedicatedWorktree: true,
       }),
     ).toBe(gitStatus.pr);
+  });
+});
+
+describe("prStatusIndicator", () => {
+  it("formats PR tooltips with number, uppercase status, and title", () => {
+    expect(prStatusIndicator(status().pr)).toMatchObject({
+      tooltip: "PR #42 - Open: PR branch",
+      tooltipLead: "PR #42 - Open",
+      tooltipTitle: "PR branch",
+    });
   });
 });
