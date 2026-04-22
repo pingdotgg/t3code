@@ -69,11 +69,21 @@ export function ChangeRequestStatusIcon({ className }: { className?: string }) {
   return <GitPullRequestIcon className={className} />;
 }
 
-export function resolveThreadPr(
-  threadBranch: string | null,
-  gitStatus: VcsStatusResult | null,
-): ThreadPr | null {
-  if (threadBranch === null || gitStatus === null || gitStatus.refName !== threadBranch) {
+export function resolveThreadPr(input: {
+  threadBranch: string | null;
+  gitStatus: VcsStatusResult | null;
+  hasDedicatedWorktree: boolean;
+}): ThreadPr | null {
+  const { threadBranch, gitStatus, hasDedicatedWorktree } = input;
+  if (gitStatus === null) {
+    return null;
+  }
+
+  if (hasDedicatedWorktree) {
+    return gitStatus.pr ?? null;
+  }
+
+  if (threadBranch === null || gitStatus.refName !== threadBranch) {
     return null;
   }
 
@@ -152,9 +162,13 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const gitCwd = thread.worktreePath ?? threadProjectCwd;
   const gitStatus = useGitStatus({
     environmentId: thread.environmentId,
-    cwd: thread.branch != null ? gitCwd : null,
+    cwd: thread.branch != null || thread.worktreePath !== null ? gitCwd : null,
   });
-  const pr = resolveThreadPr(thread.branch, gitStatus.data);
+  const pr = resolveThreadPr({
+    threadBranch: thread.branch,
+    gitStatus: gitStatus.data,
+    hasDedicatedWorktree: thread.worktreePath !== null,
+  });
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const threadStatus = resolveThreadStatusPill({
     thread: {
