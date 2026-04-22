@@ -6,6 +6,7 @@ import type {
   CopilotSession,
   PermissionRequest,
   SessionConfig,
+  SessionEvent,
 } from "@github/copilot-sdk";
 import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
@@ -19,6 +20,8 @@ import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
 import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
+const waitForSdkEventQueue = () =>
+  Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 10)));
 
 const runtimeMock = vi.hoisted(() => {
   const makeSession = () => ({
@@ -189,6 +192,113 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         });
 
         assert.equal(session.provider, "copilot");
+        yield* adapter.stopSession(threadId);
+      }),
+  );
+
+  it.effect(
+    "renders Copilot Task_complete tool output as assistant text when no assistant message arrives",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* CopilotAdapter;
+        const threadId = asThreadId("copilot-task-complete-assistant-fallback");
+
+        yield* adapter.startSession({
+          provider: "copilot",
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        });
+
+        const turn = yield* adapter.sendTurn({
+          threadId,
+          input: "make an architecture diagram",
+          attachments: [],
+        });
+
+        const config = runtimeMock.state.createSessionConfigs.at(-1);
+        assert.ok(config?.onEvent);
+        const emit = (event: SessionEvent) => config.onEvent?.(event);
+        const resultText =
+          "Task completed: **Architecture diagram prepared**\n\n```mermaid\nflowchart TD\n  Client --> Server\n```";
+
+        emit({
+          id: "evt-copilot-turn-start",
+          timestamp: new Date().toISOString(),
+          parentId: null,
+          type: "assistant.turn_start",
+          data: {
+            turnId: "sdk-turn-1",
+          },
+        } as SessionEvent);
+        emit({
+          id: "evt-copilot-task-start",
+          timestamp: new Date().toISOString(),
+          parentId: null,
+          type: "tool.execution_start",
+          data: {
+            toolCallId: "tool-task-complete",
+            toolName: "Task_complete",
+            arguments: {},
+          },
+        } as SessionEvent);
+        emit({
+          id: "evt-copilot-task-complete",
+          timestamp: new Date().toISOString(),
+          parentId: null,
+          type: "tool.execution_complete",
+          data: {
+            toolCallId: "tool-task-complete",
+            success: true,
+            result: {
+              content: resultText,
+            },
+          },
+        } as SessionEvent);
+        emit({
+          id: "evt-copilot-idle",
+          timestamp: new Date().toISOString(),
+          parentId: null,
+          type: "session.idle",
+          data: {
+            aborted: false,
+          },
+        } as SessionEvent);
+
+        let thread = yield* adapter.readThread(threadId);
+        for (
+          let attempt = 0;
+          attempt < 20 &&
+          !thread.turns.some((entry) =>
+            entry.items.some(
+              (item) =>
+                typeof item === "object" &&
+                item !== null &&
+                "type" in item &&
+                item.type === "assistant_message",
+            ),
+          );
+          attempt += 1
+        ) {
+          yield* waitForSdkEventQueue();
+          thread = yield* adapter.readThread(threadId);
+        }
+
+        const turnSnapshot = thread.turns.find((entry) => entry.id === turn.turnId);
+        assert.ok(turnSnapshot);
+        const assistantItem = turnSnapshot.items.find(
+          (item) =>
+            typeof item === "object" &&
+            item !== null &&
+            "type" in item &&
+            item.type === "assistant_message",
+        );
+        assert.deepStrictEqual(assistantItem, {
+          type: "assistant_message",
+          messageId: `copilot-task-completion-${String(turn.turnId)}`,
+          content: resultText,
+        });
+
         yield* adapter.stopSession(threadId);
       }),
   );
