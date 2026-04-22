@@ -2,6 +2,10 @@ import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
 } from "./lib/terminalContext";
+import {
+  INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER,
+  type DiffContextCommentDraft,
+} from "./lib/diffContextComments";
 
 export type ComposerPromptSegment =
   | {
@@ -19,6 +23,10 @@ export type ComposerPromptSegment =
   | {
       type: "terminal-context";
       context: TerminalContextDraft | null;
+    }
+  | {
+      type: "diff-context-comment";
+      comment: DiffContextCommentDraft | null;
     };
 
 const MENTION_TOKEN_REGEX = /(^|\s)@([^\s@]+)(?=\s)/g;
@@ -94,13 +102,20 @@ function forEachPromptSegmentSlice(
       | {
           type: "terminal-context";
           promptOffset: number;
+        }
+      | {
+          type: "diff-context-comment";
+          promptOffset: number;
         },
   ) => boolean | void,
 ): boolean {
   let textCursor = 0;
 
   for (let index = 0; index < prompt.length; index += 1) {
-    if (prompt[index] !== INLINE_TERMINAL_CONTEXT_PLACEHOLDER) {
+    const char = prompt[index];
+    const isTerminalContextPlaceholder = char === INLINE_TERMINAL_CONTEXT_PLACEHOLDER;
+    const isDiffContextCommentPlaceholder = char === INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER;
+    if (!isTerminalContextPlaceholder && !isDiffContextCommentPlaceholder) {
       continue;
     }
 
@@ -114,7 +129,12 @@ function forEachPromptSegmentSlice(
     ) {
       return true;
     }
-    if (visitor({ type: "terminal-context", promptOffset: index }) === true) {
+    if (
+      visitor({
+        type: isTerminalContextPlaceholder ? "terminal-context" : "diff-context-comment",
+        promptOffset: index,
+      }) === true
+    ) {
       return true;
     }
     textCursor = index + 1;
@@ -233,6 +253,7 @@ export function selectionTouchesMentionBoundary(
 export function splitPromptIntoComposerSegments(
   prompt: string,
   terminalContexts: ReadonlyArray<TerminalContextDraft> = [],
+  diffContextComments: ReadonlyArray<DiffContextCommentDraft> = [],
 ): ComposerPromptSegment[] {
   if (!prompt) {
     return [];
@@ -240,9 +261,19 @@ export function splitPromptIntoComposerSegments(
 
   const segments: ComposerPromptSegment[] = [];
   let terminalContextIndex = 0;
+  let diffContextCommentIndex = 0;
   forEachPromptSegmentSlice(prompt, (slice) => {
     if (slice.type === "text") {
       segments.push(...splitPromptTextIntoComposerSegments(slice.text));
+      return false;
+    }
+
+    if (slice.type === "diff-context-comment") {
+      segments.push({
+        type: "diff-context-comment",
+        comment: diffContextComments[diffContextCommentIndex] ?? null,
+      });
+      diffContextCommentIndex += 1;
       return false;
     }
 

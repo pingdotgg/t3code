@@ -1,4 +1,4 @@
-import { parsePatchFiles } from "@pierre/diffs";
+import { type DiffLineAnnotation, parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
@@ -36,6 +36,16 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import {
+  buildFileDiffRenderKey,
+  type DiffCommentAnnotationMetadata,
+  resolveFileDiffPath,
+  useDiffContextCommentDrafts,
+} from "./DiffPanel.logic";
+import {
+  DiffContextCommentDraft as DiffContextCommentDraftCard,
+  DiffContextCommentPreview,
+} from "./DiffContextCommentDraft";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
 type DiffRenderMode = "stacked" | "split";
@@ -148,18 +158,6 @@ function getRenderablePatch(
   }
 }
 
-function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
-  const raw = fileDiff.name ?? fileDiff.prevName ?? "";
-  if (raw.startsWith("a/") || raw.startsWith("b/")) {
-    return raw.slice(2);
-  }
-  return raw;
-}
-
-function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
-  return fileDiff.cacheKey ?? `${fileDiff.prevName ?? "none"}:${fileDiff.name}`;
-}
-
 interface DiffPanelProps {
   mode?: DiffPanelMode;
 }
@@ -187,6 +185,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const activeThread = useStore(
     useMemo(() => createThreadSelectorByRef(routeThreadRef), [routeThreadRef]),
   );
+  const activeThreadEnvironmentId = activeThread?.environmentId ?? null;
   const activeProjectId = activeThread?.projectId ?? null;
   const activeProject = useStore((store) =>
     activeThread && activeProjectId
@@ -313,6 +312,36 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       }),
     );
   }, [renderablePatch]);
+  const activeThreadRef = useMemo(
+    () =>
+      activeThreadEnvironmentId && activeThreadId
+        ? scopeThreadRef(activeThreadEnvironmentId, activeThreadId)
+        : null,
+    [activeThreadEnvironmentId, activeThreadId],
+  );
+  const {
+    editingCommentBody,
+    editingCommentError,
+    lineAnnotationsByFileKey,
+    manualCommentBody,
+    manualCommentError,
+    selectedLinesForFileKey,
+    visiblePendingDiffContextComments,
+    beginEditingComment,
+    cancelEditingComment,
+    clearManualCommentSelection,
+    deleteEditingComment,
+    handleManualCommentSelectionChange,
+    saveEditingComment,
+    setEditingCommentBody,
+    setManualCommentBody,
+    submitManualComment,
+  } = useDiffContextCommentDrafts({
+    activeThreadId,
+    activeThreadRef,
+    selectedTurnId: selectedTurn?.turnId ?? null,
+    renderableFiles,
+  });
 
   useEffect(() => {
     if (diffOpen && !previousDiffOpenRef.current) {
@@ -341,6 +370,72 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       });
     },
     [activeCwd],
+  );
+
+  const renderDraftAnnotation = useCallback(
+    (annotation: DiffLineAnnotation<DiffCommentAnnotationMetadata>) => {
+      const { metadata } = annotation;
+      if (metadata.kind === "draft-comment") {
+        return (
+          <DiffContextCommentDraftCard
+            filePath={metadata.filePath}
+            lineStart={metadata.lineStart}
+            lineEnd={metadata.lineEnd}
+            body={manualCommentBody}
+            error={manualCommentError}
+            onBodyChange={setManualCommentBody}
+            onCancel={clearManualCommentSelection}
+            onSubmit={submitManualComment}
+          />
+        );
+      }
+
+      const comment = visiblePendingDiffContextComments.find(
+        (entry) => entry.id === metadata.commentId,
+      );
+      if (!comment) {
+        return null;
+      }
+
+      if (metadata.isEditing) {
+        return (
+          <DiffContextCommentDraftCard
+            filePath={comment.filePath}
+            lineStart={comment.lineStart}
+            lineEnd={comment.lineEnd}
+            body={editingCommentBody}
+            error={editingCommentError}
+            onBodyChange={setEditingCommentBody}
+            onCancel={cancelEditingComment}
+            onDelete={deleteEditingComment}
+            onSubmit={saveEditingComment}
+            submitLabel="Save"
+          />
+        );
+      }
+
+      return (
+        <DiffContextCommentPreview
+          body={comment.body}
+          onEdit={() => beginEditingComment(comment)}
+        />
+      );
+    },
+    [
+      beginEditingComment,
+      cancelEditingComment,
+      clearManualCommentSelection,
+      deleteEditingComment,
+      editingCommentBody,
+      editingCommentError,
+      manualCommentBody,
+      manualCommentError,
+      saveEditingComment,
+      setEditingCommentBody,
+      setManualCommentBody,
+      submitManualComment,
+      visiblePendingDiffContextComments,
+    ],
   );
 
   const selectTurn = (turnId: TurnId) => {
@@ -622,9 +717,30 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                     >
                       <FileDiff
                         fileDiff={fileDiff}
+                        lineAnnotations={lineAnnotationsByFileKey[fileKey] ?? []}
+                        selectedLines={
+                          selectedLinesForFileKey?.fileKey === fileKey
+                            ? selectedLinesForFileKey.range
+                            : null
+                        }
+                        renderAnnotation={renderDraftAnnotation}
                         options={{
                           diffStyle: diffRenderMode === "split" ? "split" : "unified",
                           lineDiffType: "none",
+                          enableGutterUtility: true,
+                          enableLineSelection: true,
+                          onGutterUtilityClick: (range) =>
+                            handleManualCommentSelectionChange({
+                              file: fileDiff,
+                              fileKey,
+                              range,
+                            }),
+                          onLineSelected: (range) =>
+                            handleManualCommentSelectionChange({
+                              file: fileDiff,
+                              fileKey,
+                              range,
+                            }),
                           overflow: diffWordWrap ? "wrap" : "scroll",
                           theme: resolveDiffThemeName(resolvedTheme),
                           themeType: resolvedTheme as DiffThemeType,

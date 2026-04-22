@@ -9,6 +9,7 @@ import {
   EnvironmentId,
   ProjectId,
   ThreadId,
+  TurnId,
   type ModelSelection,
   type ProviderModelOptions,
 } from "@t3tools/contracts";
@@ -31,6 +32,10 @@ import {
   insertInlineTerminalContextPlaceholder,
   type TerminalContextDraft,
 } from "./lib/terminalContext";
+import {
+  INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER,
+  type DiffContextCommentDraft,
+} from "./lib/diffContextComments";
 import { createDebouncedStorage } from "./lib/storage";
 
 function makeImage(input: {
@@ -77,6 +82,30 @@ function makeTerminalContext(input: {
     lineEnd: input.lineEnd ?? 5,
     text: input.text ?? "git status\nOn branch main",
     createdAt: "2026-03-13T12:00:00.000Z",
+  };
+}
+
+function makeDiffComment(input: {
+  id: string;
+  threadId?: ThreadId;
+  filePath?: string;
+  lineStart?: number;
+  lineEnd?: number;
+  side?: "additions" | "deletions";
+  body?: string;
+  turnId?: string | null;
+  createdAt?: string;
+}): DiffContextCommentDraft {
+  return {
+    id: input.id,
+    threadId: input.threadId ?? ThreadId.make("thread-comments"),
+    turnId: input.turnId ? TurnId.make(input.turnId) : null,
+    filePath: input.filePath ?? "src/example.ts",
+    lineStart: input.lineStart ?? 12,
+    lineEnd: input.lineEnd ?? 12,
+    side: input.side ?? "additions",
+    body: input.body ?? "Tighten this guard.",
+    createdAt: input.createdAt ?? "2026-03-12T00:00:00.000Z",
   };
 }
 
@@ -244,6 +273,97 @@ describe("composerDraftStore clearComposerContent", () => {
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
     expect(draft).toBeUndefined();
     expect(revokeSpy).not.toHaveBeenCalledWith("blob:optimistic");
+  });
+
+  it("clears pending diff context comments with the rest of the composer draft", () => {
+    useComposerDraftStore
+      .getState()
+      .addDiffContextComment(threadRef, makeDiffComment({ id: "comment-clear", threadId }));
+
+    useComposerDraftStore.getState().clearComposerContent(threadRef);
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("restores sendable composer content after a failed send", () => {
+    const image = makeImage({
+      id: "img-restore",
+      previewUrl: "blob:restore",
+    });
+    const terminalContext = makeTerminalContext({ id: "terminal-restore" });
+    const comment = makeDiffComment({
+      id: "comment-restore",
+      threadId,
+      body: "Restore this diff note.",
+    });
+
+    useComposerDraftStore.getState().restoreComposerSendContent(threadRef, {
+      prompt: "Try again",
+      images: [image],
+      persistedAttachments: [],
+      terminalContexts: [terminalContext],
+      diffContextComments: [comment],
+    });
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.prompt).toBe("Try again");
+    expect(draft?.images.map((entry) => entry.id)).toEqual(["img-restore"]);
+    expect(draft?.terminalContexts.map((entry) => entry.id)).toEqual(["terminal-restore"]);
+    expect(draft?.diffContextComments.map((entry) => entry.id)).toEqual(["comment-restore"]);
+  });
+});
+
+describe("composerDraftStore diff context comments", () => {
+  const threadId = ThreadId.make("thread-comments");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("adds, updates, removes, and clears pending diff comments", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.addDiffContextComment(threadRef, makeDiffComment({ id: "comment-1", threadId }));
+    store.addDiffContextComment(
+      threadRef,
+      makeDiffComment({
+        id: "comment-2",
+        threadId,
+        body: "Keep the fallback.",
+        side: "deletions",
+      }),
+    );
+
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.diffContextComments.map((comment) => comment.id),
+    ).toEqual(["comment-1", "comment-2"]);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(
+      INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER.repeat(2),
+    );
+
+    store.updateDiffContextComment(threadRef, "comment-1", {
+      body: "Use the shared helper instead.",
+    });
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.diffContextComments[0]?.body).toBe(
+      "Use the shared helper instead.",
+    );
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.diffContextComments[0]?.filePath).toBe(
+      "src/example.ts",
+    );
+
+    store.removeDiffContextComment(threadRef, "comment-2");
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.diffContextComments.map((comment) => comment.id),
+    ).toEqual(["comment-1"]);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.prompt).toBe(
+      INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER,
+    );
+
+    store.clearDiffContextComments(threadRef);
+    store.clearDiffContextComments(threadRef);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });
 });
 
@@ -445,6 +565,56 @@ describe("composerDraftStore terminal contexts", () => {
         lineStart: 4,
         lineEnd: 5,
         text: "",
+      },
+    ]);
+  });
+
+  it("hydrates persisted diff comments with missing inline placeholders", () => {
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: "Please handle this",
+            attachments: [],
+            diffContextComments: [
+              {
+                id: "comment-rehydrated",
+                threadId,
+                turnId: null,
+                filePath: "src/example.ts",
+                lineStart: 12,
+                lineEnd: 12,
+                side: "additions",
+                body: "Use the shared helper.",
+                createdAt: "2026-03-13T12:00:00.000Z",
+              },
+            ],
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectKey: {},
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    const draft = mergedState.draftsByThreadKey[threadKeyFor(threadId)];
+    expect(draft?.prompt).toBe(`${INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER}Please handle this`);
+    expect(draft?.diffContextComments).toMatchObject([
+      {
+        id: "comment-rehydrated",
+        filePath: "src/example.ts",
+        lineStart: 12,
+        lineEnd: 12,
+        side: "additions",
+        body: "Use the shared helper.",
       },
     ]);
   });

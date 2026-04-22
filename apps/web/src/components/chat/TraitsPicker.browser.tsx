@@ -228,6 +228,7 @@ async function mountClaudePicker(props?: {
       nonPersistedImageIds: [],
       persistedAttachments: [],
       terminalContexts: [],
+      diffContextComments: [],
       modelSelectionByProvider: props?.skipDraftModelOptions
         ? {}
         : {
@@ -430,6 +431,7 @@ async function mountCodexPicker(props: { model?: string; options?: CodexModelOpt
       nonPersistedImageIds: [],
       persistedAttachments: [],
       terminalContexts: [],
+      diffContextComments: [],
       modelSelectionByProvider: {
         codex: {
           provider: "codex",
@@ -492,6 +494,7 @@ async function mountCursorPicker(props: { model?: string; options?: CursorModelO
         nonPersistedImageIds: [],
         persistedAttachments: [],
         terminalContexts: [],
+        diffContextComments: [],
         modelSelectionByProvider: {
           cursor: {
             provider: "cursor",
@@ -646,6 +649,7 @@ async function mountOpenCodePicker(props: {
       nonPersistedImageIds: [],
       persistedAttachments: [],
       terminalContexts: [],
+      diffContextComments: [],
       modelSelectionByProvider: {
         opencode: {
           provider: "opencode",

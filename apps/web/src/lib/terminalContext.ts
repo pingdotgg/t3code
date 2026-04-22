@@ -1,4 +1,10 @@
 import { type ThreadId } from "@t3tools/contracts";
+import {
+  appendPromptContextBlock,
+  buildPromptContextBlock,
+  extractTrailingPromptContextBlock,
+  type PromptContextBlockEntry,
+} from "./promptContextBlock";
 
 export interface TerminalContextSelection {
   terminalId: string;
@@ -29,15 +35,11 @@ export interface DisplayedUserMessageState {
   contexts: ParsedTerminalContextEntry[];
 }
 
-export interface ParsedTerminalContextEntry {
-  header: string;
-  body: string;
-}
+export type ParsedTerminalContextEntry = PromptContextBlockEntry;
 
 export const INLINE_TERMINAL_CONTEXT_PLACEHOLDER = "\uFFFC";
 
-const TRAILING_TERMINAL_CONTEXT_BLOCK_PATTERN =
-  /\n*<terminal_context>\n([\s\S]*?)\n<\/terminal_context>\s*$/;
+const TERMINAL_CONTEXT_BLOCK_TAG = "terminal_context";
 
 export function normalizeTerminalContextText(text: string): string {
   return text.replace(/\r\n/g, "\n").replace(/^\n+|\n+$/g, "");
@@ -155,19 +157,14 @@ export function buildTerminalContextBlock(
   const normalizedContexts = contexts
     .map((context) => normalizeTerminalContextSelection(context))
     .filter((context): context is TerminalContextSelection => context !== null);
-  if (normalizedContexts.length === 0) {
-    return "";
-  }
-  const lines: string[] = [];
-  for (let index = 0; index < normalizedContexts.length; index += 1) {
-    const context = normalizedContexts[index]!;
-    lines.push(`- ${formatTerminalContextLabel(context)}:`);
-    lines.push(...buildTerminalContextBodyLines(context));
-    if (index < normalizedContexts.length - 1) {
-      lines.push("");
-    }
-  }
-  return ["<terminal_context>", ...lines, "</terminal_context>"].join("\n");
+
+  return buildPromptContextBlock(
+    TERMINAL_CONTEXT_BLOCK_TAG,
+    normalizedContexts.map((context) => ({
+      header: formatTerminalContextLabel(context),
+      bodyLines: buildTerminalContextBodyLines(context),
+    })),
+  );
 }
 
 export function materializeInlineTerminalContextPrompt(
@@ -201,36 +198,18 @@ export function appendTerminalContextsToPrompt(
   prompt: string,
   contexts: ReadonlyArray<TerminalContextSelection>,
 ): string {
-  const trimmedPrompt = materializeInlineTerminalContextPrompt(prompt, contexts).trim();
+  const materializedPrompt = materializeInlineTerminalContextPrompt(prompt, contexts);
   const contextBlock = buildTerminalContextBlock(contexts);
-  if (contextBlock.length === 0) {
-    return trimmedPrompt;
-  }
-  return trimmedPrompt.length > 0 ? `${trimmedPrompt}\n\n${contextBlock}` : contextBlock;
+  return appendPromptContextBlock(materializedPrompt, contextBlock);
 }
 
 export function extractTrailingTerminalContexts(prompt: string): ExtractedTerminalContexts {
-  const match = TRAILING_TERMINAL_CONTEXT_BLOCK_PATTERN.exec(prompt);
-  if (!match) {
-    return {
-      promptText: prompt,
-      contextCount: 0,
-      previewTitle: null,
-      contexts: [],
-    };
-  }
-  const promptText = prompt.slice(0, match.index).replace(/\n+$/, "");
-  const parsedContexts = parseTerminalContextEntries(match[1] ?? "");
+  const extracted = extractTrailingPromptContextBlock(prompt, TERMINAL_CONTEXT_BLOCK_TAG);
   return {
-    promptText,
-    contextCount: parsedContexts.length,
-    previewTitle:
-      parsedContexts.length > 0
-        ? parsedContexts
-            .map(({ header, body }) => (body.length > 0 ? `${header}\n${body}` : header))
-            .join("\n\n")
-        : null,
-    contexts: parsedContexts,
+    promptText: extracted.promptText,
+    contextCount: extracted.entries.length,
+    previewTitle: extracted.previewTitle,
+    contexts: extracted.entries,
   };
 }
 
@@ -243,47 +222,6 @@ export function deriveDisplayedUserMessageState(prompt: string): DisplayedUserMe
     previewTitle: extractedContexts.previewTitle,
     contexts: extractedContexts.contexts,
   };
-}
-
-function parseTerminalContextEntries(block: string): ParsedTerminalContextEntry[] {
-  const entries: ParsedTerminalContextEntry[] = [];
-  let current: { header: string; bodyLines: string[] } | null = null;
-
-  const commitCurrent = () => {
-    if (!current) {
-      return;
-    }
-    entries.push({
-      header: current.header,
-      body: current.bodyLines.join("\n").trimEnd(),
-    });
-    current = null;
-  };
-
-  for (const rawLine of block.split("\n")) {
-    const headerMatch = /^- (.+):$/.exec(rawLine);
-    if (headerMatch) {
-      commitCurrent();
-      current = {
-        header: headerMatch[1]!,
-        bodyLines: [],
-      };
-      continue;
-    }
-    if (!current) {
-      continue;
-    }
-    if (rawLine.startsWith("  ")) {
-      current.bodyLines.push(rawLine.slice(2));
-      continue;
-    }
-    if (rawLine.length === 0) {
-      current.bodyLines.push("");
-    }
-  }
-
-  commitCurrent();
-  return entries;
 }
 
 export function countInlineTerminalContextPlaceholders(prompt: string): number {

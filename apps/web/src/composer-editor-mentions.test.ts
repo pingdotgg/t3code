@@ -5,6 +5,7 @@ import {
   splitPromptIntoComposerSegments,
 } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+import { INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER } from "./lib/diffContextComments";
 
 describe("splitPromptIntoComposerSegments", () => {
   it("splits mention tokens followed by whitespace into mention segments", () => {
@@ -80,6 +81,19 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "text", text: " after " },
       { type: "mention", path: "AGENTS.md" },
       { type: "text", text: " " },
+    ]);
+  });
+
+  it("keeps inline diff comment placeholders at their prompt positions", () => {
+    expect(
+      splitPromptIntoComposerSegments(
+        `Inspect ${INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER}@AGENTS.md please`,
+      ),
+    ).toEqual([
+      { type: "text", text: "Inspect " },
+      { type: "diff-context-comment", comment: null },
+      { type: "mention", path: "AGENTS.md" },
+      { type: "text", text: " please" },
     ]);
   });
 });

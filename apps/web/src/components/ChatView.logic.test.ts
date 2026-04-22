@@ -3,6 +3,7 @@ import { EnvironmentId, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type EnvironmentState, useStore } from "../store";
 import { type Thread } from "../types";
+import { INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER } from "../lib/diffContextComments";
 
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
@@ -64,6 +65,17 @@ describe("deriveComposerSendState", () => {
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
+  });
+
+  it("strips diff comment placeholders from visible prompt text", () => {
+    const state = deriveComposerSendState({
+      prompt: INLINE_DIFF_CONTEXT_COMMENT_PLACEHOLDER,
+      imageCount: 0,
+      terminalContexts: [],
+    });
+
+    expect(state.trimmedPrompt).toBe("");
+    expect(state.hasSendableContent).toBe(false);
   });
 });
 
