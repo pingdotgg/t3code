@@ -2479,6 +2479,53 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
     12_000,
   );
 
+  it.effect("rejects same-repo PR metadata when matching a cross-repo head context", () =>
+    Effect.sync(() => {
+      const headContext = {
+        headBranch: "statemachine",
+        headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+        headRepositoryOwnerLogin: "pingdotgg",
+        isCrossRepository: true,
+      };
+
+      expect(
+        GitManager.matchesBranchHeadContext(
+          {
+            number: 41,
+            title: "Same-repo PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/41",
+            baseRefName: "main",
+            headRefName: "statemachine",
+            state: "open",
+            updatedAt: null,
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+            headRepositoryOwnerLogin: "pingdotgg",
+          },
+          headContext,
+        ),
+      ).toBe(false);
+
+      expect(
+        GitManager.matchesBranchHeadContext(
+          {
+            number: 142,
+            title: "Fork PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/142",
+            baseRefName: "main",
+            headRefName: "statemachine",
+            state: "open",
+            updatedAt: null,
+            isCrossRepository: true,
+            headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+            headRepositoryOwnerLogin: "pingdotgg",
+          },
+          headContext,
+        ),
+      ).toBe(true);
+    }),
+  );
+
   it.effect("creates PR when one does not already exist", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
