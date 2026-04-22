@@ -7,6 +7,9 @@ import pkg from "./package.json" with { type: "json" };
 
 const port = Number(process.env.PORT ?? 5733);
 const host = process.env.HOST?.trim() || "localhost";
+const wildcardBindHosts = new Set(["0.0.0.0", "::"]);
+const viteListenHost = wildcardBindHosts.has(host) ? true : host;
+const hmrUsesExplicitHost = !wildcardBindHosts.has(host);
 const configuredHttpUrl = process.env.VITE_HTTP_URL?.trim();
 const configuredWsUrl = process.env.VITE_WS_URL?.trim();
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
@@ -68,7 +71,7 @@ export default defineConfig({
     tsconfigPaths: true,
   },
   server: {
-    host,
+    host: viteListenHost,
     port,
     strictPort: true,
     ...(devProxyTarget
@@ -94,7 +97,9 @@ export default defineConfig({
       // inside Electron's BrowserWindow. Vite 8 uses console.debug for
       // connection logs — enable "Verbose" in DevTools to see them.
       protocol: "ws",
-      host,
+      // When listening on all interfaces, omit `host` so the client uses the
+      // page hostname (LAN / Tailscale) instead of ws://0.0.0.0 which breaks HMR.
+      ...(hmrUsesExplicitHost ? { host } : {}),
     },
   },
   build: {
