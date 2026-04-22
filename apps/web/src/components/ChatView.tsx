@@ -149,6 +149,7 @@ import {
   buildLocalDraftThread,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
+  deriveDisplayedTurnQueue,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
@@ -159,9 +160,11 @@ import {
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  reconcileOptimisticQueuedTurns,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
+  shouldQueuePromptSubmission,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
@@ -179,6 +182,7 @@ import { RightPanelSheet } from "./RightPanelSheet";
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
+const EMPTY_MESSAGES: Thread["messages"] = [];
 const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
@@ -419,6 +423,12 @@ interface PersistentThreadTerminalDrawerProps {
   keybindings: ResolvedKeybindingsConfig;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
+
+const EMPTY_TURN_QUEUE: Thread["turnQueue"] = {
+  items: [],
+  status: "idle",
+  pauseReason: null,
+};
 
 const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDrawer({
   threadRef,
@@ -665,12 +675,16 @@ export default function ChatView(props: ChatViewProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [optimisticQueuedTurnsByThreadKey, setOptimisticQueuedTurnsByThreadKey] = useState<
+    Record<string, Thread["turnQueue"]["items"]>
+  >({});
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
     Record<string, string | null>
   >({});
   const [isConnecting, _setIsConnecting] = useState(false);
+  const [isQueueSendPending, setIsQueueSendPending] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
@@ -797,6 +811,20 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
+  const activeServerTurnQueue = activeThread?.turnQueue ?? EMPTY_TURN_QUEUE;
+  const activeThreadMessages = activeThread?.messages ?? EMPTY_MESSAGES;
+  const optimisticQueuedTurns =
+    (activeThreadKey ? optimisticQueuedTurnsByThreadKey[activeThreadKey] : undefined) ??
+    EMPTY_TURN_QUEUE.items;
+  const activeTurnQueue = useMemo(
+    () =>
+      deriveDisplayedTurnQueue({
+        serverTurnQueue: activeServerTurnQueue,
+        optimisticQueuedTurns,
+        messages: activeThreadMessages,
+      }),
+    [activeServerTurnQueue, activeThreadMessages, optimisticQueuedTurns],
+  );
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
@@ -815,6 +843,34 @@ export default function ChatView(props: ChatViewProps) {
       return threadIds;
     }, [activeLatestTurn?.sourceProposedPlan?.threadId, activeThread?.id]),
   );
+  useEffect(() => {
+    if (!activeThreadKey) {
+      return;
+    }
+    setOptimisticQueuedTurnsByThreadKey((current) => {
+      const queuedTurns = current[activeThreadKey];
+      if (!queuedTurns || queuedTurns.length === 0) {
+        return current;
+      }
+      const nextQueuedTurns = reconcileOptimisticQueuedTurns({
+        optimisticQueuedTurns: queuedTurns,
+        serverTurnQueue: activeServerTurnQueue,
+        messages: activeThreadMessages,
+      });
+      if (nextQueuedTurns.length === queuedTurns.length) {
+        return current;
+      }
+      if (nextQueuedTurns.length === 0) {
+        const { [activeThreadKey]: _removed, ...rest } = current;
+        return rest;
+      }
+      return {
+        ...current,
+        [activeThreadKey]: nextQueuedTurns,
+      };
+    });
+  }, [activeServerTurnQueue, activeThreadKey, activeThreadMessages]);
+
   useEffect(() => {
     setMountedTerminalThreadKeys((currentThreadIds) => {
       const nextThreadIds = reconcileMountedTerminalThreadIds({
@@ -1053,6 +1109,11 @@ export default function ChatView(props: ChatViewProps) {
   );
   const selectedProvider: ProviderKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
+  const shouldQueuePrompt = shouldQueuePromptSubmission({
+    thread: activeThread,
+    phase,
+    isServerThread,
+  });
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
@@ -1138,7 +1199,7 @@ export default function ChatView(props: ChatViewProps) {
     resetLocalDispatch,
     localDispatchStartedAt,
     isPreparingWorktree,
-    isSendBusy,
+    isSendBusy: isLocalSendBusy,
   } = useLocalDispatchState({
     activeThread,
     activeLatestTurn,
@@ -1147,6 +1208,7 @@ export default function ChatView(props: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError: activeThread?.error,
   });
+  const isSendBusy = isLocalSendBusy || isQueueSendPending;
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -2069,12 +2131,35 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThread?.id, activeThread?.messages, handoffAttachmentPreviews, optimisticUserMessages]);
 
   useEffect(() => {
+    if (!activeThread?.id || activeTurnQueue.items.length === 0) {
+      return;
+    }
+    const queuedMessageIds = new Set(activeTurnQueue.items.map((item) => item.messageId));
+    let removedOptimisticMessage = false;
+    setOptimisticUserMessages((existing) => {
+      const removedMessages = existing.filter((message) => queuedMessageIds.has(message.id));
+      if (removedMessages.length === 0) {
+        return existing;
+      }
+      removedOptimisticMessage = true;
+      for (const message of removedMessages) {
+        revokeUserMessagePreviewUrls(message);
+      }
+      return existing.filter((message) => !queuedMessageIds.has(message.id));
+    });
+    if (removedOptimisticMessage) {
+      resetLocalDispatch();
+    }
+  }, [activeThread?.id, activeTurnQueue.items, resetLocalDispatch]);
+
+  useEffect(() => {
     setOptimisticUserMessages((existing) => {
       for (const message of existing) {
         revokeUserMessagePreviewUrls(message);
       }
       return [];
     });
+    setIsQueueSendPending(false);
     resetLocalDispatch();
     setExpandedImage(null);
   }, [draftId, resetLocalDispatch, threadId]);
@@ -2367,6 +2452,54 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
+  const appendOptimisticQueuedTurn = useCallback(
+    (queuedTurn: Thread["turnQueue"]["items"][number]) => {
+      if (!activeThreadKey) {
+        return;
+      }
+      setOptimisticQueuedTurnsByThreadKey((current) => {
+        const existing = current[activeThreadKey] ?? [];
+        const existingIndex = existing.findIndex((item) => item.messageId === queuedTurn.messageId);
+        const nextQueuedTurns =
+          existingIndex === -1
+            ? [...existing, queuedTurn]
+            : existing.map((item, index) => (index === existingIndex ? queuedTurn : item));
+        return {
+          ...current,
+          [activeThreadKey]: nextQueuedTurns,
+        };
+      });
+    },
+    [activeThreadKey],
+  );
+
+  const removeOptimisticQueuedTurn = useCallback(
+    (messageId: MessageId) => {
+      if (!activeThreadKey) {
+        return;
+      }
+      setOptimisticQueuedTurnsByThreadKey((current) => {
+        const existing = current[activeThreadKey];
+        if (!existing || existing.length === 0) {
+          return current;
+        }
+        const nextQueuedTurns = existing.filter((item) => item.messageId !== messageId);
+        if (nextQueuedTurns.length === existing.length) {
+          return current;
+        }
+        if (nextQueuedTurns.length === 0) {
+          const { [activeThreadKey]: _removed, ...rest } = current;
+          return rest;
+        }
+        return {
+          ...current,
+          [activeThreadKey]: nextQueuedTurns,
+        };
+      });
+    },
+    [activeThreadKey],
+  );
+
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readEnvironmentApi(environmentId);
@@ -2402,12 +2535,10 @@ export default function ChatView(props: ChatViewProps) {
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
-      promptRef.current = "";
-      clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
       await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
+        queueSend: shouldQueuePrompt,
       });
       return;
     }
@@ -2455,8 +2586,11 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
 
+    const queueSend = shouldQueuePrompt;
     sendInFlightRef.current = true;
-    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+    if (!queueSend) {
+      beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+    }
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -2490,25 +2624,28 @@ export default function ChatView(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
-    // Scroll to the current end *before* adding the optimistic message.
-    // This sets LegendList's internal isAtEnd=true so maintainScrollAtEnd
-    // automatically pins to the new item when the data changes.
-    isAtEndRef.current = true;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    await legendListRef.current?.scrollToEnd?.({ animated: false });
 
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        createdAt: messageCreatedAt,
-        streaming: false,
-      },
-    ]);
+    if (!queueSend) {
+      // Scroll to the current end *before* adding the optimistic message.
+      // This sets LegendList's internal isAtEnd=true so maintainScrollAtEnd
+      // automatically pins to the new item when the data changes.
+      isAtEndRef.current = true;
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      await legendListRef.current?.scrollToEnd?.({ animated: false });
+
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+    }
 
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
@@ -2524,9 +2661,13 @@ export default function ChatView(props: ChatViewProps) {
         }),
       );
     }
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
+    if (!queueSend) {
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+    } else {
+      setIsQueueSendPending(true);
+    }
 
     let turnStartSucceeded = false;
     await (async () => {
@@ -2606,7 +2747,9 @@ export default function ChatView(props: ChatViewProps) {
                 : {}),
             }
           : undefined;
-      beginLocalDispatch({ preparingWorktree: false });
+      if (!queueSend) {
+        beginLocalDispatch({ preparingWorktree: false });
+      }
       await api.orchestration.dispatchCommand({
         type: "thread.turn.start",
         commandId: newCommandId(),
@@ -2624,9 +2767,30 @@ export default function ChatView(props: ChatViewProps) {
         ...(bootstrap ? { bootstrap } : {}),
         createdAt: messageCreatedAt,
       });
+      if (queueSend) {
+        appendOptimisticQueuedTurn({
+          messageId: messageIdForSend,
+          text: outgoingMessageText,
+          attachmentIds: composerImagesSnapshot.map((image) => image.id),
+          modelSelection: ctxSelectedModelSelection,
+          runtimeMode,
+          interactionMode,
+          titleSeed: title,
+          sourceProposedPlan: null,
+          queuedAt: messageCreatedAt,
+        });
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+        setIsQueueSendPending(false);
+      }
       turnStartSucceeded = true;
     })().catch(async (err: unknown) => {
+      if (queueSend) {
+        setIsQueueSendPending(false);
+      }
       if (
+        !queueSend &&
         !turnStartSucceeded &&
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
@@ -2659,7 +2823,7 @@ export default function ChatView(props: ChatViewProps) {
       );
     });
     sendInFlightRef.current = false;
-    if (!turnStartSucceeded) {
+    if (!queueSend && !turnStartSucceeded) {
       resetLocalDispatch();
     }
   };
@@ -2674,6 +2838,35 @@ export default function ChatView(props: ChatViewProps) {
       createdAt: new Date().toISOString(),
     });
   };
+
+  const onRemoveQueuedTurn = useCallback(
+    async (messageId: MessageId) => {
+      const api = readEnvironmentApi(environmentId);
+      if (!api || !activeThread) {
+        return;
+      }
+      await api.orchestration.dispatchCommand({
+        type: "thread.turn.queue.remove",
+        commandId: newCommandId(),
+        threadId: activeThread.id,
+        messageId,
+      });
+      removeOptimisticQueuedTurn(messageId);
+    },
+    [activeThread, environmentId, removeOptimisticQueuedTurn],
+  );
+
+  const onResumeTurnQueue = useCallback(async () => {
+    const api = readEnvironmentApi(environmentId);
+    if (!api || !activeThread) {
+      return;
+    }
+    await api.orchestration.dispatchCommand({
+      type: "thread.turn.queue.resume",
+      commandId: newCommandId(),
+      threadId: activeThread.id,
+    });
+  }, [activeThread, environmentId]);
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {
@@ -2841,9 +3034,11 @@ export default function ChatView(props: ChatViewProps) {
     async ({
       text,
       interactionMode: nextInteractionMode,
+      queueSend = false,
     }: {
       text: string;
       interactionMode: "default" | "plan";
+      queueSend?: boolean;
     }) => {
       const api = readEnvironmentApi(environmentId);
       if (
@@ -2886,25 +3081,34 @@ export default function ChatView(props: ChatViewProps) {
       });
 
       sendInFlightRef.current = true;
-      beginLocalDispatch({ preparingWorktree: false });
+      if (!queueSend) {
+        beginLocalDispatch({ preparingWorktree: false });
+      } else {
+        setIsQueueSendPending(true);
+      }
       setThreadError(threadIdForSend, null);
 
-      // Scroll to the current end *before* adding the optimistic message.
-      isAtEndRef.current = true;
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      await legendListRef.current?.scrollToEnd?.({ animated: false });
+      if (!queueSend) {
+        // Scroll to the current end *before* adding the optimistic message.
+        isAtEndRef.current = true;
+        showScrollDebouncer.current.cancel();
+        setShowScrollToBottom(false);
+        await legendListRef.current?.scrollToEnd?.({ animated: false });
 
-      setOptimisticUserMessages((existing) => [
-        ...existing,
-        {
-          id: messageIdForSend,
-          role: "user",
-          text: outgoingMessageText,
-          createdAt: messageCreatedAt,
-          streaming: false,
-        },
-      ]);
+        setOptimisticUserMessages((existing) => [
+          ...existing,
+          {
+            id: messageIdForSend,
+            role: "user",
+            text: outgoingMessageText,
+            createdAt: messageCreatedAt,
+            streaming: false,
+          },
+        ]);
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+      }
 
       try {
         await persistThreadSettingsForNextTurn({
@@ -2946,6 +3150,29 @@ export default function ChatView(props: ChatViewProps) {
             : {}),
           createdAt: messageCreatedAt,
         });
+        if (queueSend) {
+          appendOptimisticQueuedTurn({
+            messageId: messageIdForSend,
+            text: outgoingMessageText,
+            attachmentIds: [],
+            modelSelection: ctxSelectedModelSelection,
+            runtimeMode,
+            interactionMode: nextInteractionMode,
+            titleSeed: activeThread.title,
+            sourceProposedPlan:
+              nextInteractionMode === "default" && activeProposedPlan
+                ? {
+                    threadId: activeThread.id,
+                    planId: activeProposedPlan.id,
+                  }
+                : null,
+            queuedAt: messageCreatedAt,
+          });
+          promptRef.current = "";
+          clearComposerDraftContent(composerDraftTarget);
+          composerRef.current?.resetCursorState();
+          setIsQueueSendPending(false);
+        }
         // Optimistically open the plan sidebar when implementing (not refining).
         // "default" mode here means the agent is executing the plan, which produces
         // step-tracking activities that the sidebar will display.
@@ -2955,30 +3182,41 @@ export default function ChatView(props: ChatViewProps) {
         }
         sendInFlightRef.current = false;
       } catch (err) {
-        setOptimisticUserMessages((existing) =>
-          existing.filter((message) => message.id !== messageIdForSend),
-        );
+        if (queueSend) {
+          setIsQueueSendPending(false);
+        } else {
+          setOptimisticUserMessages((existing) =>
+            existing.filter((message) => message.id !== messageIdForSend),
+          );
+        }
         setThreadError(
           threadIdForSend,
           err instanceof Error ? err.message : "Failed to send plan follow-up.",
         );
         sendInFlightRef.current = false;
-        resetLocalDispatch();
+        if (!queueSend) {
+          resetLocalDispatch();
+        }
       }
     },
     [
       activeThread,
       activeProposedPlan,
       beginLocalDispatch,
+      clearComposerDraftContent,
+      composerDraftTarget,
       isConnecting,
       isSendBusy,
       isServerThread,
+      promptRef,
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
       runtimeMode,
       setComposerDraftInteractionMode,
+      setIsQueueSendPending,
       setThreadError,
       environmentId,
+      appendOptimisticQueuedTurn,
     ],
   );
 
@@ -3329,6 +3567,7 @@ export default function ChatView(props: ChatViewProps) {
               activeThreadId={activeThreadId}
               activeThreadEnvironmentId={activeThread?.environmentId}
               activeThread={activeThread}
+              turnQueue={activeTurnQueue}
               isServerThread={isServerThread}
               isLocalDraftThread={isLocalDraftThread}
               phase={phase}
@@ -3369,6 +3608,8 @@ export default function ChatView(props: ChatViewProps) {
               scheduleStickToBottom={scrollToEnd}
               onSend={onSend}
               onInterrupt={onInterrupt}
+              onRemoveQueuedTurn={onRemoveQueuedTurn}
+              onResumeTurnQueue={onResumeTurnQueue}
               onImplementPlanInNewThread={onImplementPlanInNewThread}
               onRespondToApproval={onRespondToApproval}
               onSelectActivePendingUserInputOption={onSelectActivePendingUserInputOption}

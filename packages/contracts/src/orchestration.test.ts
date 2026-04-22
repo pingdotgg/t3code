@@ -13,8 +13,15 @@ import {
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
   OrchestrationSession,
+  OrchestrationThread,
+  OrchestrationThreadShell,
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
+  ThreadTurnEnqueuedPayload,
+  ThreadTurnQueueItemRemovedPayload,
+  ThreadTurnQueuePausedPayload,
+  ThreadTurnQueueResumedPayload,
+  ThreadTurnSettledPayload,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -33,10 +40,21 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
+const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
+const decodeOrchestrationThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const decodeThreadTurnEnqueuedPayload = Schema.decodeUnknownEffect(ThreadTurnEnqueuedPayload);
+const decodeThreadTurnQueueItemRemovedPayload = Schema.decodeUnknownEffect(
+  ThreadTurnQueueItemRemovedPayload,
+);
+const decodeThreadTurnQueuePausedPayload = Schema.decodeUnknownEffect(ThreadTurnQueuePausedPayload);
+const decodeThreadTurnQueueResumedPayload = Schema.decodeUnknownEffect(
+  ThreadTurnQueueResumedPayload,
+);
+const decodeThreadTurnSettledPayload = Schema.decodeUnknownEffect(ThreadTurnSettledPayload);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -464,6 +482,153 @@ it.effect("decodes thread.turn-start-requested title seed when present", () =>
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.titleSeed, "Investigate reconnect failures");
+  }),
+);
+
+it.effect("decodes thread detail queue defaults for historical snapshots", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationThread({
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      session: null,
+    });
+
+    assert.deepStrictEqual(parsed.turnQueue, {
+      items: [],
+      status: "idle",
+      pauseReason: null,
+    });
+  }),
+);
+
+it.effect("decodes thread shell queue defaults for historical snapshots", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationThreadShell({
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      session: null,
+      latestUserMessageAt: null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      hasActionableProposedPlan: false,
+    });
+
+    assert.strictEqual(parsed.queuedTurnCount, 0);
+    assert.strictEqual(parsed.turnQueueStatus, "idle");
+  }),
+);
+
+it.effect("decodes queue payload schemas", () =>
+  Effect.gen(function* () {
+    const enqueued = yield* decodeThreadTurnEnqueuedPayload({
+      threadId: "thread-1",
+      queuedTurn: {
+        messageId: "message-1",
+        text: "Investigate reconnect failures",
+        attachmentIds: ["thread-1-11111111-1111-4111-8111-111111111111"],
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "plan",
+        titleSeed: "Investigate reconnect failures",
+        sourceProposedPlan: {
+          threadId: "thread-plan",
+          planId: "plan-1",
+        },
+        queuedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    const removed = yield* decodeThreadTurnQueueItemRemovedPayload({
+      threadId: "thread-1",
+      messageId: "message-1",
+      reason: "removed",
+    });
+    const paused = yield* decodeThreadTurnQueuePausedPayload({
+      threadId: "thread-1",
+      reason: "error",
+    });
+    const resumed = yield* decodeThreadTurnQueueResumedPayload({
+      threadId: "thread-1",
+    });
+    const settled = yield* decodeThreadTurnSettledPayload({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      outcome: "completed",
+      settledAt: "2026-01-01T00:00:05.000Z",
+    });
+
+    assert.strictEqual(enqueued.queuedTurn.interactionMode, "plan");
+    assert.strictEqual(removed.reason, "removed");
+    assert.strictEqual(paused.reason, "error");
+    assert.strictEqual(resumed.threadId, "thread-1");
+    assert.strictEqual(settled.outcome, "completed");
+  }),
+);
+
+it.effect("decodes queue commands and events", () =>
+  Effect.gen(function* () {
+    const removeCommand = yield* decodeOrchestrationCommand({
+      type: "thread.turn.queue.remove",
+      commandId: "cmd-queue-remove",
+      threadId: "thread-1",
+      messageId: "message-1",
+    });
+    const resumeCommand = yield* decodeOrchestrationCommand({
+      type: "thread.turn.queue.resume",
+      commandId: "cmd-queue-resume",
+      threadId: "thread-1",
+    });
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-queue-paused",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.turn-queue-paused",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-queue-pause",
+      causationEventId: null,
+      correlationId: "cmd-queue-pause",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        reason: "interrupted",
+      },
+    });
+
+    assert.strictEqual(removeCommand.type, "thread.turn.queue.remove");
+    assert.strictEqual(resumeCommand.type, "thread.turn.queue.resume");
+    assert.strictEqual(event.type, "thread.turn-queue-paused");
   }),
 );
 

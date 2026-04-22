@@ -49,6 +49,11 @@ export function buildLocalDraftThread(
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
+    turnQueue: {
+      items: [],
+      status: "idle",
+      pauseReason: null,
+    },
   };
 }
 
@@ -199,6 +204,56 @@ export function deriveComposerSendState(options: {
     expiredTerminalContextCount,
     hasSendableContent:
       trimmedPrompt.length > 0 || options.imageCount > 0 || sendableTerminalContexts.length > 0,
+  };
+}
+
+export function shouldQueuePromptSubmission(input: {
+  thread: Thread | undefined;
+  phase: SessionPhase;
+  isServerThread: boolean;
+}): boolean {
+  if (!input.isServerThread || !input.thread) {
+    return false;
+  }
+  return (
+    input.phase === "running" ||
+    input.phase === "connecting" ||
+    input.thread.turnQueue.status !== "idle" ||
+    input.thread.turnQueue.items.length > 0
+  );
+}
+
+export function reconcileOptimisticQueuedTurns(input: {
+  optimisticQueuedTurns: Thread["turnQueue"]["items"];
+  serverTurnQueue: Thread["turnQueue"];
+  messages: Thread["messages"];
+}): Thread["turnQueue"]["items"] {
+  if (input.optimisticQueuedTurns.length === 0) {
+    return input.optimisticQueuedTurns;
+  }
+
+  const serverQueuedIds = new Set(input.serverTurnQueue.items.map((item) => item.messageId));
+  const messageIds = new Set(input.messages.map((message) => message.id));
+
+  return input.optimisticQueuedTurns.filter(
+    (item) => !serverQueuedIds.has(item.messageId) && !messageIds.has(item.messageId),
+  );
+}
+
+export function deriveDisplayedTurnQueue(input: {
+  serverTurnQueue: Thread["turnQueue"];
+  optimisticQueuedTurns: Thread["turnQueue"]["items"];
+  messages: Thread["messages"];
+}): Thread["turnQueue"] {
+  const optimisticQueuedTurns = reconcileOptimisticQueuedTurns(input);
+  if (optimisticQueuedTurns.length === 0) {
+    return input.serverTurnQueue;
+  }
+
+  return {
+    items: [...input.serverTurnQueue.items, ...optimisticQueuedTurns],
+    status: input.serverTurnQueue.status === "idle" ? "queued" : input.serverTurnQueue.status,
+    pauseReason: input.serverTurnQueue.status === "idle" ? null : input.serverTurnQueue.pauseReason,
   };
 }
 

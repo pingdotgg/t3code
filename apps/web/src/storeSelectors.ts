@@ -13,29 +13,15 @@ export function createProjectSelectorByRef(
 function createScopedThreadSelector(
   resolveRef: (state: AppState) => ScopedThreadRef | null | undefined,
 ): (state: AppState) => Thread | undefined {
-  let previousEnvironmentState: EnvironmentState | undefined;
-  let previousThreadId: ThreadId | undefined;
-  let previousThread: Thread | undefined;
-
   return (state) => {
     const ref = resolveRef(state);
     if (!ref) {
       return undefined;
     }
-
-    const environmentState = selectEnvironmentState(state, ref.environmentId);
-    if (
-      previousThread &&
-      previousEnvironmentState === environmentState &&
-      previousThreadId === ref.threadId
-    ) {
-      return previousThread;
-    }
-
-    previousEnvironmentState = environmentState;
-    previousThreadId = ref.threadId;
-    previousThread = getThreadFromEnvironmentState(environmentState, ref.threadId);
-    return previousThread;
+    return getThreadFromEnvironmentState(
+      selectEnvironmentState(state, ref.environmentId),
+      ref.threadId,
+    );
   };
 }
 

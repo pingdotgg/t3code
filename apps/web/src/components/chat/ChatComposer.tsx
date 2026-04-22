@@ -65,6 +65,7 @@ import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommand
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ComposerQueuedTurnsPanel } from "./ComposerQueuedTurnsPanel";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -278,6 +279,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     isComplete: boolean;
   } | null;
   isRunning: boolean;
+  turnQueueStatus: Thread["turnQueue"]["status"];
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -297,6 +299,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         compact={props.compact}
         pendingAction={props.pendingAction}
         isRunning={props.isRunning}
+        turnQueueStatus={props.turnQueueStatus}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
         promptHasText={props.promptHasText}
         isSendBusy={props.isSendBusy}
@@ -364,6 +367,7 @@ export interface ChatComposerProps {
   activeThreadId: ThreadId | null;
   activeThreadEnvironmentId: EnvironmentId | undefined;
   activeThread: Thread | undefined;
+  turnQueue: Thread["turnQueue"];
   isServerThread: boolean;
   isLocalDraftThread: boolean;
 
@@ -430,6 +434,8 @@ export interface ChatComposerProps {
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
   onInterrupt: () => void;
+  onRemoveQueuedTurn: (messageId: Thread["turnQueue"]["items"][number]["messageId"]) => void;
+  onResumeTurnQueue: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
     requestId: ApprovalRequestId,
@@ -473,6 +479,7 @@ export const ChatComposer = memo(
       activeThreadId,
       activeThreadEnvironmentId: _activeThreadEnvironmentId,
       activeThread,
+      turnQueue,
       isServerThread: _isServerThread,
       isLocalDraftThread: _isLocalDraftThread,
       phase,
@@ -513,6 +520,8 @@ export const ChatComposer = memo(
       scheduleStickToBottom,
       onSend,
       onInterrupt,
+      onRemoveQueuedTurn,
+      onResumeTurnQueue,
       onImplementPlanInNewThread,
       onRespondToApproval,
       onSelectActivePendingUserInputOption,
@@ -903,6 +912,8 @@ export const ChatComposer = memo(
           : null,
       [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
     );
+    const showQueuedTurnsPanel =
+      !isComposerApprovalState && pendingUserInputs.length === 0 && turnQueue.items.length > 0;
 
     // ------------------------------------------------------------------
     // Prompt helpers
@@ -1683,307 +1694,321 @@ export const ChatComposer = memo(
     // Render
     // ------------------------------------------------------------------
     return (
-      <form
-        ref={composerFormRef}
-        onSubmit={onSend}
-        className="mx-auto w-full min-w-0 max-w-208"
-        data-chat-composer-form="true"
-      >
-        <div
-          className={cn(
-            "group rounded-[22px] p-px transition-colors duration-200",
-            composerProviderState.composerFrameClassName,
-          )}
-          onDragEnter={onComposerDragEnter}
-          onDragOver={onComposerDragOver}
-          onDragLeave={onComposerDragLeave}
-          onDrop={onComposerDrop}
+      <div className="mx-auto flex w-full min-w-0 max-w-208 flex-col gap-2">
+        {showQueuedTurnsPanel ? (
+          <ComposerQueuedTurnsPanel
+            turnQueue={turnQueue}
+            onRemoveQueuedTurn={onRemoveQueuedTurn}
+            onResumeTurnQueue={onResumeTurnQueue}
+          />
+        ) : null}
+
+        <form
+          ref={composerFormRef}
+          onSubmit={onSend}
+          className="w-full min-w-0"
+          data-chat-composer-form="true"
         >
           <div
             className={cn(
-              "rounded-[20px] border transition-colors duration-200 backdrop-blur-md",
-              "border-gray-200/50 bg-white/95 shadow-[0_3px_8px_rgba(0,0,0,0.1),0_2px_4px_rgba(0,0,0,0.06)]",
-              "dark:border-transparent dark:bg-zinc-900/80 dark:shadow-[inset_0_1px_2px_rgba(255,255,255,0.2),inset_0_-4px_30px_rgba(47,44,48,0.9),0_4px_16px_rgba(0,0,0,0.4)]",
-              "focus-within:border-ring/45 focus-within:shadow-[0_3px_12px_rgba(0,0,0,0.12),0_2px_6px_rgba(0,0,0,0.08)]",
-              "dark:focus-within:border-ring/45 dark:focus-within:shadow-[inset_0_1px_2px_rgba(255,255,255,0.22),inset_0_-4px_30px_rgba(47,44,48,0.9),0_4px_20px_rgba(0,0,0,0.5)]",
-              isDragOverComposer && "border-primary/70 !bg-accent/30",
-              composerProviderState.composerSurfaceClassName,
+              "group rounded-[22px] p-px transition-colors duration-200",
+              composerProviderState.composerFrameClassName,
             )}
+            onDragEnter={onComposerDragEnter}
+            onDragOver={onComposerDragOver}
+            onDragLeave={onComposerDragLeave}
+            onDrop={onComposerDrop}
           >
-            {activePendingApproval ? (
-              <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
-                <ComposerPendingApprovalPanel
-                  approval={activePendingApproval}
-                  pendingCount={pendingApprovals.length}
-                />
-              </div>
-            ) : pendingUserInputs.length > 0 ? (
-              <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
-                <ComposerPendingUserInputPanel
-                  pendingUserInputs={pendingUserInputs}
-                  respondingRequestIds={respondingRequestIds}
-                  answers={activePendingDraftAnswers}
-                  questionIndex={activePendingQuestionIndex}
-                  onToggleOption={onSelectActivePendingUserInputOption}
-                  onAdvance={onAdvanceActivePendingUserInput}
-                />
-              </div>
-            ) : showPlanFollowUpPrompt && activeProposedPlan ? (
-              <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
-                <ComposerPlanFollowUpBanner
-                  key={activeProposedPlan.id}
-                  planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
-                />
-              </div>
-            ) : null}
-
             <div
               className={cn(
-                "relative px-3 pb-2 sm:px-4",
-                hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
+                "rounded-[20px] border transition-colors duration-200 backdrop-blur-md",
+                "border-gray-200/50 bg-white/95 shadow-[0_3px_8px_rgba(0,0,0,0.1),0_2px_4px_rgba(0,0,0,0.06)]",
+                "dark:border-transparent dark:bg-zinc-900/80 dark:shadow-[inset_0_1px_2px_rgba(255,255,255,0.2),inset_0_-4px_30px_rgba(47,44,48,0.9),0_4px_16px_rgba(0,0,0,0.4)]",
+                "focus-within:border-ring/45 focus-within:shadow-[0_3px_12px_rgba(0,0,0,0.12),0_2px_6px_rgba(0,0,0,0.08)]",
+                "dark:focus-within:border-ring/45 dark:focus-within:shadow-[inset_0_1px_2px_rgba(255,255,255,0.22),inset_0_-4px_30px_rgba(47,44,48,0.9),0_4px_20px_rgba(0,0,0,0.5)]",
+                isDragOverComposer && "border-primary/70 !bg-accent/30",
+                composerProviderState.composerSurfaceClassName,
               )}
             >
-              {composerMenuOpen && !isComposerApprovalState && (
-                <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
-                  <ComposerCommandMenu
-                    items={composerMenuItems}
-                    resolvedTheme={resolvedTheme}
-                    isLoading={isComposerMenuLoading}
-                    triggerKind={composerTriggerKind}
-                    groupSlashCommandSections={
-                      composerTrigger?.kind === "slash-command" &&
-                      composerTrigger.query.trim().length === 0
-                    }
-                    emptyStateText={composerMenuEmptyState}
-                    activeItemId={activeComposerMenuItem?.id ?? null}
-                    onHighlightedItemChange={onComposerMenuItemHighlighted}
-                    onSelect={onSelectComposerItem}
+              {activePendingApproval ? (
+                <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                  <ComposerPendingApprovalPanel
+                    approval={activePendingApproval}
+                    pendingCount={pendingApprovals.length}
                   />
                 </div>
-              )}
+              ) : pendingUserInputs.length > 0 ? (
+                <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                  <ComposerPendingUserInputPanel
+                    pendingUserInputs={pendingUserInputs}
+                    respondingRequestIds={respondingRequestIds}
+                    answers={activePendingDraftAnswers}
+                    questionIndex={activePendingQuestionIndex}
+                    onToggleOption={onSelectActivePendingUserInputOption}
+                    onAdvance={onAdvanceActivePendingUserInput}
+                  />
+                </div>
+              ) : showPlanFollowUpPrompt && activeProposedPlan ? (
+                <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                  <ComposerPlanFollowUpBanner
+                    key={activeProposedPlan.id}
+                    planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
+                  />
+                </div>
+              ) : null}
 
-              {!isComposerApprovalState &&
-                pendingUserInputs.length === 0 &&
-                composerImages.length > 0 && (
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    {composerImages.map((image) => (
-                      <div
-                        key={image.id}
-                        className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
-                      >
-                        {image.previewUrl ? (
-                          <button
-                            type="button"
-                            className="h-full w-full cursor-zoom-in"
-                            aria-label={`Preview ${image.name}`}
-                            onClick={() => {
-                              const preview = buildExpandedImagePreview(composerImages, image.id);
-                              if (!preview) return;
-                              onExpandImage(preview);
-                            }}
-                          >
-                            <img
-                              src={image.previewUrl}
-                              alt={image.name}
-                              className="h-full w-full object-cover"
-                            />
-                          </button>
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
-                            {image.name}
-                          </div>
-                        )}
-                        {nonPersistedComposerImageIdSet.has(image.id) && (
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <span
-                                  role="img"
-                                  aria-label="Draft attachment may not persist"
-                                  className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
-                                >
-                                  <CircleAlertIcon className="size-3" />
-                                </span>
-                              }
-                            />
-                            <TooltipPopup
-                              side="top"
-                              className="max-w-64 whitespace-normal leading-tight"
-                            >
-                              Draft attachment could not be saved locally and may be lost on
-                              navigation.
-                            </TooltipPopup>
-                          </Tooltip>
-                        )}
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
-                          onClick={() => removeComposerImage(image.id)}
-                          aria-label={`Remove ${image.name}`}
-                        >
-                          <XIcon />
-                        </Button>
-                      </div>
-                    ))}
+              <div
+                className={cn(
+                  "relative px-3 pb-2 sm:px-4",
+                  hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
+                )}
+              >
+                {composerMenuOpen && !isComposerApprovalState && (
+                  <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
+                    <ComposerCommandMenu
+                      items={composerMenuItems}
+                      resolvedTheme={resolvedTheme}
+                      isLoading={isComposerMenuLoading}
+                      triggerKind={composerTriggerKind}
+                      groupSlashCommandSections={
+                        composerTrigger?.kind === "slash-command" &&
+                        composerTrigger.query.trim().length === 0
+                      }
+                      emptyStateText={composerMenuEmptyState}
+                      activeItemId={activeComposerMenuItem?.id ?? null}
+                      onHighlightedItemChange={onComposerMenuItemHighlighted}
+                      onSelect={onSelectComposerItem}
+                    />
                   </div>
                 )}
 
-              <ComposerPromptEditor
-                ref={composerEditorRef}
-                value={
-                  isComposerApprovalState
-                    ? ""
-                    : activePendingProgress
-                      ? activePendingProgress.customAnswer
-                      : prompt
-                }
-                cursor={composerCursor}
-                terminalContexts={
-                  !isComposerApprovalState && pendingUserInputs.length === 0
-                    ? composerTerminalContexts
-                    : []
-                }
-                skills={selectedProviderStatus?.skills ?? []}
-                onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
-                onChange={onPromptChange}
-                onCommandKeyDown={onComposerCommandKey}
-                onPaste={onComposerPaste}
-                placeholder={
-                  isComposerApprovalState
-                    ? (activePendingApproval?.detail ?? "Resolve this approval request to continue")
-                    : activePendingProgress
-                      ? "Type your own answer, or leave this blank to use the selected option"
-                      : showPlanFollowUpPrompt && activeProposedPlan
-                        ? "Add feedback to refine the plan, or leave this blank to implement it"
-                        : phase === "disconnected"
-                          ? "Ask for follow-up changes or attach images"
-                          : "Ask anything, @tag files/folders, or use / to show available commands"
-                }
-                disabled={isConnecting || isComposerApprovalState}
-              />
-            </div>
+                {!isComposerApprovalState &&
+                  pendingUserInputs.length === 0 &&
+                  composerImages.length > 0 && (
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      {composerImages.map((image) => (
+                        <div
+                          key={image.id}
+                          className="relative h-16 w-16 overflow-hidden rounded-lg border border-border/80 bg-background"
+                        >
+                          {image.previewUrl ? (
+                            <button
+                              type="button"
+                              className="h-full w-full cursor-zoom-in"
+                              aria-label={`Preview ${image.name}`}
+                              onClick={() => {
+                                const preview = buildExpandedImagePreview(composerImages, image.id);
+                                if (!preview) return;
+                                onExpandImage(preview);
+                              }}
+                            >
+                              <img
+                                src={image.previewUrl}
+                                alt={image.name}
+                                className="h-full w-full object-cover"
+                              />
+                            </button>
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
+                              {image.name}
+                            </div>
+                          )}
+                          {nonPersistedComposerImageIdSet.has(image.id) && (
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <span
+                                    role="img"
+                                    aria-label="Draft attachment may not persist"
+                                    className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
+                                  >
+                                    <CircleAlertIcon className="size-3" />
+                                  </span>
+                                }
+                              />
+                              <TooltipPopup
+                                side="top"
+                                className="max-w-64 whitespace-normal leading-tight"
+                              >
+                                Draft attachment could not be saved locally and may be lost on
+                                navigation.
+                              </TooltipPopup>
+                            </Tooltip>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="icon-xs"
+                            className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
+                            onClick={() => removeComposerImage(image.id)}
+                            aria-label={`Remove ${image.name}`}
+                          >
+                            <XIcon />
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
-            {/* Separator — independent element so you can bevel, gradient, inset shadow, etc. */}
-            <div
-              aria-hidden
-              data-chat-composer-footer-separator
-              className="pointer-events-none h-[2px] w-full shrink-0 bg-foreground/10 border-t border-black"
-            />
-
-            {/* Bottom toolbar */}
-            {activePendingApproval ? (
-              <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 pt-2.5 sm:px-3 sm:pb-3 sm:pt-3">
-                <ComposerPendingApprovalActions
-                  requestId={activePendingApproval.requestId}
-                  isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
-                  onRespondToApproval={onRespondToApproval}
+                <ComposerPromptEditor
+                  ref={composerEditorRef}
+                  value={
+                    isComposerApprovalState
+                      ? ""
+                      : activePendingProgress
+                        ? activePendingProgress.customAnswer
+                        : prompt
+                  }
+                  cursor={composerCursor}
+                  terminalContexts={
+                    !isComposerApprovalState && pendingUserInputs.length === 0
+                      ? composerTerminalContexts
+                      : []
+                  }
+                  skills={selectedProviderStatus?.skills ?? []}
+                  onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
+                  onChange={onPromptChange}
+                  onCommandKeyDown={onComposerCommandKey}
+                  onPaste={onComposerPaste}
+                  placeholder={
+                    isComposerApprovalState
+                      ? (activePendingApproval?.detail ??
+                        "Resolve this approval request to continue")
+                      : activePendingProgress
+                        ? "Type your own answer, or leave this blank to use the selected option"
+                        : showPlanFollowUpPrompt && activeProposedPlan
+                          ? "Add feedback to refine the plan, or leave this blank to implement it"
+                          : phase === "disconnected"
+                            ? "Ask for follow-up changes or attach images"
+                            : "Ask anything, @tag files/folders, or use / to show available commands"
+                  }
+                  disabled={isConnecting || isComposerApprovalState}
                 />
               </div>
-            ) : (
-              <div
-                data-chat-composer-footer="true"
-                data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
-                className={cn(
-                  "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 pt-2.5 sm:px-3 sm:pb-3 sm:pt-3",
-                  isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
-                )}
-              >
-                <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  <ProviderModelPicker
-                    compact={isComposerFooterCompact}
-                    provider={selectedProvider}
-                    model={selectedModelForPickerWithCustomFallback}
-                    lockedProvider={lockedProvider}
-                    providers={providerStatuses}
-                    keybindings={keybindings}
-                    modelOptionsByProvider={modelOptionsByProvider}
-                    terminalOpen={terminalOpen}
-                    open={isComposerModelPickerOpen}
-                    {...(composerProviderState.modelPickerIconClassName
-                      ? {
-                          activeProviderIconClassName:
-                            composerProviderState.modelPickerIconClassName,
-                        }
-                      : {})}
-                    onOpenChange={(open) => {
-                      setIsComposerModelPickerOpen(open);
-                    }}
-                    onProviderModelChange={onProviderModelSelect}
-                  />
 
-                  {isComposerFooterCompact ? (
-                    <CompactComposerControlsMenu
-                      activePlan={showPlanSidebarToggle}
-                      interactionMode={interactionMode}
-                      planSidebarLabel={planSidebarLabel}
-                      planSidebarOpen={planSidebarOpen}
-                      runtimeMode={runtimeMode}
-                      showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
-                      traitsMenuContent={providerTraitsMenuContent}
-                      onToggleInteractionMode={toggleInteractionMode}
-                      onTogglePlanSidebar={togglePlanSidebar}
-                      onRuntimeModeChange={handleRuntimeModeChange}
+              {/* Separator — independent element so you can bevel, gradient, inset shadow, etc. */}
+              <div
+                aria-hidden
+                data-chat-composer-footer-separator
+                className="pointer-events-none h-[2px] w-full shrink-0 bg-foreground/10 border-t border-black"
+              />
+
+              {/* Bottom toolbar */}
+              {activePendingApproval ? (
+                <div className="flex items-center justify-end gap-2 px-2.5 pb-2.5 pt-2.5 sm:px-3 sm:pb-3 sm:pt-3">
+                  <ComposerPendingApprovalActions
+                    requestId={activePendingApproval.requestId}
+                    isResponding={respondingRequestIds.includes(activePendingApproval.requestId)}
+                    onRespondToApproval={onRespondToApproval}
+                  />
+                </div>
+              ) : (
+                <div
+                  data-chat-composer-footer="true"
+                  data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
+                  className={cn(
+                    "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 pt-2.5 sm:px-3 sm:pb-3 sm:pt-3",
+                    isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
+                  )}
+                >
+                  <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                    <ProviderModelPicker
+                      compact={isComposerFooterCompact}
+                      provider={selectedProvider}
+                      model={selectedModelForPickerWithCustomFallback}
+                      lockedProvider={lockedProvider}
+                      providers={providerStatuses}
+                      keybindings={keybindings}
+                      modelOptionsByProvider={modelOptionsByProvider}
+                      terminalOpen={terminalOpen}
+                      open={isComposerModelPickerOpen}
+                      {...(composerProviderState.modelPickerIconClassName
+                        ? {
+                            activeProviderIconClassName:
+                              composerProviderState.modelPickerIconClassName,
+                          }
+                        : {})}
+                      onOpenChange={(open) => {
+                        setIsComposerModelPickerOpen(open);
+                      }}
+                      onProviderModelChange={onProviderModelSelect}
                     />
-                  ) : (
-                    <>
-                      {providerTraitsPicker ? (
-                        <>
-                          <Separator
-                            orientation="vertical"
-                            className="mx-0.5 hidden h-4 sm:block"
-                          />
-                          {providerTraitsPicker}
-                        </>
-                      ) : null}
-                      <ComposerFooterModeControls
+
+                    {isComposerFooterCompact ? (
+                      <CompactComposerControlsMenu
+                        activePlan={showPlanSidebarToggle}
+                        interactionMode={interactionMode}
+                        planSidebarLabel={planSidebarLabel}
+                        planSidebarOpen={planSidebarOpen}
+                        runtimeMode={runtimeMode}
                         showInteractionModeToggle={
                           composerProviderControls.showInteractionModeToggle
                         }
-                        interactionMode={interactionMode}
-                        runtimeMode={runtimeMode}
-                        showPlanToggle={showPlanSidebarToggle}
-                        planSidebarLabel={planSidebarLabel}
-                        planSidebarOpen={planSidebarOpen}
+                        traitsMenuContent={providerTraitsMenuContent}
                         onToggleInteractionMode={toggleInteractionMode}
-                        onRuntimeModeChange={handleRuntimeModeChange}
                         onTogglePlanSidebar={togglePlanSidebar}
+                        onRuntimeModeChange={handleRuntimeModeChange}
                       />
-                    </>
-                  )}
-                </div>
+                    ) : (
+                      <>
+                        {providerTraitsPicker ? (
+                          <>
+                            <Separator
+                              orientation="vertical"
+                              className="mx-0.5 hidden h-4 sm:block"
+                            />
+                            {providerTraitsPicker}
+                          </>
+                        ) : null}
+                        <ComposerFooterModeControls
+                          showInteractionModeToggle={
+                            composerProviderControls.showInteractionModeToggle
+                          }
+                          interactionMode={interactionMode}
+                          runtimeMode={runtimeMode}
+                          showPlanToggle={showPlanSidebarToggle}
+                          planSidebarLabel={planSidebarLabel}
+                          planSidebarOpen={planSidebarOpen}
+                          onToggleInteractionMode={toggleInteractionMode}
+                          onRuntimeModeChange={handleRuntimeModeChange}
+                          onTogglePlanSidebar={togglePlanSidebar}
+                        />
+                      </>
+                    )}
+                  </div>
 
-                {/* Right side: send / stop button */}
-                <div
-                  data-chat-composer-actions="right"
-                  data-chat-composer-primary-actions-compact={
-                    isComposerPrimaryActionsCompact ? "true" : "false"
-                  }
-                  className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
-                >
-                  <ComposerFooterPrimaryActions
-                    compact={isComposerPrimaryActionsCompact}
-                    activeContextWindow={activeContextWindow}
-                    pendingAction={pendingPrimaryAction}
-                    isRunning={phase === "running"}
-                    showPlanFollowUpPrompt={
-                      pendingUserInputs.length === 0 && showPlanFollowUpPrompt
+                  {/* Right side: send / stop button */}
+                  <div
+                    data-chat-composer-actions="right"
+                    data-chat-composer-primary-actions-compact={
+                      isComposerPrimaryActionsCompact ? "true" : "false"
                     }
-                    promptHasText={prompt.trim().length > 0}
-                    isSendBusy={isSendBusy}
-                    isConnecting={isConnecting}
-                    isPreparingWorktree={isPreparingWorktree}
-                    hasSendableContent={composerSendState.hasSendableContent}
-                    onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                    onInterrupt={handleInterruptPrimaryAction}
-                    onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
-                  />
+                    className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
+                  >
+                    <ComposerFooterPrimaryActions
+                      compact={isComposerPrimaryActionsCompact}
+                      activeContextWindow={activeContextWindow}
+                      pendingAction={pendingPrimaryAction}
+                      isRunning={phase === "running"}
+                      turnQueueStatus={turnQueue.status}
+                      showPlanFollowUpPrompt={
+                        pendingUserInputs.length === 0 && showPlanFollowUpPrompt
+                      }
+                      promptHasText={prompt.trim().length > 0}
+                      isSendBusy={isSendBusy}
+                      isConnecting={isConnecting}
+                      isPreparingWorktree={isPreparingWorktree}
+                      hasSendableContent={composerSendState.hasSendableContent}
+                      onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
+                      onInterrupt={handleInterruptPrimaryAction}
+                      onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
+                    />
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
-        </div>
-      </form>
+        </form>
+      </div>
     );
   }),
 );

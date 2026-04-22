@@ -1,7 +1,10 @@
 import type {
   EnvironmentId,
   ModelSelection,
+  OrchestrationQueuedTurn,
   OrchestrationLatestTurn,
+  OrchestrationTurnQueuePauseReason,
+  OrchestrationTurnQueueStatus,
   OrchestrationProposedPlanId,
   RepositoryIdentity,
   OrchestrationSessionStatus,
@@ -80,6 +83,16 @@ export interface TurnDiffSummary {
   checkpointTurnCount?: number | undefined;
 }
 
+export type QueuedTurn = OrchestrationQueuedTurn;
+export type ThreadTurnQueueStatus = OrchestrationTurnQueueStatus;
+export type ThreadTurnQueuePauseReason = OrchestrationTurnQueuePauseReason;
+
+export interface ThreadTurnQueue {
+  items: QueuedTurn[];
+  status: ThreadTurnQueueStatus;
+  pauseReason: ThreadTurnQueuePauseReason;
+}
+
 export interface Project {
   id: ProjectId;
   environmentId: EnvironmentId;
@@ -114,6 +127,7 @@ export interface Thread {
   worktreePath: string | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
+  turnQueue: ThreadTurnQueue;
 }
 
 export interface ThreadShell {
@@ -131,6 +145,8 @@ export interface ThreadShell {
   updatedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
+  queuedTurnCount: number;
+  turnQueueStatus: ThreadTurnQueueStatus;
 }
 
 export interface ThreadTurnState {
@@ -155,6 +171,8 @@ export interface SidebarThreadSummary {
   hasPendingApprovals: boolean;
   hasPendingUserInput: boolean;
   hasActionableProposedPlan: boolean;
+  queuedTurnCount: number;
+  turnQueueStatus: ThreadTurnQueueStatus;
 }
 
 export interface ThreadSession {

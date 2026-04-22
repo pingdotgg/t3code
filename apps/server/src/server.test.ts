@@ -11,6 +11,7 @@ import {
   KeybindingRule,
   MessageId,
   OpenError,
+  type OrchestrationReadModel,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
   type OrchestrationCommand,
@@ -125,7 +126,7 @@ const testEnvironmentDescriptor = {
     repositoryIdentity: true,
   },
 };
-const makeDefaultOrchestrationReadModel = () => {
+const makeDefaultOrchestrationReadModel = (): OrchestrationReadModel => {
   const now = new Date().toISOString();
   return {
     snapshotSequence: 0,
@@ -161,6 +162,11 @@ const makeDefaultOrchestrationReadModel = () => {
         activities: [],
         proposedPlans: [],
         checkpoints: [],
+        turnQueue: {
+          items: [],
+          status: "idle",
+          pauseReason: null,
+        },
         deletedAt: null,
       },
     ],
@@ -189,6 +195,8 @@ const makeDefaultOrchestrationThreadShell = (
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    queuedTurnCount: 0,
+    turnQueueStatus: "idle",
     ...overrides,
   };
 };
@@ -2883,7 +2891,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("routes websocket rpc orchestration methods", () =>
     Effect.gen(function* () {
       const now = new Date().toISOString();
-      const snapshot = {
+      const snapshot: OrchestrationReadModel = {
         snapshotSequence: 1,
         updatedAt: now,
         projects: [
@@ -2917,6 +2925,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             activities: [],
             proposedPlans: [],
             checkpoints: [],
+            turnQueue: {
+              items: [],
+              status: "idle",
+              pauseReason: null,
+            },
             deletedAt: null,
           },
         ],

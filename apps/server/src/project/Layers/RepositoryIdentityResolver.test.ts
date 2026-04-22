@@ -46,11 +46,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const identity = yield* resolver.resolve(cwd);
 
       expect(identity).not.toBeNull();
-      expect(identity?.canonicalKey).toBe("github.com/t3tools/harness");
+      expect(identity?.canonicalKey).toBe("github.com/harness/harness");
       expect(normalizeResolvedPath(identity?.rootPath ?? "")).toBe(normalizeResolvedPath(cwd));
-      expect(identity?.displayName).toBe("t3tools/harness");
+      expect(identity?.displayName).toBe("harness/harness");
       expect(identity?.provider).toBe("github");
-      expect(identity?.owner).toBe("t3tools");
+      expect(identity?.owner).toBe("harness");
       expect(identity?.name).toBe("harness");
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
   );
@@ -71,7 +71,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const identity = yield* resolver.resolve(nestedWorkspace);
 
       expect(identity).not.toBeNull();
-      expect(identity?.canonicalKey).toBe("github.com/t3tools/harness");
+      expect(identity?.canonicalKey).toBe("github.com/harness/harness");
       expect(normalizeResolvedPath(identity?.rootPath ?? "")).toBe(normalizeResolvedPath(repoRoot));
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
   );
@@ -113,8 +113,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
       expect(identity).not.toBeNull();
       expect(identity?.locator.remoteName).toBe("upstream");
-      expect(identity?.canonicalKey).toBe("github.com/t3tools/harness");
-      expect(identity?.displayName).toBe("t3tools/harness");
+      expect(identity?.canonicalKey).toBe("github.com/harness/harness");
+      expect(identity?.displayName).toBe("harness/harness");
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
   );
 
@@ -132,9 +132,9 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const identity = yield* resolver.resolve(cwd);
 
       expect(identity).not.toBeNull();
-      expect(identity?.canonicalKey).toBe("gitlab.com/t3tools/platform/harness");
-      expect(identity?.displayName).toBe("t3tools/platform/harness");
-      expect(identity?.owner).toBe("t3tools");
+      expect(identity?.canonicalKey).toBe("gitlab.com/harness/platform/harness");
+      expect(identity?.displayName).toBe("harness/platform/harness");
+      expect(identity?.owner).toBe("harness");
       expect(identity?.name).toBe("harness");
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
   );
@@ -165,7 +165,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
         const refreshedIdentity = yield* resolver.resolve(cwd);
         expect(refreshedIdentity).not.toBeNull();
-        expect(refreshedIdentity?.canonicalKey).toBe("github.com/t3tools/harness");
+        expect(refreshedIdentity?.canonicalKey).toBe("github.com/harness/harness");
         expect(refreshedIdentity?.name).toBe("harness");
       }).pipe(
         Effect.provide(
@@ -193,20 +193,20 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       const resolver = yield* RepositoryIdentityResolver;
       const initialIdentity = yield* resolver.resolve(cwd);
       expect(initialIdentity).not.toBeNull();
-      expect(initialIdentity?.canonicalKey).toBe("github.com/t3tools/harness");
+      expect(initialIdentity?.canonicalKey).toBe("github.com/harness/harness");
 
       yield* git(cwd, ["remote", "set-url", "origin", "git@github.com:Harness/harness-next.git"]);
 
       const cachedIdentity = yield* resolver.resolve(cwd);
       expect(cachedIdentity).not.toBeNull();
-      expect(cachedIdentity?.canonicalKey).toBe("github.com/t3tools/harness");
+      expect(cachedIdentity?.canonicalKey).toBe("github.com/harness/harness");
 
       yield* TestClock.adjust(Duration.millis(180));
 
       const refreshedIdentity = yield* resolver.resolve(cwd);
       expect(refreshedIdentity).not.toBeNull();
-      expect(refreshedIdentity?.canonicalKey).toBe("github.com/t3tools/harness-next");
-      expect(refreshedIdentity?.displayName).toBe("t3tools/harness-next");
+      expect(refreshedIdentity?.canonicalKey).toBe("github.com/harness/harness-next");
+      expect(refreshedIdentity?.displayName).toBe("harness/harness-next");
       expect(refreshedIdentity?.name).toBe("harness-next");
     }).pipe(
       Effect.provide(

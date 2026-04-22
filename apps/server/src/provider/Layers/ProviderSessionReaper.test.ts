@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProjectId, ThreadId, TurnId } from "@harness/contracts";
+import { ProjectId, ThreadId, TurnId, type OrchestrationReadModel } from "@harness/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, Option, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -55,7 +55,7 @@ function makeReadModel(
       readonly updatedAt: string;
     } | null;
   }>,
-) {
+): OrchestrationReadModel {
   const now = new Date().toISOString();
   const projectId = ProjectId.make("project-provider-session-reaper");
 
@@ -92,6 +92,11 @@ function makeReadModel(
       activities: [],
       proposedPlans: [],
       checkpoints: [],
+      turnQueue: {
+        items: [],
+        status: "idle",
+        pauseReason: null,
+      },
       deletedAt: null,
     })),
   };

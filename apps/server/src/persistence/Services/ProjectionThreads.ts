@@ -10,6 +10,8 @@ import {
   IsoDateTime,
   ModelSelection,
   NonNegativeInt,
+  OrchestrationTurnQueuePauseReason,
+  OrchestrationTurnQueueStatus,
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -38,6 +40,9 @@ export const ProjectionThread = Schema.Struct({
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,
   hasActionableProposedPlan: NonNegativeInt,
+  queuedTurnCount: NonNegativeInt,
+  turnQueueStatus: OrchestrationTurnQueueStatus,
+  turnQueuePauseReason: OrchestrationTurnQueuePauseReason,
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;

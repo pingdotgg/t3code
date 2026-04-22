@@ -3,6 +3,7 @@ import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   MessageId,
+  type OrchestrationReadModel,
   ProjectId,
   ThreadId,
   TurnId,
@@ -95,7 +96,7 @@ describe("OrchestrationEngine", () => {
         ),
     };
 
-    const projectionSnapshot = {
+    const projectionSnapshot: OrchestrationReadModel = {
       snapshotSequence: 7,
       updatedAt: "2026-03-03T00:00:04.000Z",
       projects: [
@@ -135,6 +136,11 @@ describe("OrchestrationEngine", () => {
           proposedPlans: [],
           activities: [],
           checkpoints: [],
+          turnQueue: {
+            items: [],
+            status: "idle",
+            pauseReason: null,
+          },
           session: null,
         },
       ],

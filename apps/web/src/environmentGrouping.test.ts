@@ -73,6 +73,8 @@ function makeSidebarThreadSummary(
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    queuedTurnCount: 0,
+    turnQueueStatus: "idle",
     ...overrides,
   };
 }
@@ -86,6 +88,7 @@ function makeEmptyEnvironmentState(): EnvironmentState {
     threadShellById: {},
     threadSessionById: {},
     threadTurnStateById: {},
+    threadTurnQueueById: {},
     messageIdsByThreadId: {},
     messageByThreadId: {},
     activityIdsByThreadId: {},

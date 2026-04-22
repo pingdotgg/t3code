@@ -21,11 +21,22 @@ import {
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
   ThreadRuntimeModeSetPayload,
+  ThreadTurnEnqueuedPayload,
+  ThreadTurnQueueItemRemovedPayload,
+  ThreadTurnQueuePausedPayload,
+  ThreadTurnQueueResumedPayload,
+  ThreadTurnSettledPayload,
   ThreadUnarchivedPayload,
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
 } from "./Schemas.ts";
+import {
+  appendQueuedTurn,
+  pauseQueuedTurns,
+  removeQueuedTurn,
+  resumeQueuedTurns,
+} from "./turnQueue.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
 const MAX_THREAD_MESSAGES = 2_000;
@@ -267,6 +278,11 @@ export function projectEvent(
             messages: [],
             activities: [],
             checkpoints: [],
+            turnQueue: {
+              items: [],
+              status: "idle",
+              pauseReason: null,
+            },
             session: null,
           },
           event.type,
@@ -418,6 +434,89 @@ export function projectEvent(
         };
       });
 
+    case "thread.turn-enqueued":
+      return decodeForEvent(ThreadTurnEnqueuedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              turnQueue: appendQueuedTurn(thread.turnQueue, payload.queuedTurn),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.turn-queue-item-removed":
+      return decodeForEvent(
+        ThreadTurnQueueItemRemovedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              turnQueue: removeQueuedTurn(thread.turnQueue, payload.messageId),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.turn-queue-paused":
+      return decodeForEvent(
+        ThreadTurnQueuePausedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              turnQueue: pauseQueuedTurns(thread.turnQueue, payload.reason),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.turn-queue-resumed":
+      return decodeForEvent(
+        ThreadTurnQueueResumedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              turnQueue: resumeQueuedTurns(thread.turnQueue),
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
+
     case "thread.session-set":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -466,6 +565,44 @@ export function projectEvent(
           }),
         };
       });
+
+    case "thread.turn-settled":
+      return decodeForEvent(ThreadTurnSettledPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+
+          const nextState =
+            payload.outcome === "error"
+              ? "error"
+              : payload.outcome === "interrupted"
+                ? "interrupted"
+                : "completed";
+
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              latestTurn:
+                thread.latestTurn === null || thread.latestTurn.turnId === payload.turnId
+                  ? {
+                      turnId: payload.turnId,
+                      state: nextState,
+                      requestedAt: thread.latestTurn?.requestedAt ?? payload.settledAt,
+                      startedAt: thread.latestTurn?.startedAt ?? payload.settledAt,
+                      completedAt: payload.settledAt,
+                      assistantMessageId: thread.latestTurn?.assistantMessageId ?? null,
+                      ...(thread.latestTurn?.sourceProposedPlan
+                        ? { sourceProposedPlan: thread.latestTurn.sourceProposedPlan }
+                        : {}),
+                    }
+                  : thread.latestTurn,
+              updatedAt: event.occurredAt,
+            }),
+          };
+        }),
+      );
 
     case "thread.proposed-plan-upserted":
       return Effect.gen(function* () {

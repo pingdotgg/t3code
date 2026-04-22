@@ -2,10 +2,12 @@
 import "../index.css";
 
 import {
+  CommandId,
   EventId,
   ORCHESTRATION_WS_METHODS,
   EnvironmentId,
   type EnvironmentApi,
+  type OrchestrationEvent,
   type MessageId,
   type OrchestrationReadModel,
   type ProjectId,
@@ -353,6 +355,11 @@ function createSnapshotForTargetUser(options: {
         activities: [],
         proposedPlans: [],
         checkpoints: [],
+        turnQueue: {
+          items: [],
+          status: "idle",
+          pauseReason: null,
+        },
         session: {
           threadId: THREAD_ID,
           status: options.sessionStatus ?? "ready",
@@ -418,6 +425,11 @@ function addThreadToSnapshot(
         activities: [],
         proposedPlans: [],
         checkpoints: [],
+        turnQueue: {
+          items: [],
+          status: "idle",
+          pauseReason: null,
+        },
         session: {
           threadId,
           status: "ready",
@@ -452,6 +464,8 @@ function toShellThread(thread: OrchestrationReadModel["threads"][number]) {
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    queuedTurnCount: thread.turnQueue.items.length,
+    turnQueueStatus: thread.turnQueue.status,
   };
 }
 
@@ -752,6 +766,11 @@ function createSnapshotWithSecondaryProject(options?: {
           activities: [],
           proposedPlans: [],
           checkpoints: [],
+          turnQueue: {
+            items: [],
+            status: "idle",
+            pauseReason: null,
+          },
           session: {
             threadId: "thread-secondary-project" as ThreadId,
             status: "ready",
@@ -784,6 +803,11 @@ function createSnapshotWithSecondaryProject(options?: {
           activities: [],
           proposedPlans: [],
           checkpoints: [],
+          turnQueue: {
+            items: [],
+            status: "idle",
+            pauseReason: null,
+          },
           session: {
             threadId: ARCHIVED_SECONDARY_THREAD_ID,
             status: "ready",
@@ -935,6 +959,77 @@ function createSnapshotWithPlanFollowUpPrompt(options?: {
           })
         : thread,
     ),
+  };
+}
+
+function createSnapshotWithQueuedTurns(options?: {
+  status?: "queued" | "paused";
+  pauseReason?: "interrupted" | "error" | null;
+  items?: Array<{
+    messageId: MessageId;
+    text: string;
+    attachmentIds?: string[];
+    interactionMode?: "default" | "plan";
+    runtimeMode?: "approval-required" | "full-access";
+  }>;
+  includeRunningTurn?: boolean;
+}): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-queue-target" as MessageId,
+    targetText: "queue browser thread",
+    sessionStatus: options?.includeRunningTurn === false ? "ready" : "running",
+  });
+
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? {
+            ...thread,
+            latestTurn:
+              options?.includeRunningTurn === false
+                ? null
+                : {
+                    turnId: "turn-running-browser" as TurnId,
+                    state: "running",
+                    requestedAt: isoAt(40),
+                    startedAt: isoAt(41),
+                    completedAt: null,
+                    assistantMessageId: null,
+                  },
+            turnQueue: {
+              items: (options?.items ?? []).map((item, index) => ({
+                messageId: item.messageId,
+                text: item.text,
+                attachmentIds: item.attachmentIds ?? [],
+                modelSelection: {
+                  provider: "codex" as const,
+                  model: index === 0 ? "gpt-5.3-codex" : "gpt-5-codex",
+                },
+                runtimeMode: item.runtimeMode ?? "approval-required",
+                interactionMode: item.interactionMode ?? "plan",
+                titleSeed: item.text,
+                sourceProposedPlan: null,
+                queuedAt: isoAt(50 + index),
+              })),
+              status: options?.status ?? ((options?.items?.length ?? 0) > 0 ? "queued" : "idle"),
+              pauseReason:
+                (options?.status ?? ((options?.items?.length ?? 0) > 0 ? "queued" : "idle")) ===
+                "paused"
+                  ? (options?.pauseReason ?? "error")
+                  : null,
+            },
+            session: {
+              ...thread.session!,
+              status: options?.includeRunningTurn === false ? "ready" : "running",
+              activeTurnId:
+                options?.includeRunningTurn === false ? null : ("turn-running-browser" as TurnId),
+            },
+            updatedAt: isoAt(60),
+          }
+        : thread,
+    ),
+    updatedAt: isoAt(60),
   };
 }
 
@@ -1275,8 +1370,15 @@ async function waitForComposerMenuItem(itemId: string): Promise<HTMLElement> {
 }
 async function waitForSendButton(): Promise<HTMLButtonElement> {
   return waitForElement(
-    () => document.querySelector<HTMLButtonElement>('button[aria-label="Send message"]'),
+    () => document.querySelector<HTMLButtonElement>('button[aria-label="Send"]'),
     "Unable to find send button.",
+  );
+}
+
+async function waitForActionButton(label: string): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`),
+    `Unable to find "${label}" action button.`,
   );
 }
 
@@ -1305,6 +1407,17 @@ async function waitForButtonContainingText(text: string): Promise<HTMLButtonElem
     () => findButtonContainingText(text),
     `Unable to find button containing "${text}".`,
   );
+}
+
+function countBodyOccurrences(text: string): number {
+  return (document.body.textContent ?? "").split(text).length - 1;
+}
+
+function emitThreadDetailEvent(event: OrchestrationEvent): void {
+  rpcHarness.emitStreamValue(ORCHESTRATION_WS_METHODS.subscribeThread, {
+    kind: "event",
+    event,
+  });
 }
 
 async function waitForSelectItemContainingText(text: string): Promise<HTMLElement> {
@@ -3460,11 +3573,231 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       const stopButton = await waitForElement(
-        () => document.querySelector<HTMLButtonElement>('button[aria-label="Stop generation"]'),
-        "Unable to find stop generation button.",
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Interrupt turn"]'),
+        "Unable to find interrupt button.",
       );
 
       expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows queued turns separately from the timeline while a turn is running", async () => {
+    const queuedPrompt = "browser queued prompt only";
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithQueuedTurns({
+        items: [
+          {
+            messageId: "queued-browser-1" as MessageId,
+            text: queuedPrompt,
+          },
+        ],
+      }),
+    });
+
+    try {
+      await waitForActionButton("Add to queue");
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Queued");
+          expect(document.body.textContent).toContain("1 queued");
+          expect(countBodyOccurrences(queuedPrompt)).toBe(1);
+          expect(document.body.textContent).not.toContain("Queue 1");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("dispatches resume and remove queue commands from the paused queue panel", async () => {
+    const queuedMessageId = "queued-paused-1" as MessageId;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithQueuedTurns({
+        status: "paused",
+        pauseReason: "error",
+        items: [
+          {
+            messageId: queuedMessageId,
+            text: "Paused queued prompt",
+          },
+        ],
+      }),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      (await waitForButtonByText("Resume queue")).click();
+      (
+        await waitForElement(
+          () =>
+            document.querySelector<HTMLButtonElement>('button[aria-label="Remove queued turn"]'),
+          "Unable to find queued-turn remove button.",
+        )
+      ).click();
+
+      await vi.waitFor(
+        () => {
+          const resumeRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.queue.resume",
+          );
+          const removeRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.queue.remove" &&
+              request.messageId === queuedMessageId,
+          );
+
+          expect(resumeRequest).toBeTruthy();
+          expect(removeRequest).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("adds prompts to the queue while running without creating an optimistic timeline copy", async () => {
+    const queuedPrompt = "queue row browser send";
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithQueuedTurns(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForComposerEditor();
+      await page.getByTestId("composer-editor").fill(queuedPrompt);
+      (await waitForActionButton("Add to queue")).click();
+
+      let dispatchRequest:
+        | {
+            _tag: string;
+            type?: string;
+            message?: {
+              messageId?: MessageId;
+              text?: string;
+            };
+          }
+        | undefined;
+      await vi.waitFor(
+        () => {
+          dispatchRequest = wsRequests.find(
+            (entry) =>
+              entry._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              entry.type === "thread.turn.start" &&
+              typeof entry.message === "object" &&
+              entry.message !== null &&
+              "text" in entry.message &&
+              (entry.message as { text?: unknown }).text === queuedPrompt,
+          ) as typeof dispatchRequest;
+          expect(dispatchRequest).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await vi.waitFor(
+        () => {
+          const composerEditor = document.querySelector<HTMLElement>(
+            '[data-testid="composer-editor"]',
+          );
+          const queuePanel = document.querySelector<HTMLElement>(
+            '[data-composer-queue-panel="true"]',
+          );
+          const composerForm = document.querySelector<HTMLElement>(
+            '[data-chat-composer-form="true"]',
+          );
+          expect(composerEditor?.textContent?.trim() ?? "").toBe("");
+          expect(countBodyOccurrences(queuedPrompt)).toBe(0);
+          expect(queuePanel).not.toBeNull();
+          expect(composerForm).not.toBeNull();
+          expect(queuePanel?.compareDocumentPosition(composerForm as Node)).toBe(
+            Node.DOCUMENT_POSITION_FOLLOWING,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const queuedTurn = {
+        messageId: dispatchRequest?.message?.messageId ?? ("queued-browser-send" as MessageId),
+        text: queuedPrompt,
+        attachmentIds: [],
+        modelSelection: {
+          provider: "codex" as const,
+          model: "gpt-5.3-codex",
+        },
+        runtimeMode: "approval-required" as const,
+        interactionMode: "plan" as const,
+        titleSeed: queuedPrompt,
+        sourceProposedPlan: null,
+        queuedAt: isoAt(61),
+      };
+
+      fixture.snapshot = {
+        ...fixture.snapshot,
+        snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+        threads: fixture.snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? {
+                ...thread,
+                turnQueue: {
+                  items: [queuedTurn],
+                  status: "queued",
+                  pauseReason: null,
+                },
+                updatedAt: isoAt(61),
+              }
+            : thread,
+        ),
+        updatedAt: isoAt(61),
+      };
+      emitThreadDetailEvent({
+        sequence: fixture.snapshot.snapshotSequence,
+        eventId: EventId.make("evt-browser-turn-enqueued"),
+        aggregateKind: "thread",
+        aggregateId: THREAD_ID,
+        type: "thread.turn-enqueued",
+        occurredAt: isoAt(61),
+        commandId: CommandId.make("cmd-browser-turn-enqueued"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-browser-turn-enqueued"),
+        metadata: {},
+        payload: {
+          threadId: THREAD_ID,
+          queuedTurn,
+        },
+      });
+
+      await vi.waitFor(
+        () => {
+          expect(countBodyOccurrences(queuedPrompt)).toBe(1);
+          expect(document.body.textContent).toContain("Queued");
+          expect(document.body.textContent).not.toContain("Queue 1");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }

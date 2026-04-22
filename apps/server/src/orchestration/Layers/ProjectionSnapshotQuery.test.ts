@@ -30,6 +30,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
 
       yield* sql`DELETE FROM projection_projects`;
       yield* sql`DELETE FROM projection_state`;
+      yield* sql`DELETE FROM projection_thread_turn_queue`;
       yield* sql`DELETE FROM projection_thread_proposed_plans`;
       yield* sql`DELETE FROM projection_turns`;
 
@@ -342,6 +343,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               completedAt: "2026-02-24T00:00:08.000Z",
             },
           ],
+          turnQueue: {
+            items: [],
+            status: "idle",
+            pauseReason: null,
+          },
           session: {
             threadId: ThreadId.make("thread-1"),
             status: "running",
@@ -420,6 +426,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           hasPendingApprovals: true,
           hasPendingUserInput: false,
           hasActionableProposedPlan: false,
+          queuedTurnCount: 0,
+          turnQueueStatus: "idle",
         },
       ]);
 
@@ -428,6 +436,245 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       if (threadDetail._tag === "Some") {
         assert.deepEqual(threadDetail.value, snapshot.threads[0]);
       }
+    }),
+  );
+
+  it.effect("hydrates queued turns and shell queue summaries from projection storage", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* sql`DELETE FROM projection_projects`;
+      yield* sql`DELETE FROM projection_state`;
+      yield* sql`DELETE FROM projection_thread_turn_queue`;
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_turns`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-queue',
+          'Queue Project',
+          '/tmp/project-queue',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          '2026-02-24T00:00:00.000Z',
+          '2026-02-24T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          queued_turn_count,
+          turn_queue_status,
+          turn_queue_pause_reason,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-queue',
+          'project-queue',
+          'Queue Thread',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          NULL,
+          NULL,
+          NULL,
+          NULL,
+          0,
+          0,
+          0,
+          2,
+          'paused',
+          'error',
+          '2026-02-24T00:00:02.000Z',
+          '2026-02-24T00:00:03.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_turn_queue (
+          thread_id,
+          message_id,
+          text,
+          attachment_ids_json,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          title_seed,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          queued_at,
+          enqueue_sequence
+        )
+        VALUES
+          (
+            'thread-queue',
+            'queued-2',
+            'Second queued prompt',
+            '["attachment-2"]',
+            '{"provider":"codex","model":"gpt-5.4-codex"}',
+            'approval-required',
+            'plan',
+            'Second queued title',
+            NULL,
+            NULL,
+            '2026-02-24T00:00:05.000Z',
+            2
+          ),
+          (
+            'thread-queue',
+            'queued-1',
+            'First queued prompt',
+            '[]',
+            '{"provider":"codex","model":"gpt-5.3-codex"}',
+            'full-access',
+            'default',
+            NULL,
+            'thread-source',
+            'plan-1',
+            '2026-02-24T00:00:04.000Z',
+            1
+          )
+      `;
+
+      let sequence = 10;
+      for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+        yield* sql`
+          INSERT INTO projection_state (
+            projector,
+            last_applied_sequence,
+            updated_at
+          )
+          VALUES (
+            ${projector},
+            ${sequence},
+            '2026-02-24T00:00:09.000Z'
+          )
+        `;
+        sequence += 1;
+      }
+
+      const snapshot = yield* snapshotQuery.getSnapshot();
+      const shellSnapshot = yield* snapshotQuery.getShellSnapshot();
+
+      assert.deepEqual(snapshot.threads, [
+        {
+          id: ThreadId.make("thread-queue"),
+          projectId: asProjectId("project-queue"),
+          title: "Queue Thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          interactionMode: "default",
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          latestTurn: null,
+          createdAt: "2026-02-24T00:00:02.000Z",
+          updatedAt: "2026-02-24T00:00:03.000Z",
+          archivedAt: null,
+          deletedAt: null,
+          messages: [],
+          proposedPlans: [],
+          activities: [],
+          checkpoints: [],
+          turnQueue: {
+            items: [
+              {
+                messageId: asMessageId("queued-1"),
+                text: "First queued prompt",
+                attachmentIds: [],
+                modelSelection: {
+                  provider: "codex",
+                  model: "gpt-5.3-codex",
+                },
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                titleSeed: null,
+                sourceProposedPlan: {
+                  threadId: ThreadId.make("thread-source"),
+                  planId: "plan-1",
+                },
+                queuedAt: "2026-02-24T00:00:04.000Z",
+              },
+              {
+                messageId: asMessageId("queued-2"),
+                text: "Second queued prompt",
+                attachmentIds: ["attachment-2"],
+                modelSelection: {
+                  provider: "codex",
+                  model: "gpt-5.4-codex",
+                },
+                runtimeMode: "approval-required",
+                interactionMode: "plan",
+                titleSeed: "Second queued title",
+                sourceProposedPlan: null,
+                queuedAt: "2026-02-24T00:00:05.000Z",
+              },
+            ],
+            status: "paused",
+            pauseReason: "error",
+          },
+          session: null,
+        },
+      ]);
+
+      assert.deepEqual(shellSnapshot.threads, [
+        {
+          id: ThreadId.make("thread-queue"),
+          projectId: asProjectId("project-queue"),
+          title: "Queue Thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          interactionMode: "default",
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          latestTurn: null,
+          createdAt: "2026-02-24T00:00:02.000Z",
+          updatedAt: "2026-02-24T00:00:03.000Z",
+          archivedAt: null,
+          session: null,
+          latestUserMessageAt: null,
+          hasPendingApprovals: false,
+          hasPendingUserInput: false,
+          hasActionableProposedPlan: false,
+          queuedTurnCount: 2,
+          turnQueueStatus: "paused",
+        },
+      ]);
     }),
   );
 

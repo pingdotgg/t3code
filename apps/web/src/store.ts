@@ -6,6 +6,7 @@ import type {
   OrchestrationLatestTurn,
   OrchestrationMessage,
   OrchestrationProposedPlan,
+  OrchestrationQueuedTurn,
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationShellStreamEvent,
@@ -31,10 +32,11 @@ import {
   type Thread,
   type ThreadSession,
   type ThreadShell,
+  type ThreadTurnQueue,
   type ThreadTurnState,
   type TurnDiffSummary,
 } from "./types";
-import { resolveEnvironmentHttpUrl } from "./environments/runtime";
+import { resolveAttachmentPreviewUrl } from "./attachmentPreview";
 import { sanitizeThreadErrorMessage } from "./rpc/transportError";
 import { getThreadFromEnvironmentState } from "./threadDerivation";
 
@@ -62,6 +64,7 @@ export interface EnvironmentState {
   threadShellById: Record<ThreadId, ThreadShell>;
   threadSessionById: Record<ThreadId, ThreadSession | null>;
   threadTurnStateById: Record<ThreadId, ThreadTurnState>;
+  threadTurnQueueById: Record<ThreadId, ThreadTurnQueue>;
 
   // ---------------------------------------------------------------------------
   // Thread detail content — written ONLY by the detail stream
@@ -102,6 +105,7 @@ const initialEnvironmentState: EnvironmentState = {
   threadShellById: {},
   threadSessionById: {},
   threadTurnStateById: {},
+  threadTurnQueueById: {},
   messageIdsByThreadId: {},
   messageByThreadId: {},
   activityIdsByThreadId: {},
@@ -161,9 +165,9 @@ function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage)
     name: attachment.name,
     mimeType: attachment.mimeType,
     sizeBytes: attachment.sizeBytes,
-    previewUrl: resolveEnvironmentHttpUrl({
+    previewUrl: resolveAttachmentPreviewUrl({
       environmentId,
-      pathname: attachmentPreviewRoutePath(attachment.id),
+      attachmentId: attachment.id,
     }),
   }));
 
@@ -200,6 +204,28 @@ function mapTurnDiffSummary(checkpoint: OrchestrationCheckpointSummary): TurnDif
     checkpointTurnCount: checkpoint.checkpointTurnCount,
     checkpointRef: checkpoint.checkpointRef,
     files: checkpoint.files.map((file) => ({ ...file })),
+  };
+}
+
+function mapQueuedTurn(queuedTurn: OrchestrationQueuedTurn): ThreadTurnQueue["items"][number] {
+  return {
+    ...queuedTurn,
+    attachmentIds: [...queuedTurn.attachmentIds],
+    modelSelection: normalizeModelSelection(queuedTurn.modelSelection),
+    sourceProposedPlan: queuedTurn.sourceProposedPlan
+      ? {
+          threadId: queuedTurn.sourceProposedPlan.threadId,
+          planId: queuedTurn.sourceProposedPlan.planId,
+        }
+      : null,
+  };
+}
+
+function mapTurnQueue(turnQueue: OrchestrationThread["turnQueue"]): ThreadTurnQueue {
+  return {
+    items: turnQueue.items.map(mapQueuedTurn),
+    status: turnQueue.status,
+    pauseReason: turnQueue.pauseReason,
   };
 }
 
@@ -247,6 +273,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     worktreePath: thread.worktreePath,
     turnDiffSummaries: thread.checkpoints.map(mapTurnDiffSummary),
     activities: thread.activities.map((activity) => ({ ...activity })),
+    turnQueue: mapTurnQueue(thread.turnQueue),
   };
 }
 
@@ -274,6 +301,8 @@ function mapThreadShell(
     updatedAt: thread.updatedAt,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    queuedTurnCount: thread.queuedTurnCount,
+    turnQueueStatus: thread.turnQueueStatus,
   };
   const session = thread.session ? mapSession(thread.session) : null;
   const turnState: ThreadTurnState = {
@@ -297,6 +326,8 @@ function mapThreadShell(
     hasPendingApprovals: thread.hasPendingApprovals,
     hasPendingUserInput: thread.hasPendingUserInput,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
+    queuedTurnCount: thread.queuedTurnCount,
+    turnQueueStatus: thread.turnQueueStatus,
   };
   return {
     shell,
@@ -322,6 +353,8 @@ function toThreadShell(thread: Thread): ThreadShell {
     updatedAt: thread.updatedAt,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    queuedTurnCount: thread.turnQueue.items.length,
+    turnQueueStatus: thread.turnQueue.status,
   };
 }
 
@@ -377,6 +410,45 @@ function threadSessionsEqual(
   );
 }
 
+function queuedTurnsEqual(
+  left: ThreadTurnQueue["items"],
+  right: ThreadTurnQueue["items"],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((queuedTurn, index) => {
+      const other = right[index];
+      if (!other) {
+        return false;
+      }
+      return (
+        queuedTurn.messageId === other.messageId &&
+        queuedTurn.text === other.text &&
+        arraysEqual(queuedTurn.attachmentIds, other.attachmentIds) &&
+        queuedTurn.modelSelection.provider === other.modelSelection.provider &&
+        queuedTurn.modelSelection.model === other.modelSelection.model &&
+        JSON.stringify(queuedTurn.modelSelection.options ?? null) ===
+          JSON.stringify(other.modelSelection.options ?? null) &&
+        queuedTurn.runtimeMode === other.runtimeMode &&
+        queuedTurn.interactionMode === other.interactionMode &&
+        queuedTurn.titleSeed === other.titleSeed &&
+        queuedTurn.sourceProposedPlan?.threadId === other.sourceProposedPlan?.threadId &&
+        queuedTurn.sourceProposedPlan?.planId === other.sourceProposedPlan?.planId &&
+        queuedTurn.queuedAt === other.queuedAt
+      );
+    })
+  );
+}
+
+function threadTurnQueuesEqual(left: ThreadTurnQueue | undefined, right: ThreadTurnQueue): boolean {
+  return (
+    left !== undefined &&
+    left.status === right.status &&
+    left.pauseReason === right.pauseReason &&
+    queuedTurnsEqual(left.items, right.items)
+  );
+}
+
 function sidebarThreadSummariesEqual(
   left: SidebarThreadSummary | undefined,
   right: SidebarThreadSummary,
@@ -397,7 +469,9 @@ function sidebarThreadSummariesEqual(
     left.latestUserMessageAt === right.latestUserMessageAt &&
     left.hasPendingApprovals === right.hasPendingApprovals &&
     left.hasPendingUserInput === right.hasPendingUserInput &&
-    left.hasActionableProposedPlan === right.hasActionableProposedPlan
+    left.hasActionableProposedPlan === right.hasActionableProposedPlan &&
+    left.queuedTurnCount === right.queuedTurnCount &&
+    left.turnQueueStatus === right.turnQueueStatus
   );
 }
 
@@ -417,7 +491,9 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.archivedAt === right.archivedAt &&
     left.updatedAt === right.updatedAt &&
     left.branch === right.branch &&
-    left.worktreePath === right.worktreePath
+    left.worktreePath === right.worktreePath &&
+    left.queuedTurnCount === right.queuedTurnCount &&
+    left.turnQueueStatus === right.turnQueueStatus
   );
 }
 
@@ -562,7 +638,9 @@ function ensureThreadRegistered(
  * the active thread has up-to-date state even if the shell stream event
  * hasn't arrived yet (both streams use structural equality checks to avoid
  * unnecessary re-renders when delivering equivalent data).
- * Does NOT write sidebarThreadSummaryById — that is shell-stream-only.
+ * When a sidebar summary already exists for the thread, it mirrors the
+ * latest title/session/turn/queue fields so detail-only updates keep the
+ * sidebar in sync until the shell stream catches up.
  */
 function writeThreadState(
   state: EnvironmentState,
@@ -573,6 +651,7 @@ function writeThreadState(
   const nextTurnState = toThreadTurnState(nextThread);
   const previousShell = state.threadShellById[nextThread.id];
   const previousTurnState = state.threadTurnStateById[nextThread.id];
+  const previousTurnQueue = state.threadTurnQueueById[nextThread.id];
 
   let nextState = ensureThreadRegistered(
     state,
@@ -607,6 +686,16 @@ function writeThreadState(
       threadTurnStateById: {
         ...nextState.threadTurnStateById,
         [nextThread.id]: nextTurnState,
+      },
+    };
+  }
+
+  if (!threadTurnQueuesEqual(previousTurnQueue, nextThread.turnQueue)) {
+    nextState = {
+      ...nextState,
+      threadTurnQueueById: {
+        ...nextState.threadTurnQueueById,
+        [nextThread.id]: nextThread.turnQueue,
       },
     };
   }
@@ -669,6 +758,36 @@ function writeThreadState(
         [nextThread.id]: nextTurnDiffSlice.byId,
       },
     };
+  }
+
+  const previousSummary = nextState.sidebarThreadSummaryById[nextThread.id];
+  if (previousSummary) {
+    const nextSummary: SidebarThreadSummary = {
+      ...previousSummary,
+      title: nextThread.title,
+      interactionMode: nextThread.interactionMode,
+      session: nextThread.session,
+      createdAt: nextThread.createdAt,
+      archivedAt: nextThread.archivedAt,
+      updatedAt: nextThread.updatedAt,
+      latestTurn: nextThread.latestTurn,
+      branch: nextThread.branch,
+      worktreePath: nextThread.worktreePath,
+      latestUserMessageAt:
+        nextThread.messages.findLast((message) => message.role === "user")?.createdAt ??
+        previousSummary.latestUserMessageAt,
+      queuedTurnCount: nextThread.turnQueue.items.length,
+      turnQueueStatus: nextThread.turnQueue.status,
+    };
+    if (!sidebarThreadSummariesEqual(previousSummary, nextSummary)) {
+      nextState = {
+        ...nextState,
+        sidebarThreadSummaryById: {
+          ...nextState.sidebarThreadSummaryById,
+          [nextThread.id]: nextSummary,
+        },
+      };
+    }
   }
 
   return nextState;
@@ -789,6 +908,7 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
   const { [threadId]: _removedShell, ...threadShellById } = state.threadShellById;
   const { [threadId]: _removedSession, ...threadSessionById } = state.threadSessionById;
   const { [threadId]: _removedTurnState, ...threadTurnStateById } = state.threadTurnStateById;
+  const { [threadId]: _removedTurnQueue, ...threadTurnQueueById } = state.threadTurnQueueById;
   const { [threadId]: _removedMessageIds, ...messageIdsByThreadId } = state.messageIdsByThreadId;
   const { [threadId]: _removedMessages, ...messageByThreadId } = state.messageByThreadId;
   const { [threadId]: _removedActivityIds, ...activityIdsByThreadId } = state.activityIdsByThreadId;
@@ -809,6 +929,7 @@ function removeThreadState(state: EnvironmentState, threadId: ThreadId): Environ
     threadShellById,
     threadSessionById,
     threadTurnStateById,
+    threadTurnQueueById,
     messageIdsByThreadId,
     messageByThreadId,
     activityIdsByThreadId,
@@ -829,6 +950,69 @@ function checkpointStatusToLatestTurnState(status: "ready" | "missing" | "error"
     return "interrupted" as const;
   }
   return "completed" as const;
+}
+
+function appendQueuedTurn(
+  turnQueue: ThreadTurnQueue,
+  queuedTurn: ThreadTurnQueue["items"][number],
+): ThreadTurnQueue {
+  const existingIndex = turnQueue.items.findIndex(
+    (item) => item.messageId === queuedTurn.messageId,
+  );
+  const items =
+    existingIndex === -1
+      ? [...turnQueue.items, queuedTurn]
+      : turnQueue.items.map((item, index) => (index === existingIndex ? queuedTurn : item));
+  return {
+    items,
+    status: turnQueue.status === "paused" ? "paused" : "queued",
+    pauseReason: turnQueue.status === "paused" ? turnQueue.pauseReason : null,
+  };
+}
+
+function removeQueuedTurn(turnQueue: ThreadTurnQueue, messageId: MessageId): ThreadTurnQueue {
+  const items = turnQueue.items.filter((item) => item.messageId !== messageId);
+  if (items.length === turnQueue.items.length) {
+    return turnQueue;
+  }
+  return {
+    items,
+    status: items.length === 0 ? "idle" : turnQueue.status === "paused" ? "paused" : "queued",
+    pauseReason: items.length === 0 ? null : turnQueue.pauseReason,
+  };
+}
+
+function pauseTurnQueue(
+  turnQueue: ThreadTurnQueue,
+  reason: ThreadTurnQueue["pauseReason"],
+): ThreadTurnQueue {
+  if (turnQueue.items.length === 0) {
+    return {
+      items: [],
+      status: "idle",
+      pauseReason: null,
+    };
+  }
+  return {
+    items: turnQueue.items,
+    status: "paused",
+    pauseReason: reason,
+  };
+}
+
+function resumeTurnQueue(turnQueue: ThreadTurnQueue): ThreadTurnQueue {
+  if (turnQueue.items.length === 0) {
+    return {
+      items: [],
+      status: "idle",
+      pauseReason: null,
+    };
+  }
+  return {
+    items: turnQueue.items,
+    status: "queued",
+    pauseReason: null,
+  };
 }
 
 function compareActivities(
@@ -1007,10 +1191,6 @@ function toLegacyProvider(providerName: string | null): ProviderKind {
   return "codex";
 }
 
-function attachmentPreviewRoutePath(attachmentId: string): string {
-  return `/attachments/${encodeURIComponent(attachmentId)}`;
-}
-
 function updateThreadState(
   state: EnvironmentState,
   threadId: ThreadId,
@@ -1084,6 +1264,7 @@ function syncEnvironmentShellSnapshot(
     threadShellById: {},
     threadSessionById: {},
     threadTurnStateById: {},
+    threadTurnQueueById: retainThreadScopedRecord(state.threadTurnQueueById, nextThreadIds),
     sidebarThreadSummaryById: {},
     messageIdsByThreadId: retainThreadScopedRecord(state.messageIdsByThreadId, nextThreadIds),
     messageByThreadId: retainThreadScopedRecord(state.messageByThreadId, nextThreadIds),
@@ -1263,6 +1444,11 @@ function applyEnvironmentOrchestrationEvent(
           activities: [],
           checkpoints: [],
           session: null,
+          turnQueue: {
+            items: [],
+            status: "idle",
+            pauseReason: null,
+          },
         },
         environmentId,
       );
@@ -1323,6 +1509,34 @@ function applyEnvironmentOrchestrationEvent(
         runtimeMode: event.payload.runtimeMode,
         interactionMode: event.payload.interactionMode,
         pendingSourceProposedPlan: event.payload.sourceProposedPlan,
+        updatedAt: event.occurredAt,
+      }));
+
+    case "thread.turn-enqueued":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        turnQueue: appendQueuedTurn(thread.turnQueue, mapQueuedTurn(event.payload.queuedTurn)),
+        updatedAt: event.occurredAt,
+      }));
+
+    case "thread.turn-queue-item-removed":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        turnQueue: removeQueuedTurn(thread.turnQueue, event.payload.messageId),
+        updatedAt: event.occurredAt,
+      }));
+
+    case "thread.turn-queue-paused":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        turnQueue: pauseTurnQueue(thread.turnQueue, event.payload.reason),
+        updatedAt: event.occurredAt,
+      }));
+
+    case "thread.turn-queue-resumed":
+      return updateThreadState(state, event.payload.threadId, (thread) => ({
+        ...thread,
+        turnQueue: resumeTurnQueue(thread.turnQueue),
         updatedAt: event.occurredAt,
       }));
 
@@ -1551,6 +1765,27 @@ function applyEnvironmentOrchestrationEvent(
           ...thread,
           turnDiffSummaries,
           latestTurn,
+          updatedAt: event.occurredAt,
+        };
+      });
+
+    case "thread.turn-settled":
+      return updateThreadState(state, event.payload.threadId, (thread) => {
+        if (thread.latestTurn === null || thread.latestTurn.turnId !== event.payload.turnId) {
+          return thread;
+        }
+        return {
+          ...thread,
+          latestTurn: buildLatestTurn({
+            previous: thread.latestTurn,
+            turnId: event.payload.turnId,
+            state: event.payload.outcome,
+            requestedAt: thread.latestTurn.requestedAt,
+            startedAt: thread.latestTurn.startedAt,
+            completedAt: event.payload.settledAt,
+            assistantMessageId: thread.latestTurn.assistantMessageId,
+            sourceProposedPlan: thread.pendingSourceProposedPlan,
+          }),
           updatedAt: event.occurredAt,
         };
       });

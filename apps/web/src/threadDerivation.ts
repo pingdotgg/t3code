@@ -6,6 +6,7 @@ import type {
   Thread,
   ThreadSession,
   ThreadShell,
+  ThreadTurnQueue,
   ThreadTurnState,
   TurnDiffSummary,
 } from "./types";
@@ -18,8 +19,14 @@ const EMPTY_MESSAGE_MAP: Record<MessageId, ChatMessage> = {};
 const EMPTY_ACTIVITY_MAP: Record<string, Thread["activities"][number]> = {};
 const EMPTY_PROPOSED_PLAN_MAP: Record<string, ProposedPlan> = {};
 const EMPTY_TURN_DIFF_MAP: Record<TurnId, TurnDiffSummary> = {};
+const EMPTY_TURN_QUEUE: ThreadTurnQueue = {
+  items: [],
+  status: "idle",
+  pauseReason: null,
+};
 
 const collectedByIdsCache = new WeakMap<readonly string[], WeakMap<object, readonly unknown[]>>();
+const shellTurnQueueFallbackCache = new WeakMap<ThreadShell, ThreadTurnQueue>();
 const threadCache = new WeakMap<
   ThreadShell,
   {
@@ -29,6 +36,7 @@ const threadCache = new WeakMap<
     activities: Thread["activities"];
     proposedPlans: Thread["proposedPlans"];
     turnDiffSummaries: Thread["turnDiffSummaries"];
+    turnQueue: ThreadTurnQueue;
     thread: Thread;
   }
 >();
@@ -98,6 +106,31 @@ function selectThreadTurnDiffSummaries(
   );
 }
 
+function selectThreadTurnQueue(
+  state: EnvironmentState,
+  threadId: ThreadId,
+  shell: ThreadShell,
+): ThreadTurnQueue {
+  const turnQueue = state.threadTurnQueueById[threadId];
+  if (turnQueue) {
+    return turnQueue;
+  }
+  if (shell.queuedTurnCount === 0 && shell.turnQueueStatus === "idle") {
+    return EMPTY_TURN_QUEUE;
+  }
+  const cached = shellTurnQueueFallbackCache.get(shell);
+  if (cached) {
+    return cached;
+  }
+  const nextTurnQueue: ThreadTurnQueue = {
+    items: [],
+    status: shell.turnQueueStatus,
+    pauseReason: null,
+  };
+  shellTurnQueueFallbackCache.set(shell, nextTurnQueue);
+  return nextTurnQueue;
+}
+
 export function getThreadFromEnvironmentState(
   state: EnvironmentState,
   threadId: ThreadId,
@@ -113,6 +146,7 @@ export function getThreadFromEnvironmentState(
   const activities = selectThreadActivities(state, threadId);
   const proposedPlans = selectThreadProposedPlans(state, threadId);
   const turnDiffSummaries = selectThreadTurnDiffSummaries(state, threadId);
+  const turnQueue = selectThreadTurnQueue(state, threadId, shell);
   const cached = threadCache.get(shell);
 
   if (
@@ -122,7 +156,8 @@ export function getThreadFromEnvironmentState(
     cached.messages === messages &&
     cached.activities === activities &&
     cached.proposedPlans === proposedPlans &&
-    cached.turnDiffSummaries === turnDiffSummaries
+    cached.turnDiffSummaries === turnDiffSummaries &&
+    cached.turnQueue === turnQueue
   ) {
     return cached.thread;
   }
@@ -136,6 +171,7 @@ export function getThreadFromEnvironmentState(
     activities,
     proposedPlans,
     turnDiffSummaries,
+    turnQueue,
   };
 
   threadCache.set(shell, {
@@ -145,6 +181,7 @@ export function getThreadFromEnvironmentState(
     activities,
     proposedPlans,
     turnDiffSummaries,
+    turnQueue,
     thread,
   });
 

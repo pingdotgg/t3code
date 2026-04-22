@@ -73,6 +73,11 @@ const readModel: OrchestrationReadModel = {
       activities: [],
       proposedPlans: [],
       checkpoints: [],
+      turnQueue: {
+        items: [],
+        status: "idle",
+        pauseReason: null,
+      },
       deletedAt: null,
     },
     {
@@ -96,6 +101,11 @@ const readModel: OrchestrationReadModel = {
       activities: [],
       proposedPlans: [],
       checkpoints: [],
+      turnQueue: {
+        items: [],
+        status: "idle",
+        pauseReason: null,
+      },
       deletedAt: null,
     },
   ],

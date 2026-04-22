@@ -240,6 +240,11 @@ const makeThread = (input?: {
   worktreePath: null,
   turnDiffSummaries: [],
   activities: [],
+  turnQueue: {
+    items: [],
+    status: "idle",
+    pauseReason: null,
+  },
 });
 
 function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) {
@@ -283,6 +288,8 @@ function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) 
           updatedAt: thread.updatedAt,
           branch: thread.branch,
           worktreePath: thread.worktreePath,
+          queuedTurnCount: thread.turnQueue.items.length,
+          turnQueueStatus: thread.turnQueue.status,
         },
       ]),
     ),
@@ -298,6 +305,7 @@ function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) 
         },
       ]),
     ),
+    threadTurnQueueById: Object.fromEntries(threads.map((thread) => [thread.id, thread.turnQueue])),
     messageIdsByThreadId: Object.fromEntries(
       threads.map((thread) => [thread.id, thread.messages.map((message) => message.id)]),
     ),
@@ -481,6 +489,11 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       worktreePath: null,
       turnDiffSummaries: [],
       activities: [],
+      turnQueue: {
+        items: [],
+        status: "idle",
+        pauseReason: null,
+      },
     });
 
     expect(
@@ -518,6 +531,11 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       worktreePath: null,
       turnDiffSummaries: [],
       activities: [],
+      turnQueue: {
+        items: [],
+        status: "idle",
+        pauseReason: null,
+      },
     });
 
     expect(
@@ -564,6 +582,11 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       worktreePath: null,
       turnDiffSummaries: [],
       activities: [],
+      turnQueue: {
+        items: [],
+        status: "idle",
+        pauseReason: null,
+      },
     });
 
     expect(
@@ -607,6 +630,11 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       worktreePath: null,
       turnDiffSummaries: [],
       activities: [],
+      turnQueue: {
+        items: [],
+        status: "idle",
+        pauseReason: null,
+      },
     });
 
     expect(
@@ -650,6 +678,11 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       worktreePath: null,
       turnDiffSummaries: [],
       activities: [],
+      turnQueue: {
+        items: [],
+        status: "idle",
+        pauseReason: null,
+      },
     });
 
     expect(
@@ -700,6 +733,11 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       worktreePath: null,
       turnDiffSummaries: [],
       activities: [],
+      turnQueue: {
+        items: [],
+        status: "idle",
+        pauseReason: null,
+      },
     });
 
     expect(

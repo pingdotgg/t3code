@@ -44,6 +44,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count,
           pending_user_input_count,
           has_actionable_proposed_plan,
+          queued_turn_count,
+          turn_queue_status,
+          turn_queue_pause_reason,
           deleted_at
         )
         VALUES (
@@ -63,6 +66,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.pendingApprovalCount},
           ${row.pendingUserInputCount},
           ${row.hasActionableProposedPlan},
+          ${row.queuedTurnCount},
+          ${row.turnQueueStatus},
+          ${row.turnQueuePauseReason},
           ${row.deletedAt}
         )
         ON CONFLICT (thread_id)
@@ -82,6 +88,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count = excluded.pending_approval_count,
           pending_user_input_count = excluded.pending_user_input_count,
           has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
+          queued_turn_count = excluded.queued_turn_count,
+          turn_queue_status = excluded.turn_queue_status,
+          turn_queue_pause_reason = excluded.turn_queue_pause_reason,
           deleted_at = excluded.deleted_at
       `,
   });
@@ -108,6 +117,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          queued_turn_count AS "queuedTurnCount",
+          turn_queue_status AS "turnQueueStatus",
+          turn_queue_pause_reason AS "turnQueuePauseReason",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -136,6 +148,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          queued_turn_count AS "queuedTurnCount",
+          turn_queue_status AS "turnQueueStatus",
+          turn_queue_pause_reason AS "turnQueuePauseReason",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE project_id = ${projectId}

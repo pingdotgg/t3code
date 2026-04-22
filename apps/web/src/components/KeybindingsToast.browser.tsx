@@ -162,6 +162,11 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         activities: [],
         proposedPlans: [],
         checkpoints: [],
+        turnQueue: {
+          items: [],
+          status: "idle",
+          pauseReason: null,
+        },
         session: {
           threadId: THREAD_ID,
           status: "ready",
@@ -209,6 +214,8 @@ function toShellSnapshot(snapshot: OrchestrationReadModel) {
       hasPendingApprovals: false,
       hasPendingUserInput: false,
       hasActionableProposedPlan: false,
+      queuedTurnCount: thread.turnQueue.items.length,
+      turnQueueStatus: thread.turnQueue.status,
     })),
     updatedAt: snapshot.updatedAt,
   };

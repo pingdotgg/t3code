@@ -24,7 +24,13 @@ import {
   type AppState,
   type EnvironmentState,
 } from "./store";
-import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
+import { createThreadSelectorByRef } from "./storeSelectors";
+import {
+  DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  type SidebarThreadSummary,
+  type Thread,
+} from "./types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 const remoteEnvironmentId = EnvironmentId.make("environment-remote");
@@ -81,6 +87,11 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    turnQueue: {
+      items: [],
+      status: "idle",
+      pauseReason: null,
+    },
     ...overrides,
   };
 }
@@ -126,6 +137,8 @@ function makeState(thread: Thread): AppState {
         updatedAt: thread.updatedAt,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
+        queuedTurnCount: thread.turnQueue.items.length,
+        turnQueueStatus: thread.turnQueue.status,
       },
     },
     threadSessionById: {
@@ -138,6 +151,9 @@ function makeState(thread: Thread): AppState {
           ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
           : {}),
       },
+    },
+    threadTurnQueueById: {
+      [thread.id]: thread.turnQueue,
     },
     messageIdsByThreadId: {
       [thread.id]: thread.messages.map((message) => message.id),
@@ -179,6 +195,34 @@ function makeState(thread: Thread): AppState {
   });
 }
 
+function makeSidebarSummary(
+  thread: Thread,
+  overrides: Partial<SidebarThreadSummary> = {},
+): SidebarThreadSummary {
+  return {
+    id: thread.id,
+    environmentId: thread.environmentId,
+    projectId: thread.projectId,
+    title: thread.title,
+    interactionMode: thread.interactionMode,
+    session: thread.session,
+    createdAt: thread.createdAt,
+    archivedAt: thread.archivedAt,
+    updatedAt: thread.updatedAt,
+    latestTurn: thread.latestTurn,
+    branch: thread.branch,
+    worktreePath: thread.worktreePath,
+    latestUserMessageAt:
+      thread.messages.findLast((message) => message.role === "user")?.createdAt ?? null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    queuedTurnCount: thread.turnQueue.items.length,
+    turnQueueStatus: thread.turnQueue.status,
+    ...overrides,
+  };
+}
+
 function makeEmptyState(overrides: Partial<AppState & EnvironmentState> = {}): AppState {
   const environmentState: EnvironmentState = {
     projectIds: [],
@@ -188,6 +232,7 @@ function makeEmptyState(overrides: Partial<AppState & EnvironmentState> = {}): A
     threadShellById: {},
     threadSessionById: {},
     threadTurnStateById: {},
+    threadTurnQueueById: {},
     messageIdsByThreadId: {},
     messageByThreadId: {},
     activityIdsByThreadId: {},
@@ -349,6 +394,45 @@ describe("thread selection memoization", () => {
     expect(second).not.toBe(first);
     expect(second?.messages).toHaveLength(1);
     expect(second?.messages[0]?.text).toBe("new");
+  });
+
+  it("updates the memoized thread selector when queue detail changes", () => {
+    const thread = makeThread();
+    const ref = scopeThreadRef(thread.environmentId, thread.id);
+    const selector = createThreadSelectorByRef(ref);
+    const firstState = makeState(thread);
+    const secondState = applyOrchestrationEvent(
+      firstState,
+      makeEvent(
+        "thread.turn-enqueued",
+        {
+          threadId: thread.id,
+          queuedTurn: {
+            messageId: MessageId.make("queued-selector-1"),
+            text: "Queued selector prompt",
+            attachmentIds: [],
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5.3-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            titleSeed: "Queued selector prompt",
+            sourceProposedPlan: null,
+            queuedAt: "2026-02-27T00:00:01.000Z",
+          },
+        },
+        { sequence: 2 },
+      ),
+      localEnvironmentId,
+    );
+
+    const first = selector(firstState);
+    const second = selector(secondState);
+
+    expect(second).not.toBe(first);
+    expect(second?.turnQueue.items).toHaveLength(1);
+    expect(second?.turnQueue.items[0]?.text).toBe("Queued selector prompt");
   });
 
   it("checks thread existence without materializing the full thread", () => {
@@ -744,6 +828,129 @@ describe("incremental orchestration updates", () => {
     expect(threadsOf(next)[0]?.session?.status).toBe("running");
     expect(threadsOf(next)[0]?.latestTurn?.state).toBe("completed");
     expect(threadsOf(next)[0]?.messages).toHaveLength(1);
+  });
+
+  it("keeps queue detail and sidebar summaries in sync across queue events", () => {
+    const thread = makeThread();
+    const baseState = makeState(thread);
+    const state = withActiveEnvironmentState(localEnvironmentStateOf(baseState), {
+      sidebarThreadSummaryById: {
+        [thread.id]: makeSidebarSummary(thread),
+      },
+    });
+
+    const next = applyOrchestrationEvents(
+      state,
+      [
+        makeEvent(
+          "thread.turn-enqueued",
+          {
+            threadId: thread.id,
+            queuedTurn: {
+              messageId: MessageId.make("queued-1"),
+              text: "Queued prompt",
+              attachmentIds: ["attachment-1"],
+              modelSelection: {
+                provider: "codex",
+                model: "gpt-5.3-codex",
+              },
+              runtimeMode: "approval-required",
+              interactionMode: "plan",
+              titleSeed: "Queued prompt",
+              sourceProposedPlan: null,
+              queuedAt: "2026-02-27T00:00:01.000Z",
+            },
+          },
+          { sequence: 2 },
+        ),
+        makeEvent(
+          "thread.turn-queue-paused",
+          {
+            threadId: thread.id,
+            reason: "error",
+          },
+          { sequence: 3 },
+        ),
+        makeEvent(
+          "thread.turn-queue-resumed",
+          {
+            threadId: thread.id,
+          },
+          { sequence: 4 },
+        ),
+        makeEvent(
+          "thread.turn-queue-item-removed",
+          {
+            threadId: thread.id,
+            messageId: MessageId.make("queued-1"),
+            reason: "removed",
+          },
+          { sequence: 5 },
+        ),
+      ],
+      localEnvironmentId,
+    );
+
+    const nextEnvironmentState = localEnvironmentStateOf(next);
+    const nextThread = threadsOf(next)[0];
+    const nextShell = nextEnvironmentState.threadShellById[thread.id];
+    const nextSummary = nextEnvironmentState.sidebarThreadSummaryById[thread.id];
+
+    expect(nextThread?.turnQueue).toEqual({
+      items: [],
+      status: "idle",
+      pauseReason: null,
+    });
+    expect(nextShell?.queuedTurnCount).toBe(0);
+    expect(nextShell?.turnQueueStatus).toBe("idle");
+    expect(nextSummary?.queuedTurnCount).toBe(0);
+    expect(nextSummary?.turnQueueStatus).toBe("idle");
+  });
+
+  it("marks the latest turn terminal on thread.turn-settled and mirrors it into the sidebar", () => {
+    const thread = makeThread({
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "running",
+        requestedAt: "2026-02-27T00:00:00.000Z",
+        startedAt: "2026-02-27T00:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: MessageId.make("assistant-1"),
+      },
+    });
+    const baseState = makeState(thread);
+    const state = withActiveEnvironmentState(localEnvironmentStateOf(baseState), {
+      sidebarThreadSummaryById: {
+        [thread.id]: makeSidebarSummary(thread),
+      },
+    });
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.turn-settled", {
+        threadId: thread.id,
+        turnId: TurnId.make("turn-1"),
+        outcome: "interrupted",
+        settledAt: "2026-02-27T00:00:05.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    const nextThread = threadsOf(next)[0];
+    const nextSummary = localEnvironmentStateOf(next).sidebarThreadSummaryById[thread.id];
+
+    expect(nextThread?.latestTurn).toMatchObject({
+      turnId: TurnId.make("turn-1"),
+      state: "interrupted",
+      completedAt: "2026-02-27T00:00:05.000Z",
+      assistantMessageId: MessageId.make("assistant-1"),
+    });
+    expect(nextSummary?.latestTurn).toMatchObject({
+      turnId: TurnId.make("turn-1"),
+      state: "interrupted",
+      completedAt: "2026-02-27T00:00:05.000Z",
+      assistantMessageId: MessageId.make("assistant-1"),
+    });
   });
 
   it("does not regress latestTurn when an older turn diff completes late", () => {

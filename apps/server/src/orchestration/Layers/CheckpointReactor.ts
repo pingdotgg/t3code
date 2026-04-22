@@ -37,6 +37,13 @@ type ReactorInput =
       readonly event: OrchestrationEvent;
     };
 
+interface PendingTurnSettlement {
+  readonly threadId: ThreadId;
+  readonly turnId: TurnId;
+  readonly outcome: "completed" | "interrupted" | "error";
+  readonly settledAt: string;
+}
+
 function toTurnId(value: string | undefined): TurnId | null {
   return value === undefined ? null : TurnId.make(String(value));
 }
@@ -61,6 +68,19 @@ function checkpointStatusFromRuntime(status: string | undefined): "ready" | "mis
   }
 }
 
+function settledOutcomeFromRuntime(status: string | undefined): PendingTurnSettlement["outcome"] {
+  switch (status) {
+    case "failed":
+      return "error";
+    case "cancelled":
+    case "interrupted":
+      return "interrupted";
+    case "completed":
+    default:
+      return "completed";
+  }
+}
+
 const serverCommandId = (tag: string): CommandId =>
   CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -71,6 +91,9 @@ const make = Effect.gen(function* () {
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries;
   const gitStatusBroadcaster = yield* GitStatusBroadcaster;
+  const pendingTurnSettlements = new Map<string, PendingTurnSettlement>();
+
+  const turnSettlementKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -120,6 +143,67 @@ const make = Effect.gen(function* () {
       },
       createdAt: input.createdAt,
     });
+
+  const isTurnProcessingComplete = Effect.fn("isTurnProcessingComplete")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+  }) {
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const thread = readModel.threads.find((entry) => entry.id === input.threadId);
+    if (!thread) {
+      return true;
+    }
+    const session = thread.session;
+    if (!session) {
+      return true;
+    }
+    return (
+      session.status !== "starting" && session.status !== "running" && session.activeTurnId === null
+    );
+  });
+
+  const dispatchTurnSettled = Effect.fn("dispatchTurnSettled")(function* (
+    settlement: PendingTurnSettlement,
+  ) {
+    yield* orchestrationEngine.dispatch({
+      type: "thread.turn.settle",
+      commandId: serverCommandId("checkpoint-turn-settle"),
+      threadId: settlement.threadId,
+      turnId: settlement.turnId,
+      outcome: settlement.outcome,
+      settledAt: settlement.settledAt,
+      createdAt: settlement.settledAt,
+    });
+  });
+
+  const flushPendingTurnSettlement = Effect.fn("flushPendingTurnSettlement")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly turnId: TurnId;
+  }) {
+    const key = turnSettlementKey(input.threadId, input.turnId);
+    const settlement = pendingTurnSettlements.get(key);
+    if (!settlement) {
+      return;
+    }
+    if (!(yield* isTurnProcessingComplete(input))) {
+      return;
+    }
+    pendingTurnSettlements.delete(key);
+    yield* dispatchTurnSettled(settlement);
+  });
+
+  const queuePendingTurnSettlement = Effect.fn("queuePendingTurnSettlement")(function* (
+    settlement: PendingTurnSettlement,
+  ) {
+    pendingTurnSettlements.set(
+      turnSettlementKey(settlement.threadId, settlement.turnId),
+      settlement,
+    );
+    yield* flushPendingTurnSettlement({
+      threadId: settlement.threadId,
+      turnId: settlement.turnId,
+    });
+  });
 
   const resolveSessionRuntimeForThread = Effect.fn("resolveSessionRuntimeForThread")(function* (
     threadId: ThreadId,
@@ -745,6 +829,22 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.catch(() => Effect.void)),
         ),
       );
+      return;
+    }
+
+    if (event.type === "thread.session-set" && event.payload.session.activeTurnId === null) {
+      const pendingForThread = Array.from(pendingTurnSettlements.values()).filter(
+        (settlement) => settlement.threadId === event.payload.threadId,
+      );
+      yield* Effect.forEach(
+        pendingForThread,
+        (settlement) =>
+          flushPendingTurnSettlement({
+            threadId: settlement.threadId,
+            turnId: settlement.turnId,
+          }),
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
     }
   });
 
@@ -769,6 +869,14 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.catch(() => Effect.void)),
         ),
       );
+      if (turnId !== null) {
+        yield* queuePendingTurnSettlement({
+          threadId: event.threadId,
+          turnId,
+          outcome: settledOutcomeFromRuntime(event.payload.state),
+          settledAt: event.createdAt,
+        });
+      }
       return;
     }
   });
@@ -801,7 +909,8 @@ const make = Effect.gen(function* () {
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
           event.type !== "thread.checkpoint-revert-requested" &&
-          event.type !== "thread.turn-diff-completed"
+          event.type !== "thread.turn-diff-completed" &&
+          event.type !== "thread.session-set"
         ) {
           return Effect.void;
         }

@@ -30,6 +30,11 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    turnQueue: {
+      items: [],
+      status: "idle",
+      pauseReason: null,
+    },
     ...overrides,
   };
 }
