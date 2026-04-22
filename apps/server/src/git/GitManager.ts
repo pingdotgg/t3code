@@ -329,7 +329,12 @@ export function matchesBranchHeadContext(
   }
 
   if (pr.isCrossRepository === true) {
-    return false;
+    if (
+      (!expectedHead.repositoryNameWithOwner && !expectedHead.ownerLogin) ||
+      (!pullRequestHead.repositoryNameWithOwner && !pullRequestHead.ownerLogin)
+    ) {
+      return false;
+    }
   }
 
   return true;
