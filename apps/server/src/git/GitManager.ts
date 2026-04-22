@@ -281,7 +281,7 @@ function resolvePullRequestHeadIdentity(pr: PullRequestInfo): PullRequestHeadIde
   };
 }
 
-function matchesBranchHeadContext(
+export function matchesBranchHeadContext(
   pr: PullRequestInfo,
   headContext: Pick<
     BranchHeadContext,
@@ -297,18 +297,21 @@ function matchesBranchHeadContext(
 
   if (expectedHead.repositoryNameWithOwner) {
     if (pullRequestHead.repositoryNameWithOwner) {
-      return expectedHead.repositoryNameWithOwner === pullRequestHead.repositoryNameWithOwner;
+      if (expectedHead.repositoryNameWithOwner !== pullRequestHead.repositoryNameWithOwner) {
+        return false;
+      }
     }
     if (expectedHead.ownerLogin && pullRequestHead.ownerLogin) {
-      return expectedHead.ownerLogin === pullRequestHead.ownerLogin;
-    }
-    if (pr.isCrossRepository === true) {
-      return false;
+      if (expectedHead.ownerLogin !== pullRequestHead.ownerLogin) {
+        return false;
+      }
     }
   }
 
   if (expectedHead.ownerLogin && pullRequestHead.ownerLogin) {
-    return expectedHead.ownerLogin === pullRequestHead.ownerLogin;
+    if (expectedHead.ownerLogin !== pullRequestHead.ownerLogin) {
+      return false;
+    }
   }
 
   if (headContext.isCrossRepository) {

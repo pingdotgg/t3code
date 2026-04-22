@@ -27,7 +27,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
-import { makeGitManager } from "./GitManager.ts";
+import { makeGitManager, matchesBranchHeadContext } from "./GitManager.ts";
 import { ServerConfig } from "../config.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import {
@@ -2197,6 +2197,53 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(true);
       }),
     12_000,
+  );
+
+  it.effect("rejects same-repo PR metadata when matching a cross-repo head context", () =>
+    Effect.sync(() => {
+      const headContext = {
+        headBranch: "statemachine",
+        headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+        headRepositoryOwnerLogin: "pingdotgg",
+        isCrossRepository: true,
+      };
+
+      expect(
+        matchesBranchHeadContext(
+          {
+            number: 41,
+            title: "Same-repo PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/41",
+            baseRefName: "main",
+            headRefName: "statemachine",
+            state: "open",
+            updatedAt: null,
+            isCrossRepository: false,
+            headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+            headRepositoryOwnerLogin: "pingdotgg",
+          },
+          headContext,
+        ),
+      ).toBe(false);
+
+      expect(
+        matchesBranchHeadContext(
+          {
+            number: 142,
+            title: "Fork PR",
+            url: "https://github.com/pingdotgg/codething-mvp/pull/142",
+            baseRefName: "main",
+            headRefName: "statemachine",
+            state: "open",
+            updatedAt: null,
+            isCrossRepository: true,
+            headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
+            headRepositoryOwnerLogin: "pingdotgg",
+          },
+          headContext,
+        ),
+      ).toBe(true);
+    }),
   );
 
   it.effect("creates PR when one does not already exist", () =>
