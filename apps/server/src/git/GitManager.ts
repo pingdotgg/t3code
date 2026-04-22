@@ -314,7 +314,17 @@ function matchesBranchHeadContext(
   }
 
   if (headContext.isCrossRepository) {
-    return pr.isCrossRepository !== false;
+    if (pr.isCrossRepository === false) {
+      return false;
+    }
+    if (
+      (expectedHead.repositoryNameWithOwner || expectedHead.ownerLogin) &&
+      !pullRequestHead.repositoryNameWithOwner &&
+      !pullRequestHead.ownerLogin
+    ) {
+      return false;
+    }
+    return true;
   }
 
   if (pr.isCrossRepository === true) {
