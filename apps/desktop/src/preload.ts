@@ -26,6 +26,25 @@ const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environmen
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
 
+const openProjectPathListeners = new Set<(path: string) => void>();
+const pendingOpenProjectPaths: string[] = [];
+
+function dispatchOpenProjectPath(path: string): void {
+  if (!openProjectPathListeners.size) {
+    pendingOpenProjectPaths.push(path);
+    return;
+  }
+
+  for (const listener of openProjectPathListeners) {
+    listener(path);
+  }
+}
+
+ipcRenderer.on(OPEN_PROJECT_PATH_CHANNEL, (_event: Electron.IpcRendererEvent, path: unknown) => {
+  if (typeof path !== "string") return;
+  dispatchOpenProjectPath(path);
+});
+
 contextBridge.exposeInMainWorld("desktopBridge", {
   getAppBranding: () => {
     const result = ipcRenderer.sendSync(GET_APP_BRANDING_CHANNEL);
@@ -71,14 +90,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     };
   },
   onOpenProjectPath: (listener) => {
-    const wrappedListener = (_event: Electron.IpcRendererEvent, path: unknown) => {
-      if (typeof path !== "string") return;
+    openProjectPathListeners.add(listener);
+    for (const path of pendingOpenProjectPaths.splice(0)) {
       listener(path);
-    };
-
-    ipcRenderer.on(OPEN_PROJECT_PATH_CHANNEL, wrappedListener);
+    }
     return () => {
-      ipcRenderer.removeListener(OPEN_PROJECT_PATH_CHANNEL, wrappedListener);
+      openProjectPathListeners.delete(listener);
     };
   },
   getUpdateState: () => ipcRenderer.invoke(UPDATE_GET_STATE_CHANNEL),
