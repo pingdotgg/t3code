@@ -643,9 +643,9 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
       persistState(get());
     }
   },
-  reorderProjects: (draggedProjectId, targetProjectId) => {
+  reorderProjects: (draggedProjectIds, targetProjectIds) => {
     const previousState = get();
-    set((state) => reorderProjects(state, draggedProjectId, targetProjectId));
+    set((state) => reorderProjects(state, draggedProjectIds, targetProjectIds));
     if (get() !== previousState) {
       persistState(get());
     }
