@@ -1,11 +1,5 @@
 import { Effect, Option, Schema, SchemaIssue, Struct } from "effect";
-import {
-  ClaudeModelOptions,
-  CodexModelOptions,
-  CursorModelOptions,
-  GeminiModelOptions,
-  OpenCodeModelOptions,
-} from "./model.ts";
+import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity } from "./environment.ts";
 import {
   ApprovalRequestId,
@@ -58,33 +52,33 @@ export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
 export const CodexModelSelection = Schema.Struct({
   provider: Schema.Literal("codex"),
   model: TrimmedNonEmptyString,
-  options: Schema.optionalKey(CodexModelOptions),
+  options: Schema.optionalKey(ProviderOptionSelections),
 });
 export type CodexModelSelection = typeof CodexModelSelection.Type;
 
 export const ClaudeModelSelection = Schema.Struct({
   provider: Schema.Literal("claudeAgent"),
   model: TrimmedNonEmptyString,
-  options: Schema.optionalKey(ClaudeModelOptions),
+  options: Schema.optionalKey(ProviderOptionSelections),
 });
 export type ClaudeModelSelection = typeof ClaudeModelSelection.Type;
 
 export const CursorModelSelection = Schema.Struct({
   provider: Schema.Literal("cursor"),
   model: TrimmedNonEmptyString,
-  options: Schema.optionalKey(CursorModelOptions),
+  options: Schema.optionalKey(ProviderOptionSelections),
 });
 export type CursorModelSelection = typeof CursorModelSelection.Type;
 export const GeminiModelSelection = Schema.Struct({
   provider: Schema.Literal("gemini"),
   model: TrimmedNonEmptyString,
-  options: Schema.optionalKey(GeminiModelOptions),
+  options: Schema.optionalKey(ProviderOptionSelections),
 });
 export type GeminiModelSelection = typeof GeminiModelSelection.Type;
 export const OpenCodeModelSelection = Schema.Struct({
   provider: Schema.Literal("opencode"),
   model: TrimmedNonEmptyString,
-  options: Schema.optionalKey(OpenCodeModelOptions),
+  options: Schema.optionalKey(ProviderOptionSelections),
 });
 export type OpenCodeModelSelection = typeof OpenCodeModelSelection.Type;
 

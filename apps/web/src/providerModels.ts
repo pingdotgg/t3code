@@ -1,6 +1,5 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
-  type CursorModelOptions,
   type ModelCapabilities,
   type ProviderKind,
   type ServerProvider,
@@ -9,21 +8,22 @@ import {
 import {
   EMPTY_MODEL_CAPABILITIES,
   geminiCapabilitiesForModel,
-  hasEffortLevel,
   normalizeModelSlug,
-  resolveContextWindow,
-  trimOrNull,
 } from "@t3tools/shared/model";
 
-function hasDeclaredCapabilities(capabilities: ModelCapabilities): boolean {
-  return (
-    capabilities.reasoningEffortLevels.length > 0 ||
-    capabilities.supportsFastMode ||
-    capabilities.supportsThinkingToggle ||
-    capabilities.contextWindowOptions.length > 0 ||
-    capabilities.promptInjectedEffortLevels.length > 0
-  );
+export function formatProviderKindLabel(provider: ProviderKind): string {
+  return provider
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
+
+function hasDeclaredCapabilities(capabilities: ModelCapabilities): boolean {
+  return (capabilities.optionDescriptors?.length ?? 0) > 0;
+}
+
+const EMPTY_CAPABILITIES: ModelCapabilities = EMPTY_MODEL_CAPABILITIES;
 
 export function getProviderModels(
   providers: ReadonlyArray<ServerProvider>,
@@ -37,6 +37,21 @@ export function getProviderSnapshot(
   provider: ProviderKind,
 ): ServerProvider | undefined {
   return providers.find((candidate) => candidate.provider === provider);
+}
+
+export function getProviderDisplayName(
+  providers: ReadonlyArray<ServerProvider>,
+  provider: ProviderKind,
+): string {
+  const snapshot = getProviderSnapshot(providers, provider);
+  return snapshot?.displayName?.trim() || formatProviderKindLabel(provider);
+}
+
+export function getProviderInteractionModeToggle(
+  providers: ReadonlyArray<ServerProvider>,
+  provider: ProviderKind,
+): boolean {
+  return getProviderSnapshot(providers, provider)?.showInteractionModeToggle ?? true;
 }
 
 export function isProviderEnabled(
@@ -67,17 +82,17 @@ export function getProviderModelCapabilities(
 ): ModelCapabilities {
   const slug = normalizeModelSlug(model, provider);
   if (!slug) {
-    return EMPTY_MODEL_CAPABILITIES;
+    return EMPTY_CAPABILITIES;
   }
 
   const capabilities = models.find((candidate) => candidate.slug === slug)?.capabilities;
   if (provider === "gemini") {
     return capabilities && hasDeclaredCapabilities(capabilities)
       ? capabilities
-      : geminiCapabilitiesForModel(slug, capabilities ?? EMPTY_MODEL_CAPABILITIES);
+      : geminiCapabilitiesForModel(slug, capabilities ?? EMPTY_CAPABILITIES);
   }
 
-  return capabilities ?? EMPTY_MODEL_CAPABILITIES;
+  return capabilities ?? EMPTY_CAPABILITIES;
 }
 
 export function getDefaultServerModel(
@@ -90,31 +105,4 @@ export function getDefaultServerModel(
     models[0]?.slug ??
     DEFAULT_MODEL_BY_PROVIDER[provider]
   );
-}
-
-export function normalizeCursorModelOptionsWithCapabilities(
-  caps: ModelCapabilities,
-  modelOptions: CursorModelOptions | null | undefined,
-): CursorModelOptions | undefined {
-  const reasoning = trimOrNull(modelOptions?.reasoning);
-  const reasoningValue =
-    reasoning && hasEffortLevel(caps, reasoning)
-      ? (reasoning as CursorModelOptions["reasoning"])
-      : undefined;
-  const fastMode =
-    caps.supportsFastMode && typeof modelOptions?.fastMode === "boolean"
-      ? modelOptions.fastMode
-      : undefined;
-  const thinking =
-    caps.supportsThinkingToggle && typeof modelOptions?.thinking === "boolean"
-      ? modelOptions.thinking
-      : undefined;
-  const contextWindow = resolveContextWindow(caps, modelOptions?.contextWindow);
-  const nextOptions: CursorModelOptions = {
-    ...(reasoningValue ? { reasoning: reasoningValue } : {}),
-    ...(fastMode !== undefined ? { fastMode } : {}),
-    ...(thinking !== undefined ? { thinking } : {}),
-    ...(contextWindow ? { contextWindow } : {}),
-  };
-  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }

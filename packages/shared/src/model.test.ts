@@ -1,84 +1,73 @@
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_MODEL_BY_PROVIDER,
-  type GeminiModelOptions,
-  type ModelCapabilities,
-} from "@t3tools/contracts";
+import { DEFAULT_MODEL_BY_PROVIDER, type ModelCapabilities } from "@t3tools/contracts";
 
 import {
   applyClaudePromptEffortPrefix,
-  DEFAULT_GEMINI_MODEL_CAPABILITIES,
+  buildProviderOptionSelectionsFromDescriptors,
+  createModelCapabilities,
+  createModelSelection,
   geminiCapabilitiesForModel,
-  geminiModelOptionsFromEffortValue,
-  getDefaultContextWindow,
-  getDefaultEffort,
   getGeminiThinkingConfigKind,
   getGeminiThinkingModelAlias,
-  GEMINI_2_5_MODEL_CAPABILITIES,
-  GEMINI_3_MODEL_CAPABILITIES,
-  hasContextWindowOption,
-  hasEffortLevel,
+  getModelSelectionBooleanOptionValue,
+  getModelSelectionStringOptionValue,
+  getProviderOptionBooleanSelectionValue,
+  getProviderOptionDescriptors,
+  getProviderOptionStringSelectionValue,
   isClaudeUltrathinkPrompt,
-  mergeGeminiModelOptions,
-  normalizeClaudeModelOptionsWithCapabilities,
-  normalizeCodexModelOptionsWithCapabilities,
-  normalizeGeminiModelOptionsWithCapabilities,
   normalizeModelSlug,
-  resolveContextWindow,
-  resolveEffort,
   resolveApiModelId,
   resolveModelSlugForProvider,
   resolveSelectableModel,
   trimOrNull,
 } from "./model.ts";
 
-const codexCaps: ModelCapabilities = {
-  reasoningEffortLevels: [
-    { value: "xhigh", label: "Extra High" },
-    { value: "high", label: "High", isDefault: true },
+const codexCaps: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    {
+      id: "reasoningEffort",
+      label: "Reasoning",
+      type: "select",
+      options: [
+        { id: "xhigh", label: "Extra High" },
+        { id: "high", label: "High", isDefault: true },
+      ],
+      currentValue: "high",
+    },
+    {
+      id: "fastMode",
+      label: "Fast Mode",
+      type: "boolean",
+    },
   ],
-  supportsFastMode: true,
-  supportsThinkingToggle: false,
-  contextWindowOptions: [],
-  promptInjectedEffortLevels: [],
-};
+});
 
-const claudeCaps: ModelCapabilities = {
-  reasoningEffortLevels: [
-    { value: "medium", label: "Medium" },
-    { value: "high", label: "High", isDefault: true },
-    { value: "ultrathink", label: "Ultrathink" },
+const claudeCaps: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    {
+      id: "effort",
+      label: "Reasoning",
+      type: "select",
+      options: [
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High", isDefault: true },
+        { id: "ultrathink", label: "Ultrathink" },
+      ],
+      currentValue: "high",
+      promptInjectedValues: ["ultrathink"],
+    },
+    {
+      id: "contextWindow",
+      label: "Context Window",
+      type: "select",
+      options: [
+        { id: "200k", label: "200k" },
+        { id: "1m", label: "1M", isDefault: true },
+      ],
+      currentValue: "1m",
+    },
   ],
-  supportsFastMode: false,
-  supportsThinkingToggle: false,
-  contextWindowOptions: [
-    { value: "200k", label: "200k" },
-    { value: "1m", label: "1M", isDefault: true },
-  ],
-  promptInjectedEffortLevels: ["ultrathink"],
-};
-
-const gemini3Caps: ModelCapabilities = {
-  reasoningEffortLevels: [
-    { value: "HIGH", label: "High", isDefault: true },
-    { value: "LOW", label: "Low" },
-  ],
-  supportsFastMode: false,
-  supportsThinkingToggle: false,
-  contextWindowOptions: [],
-  promptInjectedEffortLevels: [],
-};
-
-const gemini25Caps: ModelCapabilities = {
-  reasoningEffortLevels: [
-    { value: "-1", label: "Dynamic", isDefault: true },
-    { value: "512", label: "512 Tokens" },
-  ],
-  supportsFastMode: false,
-  supportsThinkingToggle: false,
-  contextWindowOptions: [],
-  promptInjectedEffortLevels: [],
-};
+});
 
 describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
@@ -122,54 +111,6 @@ describe("resolveSelectableModel", () => {
   });
 });
 
-describe("capability helpers", () => {
-  it("reads default efforts", () => {
-    expect(getDefaultEffort(codexCaps)).toBe("high");
-    expect(getDefaultEffort(claudeCaps)).toBe("high");
-  });
-
-  it("checks effort support", () => {
-    expect(hasEffortLevel(codexCaps, "xhigh")).toBe(true);
-    expect(hasEffortLevel(codexCaps, "max")).toBe(false);
-  });
-});
-
-describe("resolveEffort", () => {
-  it("returns the explicit value when supported and not prompt-injected", () => {
-    expect(resolveEffort(codexCaps, "xhigh")).toBe("xhigh");
-    expect(resolveEffort(codexCaps, "high")).toBe("high");
-    expect(resolveEffort(claudeCaps, "medium")).toBe("medium");
-  });
-
-  it("falls back to default when value is unsupported", () => {
-    expect(resolveEffort(codexCaps, "bogus")).toBe("high");
-    expect(resolveEffort(claudeCaps, "bogus")).toBe("high");
-  });
-
-  it("returns the default when no value is provided", () => {
-    expect(resolveEffort(codexCaps, undefined)).toBe("high");
-    expect(resolveEffort(codexCaps, null)).toBe("high");
-    expect(resolveEffort(codexCaps, "")).toBe("high");
-    expect(resolveEffort(codexCaps, "  ")).toBe("high");
-  });
-
-  it("excludes prompt-injected efforts and falls back to default", () => {
-    expect(resolveEffort(claudeCaps, "ultrathink")).toBe("high");
-  });
-
-  it("returns undefined for models with no effort levels", () => {
-    const noCaps: ModelCapabilities = {
-      reasoningEffortLevels: [],
-      supportsFastMode: false,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    };
-    expect(resolveEffort(noCaps, undefined)).toBeUndefined();
-    expect(resolveEffort(noCaps, "high")).toBeUndefined();
-  });
-});
-
 describe("misc helpers", () => {
   it("detects ultrathink prompts", () => {
     expect(isClaudeUltrathinkPrompt("Please ultrathink about this")).toBe(true);
@@ -192,256 +133,172 @@ describe("misc helpers", () => {
   });
 });
 
-describe("context window helpers", () => {
-  it("reads default context window", () => {
-    expect(getDefaultContextWindow(claudeCaps)).toBe("1m");
-  });
-
-  it("returns null for models without context window options", () => {
-    expect(getDefaultContextWindow(codexCaps)).toBeNull();
-  });
-
-  it("checks context window support", () => {
-    expect(hasContextWindowOption(claudeCaps, "1m")).toBe(true);
-    expect(hasContextWindowOption(claudeCaps, "200k")).toBe(true);
-    expect(hasContextWindowOption(claudeCaps, "bogus")).toBe(false);
-    expect(hasContextWindowOption(codexCaps, "1m")).toBe(false);
-  });
-});
-
-describe("resolveContextWindow", () => {
-  it("returns the explicit value when supported", () => {
-    expect(resolveContextWindow(claudeCaps, "200k")).toBe("200k");
-    expect(resolveContextWindow(claudeCaps, "1m")).toBe("1m");
-  });
-
-  it("falls back to default when value is unsupported", () => {
-    expect(resolveContextWindow(claudeCaps, "bogus")).toBe("1m");
-  });
-
-  it("returns the default when no value is provided", () => {
-    expect(resolveContextWindow(claudeCaps, undefined)).toBe("1m");
-    expect(resolveContextWindow(claudeCaps, null)).toBe("1m");
-    expect(resolveContextWindow(claudeCaps, "")).toBe("1m");
-  });
-
-  it("returns undefined for models with no context window options", () => {
-    expect(resolveContextWindow(codexCaps, undefined)).toBeUndefined();
-    expect(resolveContextWindow(codexCaps, "1m")).toBeUndefined();
-  });
-});
-
-describe("resolveApiModelId", () => {
-  it("appends [1m] suffix for 1m context window", () => {
+describe("descriptor helpers", () => {
+  it("applies selection values to capability descriptors", () => {
     expect(
-      resolveApiModelId({
-        provider: "claudeAgent",
-        model: "claude-opus-4-6",
-        options: { contextWindow: "1m" },
+      getProviderOptionDescriptors({
+        caps: claudeCaps,
+        selections: [
+          { id: "effort", value: "medium" },
+          { id: "contextWindow", value: "200k" },
+        ],
       }),
-    ).toBe("claude-opus-4-6[1m]");
+    ).toEqual([
+      {
+        id: "effort",
+        label: "Reasoning",
+        type: "select",
+        options: [
+          { id: "medium", label: "Medium" },
+          { id: "high", label: "High", isDefault: true },
+          { id: "ultrathink", label: "Ultrathink" },
+        ],
+        currentValue: "medium",
+        promptInjectedValues: ["ultrathink"],
+      },
+      {
+        id: "contextWindow",
+        label: "Context Window",
+        type: "select",
+        options: [
+          { id: "200k", label: "200k" },
+          { id: "1m", label: "1M", isDefault: true },
+        ],
+        currentValue: "200k",
+      },
+    ]);
   });
 
-  it("returns the model as-is for 200k context window", () => {
+  it("builds wire-format option selections from descriptors", () => {
+    const descriptors = getProviderOptionDescriptors({
+      caps: codexCaps,
+      selections: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ],
+    });
+
+    expect(buildProviderOptionSelectionsFromDescriptors(descriptors)).toEqual([
+      { id: "reasoningEffort", value: "high" },
+      { id: "fastMode", value: true },
+    ]);
+  });
+
+  it("stores option selection arrays in model selections", () => {
     expect(
-      resolveApiModelId({
-        provider: "claudeAgent",
-        model: "claude-opus-4-6",
-        options: { contextWindow: "200k" },
-      }),
-    ).toBe("claude-opus-4-6");
+      createModelSelection("codex", "gpt-5.4", [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ]),
+    ).toEqual({
+      provider: "codex",
+      model: "gpt-5.4",
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ],
+    });
   });
 
-  it("returns the model as-is when no context window is set", () => {
-    expect(resolveApiModelId({ provider: "claudeAgent", model: "claude-opus-4-6" })).toBe(
-      "claude-opus-4-6",
+  it("reads typed option selection values", () => {
+    const selection = createModelSelection("codex", "gpt-5.4", [
+      { id: "reasoningEffort", value: "high" },
+      { id: "fastMode", value: true },
+    ]);
+
+    expect(getProviderOptionStringSelectionValue(selection.options, "reasoningEffort")).toBe(
+      "high",
     );
+    expect(getProviderOptionStringSelectionValue(selection.options, "fastMode")).toBeUndefined();
+    expect(getProviderOptionBooleanSelectionValue(selection.options, "fastMode")).toBe(true);
     expect(
-      resolveApiModelId({ provider: "claudeAgent", model: "claude-opus-4-6", options: {} }),
-    ).toBe("claude-opus-4-6");
-  });
-
-  it("returns the model as-is for Codex selections", () => {
-    expect(resolveApiModelId({ provider: "codex", model: "gpt-5.4" })).toBe("gpt-5.4");
-  });
-
-  it("maps Gemini 3 thinking selections to a generated alias", () => {
-    expect(
-      resolveApiModelId({
-        provider: "gemini",
-        model: "auto-gemini-3",
-        options: { thinkingLevel: "LOW" },
-      }),
-    ).toBe("t3code-gemini-auto-gemini-3-thinking-level-low");
-  });
-
-  it("maps Gemini 2.5 thinking budgets to a generated alias", () => {
-    expect(
-      resolveApiModelId({
-        provider: "gemini",
-        model: "gemini-2.5-flash",
-        options: { thinkingBudget: 0 },
-      }),
-    ).toBe("gemini-2.5-flash");
+      getProviderOptionBooleanSelectionValue(selection.options, "reasoningEffort"),
+    ).toBeUndefined();
+    expect(getModelSelectionStringOptionValue(selection, "reasoningEffort")).toBe("high");
+    expect(getModelSelectionBooleanOptionValue(selection, "fastMode")).toBe(true);
   });
 });
 
-describe("normalize*ModelOptionsWithCapabilities", () => {
-  it("preserves explicit false codex fast mode", () => {
-    expect(
-      normalizeCodexModelOptionsWithCapabilities(codexCaps, {
-        reasoningEffort: "high",
-        fastMode: false,
-      }),
-    ).toEqual({
-      reasoningEffort: "high",
-      fastMode: false,
-    });
-  });
-
-  it("preserves the default Claude context window explicitly", () => {
-    expect(
-      normalizeClaudeModelOptionsWithCapabilities(
-        {
-          ...claudeCaps,
-          contextWindowOptions: [
-            { value: "200k", label: "200k", isDefault: true },
-            { value: "1m", label: "1M" },
-          ],
-        },
-        {
-          effort: "high",
-          contextWindow: "200k",
-        },
-      ),
-    ).toEqual({
-      effort: "high",
-      contextWindow: "200k",
-    });
-  });
-
-  it("omits unsupported Claude context window options", () => {
-    expect(
-      normalizeClaudeModelOptionsWithCapabilities(
-        {
-          ...claudeCaps,
-          reasoningEffortLevels: [],
-          supportsThinkingToggle: true,
-          contextWindowOptions: [],
-        },
-        {
-          thinking: true,
-          contextWindow: "1m",
-        },
-      ),
-    ).toEqual({
-      thinking: true,
-    });
-  });
-
-  it("normalizes Gemini 3 selections to thinkingLevel values", () => {
-    expect(
-      normalizeGeminiModelOptionsWithCapabilities(gemini3Caps, {
-        thinkingBudget: 512,
-      }),
-    ).toEqual({
-      thinkingLevel: "HIGH",
-    });
-
-    expect(
-      normalizeGeminiModelOptionsWithCapabilities(gemini3Caps, {
-        thinkingLevel: "LOW",
-      }),
-    ).toEqual({
-      thinkingLevel: "LOW",
-    });
-  });
-
-  it("normalizes Gemini 2.5 selections to thinkingBudget values", () => {
-    expect(normalizeGeminiModelOptionsWithCapabilities(gemini25Caps, undefined)).toEqual({
-      thinkingBudget: -1,
-    });
-
-    expect(
-      normalizeGeminiModelOptionsWithCapabilities(gemini25Caps, {
-        thinkingLevel: "LOW",
-        thinkingBudget: 0,
-      }),
-    ).toEqual({
-      thinkingBudget: -1,
-    });
-  });
-});
-
-describe("Gemini helpers", () => {
-  it("classifies Gemini model families for thinking config", () => {
+describe("gemini helpers", () => {
+  it("classifies Gemini families for thinking controls", () => {
     expect(getGeminiThinkingConfigKind("auto-gemini-3")).toBe("level");
     expect(getGeminiThinkingConfigKind("gemini-3.1-pro-preview")).toBe("level");
     expect(getGeminiThinkingConfigKind("auto-gemini-2.5")).toBe("budget");
     expect(getGeminiThinkingConfigKind("gemini-2.5-flash")).toBe("budget");
-    expect(getGeminiThinkingConfigKind("custom-model")).toBeNull();
   });
 
-  it("builds Gemini model options from effort values", () => {
-    expect(geminiModelOptionsFromEffortValue("HIGH")).toEqual({ thinkingLevel: "HIGH" });
-    expect(geminiModelOptionsFromEffortValue("512")).toEqual({ thinkingBudget: 512 });
-    expect(geminiModelOptionsFromEffortValue("bogus")).toBeUndefined();
-  });
-
-  it("merges Gemini model options while clearing incompatible thinking fields", () => {
-    expect(
-      mergeGeminiModelOptions(
-        {
-          thinkingBudget: 0,
-        },
-        { thinkingLevel: "LOW" },
-      ),
-    ).toEqual({
-      thinkingLevel: "LOW",
-    });
-
-    expect(
-      mergeGeminiModelOptions(
-        {
-          thinkingLevel: "HIGH",
-          keepFutureOption: true,
-        } as GeminiModelOptions,
-        { thinkingBudget: 512 },
-      ),
-    ).toMatchObject({
-      thinkingBudget: 512,
-      keepFutureOption: true,
-    });
-  });
-
-  it("builds Gemini thinking aliases only for matching model families", () => {
-    expect(
-      getGeminiThinkingModelAlias("auto-gemini-3", {
-        thinkingLevel: "HIGH",
-      }),
-    ).toBe("t3code-gemini-auto-gemini-3-thinking-level-high");
-    expect(
-      getGeminiThinkingModelAlias("gemini-2.5-pro", {
-        thinkingBudget: -1,
-      }),
-    ).toBe("t3code-gemini-gemini-2-5-pro-thinking-budget-dynamic");
-    expect(
-      getGeminiThinkingModelAlias("custom-model", {
-        thinkingLevel: "HIGH",
-      }),
-    ).toBeNull();
-    expect(
-      getGeminiThinkingModelAlias("gemini-2.5-flash", {
-        thinkingBudget: 0,
-      }),
-    ).toBeNull();
-  });
-
-  it("maps Gemini model families to capability presets", () => {
+  it("infers Gemini capabilities by family", () => {
     expect(geminiCapabilitiesForModel("gemini-3.1-pro-preview")).toEqual(
-      GEMINI_3_MODEL_CAPABILITIES,
+      createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "thinking",
+            label: "Thinking",
+            type: "select",
+            options: [
+              { id: "HIGH", label: "High", isDefault: true },
+              { id: "LOW", label: "Low" },
+            ],
+            currentValue: "HIGH",
+          },
+        ],
+      }),
     );
-    expect(geminiCapabilitiesForModel("gemini-2.5-flash")).toEqual(GEMINI_2_5_MODEL_CAPABILITIES);
-    expect(geminiCapabilitiesForModel("custom-model")).toEqual(DEFAULT_GEMINI_MODEL_CAPABILITIES);
+    expect(geminiCapabilitiesForModel("gemini-2.5-flash")).toEqual(
+      createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "thinking",
+            label: "Thinking",
+            type: "select",
+            options: [
+              { id: "-1", label: "Dynamic", isDefault: true },
+              { id: "512", label: "512 Tokens" },
+            ],
+            currentValue: "-1",
+          },
+        ],
+      }),
+    );
+  });
+
+  it("builds Gemini thinking aliases from generic selection arrays", () => {
+    expect(getGeminiThinkingModelAlias("auto-gemini-3", [{ id: "thinking", value: "LOW" }])).toBe(
+      "t3code-gemini-auto-gemini-3-thinking-level-low",
+    );
+    expect(getGeminiThinkingModelAlias("gemini-2.5-pro", [{ id: "thinking", value: "-1" }])).toBe(
+      "t3code-gemini-gemini-2-5-pro-thinking-budget-dynamic",
+    );
+    expect(
+      getGeminiThinkingModelAlias("gemini-2.5-flash", [{ id: "thinking", value: "0" }]),
+    ).toBeNull();
+  });
+});
+
+describe("resolveApiModelId", () => {
+  it("appends [1m] suffix for Claude 1m context windows", () => {
+    expect(
+      resolveApiModelId(
+        createModelSelection("claudeAgent", "claude-opus-4-6", [
+          { id: "contextWindow", value: "1m" },
+        ]),
+      ),
+    ).toBe("claude-opus-4-6[1m]");
+  });
+
+  it("maps Gemini thinking selections to generated aliases", () => {
+    expect(
+      resolveApiModelId(
+        createModelSelection("gemini", "auto-gemini-3", [{ id: "thinking", value: "LOW" }]),
+      ),
+    ).toBe("t3code-gemini-auto-gemini-3-thinking-level-low");
+  });
+
+  it("returns the original model when Gemini selection is unsupported", () => {
+    expect(
+      resolveApiModelId(
+        createModelSelection("gemini", "gemini-2.5-flash", [{ id: "thinking", value: "0" }]),
+      ),
+    ).toBe("gemini-2.5-flash");
   });
 });

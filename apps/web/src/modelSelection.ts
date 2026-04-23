@@ -2,23 +2,24 @@ import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   type ModelSelection,
   type ProviderKind,
-  type ProviderModelOptions,
+  type ProviderOptionSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { UnifiedSettings } from "@t3tools/contracts/settings";
 import {
   createModelSelection,
   normalizeModelSlug,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
-import { getComposerProviderState } from "./components/chat/composerProviderRegistry";
-import { UnifiedSettings } from "@t3tools/contracts/settings";
+
+import { getComposerProviderState } from "./components/chat/composerProviderState";
+import { type ModelEsque } from "./components/chat/providerIconUtils";
+import { formatAppModelOptionName } from "./providerModelNames";
 import {
   getDefaultServerModel,
   getProviderModels,
   resolveSelectableProvider,
 } from "./providerModels";
-import { type ModelEsque } from "./components/chat/providerIconUtils";
-import { formatAppModelOptionName } from "./providerModelNames";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
@@ -82,7 +83,7 @@ export const MODEL_PROVIDER_SETTINGS = Object.values(PROVIDER_CUSTOM_MODEL_CONFI
 export function buildModelSelection(input: {
   provider: ProviderKind;
   model: string;
-  options?: ProviderModelOptions[ProviderKind];
+  options?: ReadonlyArray<ProviderOptionSelection> | null;
 }): ModelSelection {
   return createModelSelection(input.provider, input.model, input.options);
 }
@@ -122,15 +123,20 @@ export function getAppModelOptions(
   provider: ProviderKind,
   selectedModel?: string | null,
 ): AppModelOption[] {
-  const options: AppModelOption[] = getProviderModels(providers, provider).map(
-    ({ slug, name, shortName, subProvider, isCustom }) => ({
-      slug,
-      name,
-      ...(shortName ? { shortName } : {}),
-      ...(subProvider ? { subProvider } : {}),
-      isCustom,
-    }),
-  );
+  const options: AppModelOption[] = getProviderModels(providers, provider).map((model) => {
+    const option: AppModelOption = {
+      slug: model.slug,
+      name: model.name,
+      isCustom: model.isCustom,
+    };
+    if (model.shortName) {
+      option.shortName = model.shortName;
+    }
+    if (model.subProvider) {
+      option.subProvider = model.subProvider;
+    }
+    return option;
+  });
   const seen = new Set(options.map((option) => option.slug));
   const trimmedSelectedModel = selectedModel?.trim().toLowerCase();
   const builtInModelSlugs = new Set(
@@ -236,8 +242,6 @@ export function resolveAppModelSelectionState(
   };
   const provider = resolveSelectableProvider(providers, selection.provider);
 
-  // When the provider changed due to fallback (e.g. selected provider was disabled),
-  // don't carry over the old provider's model — use the fallback provider's default.
   const selectedModel = provider === selection.provider ? selection.model : null;
   const model = resolveAppModelSelection(provider, settings, providers, selectedModel);
   const { modelOptionsForDispatch } = getComposerProviderState({
@@ -245,9 +249,7 @@ export function resolveAppModelSelectionState(
     model,
     models: getProviderModels(providers, provider),
     prompt: "",
-    modelOptions: {
-      [provider]: provider === selection.provider ? selection.options : undefined,
-    },
+    modelOptions: provider === selection.provider ? selection.options : undefined,
   });
 
   return createModelSelection(provider, model, modelOptionsForDispatch);

@@ -6,6 +6,7 @@ import {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { describe, expect, it } from "vitest";
 import { Effect } from "effect";
 
@@ -162,14 +163,10 @@ describe("decider project scripts", () => {
             text: "hello",
             attachments: [],
           },
-          modelSelection: {
-            provider: "codex",
-            model: "gpt-5.3-codex",
-            options: {
-              reasoningEffort: "high",
-              fastMode: true,
-            },
-          },
+          modelSelection: createModelSelection("codex", "gpt-5.3-codex", [
+            { id: "reasoningEffort", value: "high" },
+            { id: "fastMode", value: true },
+          ]),
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
           createdAt: now,
@@ -191,14 +188,10 @@ describe("decider project scripts", () => {
     expect(turnStartEvent.payload).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       messageId: asMessageId("message-user-1"),
-      modelSelection: {
-        provider: "codex",
-        model: "gpt-5.3-codex",
-        options: {
-          reasoningEffort: "high",
-          fastMode: true,
-        },
-      },
+      modelSelection: createModelSelection("codex", "gpt-5.3-codex", [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ]),
       runtimeMode: "approval-required",
     });
   });

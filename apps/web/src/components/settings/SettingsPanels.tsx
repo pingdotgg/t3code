@@ -11,7 +11,6 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
-  PROVIDER_DISPLAY_NAMES,
   type DesktopUpdateChannel,
   type ScopedThreadRef,
   type ProviderKind,
@@ -79,6 +78,7 @@ import {
   useServerObservability,
   useServerProviders,
 } from "../../rpc/serverState";
+import { formatProviderKindLabel } from "../../providerModels";
 
 const THEME_OPTIONS = [
   {
@@ -1184,7 +1184,9 @@ export function GeneralSettingsPanel() {
           const customModelInput = customModelInputByProvider[providerCard.provider];
           const customModelError = customModelErrorByProvider[providerCard.provider] ?? null;
           const providerDisplayName =
-            PROVIDER_DISPLAY_NAMES[providerCard.provider] ?? providerCard.title;
+            providerCard.liveProvider?.displayName?.trim() ||
+            providerCard.title ||
+            formatProviderKindLabel(providerCard.provider);
 
           return (
             <div key={providerCard.provider} className="border-t border-border first:border-t-0">
@@ -1483,11 +1485,22 @@ export function GeneralSettingsPanel() {
                         {providerCard.models.map((model) => {
                           const caps = model.capabilities;
                           const capLabels: string[] = [];
-                          if (caps?.supportsFastMode) capLabels.push("Fast mode");
-                          if (caps?.supportsThinkingToggle) capLabels.push("Thinking");
+                          const descriptors = caps?.optionDescriptors ?? [];
+                          if (descriptors.some((descriptor) => descriptor.id === "fastMode")) {
+                            capLabels.push("Fast mode");
+                          }
+                          if (descriptors.some((descriptor) => descriptor.id === "thinking")) {
+                            capLabels.push("Thinking");
+                          }
                           if (
-                            caps?.reasoningEffortLevels &&
-                            caps.reasoningEffortLevels.length > 0
+                            descriptors.some(
+                              (descriptor) =>
+                                descriptor.type === "select" &&
+                                (descriptor.id === "reasoningEffort" ||
+                                  descriptor.id === "effort" ||
+                                  descriptor.id === "reasoning" ||
+                                  descriptor.id === "variant"),
+                            )
                           ) {
                             capLabels.push("Reasoning");
                           }

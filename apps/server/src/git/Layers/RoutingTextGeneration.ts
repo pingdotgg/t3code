@@ -11,11 +11,7 @@
  */
 import { Context, Effect, Layer } from "effect";
 
-import {
-  TextGeneration,
-  type TextGenerationProvider,
-  type TextGenerationShape,
-} from "../Services/TextGeneration.ts";
+import { TextGeneration, type TextGenerationShape } from "../Services/TextGeneration.ts";
 import { ClaudeTextGenerationLive } from "./ClaudeTextGeneration.ts";
 import { CodexTextGenerationLive } from "./CodexTextGeneration.ts";
 import { CursorTextGenerationLive } from "./CursorTextGeneration.ts";
@@ -51,29 +47,23 @@ class OpenCodeTextGen extends Context.Service<OpenCodeTextGen, TextGenerationSha
 // ---------------------------------------------------------------------------
 
 const makeRoutingTextGeneration = Effect.gen(function* () {
-  const codex = yield* CodexTextGen;
-  const claude = yield* ClaudeTextGen;
-  const cursor = yield* CursorTextGen;
-  const gemini = yield* GeminiTextGen;
-  const openCode = yield* OpenCodeTextGen;
-
-  const route = (provider?: TextGenerationProvider): TextGenerationShape =>
-    provider === "claudeAgent"
-      ? claude
-      : provider === "cursor"
-        ? cursor
-        : provider === "gemini"
-          ? gemini
-          : provider === "opencode"
-            ? openCode
-            : codex;
+  const byProvider = {
+    codex: yield* CodexTextGen,
+    claudeAgent: yield* ClaudeTextGen,
+    cursor: yield* CursorTextGen,
+    gemini: yield* GeminiTextGen,
+    opencode: yield* OpenCodeTextGen,
+  };
 
   return {
     generateCommitMessage: (input) =>
-      route(input.modelSelection.provider).generateCommitMessage(input),
-    generatePrContent: (input) => route(input.modelSelection.provider).generatePrContent(input),
-    generateBranchName: (input) => route(input.modelSelection.provider).generateBranchName(input),
-    generateThreadTitle: (input) => route(input.modelSelection.provider).generateThreadTitle(input),
+      byProvider[input.modelSelection.provider].generateCommitMessage(input),
+    generatePrContent: (input) =>
+      byProvider[input.modelSelection.provider].generatePrContent(input),
+    generateBranchName: (input) =>
+      byProvider[input.modelSelection.provider].generateBranchName(input),
+    generateThreadTitle: (input) =>
+      byProvider[input.modelSelection.provider].generateThreadTitle(input),
   } satisfies TextGenerationShape;
 });
 

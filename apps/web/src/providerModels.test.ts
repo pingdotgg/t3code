@@ -1,15 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ModelCapabilities } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 
 import { getProviderModelCapabilities } from "./providerModels";
 
-const EMPTY_CAPABILITIES: ModelCapabilities = {
-  reasoningEffortLevels: [],
-  supportsFastMode: false,
-  supportsThinkingToggle: false,
-  contextWindowOptions: [],
-  promptInjectedEffortLevels: [],
-};
+const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [],
+});
 
 describe("getProviderModelCapabilities", () => {
   it("infers Gemini 3 thinking controls when the provider snapshot lacks capabilities", () => {
@@ -26,29 +23,41 @@ describe("getProviderModelCapabilities", () => {
         "gemini-3.1-pro-preview",
         "gemini",
       ),
-    ).toEqual({
-      reasoningEffortLevels: [
-        { value: "HIGH", label: "High", isDefault: true },
-        { value: "LOW", label: "Low" },
-      ],
-      supportsFastMode: false,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    });
+    ).toEqual(
+      createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "thinking",
+            label: "Thinking",
+            type: "select",
+            options: [
+              { id: "HIGH", label: "High", isDefault: true },
+              { id: "LOW", label: "Low" },
+            ],
+            currentValue: "HIGH",
+          },
+        ],
+      }),
+    );
   });
 
   it("falls back to family inference for known Gemini models even when discovery is missing", () => {
-    expect(getProviderModelCapabilities([], "gemini-2.5-flash", "gemini")).toEqual({
-      reasoningEffortLevels: [
-        { value: "-1", label: "Dynamic", isDefault: true },
-        { value: "512", label: "512 Tokens" },
-      ],
-      supportsFastMode: false,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    });
+    expect(getProviderModelCapabilities([], "gemini-2.5-flash", "gemini")).toEqual(
+      createModelCapabilities({
+        optionDescriptors: [
+          {
+            id: "thinking",
+            label: "Thinking",
+            type: "select",
+            options: [
+              { id: "-1", label: "Dynamic", isDefault: true },
+              { id: "512", label: "512 Tokens" },
+            ],
+            currentValue: "-1",
+          },
+        ],
+      }),
+    );
   });
 
   it("keeps empty capabilities for unknown custom Gemini models", () => {
