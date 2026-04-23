@@ -198,6 +198,18 @@ function isSyntheticClaudeThreadId(value: string): boolean {
   return value.startsWith("claude-thread-");
 }
 
+function hasDurableClaudeSessionId(message: SDKMessage): boolean {
+  if (message.type !== "system") {
+    return true;
+  }
+
+  return (
+    message.subtype !== "hook_started" &&
+    message.subtype !== "hook_progress" &&
+    message.subtype !== "hook_response"
+  );
+}
+
 function toMessage(cause: unknown, fallback: string): string {
   if (cause instanceof Error && cause.message.length > 0) {
     return cause.message;
@@ -1247,6 +1259,9 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     message: SDKMessage,
   ) {
     if (typeof message.session_id !== "string" || message.session_id.length === 0) {
+      return;
+    }
+    if (!hasDurableClaudeSessionId(message)) {
       return;
     }
     const nextThreadId = message.session_id;
@@ -2874,6 +2889,31 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
       };
+
+      yield* Effect.annotateCurrentSpan({
+        "provider.kind": PROVIDER,
+        "provider.thread_id": threadId,
+        "provider.runtime_mode": input.runtimeMode,
+        "claude.resume.source":
+          existingResumeSessionId !== undefined ? "resume-session" : "generated-session",
+        "claude.resume.thread_id": resumeState?.threadId ?? "",
+        "claude.resume.session_id": existingResumeSessionId ?? "",
+        "claude.resume.session_at": resumeState?.resumeSessionAt ?? "",
+        "claude.resume.turn_count": resumeState?.turnCount ?? -1,
+        "claude.query.cwd": input.cwd ?? "",
+        "claude.query.model": apiModelId ?? "",
+        "claude.query.effort": effectiveEffort ?? "",
+        "claude.query.permission_mode": permissionMode ?? "",
+        "claude.query.allow_dangerously_skip_permissions": permissionMode === "bypassPermissions",
+        "claude.query.resume": existingResumeSessionId ?? "",
+        "claude.query.session_id": newSessionId ?? "",
+        "claude.query.include_partial_messages": true,
+        "claude.query.additional_directories": input.cwd ? [input.cwd] : [],
+        "claude.query.setting_sources": [...CLAUDE_SETTING_SOURCES],
+        "claude.query.settings_json": JSON.stringify(settings),
+        "claude.query.extra_args_json": JSON.stringify(extraArgs),
+        "claude.query.path_to_executable": claudeBinaryPath,
+      });
 
       const queryRuntime = yield* Effect.try({
         try: () =>

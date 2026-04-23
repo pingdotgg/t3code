@@ -2561,6 +2561,96 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("preserves durable resume ids across Claude resume hooks", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const durableSessionId = "550e8400-e29b-41d4-a716-446655440000";
+      const transientHookSessionId = "7368d0c7-40a3-4d8a-bcc1-ac80c49f2719";
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: RESUME_THREAD_ID,
+        provider: "claudeAgent",
+        resumeCursor: {
+          threadId: RESUME_THREAD_ID,
+          resume: durableSessionId,
+          resumeSessionAt: "assistant-99",
+          turnCount: 3,
+        },
+        runtimeMode: "full-access",
+      });
+
+      harness.query.emit({
+        type: "system",
+        subtype: "hook_started",
+        hook_id: "resume-hook-1",
+        hook_name: "SessionStart:resume",
+        hook_event: "SessionStart",
+        session_id: transientHookSessionId,
+        uuid: "resume-hook-started",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "hook_response",
+        hook_id: "resume-hook-1",
+        hook_name: "SessionStart:resume",
+        hook_event: "SessionStart",
+        output: "",
+        stdout: "",
+        stderr: "",
+        outcome: "success",
+        session_id: transientHookSessionId,
+        uuid: "resume-hook-response",
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "system",
+        subtype: "init",
+        apiKeySource: "none",
+        claude_code_version: "test",
+        cwd: "/tmp/claude-adapter-test",
+        tools: [],
+        mcp_servers: [],
+        model: "claude-sonnet-4-5",
+        permissionMode: "bypassPermissions",
+        slash_commands: [],
+        output_style: "default",
+        skills: [],
+        plugins: [],
+        session_id: durableSessionId,
+        uuid: "resume-init",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const threadStartedEvents = runtimeEvents.filter((event) => event.type === "thread.started");
+      assert.equal(threadStartedEvents.length, 1);
+      const threadStarted = threadStartedEvents[0];
+      assert.equal(threadStarted?.type, "thread.started");
+      if (threadStarted?.type === "thread.started") {
+        assert.deepEqual(threadStarted.payload, {
+          providerThreadId: durableSessionId,
+        });
+      }
+
+      const activeSessions = yield* adapter.listSessions();
+      const resumeCursor = activeSessions[0]?.resumeCursor as
+        | {
+            readonly resume?: string;
+          }
+        | undefined;
+      assert.equal(resumeCursor?.resume, durableSessionId);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("uses an app-generated Claude session id for fresh sessions", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
