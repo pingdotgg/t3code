@@ -2,7 +2,7 @@ import type { DesktopAppBranding, DesktopAppStageLabel } from "@harness/contract
 
 import { isNightlyDesktopVersion } from "./updateChannels.ts";
 
-const APP_BASE_NAME = "Harness";
+const APP_BASE_NAME = "Forma";
 
 export function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;

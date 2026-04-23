@@ -39,9 +39,9 @@ describe("resolveDesktopAppBranding", () => {
         appVersion: "0.0.17-nightly.20260414.1",
       }),
     ).toEqual({
-      baseName: "Harness",
+      baseName: "Forma",
       stageLabel: "Nightly",
-      displayName: "Harness (Nightly)",
+      displayName: "Forma (Nightly)",
     });
   });
 });
