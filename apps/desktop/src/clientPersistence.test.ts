@@ -49,6 +49,7 @@ function makeSecretStorage(available: boolean): DesktopSecretStorage {
 }
 
 const clientSettings: ClientSettings = {
+  chatFontSize: 14,
   confirmThreadArchive: true,
   confirmThreadDelete: false,
   diffWordWrap: true,

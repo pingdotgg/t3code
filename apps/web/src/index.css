@@ -245,6 +245,44 @@ label:has(> select#reasoning-effort) select {
   height: 100%;
 }
 
+/* Chat font size — scaling for all timeline elements */
+[data-timeline-root] {
+  font-size: var(--chat-font-size, 14px);
+  --chat-text-xs: calc(var(--chat-font-size, 14px) * 12 / 14);
+  --chat-text-2xs: calc(var(--chat-font-size, 14px) * 11 / 14);
+  --chat-text-3xs: calc(var(--chat-font-size, 14px) * 10 / 14);
+  --chat-text-4xs: calc(var(--chat-font-size, 14px) * 9 / 14);
+  --chat-code-size: calc(var(--chat-font-size, 14px) * 12 / 14);
+}
+
+/* Chat font size — tier utility classes used by the timeline */
+.text-chat-body {
+  font-size: var(--chat-font-size, 14px);
+}
+.text-chat-xs {
+  font-size: var(--chat-text-xs, 12px);
+}
+.text-chat-2xs {
+  font-size: var(--chat-text-2xs, 11px);
+}
+.text-chat-3xs {
+  font-size: var(--chat-text-3xs, 10px);
+}
+.text-chat-4xs {
+  font-size: var(--chat-text-4xs, 9px);
+}
+
+/* Scale markdown prose and inline/code blocks inside the timeline */
+[data-timeline-root] .chat-markdown {
+  font-size: var(--chat-font-size, 14px);
+}
+[data-timeline-root] .chat-markdown :not(pre) > code {
+  font-size: var(--chat-code-size, 0.75rem);
+}
+[data-timeline-root] .chat-markdown pre code {
+  font-size: var(--chat-code-size, 0.75rem);
+}
+
 /* Chat markdown rendering */
 .chat-markdown {
   min-width: 0;

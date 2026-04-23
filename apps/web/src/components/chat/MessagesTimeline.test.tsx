@@ -94,6 +94,7 @@ function buildProps() {
     markdownCwd: undefined,
     resolvedTheme: "light" as const,
     timestampFormat: "locale" as const,
+    chatFontSize: 14,
     workspaceRoot: undefined,
     onIsAtEndChange: () => {},
   };
@@ -158,6 +159,32 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Context compacted");
     expect(markup).toContain("Work log");
+  });
+
+  it("propagates chatFontSize as the --chat-font-size CSS variable on the list wrapper", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        chatFontSize={20}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.make("message-1"),
+              role: "user",
+              text: "hi",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("--chat-font-size:20px");
   });
 
   it("formats changed file paths from the workspace root", async () => {

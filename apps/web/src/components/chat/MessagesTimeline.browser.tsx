@@ -68,6 +68,7 @@ function buildProps() {
     markdownCwd: undefined,
     resolvedTheme: "dark" as const,
     timestampFormat: "24-hour" as const,
+    chatFontSize: 14,
     workspaceRoot: undefined,
     onIsAtEndChange: vi.fn(),
   };
