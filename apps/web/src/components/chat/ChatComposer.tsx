@@ -71,11 +71,10 @@ import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
-  getComposerProviderControls,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
-} from "./composerProviderRegistry";
+} from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../vscode-icons";
@@ -96,7 +95,11 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { resolveSelectableProvider, getProviderModels } from "../../providerModels";
+import {
+  getProviderInteractionModeToggle,
+  getProviderModels,
+  resolveSelectableProvider,
+} from "../../providerModels";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
@@ -595,7 +598,7 @@ export const ChatComposer = memo(
           model: selectedModel,
           models: selectedProviderModels,
           prompt,
-          modelOptions: composerModelOptions,
+          modelOptions: composerModelOptions?.[selectedProvider],
         }),
       [composerModelOptions, prompt, selectedModel, selectedProvider, selectedProviderModels],
     );
@@ -603,8 +606,13 @@ export const ChatComposer = memo(
     const selectedPromptEffort = composerProviderState.promptEffort;
     const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
     const composerProviderControls = useMemo(
-      () => getComposerProviderControls(selectedProvider),
-      [selectedProvider],
+      () => ({
+        showInteractionModeToggle: getProviderInteractionModeToggle(
+          providerStatuses,
+          selectedProvider,
+        ),
+      }),
+      [providerStatuses, selectedProvider],
     );
     const selectedModelSelection = useMemo<ModelSelection>(
       () => createModelSelection(selectedProvider, selectedModel, selectedModelOptionsForDispatch),

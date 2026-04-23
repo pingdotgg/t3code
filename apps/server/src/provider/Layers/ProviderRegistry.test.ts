@@ -11,6 +11,7 @@ import {
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { deepMerge } from "@t3tools/shared/Struct";
+import { createModelCapabilities } from "@t3tools/shared/model";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus, parseClaudeAuthStatusFromOutput } from "./ClaudeProvider.ts";
@@ -28,6 +29,30 @@ process.env.T3CODE_CURSOR_ENABLED = "1";
 // ── Test helpers ────────────────────────────────────────────────────
 
 const encoder = new TextEncoder();
+
+function selectDescriptor(
+  id: string,
+  label: string,
+  options: ReadonlyArray<{ id: string; label: string; isDefault?: boolean }>,
+) {
+  return {
+    id,
+    label,
+    type: "select" as const,
+    options: [...options],
+    ...(options.find((option) => option.isDefault)?.id
+      ? { currentValue: options.find((option) => option.isDefault)?.id }
+      : {}),
+  };
+}
+
+function booleanDescriptor(id: string, label: string) {
+  return {
+    id,
+    label,
+    type: "boolean" as const,
+  };
+}
 
 function mockHandle(result: { stdout: string; stderr: string; code: number }) {
   return ChildProcessSpawner.makeHandle({
@@ -88,16 +113,15 @@ function failingSpawnerLayer(description: string) {
   );
 }
 
-const codexModelCapabilities = {
-  reasoningEffortLevels: [
-    { value: "high", label: "High", isDefault: true },
-    { value: "low", label: "Low" },
+const codexModelCapabilities = createModelCapabilities({
+  optionDescriptors: [
+    selectDescriptor("reasoningEffort", "Reasoning", [
+      { id: "high", label: "High", isDefault: true },
+      { id: "low", label: "Low" },
+    ]),
+    booleanDescriptor("fastMode", "Fast Mode"),
   ],
-  supportsFastMode: true,
-  supportsThinkingToggle: false,
-  contextWindowOptions: [],
-  promptInjectedEffortLevels: [],
-} satisfies NonNullable<ServerProvider["models"][number]["capabilities"]>;
+}) satisfies NonNullable<ServerProvider["models"][number]["capabilities"]>;
 
 function makeCodexProbeSnapshot(
   input: Partial<CodexAppServerProviderSnapshot> = {},
@@ -179,7 +203,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.version, "1.0.0");
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(status.auth.type, "chatgpt");
-          assert.strictEqual(status.auth.label, "ChatGPT Pro Subscription");
+          assert.strictEqual(status.auth.label, "ChatGPT Pro 20x Subscription");
           assert.deepStrictEqual(status.models, [
             {
               slug: "gpt-live-codex",
@@ -330,13 +354,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               slug: "claude-opus-4-6",
               name: "Opus 4.6",
               isCustom: false,
-              capabilities: {
-                reasoningEffortLevels: [{ value: "high", label: "High", isDefault: true }],
-                supportsFastMode: true,
-                supportsThinkingToggle: true,
-                contextWindowOptions: [],
-                promptInjectedEffortLevels: [],
-              },
+              capabilities: createModelCapabilities({
+                optionDescriptors: [
+                  selectDescriptor("reasoning", "Reasoning", [
+                    { id: "high", label: "High", isDefault: true },
+                  ]),
+                  booleanDescriptor("fastMode", "Fast Mode"),
+                  booleanDescriptor("thinking", "Thinking"),
+                ],
+              }),
             },
           ],
           slashCommands: [],
@@ -367,13 +393,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               slug: "claude-opus-4-6",
               name: "Opus 4.6",
               isCustom: false,
-              capabilities: {
-                reasoningEffortLevels: [{ value: "high", label: "High", isDefault: true }],
-                supportsFastMode: true,
-                supportsThinkingToggle: true,
-                contextWindowOptions: [],
-                promptInjectedEffortLevels: [],
-              },
+              capabilities: createModelCapabilities({
+                optionDescriptors: [
+                  selectDescriptor("reasoning", "Reasoning", [
+                    { id: "high", label: "High", isDefault: true },
+                  ]),
+                  booleanDescriptor("fastMode", "Fast Mode"),
+                  booleanDescriptor("thinking", "Thinking"),
+                ],
+              }),
             },
           ],
           slashCommands: [],
@@ -387,13 +415,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               slug: "claude-opus-4-6",
               name: "Opus 4.6",
               isCustom: false,
-              capabilities: {
-                reasoningEffortLevels: [],
-                supportsFastMode: false,
-                supportsThinkingToggle: false,
-                contextWindowOptions: [],
-                promptInjectedEffortLevels: [],
-              },
+              capabilities: createModelCapabilities({
+                optionDescriptors: [],
+              }),
             },
           ],
         } satisfies ServerProvider;
@@ -603,9 +627,14 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                 "Expected Claude Opus 4.7 capabilities to be present for Claude Code v2.1.111.",
               );
             }
+            const effortDescriptor = opus47.capabilities.optionDescriptors?.find(
+              (descriptor) => descriptor.type === "select" && descriptor.id === "effort",
+            );
             assert.deepStrictEqual(
-              opus47.capabilities.reasoningEffortLevels.find((level) => level.isDefault),
-              { value: "xhigh", label: "Extra High", isDefault: true },
+              effortDescriptor?.type === "select"
+                ? effortDescriptor.options.find((option) => option.isDefault)
+                : undefined,
+              { id: "xhigh", label: "Extra High", isDefault: true },
             );
           }).pipe(
             Effect.provide(
