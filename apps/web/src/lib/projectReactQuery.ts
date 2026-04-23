@@ -1,9 +1,11 @@
 import type { EnvironmentId, ProjectSearchEntriesResult } from "@harness/contracts";
-import { queryOptions } from "@tanstack/react-query";
+import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureEnvironmentApi } from "~/environmentApi";
 
 export const projectQueryKeys = {
   all: ["projects"] as const,
+  searchEntriesScope: (environmentId: EnvironmentId | null, cwd: string | null) =>
+    ["projects", "search-entries", environmentId ?? null, cwd] as const,
   searchEntries: (
     environmentId: EnvironmentId | null,
     cwd: string | null,
@@ -18,6 +20,21 @@ const EMPTY_SEARCH_ENTRIES_RESULT: ProjectSearchEntriesResult = {
   entries: [],
   truncated: false,
 };
+
+export function invalidateProjectQueries(
+  queryClient: QueryClient,
+  input?: { environmentId?: EnvironmentId | null; cwd?: string | null },
+) {
+  const environmentId = input?.environmentId ?? null;
+  const cwd = input?.cwd ?? null;
+  if (cwd !== null) {
+    return queryClient.invalidateQueries({
+      queryKey: projectQueryKeys.searchEntriesScope(environmentId, cwd),
+    });
+  }
+
+  return queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+}
 
 export function projectSearchEntriesQueryOptions(input: {
   environmentId: EnvironmentId | null;

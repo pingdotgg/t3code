@@ -6,27 +6,45 @@
  *
  * @module WorkspaceFileSystem
  */
-import { Schema, Context } from "effect";
+import { Context } from "effect";
 import type { Effect } from "effect";
 
-import type { ProjectWriteFileInput, ProjectWriteFileResult } from "@harness/contracts";
+import type {
+  ProjectReadFileInput,
+  ProjectReadFileResult,
+  ProjectWriteFileInput,
+  ProjectWriteFileResult,
+} from "@harness/contracts";
+import {
+  ProjectFileBinaryError,
+  ProjectFileNotFoundError,
+  ProjectFileTooLargeError,
+  ProjectFileVersionConflictError,
+  ProjectReadFileError,
+  ProjectWriteFileError,
+} from "@harness/contracts";
 import { WorkspacePathOutsideRootError } from "./WorkspacePaths.ts";
-
-export class WorkspaceFileSystemError extends Schema.TaggedErrorClass<WorkspaceFileSystemError>()(
-  "WorkspaceFileSystemError",
-  {
-    cwd: Schema.String,
-    relativePath: Schema.optional(Schema.String),
-    operation: Schema.String,
-    detail: Schema.String,
-    cause: Schema.optional(Schema.Defect),
-  },
-) {}
 
 /**
  * WorkspaceFileSystemShape - Service API for workspace-relative file operations.
  */
 export interface WorkspaceFileSystemShape {
+  /**
+   * Read a text file relative to the workspace root.
+   *
+   * Rejects binary and oversized files.
+   */
+  readonly readFile: (
+    input: ProjectReadFileInput,
+  ) => Effect.Effect<
+    ProjectReadFileResult,
+    | ProjectFileBinaryError
+    | ProjectFileNotFoundError
+    | ProjectFileTooLargeError
+    | ProjectReadFileError
+    | WorkspacePathOutsideRootError
+  >;
+
   /**
    * Write a file relative to the workspace root.
    *
@@ -37,7 +55,7 @@ export interface WorkspaceFileSystemShape {
     input: ProjectWriteFileInput,
   ) => Effect.Effect<
     ProjectWriteFileResult,
-    WorkspaceFileSystemError | WorkspacePathOutsideRootError
+    ProjectFileVersionConflictError | ProjectWriteFileError | WorkspacePathOutsideRootError
   >;
 }
 

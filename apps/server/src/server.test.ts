@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -104,6 +106,10 @@ import {
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
+
+function sha256(input: string): string {
+  return createHash("sha256").update(input).digest("hex");
+}
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 
@@ -2157,8 +2163,43 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.equal(response.relativePath, "nested/created.txt");
+      assert.equal(response.version, sha256("written-by-rpc"));
       const persisted = yield* fs.readFileString(path.join(workspaceDir, "nested", "created.txt"));
       assert.equal(persisted, "written-by-rpc");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.readFile", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "harness-ws-project-read-",
+      });
+      yield* fs
+        .makeDirectory(path.join(workspaceDir, "nested"), { recursive: true })
+        .pipe(Effect.orDie);
+      yield* fs
+        .writeFileString(path.join(workspaceDir, "nested", "created.txt"), "loaded-by-rpc")
+        .pipe(Effect.orDie);
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsReadFile]({
+            cwd: workspaceDir,
+            relativePath: "nested/created.txt",
+          }),
+        ),
+      );
+
+      assert.deepEqual(response, {
+        relativePath: "nested/created.txt",
+        contents: "loaded-by-rpc",
+        version: sha256("loaded-by-rpc"),
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -2218,6 +2259,34 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assertTrue(result._tag === "Failure");
       assertTrue(result.failure._tag === "ProjectWriteFileError");
+      assert.equal(
+        result.failure.message,
+        "Workspace file path must stay within the project root.",
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.readFile errors", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "harness-ws-project-read-",
+      });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsReadFile]({
+            cwd: workspaceDir,
+            relativePath: "../escape.txt",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ProjectReadFileError");
       assert.equal(
         result.failure.message,
         "Workspace file path must stay within the project root.",

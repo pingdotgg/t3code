@@ -83,6 +83,7 @@ function createRegisteredGitStatusClient(environmentId: EnvironmentId) {
       onEvent: vi.fn(() => () => undefined),
     },
     projects: {
+      readFile: vi.fn(async () => undefined),
       searchEntries: vi.fn(async () => []),
       writeFile: vi.fn(async () => undefined),
     },

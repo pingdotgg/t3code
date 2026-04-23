@@ -14,6 +14,7 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
+  ProjectReadFileError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
@@ -786,19 +787,33 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.projectsReadFile]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsReadFile,
+            workspaceFileSystem.readFile(input).pipe(
+              Effect.mapError((cause) =>
+                Schema.is(WorkspacePathOutsideRootError)(cause)
+                  ? new ProjectReadFileError({
+                      message: "Workspace file path must stay within the project root.",
+                      cause,
+                    })
+                  : cause,
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
             workspaceFileSystem.writeFile(input).pipe(
-              Effect.mapError((cause) => {
-                const message = Schema.is(WorkspacePathOutsideRootError)(cause)
-                  ? "Workspace file path must stay within the project root."
-                  : "Failed to write workspace file";
-                return new ProjectWriteFileError({
-                  message,
-                  cause,
-                });
-              }),
+              Effect.mapError((cause) =>
+                Schema.is(WorkspacePathOutsideRootError)(cause)
+                  ? new ProjectWriteFileError({
+                      message: "Workspace file path must stay within the project root.",
+                      cause,
+                    })
+                  : cause,
+              ),
             ),
             { "rpc.aggregate": "workspace" },
           ),

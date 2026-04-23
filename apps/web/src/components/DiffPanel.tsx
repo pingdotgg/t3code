@@ -1,6 +1,6 @@
-import { parsePatchFiles } from "@pierre/diffs";
-import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
-import { useQuery } from "@tanstack/react-query";
+import { parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
+import { FileDiff, Virtualizer } from "@pierre/diffs/react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { scopeThreadRef } from "@harness/client-runtime";
 import type { TurnId } from "@harness/contracts";
@@ -11,24 +11,25 @@ import {
   Rows3Icon,
   TextWrapIcon,
 } from "lucide-react";
-import {
-  type WheelEvent as ReactWheelEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openInPreferredEditor } from "../editorPreferences";
-import { useGitStatus } from "~/lib/gitStatusState";
+import { refreshGitStatus, useGitStatus } from "~/lib/gitStatusState";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
+import { invalidateProjectQueries } from "~/lib/projectReactQuery";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
-import { buildPatchCacheKey } from "../lib/diffRendering";
-import { resolveDiffThemeName } from "../lib/diffRendering";
+import { buildPatchCacheKey, resolveDiffThemeName } from "../lib/diffRendering";
+import {
+  buildDiffFileEditOverrideKey,
+  buildDiffFileEditThreadKey,
+  buildOverriddenFileDiff,
+  readPersistedDiffFileEditOverrides,
+  writePersistedDiffFileEditOverrides,
+  type PersistedDiffFileEditOverride,
+} from "../lib/diffFileEditOverrides";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { selectProjectByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
@@ -36,9 +37,12 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import { DiffFileEditorPane } from "./DiffFileEditorPane";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
+import { Button } from "./ui/button";
 
 type DiffRenderMode = "stacked" | "split";
+type DiffViewMode = "diff" | "editor";
 type DiffThemeType = "light" | "dark";
 
 const DIFF_PANEL_UNSAFE_CSS = `
@@ -168,19 +172,29 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { resolvedTheme } = useTheme();
   const settings = useSettings();
+  const routeThreadRef = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteRef(params),
+  });
+  const activeThreadStorageKey = buildDiffFileEditThreadKey(
+    routeThreadRef?.environmentId ?? null,
+    routeThreadRef?.threadId ?? null,
+  );
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
+  const [viewMode, setViewMode] = useState<DiffViewMode>("diff");
+  const [editorFilePath, setEditorFilePath] = useState<string | null>(null);
+  const [savedOverridesByKey, setSavedOverridesByKey] = useState<
+    Record<string, PersistedDiffFileEditOverride | undefined>
+  >(() => readPersistedDiffFileEditOverrides(activeThreadStorageKey));
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const previousDiffOpenRef = useRef(false);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
   const [canScrollTurnStripRight, setCanScrollTurnStripRight] = useState(false);
-  const routeThreadRef = useParams({
-    strict: false,
-    select: (params) => resolveThreadRouteRef(params),
-  });
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
   const diffOpen = diffSearch.diff === "1";
   const activeThreadId = routeThreadRef?.threadId ?? null;
@@ -313,6 +327,59 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       }),
     );
   }, [renderablePatch]);
+  const renderableFileDiffsByPath = useMemo(
+    () =>
+      new Map(
+        renderableFiles.map((fileDiff) => [resolveFileDiffPath(fileDiff), fileDiff] as const),
+      ),
+    [renderableFiles],
+  );
+  const selectedTurnFilePaths = useMemo(
+    () =>
+      selectedTurn
+        ? [...new Set(selectedTurn.files.map((file) => file.path))].toSorted((left, right) =>
+            left.localeCompare(right, undefined, {
+              numeric: true,
+              sensitivity: "base",
+            }),
+          )
+        : [],
+    [selectedTurn],
+  );
+  const selectedTurnFilePathSet = useMemo(
+    () => new Set(selectedTurnFilePaths),
+    [selectedTurnFilePaths],
+  );
+  const canEditFiles = Boolean(selectedTurn && activeThread && activeCwd);
+  const editorFileDiff =
+    editorFilePath !== null ? (renderableFileDiffsByPath.get(editorFilePath) ?? null) : null;
+  const editorOverrideKey =
+    selectedTurn && editorFilePath
+      ? buildDiffFileEditOverrideKey(selectedTurn.turnId, editorFilePath)
+      : null;
+  const editorOverride =
+    editorOverrideKey !== null ? savedOverridesByKey[editorOverrideKey] : undefined;
+
+  const updateSavedOverrides = useCallback(
+    (
+      nextState:
+        | Record<string, PersistedDiffFileEditOverride | undefined>
+        | ((
+            current: Record<string, PersistedDiffFileEditOverride | undefined>,
+          ) => Record<string, PersistedDiffFileEditOverride | undefined>),
+    ) => {
+      setSavedOverridesByKey((current) => {
+        const resolved = typeof nextState === "function" ? nextState(current) : nextState;
+        writePersistedDiffFileEditOverrides(activeThreadStorageKey, resolved);
+        return resolved;
+      });
+    },
+    [activeThreadStorageKey],
+  );
+
+  useEffect(() => {
+    setSavedOverridesByKey(readPersistedDiffFileEditOverrides(activeThreadStorageKey));
+  }, [activeThreadStorageKey]);
 
   useEffect(() => {
     if (diffOpen && !previousDiffOpenRef.current) {
@@ -322,14 +389,42 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   }, [diffOpen, settings.diffWordWrap]);
 
   useEffect(() => {
-    if (!selectedFilePath || !patchViewportRef.current) {
+    if (!selectedFilePath || !patchViewportRef.current || viewMode !== "diff") {
       return;
     }
     const target = Array.from(
       patchViewportRef.current.querySelectorAll<HTMLElement>("[data-diff-file-path]"),
     ).find((element) => element.dataset.diffFilePath === selectedFilePath);
     target?.scrollIntoView({ block: "nearest" });
-  }, [selectedFilePath, renderableFiles]);
+  }, [selectedFilePath, renderableFiles, viewMode]);
+
+  useEffect(() => {
+    setViewMode("diff");
+    setEditorFilePath(null);
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    if (!diffOpen) {
+      setViewMode("diff");
+      setEditorFilePath(null);
+    }
+  }, [diffOpen]);
+
+  useEffect(() => {
+    if (
+      viewMode === "editor" &&
+      (!selectedTurn || !activeThread || !activeCwd || !editorFilePath)
+    ) {
+      setViewMode("diff");
+      setEditorFilePath(null);
+      return;
+    }
+
+    if (viewMode === "editor" && editorFilePath && !selectedTurnFilePathSet.has(editorFilePath)) {
+      setViewMode("diff");
+      setEditorFilePath(null);
+    }
+  }, [activeCwd, activeThread, editorFilePath, selectedTurn, selectedTurnFilePathSet, viewMode]);
 
   const openDiffFileInEditor = useCallback(
     (filePath: string) => {
@@ -343,6 +438,57 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     [activeCwd],
   );
 
+  const persistSavedDiffOverride = useCallback(
+    async (input: { filePath: string; savedContents: string; preTurnContents: string | null }) => {
+      if (!selectedTurn || !activeThread || !activeCwd) {
+        return;
+      }
+
+      const overrideKey = buildDiffFileEditOverrideKey(selectedTurn.turnId, input.filePath);
+      updateSavedOverrides((current) => {
+        const next = { ...current };
+        if (input.preTurnContents === null) {
+          delete next[overrideKey];
+        } else {
+          next[overrideKey] = {
+            preTurnContents: input.preTurnContents,
+            savedContents: input.savedContents,
+          };
+        }
+        return next;
+      });
+
+      await refreshGitStatus({
+        environmentId: activeThread.environmentId,
+        cwd: activeCwd,
+      }).catch(() => undefined);
+      await invalidateProjectQueries(queryClient, {
+        environmentId: activeThread.environmentId,
+        cwd: activeCwd,
+      });
+      await activeCheckpointDiffQuery.refetch().catch(() => undefined);
+    },
+    [
+      activeCheckpointDiffQuery,
+      activeCwd,
+      activeThread,
+      queryClient,
+      selectedTurn,
+      updateSavedOverrides,
+    ],
+  );
+
+  const openEditorForFile = useCallback(
+    (filePath: string) => {
+      if (!canEditFiles || !selectedTurnFilePathSet.has(filePath)) {
+        return;
+      }
+      setEditorFilePath(filePath);
+      setViewMode("editor");
+    },
+    [canEditFiles, selectedTurnFilePathSet],
+  );
+
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
     void navigate({
@@ -354,6 +500,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       },
     });
   };
+
   const selectWholeConversation = () => {
     if (!activeThread) return;
     void navigate({
@@ -365,6 +512,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       },
     });
   };
+
   const updateTurnStripScrollState = useCallback(() => {
     const element = turnStripRef.current;
     if (!element) {
@@ -377,12 +525,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     setCanScrollTurnStripLeft(element.scrollLeft > 4);
     setCanScrollTurnStripRight(element.scrollLeft < maxScrollLeft - 4);
   }, []);
+
   const scrollTurnStripBy = useCallback((offset: number) => {
     const element = turnStripRef.current;
     if (!element) return;
     element.scrollBy({ left: offset, behavior: "smooth" });
   }, []);
-  const onTurnStripWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>) => {
+
+  const onTurnStripWheel = useCallback((event: React.WheelEvent<HTMLDivElement>) => {
     const element = turnStripRef.current;
     if (!element) return;
     if (element.scrollWidth <= element.clientWidth + 1) return;
@@ -400,7 +550,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     const onScroll = () => updateTurnStripScrollState();
 
     element.addEventListener("scroll", onScroll, { passive: true });
-
     const resizeObserver = new ResizeObserver(() => updateTurnStripScrollState());
     resizeObserver.observe(element);
 
@@ -426,7 +575,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     selectedChip?.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
   }, [selectedTurn?.turnId, selectedTurnId]);
 
-  const headerRow = (
+  const diffHeaderRow = (
     <>
       <div className="relative min-w-0 flex-1 [-webkit-app-region:no-drag]">
         <button
@@ -555,6 +704,24 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     </>
   );
 
+  const editorHeaderRow = (
+    <>
+      <div className="min-w-0 flex-1">
+        <p className="truncate font-mono text-[11px] text-foreground">
+          {editorFilePath ?? "Editing file"}
+        </p>
+        <p className="text-[10px] text-muted-foreground">
+          {selectedTurn
+            ? `Editing selected turn file${typeof selectedCheckpointTurnCount === "number" ? ` • Turn ${selectedCheckpointTurnCount}` : ""}`
+            : "Editing file"}
+        </p>
+      </div>
+      <div className="text-[10px] text-muted-foreground">Use Back to diff to return</div>
+    </>
+  );
+
+  const headerRow = viewMode === "editor" ? editorHeaderRow : diffHeaderRow;
+
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
       {!activeThread ? (
@@ -569,91 +736,142 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           No completed turns yet.
         </div>
+      ) : viewMode === "editor" && activeCwd && selectedTurn && editorFilePath ? (
+        <DiffFileEditorPane
+          cwd={activeCwd}
+          environmentId={activeThread.environmentId}
+          fileDiff={editorFileDiff}
+          filePath={editorFilePath}
+          filePaths={selectedTurnFilePaths}
+          initialOverride={editorOverride}
+          resolvedTheme={resolvedTheme}
+          onOpenInEditor={openDiffFileInEditor}
+          onPersisted={persistSavedDiffOverride}
+          onRequestBack={() => {
+            setViewMode("diff");
+            setEditorFilePath(null);
+          }}
+          onRequestFilePathChange={(filePath) => {
+            setEditorFilePath(filePath);
+          }}
+        />
       ) : (
-        <>
-          <div
-            ref={patchViewportRef}
-            className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden"
-          >
-            {checkpointDiffError && !renderablePatch && (
-              <div className="px-3">
-                <p className="mb-2 text-[11px] text-red-500/80">{checkpointDiffError}</p>
-              </div>
-            )}
-            {!renderablePatch ? (
-              isLoadingCheckpointDiff ? (
-                <DiffPanelLoadingState label="Loading checkpoint diff..." />
-              ) : (
-                <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
-                  <p>
-                    {hasNoNetChanges
-                      ? "No net changes in this selection."
-                      : "No patch available for this selection."}
-                  </p>
-                </div>
-              )
-            ) : renderablePatch.kind === "files" ? (
-              <Virtualizer
-                className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
-                config={{
-                  overscrollSize: 600,
-                  intersectionObserverMargin: 1200,
-                }}
-              >
-                {renderableFiles.map((fileDiff) => {
-                  const filePath = resolveFileDiffPath(fileDiff);
-                  const fileKey = buildFileDiffRenderKey(fileDiff);
-                  const themedFileKey = `${fileKey}:${resolvedTheme}`;
-                  return (
-                    <div
-                      key={themedFileKey}
-                      data-diff-file-path={filePath}
-                      className="diff-render-file mb-2 rounded-md first:mt-2 last:mb-0"
-                      onClickCapture={(event) => {
-                        const nativeEvent = event.nativeEvent as MouseEvent;
-                        const composedPath = nativeEvent.composedPath?.() ?? [];
-                        const clickedHeader = composedPath.some((node) => {
-                          if (!(node instanceof Element)) return false;
-                          return node.hasAttribute("data-title");
-                        });
-                        if (!clickedHeader) return;
-                        openDiffFileInEditor(filePath);
-                      }}
-                    >
-                      <FileDiff
-                        fileDiff={fileDiff}
-                        options={{
-                          diffStyle: diffRenderMode === "split" ? "split" : "unified",
-                          lineDiffType: "none",
-                          overflow: diffWordWrap ? "wrap" : "scroll",
-                          theme: resolveDiffThemeName(resolvedTheme),
-                          themeType: resolvedTheme as DiffThemeType,
-                          unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
-                        }}
-                      />
-                    </div>
-                  );
-                })}
-              </Virtualizer>
+        <div
+          ref={patchViewportRef}
+          className="diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden"
+        >
+          {checkpointDiffError && !renderablePatch && (
+            <div className="px-3">
+              <p className="mb-2 text-[11px] text-red-500/80">{checkpointDiffError}</p>
+            </div>
+          )}
+          {!renderablePatch ? (
+            isLoadingCheckpointDiff ? (
+              <DiffPanelLoadingState label="Loading checkpoint diff..." />
             ) : (
-              <div className="h-full overflow-auto p-2">
-                <div className="space-y-2">
-                  <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
-                  <pre
+              <div className="flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70">
+                <p>
+                  {hasNoNetChanges
+                    ? "No net changes in this selection."
+                    : "No patch available for this selection."}
+                </p>
+              </div>
+            )
+          ) : renderablePatch.kind === "files" ? (
+            <Virtualizer
+              className="diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2"
+              config={{
+                overscrollSize: 600,
+                intersectionObserverMargin: 1200,
+              }}
+            >
+              {renderableFiles.map((fileDiff) => {
+                const filePath = resolveFileDiffPath(fileDiff);
+                const fileKey = buildFileDiffRenderKey(fileDiff);
+                const themedFileKey = `${fileKey}:${resolvedTheme}`;
+                const overrideKey =
+                  selectedTurn !== undefined
+                    ? buildDiffFileEditOverrideKey(selectedTurn.turnId, filePath)
+                    : null;
+                const override =
+                  overrideKey !== null ? savedOverridesByKey[overrideKey] : undefined;
+                const displayFileDiff =
+                  override !== undefined
+                    ? (buildOverriddenFileDiff(filePath, override) ?? fileDiff)
+                    : fileDiff;
+                const canEditFile = canEditFiles && selectedTurnFilePathSet.has(filePath);
+
+                return (
+                  <div
+                    key={themedFileKey}
+                    data-diff-file-path={filePath}
                     className={cn(
-                      "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90",
-                      diffWordWrap
-                        ? "overflow-auto whitespace-pre-wrap wrap-break-word"
-                        : "overflow-auto",
+                      "diff-render-file mb-2 overflow-hidden rounded-md border bg-card/70 first:mt-2 last:mb-0",
+                      selectedFilePath === filePath ? "border-border" : "border-border/70",
                     )}
                   >
-                    {renderablePatch.text}
-                  </pre>
-                </div>
+                    <div className="flex items-center justify-between gap-3 border-b border-border/60 px-3 py-2">
+                      <div className="min-w-0">
+                        <button
+                          type="button"
+                          className="truncate font-mono text-[11px] text-foreground underline decoration-transparent underline-offset-2 transition-colors hover:text-primary hover:decoration-current"
+                          onClick={() => openDiffFileInEditor(filePath)}
+                          title={filePath}
+                        >
+                          {filePath}
+                        </button>
+                        {override ? (
+                          <p className="text-[10px] text-muted-foreground/65">
+                            Showing saved manual edits
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        {canEditFile ? (
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            onClick={() => openEditorForFile(filePath)}
+                          >
+                            Edit
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                    <FileDiff
+                      fileDiff={displayFileDiff}
+                      options={{
+                        diffStyle: diffRenderMode === "split" ? "split" : "unified",
+                        disableFileHeader: true,
+                        lineDiffType: "none",
+                        overflow: diffWordWrap ? "wrap" : "scroll",
+                        theme: resolveDiffThemeName(resolvedTheme),
+                        themeType: resolvedTheme as DiffThemeType,
+                        unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </Virtualizer>
+          ) : (
+            <div className="h-full overflow-auto p-2">
+              <div className="space-y-2">
+                <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
+                <pre
+                  className={cn(
+                    "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90",
+                    diffWordWrap
+                      ? "overflow-auto whitespace-pre-wrap wrap-break-word"
+                      : "overflow-auto",
+                  )}
+                >
+                  {renderablePatch.text}
+                </pre>
               </div>
-            )}
-          </div>
-        </>
+            </div>
+          )}
+        </div>
       )}
     </DiffPanelShell>
   );

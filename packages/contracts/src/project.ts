@@ -2,7 +2,13 @@ import { Schema } from "effect";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
-const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
+const PROJECT_FILE_PATH_MAX_LENGTH = 512;
+export const PROJECT_TEXT_FILE_MAX_BYTES = 512 * 1024;
+export const ProjectRelativePath = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(PROJECT_FILE_PATH_MAX_LENGTH),
+);
+export const ProjectFileVersion = TrimmedNonEmptyString.check(Schema.isPattern(/^[a-f0-9]{64}$/));
+export type ProjectFileVersion = typeof ProjectFileVersion.Type;
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
@@ -34,17 +40,88 @@ export class ProjectSearchEntriesError extends Schema.TaggedErrorClass<ProjectSe
   },
 ) {}
 
+export const ProjectReadFileInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: ProjectRelativePath,
+});
+export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
+
+export const ProjectReadFileResult = Schema.Struct({
+  relativePath: ProjectRelativePath,
+  contents: Schema.String,
+  version: ProjectFileVersion,
+});
+export type ProjectReadFileResult = typeof ProjectReadFileResult.Type;
+
 export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+  relativePath: ProjectRelativePath,
   contents: Schema.String,
+  expectedVersion: Schema.optional(Schema.NullOr(ProjectFileVersion)),
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
 export const ProjectWriteFileResult = Schema.Struct({
-  relativePath: TrimmedNonEmptyString,
+  relativePath: ProjectRelativePath,
+  version: ProjectFileVersion,
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
+
+export class ProjectFileNotFoundError extends Schema.TaggedErrorClass<ProjectFileNotFoundError>()(
+  "ProjectFileNotFoundError",
+  {
+    message: TrimmedNonEmptyString,
+    relativePath: ProjectRelativePath,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class ProjectFileBinaryError extends Schema.TaggedErrorClass<ProjectFileBinaryError>()(
+  "ProjectFileBinaryError",
+  {
+    message: TrimmedNonEmptyString,
+    relativePath: ProjectRelativePath,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class ProjectFileTooLargeError extends Schema.TaggedErrorClass<ProjectFileTooLargeError>()(
+  "ProjectFileTooLargeError",
+  {
+    message: TrimmedNonEmptyString,
+    relativePath: ProjectRelativePath,
+    sizeBytes: PositiveInt,
+    maxBytes: PositiveInt,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class ProjectFileVersionConflictError extends Schema.TaggedErrorClass<ProjectFileVersionConflictError>()(
+  "ProjectFileVersionConflictError",
+  {
+    message: TrimmedNonEmptyString,
+    relativePath: ProjectRelativePath,
+    expectedVersion: Schema.NullOr(ProjectFileVersion),
+    actualVersion: Schema.NullOr(ProjectFileVersion),
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class ProjectReadFileError extends Schema.TaggedErrorClass<ProjectReadFileError>()(
+  "ProjectReadFileError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export const ProjectReadFileRpcError = Schema.Union([
+  ProjectFileNotFoundError,
+  ProjectFileBinaryError,
+  ProjectFileTooLargeError,
+  ProjectReadFileError,
+]);
+export type ProjectReadFileRpcError = typeof ProjectReadFileRpcError.Type;
 
 export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteFileError>()(
   "ProjectWriteFileError",
@@ -53,3 +130,9 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
     cause: Schema.optional(Schema.Defect),
   },
 ) {}
+
+export const ProjectWriteFileRpcError = Schema.Union([
+  ProjectFileVersionConflictError,
+  ProjectWriteFileError,
+]);
+export type ProjectWriteFileRpcError = typeof ProjectWriteFileRpcError.Type;

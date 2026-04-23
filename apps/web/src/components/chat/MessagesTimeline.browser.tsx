@@ -1,6 +1,6 @@
 import "../../index.css";
 
-import { EnvironmentId } from "@harness/contracts";
+import { EnvironmentId, type MessageId, type TurnId } from "@harness/contracts";
 import { createRef } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { page } from "vitest/browser";
@@ -153,6 +153,99 @@ describe("MessagesTimeline", () => {
       expect(props.onIsAtEndChange).toHaveBeenCalledWith(true);
       expect(scrollToEndSpy).toHaveBeenCalledWith({ animated: false });
       expect(requestAnimationFrameSpy).toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("shows the view diff action for changed assistant files and forwards the selected file", async () => {
+    const assistantMessageId = "message-assistant-1" as MessageId;
+    const onOpenTurnDiff = vi.fn();
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        onOpenTurnDiff={onOpenTurnDiff}
+        turnDiffSummaryByAssistantMessageId={
+          new Map([
+            [
+              assistantMessageId,
+              {
+                turnId: "turn-1" as TurnId,
+                completedAt: "2026-04-21T12:00:00.000Z",
+                checkpointTurnCount: 2,
+                files: [{ path: "src/manual.ts" }],
+                assistantMessageId,
+              },
+            ],
+          ])
+        }
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "message",
+            createdAt: "2026-04-21T12:00:00.000Z",
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "Updated the file.",
+              createdAt: "2026-04-21T12:00:00.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      await expect.element(page.getByRole("button", { name: "View diff" })).toBeVisible();
+      await page.getByRole("button", { name: "View diff" }).click();
+      expect(onOpenTurnDiff).toHaveBeenCalledWith("turn-1", "src/manual.ts");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("does not render a manual tweak action for changed assistant files", async () => {
+    const assistantMessageId = "message-assistant-2" as MessageId;
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        turnDiffSummaryByAssistantMessageId={
+          new Map([
+            [
+              assistantMessageId,
+              {
+                turnId: "turn-2" as TurnId,
+                completedAt: "2026-04-21T12:00:00.000Z",
+                checkpointTurnCount: 2,
+                files: [{ path: "src/manual.ts" }],
+                assistantMessageId,
+              },
+            ],
+          ])
+        }
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "message",
+            createdAt: "2026-04-21T12:00:00.000Z",
+            message: {
+              id: assistantMessageId,
+              role: "assistant",
+              text: "Updated the file.",
+              createdAt: "2026-04-21T12:00:00.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      await expect
+        .element(page.getByRole("button", { name: "Manual tweak" }))
+        .not.toBeInTheDocument();
+      await expect.element(page.getByRole("button", { name: "View diff" })).toBeVisible();
     } finally {
       await screen.unmount();
     }

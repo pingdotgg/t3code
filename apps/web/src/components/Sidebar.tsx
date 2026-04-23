@@ -59,7 +59,7 @@ import {
 } from "@harness/contracts/settings";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
-import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
+import { APP_BASE_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform, newCommandId } from "../lib/utils";
 import {
@@ -2207,10 +2207,10 @@ const SidebarProjectListRow = memo(function SidebarProjectListRow(props: Sidebar
 function HarnessWordmark() {
   return (
     <span
-      aria-label="Harness"
+      aria-label={APP_BASE_NAME}
       className="shrink-0 text-sm font-semibold tracking-tight text-foreground lowercase"
     >
-      harness
+      {APP_BASE_NAME}
     </span>
   );
 }

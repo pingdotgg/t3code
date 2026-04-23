@@ -78,6 +78,7 @@ function createTestClient() {
       },
     },
     projects: {
+      readFile: vi.fn(async () => undefined),
       searchEntries: vi.fn(async () => []),
       writeFile: vi.fn(async () => undefined),
     },
