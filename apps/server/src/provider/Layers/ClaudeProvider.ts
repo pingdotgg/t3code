@@ -54,8 +54,8 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
       reasoningEffortLevels: [
         { value: "low", label: "Low" },
         { value: "medium", label: "Medium" },
-        { value: "high", label: "High", isDefault: true },
-        { value: "xhigh", label: "Extra High" },
+        { value: "high", label: "High" },
+        { value: "xhigh", label: "Extra High", isDefault: true },
         { value: "max", label: "Max" },
         { value: "ultrathink", label: "Ultrathink" },
       ],
@@ -779,7 +779,7 @@ const makePendingClaudeProvider = (claudeSettings: ClaudeSettings): ServerProvid
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Claude is disabled in T3 Code settings.",
+        message: "Claude is disabled in MarCode settings.",
       },
     });
   }

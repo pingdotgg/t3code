@@ -314,7 +314,7 @@ const makeOpenCodeTextGeneration = Effect.gen(function* () {
               : {}),
           });
           const session = await client.session.create({
-            title: `T3 Code ${input.operation}`,
+            title: `MarCode ${input.operation}`,
             permission: [{ permission: "*", pattern: "*", action: "deny" }],
           });
           if (!session.data) {

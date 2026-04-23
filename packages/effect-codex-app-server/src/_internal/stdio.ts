@@ -1,12 +1,12 @@
-import * as Queue from "effect/Queue";
-import * as Stream from "effect/Stream";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as Queue from "effect/Queue";
 import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
+import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import * as AcpError from "../errors.ts";
+import * as CodexError from "../errors.ts";
 
 const encoder = new TextEncoder();
 
@@ -46,12 +46,12 @@ export const makeInMemoryStdio = Effect.fn("makeInMemoryStdio")(function* () {
 
 export const makeTerminationError = (
   handle: ChildProcessSpawner.ChildProcessHandle,
-): Effect.Effect<AcpError.AcpError> =>
+): Effect.Effect<CodexError.CodexAppServerError> =>
   Effect.match(handle.exitCode, {
     onFailure: (cause) =>
-      new AcpError.AcpTransportError({
-        detail: "Failed to determine ACP process exit status",
+      new CodexError.CodexAppServerTransportError({
+        detail: "Failed to determine Codex App Server process exit status",
         cause,
       }),
-    onSuccess: (code) => new AcpError.AcpProcessExitedError({ code }),
+    onSuccess: (code) => new CodexError.CodexAppServerProcessExitedError({ code }),
   });

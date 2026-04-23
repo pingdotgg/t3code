@@ -26,7 +26,7 @@ const CursorTextGenerationTestLayer = CursorTextGenerationLive.pipe(
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3code-cursor-text-generation-test-",
+      prefix: "marcode-cursor-text-generation-test-",
     }),
   ),
   Layer.provideMerge(NodeServices.layer),
@@ -59,7 +59,7 @@ function withFakeAcpAgent<A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E | ServerSettingsError, R | ServerSettingsService> {
   return Effect.gen(function* () {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-acp-"));
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "marcode-cursor-text-acp-"));
     const agentPath = makeAcpAgentWrapper(tempDir, env);
     const serverSettings = yield* ServerSettingsService;
     const previousSettings = yield* serverSettings.getSettings;
@@ -114,7 +114,7 @@ function waitForFileContent(path: string): Effect.Effect<string> {
 
 it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
   it.effect("uses ACP model config options instead of raw CLI model ids", () => {
-    const requestLogDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-log-"));
+    const requestLogDir = mkdtempSync(path.join(os.tmpdir(), "marcode-cursor-text-log-"));
     const requestLogPath = path.join(requestLogDir, "requests.ndjson");
 
     return withFakeAcpAgent(
@@ -260,7 +260,7 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
   );
 
   it.effect("closes the ACP child process after text generation completes", () => {
-    const exitLogDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-exit-log-"));
+    const exitLogDir = mkdtempSync(path.join(os.tmpdir(), "marcode-cursor-text-exit-log-"));
     const exitLogPath = path.join(exitLogDir, "exit.log");
 
     return withFakeAcpAgent(

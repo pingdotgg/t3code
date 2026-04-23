@@ -103,8 +103,9 @@ describe("ChatMarkdown", () => {
   });
 
   it("disambiguates duplicate file basenames inline", async () => {
-    const firstPath = "/Users/yashsingh/p/t3code/apps/web/src/components/chat/MessagesTimeline.tsx";
-    const secondPath = "/Users/yashsingh/p/t3code/apps/web/src/components/MessagesTimeline.tsx";
+    const firstPath =
+      "/Users/yashsingh/p/marcode/apps/web/src/components/chat/MessagesTimeline.tsx";
+    const secondPath = "/Users/yashsingh/p/marcode/apps/web/src/components/MessagesTimeline.tsx";
     const screen = await render(
       <ChatMarkdown
         text={`See [MessagesTimeline.tsx](file://${firstPath}) and [MessagesTimeline.tsx](file://${secondPath}).`}

@@ -8,5 +8,5 @@ export interface OpenCodeAdapterShape extends ProviderAdapterShape<ProviderAdapt
 }
 
 export class OpenCodeAdapter extends Context.Service<OpenCodeAdapter, OpenCodeAdapterShape>()(
-  "t3/provider/Services/OpenCodeAdapter",
+  "marcode/provider/Services/OpenCodeAdapter",
 ) {}

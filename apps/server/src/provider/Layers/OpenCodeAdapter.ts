@@ -1045,7 +1045,7 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
                 });
                 const openCodeSession = yield* runOpenCodeSdk("session.create", () =>
                   client.session.create({
-                    title: `T3 Code ${input.threadId}`,
+                    title: `MarCode ${input.threadId}`,
                     permission: buildOpenCodePermissionRules(input.runtimeMode),
                   }),
                 );

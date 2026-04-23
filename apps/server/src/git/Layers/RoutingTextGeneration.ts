@@ -39,11 +39,11 @@ class ClaudeTextGen extends Context.Service<ClaudeTextGen, TextGenerationShape>(
 ) {}
 
 class CursorTextGen extends Context.Service<CursorTextGen, TextGenerationShape>()(
-  "t3/git/Layers/RoutingTextGeneration/CursorTextGen",
+  "marcode/git/Layers/RoutingTextGeneration/CursorTextGen",
 ) {}
 
 class OpenCodeTextGen extends Context.Service<OpenCodeTextGen, TextGenerationShape>()(
-  "t3/git/Layers/RoutingTextGeneration/OpenCodeTextGen",
+  "marcode/git/Layers/RoutingTextGeneration/OpenCodeTextGen",
 ) {}
 
 // ---------------------------------------------------------------------------

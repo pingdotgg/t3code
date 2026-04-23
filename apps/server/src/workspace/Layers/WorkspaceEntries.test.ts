@@ -286,7 +286,7 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries;
         const path = yield* Path.Path;
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-prefix-" });
+        const cwd = yield* makeTempDir({ prefix: "marcode-workspace-browse-prefix-" });
         yield* writeTextFile(cwd, "alphabet.txt", "ignore me");
         yield* writeTextFile(cwd, "alpha/index.ts", "export {};\n");
         yield* writeTextFile(cwd, "alpine/index.ts", "export {};\n");
@@ -309,7 +309,7 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries;
         const path = yield* Path.Path;
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-hidden-" });
+        const cwd = yield* makeTempDir({ prefix: "marcode-workspace-browse-hidden-" });
         yield* writeTextFile(cwd, ".config/settings.json", "{}");
         yield* writeTextFile(cwd, "config/settings.json", "{}");
 
@@ -332,7 +332,7 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
       Effect.gen(function* () {
         const workspaceEntries = yield* WorkspaceEntries;
         const path = yield* Path.Path;
-        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-relative-" });
+        const cwd = yield* makeTempDir({ prefix: "marcode-workspace-browse-relative-" });
         yield* writeTextFile(cwd, "packages/pkg.json", "{}");
 
         const result = yield* workspaceEntries.browse({

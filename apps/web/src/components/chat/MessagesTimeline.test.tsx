@@ -239,7 +239,7 @@ describe("MessagesTimeline", () => {
               createdAt: "2026-03-17T19:12:28.000Z",
               label: "Updated files",
               tone: "tool",
-              changedFiles: ["C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts"],
+              changedFiles: ["C:/Users/mike/dev-stuff/marcode/apps/web/src/session-logic.ts"],
             },
           },
         ]}
@@ -257,7 +257,7 @@ describe("MessagesTimeline", () => {
         markdownCwd={undefined}
         resolvedTheme="light"
         timestampFormat="locale"
-        workspaceRoot="C:/Users/mike/dev-stuff/t3code"
+        workspaceRoot="C:/Users/mike/dev-stuff/marcode"
         isSendBusy={false}
         isSessionStarting={false}
         hasPendingAssistantResponse={false}
@@ -277,7 +277,7 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("t3code/apps/web/src/session-logic.ts");
-    expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
+    expect(markup).toContain("marcode/apps/web/src/session-logic.ts");
+    expect(markup).not.toContain("C:/Users/mike/dev-stuff/marcode/apps/web/src/session-logic.ts");
   });
 });

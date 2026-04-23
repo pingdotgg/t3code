@@ -8,6 +8,7 @@ import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@marcode/shar
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 import { TextGenerationError } from "@marcode/contracts";
 import {
   type BranchNameGenerationInput,
@@ -29,9 +30,7 @@ import {
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "../Utils.ts";
-import { getCodexModelCapabilities } from "../../provider/Layers/CodexProvider.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { normalizeCodexModelOptionsWithCapabilities } from "@marcode/shared/model";
 
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
@@ -156,10 +155,6 @@ const makeCodexTextGeneration = Effect.gen(function* () {
     ).pipe(Effect.catch(() => Effect.undefined));
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
-      const normalizedOptions = normalizeCodexModelOptionsWithCapabilities(
-        getCodexModelCapabilities(modelSelection.model),
-        modelSelection.options,
-      );
       const reasoningEffort =
         modelSelection.options?.reasoningEffort ?? CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT;
       const command = ChildProcess.make(
@@ -174,7 +169,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
           modelSelection.model,
           "--config",
           `model_reasoning_effort="${reasoningEffort}"`,
-          ...(normalizedOptions?.fastMode ? ["--config", `service_tier="fast"`] : []),
+          ...(modelSelection.options?.fastMode ? ["--config", `service_tier="fast"`] : []),
           "--output-schema",
           schemaPath,
           "--output-last-message",
@@ -185,7 +180,9 @@ const makeCodexTextGeneration = Effect.gen(function* () {
         {
           env: {
             ...process.env,
-            ...(codexSettings?.homePath ? { CODEX_HOME: codexSettings.homePath } : {}),
+            ...(codexSettings?.homePath
+              ? { CODEX_HOME: expandHomePath(codexSettings.homePath) }
+              : {}),
           },
           cwd,
           shell: process.platform === "win32",

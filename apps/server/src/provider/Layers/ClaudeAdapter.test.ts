@@ -353,7 +353,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("defaults Claude Opus 4.7 sessions to high effort", () => {
+  it.effect("defaults Claude Opus 4.7 sessions to xhigh effort", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -368,7 +368,7 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.effort, "high");
+      assert.equal(createInput?.options.effort, "max");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
