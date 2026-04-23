@@ -518,13 +518,15 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                 slug: "claude-opus-4-6",
                 name: "Opus 4.6",
                 isCustom: false,
-                capabilities: {
-                  reasoningEffortLevels: [{ value: "high", label: "High", isDefault: true }],
-                  supportsFastMode: true,
-                  supportsThinkingToggle: true,
-                  contextWindowOptions: [],
-                  promptInjectedEffortLevels: [],
-                },
+                capabilities: createModelCapabilities({
+                  optionDescriptors: [
+                    selectDescriptor("reasoning", "Reasoning", [
+                      { id: "high", label: "High", isDefault: true },
+                    ]),
+                    booleanDescriptor("fastMode", "Fast Mode"),
+                    booleanDescriptor("thinking", "Thinking"),
+                  ],
+                }),
               },
             ],
             slashCommands: [],
