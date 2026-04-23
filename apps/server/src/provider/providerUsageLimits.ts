@@ -14,14 +14,6 @@ export function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
 
-export function toIsoDateTimeFromUnixSeconds(value: unknown): string | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return undefined;
-  }
-  const date = new Date(value * 1000);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
-}
-
 export function windowKindFromDuration(input: {
   readonly windowDurationMins?: number;
   readonly shortestWindowDurationMins?: number;

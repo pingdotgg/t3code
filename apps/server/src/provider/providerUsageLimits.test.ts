@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
-
 import {
   clampPercent,
   makeUsageLimitsSnapshot,
-  toIsoDateTimeFromUnixSeconds,
   windowKindFromDuration,
 } from "./providerUsageLimits.ts";
 
@@ -61,14 +59,5 @@ describe("providerUsageLimits", () => {
         longestWindowDurationMins: 10080,
       }),
     ).toBe("weekly");
-  });
-
-  it("normalizes unix-second reset timestamps", () => {
-    expect(toIsoDateTimeFromUnixSeconds(1_713_353_600)).toBe("2024-04-17T11:33:20.000Z");
-  });
-
-  it("drops malformed or out-of-range unix-second reset timestamps", () => {
-    expect(toIsoDateTimeFromUnixSeconds(Number.MAX_VALUE)).toBeUndefined();
-    expect(toIsoDateTimeFromUnixSeconds(Number.POSITIVE_INFINITY)).toBeUndefined();
   });
 });
