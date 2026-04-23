@@ -67,7 +67,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "..
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { toastManager } from "../ui/toast";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   SettingResetButton,
@@ -394,11 +394,13 @@ function AboutVersionSection() {
           setDesktopUpdateStateQueryData(queryClient, state);
         })
         .catch((error: unknown) => {
-          toastManager.add({
-            type: "error",
-            title: "Could not change update track",
-            description: error instanceof Error ? error.message : "Update track change failed.",
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not change update track",
+              description: error instanceof Error ? error.message : "Update track change failed.",
+            }),
+          );
         })
         .finally(() => {
           setIsChangingUpdateChannel(false);
@@ -420,11 +422,13 @@ function AboutVersionSection() {
           setDesktopUpdateStateQueryData(queryClient, result.state);
         })
         .catch((error: unknown) => {
-          toastManager.add({
-            type: "error",
-            title: "Could not download update",
-            description: error instanceof Error ? error.message : "Download failed.",
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not download update",
+              description: error instanceof Error ? error.message : "Download failed.",
+            }),
+          );
         });
       return;
     }
@@ -442,11 +446,13 @@ function AboutVersionSection() {
           setDesktopUpdateStateQueryData(queryClient, result.state);
         })
         .catch((error: unknown) => {
-          toastManager.add({
-            type: "error",
-            title: "Could not install update",
-            description: error instanceof Error ? error.message : "Install failed.",
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not install update",
+              description: error instanceof Error ? error.message : "Install failed.",
+            }),
+          );
         });
       return;
     }
@@ -457,20 +463,24 @@ function AboutVersionSection() {
       .then((result) => {
         setDesktopUpdateStateQueryData(queryClient, result.state);
         if (!result.checked) {
-          toastManager.add({
-            type: "error",
-            title: "Could not check for updates",
-            description:
-              result.state.message ?? "Automatic updates are not available in this build.",
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not check for updates",
+              description:
+                result.state.message ?? "Automatic updates are not available in this build.",
+            }),
+          );
         }
       })
       .catch((error: unknown) => {
-        toastManager.add({
-          type: "error",
-          title: "Could not check for updates",
-          description: error instanceof Error ? error.message : "Update check failed.",
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not check for updates",
+            description: error instanceof Error ? error.message : "Update check failed.",
+          }),
+        );
       });
   }, [queryClient, updateState]);
 
@@ -1804,11 +1814,13 @@ export function ArchivedThreadsPanel() {
         try {
           await unarchiveThread(threadRef);
         } catch (error) {
-          toastManager.add({
-            type: "error",
-            title: "Failed to unarchive thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to unarchive thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
         }
         return;
       }
@@ -1872,12 +1884,14 @@ export function ArchivedThreadsPanel() {
                   onClick={() =>
                     void unarchiveThread(scopeThreadRef(thread.environmentId, thread.id)).catch(
                       (error) => {
-                        toastManager.add({
-                          type: "error",
-                          title: "Failed to unarchive thread",
-                          description:
-                            error instanceof Error ? error.message : "An error occurred.",
-                        });
+                        toastManager.add(
+                          stackedThreadToast({
+                            type: "error",
+                            title: "Failed to unarchive thread",
+                            description:
+                              error instanceof Error ? error.message : "An error occurred.",
+                          }),
+                        );
                       },
                     )
                   }

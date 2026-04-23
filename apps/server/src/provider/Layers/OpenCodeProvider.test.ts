@@ -3,74 +3,86 @@ import assert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
-import { beforeEach, vi } from "vitest";
+import { beforeEach } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { OpenCodeProvider } from "../Services/OpenCodeProvider.ts";
-import { makeOpenCodeProviderLive } from "./OpenCodeProvider.ts";
+import {
+  OpenCodeRuntime,
+  OpenCodeRuntimeError,
+  type OpenCodeRuntimeShape,
+} from "../opencodeRuntime.ts";
+import { OpenCodeProviderLive } from "./OpenCodeProvider.ts";
+import type { OpenCodeInventory } from "../opencodeRuntime.ts";
+
+const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
+
 
 const runtimeMock = {
   state: {
     runVersionError: null as Error | null,
+    versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
-    inventoryResult: {
-      providerList: { connected: [], default: {}, all: [] },
-      agents: [],
-    } as {
-      providerList: {
-        connected: string[];
-        default: Record<string, string>;
-        all: Array<Record<string, unknown>>;
-      };
-      agents: Array<unknown>;
-    },
+    inventory: {
+      providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
+      agents: [] as unknown[],
+    } as unknown,
   },
   reset() {
     this.state.runVersionError = null;
+    this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
-    this.state.inventoryResult = {
-      providerList: { connected: [], default: {}, all: [] },
-      agents: [],
+    this.state.inventory = {
+      providerList: { connected: [], all: [] as unknown[], default: {} },
+      agents: [] as unknown[],
     };
   },
 };
 
-vi.mock("../opencodeRuntime.ts", async () => {
-  const actual =
-    await vi.importActual<typeof import("../opencodeRuntime.ts")>("../opencodeRuntime.ts");
-
-  return {
-    ...actual,
-    runOpenCodeCommand: vi.fn(async () => {
-      if (runtimeMock.state.runVersionError) {
-        throw runtimeMock.state.runVersionError;
-      }
-      return { stdout: "opencode 1.0.0\n", stderr: "", code: 0 };
+const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
+  startOpenCodeServerProcess: () =>
+    Effect.succeed({
+      url: "http://127.0.0.1:4301",
+      exitCode: Effect.never,
     }),
-    connectToOpenCodeServer: vi.fn(async ({ serverUrl }: { serverUrl?: string }) => ({
+  connectToOpenCodeServer: ({ serverUrl }) =>
+    Effect.succeed({
       url: serverUrl ?? "http://127.0.0.1:4301",
-      process: null,
+      exitCode: null,
       external: Boolean(serverUrl),
-      close() {},
-    })),
-    createOpenCodeSdkClient: vi.fn(() => ({})),
-    loadOpenCodeInventory: vi.fn(async () => {
-      if (runtimeMock.state.inventoryError) {
-        throw runtimeMock.state.inventoryError;
-      }
-      return runtimeMock.state.inventoryResult;
     }),
-    flattenOpenCodeModels: vi.fn(() => []),
-  };
-});
+  runOpenCodeCommand: () =>
+    runtimeMock.state.runVersionError
+      ? Effect.fail(
+          new OpenCodeRuntimeError({
+            operation: "runOpenCodeCommand",
+            detail: runtimeMock.state.runVersionError.message,
+            cause: runtimeMock.state.runVersionError,
+          }),
+        )
+      : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
+  createOpenCodeSdkClient: () =>
+    ({}) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+  loadOpenCodeInventory: () =>
+    runtimeMock.state.inventoryError
+      ? Effect.fail(
+          new OpenCodeRuntimeError({
+            operation: "loadOpenCodeInventory",
+            detail: runtimeMock.state.inventoryError.message,
+            cause: runtimeMock.state.inventoryError,
+          }),
+        )
+      : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory),
+};
 
 beforeEach(() => {
   runtimeMock.reset();
 });
 
 const makeTestLayer = (settingsOverrides?: Parameters<typeof ServerSettingsService.layerTest>[0]) =>
-  makeOpenCodeProviderLive().pipe(
+  OpenCodeProviderLive.pipe(
+    Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest(settingsOverrides)),
     Layer.provideMerge(NodeServices.layer),
@@ -103,7 +115,7 @@ it.layer(makeTestLayer())("OpenCodeProviderLive", (it) => {
 
   it.effect("shows managed OpenCode usage only when a managed provider reports real usage", () =>
     Effect.gen(function* () {
-      runtimeMock.state.inventoryResult = {
+      runtimeMock.state.inventory = {
         providerList: {
           connected: ["opencode-go", "anthropic"],
           default: {},
@@ -125,7 +137,7 @@ it.layer(makeTestLayer())("OpenCodeProviderLive", (it) => {
           ],
         },
         agents: [],
-      };
+      } as unknown;
       const provider = yield* OpenCodeProvider;
       const snapshot = yield* provider.refresh;
 
@@ -138,19 +150,94 @@ it.layer(makeTestLayer())("OpenCodeProviderLive", (it) => {
 
   it.effect("shows unavailable usage when only upstream providers are connected", () =>
     Effect.gen(function* () {
-      runtimeMock.state.inventoryResult = {
+      runtimeMock.state.inventory = {
         providerList: {
           connected: ["anthropic"],
           default: {},
           all: [{ id: "anthropic", name: "Anthropic", env: [], models: {} }],
         },
         agents: [],
-      };
+      } as unknown;
       const provider = yield* OpenCodeProvider;
       const snapshot = yield* provider.refresh;
 
       assert.equal(snapshot.usageLimits?.available, false);
       assert.equal(snapshot.usageLimits?.reason, "Unable to fetch usage");
+    }),
+  );
+
+  it.effect("refuses to probe when opencode is older than the required minimum", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode 1.4.7\n";
+      const provider = yield* OpenCodeProvider;
+      const snapshot = yield* provider.refresh;
+
+      assert.equal(snapshot.status, "error");
+      assert.equal(snapshot.installed, true);
+      assert.equal(snapshot.version, "1.4.7");
+      assert.ok(snapshot.message?.includes("1.14.19"));
+      assert.ok(snapshot.message?.toLowerCase().includes("upgrade"));
+    }),
+  );
+
+  it.effect("refuses to probe when opencode --version output is unparseable", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "garbled binary output\n";
+      const provider = yield* OpenCodeProvider;
+      const snapshot = yield* provider.refresh;
+
+      assert.equal(snapshot.status, "error");
+      assert.equal(snapshot.installed, true);
+      assert.equal(snapshot.version, null);
+      assert.ok(snapshot.message?.includes("1.14.19"));
+    }),
+  );
+
+  it.effect("emits OpenCode variant defaults so trait picker can resolve a visible selection", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["openai"],
+          all: [
+            {
+              id: "openai",
+              name: "OpenAI",
+              models: {
+                "gpt-5.4": {
+                  id: "gpt-5.4",
+                  name: "GPT-5.4",
+                  variants: {
+                    none: {},
+                    low: {},
+                    medium: {},
+                    high: {},
+                    xhigh: {},
+                  },
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [
+          { name: "build", hidden: false, mode: "primary" },
+          { name: "plan", hidden: false, mode: "primary" },
+        ],
+      } as unknown;
+
+      const provider = yield* OpenCodeProvider;
+      const snapshot = yield* provider.refresh;
+      const model = snapshot.models.find((entry) => entry.slug === "openai/gpt-5.4");
+
+      assert.ok(model);
+      assert.equal(
+        model.capabilities?.variantOptions?.find((option) => option.isDefault)?.value,
+        "medium",
+      );
+      assert.equal(
+        model.capabilities?.agentOptions?.find((option) => option.isDefault)?.value,
+        "build",
+      );
     }),
   );
 });

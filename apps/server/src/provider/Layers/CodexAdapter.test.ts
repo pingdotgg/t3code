@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   ApprovalRequestId,
   EventId,
@@ -12,20 +15,22 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { afterAll, it, vi } from "@effect/vitest";
+import { it, vi } from "@effect/vitest";
 
-import { Effect, Fiber, Layer, Option, Stream } from "effect";
+import { Effect, Exit, Fiber, Layer, Option, Queue, Scope, Stream } from "effect";
+import * as CodexErrors from "effect-codex-app-server/errors";
 
-import {
-  CodexAppServerManager,
-  type CodexAppServerStartSessionInput,
-  type CodexAppServerSendTurnInput,
-} from "../../codexAppServerManager.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import {
+  type CodexSessionRuntimeOptions,
+  type CodexSessionRuntimeSendTurnInput,
+  type CodexSessionRuntimeShape,
+  type CodexThreadSnapshot,
+} from "./CodexSessionRuntime.ts";
 import { makeCodexAdapterLive } from "./CodexAdapter.ts";
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
@@ -33,110 +38,157 @@ const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asItemId = (value: string): ProviderItemId => ProviderItemId.make(value);
 
-class FakeCodexManager extends CodexAppServerManager {
-  public startSessionImpl = vi.fn(
-    async (input: CodexAppServerStartSessionInput): Promise<ProviderSession> => {
-      const now = new Date().toISOString();
-      return {
-        provider: "codex",
-        status: "ready",
-        runtimeMode: input.runtimeMode,
-        threadId: input.threadId,
-        cwd: input.cwd,
-        createdAt: now,
-        updatedAt: now,
-      };
-    },
+class FakeCodexRuntime implements CodexSessionRuntimeShape {
+  private readonly eventQueue = Effect.runSync(Queue.unbounded<ProviderEvent>());
+  private readonly now = new Date().toISOString();
+
+  public readonly startImpl = vi.fn(() =>
+    Promise.resolve({
+      provider: "codex" as const,
+      status: "ready" as const,
+      runtimeMode: this.options.runtimeMode,
+      threadId: this.options.threadId,
+      cwd: this.options.cwd,
+      ...(this.options.model ? { model: this.options.model } : {}),
+      createdAt: this.now,
+      updatedAt: this.now,
+    } satisfies ProviderSession),
   );
 
-  public sendTurnImpl = vi.fn(
-    async (_input: CodexAppServerSendTurnInput): Promise<ProviderTurnStartResult> => ({
-      threadId: asThreadId("thread-1"),
-      turnId: asTurnId("turn-1"),
+  public readonly sendTurnImpl = vi.fn(
+    (_input: CodexSessionRuntimeSendTurnInput): Promise<ProviderTurnStartResult> =>
+      Promise.resolve({
+        threadId: this.options.threadId,
+        turnId: asTurnId("turn-1"),
+      }),
+  );
+
+  public readonly interruptTurnImpl = vi.fn(
+    (_turnId?: TurnId): Promise<void> => Promise.resolve(undefined),
+  );
+
+  public readonly readThreadImpl = vi.fn(
+    (): Promise<CodexThreadSnapshot> =>
+      Promise.resolve({
+        threadId: "provider-thread-1",
+        turns: [],
+      }),
+  );
+
+  public readonly rollbackThreadImpl = vi.fn(
+    (_numTurns: number): Promise<CodexThreadSnapshot> =>
+      Promise.resolve({
+        threadId: "provider-thread-1",
+        turns: [],
+      }),
+  );
+
+  public readonly respondToRequestImpl = vi.fn(
+    (_requestId: ApprovalRequestId, _decision: ProviderApprovalDecision): Promise<void> =>
+      Promise.resolve(undefined),
+  );
+
+  public readonly respondToUserInputImpl = vi.fn(
+    (_requestId: ApprovalRequestId, _answers: ProviderUserInputAnswers): Promise<void> =>
+      Promise.resolve(undefined),
+  );
+
+  public readonly closeImpl = vi.fn(() => Promise.resolve(undefined));
+
+  readonly options: CodexSessionRuntimeOptions;
+
+  constructor(options: CodexSessionRuntimeOptions) {
+    this.options = options;
+  }
+
+  start() {
+    return Effect.promise(() => this.startImpl());
+  }
+
+  getSession = Effect.promise(() => this.startImpl());
+
+  sendTurn(input: CodexSessionRuntimeSendTurnInput) {
+    return Effect.promise(() => this.sendTurnImpl(input));
+  }
+
+  interruptTurn(turnId?: TurnId) {
+    return Effect.promise(() => this.interruptTurnImpl(turnId));
+  }
+
+  readThread = Effect.promise(() => this.readThreadImpl());
+
+  rollbackThread(numTurns: number) {
+    return Effect.promise(() => this.rollbackThreadImpl(numTurns));
+  }
+
+  respondToRequest(requestId: ApprovalRequestId, decision: ProviderApprovalDecision) {
+    return Effect.promise(() => this.respondToRequestImpl(requestId, decision));
+  }
+
+  respondToUserInput(requestId: ApprovalRequestId, answers: ProviderUserInputAnswers) {
+    return Effect.promise(() => this.respondToUserInputImpl(requestId, answers));
+  }
+
+  get events() {
+    return Stream.fromQueue(this.eventQueue);
+  }
+
+  close = Effect.promise(() => this.closeImpl());
+
+  emit(event: ProviderEvent) {
+    return Queue.offer(this.eventQueue, event).pipe(Effect.asVoid);
+  }
+}
+
+function makeRuntimeFactory() {
+  const runtimes: Array<FakeCodexRuntime> = [];
+  const factory = vi.fn((options: CodexSessionRuntimeOptions) => {
+    const runtime = new FakeCodexRuntime(options);
+    runtimes.push(runtime);
+    return Effect.succeed(runtime);
+  });
+
+  return {
+    factory,
+    get lastRuntime(): FakeCodexRuntime | undefined {
+      return runtimes.at(-1);
+    },
+  };
+}
+
+function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolean }) {
+  const runtimes: Array<FakeCodexRuntime> = [];
+  const releasedThreadIds: Array<ThreadId> = [];
+
+  const factory = vi.fn((runtimeOptions: CodexSessionRuntimeOptions) =>
+    Effect.gen(function* () {
+      yield* Scope.Scope;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          releasedThreadIds.push(runtimeOptions.threadId);
+        }),
+      );
+
+      if (options?.failConstruction) {
+        return yield* new CodexErrors.CodexAppServerSpawnError({
+          command: `${runtimeOptions.binaryPath} app-server`,
+          cause: new Error("runtime construction failed"),
+        });
+      }
+
+      const runtime = new FakeCodexRuntime(runtimeOptions);
+      runtimes.push(runtime);
+      return runtime;
     }),
   );
 
-  public interruptTurnImpl = vi.fn(
-    async (_threadId: ThreadId, _turnId?: TurnId): Promise<void> => undefined,
-  );
-
-  public readThreadImpl = vi.fn(async (_threadId: ThreadId) => ({
-    threadId: asThreadId("thread-1"),
-    turns: [],
-  }));
-
-  public rollbackThreadImpl = vi.fn(async (_threadId: ThreadId, _numTurns: number) => ({
-    threadId: asThreadId("thread-1"),
-    turns: [],
-  }));
-
-  public respondToRequestImpl = vi.fn(
-    async (
-      _threadId: ThreadId,
-      _requestId: ApprovalRequestId,
-      _decision: ProviderApprovalDecision,
-    ): Promise<void> => undefined,
-  );
-
-  public respondToUserInputImpl = vi.fn(
-    async (
-      _threadId: ThreadId,
-      _requestId: ApprovalRequestId,
-      _answers: ProviderUserInputAnswers,
-    ): Promise<void> => undefined,
-  );
-
-  public stopAllImpl = vi.fn(() => undefined);
-
-  override startSession(input: CodexAppServerStartSessionInput): Promise<ProviderSession> {
-    return this.startSessionImpl(input);
-  }
-
-  override sendTurn(input: CodexAppServerSendTurnInput): Promise<ProviderTurnStartResult> {
-    return this.sendTurnImpl(input);
-  }
-
-  override interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void> {
-    return this.interruptTurnImpl(threadId, turnId);
-  }
-
-  override readThread(threadId: ThreadId) {
-    return this.readThreadImpl(threadId);
-  }
-
-  override rollbackThread(threadId: ThreadId, numTurns: number) {
-    return this.rollbackThreadImpl(threadId, numTurns);
-  }
-
-  override respondToRequest(
-    threadId: ThreadId,
-    requestId: ApprovalRequestId,
-    decision: ProviderApprovalDecision,
-  ): Promise<void> {
-    return this.respondToRequestImpl(threadId, requestId, decision);
-  }
-
-  override respondToUserInput(
-    threadId: ThreadId,
-    requestId: ApprovalRequestId,
-    answers: ProviderUserInputAnswers,
-  ): Promise<void> {
-    return this.respondToUserInputImpl(threadId, requestId, answers);
-  }
-
-  override stopSession(_threadId: ThreadId): void {}
-
-  override listSessions(): ProviderSession[] {
-    return [];
-  }
-
-  override hasSession(_threadId: ThreadId): boolean {
-    return false;
-  }
-
-  override stopAll(): void {
-    this.stopAllImpl();
-  }
+  return {
+    factory,
+    releasedThreadIds,
+    get lastRuntime(): FakeCodexRuntime | undefined {
+      return runtimes.at(-1);
+    },
+  };
 }
 
 const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory, {
@@ -148,9 +200,9 @@ const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory
   listBindings: () => Effect.succeed([]),
 });
 
-const validationManager = new FakeCodexManager();
+const validationRuntimeFactory = makeRuntimeFactory();
 const validationLayer = it.layer(
-  makeCodexAdapterLive({ manager: validationManager }).pipe(
+  makeCodexAdapterLive({ makeRuntime: validationRuntimeFactory.factory }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
@@ -179,12 +231,12 @@ validationLayer("CodexAdapterLive validation", (it) => {
           issue: "Expected provider 'codex' but received 'claudeAgent'.",
         }),
       );
-      assert.equal(validationManager.startSessionImpl.mock.calls.length, 0);
+      assert.equal(validationRuntimeFactory.factory.mock.calls.length, 0);
     }),
   );
   it.effect("maps codex model options before starting a session", () =>
     Effect.gen(function* () {
-      validationManager.startSessionImpl.mockClear();
+      validationRuntimeFactory.factory.mockClear();
       const adapter = yield* CodexAdapter;
 
       yield* adapter.startSession({
@@ -200,24 +252,21 @@ validationLayer("CodexAdapterLive validation", (it) => {
         runtimeMode: "full-access",
       });
 
-      assert.deepStrictEqual(validationManager.startSessionImpl.mock.calls[0]?.[0], {
-        provider: "codex",
-        threadId: asThreadId("thread-1"),
+      assert.deepStrictEqual(validationRuntimeFactory.factory.mock.calls[0]?.[0], {
         binaryPath: "codex",
+        cwd: process.cwd(),
         model: "gpt-5.3-codex",
         serviceTier: "fast",
+        threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
     }),
   );
 });
 
-const sessionErrorManager = new FakeCodexManager();
-sessionErrorManager.sendTurnImpl.mockImplementation(async () => {
-  throw new Error("Unknown session: sess-missing");
-});
+const sessionRuntimeFactory = makeRuntimeFactory();
 const sessionErrorLayer = it.layer(
-  makeCodexAdapterLive({ manager: sessionErrorManager }).pipe(
+  makeCodexAdapterLive({ makeRuntime: sessionRuntimeFactory.factory }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
@@ -226,7 +275,7 @@ const sessionErrorLayer = it.layer(
 );
 
 sessionErrorLayer("CodexAdapterLive session errors", (it) => {
-  it.effect("maps unknown-session sendTurn errors to ProviderAdapterSessionNotFoundError", () =>
+  it.effect("maps missing adapter sessions to ProviderAdapterSessionNotFoundError", () =>
     Effect.gen(function* () {
       const adapter = yield* CodexAdapter;
       const result = yield* adapter
@@ -241,14 +290,20 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       assert.equal(result.failure._tag, "ProviderAdapterSessionNotFoundError");
       assert.equal(result.failure.provider, "codex");
       assert.equal(result.failure.threadId, "sess-missing");
-      assert.equal(result.failure.cause instanceof Error, true);
     }),
   );
 
   it.effect("maps codex model options before sending a turn", () =>
     Effect.gen(function* () {
-      sessionErrorManager.sendTurnImpl.mockClear();
       const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId: asThreadId("sess-missing"),
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      assert.ok(runtime);
+      runtime.sendTurnImpl.mockClear();
 
       yield* Effect.ignore(
         adapter.sendTurn({
@@ -266,8 +321,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         }),
       );
 
-      assert.deepStrictEqual(sessionErrorManager.sendTurnImpl.mock.calls[0]?.[0], {
-        threadId: asThreadId("sess-missing"),
+      assert.deepStrictEqual(runtime.sendTurnImpl.mock.calls[0]?.[0], {
         input: "hello",
         model: "gpt-5.3-codex",
         effort: "high",
@@ -277,9 +331,9 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
   );
 });
 
-const lifecycleManager = new FakeCodexManager();
+const lifecycleRuntimeFactory = makeRuntimeFactory();
 const lifecycleLayer = it.layer(
-  makeCodexAdapterLive({ manager: lifecycleManager }).pipe(
+  makeCodexAdapterLive({ makeRuntime: lifecycleRuntimeFactory.factory }).pipe(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
@@ -287,10 +341,24 @@ const lifecycleLayer = it.layer(
   ),
 );
 
+function startLifecycleRuntime() {
+  return Effect.gen(function* () {
+    const adapter = yield* CodexAdapter;
+    yield* adapter.startSession({
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      runtimeMode: "full-access",
+    });
+    const runtime = lifecycleRuntimeFactory.lastRuntime;
+    assert.ok(runtime);
+    return { adapter, runtime };
+  });
+}
+
 lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
   it.effect("maps completed agent message items to canonical item.completed events", () =>
     Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
+      const { adapter, runtime } = yield* startLifecycleRuntime();
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
 
       const event: ProviderEvent = {
@@ -303,14 +371,17 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         turnId: asTurnId("turn-1"),
         itemId: asItemId("msg_1"),
         payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
           item: {
             type: "agentMessage",
             id: "msg_1",
+            text: "done",
           },
         },
       };
 
-      lifecycleManager.emit("event", event);
+      yield* runtime.emit(event);
       const firstEvent = yield* Fiber.join(firstEventFiber);
 
       assert.equal(firstEvent._tag, "Some");
@@ -329,7 +400,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 
   it.effect("maps completed plan items to canonical proposed-plan completion events", () =>
     Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
+      const { adapter, runtime } = yield* startLifecycleRuntime();
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
 
       const event: ProviderEvent = {
@@ -342,15 +413,17 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         turnId: asTurnId("turn-1"),
         itemId: asItemId("plan_1"),
         payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
           item: {
-            type: "Plan",
+            type: "plan",
             id: "plan_1",
             text: "## Final plan\n\n- one\n- two",
           },
         },
       };
 
-      lifecycleManager.emit("event", event);
+      yield* runtime.emit(event);
       const firstEvent = yield* Fiber.join(firstEventFiber);
 
       assert.equal(firstEvent._tag, "Some");
@@ -368,10 +441,10 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 
   it.effect("maps plan deltas to canonical proposed-plan delta events", () =>
     Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
+      const { adapter, runtime } = yield* startLifecycleRuntime();
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
 
-      lifecycleManager.emit("event", {
+      yield* runtime.emit({
         id: asEventId("evt-plan-delta"),
         kind: "notification",
         provider: "codex",
@@ -381,6 +454,9 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         turnId: asTurnId("turn-1"),
         itemId: asItemId("plan_1"),
         payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          itemId: "plan_1",
           delta: "## Final plan",
         },
       } satisfies ProviderEvent);
@@ -402,7 +478,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 
   it.effect("maps session/closed lifecycle events to canonical session.exited runtime events", () =>
     Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
+      const { adapter, runtime } = yield* startLifecycleRuntime();
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
 
       const event: ProviderEvent = {
@@ -415,7 +491,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         message: "Session stopped",
       };
 
-      lifecycleManager.emit("event", event);
+      yield* runtime.emit(event);
       const firstEvent = yield* Fiber.join(firstEventFiber);
 
       assert.equal(firstEvent._tag, "Some");
@@ -433,10 +509,10 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 
   it.effect("maps retryable Codex error notifications to runtime.warning", () =>
     Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
+      const { adapter, runtime } = yield* startLifecycleRuntime();
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
 
-      lifecycleManager.emit("event", {
+      yield* runtime.emit({
         id: asEventId("evt-retryable-error"),
         kind: "notification",
         provider: "codex",
@@ -445,6 +521,8 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         method: "error",
         turnId: asTurnId("turn-1"),
         payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
           error: {
             message: "Reconnecting... 2/5",
           },
@@ -469,10 +547,10 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 
   it.effect("maps process stderr notifications to runtime.warning", () =>
     Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
+      const { adapter, runtime } = yield* startLifecycleRuntime();
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
 
-      lifecycleManager.emit("event", {
+      yield* runtime.emit({
         id: asEventId("evt-process-stderr"),
         kind: "notification",
         provider: "codex",
@@ -503,10 +581,10 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 
   it.effect("maps fatal websocket stderr notifications to runtime.error", () =>
     Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
+      const { adapter, runtime } = yield* startLifecycleRuntime();
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
 
-      lifecycleManager.emit("event", {
+      yield* runtime.emit({
         id: asEventId("evt-process-stderr-websocket"),
         kind: "notification",
         provider: "codex",
@@ -539,7 +617,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 
   it.effect("preserves request type when mapping serverRequest/resolved", () =>
     Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
+      const { adapter, runtime } = yield* startLifecycleRuntime();
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
 
       const event: ProviderEvent = {
@@ -549,16 +627,15 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         threadId: asThreadId("thread-1"),
         createdAt: new Date().toISOString(),
         method: "serverRequest/resolved",
+        requestKind: "command",
         requestId: ApprovalRequestId.make("req-1"),
         payload: {
-          request: {
-            method: "item/commandExecution/requestApproval",
-          },
-          decision: "accept",
+          threadId: "thread-1",
+          requestId: "req-1",
         },
       };
 
-      lifecycleManager.emit("event", event);
+      yield* runtime.emit(event);
       const firstEvent = yield* Fiber.join(firstEventFiber);
 
       assert.equal(firstEvent._tag, "Some");
@@ -575,7 +652,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 
   it.effect("preserves file-read request type when mapping serverRequest/resolved", () =>
     Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
+      const { adapter, runtime } = yield* startLifecycleRuntime();
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
 
       const event: ProviderEvent = {
@@ -585,16 +662,15 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         threadId: asThreadId("thread-1"),
         createdAt: new Date().toISOString(),
         method: "serverRequest/resolved",
+        requestKind: "file-read",
         requestId: ApprovalRequestId.make("req-file-read-1"),
         payload: {
-          request: {
-            method: "item/fileRead/requestApproval",
-          },
-          decision: "accept",
+          threadId: "thread-1",
+          requestId: "req-file-read-1",
         },
       };
 
-      lifecycleManager.emit("event", event);
+      yield* runtime.emit(event);
       const firstEvent = yield* Fiber.join(firstEventFiber);
 
       assert.equal(firstEvent._tag, "Some");
@@ -611,7 +687,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 
   it.effect("preserves explicit empty multi-select user-input answers", () =>
     Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
+      const { adapter, runtime } = yield* startLifecycleRuntime();
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
 
       const event: ProviderEvent = {
@@ -623,12 +699,14 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         method: "item/tool/requestUserInput/answered",
         payload: {
           answers: {
-            scope: [],
+            scope: {
+              answers: [],
+            },
           },
         },
       };
 
-      lifecycleManager.emit("event", event);
+      yield* runtime.emit(event);
       const firstEvent = yield* Fiber.join(firstEventFiber);
 
       assert.equal(firstEvent._tag, "Some");
@@ -647,7 +725,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
 
   it.effect("maps windowsSandbox/setupCompleted to session state and warning on failure", () =>
     Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
+      const { adapter, runtime } = yield* startLifecycleRuntime();
       const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
         Effect.forkChild,
       );
@@ -661,12 +739,13 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         method: "windowsSandbox/setupCompleted",
         message: "Sandbox setup failed",
         payload: {
+          mode: "unelevated",
           success: false,
-          detail: "unsupported environment",
+          error: "unsupported environment",
         },
       };
 
-      lifecycleManager.emit("event", event);
+      yield* runtime.emit(event);
       const events = Array.from(yield* Fiber.join(eventsFiber));
 
       assert.equal(events.length, 2);
@@ -691,12 +770,12 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     "maps requestUserInput requests and answered notifications to canonical user-input events",
     () =>
       Effect.gen(function* () {
-        const adapter = yield* CodexAdapter;
+        const { adapter, runtime } = yield* startLifecycleRuntime();
         const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
           Effect.forkChild,
         );
 
-        lifecycleManager.emit("event", {
+        yield* runtime.emit({
           id: asEventId("evt-user-input-requested"),
           kind: "request",
           provider: "codex",
@@ -705,6 +784,9 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           method: "item/tool/requestUserInput",
           requestId: ApprovalRequestId.make("req-user-input-1"),
           payload: {
+            itemId: "item-user-input-1",
+            threadId: "thread-1",
+            turnId: "turn-1",
             questions: [
               {
                 id: "sandbox_mode",
@@ -716,12 +798,11 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
                     description: "Allow workspace writes only",
                   },
                 ],
-                multiSelect: true,
               },
             ],
           },
         } satisfies ProviderEvent);
-        lifecycleManager.emit("event", {
+        yield* runtime.emit({
           id: asEventId("evt-user-input-resolved"),
           kind: "notification",
           provider: "codex",
@@ -743,7 +824,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         if (events[0]?.type === "user-input.requested") {
           assert.equal(events[0].requestId, "req-user-input-1");
           assert.equal(events[0].payload.questions[0]?.id, "sandbox_mode");
-          assert.equal(events[0].payload.questions[0]?.multiSelect, true);
+          assert.equal(events[0].payload.questions[0]?.multiSelect, false);
         }
 
         assert.equal(events[1]?.type, "user-input.resolved");
@@ -756,168 +837,12 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }),
   );
 
-  it.effect("maps Codex task and reasoning event chunks into canonical runtime events", () =>
-    Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
-      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 5)).pipe(
-        Effect.forkChild,
-      );
-
-      lifecycleManager.emit("event", {
-        id: asEventId("evt-codex-task-started"),
-        kind: "notification",
-        provider: "codex",
-        threadId: asThreadId("thread-1"),
-        createdAt: new Date().toISOString(),
-        method: "codex/event/task_started",
-        payload: {
-          id: "turn-structured-1",
-          msg: {
-            type: "task_started",
-            turn_id: "turn-structured-1",
-            collaboration_mode_kind: "plan",
-          },
-        },
-      } satisfies ProviderEvent);
-
-      lifecycleManager.emit("event", {
-        id: asEventId("evt-codex-agent-reasoning"),
-        kind: "notification",
-        provider: "codex",
-        threadId: asThreadId("thread-1"),
-        createdAt: new Date().toISOString(),
-        method: "codex/event/agent_reasoning",
-        payload: {
-          id: "turn-structured-1",
-          msg: {
-            type: "agent_reasoning",
-            text: "Need to compare both transport layers before finalizing the plan.",
-          },
-        },
-      } satisfies ProviderEvent);
-
-      lifecycleManager.emit("event", {
-        id: asEventId("evt-codex-reasoning-delta"),
-        kind: "notification",
-        provider: "codex",
-        threadId: asThreadId("thread-1"),
-        createdAt: new Date().toISOString(),
-        method: "codex/event/reasoning_content_delta",
-        payload: {
-          id: "turn-structured-1",
-          msg: {
-            type: "reasoning_content_delta",
-            turn_id: "turn-structured-1",
-            item_id: "rs_reasoning_1",
-            delta: "**Compare** transport boundaries",
-            summary_index: 0,
-          },
-        },
-      } satisfies ProviderEvent);
-
-      lifecycleManager.emit("event", {
-        id: asEventId("evt-codex-task-complete"),
-        kind: "notification",
-        provider: "codex",
-        threadId: asThreadId("thread-1"),
-        createdAt: new Date().toISOString(),
-        method: "codex/event/task_complete",
-        payload: {
-          id: "turn-structured-1",
-          msg: {
-            type: "task_complete",
-            turn_id: "turn-structured-1",
-            last_agent_message: "<proposed_plan>\n# Ship it\n</proposed_plan>",
-          },
-        },
-      } satisfies ProviderEvent);
-
-      const events = Array.from(yield* Fiber.join(eventsFiber));
-
-      assert.equal(events[0]?.type, "task.started");
-      if (events[0]?.type === "task.started") {
-        assert.equal(events[0].turnId, "turn-structured-1");
-        assert.equal(events[0].payload.taskId, "turn-structured-1");
-        assert.equal(events[0].payload.taskType, "plan");
-      }
-
-      assert.equal(events[1]?.type, "task.progress");
-      if (events[1]?.type === "task.progress") {
-        assert.equal(events[1].payload.taskId, "turn-structured-1");
-        assert.equal(
-          events[1].payload.description,
-          "Need to compare both transport layers before finalizing the plan.",
-        );
-      }
-
-      assert.equal(events[2]?.type, "content.delta");
-      if (events[2]?.type === "content.delta") {
-        assert.equal(events[2].turnId, "turn-structured-1");
-        assert.equal(events[2].itemId, "rs_reasoning_1");
-        assert.equal(events[2].payload.streamKind, "reasoning_summary_text");
-        assert.equal(events[2].payload.summaryIndex, 0);
-      }
-
-      assert.equal(events[3]?.type, "task.completed");
-      if (events[3]?.type === "task.completed") {
-        assert.equal(events[3].turnId, "turn-structured-1");
-        assert.equal(events[3].payload.taskId, "turn-structured-1");
-        assert.equal(events[3].payload.summary, "<proposed_plan>\n# Ship it\n</proposed_plan>");
-      }
-
-      assert.equal(events[4]?.type, "turn.proposed.completed");
-      if (events[4]?.type === "turn.proposed.completed") {
-        assert.equal(events[4].turnId, "turn-structured-1");
-        assert.equal(events[4].payload.planMarkdown, "# Ship it");
-      }
-    }),
-  );
-
-  it.effect("prefers manager-assigned turn ids for Codex task events", () =>
-    Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
-      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
-
-      lifecycleManager.emit("event", {
-        id: asEventId("evt-codex-task-started-parent-turn"),
-        kind: "notification",
-        provider: "codex",
-        threadId: asThreadId("thread-1"),
-        turnId: asTurnId("turn-parent"),
-        createdAt: new Date().toISOString(),
-        method: "codex/event/task_started",
-        payload: {
-          id: "turn-child",
-          msg: {
-            type: "task_started",
-            turn_id: "turn-child",
-            collaboration_mode_kind: "default",
-          },
-          conversationId: "child-provider-thread",
-        },
-      } satisfies ProviderEvent);
-
-      const firstEvent = yield* Fiber.join(firstEventFiber);
-      assert.equal(firstEvent._tag, "Some");
-      if (firstEvent._tag !== "Some") {
-        return;
-      }
-      assert.equal(firstEvent.value.type, "task.started");
-      if (firstEvent.value.type !== "task.started") {
-        return;
-      }
-      assert.equal(firstEvent.value.turnId, "turn-parent");
-      assert.equal(firstEvent.value.providerRefs?.providerTurnId, "turn-parent");
-      assert.equal(firstEvent.value.payload.taskId, "turn-child");
-    }),
-  );
-
   it.effect("unwraps Codex token usage payloads for context window events", () =>
     Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
+      const { adapter, runtime } = yield* startLifecycleRuntime();
       const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
 
-      lifecycleManager.emit("event", {
+      yield* runtime.emit({
         id: asEventId("evt-codex-thread-token-usage-updated"),
         kind: "notification",
         provider: "codex",
@@ -977,9 +902,130 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
   );
 });
 
-afterAll(() => {
-  if (lifecycleManager.stopAllImpl.mock.calls.length === 0) {
-    lifecycleManager.stopAll();
-  }
-  assert.ok(lifecycleManager.stopAllImpl.mock.calls.length >= 1);
+const scopedLifecycleRuntimeFactory = makeScopedRuntimeFactory();
+const scopedLifecycleLayer = it.layer(
+  makeCodexAdapterLive({ makeRuntime: scopedLifecycleRuntimeFactory.factory }).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+scopedLifecycleLayer("CodexAdapterLive scoped lifecycle", (it) => {
+  it.effect("closes the externally owned session scope on stopSession", () =>
+    Effect.gen(function* () {
+      scopedLifecycleRuntimeFactory.releasedThreadIds.length = 0;
+      const adapter = yield* CodexAdapter;
+
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId: asThreadId("thread-stop"),
+        runtimeMode: "full-access",
+      });
+
+      const runtime = scopedLifecycleRuntimeFactory.lastRuntime;
+      assert.ok(runtime);
+
+      yield* adapter.stopSession(asThreadId("thread-stop"));
+
+      assert.equal(runtime.closeImpl.mock.calls.length, 1);
+      assert.deepStrictEqual(scopedLifecycleRuntimeFactory.releasedThreadIds, [
+        asThreadId("thread-stop"),
+      ]);
+      assert.equal(yield* adapter.hasSession(asThreadId("thread-stop")), false);
+    }),
+  );
 });
+
+const scopedFailureRuntimeFactory = makeScopedRuntimeFactory({ failConstruction: true });
+const scopedFailureLayer = it.layer(
+  makeCodexAdapterLive({ makeRuntime: scopedFailureRuntimeFactory.factory }).pipe(
+    Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+scopedFailureLayer("CodexAdapterLive scoped startup failure", (it) => {
+  it.effect("closes the externally owned session scope when startSession fails", () =>
+    Effect.gen(function* () {
+      scopedFailureRuntimeFactory.releasedThreadIds.length = 0;
+      const adapter = yield* CodexAdapter;
+
+      const result = yield* adapter
+        .startSession({
+          provider: "codex",
+          threadId: asThreadId("thread-fail"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.result);
+
+      assert.equal(result._tag, "Failure");
+      assert.equal(result.failure._tag, "ProviderAdapterProcessError");
+      assert.deepStrictEqual(scopedFailureRuntimeFactory.releasedThreadIds, [
+        asThreadId("thread-fail"),
+      ]);
+      assert.equal(yield* adapter.hasSession(asThreadId("thread-fail")), false);
+    }),
+  );
+});
+
+it.effect("flushes managed native logs when the adapter layer shuts down", () =>
+  Effect.gen(function* () {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-codex-adapter-native-log-"));
+    const basePath = path.join(tempDir, "provider-native.ndjson");
+    const runtimeFactory = makeRuntimeFactory();
+    const scope = yield* Scope.make("sequential");
+    let scopeClosed = false;
+
+    try {
+      const layer = makeCodexAdapterLive({
+        makeRuntime: runtimeFactory.factory,
+        nativeEventLogPath: basePath,
+      }).pipe(
+        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provideMerge(ServerSettingsService.layerTest()),
+        Layer.provideMerge(providerSessionDirectoryTestLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+      const context = yield* Layer.buildWithScope(layer, scope);
+      const adapter = yield* Effect.service(CodexAdapter).pipe(Effect.provide(context));
+
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId: asThreadId("thread-logger"),
+        runtimeMode: "full-access",
+      });
+
+      const runtime = runtimeFactory.lastRuntime;
+      assert.ok(runtime);
+
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+      yield* runtime.emit({
+        id: asEventId("evt-native-log"),
+        kind: "notification",
+        provider: "codex",
+        threadId: asThreadId("thread-logger"),
+        createdAt: new Date().toISOString(),
+        method: "process/stderr",
+        message: "native flush test",
+      } satisfies ProviderEvent);
+      yield* Fiber.join(firstEventFiber);
+
+      yield* Scope.close(scope, Exit.void);
+      scopeClosed = true;
+
+      const threadLogPath = path.join(tempDir, "thread-logger.log");
+      assert.equal(fs.existsSync(threadLogPath), true);
+      const contents = fs.readFileSync(threadLogPath, "utf8");
+      assert.match(contents, /NTIVE: .*"message":"native flush test"/);
+    } finally {
+      if (!scopeClosed) {
+        yield* Scope.close(scope, Exit.void);
+      }
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  }),
+);

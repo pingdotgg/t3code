@@ -19,7 +19,12 @@ import {
   WebSocketConnectionSurface,
 } from "../components/WebSocketConnectionSurface";
 import { Button } from "../components/ui/button";
-import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
+import {
+  AnchoredToastProvider,
+  stackedThreadToast,
+  ToastProvider,
+  toastManager,
+} from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { readLocalApi } from "../localApi";
 import { useSettings } from "../hooks/useSettings";
@@ -290,37 +295,42 @@ function EventRouter() {
         return;
       }
 
-      toastManager.add({
-        type: "warning",
-        title: "Invalid keybindings configuration",
-        description: issue.message,
-        actionProps: {
-          children: "Open keybindings.json",
-          onClick: () => {
-            const api = readLocalApi();
-            if (!api) {
-              return;
-            }
+      toastManager.add(
+        stackedThreadToast({
+          type: "warning",
+          title: "Invalid keybindings configuration",
+          description: issue.message,
+          actionVariant: "outline",
+          actionProps: {
+            children: "Open keybindings.json",
+            onClick: () => {
+              const api = readLocalApi();
+              if (!api) {
+                return;
+              }
 
-            void Promise.resolve(serverConfig ?? api.server.getConfig())
-              .then((config) => {
-                const editor = resolveAndPersistPreferredEditor(config.availableEditors);
-                if (!editor) {
-                  throw new Error("No available editors found.");
-                }
-                return api.shell.openInEditor(config.keybindingsConfigPath, editor);
-              })
-              .catch((error) => {
-                toastManager.add({
-                  type: "error",
-                  title: "Unable to open keybindings file",
-                  description:
-                    error instanceof Error ? error.message : "Unknown error opening file.",
+              void Promise.resolve(serverConfig ?? api.server.getConfig())
+                .then((config) => {
+                  const editor = resolveAndPersistPreferredEditor(config.availableEditors);
+                  if (!editor) {
+                    throw new Error("No available editors found.");
+                  }
+                  return api.shell.openInEditor(config.keybindingsConfigPath, editor);
+                })
+                .catch((error) => {
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: "Unable to open keybindings file",
+                      description:
+                        error instanceof Error ? error.message : "Unknown error opening file.",
+                    }),
+                  );
                 });
-              });
+            },
           },
-        },
-      });
+        }),
+      );
     },
   );
 
