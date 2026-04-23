@@ -1,7 +1,7 @@
-import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
+import { type AcpAgentServer, type ProviderKind, type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { Clock3Icon, SparklesIcon, StarIcon } from "lucide-react";
-import { Gemini, GithubCopilotIcon } from "../Icons";
+import { Gemini, GithubCopilotIcon, OpenCodeIcon } from "../Icons";
 import { AVAILABLE_PROVIDER_OPTIONS, PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -42,6 +42,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
   selectedProvider: ProviderKind | "favorites";
   onSelectProvider: (provider: ProviderKind | "favorites") => void;
   providers?: ReadonlyArray<ServerProvider>;
+  acpAgents?: ReadonlyArray<Pick<AcpAgentServer, "id" | "name" | "enabled" | "iconUrl">>;
 }) {
   const handleProviderClick = (provider: ProviderKind | "favorites") => {
     props.onSelectProvider(provider);
@@ -152,6 +153,37 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
           </div>
         );
       })}
+
+      {(props.acpAgents?.some((agent) => agent.enabled) ?? false) ? (
+        <div className="relative w-full">
+          {props.selectedProvider === "acp" && <div className={SELECTED_INDICATOR_CLASS} />}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <button
+                  data-model-picker-provider="acp"
+                  className={cn(
+                    "relative isolate flex w-full cursor-pointer aspect-square items-center justify-center rounded transition-colors hover:bg-muted",
+                    props.selectedProvider === "acp" && SELECTED_BUTTON_CLASS,
+                  )}
+                  onClick={() => handleProviderClick("acp")}
+                  type="button"
+                  aria-label="ACP Agents"
+                >
+                  <OpenCodeIcon className="size-5 shrink-0" aria-hidden />
+                </button>
+              }
+            />
+            <TooltipPopup
+              side={PICKER_TOOLTIP_SIDE}
+              align="center"
+              className={PICKER_TOOLTIP_CLASS}
+            >
+              ACP Agents
+            </TooltipPopup>
+          </Tooltip>
+        </div>
+      ) : null}
 
       {/* Gemini button (coming soon) */}
       <Tooltip>

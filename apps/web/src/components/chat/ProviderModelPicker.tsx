@@ -1,4 +1,5 @@
 import {
+  type AcpAgentServer,
   type ProviderKind,
   type ResolvedKeybindingsConfig,
   type ServerProvider,
@@ -26,6 +27,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   providers?: ReadonlyArray<ServerProvider>;
   keybindings?: ResolvedKeybindingsConfig;
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<ModelEsque>>;
+  acpAgents?: ReadonlyArray<Pick<AcpAgentServer, "id" | "name" | "enabled" | "iconUrl">>;
   activeProviderIconClassName?: string;
   compact?: boolean;
   disabled?: boolean;
@@ -33,6 +35,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   open?: boolean;
   triggerVariant?: VariantProps<typeof buttonVariants>["variant"];
   triggerClassName?: string;
+  disabledReason?: string;
   onOpenChange?: (open: boolean) => void;
   onProviderModelChange: (provider: ProviderKind, model: string) => void;
 }) {
@@ -40,15 +43,24 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const activeProvider = props.lockedProvider ?? props.provider;
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
   const selectedProviderOptions = props.modelOptionsByProvider[activeProvider];
-  // If the current slug belongs to a different provider (for example after a provider
-  // switch or disable), prefer the active provider's first option so the trigger icon
-  // and label stay in sync instead of showing a stale foreign slug.
+  const selectedAcpAgent = props.acpAgents?.find((agent) => agent.id === props.model);
   const selectedModel =
-    selectedProviderOptions.find((option) => option.slug === props.model) ??
-    selectedProviderOptions[0];
+    activeProvider === "acp"
+      ? selectedAcpAgent
+        ? {
+            slug: selectedAcpAgent.id,
+            name: selectedAcpAgent.name,
+          }
+        : {
+            slug: props.model,
+            name: props.model === "default" ? "ACP Agent" : props.model,
+          }
+      : (selectedProviderOptions.find((option) => option.slug === props.model) ??
+        selectedProviderOptions[0]);
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
   const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
-  const triggerSubtitle = selectedModel?.subProvider;
+  const triggerSubtitle =
+    selectedModel && "subProvider" in selectedModel ? selectedModel.subProvider : undefined;
   const triggerLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
 
   const setIsMenuOpen = (open: boolean) => {
@@ -94,6 +106,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               props.triggerClassName,
             )}
             disabled={props.disabled}
+            title={props.disabled ? props.disabledReason : undefined}
           />
         }
       >
@@ -148,6 +161,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           {...(props.providers && { providers: props.providers })}
           {...(props.keybindings ? { keybindings: props.keybindings } : {})}
           modelOptionsByProvider={props.modelOptionsByProvider}
+          acpAgents={props.acpAgents ?? []}
           terminalOpen={props.terminalOpen ?? false}
           onRequestClose={() => setIsMenuOpen(false)}
           onProviderModelChange={handleProviderModelChange}

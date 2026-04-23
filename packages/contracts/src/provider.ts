@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { AcpAgentServerId } from "./acp.ts";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ApprovalRequestId,
@@ -33,6 +34,7 @@ const ProviderSessionStatus = Schema.Literals([
 
 export const ProviderSession = Schema.Struct({
   provider: ProviderKind,
+  agentServerId: Schema.optional(AcpAgentServerId),
   status: ProviderSessionStatus,
   runtimeMode: RuntimeMode,
   cwd: Schema.optional(TrimmedNonEmptyString),
@@ -109,6 +111,7 @@ export const ProviderEvent = Schema.Struct({
   id: EventId,
   kind: ProviderEventKind,
   provider: ProviderKind,
+  agentServerId: Schema.optional(AcpAgentServerId),
   threadId: ThreadId,
   createdAt: IsoDateTime,
   method: TrimmedNonEmptyString,

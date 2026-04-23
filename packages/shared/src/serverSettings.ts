@@ -56,6 +56,10 @@ function shouldReplaceTextGenerationModelSelection(
 const withModelSelectionOptions = <Options>(options: Options | undefined) =>
   options ? { options } : {};
 
+const getModelSelectionPatchOptions = (
+  patch: NonNullable<ServerSettingsPatch["textGenerationModelSelection"]>,
+) => ("options" in patch ? patch.options : undefined);
+
 /**
  * Applies a server settings patch while treating textGenerationModelSelection as
  * replace-on-provider/model updates. This prevents stale nested options from
@@ -74,6 +78,22 @@ export function applyServerSettingsPatch(
   const provider = selectionPatch.provider ?? current.textGenerationModelSelection.provider;
   const model = selectionPatch.model ?? current.textGenerationModelSelection.model;
 
+  if (provider === "acp") {
+    const agentServerId =
+      ("agentServerId" in selectionPatch ? selectionPatch.agentServerId : undefined) ??
+      (current.textGenerationModelSelection.provider === "acp"
+        ? current.textGenerationModelSelection.agentServerId
+        : model);
+    return {
+      ...next,
+      textGenerationModelSelection: {
+        provider,
+        agentServerId,
+        model,
+      },
+    };
+  }
+
   return {
     ...next,
     textGenerationModelSelection:
@@ -81,14 +101,16 @@ export function applyServerSettingsPatch(
         ? {
             provider,
             model,
-            ...withModelSelectionOptions(selectionPatch.options as CodexModelOptions | undefined),
+            ...withModelSelectionOptions(
+              getModelSelectionPatchOptions(selectionPatch) as CodexModelOptions | undefined,
+            ),
           }
         : provider === "claudeAgent"
           ? {
               provider,
               model,
               ...withModelSelectionOptions(
-                selectionPatch.options as ClaudeModelOptions | undefined,
+                getModelSelectionPatchOptions(selectionPatch) as ClaudeModelOptions | undefined,
               ),
             }
           : provider === "cursor"
@@ -96,14 +118,14 @@ export function applyServerSettingsPatch(
                 provider,
                 model,
                 ...withModelSelectionOptions(
-                  selectionPatch.options as CursorModelOptions | undefined,
+                  getModelSelectionPatchOptions(selectionPatch) as CursorModelOptions | undefined,
                 ),
               }
             : {
                 provider,
                 model,
                 ...withModelSelectionOptions(
-                  selectionPatch.options as OpenCodeModelOptions | undefined,
+                  getModelSelectionPatchOptions(selectionPatch) as OpenCodeModelOptions | undefined,
                 ),
               },
   };

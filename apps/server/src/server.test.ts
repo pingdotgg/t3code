@@ -79,6 +79,14 @@ import {
   ProviderRegistry,
   type ProviderRegistryShape,
 } from "./provider/Services/ProviderRegistry.ts";
+import {
+  AcpAgentRegistry,
+  type AcpAgentRegistryShape,
+} from "./provider/Services/AcpAgentRegistry.ts";
+import {
+  AcpRegistryClient,
+  type AcpRegistryClientShape,
+} from "./provider/Services/AcpRegistryClient.ts";
 import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
@@ -320,6 +328,8 @@ const buildAppUnderTest = (options?: {
   layers?: {
     keybindings?: Partial<KeybindingsShape>;
     providerRegistry?: Partial<ProviderRegistryShape>;
+    acpAgentRegistry?: Partial<AcpAgentRegistryShape>;
+    acpRegistryClient?: Partial<AcpRegistryClientShape>;
     serverSettings?: Partial<ServerSettingsShape>;
     open?: Partial<OpenShape>;
     gitCore?: Partial<GitCoreShape>;
@@ -422,6 +432,22 @@ const buildAppUnderTest = (options?: {
           refresh: () => Effect.succeed([]),
           streamChanges: Stream.empty,
           ...options?.layers?.providerRegistry,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(AcpAgentRegistry)({
+          getAgentServers: Effect.succeed([]),
+          listStatuses: Effect.succeed([]),
+          ...options?.layers?.acpAgentRegistry,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(AcpRegistryClient)({
+          listAgents: Effect.succeed({
+            registryVersion: "test",
+            agents: [],
+          }),
+          ...options?.layers?.acpRegistryClient,
         }),
       ),
       Layer.provide(

@@ -189,6 +189,7 @@ function createBaseServerConfig(): ServerConfig {
     keybindings: [],
     issues: [],
     providers: [],
+    acpAgentServers: [],
     availableEditors: ["cursor"],
     observability: {
       logsDirectoryPath: "/repo/project/.t3/logs",

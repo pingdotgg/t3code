@@ -1,0 +1,108 @@
+diff --git a/src/SchemaRepresentation.ts b/src/SchemaRepresentation.ts
+index e1a87e2b..a7797678 100644
+--- a/src/SchemaRepresentation.ts
++++ b/src/SchemaRepresentation.ts
+@@ -3007,7 +3007,14 @@ export function fromJsonSchemaMultiDocument(document: JsonSchema.MultiDocument<"
+       }
+     }
+ 
+-    let out = on(js)
++    const hasAnyOf = Array.isArray(js.anyOf)
++    const hasOneOf = Array.isArray(js.oneOf)
++    const base =
++      hasAnyOf || hasOneOf
++        ? ({ ...js, anyOf: undefined, oneOf: undefined } as JsonSchema.JsonSchema)
++        : js
++
++    let out = on(base)
+ 
+     const annotations = collectAnnotations(js)
+     if (annotations !== undefined) {
+@@ -3018,6 +3025,14 @@ export function fromJsonSchemaMultiDocument(document: JsonSchema.MultiDocument<"
+       return js.allOf.reduce((acc, curr) => combine(acc, recur(curr)), out)
+     }
+ 
++    if (hasAnyOf) {
++      out = combine({ _tag: "Union", types: js.anyOf.map((type) => recur(type)), mode: "anyOf" }, out)
++    }
++
++    if (hasOneOf) {
++      out = combine({ _tag: "Union", types: js.oneOf.map((type) => recur(type)), mode: "oneOf" }, out)
++    }
++
+     return out
+   }
+ 
+@@ -3054,12 +3069,7 @@ export function fromJsonSchemaMultiDocument(document: JsonSchema.MultiDocument<"
+       } else {
+         return { _tag: "Union", types, mode: "anyOf" }
+       }
+-    } else if (Array.isArray(js.anyOf)) {
+-      return { _tag: "Union", types: js.anyOf.map((type) => recur(type)), mode: "anyOf" }
+-    } else if (Array.isArray(js.oneOf)) {
+-      return { _tag: "Union", types: js.oneOf.map((type) => recur(type)), mode: "oneOf" }
+     }
+-
+     const type = isType(js.type) ? js.type : getType(js)
+     if (type !== undefined) {
+       switch (type) {
+diff --git a/dist/SchemaRepresentation.js b/dist/SchemaRepresentation.js
+index 0d3f01d7..c3672558 100644
+--- a/dist/SchemaRepresentation.js
++++ b/dist/SchemaRepresentation.js
+@@ -2042,7 +2042,14 @@ export function fromJsonSchemaMultiDocument(document, options) {
+         js = {};
+       }
+     }
+-    let out = on(js);
++    const hasAnyOf = Array.isArray(js.anyOf);
++    const hasOneOf = Array.isArray(js.oneOf);
++    const base = hasAnyOf || hasOneOf ? {
++      ...js,
++      anyOf: undefined,
++      oneOf: undefined
++    } : js;
++    let out = on(base);
+     const annotations = collectAnnotations(js);
+     if (annotations !== undefined) {
+       out = combine(out, {
+@@ -2053,6 +2060,20 @@ export function fromJsonSchemaMultiDocument(document, options) {
+     if (Array.isArray(js.allOf)) {
+       return js.allOf.reduce((acc, curr) => combine(acc, recur(curr)), out);
+     }
++    if (hasAnyOf) {
++      out = combine({
++        _tag: "Union",
++        types: js.anyOf.map(type => recur(type)),
++        mode: "anyOf"
++      }, out);
++    }
++    if (hasOneOf) {
++      out = combine({
++        _tag: "Union",
++        types: js.oneOf.map(type => recur(type)),
++        mode: "oneOf"
++      }, out);
++    }
+     return out;
+   }
+   function on(js) {
+@@ -2105,18 +2126,6 @@ export function fromJsonSchemaMultiDocument(document, options) {
+           mode: "anyOf"
+         };
+       }
+-    } else if (Array.isArray(js.anyOf)) {
+-      return {
+-        _tag: "Union",
+-        types: js.anyOf.map(type => recur(type)),
+-        mode: "anyOf"
+-      };
+-    } else if (Array.isArray(js.oneOf)) {
+-      return {
+-        _tag: "Union",
+-        types: js.oneOf.map(type => recur(type)),
+-        mode: "oneOf"
+-      };
+     }
+     const type = isType(js.type) ? js.type : getType(js);
+     if (type !== undefined) {

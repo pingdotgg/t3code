@@ -7,10 +7,11 @@ export const PROVIDER_ICON_BY_PROVIDER: Record<ProviderKind, Icon> = {
   claudeAgent: ClaudeAI,
   opencode: OpenCodeIcon,
   cursor: CursorIcon,
+  acp: OpenCodeIcon,
 };
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
-  value: ProviderKind;
+  value: Exclude<ProviderKind, "acp">;
   label: string;
   available: true;
   pickerSidebarBadge?: "new" | "soon";

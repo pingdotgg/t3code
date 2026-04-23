@@ -2,6 +2,7 @@ import {
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   type ModelSelection,
   type ProviderKind,
+  type ProviderModelOptions,
   type ServerProvider,
 } from "@t3tools/contracts";
 import {
@@ -20,6 +21,13 @@ import { ModelEsque } from "./components/chat/providerIconUtils";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
+export type BuiltInProviderKind = Exclude<ProviderKind, "acp">;
+export const BUILT_IN_PROVIDER_KINDS = [
+  "codex",
+  "claudeAgent",
+  "opencode",
+  "cursor",
+] as const satisfies readonly BuiltInProviderKind[];
 
 export type ProviderCustomModelConfig = {
   provider: ProviderKind;
@@ -35,6 +43,27 @@ export interface AppModelOption {
   shortName?: string;
   subProvider?: string;
   isCustom: boolean;
+}
+
+export function getModelSelectionOptions(
+  selection: ModelSelection | null | undefined,
+): ProviderModelOptions[ProviderKind] | undefined {
+  return selection?.provider === "acp" ? undefined : selection?.options;
+}
+
+export function isBuiltInProviderKind(provider: ProviderKind): provider is BuiltInProviderKind {
+  return provider !== "acp";
+}
+
+export function resolveBuiltInSelectableProvider(
+  providers: ReadonlyArray<ServerProvider>,
+  provider: ProviderKind | null | undefined,
+): BuiltInProviderKind {
+  const resolved = resolveSelectableProvider(
+    providers.filter((candidate) => candidate.provider !== "acp"),
+    provider === "acp" ? "codex" : provider,
+  );
+  return resolved === "acp" ? "codex" : resolved;
 }
 
 const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConfig> = {
@@ -62,9 +91,16 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
   opencode: {
     provider: "opencode",
     title: "OpenCode",
-    description: "Save additional OpenCode model slugs in `provider/model` format.",
-    placeholder: "openai/gpt-5",
-    example: "anthropic/claude-sonnet-4-5-20250929",
+    description: "Save additional OpenCode model slugs for the picker and `/model` command.",
+    placeholder: "provider/model-name",
+    example: "openai/gpt-5",
+  },
+  acp: {
+    provider: "acp",
+    title: "ACP",
+    description: "ACP agents do not currently expose custom model slugs in T3 Code.",
+    placeholder: "acp-agent",
+    example: "acp-agent",
   },
 };
 
@@ -105,14 +141,24 @@ export function getAppModelOptions(
   provider: ProviderKind,
   selectedModel?: string | null,
 ): AppModelOption[] {
+  if (provider === "acp") {
+    return [];
+  }
   const options: AppModelOption[] = getProviderModels(providers, provider).map(
-    ({ slug, name, shortName, subProvider, isCustom }) => ({
-      slug,
-      name,
-      ...(shortName ? { shortName } : {}),
-      ...(subProvider ? { subProvider } : {}),
-      isCustom,
-    }),
+    ({ slug, name, shortName, subProvider, isCustom }) => {
+      const option: AppModelOption = {
+        slug,
+        name,
+        isCustom,
+      };
+      if (shortName) {
+        option.shortName = shortName;
+      }
+      if (subProvider) {
+        option.subProvider = subProvider;
+      }
+      return option;
+    },
   );
   const seen = new Set(options.map((option) => option.slug));
   const trimmedSelectedModel = selectedModel?.trim().toLowerCase();
@@ -200,6 +246,7 @@ export function getCustomModelOptionsByProvider(
       "opencode",
       selectedProvider === "opencode" ? selectedModel : undefined,
     ),
+    acp: [],
   };
 }
 
@@ -211,7 +258,7 @@ export function resolveAppModelSelectionState(
     provider: "codex" as const,
     model: DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER.codex,
   };
-  const provider = resolveSelectableProvider(providers, selection.provider);
+  const provider = resolveBuiltInSelectableProvider(providers, selection.provider);
 
   // When the provider changed due to fallback (e.g. selected provider was disabled),
   // don't carry over the old provider's model — use the fallback provider's default.
@@ -223,7 +270,7 @@ export function resolveAppModelSelectionState(
     models: getProviderModels(providers, provider),
     prompt: "",
     modelOptions: {
-      [provider]: provider === selection.provider ? selection.options : undefined,
+      [provider]: provider === selection.provider ? getModelSelectionOptions(selection) : undefined,
     },
   });
 

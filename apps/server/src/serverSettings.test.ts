@@ -158,16 +158,13 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
 
       const next = yield* serverSettings.updateSettings({
-        textGenerationModelSelection: {
-          provider: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.provider,
-          model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
-        },
+        textGenerationModelSelection: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
       });
 
-      assert.deepEqual(next.textGenerationModelSelection, {
-        provider: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.provider,
-        model: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.model,
-      });
+      assert.deepEqual(
+        next.textGenerationModelSelection,
+        DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+      );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 

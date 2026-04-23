@@ -1,4 +1,5 @@
 export * from "./baseSchemas.ts";
+export * from "./acp.ts";
 export * from "./auth.ts";
 export * from "./environment.ts";
 export * from "./ipc.ts";
@@ -6,6 +7,7 @@ export * from "./terminal.ts";
 export * from "./provider.ts";
 export * from "./providerRuntime.ts";
 export * from "./model.ts";
+export * from "./ws.ts";
 export * from "./keybindings.ts";
 export * from "./server.ts";
 export * from "./settings.ts";

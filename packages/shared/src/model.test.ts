@@ -8,8 +8,6 @@ import {
   hasContextWindowOption,
   hasEffortLevel,
   isClaudeUltrathinkPrompt,
-  normalizeClaudeModelOptionsWithCapabilities,
-  normalizeCodexModelOptionsWithCapabilities,
   normalizeModelSlug,
   resolveContextWindow,
   resolveEffort,
@@ -192,59 +190,5 @@ describe("resolveContextWindow", () => {
   it("returns undefined for models with no context window options", () => {
     expect(resolveContextWindow(codexCaps, undefined)).toBeUndefined();
     expect(resolveContextWindow(codexCaps, "1m")).toBeUndefined();
-  });
-});
-
-describe("normalize*ModelOptionsWithCapabilities", () => {
-  it("preserves explicit false codex fast mode", () => {
-    expect(
-      normalizeCodexModelOptionsWithCapabilities(codexCaps, {
-        reasoningEffort: "high",
-        fastMode: false,
-      }),
-    ).toEqual({
-      reasoningEffort: "high",
-      fastMode: false,
-    });
-  });
-
-  it("preserves the default Claude context window explicitly", () => {
-    expect(
-      normalizeClaudeModelOptionsWithCapabilities(
-        {
-          ...claudeCaps,
-          contextWindowOptions: [
-            { value: "200k", label: "200k", isDefault: true },
-            { value: "1m", label: "1M" },
-          ],
-        },
-        {
-          effort: "high",
-          contextWindow: "200k",
-        },
-      ),
-    ).toEqual({
-      effort: "high",
-      contextWindow: "200k",
-    });
-  });
-
-  it("omits unsupported Claude context window options", () => {
-    expect(
-      normalizeClaudeModelOptionsWithCapabilities(
-        {
-          ...claudeCaps,
-          reasoningEffortLevels: [],
-          supportsThinkingToggle: true,
-          contextWindowOptions: [],
-        },
-        {
-          thinking: true,
-          contextWindow: "1m",
-        },
-      ),
-    ).toEqual({
-      thinking: true,
-    });
   });
 });

@@ -12,17 +12,21 @@ import type {
   OrchestrationSession,
   OrchestrationSessionStatus,
   OrchestrationThread,
-  OrchestrationThreadShell,
   OrchestrationThreadActivity,
+  OrchestrationThreadShell,
   ProjectId,
   ScopedProjectRef,
   ScopedThreadRef,
+  ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
 import { ProviderKind } from "@t3tools/contracts";
-import type { ThreadId, TurnId } from "@t3tools/contracts";
-import { Schema } from "effect";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
+import { Schema } from "effect";
+import { resolveEnvironmentHttpUrl } from "./environments/runtime";
+import { sanitizeThreadErrorMessage } from "./rpc/transportError";
+import { getThreadFromEnvironmentState } from "./threadDerivation";
 import {
   type ChatMessage,
   type Project,
@@ -34,9 +38,6 @@ import {
   type ThreadTurnState,
   type TurnDiffSummary,
 } from "./types";
-import { resolveEnvironmentHttpUrl } from "./environments/runtime";
-import { sanitizeThreadErrorMessage } from "./rpc/transportError";
-import { getThreadFromEnvironmentState } from "./threadDerivation";
 
 export interface EnvironmentState {
   projectIds: ProjectId[];

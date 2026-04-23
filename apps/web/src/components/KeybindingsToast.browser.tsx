@@ -84,6 +84,7 @@ function createBaseServerConfig(): ServerConfig {
         skills: [],
       },
     ],
+    acpAgentServers: [],
     availableEditors: [],
     observability: {
       logsDirectoryPath: "/repo/project/.t3/logs",
@@ -107,6 +108,7 @@ function createBaseServerConfig(): ServerConfig {
           serverPassword: "",
           customModels: [],
         },
+        acp: { enabled: true, registryUrl: "", agentServers: [] },
       },
     },
   };

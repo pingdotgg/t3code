@@ -1,4 +1,5 @@
 import {
+  type AcpAgentServer,
   type ProviderKind,
   PROVIDER_DISPLAY_NAMES,
   type ResolvedKeybindingsConfig,
@@ -28,6 +29,7 @@ type ModelPickerItem = {
   name: string;
   shortName?: string;
   subProvider?: string;
+  iconUrl?: string;
   provider: ProviderKind;
 };
 
@@ -40,6 +42,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   providers?: ReadonlyArray<ServerProvider>;
   keybindings?: ResolvedKeybindingsConfig;
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<ModelEsque>>;
+  acpAgents?: ReadonlyArray<Pick<AcpAgentServer, "id" | "name" | "enabled" | "iconUrl">>;
   terminalOpen: boolean;
   onRequestClose?: () => void;
   onProviderModelChange: (provider: ProviderKind, model: string) => void;
@@ -113,19 +116,38 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   // Flatten models into a searchable array
   const flatModels = useMemo(() => {
-    return Object.entries(props.modelOptionsByProvider).flatMap(([providerKind, models]) => {
-      if (readyProviderSet && !readyProviderSet.has(providerKind as ProviderKind)) {
-        return [];
-      }
-      return models.map((m) => ({
-        slug: m.slug,
-        name: m.name,
-        ...(m.shortName ? { shortName: m.shortName } : {}),
-        ...(m.subProvider ? { subProvider: m.subProvider } : {}),
-        provider: providerKind as ProviderKind,
-      })) satisfies Array<ModelPickerItem>;
-    });
-  }, [props.modelOptionsByProvider, readyProviderSet]);
+    const providerModels = Object.entries(props.modelOptionsByProvider).flatMap(
+      ([providerKind, models]) => {
+        if (providerKind === "acp") {
+          return [];
+        }
+        if (readyProviderSet && !readyProviderSet.has(providerKind as ProviderKind)) {
+          return [];
+        }
+        return models.map((m) => ({
+          slug: m.slug,
+          name: m.name,
+          ...(m.shortName ? { shortName: m.shortName } : {}),
+          ...(m.subProvider ? { subProvider: m.subProvider } : {}),
+          provider: providerKind as ProviderKind,
+        })) satisfies Array<ModelPickerItem>;
+      },
+    );
+    const acpModels = (props.acpAgents ?? [])
+      .filter((agent) => agent.enabled)
+      .map((agent) => {
+        const item: ModelPickerItem = {
+          slug: agent.id,
+          name: agent.name,
+          provider: "acp",
+        };
+        if (agent.iconUrl) {
+          item.iconUrl = agent.iconUrl;
+        }
+        return item;
+      }) satisfies Array<ModelPickerItem>;
+    return [...providerModels, ...acpModels];
+  }, [props.acpAgents, props.modelOptionsByProvider, readyProviderSet]);
 
   // Filter models based on search query and selected provider
   const filteredModels = useMemo(() => {
@@ -223,6 +245,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const handleModelSelect = useCallback(
     (modelSlug: string, provider: ProviderKind) => {
+      if (provider === "acp") {
+        onProviderModelChange(provider, modelSlug);
+        return;
+      }
       const resolvedModel = resolveSelectableModel(
         provider,
         modelSlug,
@@ -411,6 +437,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             selectedProvider={selectedProvider}
             onSelectProvider={handleSelectProvider}
             {...(props.providers && { providers: props.providers })}
+            acpAgents={props.acpAgents ?? []}
           />
         )}
 

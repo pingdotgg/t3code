@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { ServerAcpAgentStatus } from "./acp.ts";
 import { ServerAuthDescriptor } from "./auth.ts";
 import {
   IsoDateTime,
@@ -8,8 +8,9 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings.ts";
 import { EditorId } from "./editor.ts";
+import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderKind } from "./orchestration.ts";
 import { ServerSettings } from "./settings.ts";
@@ -121,6 +122,7 @@ export const ServerConfig = Schema.Struct({
   keybindings: ResolvedKeybindingsConfig,
   issues: ServerConfigIssues,
   providers: ServerProviders,
+  acpAgentServers: Schema.Array(ServerAcpAgentStatus),
   availableEditors: Schema.Array(EditorId),
   observability: ServerObservability,
   settings: ServerSettings,

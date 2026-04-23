@@ -5,9 +5,9 @@ import {
   type ClaudeModelOptions,
   type CodexModelOptions,
   type CursorModelOptions,
-  type ModelCapabilities,
   type ModelSelection,
   type OpenCodeModelOptions,
+  type ModelCapabilities,
   type ProviderKind,
   type ProviderModelOptions,
 } from "@t3tools/contracts";
@@ -167,6 +167,8 @@ export function normalizeProviderModelOptionsWithCapabilities(
         caps,
         modelOptions as OpenCodeModelOptions,
       );
+    case "acp":
+      return undefined;
   }
 }
 
@@ -278,6 +280,12 @@ export function createModelSelection(
         provider,
         model,
         ...(options ? { options: options as OpenCodeModelOptions } : {}),
+      };
+    case "acp":
+      return {
+        provider,
+        agentServerId: model,
+        model: "default",
       };
   }
 }

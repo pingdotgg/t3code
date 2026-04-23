@@ -9,6 +9,7 @@
  *
  * @module RoutingTextGeneration
  */
+import type { ModelSelection } from "@t3tools/contracts";
 import { Effect, Layer, Context } from "effect";
 
 import {
@@ -59,13 +60,18 @@ const makeRoutingTextGeneration = Effect.gen(function* () {
         : provider === "cursor"
           ? cursor
           : codex;
+  const routeModelSelection = (provider: ModelSelection["provider"]) =>
+    route(provider === "acp" ? undefined : provider);
 
   return {
     generateCommitMessage: (input) =>
-      route(input.modelSelection.provider).generateCommitMessage(input),
-    generatePrContent: (input) => route(input.modelSelection.provider).generatePrContent(input),
-    generateBranchName: (input) => route(input.modelSelection.provider).generateBranchName(input),
-    generateThreadTitle: (input) => route(input.modelSelection.provider).generateThreadTitle(input),
+      routeModelSelection(input.modelSelection.provider).generateCommitMessage(input),
+    generatePrContent: (input) =>
+      routeModelSelection(input.modelSelection.provider).generatePrContent(input),
+    generateBranchName: (input) =>
+      routeModelSelection(input.modelSelection.provider).generateBranchName(input),
+    generateThreadTitle: (input) =>
+      routeModelSelection(input.modelSelection.provider).generateThreadTitle(input),
   } satisfies TextGenerationShape;
 });
 

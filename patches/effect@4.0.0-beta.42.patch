@@ -1,0 +1,96 @@
+diff --git a/dist/unstable/rpc/RpcSerialization.js b/dist/unstable/rpc/RpcSerialization.js
+index 26dc4f2608580af60306a99243a9abf2b3581640..7c25eeb940428fc2844c986cbb98b989518e7f5a 100644
+--- a/dist/unstable/rpc/RpcSerialization.js
++++ b/dist/unstable/rpc/RpcSerialization.js
+@@ -139,7 +139,7 @@ function decodeJsonRpcRaw(decoded, batches) {
+ }
+ function decodeJsonRpcMessage(decoded) {
+   if ("method" in decoded) {
+-    if (!decoded.id && decoded.method.startsWith("@effect/rpc/")) {
++    if (decoded.id == null && decoded.method.startsWith("@effect/rpc/")) {
+       const tag = decoded.method.slice("@effect/rpc/".length);
+       const requestId = decoded.params?.requestId;
+       return requestId ? {
+@@ -151,7 +151,7 @@ function decodeJsonRpcMessage(decoded) {
+     }
+     return {
+       _tag: "Request",
+-      id: decoded.id ? String(decoded.id) : "",
++      id: decoded.id != null ? String(decoded.id) : "",
+       tag: decoded.method,
+       payload: decoded.params ?? null,
+       headers: decoded.headers ?? [],
+@@ -241,7 +241,7 @@ function encodeJsonRpcMessage(response) {
+         jsonrpc: "2.0",
+         method: response.tag,
+         params: response.payload,
+-        id: response.id && Number(response.id),
++        id: response.id !== "" ? Number(response.id) : undefined,
+         headers: response.headers,
+         traceId: response.traceId,
+         spanId: response.spanId,
+@@ -271,14 +271,14 @@ function encodeJsonRpcMessage(response) {
+         if (response.exit._tag === "Success") {
+           return {
+             jsonrpc: "2.0",
+-            id: response.requestId ? Number(response.requestId) : undefined,
++            id: response.requestId !== "" ? Number(response.requestId) : undefined,
+             result: response.exit.value
+           };
+         }
+         const error = response.exit.cause.find(failure => failure._tag === "Fail");
+         return {
+           jsonrpc: "2.0",
+-          id: response.requestId ? Number(response.requestId) : undefined,
++          id: response.requestId !== "" ? Number(response.requestId) : undefined,
+           error: response.exit._tag === "Failure" ? {
+             _tag: "Cause",
+             code: error && Predicate.hasProperty(error, "code") ? Number(error.code) : 0,
+diff --git a/src/unstable/rpc/RpcSerialization.ts b/src/unstable/rpc/RpcSerialization.ts
+index 319effeabbc94237cd1a11799ac5d9bbd39d0170..66e82004de888b38f19a792886b461daa1789c55 100644
+--- a/src/unstable/rpc/RpcSerialization.ts
++++ b/src/unstable/rpc/RpcSerialization.ts
+@@ -180,7 +180,7 @@ function decodeJsonRpcRaw(
+ 
+ function decodeJsonRpcMessage(decoded: JsonRpcMessage): RpcMessage.FromClientEncoded | RpcMessage.FromServerEncoded {
+   if ("method" in decoded) {
+-    if (!decoded.id && decoded.method.startsWith("@effect/rpc/")) {
++    if (decoded.id == null && decoded.method.startsWith("@effect/rpc/")) {
+       const tag = decoded.method.slice("@effect/rpc/".length) as
+         | RpcMessage.FromServerEncoded["_tag"]
+         | Exclude<RpcMessage.FromClientEncoded["_tag"], "Request">
+@@ -194,7 +194,7 @@ function decodeJsonRpcMessage(decoded: JsonRpcMessage): RpcMessage.FromClientEnc
+     }
+     return {
+       _tag: "Request",
+-      id: decoded.id ? String(decoded.id) : "",
++      id: decoded.id != null ? String(decoded.id) : "",
+       tag: decoded.method,
+       payload: decoded.params ?? null,
+       headers: decoded.headers ?? [],
+@@ -308,7 +308,7 @@ function encodeJsonRpcMessage(response: RpcMessage.FromServerEncoded | RpcMessag
+         jsonrpc: "2.0",
+         method: response.tag,
+         params: response.payload,
+-        id: response.id && Number(response.id),
++        id: response.id !== "" ? Number(response.id) : undefined,
+         headers: response.headers,
+         traceId: response.traceId,
+         spanId: response.spanId,
+@@ -335,14 +335,14 @@ function encodeJsonRpcMessage(response: RpcMessage.FromServerEncoded | RpcMessag
+       if (response.exit._tag === "Success") {
+         return {
+           jsonrpc: "2.0",
+-          id: response.requestId ? Number(response.requestId) : undefined,
++          id: response.requestId !== "" ? Number(response.requestId) : undefined,
+           result: response.exit.value
+         } as any
+       }
+       const error = response.exit.cause.find((failure) => failure._tag === "Fail")
+       return {
+         jsonrpc: "2.0",
+-        id: response.requestId ? Number(response.requestId) : undefined,
++        id: response.requestId !== "" ? Number(response.requestId) : undefined,
+         error: response.exit._tag === "Failure" ?
+           {
+             _tag: "Cause",

@@ -1,5 +1,6 @@
 import type {
   ClaudeSettings,
+  ClaudeModelOptions,
   ClaudeModelSelection,
   ModelCapabilities,
   ServerProvider,
@@ -34,6 +35,7 @@ import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { ClaudeProvider } from "../Services/ClaudeProvider.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ServerSettingsError } from "@t3tools/contracts";
+import { resolveContextWindow, resolveEffort } from "@t3tools/shared/model";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = {
   reasoningEffortLevels: [],
@@ -173,6 +175,25 @@ export function resolveClaudeApiModelId(modelSelection: ClaudeModelSelection): s
     default:
       return modelSelection.model;
   }
+}
+
+export function normalizeClaudeModelOptions(
+  model: string | null | undefined,
+  modelOptions: ClaudeModelOptions | null | undefined,
+): ClaudeModelOptions | undefined {
+  const caps = getClaudeModelCapabilities(model);
+  const effort = resolveEffort(caps, modelOptions?.effort);
+  const thinking =
+    caps.supportsThinkingToggle && modelOptions?.thinking === false ? false : undefined;
+  const fastMode = caps.supportsFastMode && modelOptions?.fastMode === true ? true : undefined;
+  const contextWindow = resolveContextWindow(caps, modelOptions?.contextWindow);
+  const nextOptions: ClaudeModelOptions = {
+    ...(thinking === false ? { thinking: false } : {}),
+    ...(effort ? { effort: effort as ClaudeModelOptions["effort"] } : {}),
+    ...(fastMode ? { fastMode: true } : {}),
+    ...(contextWindow ? { contextWindow } : {}),
+  };
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }
 export function parseClaudeAuthStatusFromOutput(result: CommandResult): {
   readonly status: Exclude<ServerProviderState, "disabled">;

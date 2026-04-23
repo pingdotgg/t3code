@@ -19,6 +19,8 @@ import { ProviderRegistry, type ProviderRegistryShape } from "../Services/Provid
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import {
   hydrateCachedProvider,
+  isProviderCacheId,
+  type ProviderCacheId,
   PROVIDER_CACHE_IDS,
   orderProviderSnapshots,
   readProviderStatusCache,
@@ -27,7 +29,7 @@ import {
 } from "../providerStatusCache.ts";
 
 type ProviderSnapshotSource = {
-  readonly provider: ProviderKind;
+  readonly provider: ProviderCacheId;
   readonly getSnapshot: Effect.Effect<ServerProvider>;
   readonly refresh: Effect.Effect<ServerProvider>;
   readonly streamChanges: Stream.Stream<ServerProvider>;
@@ -174,15 +176,17 @@ const ProviderRegistryLiveBase = Layer.effect(
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(cachedProviders);
 
     const persistProvider = (provider: ServerProvider) =>
-      writeProviderStatusCache({
-        filePath: cachePathByProvider.get(provider.provider)!,
-        provider,
-      }).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-        Effect.tapError(Effect.logError),
-        Effect.ignore,
-      );
+      isProviderCacheId(provider.provider)
+        ? writeProviderStatusCache({
+            filePath: cachePathByProvider.get(provider.provider)!,
+            provider,
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fileSystem),
+            Effect.provideService(Path.Path, path),
+            Effect.tapError(Effect.logError),
+            Effect.ignore,
+          )
+        : Effect.void;
 
     const upsertProviders = Effect.fn("upsertProviders")(function* (
       nextProviders: ReadonlyArray<ServerProvider>,

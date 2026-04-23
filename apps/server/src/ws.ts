@@ -43,6 +43,8 @@ import {
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
+import { AcpAgentRegistry } from "./provider/Services/AcpAgentRegistry.ts";
+import { AcpRegistryClient } from "./provider/Services/AcpRegistryClient.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService } from "./serverSettings.ts";
@@ -141,6 +143,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const gitStatusBroadcaster = yield* GitStatusBroadcaster;
       const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
+      const acpAgentRegistry = yield* AcpAgentRegistry;
+      const acpRegistryClient = yield* AcpRegistryClient;
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const serverSettings = yield* ServerSettingsService;
@@ -512,6 +516,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const loadServerConfig = Effect.gen(function* () {
         const keybindingsConfig = yield* keybindings.loadConfigState;
         const providers = yield* providerRegistry.getProviders;
+        const acpAgentServers = yield* acpAgentRegistry.listStatuses;
         const settings = yield* serverSettings.getSettings;
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
@@ -524,6 +529,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
           providers,
+          acpAgentServers,
           availableEditors: resolveAvailableEditors(),
           observability: {
             logsDirectoryPath: config.logsDir,
@@ -772,6 +778,24 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.serverUpdateSettings, serverSettings.updateSettings(patch), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverListAcpRegistry]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverListAcpRegistry,
+            acpRegistryClient.listAgents.pipe(
+              Effect.tapError((error) =>
+                Effect.logWarning("failed to list ACP registry agents", {
+                  error: error.message,
+                }),
+              ),
+              Effect.orElseSucceed(() => ({
+                registryVersion: "unavailable",
+                agents: [],
+              })),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,

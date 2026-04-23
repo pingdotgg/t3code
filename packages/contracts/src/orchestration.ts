@@ -1,11 +1,11 @@
 import { Effect, Option, Schema, SchemaIssue, Struct } from "effect";
+import { AcpAgentServerId } from "./acp.ts";
 import {
   ClaudeModelOptions,
   CodexModelOptions,
   CursorModelOptions,
   OpenCodeModelOptions,
 } from "./model.ts";
-import { RepositoryIdentity } from "./environment.ts";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -20,9 +20,11 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas.ts";
+import { RepositoryIdentity } from "./environment.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
+  getSnapshot: "orchestration.getSnapshot",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   replayEvents: "orchestration.replayEvents",
@@ -30,7 +32,11 @@ export const ORCHESTRATION_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
 } as const;
 
-export const ProviderKind = Schema.Literals(["codex", "claudeAgent", "cursor", "opencode"]);
+export const ORCHESTRATION_WS_CHANNELS = {
+  domainEvent: "orchestration.domainEvent",
+} as const;
+
+export const ProviderKind = Schema.Literals(["codex", "claudeAgent", "cursor", "opencode", "acp"]);
 export type ProviderKind = typeof ProviderKind.Type;
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
@@ -68,6 +74,7 @@ export const CursorModelSelection = Schema.Struct({
   options: Schema.optionalKey(CursorModelOptions),
 });
 export type CursorModelSelection = typeof CursorModelSelection.Type;
+
 export const OpenCodeModelSelection = Schema.Struct({
   provider: Schema.Literal("opencode"),
   model: TrimmedNonEmptyString,
@@ -75,11 +82,19 @@ export const OpenCodeModelSelection = Schema.Struct({
 });
 export type OpenCodeModelSelection = typeof OpenCodeModelSelection.Type;
 
+export const AcpModelSelection = Schema.Struct({
+  provider: Schema.Literal("acp"),
+  agentServerId: AcpAgentServerId,
+  model: TrimmedNonEmptyString,
+});
+export type AcpModelSelection = typeof AcpModelSelection.Type;
+
 export const ModelSelection = Schema.Union([
   CodexModelSelection,
   ClaudeModelSelection,
   CursorModelSelection,
   OpenCodeModelSelection,
+  AcpModelSelection,
 ]);
 export type ModelSelection = typeof ModelSelection.Type;
 
@@ -1169,6 +1184,9 @@ export type OrchestrationReplayEventsInput = typeof OrchestrationReplayEventsInp
 
 const OrchestrationReplayEventsResult = Schema.Array(OrchestrationEvent);
 export type OrchestrationReplayEventsResult = typeof OrchestrationReplayEventsResult.Type;
+
+export const OrchestrationGetSnapshotInput = Schema.Struct({});
+export type OrchestrationGetSnapshotInput = typeof OrchestrationGetSnapshotInput.Type;
 
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {

@@ -22,7 +22,7 @@ import type {
   TurnDiffSummary,
 } from "./types";
 
-export type ProviderPickerKind = ProviderKind;
+export type ProviderPickerKind = Exclude<ProviderKind, "acp">;
 
 export const PROVIDER_OPTIONS: Array<{
   value: ProviderPickerKind;

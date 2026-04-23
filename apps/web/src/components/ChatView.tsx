@@ -112,7 +112,11 @@ import {
 import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
-import { resolveAppModelSelection } from "../modelSelection";
+import {
+  getModelSelectionOptions,
+  resolveAppModelSelection,
+  resolveBuiltInSelectableProvider,
+} from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import {
@@ -1944,8 +1948,8 @@ export default function ChatView(props: ChatViewProps) {
         input.modelSelection !== undefined &&
         (input.modelSelection.model !== serverThread.modelSelection.model ||
           input.modelSelection.provider !== serverThread.modelSelection.provider ||
-          JSON.stringify(input.modelSelection.options ?? null) !==
-            JSON.stringify(serverThread.modelSelection.options ?? null))
+          JSON.stringify(getModelSelectionOptions(input.modelSelection) ?? null) !==
+            JSON.stringify(getModelSelectionOptions(serverThread.modelSelection) ?? null))
       ) {
         await api.orchestration.dispatchCommand({
           type: "thread.meta.update",
@@ -2553,7 +2557,7 @@ export default function ChatView(props: ChatViewProps) {
         ctxSelectedModel ||
           activeProject.defaultModelSelection?.model ||
           DEFAULT_MODEL_BY_PROVIDER.codex,
-        ctxSelectedModelSelection.options,
+        getModelSelectionOptions(ctxSelectedModelSelection),
       );
 
       // Auto-title from first message
@@ -3122,17 +3126,28 @@ export default function ChatView(props: ChatViewProps) {
         scheduleComposerFocus();
         return;
       }
-      const resolvedProvider = resolveSelectableProvider(providerStatuses, provider);
+      if (provider === "acp") {
+        const nextModelSelection: ModelSelection = {
+          provider: "acp",
+          agentServerId: model,
+          model: "default",
+        };
+        setComposerDraftModelSelection(
+          scopeThreadRef(activeThread.environmentId, activeThread.id),
+          nextModelSelection,
+        );
+        setStickyComposerModelSelection(nextModelSelection);
+        scheduleComposerFocus();
+        return;
+      }
+      const resolvedProvider = resolveBuiltInSelectableProvider(providerStatuses, provider);
       const resolvedModel = resolveAppModelSelection(
         resolvedProvider,
         settings,
         providerStatuses,
         model,
       );
-      const nextModelSelection: ModelSelection = {
-        provider: resolvedProvider,
-        model: resolvedModel,
-      };
+      const nextModelSelection = createModelSelection(resolvedProvider, resolvedModel);
       setComposerDraftModelSelection(
         scopeThreadRef(activeThread.environmentId, activeThread.id),
         nextModelSelection,

@@ -23,6 +23,10 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
   const threadKey = scopedThreadKey(threadRef);
   const provider = props?.modelSelection?.provider ?? "claudeAgent";
   const model = props?.modelSelection?.model ?? DEFAULT_MODEL_BY_PROVIDER[provider];
+  const modelSelectionOptions =
+    props?.modelSelection && "options" in props.modelSelection
+      ? props.modelSelection.options
+      : undefined;
 
   useComposerDraftStore.setState({
     draftsByThreadKey: {
@@ -36,7 +40,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
           [provider]: {
             provider,
             model,
-            ...(props?.modelSelection?.options ? { options: props.modelSelection.options } : {}),
+            ...(modelSelectionOptions ? { options: modelSelectionOptions } : {}),
           },
         },
         activeProvider: provider,
@@ -50,7 +54,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
   const host = document.createElement("div");
   document.body.append(host);
   const onPromptChange = vi.fn();
-  const providerOptions = props?.modelSelection?.options;
+  const providerOptions = modelSelectionOptions;
   const models =
     provider === "claudeAgent"
       ? [

@@ -572,6 +572,9 @@ export const ChatComposer = memo(
       selectedProviderByThreadId ?? threadProvider ?? "codex",
     );
     const selectedProvider: ProviderKind = lockedProvider ?? unlockedSelectedProvider;
+    const acpAgents = settings.providers.acp.enabled
+      ? settings.providers.acp.agentServers.filter((agent) => agent.enabled)
+      : [];
 
     const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
       threadRef: composerDraftTarget,
@@ -621,6 +624,7 @@ export const ChatComposer = memo(
         opencode:
           providerStatuses.find((provider) => provider.provider === "opencode")?.models ?? [],
         cursor: providerStatuses.find((provider) => provider.provider === "cursor")?.models ?? [],
+        acp: [],
       }),
       [providerStatuses],
     );
@@ -1887,6 +1891,7 @@ export const ChatComposer = memo(
                     providers={providerStatuses}
                     keybindings={keybindings}
                     modelOptionsByProvider={modelOptionsByProvider}
+                    acpAgents={acpAgents}
                     terminalOpen={terminalOpen}
                     open={isComposerModelPickerOpen}
                     {...(composerProviderState.modelPickerIconClassName

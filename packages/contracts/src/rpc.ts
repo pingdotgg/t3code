@@ -4,6 +4,7 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 import { OpenError, OpenInEditorInput } from "./editor.ts";
 import { AuthAccessStreamEvent } from "./auth.ts";
+import { AcpRegistryListResult } from "./acp.ts";
 import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
@@ -93,6 +94,7 @@ export const WS_METHODS = {
 
   // Git methods
   gitPull: "git.pull",
+  gitStatus: "git.status",
   gitRefreshStatus: "git.refreshStatus",
   gitRunStackedAction: "git.runStackedAction",
   gitListBranches: "git.listBranches",
@@ -118,6 +120,7 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  serverListAcpRegistry: "server.listAcpRegistry",
 
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
@@ -154,6 +157,11 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: ServerSettingsError,
+});
+
+export const WsServerListAcpRegistryRpc = Rpc.make(WS_METHODS.serverListAcpRegistry, {
+  payload: Schema.Struct({}),
+  success: AcpRegistryListResult,
 });
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -361,6 +369,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsServerListAcpRegistryRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,

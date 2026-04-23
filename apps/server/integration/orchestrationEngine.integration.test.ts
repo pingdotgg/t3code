@@ -106,7 +106,7 @@ function withRealCodexHarness<A, E>(
 const seedProjectAndThread = (harness: OrchestrationIntegrationHarness) =>
   Effect.gen(function* () {
     const createdAt = nowIso();
-    const provider = harness.adapterHarness?.provider ?? "codex";
+    const provider = (harness.adapterHarness?.provider ?? "codex") as Exclude<ProviderKind, "acp">;
     const defaultModel = DEFAULT_MODEL_BY_PROVIDER[provider];
 
     yield* harness.engine.dispatch({

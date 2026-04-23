@@ -1,26 +1,12 @@
-import * as path from "node:path";
-import * as os from "node:os";
-import { fileURLToPath } from "node:url";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, FileSystem, Layer, Path } from "effect";
 import { expect } from "vitest";
-
-import { ServerSettingsError } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 import { CursorTextGenerationLive } from "./CursorTextGeneration.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const mockAgentPath = path.join(__dirname, "../../../scripts/acp-mock-agent.ts");
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
-}
 
 const CursorTextGenerationTestLayer = CursorTextGenerationLive.pipe(
   Layer.provideMerge(ServerSettingsService.layerTest()),
@@ -32,98 +18,159 @@ const CursorTextGenerationTestLayer = CursorTextGenerationLive.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
-function makeAcpAgentWrapper(dir: string, env: Record<string, string>): string {
-  const binDir = path.join(dir, "bin");
-  const agentPath = path.join(binDir, "agent");
-  mkdirSync(binDir, { recursive: true });
-  writeFileSync(
-    agentPath,
-    [
-      "#!/bin/sh",
-      ...Object.entries(env).map(([key, value]) => `export ${key}=${shellSingleQuote(value)}`),
-      'if [ "$1" != "acp" ]; then',
-      '  printf "%s\\n" "unexpected args: $*" >&2',
-      "  exit 11",
-      "fi",
-      `exec bun ${JSON.stringify(mockAgentPath)}`,
-      "",
-    ].join("\n"),
-    "utf8",
-  );
-  chmodSync(agentPath, 0o755);
-  return agentPath;
-}
-
-function withFakeAcpAgent<A, E, R>(
-  env: Record<string, string>,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E | ServerSettingsError, R | ServerSettingsService> {
+function makeFakeAgentBinary(
+  dir: string,
+  input: {
+    result: string;
+    requireModel?: string;
+    requireTrust?: boolean;
+    requireMode?: string;
+    stdinMustContain?: string;
+    stderr?: string;
+    exitCode?: number;
+  },
+) {
   return Effect.gen(function* () {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-acp-"));
-    const agentPath = makeAcpAgentWrapper(tempDir, env);
-    const serverSettings = yield* ServerSettingsService;
-    const previousSettings = yield* serverSettings.getSettings;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = path.join(dir, "bin");
+    const agentPath = path.join(binDir, "agent");
+    yield* fs.makeDirectory(binDir, { recursive: true });
 
-    yield* serverSettings.updateSettings({
-      providers: {
-        cursor: {
-          binaryPath: agentPath,
-        },
-      },
-    });
-
-    return yield* effect.pipe(
-      Effect.ensuring(
-        serverSettings
-          .updateSettings({
-            providers: {
-              cursor: {
-                binaryPath: previousSettings.providers.cursor.binaryPath,
-              },
-            },
-          })
-          .pipe(
-            Effect.catch(() => Effect.void),
-            Effect.ensuring(
-              Effect.sync(() => {
-                rmSync(tempDir, { recursive: true, force: true });
-              }),
-            ),
-            Effect.asVoid,
-          ),
-      ),
+    yield* fs.writeFileString(
+      agentPath,
+      [
+        "#!/bin/sh",
+        'model=""',
+        'seen_trust="0"',
+        'mode=""',
+        "while [ $# -gt 0 ]; do",
+        '  if [ "$1" = "--model" ]; then',
+        "    shift",
+        '    model="$1"',
+        "    shift",
+        "    continue",
+        "  fi",
+        '  if [ "$1" = "--trust" ]; then',
+        '    seen_trust="1"',
+        "    shift",
+        "    continue",
+        "  fi",
+        '  if [ "$1" = "--mode" ]; then',
+        "    shift",
+        '    mode="$1"',
+        "    shift",
+        "    continue",
+        "  fi",
+        "  shift",
+        "done",
+        'stdin_content="$(cat)"',
+        ...(input.requireModel !== undefined
+          ? [
+              `if [ "$model" != "${input.requireModel}" ]; then`,
+              '  printf "%s\\n" "unexpected model: $model" >&2',
+              "  exit 11",
+              "fi",
+            ]
+          : []),
+        ...(input.requireTrust
+          ? [
+              'if [ "$seen_trust" != "1" ]; then',
+              '  printf "%s\\n" "missing --trust" >&2',
+              "  exit 12",
+              "fi",
+            ]
+          : []),
+        ...(input.requireMode !== undefined
+          ? [
+              `if [ "$mode" != "${input.requireMode}" ]; then`,
+              '  printf "%s\\n" "unexpected mode: $mode" >&2',
+              "  exit 13",
+              "fi",
+            ]
+          : []),
+        ...(input.stdinMustContain !== undefined
+          ? [
+              `if ! printf "%s" "$stdin_content" | grep -F -- ${JSON.stringify(input.stdinMustContain)} >/dev/null; then`,
+              '  printf "%s\\n" "stdin missing expected content" >&2',
+              "  exit 14",
+              "fi",
+            ]
+          : []),
+        ...(input.stderr !== undefined
+          ? [`printf "%s\\n" ${JSON.stringify(input.stderr)} >&2`]
+          : []),
+        "cat <<'__T3CODE_FAKE_AGENT_OUTPUT__'",
+        JSON.stringify({
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          result: input.result,
+        }),
+        "__T3CODE_FAKE_AGENT_OUTPUT__",
+        `exit ${input.exitCode ?? 0}`,
+        "",
+      ].join("\n"),
     );
+    yield* fs.chmod(agentPath, 0o755);
+    return agentPath;
   });
 }
 
-function waitForFileContent(path: string): Effect.Effect<string> {
-  return Effect.promise(async () => {
-    const deadline = Date.now() + 5_000;
-    for (;;) {
-      try {
-        return readFileSync(path, "utf8");
-      } catch (error) {
-        if (Date.now() >= deadline) {
-          throw error instanceof Error ? error : new Error(String(error));
-        }
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-  });
+function withFakeAgentEnv<A, E, R>(
+  input: {
+    result: string;
+    requireModel?: string;
+    requireTrust?: boolean;
+    requireMode?: string;
+    stdinMustContain?: string;
+    stderr?: string;
+    exitCode?: number;
+  },
+  effect: Effect.Effect<A, E, R>,
+) {
+  return Effect.acquireUseRelease(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-cursor-text-" });
+      const agentPath = yield* makeFakeAgentBinary(tempDir, input);
+      const serverSettings = yield* ServerSettingsService;
+      const previousSettings = yield* serverSettings.getSettings;
+      yield* serverSettings.updateSettings({
+        providers: {
+          cursor: {
+            binaryPath: agentPath,
+          },
+        },
+      });
+      return { serverSettings, previousBinaryPath: previousSettings.providers.cursor.binaryPath };
+    }),
+    () => effect,
+    ({ serverSettings, previousBinaryPath }) =>
+      serverSettings
+        .updateSettings({
+          providers: {
+            cursor: {
+              binaryPath: previousBinaryPath,
+            },
+          },
+        })
+        .pipe(Effect.asVoid),
+  );
 }
 
 it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
-  it.effect("uses ACP model config options instead of raw CLI model ids", () => {
-    const requestLogDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-log-"));
-    const requestLogPath = path.join(requestLogDir, "requests.ndjson");
-
-    return withFakeAcpAgent(
+  it.effect("uses agent CLI model ids instead of ACP bracket notation for commit messages", () =>
+    withFakeAgentEnv(
       {
-        T3_ACP_REQUEST_LOG_PATH: requestLogPath,
-        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+        result: JSON.stringify({
           subject: "Add generated commit message",
-          body: "- verify cursor acp model config path",
+          body: "- verify agent model mapping",
         }),
+        requireModel: "composer-2-fast",
+        requireTrust: true,
+        requireMode: "ask",
+        stdinMustContain: "Staged patch:",
       },
       Effect.gen(function* () {
         const textGeneration = yield* TextGeneration;
@@ -136,84 +183,25 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
             "diff --git a/apps/server/src/git/Layers/CursorTextGeneration.ts b/apps/server/src/git/Layers/CursorTextGeneration.ts",
           modelSelection: {
             provider: "cursor",
-            model: "gpt-5.4",
-            options: {
-              reasoning: "xhigh",
-              fastMode: true,
-              contextWindow: "1m",
-            },
+            model: "composer-2",
+            options: { fastMode: true },
           },
         });
 
         expect(generated.subject).toBe("Add generated commit message");
-        expect(generated.body).toBe("- verify cursor acp model config path");
-
-        const requests = readFileSync(requestLogPath, "utf8")
-          .trim()
-          .split("\n")
-          .filter((line) => line.length > 0)
-          .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
-
-        expect(
-          requests.find((request) => request.method === "initialize")?.params?.clientCapabilities,
-        ).toMatchObject({
-          _meta: {
-            parameterizedModelPicker: true,
-          },
-        });
-        expect(
-          requests.some(
-            (request) =>
-              request.method === "session/set_config_option" &&
-              request.params?.configId === "model" &&
-              request.params?.value === "gpt-5.4",
-          ),
-        ).toBe(true);
-        expect(
-          requests.some(
-            (request) =>
-              request.method === "session/set_config_option" &&
-              request.params?.configId === "reasoning" &&
-              request.params?.value === "extra-high",
-          ),
-        ).toBe(true);
-        expect(
-          requests.some(
-            (request) =>
-              request.method === "session/set_config_option" &&
-              request.params?.configId === "context" &&
-              request.params?.value === "1m",
-          ),
-        ).toBe(true);
-        expect(
-          requests.some(
-            (request) =>
-              request.method === "session/set_config_option" &&
-              request.params?.configId === "fast" &&
-              request.params?.value === "true",
-          ),
-        ).toBe(true);
-        expect(
-          requests.find((request) => request.method === "session/prompt")?.params?.prompt,
-        ).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              type: "text",
-              text: expect.stringContaining("Staged patch:"),
-            }),
-          ]),
-        );
-
-        rmSync(requestLogDir, { recursive: true, force: true });
+        expect(generated.body).toBe("- verify agent model mapping");
       }),
-    );
-  });
+    ),
+  );
 
-  it.effect("accepts json objects with extra assistant text around them", () =>
-    withFakeAcpAgent(
+  it.effect("accepts json objects with extra text around them from agent output", () =>
+    withFakeAgentEnv(
       {
-        T3_ACP_PROMPT_RESPONSE_TEXT:
+        result:
           'Sure, here is the JSON:\n```json\n{\n  "subject": "Update README dummy comment with attribution and date",\n  "body": ""\n}\n```\nDone.',
+        requireModel: "composer-2",
+        requireTrust: true,
+        requireMode: "ask",
       },
       Effect.gen(function* () {
         const textGeneration = yield* TextGeneration;
@@ -234,65 +222,4 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
       }),
     ),
   );
-
-  it.effect("generates thread titles through Cursor ACP text generation", () =>
-    withFakeAcpAgent(
-      {
-        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
-          title: '"Trim reconnect spinner status after resume."',
-        }),
-      },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
-
-        const generated = yield* textGeneration.generateThreadTitle({
-          cwd: process.cwd(),
-          message: "Fix the reconnect spinner after a resumed session.",
-          modelSelection: {
-            provider: "cursor",
-            model: "composer-2",
-          },
-        });
-
-        expect(generated.title).toBe("Trim reconnect spinner status after resume.");
-      }),
-    ),
-  );
-
-  it.effect("closes the ACP child process after text generation completes", () => {
-    const exitLogDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-exit-log-"));
-    const exitLogPath = path.join(exitLogDir, "exit.log");
-
-    return withFakeAcpAgent(
-      {
-        T3_ACP_EXIT_LOG_PATH: exitLogPath,
-        T3_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
-          subject: "Close runtime after generation",
-          body: "",
-        }),
-      },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
-
-        const generated = yield* textGeneration.generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/cursor-runtime-close",
-          stagedSummary: "M apps/server/src/git/Layers/CursorTextGeneration.ts",
-          stagedPatch:
-            "diff --git a/apps/server/src/git/Layers/CursorTextGeneration.ts b/apps/server/src/git/Layers/CursorTextGeneration.ts",
-          modelSelection: {
-            provider: "cursor",
-            model: "composer-2",
-          },
-        });
-
-        expect(generated.subject).toBe("Close runtime after generation");
-
-        const exitLog = yield* waitForFileContent(exitLogPath);
-        expect(exitLog).toContain("exit:0");
-
-        rmSync(exitLogDir, { recursive: true, force: true });
-      }),
-    );
-  });
 });

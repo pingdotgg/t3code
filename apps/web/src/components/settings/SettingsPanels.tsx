@@ -43,8 +43,10 @@ import {
   useDesktopUpdateState,
 } from "../../lib/desktopUpdateReactQuery";
 import {
+  type BuiltInProviderKind,
   MAX_CUSTOM_MODEL_LENGTH,
   getCustomModelOptionsByProvider,
+  getModelSelectionOptions,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
@@ -102,7 +104,7 @@ const TIMESTAMP_FORMAT_LABELS = {
 } as const;
 
 type InstallProviderSettings = {
-  provider: ProviderKind;
+  provider: BuiltInProviderKind;
   title: string;
   badgeLabel?: string;
   binaryPlaceholder: string;
@@ -537,7 +539,9 @@ export function GeneralSettingsPanel() {
   const [openPathErrorByTarget, setOpenPathErrorByTarget] = useState<
     Partial<Record<"keybindings" | "logsDirectory", string | null>>
   >({});
-  const [openProviderDetails, setOpenProviderDetails] = useState<Record<ProviderKind, boolean>>({
+  const [openProviderDetails, setOpenProviderDetails] = useState<
+    Record<BuiltInProviderKind, boolean>
+  >({
     codex: Boolean(
       settings.providers.codex.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.binaryPath ||
       settings.providers.codex.homePath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.homePath ||
@@ -565,7 +569,7 @@ export function GeneralSettingsPanel() {
     ),
   });
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
-    Record<ProviderKind, string>
+    Record<BuiltInProviderKind, string>
   >({
     codex: "",
     claudeAgent: "",
@@ -573,7 +577,7 @@ export function GeneralSettingsPanel() {
     opencode: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
-    Partial<Record<ProviderKind, string | null>>
+    Partial<Record<BuiltInProviderKind, string | null>>
   >({});
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const refreshingRef = useRef(false);
@@ -619,7 +623,7 @@ export function GeneralSettingsPanel() {
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenProvider = textGenerationModelSelection.provider;
   const textGenModel = textGenerationModelSelection.model;
-  const textGenModelOptions = textGenerationModelSelection.options;
+  const textGenModelOptions = getModelSelectionOptions(textGenerationModelSelection);
   const gitModelOptionsByProvider = getCustomModelOptionsByProvider(
     settings,
     serverProviders,
@@ -676,7 +680,7 @@ export function GeneralSettingsPanel() {
   const isOpeningLogsDirectory = openingPathByTarget.logsDirectory;
 
   const addCustomModel = useCallback(
-    (provider: ProviderKind) => {
+    (provider: BuiltInProviderKind) => {
       const customModelInput = customModelInputByProvider[provider];
       const customModels = settings.providers[provider].customModels;
       const normalized = normalizeModelSlug(customModelInput, provider);
@@ -746,7 +750,7 @@ export function GeneralSettingsPanel() {
   );
 
   const removeCustomModel = useCallback(
-    (provider: ProviderKind, slug: string) => {
+    (provider: BuiltInProviderKind, slug: string) => {
       updateSettings({
         providers: {
           ...settings.providers,

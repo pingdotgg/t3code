@@ -10,15 +10,26 @@ export const PROVIDER_CACHE_IDS = [
   "opencode",
   "cursor",
 ] as const satisfies ReadonlyArray<ServerProvider["provider"]>;
+export type ProviderCacheId = (typeof PROVIDER_CACHE_IDS)[number];
+const PROVIDER_CACHE_ID_SET = new Set<ServerProvider["provider"]>(PROVIDER_CACHE_IDS);
 
 const decodeProviderStatusCache = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ServerProviderSchema),
 );
 
 const providerOrderRank = (provider: ServerProvider["provider"]): number => {
-  const rank = PROVIDER_CACHE_IDS.indexOf(provider);
+  if (!PROVIDER_CACHE_ID_SET.has(provider)) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  const rank = PROVIDER_CACHE_IDS.indexOf(provider as ProviderCacheId);
   return rank === -1 ? Number.MAX_SAFE_INTEGER : rank;
 };
+
+export function isProviderCacheId(
+  provider: ServerProvider["provider"],
+): provider is ProviderCacheId {
+  return PROVIDER_CACHE_ID_SET.has(provider);
+}
 
 const mergeProviderModels = (
   fallbackModels: ReadonlyArray<ServerProvider["models"][number]>,
