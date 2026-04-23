@@ -12,7 +12,7 @@ layer("029_ProjectionThreadDetailOrderingIndexes", (it) => {
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 25 });
+      yield* runMigrations({ toMigrationInclusive: 28 });
       yield* runMigrations({ toMigrationInclusive: 29 });
 
       const activityIndexes = yield* sql<{
@@ -26,7 +26,9 @@ layer("029_ProjectionThreadDetailOrderingIndexes", (it) => {
       `;
       assert.ok(
         activityIndexes.some(
-          (index) => index.name === "idx_projection_thread_activities_thread_sequence_created_id",
+          (index) =>
+            index.name ===
+            "idx_projection_thread_activities_thread_sequence_created_id",
         ),
       );
 
@@ -53,7 +55,8 @@ layer("029_ProjectionThreadDetailOrderingIndexes", (it) => {
       `;
       assert.ok(
         messageIndexes.some(
-          (index) => index.name === "idx_projection_thread_messages_thread_created_id",
+          (index) =>
+            index.name === "idx_projection_thread_messages_thread_created_id",
         ),
       );
 
