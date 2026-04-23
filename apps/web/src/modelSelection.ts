@@ -59,6 +59,13 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
     placeholder: "your-cursor-model-slug",
     example: "claude-sonnet-4-6",
   },
+  copilot: {
+    provider: "copilot",
+    title: "GitHub Copilot",
+    description: "Save additional Copilot model slugs for the picker and `/model` command.",
+    placeholder: "your-copilot-model-slug",
+    example: "gpt-5",
+  },
   opencode: {
     provider: "opencode",
     title: "OpenCode",
@@ -193,6 +200,12 @@ export function getCustomModelOptionsByProvider(
       providers,
       "cursor",
       selectedProvider === "cursor" ? selectedModel : undefined,
+    ),
+    copilot: getAppModelOptions(
+      settings,
+      providers,
+      "copilot",
+      selectedProvider === "copilot" ? selectedModel : undefined,
     ),
     opencode: getAppModelOptions(
       settings,

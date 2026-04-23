@@ -1,6 +1,7 @@
 import {
   ServerSettings,
   type ClaudeModelOptions,
+  type CopilotModelOptions,
   type CodexModelOptions,
   type CursorModelOptions,
   type OpenCodeModelOptions,
@@ -99,11 +100,19 @@ export function applyServerSettingsPatch(
                   selectionPatch.options as CursorModelOptions | undefined,
                 ),
               }
-            : {
+            : provider === "opencode"
+              ? {
+                  provider,
+                  model,
+                  ...withModelSelectionOptions(
+                    selectionPatch.options as OpenCodeModelOptions | undefined,
+                  ),
+                }
+              : {
                 provider,
                 model,
                 ...withModelSelectionOptions(
-                  selectionPatch.options as OpenCodeModelOptions | undefined,
+                  selectionPatch.options as CopilotModelOptions | undefined,
                 ),
               },
   };

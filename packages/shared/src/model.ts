@@ -3,6 +3,7 @@ import {
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   type ClaudeAgentEffort,
   type ClaudeModelOptions,
+  type CopilotModelOptions,
   type CodexModelOptions,
   type CursorModelOptions,
   type ModelCapabilities,
@@ -167,6 +168,8 @@ export function normalizeProviderModelOptionsWithCapabilities(
         caps,
         modelOptions as OpenCodeModelOptions,
       );
+    case "copilot":
+      return (modelOptions as CopilotModelOptions | null | undefined) ?? undefined;
   }
 }
 
@@ -278,6 +281,12 @@ export function createModelSelection(
         provider,
         model,
         ...(options ? { options: options as OpenCodeModelOptions } : {}),
+      };
+    case "copilot":
+      return {
+        provider,
+        model,
+        ...(options ? { options: options as CopilotModelOptions } : {}),
       };
   }
 }

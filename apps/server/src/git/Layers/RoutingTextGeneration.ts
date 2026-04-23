@@ -10,6 +10,7 @@
  * @module RoutingTextGeneration
  */
 import { Effect, Layer, Context } from "effect";
+import type { ProviderKind } from "@t3tools/contracts";
 
 import {
   TextGeneration,
@@ -51,6 +52,10 @@ const makeRoutingTextGeneration = Effect.gen(function* () {
   const cursor = yield* CursorTextGen;
   const openCode = yield* OpenCodeTextGen;
 
+  const toTextGenerationProvider = (
+    provider: ProviderKind | undefined,
+  ): TextGenerationProvider | undefined => (provider === "copilot" ? undefined : provider);
+
   const route = (provider?: TextGenerationProvider): TextGenerationShape =>
     provider === "claudeAgent"
       ? claude
@@ -62,10 +67,13 @@ const makeRoutingTextGeneration = Effect.gen(function* () {
 
   return {
     generateCommitMessage: (input) =>
-      route(input.modelSelection.provider).generateCommitMessage(input),
-    generatePrContent: (input) => route(input.modelSelection.provider).generatePrContent(input),
-    generateBranchName: (input) => route(input.modelSelection.provider).generateBranchName(input),
-    generateThreadTitle: (input) => route(input.modelSelection.provider).generateThreadTitle(input),
+      route(toTextGenerationProvider(input.modelSelection.provider)).generateCommitMessage(input),
+    generatePrContent: (input) =>
+      route(toTextGenerationProvider(input.modelSelection.provider)).generatePrContent(input),
+    generateBranchName: (input) =>
+      route(toTextGenerationProvider(input.modelSelection.provider)).generateBranchName(input),
+    generateThreadTitle: (input) =>
+      route(toTextGenerationProvider(input.modelSelection.provider)).generateThreadTitle(input),
   } satisfies TextGenerationShape;
 });
 

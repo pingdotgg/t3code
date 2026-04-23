@@ -140,6 +140,13 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     binaryDescription: "Path to the Cursor agent binary",
   },
   {
+    provider: "copilot",
+    title: "GitHub Copilot",
+    badgeLabel: "Preview",
+    binaryPlaceholder: "Copilot CLI binary path",
+    binaryDescription: "Path to the GitHub Copilot CLI binary",
+  },
+  {
     provider: "opencode",
     title: "OpenCode",
     binaryPlaceholder: "OpenCode binary path",
@@ -554,6 +561,11 @@ export function GeneralSettingsPanel() {
         DEFAULT_UNIFIED_SETTINGS.providers.cursor.binaryPath ||
       settings.providers.cursor.customModels.length > 0,
     ),
+    copilot: Boolean(
+      settings.providers.copilot.binaryPath !==
+        DEFAULT_UNIFIED_SETTINGS.providers.copilot.binaryPath ||
+      settings.providers.copilot.customModels.length > 0,
+    ),
     opencode: Boolean(
       settings.providers.opencode.binaryPath !==
         DEFAULT_UNIFIED_SETTINGS.providers.opencode.binaryPath ||
@@ -570,6 +582,7 @@ export function GeneralSettingsPanel() {
     codex: "",
     claudeAgent: "",
     cursor: "",
+    copilot: "",
     opencode: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
@@ -1570,6 +1583,8 @@ export function GeneralSettingsPanel() {
                               ? "gpt-6.7-codex-ultra-preview"
                               : providerCard.provider === "opencode"
                                 ? "openai/gpt-5"
+                                : providerCard.provider === "copilot"
+                                  ? "gpt-5"
                                 : "claude-sonnet-5-0"
                           }
                           spellCheck={false}

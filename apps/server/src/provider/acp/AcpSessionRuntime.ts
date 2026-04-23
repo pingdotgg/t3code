@@ -33,7 +33,7 @@ export interface AcpSessionRuntimeOptions {
     readonly name: string;
     readonly version: string;
   };
-  readonly authMethodId: string;
+  readonly authMethodId?: string;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -365,15 +365,18 @@ const makeAcpSessionRuntime = (
         acp.agent.initialize(initializePayload),
       );
 
-      const authenticatePayload = {
-        methodId: options.authMethodId,
-      } satisfies EffectAcpSchema.AuthenticateRequest;
+      const authMethodId = options.authMethodId?.trim();
+      if (authMethodId && authMethodId.length > 0) {
+        const authenticatePayload = {
+          methodId: authMethodId,
+        } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
+      }
 
       let sessionId: string;
       let sessionSetupResult:

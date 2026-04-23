@@ -5,6 +5,7 @@ import { Cause, Effect, FileSystem, Path, Schema } from "effect";
 export const PROVIDER_CACHE_IDS = [
   "codex",
   "claudeAgent",
+  "copilot",
   "opencode",
   "cursor",
 ] as const satisfies ReadonlyArray<ServerProvider["provider"]>;
