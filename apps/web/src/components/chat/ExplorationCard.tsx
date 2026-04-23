@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import { memo, useState } from "react";
 import { cn } from "~/lib/utils";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import type { WorkLogEntry } from "../../session-logic";
 
 interface ExplorationCardProps {
@@ -15,9 +16,67 @@ interface ExplorationCardProps {
   isPendingApproval?: boolean;
 }
 
-const READ_TOOL_NAMES = new Set(["read", "cat", "head", "tail", "view"]);
-const SEARCH_TOOL_NAMES = new Set(["grep", "glob", "search", "toolsearch", "find", "list", "ls"]);
+const READ_TOOL_NAMES = new Set(["read", "cat", "head", "tail", "view", "view_file", "read_file"]);
+const SEARCH_TOOL_NAMES = new Set([
+  "grep",
+  "glob",
+  "search",
+  "toolsearch",
+  "find",
+  "list",
+  "ls",
+  "list_directory",
+  "codebase_search",
+  "file_search",
+  "tree",
+  "ripgrep",
+  "rg",
+]);
 const SEARCH_QUERY_KEYS = ["pattern", "query", "q", "searchQuery", "term"] as const;
+
+// Project-root markers. When an absolute path contains one of these segments,
+// start the displayed path from there so users see the intent ("apps/web/.../Foo.ts")
+// rather than "/Users/whoever/WebstormProjects/personal/marcode/apps/web/.../Foo.ts".
+const PROJECT_ROOT_MARKERS = ["apps/", "packages/", "src/", "lib/", "components/", "modules/"];
+
+/**
+ * Shorten an absolute path to something readable for the exploration row.
+ * Tries, in order: starting from a known project-root marker, or falling back
+ * to the last three segments of the path.
+ */
+function shortenPath(filePath: string): string {
+  const trimmed = filePath.trim();
+  if (trimmed.length === 0) return trimmed;
+  if (!trimmed.startsWith("/") && !trimmed.includes(":\\")) {
+    return trimmed;
+  }
+  const normalized = trimmed.replaceAll("\\", "/");
+  for (const marker of PROJECT_ROOT_MARKERS) {
+    const index = normalized.indexOf(`/${marker}`);
+    if (index >= 0) {
+      return normalized.slice(index + 1);
+    }
+  }
+  const parts = normalized.split("/").filter((part) => part.length > 0);
+  return parts.length <= 3 ? normalized.replace(/^\//, "") : parts.slice(-3).join("/");
+}
+
+/** Parse a `<path>/foo/bar</path>` segment out of Cursor/Codex-style XML detail. */
+const XML_PATH_RE = /<path>([^<]+)<\/path>/i;
+const XML_CONTENT_TRAILER_RE = /<content>[\s\S]*$/i;
+
+function extractPathFromXml(value: string | undefined): string | null {
+  if (!value) return null;
+  const match = value.match(XML_PATH_RE);
+  return match?.[1]?.trim() || null;
+}
+
+/** Strip `<content>…` trailer and compact whitespace for a clean tooltip body. */
+function cleanDetailForTooltip(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const stripped = value.replace(XML_CONTENT_TRAILER_RE, "").trim();
+  return stripped.length > 0 ? stripped : value.trim();
+}
 
 function isReadEntry(entry: WorkLogEntry): boolean {
   if (entry.requestKind === "file-read") return true;
@@ -50,7 +109,16 @@ function inputNum(input: Record<string, unknown> | undefined, key: string): numb
 }
 
 function inputFilePath(input: Record<string, unknown> | undefined): string | null {
-  return inputStr(input, "file_path") ?? inputStr(input, "filePath") ?? inputStr(input, "path");
+  return (
+    inputStr(input, "file_path") ??
+    inputStr(input, "filePath") ??
+    inputStr(input, "path") ??
+    inputStr(input, "file") ??
+    inputStr(input, "target_file") ??
+    inputStr(input, "targetFile") ??
+    inputStr(input, "directory") ??
+    inputStr(input, "dir")
+  );
 }
 
 function extractSearchQuery(input: Record<string, unknown> | undefined): string | null {
@@ -80,44 +148,54 @@ function formatLineRange(input: Record<string, unknown> | undefined): string | n
 function explorationEntryHeading(entry: WorkLogEntry): string {
   const input = entry.toolInput;
   const lower = entry.toolName?.toLowerCase();
+  // Path source precedence: structured tool input → XML detail (Cursor/Codex
+  // wrap tool output like `<path>/foo</path>`) → JSON-encoded detail.
+  const pathFromInput = inputFilePath(input);
+  const pathFromXml = extractPathFromXml(entry.detail);
+  const pathFromJsonDetail = entry.detail
+    ? extractFilePathFromValue(stripToolPrefix(entry.detail))
+    : null;
+  const resolvedPath = pathFromInput ?? pathFromXml ?? pathFromJsonDetail;
+  const shortPath = resolvedPath ? shortenPath(resolvedPath) : null;
+  const fileName = resolvedPath ? fileNameFromPath(resolvedPath) : null;
 
-  if (lower === "read") {
-    const filePath = inputFilePath(input);
-    const fileName = filePath
-      ? fileNameFromPath(filePath)
-      : extractFileNameFromDetail(entry.detail);
+  // Route by specific tool name when we recognize it.
+  if (lower === "read" || lower === "read_file" || lower === "view" || lower === "view_file") {
     const lineRange = formatLineRange(input);
-    if (fileName && lineRange) return `Read ${fileName} (${lineRange})`;
+    if (shortPath && lineRange) return `Read ${shortPath} (${lineRange})`;
+    if (shortPath) return `Read ${shortPath}`;
     if (fileName) return `Read ${fileName}`;
     return "Read file";
   }
 
-  if (lower === "grep") {
-    const pattern = inputStr(input, "pattern");
-    const path = inputFilePath(input);
-    if (pattern && path) return `Searched for ${pattern} in ${fileNameFromPath(path)}`;
-    if (pattern) return `Searched for ${pattern}`;
+  if (lower === "grep" || lower === "ripgrep" || lower === "rg") {
+    const pattern = inputStr(input, "pattern") ?? inputStr(input, "query");
+    if (pattern && shortPath) return `Searched ${pattern} in ${shortPath}`;
+    if (pattern) return `Searched ${pattern}`;
+    if (shortPath) return `Searched ${shortPath}`;
     return `Searched ${extractSearchSummaryFromDetail(entry.detail)}`;
   }
 
   if (lower === "glob") {
     const pattern = inputStr(input, "pattern");
-    const path = inputFilePath(input);
-    if (pattern && path) return `Glob ${pattern} in ${fileNameFromPath(path)}`;
+    if (pattern && shortPath) return `Glob ${pattern} in ${shortPath}`;
     if (pattern) return `Glob ${pattern}`;
     return `Glob ${extractSearchSummaryFromDetail(entry.detail)}`;
   }
 
-  if (lower === "list" || lower === "ls") {
-    const path = inputFilePath(input);
-    if (path) return `Listed ${fileNameFromPath(path)}`;
+  if (lower === "list" || lower === "ls" || lower === "list_directory") {
+    if (shortPath) return `Listed ${shortPath}`;
     return `Listed ${extractPathSummaryFromDetail(entry.detail)}`;
   }
 
   if (lower === "find") {
-    const path = inputFilePath(input);
-    if (path) return `Found ${fileNameFromPath(path)}`;
+    if (shortPath) return `Found ${shortPath}`;
     return `Found ${extractPathSummaryFromDetail(entry.detail)}`;
+  }
+
+  if (lower === "tree") {
+    if (shortPath) return `Tree ${shortPath}`;
+    return "Tree";
   }
 
   if (lower === "toolsearch") {
@@ -127,32 +205,43 @@ function explorationEntryHeading(entry: WorkLogEntry): string {
     return summary ? `Searched tools ${summary}` : "Searched tools";
   }
 
-  if (lower && lower.includes("search")) {
+  if (
+    lower === "codebase_search" ||
+    lower === "file_search" ||
+    (lower && lower.includes("search"))
+  ) {
     const query = extractSearchQuery(input);
-    const path = inputFilePath(input);
-    if (query && path) return `Searched for ${query} in ${fileNameFromPath(path)}`;
-    if (query) return `Searched for ${query}`;
+    if (query && shortPath) return `Searched ${query} in ${shortPath}`;
+    if (query) return `Searched ${query}`;
+    if (shortPath) return `Searched ${shortPath}`;
     const summary = extractSearchSummaryFromDetail(entry.detail);
     return summary ? `Searched ${summary}` : "Searched";
   }
 
+  // Fallback: route by canonical itemType when toolName is missing/unknown.
+  // This is the common Cursor ACP path, where `kind: "read"` is the only
+  // signal and we've lost specificity.
+  if (entry.itemType === "file_read") {
+    if (shortPath) return `Read ${shortPath}`;
+    if (fileName) return `Read ${fileName}`;
+    return "Read file";
+  }
+
+  // Final fallback: never print the raw XML-ish detail as the heading.
   const raw = (entry.toolTitle ?? entry.label).trim();
   if (isGenericLabel(raw) && entry.detail) {
     return cleanDetailAsHeading(entry.detail);
   }
   const titled = raw.length === 0 ? "Explored" : `${raw.charAt(0).toUpperCase()}${raw.slice(1)}`;
 
-  const fallbackPath = inputFilePath(input);
   const fallbackQuery = extractSearchQuery(input);
-  if (fallbackQuery && fallbackPath) {
-    return `${titled}: ${fallbackQuery} in ${fileNameFromPath(fallbackPath)}`;
-  }
-  if (fallbackQuery) return `${titled}: ${fallbackQuery}`;
-  if (fallbackPath) return `${titled} ${fileNameFromPath(fallbackPath)}`;
+  if (fallbackQuery && shortPath) return `${titled} ${fallbackQuery} in ${shortPath}`;
+  if (fallbackQuery) return `${titled} ${fallbackQuery}`;
+  if (shortPath) return `${titled} ${shortPath}`;
 
   if (entry.detail) {
     const summary = extractSearchSummaryFromDetail(entry.detail);
-    if (summary && summary !== titled) return `${titled}: ${summary}`;
+    if (summary && summary !== titled) return `${titled} ${summary}`;
   }
   return titled;
 }
@@ -246,8 +335,24 @@ function ExplorationEntryRow(props: { entry: WorkLogEntry }) {
   const isRead = isReadEntry(entry);
   const Icon = isRead ? EyeIcon : SearchIcon;
   const heading = explorationEntryHeading(entry);
+  // Tooltip body: the full absolute path + any non-content detail, so users
+  // can hover to see everything that was truncated out of the inline heading.
+  const tooltipLines: string[] = [];
+  const input = entry.toolInput;
+  const fullPath =
+    inputFilePath(input) ??
+    extractPathFromXml(entry.detail) ??
+    (entry.detail ? extractFilePathFromValue(stripToolPrefix(entry.detail)) : null);
+  if (fullPath) tooltipLines.push(fullPath);
+  const pattern = input ? (inputStr(input, "pattern") ?? extractSearchQuery(input)) : null;
+  if (pattern) tooltipLines.push(`pattern: ${pattern}`);
+  const cleanedDetail = cleanDetailForTooltip(entry.detail);
+  if (cleanedDetail && cleanedDetail !== fullPath && cleanedDetail !== heading) {
+    tooltipLines.push(cleanedDetail);
+  }
+  const tooltipBody = tooltipLines.join("\n");
 
-  return (
+  const rowContent = (
     <div className="flex items-center gap-2 rounded-lg px-1 py-0.5">
       <span className="flex size-4 shrink-0 items-center justify-center text-muted-foreground/50">
         <Icon className="size-3" />
@@ -256,6 +361,17 @@ function ExplorationEntryRow(props: { entry: WorkLogEntry }) {
         <span className="text-foreground/70">{heading}</span>
       </p>
     </div>
+  );
+
+  if (!tooltipBody) return rowContent;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger render={rowContent} />
+      <TooltipPopup className="max-w-[min(90vw,640px)] whitespace-pre-wrap break-all text-[11px]">
+        {tooltipBody}
+      </TooltipPopup>
+    </Tooltip>
   );
 }
 

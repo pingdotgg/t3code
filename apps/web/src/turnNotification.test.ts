@@ -343,7 +343,7 @@ describe("deriveTurnNotificationTriggers", () => {
       // and fired a spurious turn-completed notification on thread creation.
       const thread = makeThread({
         session: { orchestrationStatus: "ready", activeTurnId: null },
-      } as Partial<Thread>);
+      } as unknown as Partial<Thread>);
       const project = makeProject();
       const events = [makeSessionSetEvent("thread-1", "ready", { activeTurnId: null })];
 
@@ -364,7 +364,7 @@ describe("deriveTurnNotificationTriggers", () => {
       // running event, makes the completion fire anyway.
       const thread = makeThread({
         session: { orchestrationStatus: "ready", activeTurnId: null },
-      } as Partial<Thread>);
+      } as unknown as Partial<Thread>);
       const project = makeProject();
 
       // Batch 1: running status arms the persistent flag.

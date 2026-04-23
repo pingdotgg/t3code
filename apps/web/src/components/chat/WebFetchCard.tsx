@@ -34,11 +34,27 @@ const STATUS_ACCENT: Record<ToolStatus, string> = {
 
 function deriveUrl(entry: WorkLogEntry): string | null {
   const input = entry.toolInput;
-  if (input && typeof input.url === "string" && input.url.trim().length > 0) {
-    return input.url.trim();
+  if (input) {
+    // Different providers/tools use different keys for the fetched URL.
+    for (const key of ["url", "uri", "link", "target", "href", "endpoint", "address"] as const) {
+      const value = input[key];
+      if (typeof value === "string" && value.trim().length > 0) {
+        return value.trim();
+      }
+    }
   }
-  if (entry.detail && /^https?:\/\//.test(entry.detail.trim())) {
-    return entry.detail.trim().split(/\s/)[0] ?? null;
+  if (entry.detail) {
+    const trimmed = entry.detail.trim();
+    // Direct https:// prefix (Claude/Codex).
+    if (/^https?:\/\//.test(trimmed)) {
+      return trimmed.split(/\s/)[0] ?? null;
+    }
+    // <url>https://…</url> or <uri>https://…</uri> — Cursor/ACP XML detail.
+    const xmlMatch = trimmed.match(/<(?:url|uri|link)>(https?:\/\/[^<\s]+)<\/(?:url|uri|link)>/i);
+    if (xmlMatch?.[1]) return xmlMatch[1];
+    // Fallback: first https://… token anywhere in the detail.
+    const inline = trimmed.match(/https?:\/\/[^\s"'<>)]+/);
+    if (inline) return inline[0];
   }
   return null;
 }
