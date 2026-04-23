@@ -176,23 +176,16 @@ export function deriveTurnNotificationTriggers(
 
       if (isThreadSuppressed(threadId)) continue;
 
+      // STRICT GATE: only fire if we observed a `running` session-set event
+      // earlier (in this batch or a prior one). This is the single signal that
+      // a real turn actually started. Previous heuristics (stored
+      // orchestrationStatus / activeTurnId / latestTurn) all had failure modes
+      // where session.started's status=ready + stale store state misfired for
+      // OpenCode/Cursor — the flag below is authoritative.
+      if (!threadsWithActiveTurn.has(threadId)) continue;
+
       const thread = getThread(threadId);
       if (!thread) continue;
-
-      // Skip session-bootstrap completions (e.g. provider "session.started"
-      // maps to status:ready when no turn is active). A real turn completion
-      // requires: a persistent active-turn flag (armed by a prior running
-      // status), the stored session still reading "running", a non-null
-      // activeTurnId on the prior session, or a latestTurn still marked
-      // running. `activeTurnId != null` here (not `!== undefined`) because
-      // session.started emits a session object with activeTurnId=null that
-      // must NOT be treated as evidence of an active turn.
-      const turnWasActive =
-        threadsWithActiveTurn.has(threadId) ||
-        thread.session?.orchestrationStatus === "running" ||
-        thread.session?.activeTurnId != null ||
-        thread.latestTurn?.state === "running";
-      if (!turnWasActive) continue;
 
       if (wasRecentlyFired(threadId)) {
         // Another event in the prior ~3s already fired this turn's completion
@@ -217,14 +210,14 @@ export function deriveTurnNotificationTriggers(
 
     // Fallback signal: a turn-diff capture completing is a strong guarantee
     // that a turn ended — CheckpointReactor only fires this after an actual
-    // turn.completed runtime event. If the session-set path was dropped
-    // (subscription race, snapshot overwrite, missed batch), this still
-    // notifies the user and is deduped against the primary path above.
+    // turn.completed runtime event. Still gated on the armed flag so we never
+    // notify for a turn that never started from the client's perspective.
     if (event.type === "thread.turn-diff-completed") {
       const { threadId } = event.payload;
       if (completionFiredThreadIds.has(threadId)) continue;
       if (isThreadSuppressed(threadId)) continue;
       if (userInitiatedThreadIds.has(threadId)) continue;
+      if (!threadsWithActiveTurn.has(threadId)) continue;
       if (wasRecentlyFired(threadId)) {
         // The primary session-set path already fired in a nearby batch.
         completionFiredThreadIds.add(threadId);

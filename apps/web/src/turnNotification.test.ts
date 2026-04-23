@@ -109,8 +109,14 @@ describe("deriveTurnNotificationTriggers", () => {
   it("emits trigger for a completed turn", () => {
     const thread = makeThread();
     const project = makeProject();
-    const events = [makeSessionSetEvent("thread-1", "idle")];
+    // Arm the persistent active-turn flag with a prior running event.
+    deriveTurnNotificationTriggers(
+      [makeSessionSetEvent("thread-1", "running", { activeTurnId: "turn-1" })],
+      () => thread,
+      () => project,
+    );
 
+    const events = [makeSessionSetEvent("thread-1", "idle")];
     const triggers = deriveTurnNotificationTriggers(
       events,
       () => thread,
@@ -161,6 +167,13 @@ describe("deriveTurnNotificationTriggers", () => {
     const thread = makeThread({ id: "thread-2" as ThreadId });
     const project = makeProject();
 
+    // Arm the flag so the strict gate lets completion events through.
+    deriveTurnNotificationTriggers(
+      [makeSessionSetEvent("thread-2", "running", { activeTurnId: "turn-1" })],
+      () => thread,
+      () => project,
+    );
+
     vi.spyOn(Date, "now").mockReturnValue(10000);
     markThreadUserStopped("thread-2" as ThreadId);
 
@@ -173,6 +186,15 @@ describe("deriveTurnNotificationTriggers", () => {
       () => project,
     );
     expect(triggersWithin).toHaveLength(0);
+
+    // Re-arm for the post-window event (suppression doesn't clear the flag
+    // but a successful fire would — so we re-arm here to simulate the next
+    // turn's running transition that normally preceeds the completion).
+    deriveTurnNotificationTriggers(
+      [makeSessionSetEvent("thread-2", "running", { activeTurnId: "turn-2" })],
+      () => thread,
+      () => project,
+    );
 
     vi.spyOn(Date, "now").mockReturnValue(16000);
     const eventsAfterWindow = [makeSessionSetEvent("thread-2", "idle")];
@@ -210,10 +232,12 @@ describe("deriveTurnNotificationTriggers", () => {
     expect(triggers[0]!.reason).toBe("turn-completed");
   });
 
-  it("fires turn-completed when the thread has an active latest turn even if orchestrationStatus is not running", () => {
-    // The stored session status may have been updated out of band (e.g. by a
-    // snapshot sync) before the completion event is derived. As long as the
-    // thread is tracking an active turn, completion must still notify.
+  it("does NOT fire turn-completed from stored latestTurn alone without an observed running event", () => {
+    // The strict gate requires a `thread.session-set` with status=running to
+    // have been observed (in any batch) before completion will fire. Stored
+    // state alone — even when it looks like a turn is active — is no longer
+    // sufficient, because that stored state can be stale or delivered via the
+    // shell stream for a bootstrap session that never actually ran a turn.
     const thread = makeThread({
       session: { orchestrationStatus: "ready" },
       latestTurn: { state: "running", turnId: "turn-1" },
@@ -227,12 +251,13 @@ describe("deriveTurnNotificationTriggers", () => {
       () => project,
     );
 
-    expect(triggers).toHaveLength(1);
-    expect(triggers[0]!.reason).toBe("turn-completed");
+    expect(triggers).toHaveLength(0);
   });
 
-  it("fires turn-completed when the session tracks an activeTurnId even without running status", () => {
-    // Same shape as the latestTurn case but driven off the session binding.
+  it("does NOT fire turn-completed from stored activeTurnId alone without an observed running event", () => {
+    // Same rationale as the latestTurn case: the persistent arm must be set
+    // from a `thread.session-set` running event. An activeTurnId snapshotted
+    // from the shell stream is not enough on its own.
     const thread = makeThread({
       session: { orchestrationStatus: "ready", activeTurnId: "turn-1" },
     } as Partial<Thread>);
@@ -245,8 +270,7 @@ describe("deriveTurnNotificationTriggers", () => {
       () => project,
     );
 
-    expect(triggers).toHaveLength(1);
-    expect(triggers[0]!.reason).toBe("turn-completed");
+    expect(triggers).toHaveLength(0);
   });
 
   it("skips turn-completed when the thread never saw a running turn", () => {
@@ -272,13 +296,19 @@ describe("deriveTurnNotificationTriggers", () => {
     // The session-set path can be lost (subscription race, snapshot overwrite)
     // but the CheckpointReactor reliably dispatches thread.turn-diff-completed
     // after an actual turn.completed runtime event, so the user still gets
-    // notified.
+    // notified — as long as we saw a running transition earlier (strict gate).
     const thread = makeThread({
       session: { orchestrationStatus: "ready" },
     } as Partial<Thread>);
     const project = makeProject();
-    const events = [makeTurnDiffCompletedEvent("thread-1")];
+    // Arm the flag as a prior running transition would.
+    deriveTurnNotificationTriggers(
+      [makeSessionSetEvent("thread-1", "running", { activeTurnId: "turn-1" })],
+      () => thread,
+      () => project,
+    );
 
+    const events = [makeTurnDiffCompletedEvent("thread-1")];
     const triggers = deriveTurnNotificationTriggers(
       events,
       () => thread,
@@ -296,6 +326,12 @@ describe("deriveTurnNotificationTriggers", () => {
       session: { orchestrationStatus: "running" },
     } as Partial<Thread>);
     const project = makeProject();
+    // Prior batch: arm via running transition.
+    deriveTurnNotificationTriggers(
+      [makeSessionSetEvent("thread-1", "running", { activeTurnId: "turn-1" })],
+      () => thread,
+      () => project,
+    );
     const events = [
       makeSessionSetEvent("thread-1", "ready"),
       makeTurnDiffCompletedEvent("thread-1"),
@@ -398,6 +434,12 @@ describe("deriveTurnNotificationTriggers", () => {
       } as Partial<Thread>);
       const project = makeProject();
 
+      // Arm the persistent flag first (required by strict gate).
+      deriveTurnNotificationTriggers(
+        [makeSessionSetEvent("thread-1", "running", { activeTurnId: "turn-1" })],
+        () => thread,
+        () => project,
+      );
       const firstBatch = deriveTurnNotificationTriggers(
         [makeSessionSetEvent("thread-1", "ready")],
         () => thread,
@@ -412,6 +454,59 @@ describe("deriveTurnNotificationTriggers", () => {
       expect(firstBatch).toHaveLength(1);
       expect(secondBatch).toHaveLength(0);
     });
+
+    it(
+      "OpenCode first-message: session.started + thread.started + turn.started + turn.completed " +
+        "fires exactly once, at the actual turn end",
+      () => {
+        // User-reported repro: OpenCode emits session.started → thread.started →
+        // turn.started → turn.completed in separate batches for the first
+        // message on a brand-new thread. The only sound that may play is at
+        // turn.completed. Every earlier event MUST be silent, even when the
+        // stored thread state reflects partial application.
+        const project = makeProject();
+        let threadState: Thread = makeThread({ session: undefined } as unknown as Partial<Thread>);
+
+        // Batch 1: session.started → status=ready, activeTurnId=null.
+        let triggers = deriveTurnNotificationTriggers(
+          [makeSessionSetEvent("thread-1", "ready", { activeTurnId: null })],
+          () => threadState,
+          () => project,
+        );
+        expect(triggers).toHaveLength(0);
+        threadState = makeThread({
+          session: { orchestrationStatus: "ready", activeTurnId: null },
+        } as unknown as Partial<Thread>);
+
+        // Batch 2: thread.started → status=ready, activeTurnId=null.
+        triggers = deriveTurnNotificationTriggers(
+          [makeSessionSetEvent("thread-1", "ready", { activeTurnId: null })],
+          () => threadState,
+          () => project,
+        );
+        expect(triggers).toHaveLength(0);
+
+        // Batch 3: turn.started → status=running, activeTurnId=T1.
+        triggers = deriveTurnNotificationTriggers(
+          [makeSessionSetEvent("thread-1", "running", { activeTurnId: "turn-1" })],
+          () => threadState,
+          () => project,
+        );
+        expect(triggers).toHaveLength(0);
+        threadState = makeThread({
+          session: { orchestrationStatus: "running", activeTurnId: "turn-1" },
+        } as Partial<Thread>);
+
+        // Batch 4: turn.completed → status=ready. Sound should fire exactly here.
+        triggers = deriveTurnNotificationTriggers(
+          [makeSessionSetEvent("thread-1", "ready", { activeTurnId: null })],
+          () => threadState,
+          () => project,
+        );
+        expect(triggers).toHaveLength(1);
+        expect(triggers[0]!.reason).toBe("turn-completed");
+      },
+    );
   });
 });
 
