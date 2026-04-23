@@ -97,7 +97,7 @@ import {
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
-import { Kbd } from "./ui/kbd";
+import { Kbd, KbdGroup } from "./ui/kbd";
 import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
@@ -128,6 +128,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "./ui/menu";
+import { LogomarkForma } from "./LogomarkForma";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
@@ -204,6 +205,28 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
   repository_path: "Group by repository path",
   separate: "Keep separate",
 };
+
+function splitShortcutLabelIntoKeycaps(label: string): string[] {
+  if (label.includes("\u2318") || label.includes("\u2303") || label.includes("\u2325")) {
+    const keycaps: string[] = [];
+    if (label.includes("\u2303")) keycaps.push("\u2303");
+    if (label.includes("\u2325")) keycaps.push("\u2325");
+    if (label.includes("\u21e7")) keycaps.push("\u21e7");
+    if (label.includes("\u2318")) keycaps.push("\u2318");
+
+    const key = label.replace(/[\u2303\u2325\u21e7\u2318]/g, "").trim();
+    if (key.length > 0) {
+      keycaps.push(key.toUpperCase());
+    }
+
+    return keycaps;
+  }
+
+  return label
+    .split("+")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
 
 function formatProjectMemberActionLabel(
   member: SidebarProjectGroupMember,
@@ -2208,9 +2231,10 @@ function HarnessWordmark() {
   return (
     <span
       aria-label={APP_BASE_NAME}
-      className="shrink-0 text-sm font-semibold tracking-tight text-foreground lowercase"
+      className="inline-flex shrink-0 items-center gap-1.5 text-md font-semibold tracking-tight text-foreground lowercase"
     >
-      {APP_BASE_NAME}
+      <LogomarkForma aria-hidden="true" className="h-4 w-auto shrink-0" />
+      <span>{APP_BASE_NAME}</span>
     </span>
   );
 }
@@ -2383,8 +2407,8 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
   );
 
   return isElectron ? (
-    <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px] wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)]">
-      {wordmark}
+    <SidebarHeader className="drag-region relative isolate h-[52px] flex-row items-center gap-2 overflow-hidden px-4 py-0 wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)]">
+      <div className="relative z-10">{wordmark}</div>
     </SidebarHeader>
   ) : (
     <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">{wordmark}</SidebarHeader>
@@ -2521,7 +2545,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               render={
                 <SidebarMenuButton
                   size="sm"
-                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground focus-visible:ring-0"
+                  className="gap-2 border border-border/65 bg-accent/70 px-2 py-1.5 text-muted-foreground/70 shadow-sm/5 transition-colors hover:bg-accent/85 hover:text-foreground focus-visible:ring-0"
                   data-testid="command-palette-trigger"
                 />
               }
@@ -2529,9 +2553,16 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               <SearchIcon className="size-3.5" />
               <span className="flex-1 truncate text-left text-xs">Search</span>
               {commandPaletteShortcutLabel ? (
-                <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
-                  {commandPaletteShortcutLabel}
-                </Kbd>
+                <KbdGroup className="pointer-events-none items-center gap-1">
+                  {splitShortcutLabelIntoKeycaps(commandPaletteShortcutLabel).map((keycap) => (
+                    <Kbd
+                      key={keycap}
+                      className="h-5 min-w-0 rounded-md border border-border/60 bg-background/88 px-1.5 text-[10px] text-muted-foreground/80 shadow-none"
+                    >
+                      {keycap}
+                    </Kbd>
+                  ))}
+                </KbdGroup>
               ) : null}
             </CommandDialogTrigger>
           </SidebarMenuItem>

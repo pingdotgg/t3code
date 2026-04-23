@@ -1881,8 +1881,7 @@ function getInitialWindowBackgroundColor(): string {
 function getWindowTitleBarOptions(): WindowTitleBarOptions {
   if (process.platform === "darwin") {
     return {
-      titleBarStyle: "hiddenInset",
-      trafficLightPosition: { x: 16, y: 18 },
+      titleBarStyle: "hidden",
     };
   }
 
@@ -1937,6 +1936,10 @@ function createWindow(): BrowserWindow {
       sandbox: true,
     },
   });
+
+  if (process.platform === "darwin") {
+    window.setWindowButtonVisibility(false);
+  }
 
   window.webContents.on("context-menu", (event, params) => {
     event.preventDefault();
