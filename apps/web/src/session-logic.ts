@@ -993,11 +993,20 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       entry.exitCode = exitCode;
     }
   }
-  if (!entry.detail && payload && typeof payload.detail === "string" && payload.detail.length > 0) {
-    const { output: detail, exitCode } = stripTrailingExitCode(payload.detail);
-    if (detail) {
-      entry.detail = detail;
+  if (!entry.detail) {
+    // Use the smart extractor: suppresses detail when it's equivalent to the
+    // row heading (prevents echoing "Read File" as both title and detail),
+    // and falls back to a summary of `data.rawOutput` (e.g. grep's
+    // `{totalFiles: 19}` → "19 files", read's `{content: "..."}` → first line).
+    const smartDetail = extractToolDetail(payload, title ?? activity.summary);
+    if (smartDetail !== null) {
+      entry.detail = smartDetail;
     }
+  }
+  // Regardless of which detail source we used, extract the exit code from the
+  // raw payload detail so CommandExecutionCard can badge failure/success.
+  if (entry.exitCode === undefined && payload && typeof payload.detail === "string") {
+    const { exitCode } = stripTrailingExitCode(payload.detail);
     if (exitCode !== undefined) {
       entry.exitCode = exitCode;
     }
