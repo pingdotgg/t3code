@@ -174,6 +174,10 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  stateSubdir: Config.string("T3CODE_STATE_SUBDIR").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 interface CliServerFlags {
@@ -286,8 +290,14 @@ export const resolveServerConfig = (
     const rawCwd = Option.getOrElse(normalizedFlags.cwd, () => process.cwd());
     const cwd = path.resolve(yield* expandHomePath(rawCwd.trim()));
     yield* fs.makeDirectory(cwd, { recursive: true });
-    const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
+    const derivedPaths = yield* deriveServerPaths(baseDir, devUrl, env.stateSubdir);
     yield* ensureServerDirectories(derivedPaths);
+    if (devUrl !== undefined && env.stateSubdir?.trim() === "userdata") {
+      yield* Effect.logWarning(
+        "⚠️  T3CODE_STATE_SUBDIR=userdata: dev server is reading/writing the installed app's state directory. Quit the installed app first to avoid corruption.",
+        { stateDir: derivedPaths.stateDir },
+      );
+    }
     const persistedObservabilitySettings = yield* loadPersistedObservabilitySettings(
       derivedPaths.settingsPath,
     );

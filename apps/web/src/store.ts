@@ -1432,8 +1432,36 @@ function applyEnvironmentOrchestrationEvent(
                 assistantMessageId: event.payload.messageId,
               })
             : thread.latestTurn;
+        // Optimistically reconcile session state when the final assistant
+        // message for the active turn arrives.  The server emits a separate
+        // `thread.session-set` event on `turn.completed` which flips
+        // session.status → "ready" and clears activeTurnId, but that event
+        // can arrive after the final `thread.message-sent`.  In that gap
+        // the stop button stays active and clicking it dispatches a dead
+        // interrupt command (no active turn) that the server no-ops.  Flip
+        // the status locally here so the button disappears immediately; the
+        // later session-set is idempotent over this change.
+        const shouldReconcileSession =
+          event.payload.role === "assistant" &&
+          event.payload.streaming === false &&
+          event.payload.turnId !== null &&
+          thread.session !== null &&
+          thread.session.orchestrationStatus === "running" &&
+          thread.session.activeTurnId === event.payload.turnId &&
+          latestTurn?.state === "completed";
+        const nextSession: Thread["session"] =
+          shouldReconcileSession && thread.session !== null
+            ? {
+                ...thread.session,
+                status: "ready",
+                orchestrationStatus: "ready",
+                activeTurnId: undefined,
+                updatedAt: event.occurredAt,
+              }
+            : thread.session;
         return {
           ...thread,
+          session: nextSession,
           messages: cappedMessages,
           turnDiffSummaries,
           latestTurn,

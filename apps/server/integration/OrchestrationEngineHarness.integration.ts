@@ -23,6 +23,7 @@ import {
 } from "effect";
 
 import { CheckpointStoreLive } from "../src/checkpointing/Layers/CheckpointStore.ts";
+import { CostTrackerLive } from "../src/cost/Layers/CostTracker.ts";
 import { CheckpointStore } from "../src/checkpointing/Services/CheckpointStore.ts";
 import { GitCoreLive } from "../src/git/Layers/GitCore.ts";
 import { GitCore, type GitCoreShape } from "../src/git/Services/GitCore.ts";
@@ -359,13 +360,15 @@ export const makeOrchestrationIntegrationHarness = (
         }),
       ),
     );
+    const configLayer = ServerConfig.layerTest(workspaceDir, rootDir);
     const layer = Layer.empty.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(orchestrationReactorLayer),
       Layer.provide(persistenceLayer),
       Layer.provideMerge(RepositoryIdentityResolverLive),
       Layer.provideMerge(ServerSettingsService.layerTest()),
-      Layer.provideMerge(ServerConfig.layerTest(workspaceDir, rootDir)),
+      Layer.provideMerge(CostTrackerLive.pipe(Layer.provide(configLayer))),
+      Layer.provideMerge(configLayer),
       Layer.provideMerge(NodeServices.layer),
     );
 

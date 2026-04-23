@@ -137,16 +137,25 @@ function normalizeCodexTokenUsage(
   usage: EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification["tokenUsage"],
 ): ThreadTokenUsageSnapshot | undefined {
   const totalProcessedTokens = usage.total.totalTokens;
-  const usedTokens = usage.last.totalTokens;
-  if (usedTokens === undefined || usedTokens <= 0) {
-    return undefined;
-  }
-
   const maxTokens = usage.modelContextWindow ?? undefined;
   const inputTokens = usage.last.inputTokens;
   const cachedInputTokens = usage.last.cachedInputTokens;
   const outputTokens = usage.last.outputTokens;
   const reasoningOutputTokens = usage.last.reasoningOutputTokens;
+
+  // Context-window semantics: `usedTokens` reports the input-side only
+  // (tokens currently sitting in the model's prompt window).  Output +
+  // reasoning are billed but do not persist into context between turns, so
+  // including them in the ring over-reports utilisation.  Codex re-sends
+  // the full conversation each turn, so `last.inputTokens +
+  // last.cachedInputTokens` is the closest analogue to current context
+  // size.  Fall back to the raw `last.totalTokens` only when the
+  // breakdown is zero (defensive — shouldn't happen for any real turn).
+  const inputSideTokens = inputTokens + cachedInputTokens;
+  const usedTokens = inputSideTokens > 0 ? inputSideTokens : usage.last.totalTokens;
+  if (usedTokens <= 0) {
+    return undefined;
+  }
 
   return {
     usedTokens,
@@ -158,7 +167,7 @@ function normalizeCodexTokenUsage(
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(outputTokens !== undefined ? { outputTokens } : {}),
     ...(reasoningOutputTokens !== undefined ? { reasoningOutputTokens } : {}),
-    ...(usedTokens !== undefined ? { lastUsedTokens: usedTokens } : {}),
+    lastUsedTokens: usedTokens,
     ...(inputTokens !== undefined ? { lastInputTokens: inputTokens } : {}),
     ...(cachedInputTokens !== undefined ? { lastCachedInputTokens: cachedInputTokens } : {}),
     ...(outputTokens !== undefined ? { lastOutputTokens: outputTokens } : {}),

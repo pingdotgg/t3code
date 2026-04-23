@@ -51,6 +51,7 @@ import { vi } from "vitest";
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
+import { CostTrackerService } from "./cost/Services/CostTracker.ts";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
 import {
   CheckpointDiffQuery,
@@ -504,6 +505,25 @@ const buildAppUnderTest = (options?: {
     );
 
     const appLayer = servedRoutesLayer.pipe(
+      Layer.provide(
+        Layer.mock(CostTrackerService)({
+          recordUsage: () =>
+            Effect.succeed({
+              thread: null,
+              month: { totalUsd: 0, turnCount: 0, byModel: {}, updatedAt: "" },
+              allTime: { totalUsd: 0, turnCount: 0, byModel: {}, updatedAt: "" },
+              monthKey: "1970-01",
+            }),
+          getSummary: () =>
+            Effect.succeed({
+              thread: null,
+              month: { totalUsd: 0, turnCount: 0, byModel: {}, updatedAt: "" },
+              allTime: { totalUsd: 0, turnCount: 0, byModel: {}, updatedAt: "" },
+              monthKey: "1970-01",
+            }),
+          updates: Stream.empty,
+        }),
+      ),
       Layer.provide(
         Layer.mock(BrowserTraceCollector)({
           record: () => Effect.void,

@@ -883,15 +883,19 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         return;
       }
 
+      // `usedTokens` reports the input-side tokens only (120 input + 0
+      // cached = 120) so the context-window ring reflects what's actually
+      // in the prompt. Output + reasoning are tracked separately for
+      // billing via `lastOutputTokens` / `lastReasoningOutputTokens`.
       assert.deepEqual(firstEvent.value.payload.usage, {
-        usedTokens: 126,
+        usedTokens: 120,
         totalProcessedTokens: 11_839,
         maxTokens: 258_400,
         inputTokens: 120,
         cachedInputTokens: 0,
         outputTokens: 6,
         reasoningOutputTokens: 0,
-        lastUsedTokens: 126,
+        lastUsedTokens: 120,
         lastInputTokens: 120,
         lastCachedInputTokens: 0,
         lastOutputTokens: 6,

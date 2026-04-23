@@ -15,7 +15,9 @@ import {
 } from "@t3tools/contracts";
 import { Cache, Cause, Duration, Effect, Layer, Option, Stream } from "effect";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 
+import { CostTrackerService } from "../../cost/Services/CostTracker.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionTurns.ts";
 import { ProjectionTurnRepositoryLive } from "../../persistence/Layers/ProjectionTurns.ts";
@@ -525,6 +527,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
   const serverSettingsService = yield* ServerSettingsService;
+  const costTracker = yield* CostTrackerService;
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -1519,6 +1522,46 @@ const make = Effect.gen(function* () {
           createdAt: activity.createdAt,
         }),
       ).pipe(Effect.asVoid);
+
+      // Side-channel: feed token usage into the CostTracker so the JSON
+      // ledger stays in sync with the activity stream. Failures never block
+      // ingestion — we log and drop.
+      //
+      // Only *turn-final* usage events reach the ledger. Providers (notably
+      // Claude) emit mid-turn snapshots from each `task_progress` /
+      // `task_notification` that carry per-API-call breakdowns *without*
+      // `lastXxxTokens` fields; feeding those through the Reducer's
+      // cumulative-subtraction fallback would double-count tokens and
+      // inflate `turnCount` by N per real turn. The presence of any
+      // `lastXxxTokens` field is the signal that this event represents the
+      // end of a turn with meaningful deltas — mid-turn snapshots still
+      // flow through the activity stream for the context-window ring,
+      // they just skip the cost ledger.
+      if (event.type === "thread.token-usage.updated") {
+        const usage = event.payload.usage;
+        const hasTurnDeltas =
+          usage.lastInputTokens !== undefined ||
+          usage.lastCachedInputTokens !== undefined ||
+          usage.lastCacheCreationInputTokens !== undefined ||
+          usage.lastOutputTokens !== undefined ||
+          usage.lastReasoningOutputTokens !== undefined;
+        if (hasTurnDeltas) {
+          const provider = thread.modelSelection.provider;
+          const rawModel = event.payload.model ?? thread.modelSelection.model;
+          // Normalize to the canonical slug so the `byModel` ledger key is
+          // stable across turns that happen to report aliased slugs.
+          const model = resolveModelSlugForProvider(provider, rawModel);
+          yield* costTracker
+            .recordUsage({
+              threadId: thread.id,
+              model,
+              provider,
+              usage,
+              at: new Date(event.createdAt),
+            })
+            .pipe(Effect.asVoid, Effect.ignoreCause({ log: true }));
+        }
+      }
     });
 
   const processDomainEvent = (_event: TurnStartRequestedDomainEvent) => Effect.void;
@@ -1570,3 +1613,7 @@ export const ProviderRuntimeIngestionLive = Layer.effect(
   ProviderRuntimeIngestionService,
   make,
 ).pipe(Layer.provide(ProjectionTurnRepositoryLive));
+
+// Note: CostTrackerLive must be provided in the composition root (bin.ts or
+// server runtime layer). Keeping it out of ProviderRuntimeIngestionLive keeps
+// the dep graph explicit and lets tests substitute a stub CostTracker.

@@ -525,4 +525,59 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       });
     }),
   );
+
+  it.effect("T3CODE_STATE_SUBDIR overrides default dev/userdata selection", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(os.tmpdir(), "t3-cli-config-state-subdir");
+      const resolved = yield* resolveServerConfig(
+        {
+          mode: Option.some("web"),
+          port: Option.some(3773),
+          host: Option.none(),
+          baseDir: Option.some(baseDir),
+          cwd: Option.none(),
+          devUrl: Option.some(new URL("http://127.0.0.1:5173")),
+          noBrowser: Option.some(true),
+          bootstrapFd: Option.none(),
+          autoBootstrapProjectFromCwd: Option.none(),
+          logWebSocketEvents: Option.none(),
+        },
+        Option.none(),
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: { T3CODE_STATE_SUBDIR: "userdata" },
+              }),
+            ),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      // Even though devUrl is set (would normally pick "dev"), env override wins.
+      assert.equal(resolved.stateDir, join(baseDir, "userdata"));
+      assert.equal(resolved.dbPath, join(baseDir, "userdata", "state.sqlite"));
+      assert.equal(resolved.usageDir, join(baseDir, "userdata", "usage"));
+    }),
+  );
+
+  it.effect("deriveServerPaths exposes usageDir under stateDir", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(os.tmpdir(), "t3-derive-paths-usage");
+      const prodPaths = yield* deriveServerPaths(baseDir, undefined);
+      assert.equal(prodPaths.usageDir, join(baseDir, "userdata", "usage"));
+      const devPaths = yield* deriveServerPaths(baseDir, new URL("http://localhost:5173"));
+      assert.equal(devPaths.usageDir, join(baseDir, "dev", "usage"));
+      const overridePaths = yield* deriveServerPaths(
+        baseDir,
+        new URL("http://localhost:5173"),
+        "userdata",
+      );
+      assert.equal(overridePaths.usageDir, join(baseDir, "userdata", "usage"));
+    }),
+  );
 });

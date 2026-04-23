@@ -2667,6 +2667,20 @@ export default function ChatView(props: ChatViewProps) {
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread) return;
+    // Defensive: if the latest turn is already in a terminal state the
+    // server has no active turn to interrupt, so the dispatch would be a
+    // no-op round-trip.  Skip it — the store reconciles session.status in
+    // the `thread.message-sent` handler, so the stop button should have
+    // already disappeared; this guard handles the small window where a
+    // click landed before the React re-render.
+    const latestTurnState = activeThread.latestTurn?.state;
+    if (
+      latestTurnState === "completed" ||
+      latestTurnState === "interrupted" ||
+      latestTurnState === "error"
+    ) {
+      return;
+    }
     await api.orchestration.dispatchCommand({
       type: "thread.turn.interrupt",
       commandId: newCommandId(),

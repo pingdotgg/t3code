@@ -33,6 +33,8 @@ import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryI
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
+import { CostTrackerLive } from "../../cost/Layers/CostTracker.ts";
+import { CostTrackerService } from "../../cost/Services/CostTracker.ts";
 import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
 import {
   OrchestrationEngineService,
@@ -170,7 +172,7 @@ type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][nu
 
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService,
+    OrchestrationEngineService | ProviderRuntimeIngestionService | CostTrackerService,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -208,17 +210,24 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provide(RepositoryIdentityResolverLive),
       Layer.provide(SqlitePersistenceMemory),
     );
+    // Use a scoped temp dir for the test base — avoids writing into the
+    // developer's real `<cwd>/userdata/usage/` when the ingestion harness
+    // runs `CostTrackerLive` (which now performs a schema-sentinel wipe
+    // on boot if no sentinel is present).
+    const configLayer = ServerConfig.layerTest(process.cwd(), { prefix: "t3-ingestion-" });
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(CostTrackerLive.pipe(Layer.provide(configLayer))),
+      Layer.provideMerge(configLayer),
       Layer.provideMerge(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
+    const costTracker = await runtime.runPromise(Effect.service(CostTrackerService));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
     const drain = () => Effect.runPromise(ingestion.drain);
@@ -287,6 +296,7 @@ describe("ProviderRuntimeIngestion", () => {
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
+      costTracker,
     };
   }
 
@@ -2654,6 +2664,73 @@ describe("ProviderRuntimeIngestion", () => {
       lastOutputTokens: 6,
       compactsAutomatically: true,
     });
+  });
+
+  it("routes only turn-final token-usage events to the cost ledger", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    // Mid-turn snapshot (what Claude emits from task_progress /
+    // task_notification): cumulative breakdown present but NO `lastXxx`
+    // turn-delta fields. This should flow to the activity stream for the
+    // context-window ring but must not reach the cost ledger — the
+    // Reducer's cumulative-subtraction fallback would otherwise treat
+    // each mid-turn snapshot as a separate turn and over-count.
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-token-usage-mid-turn"),
+      provider: "claudeAgent",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      payload: {
+        usage: {
+          usedTokens: 1_000,
+          inputTokens: 1_000,
+          outputTokens: 200,
+        },
+      },
+    });
+
+    await waitForThread(harness.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.kind === "context-window.updated",
+      ),
+    );
+    await harness.drain();
+
+    const summaryAfterMidTurn = await runtime!.runPromise(
+      harness.costTracker.getSummary({ threadId: asThreadId("thread-1") }),
+    );
+    expect(summaryAfterMidTurn.thread?.turnCount ?? 0).toBe(0);
+    expect(summaryAfterMidTurn.month.turnCount).toBe(0);
+
+    // Turn-final snapshot: `lastXxx` deltas present → cost ledger records
+    // exactly one turn.
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-token-usage-turn-final"),
+      provider: "claudeAgent",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-1"),
+      payload: {
+        usage: {
+          usedTokens: 1_000,
+          inputTokens: 1_000,
+          outputTokens: 200,
+          lastInputTokens: 1_000,
+          lastOutputTokens: 200,
+        },
+      },
+    });
+
+    await harness.drain();
+
+    const summaryAfterTurnFinal = await runtime!.runPromise(
+      harness.costTracker.getSummary({ threadId: asThreadId("thread-1") }),
+    );
+    expect(summaryAfterTurnFinal.thread?.turnCount).toBe(1);
+    expect(summaryAfterTurnFinal.month.turnCount).toBe(1);
   });
 
   it("projects Claude usage snapshots with context window into normalized thread activities", async () => {

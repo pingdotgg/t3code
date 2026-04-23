@@ -37,6 +37,7 @@ export interface ServerDerivedPaths {
   readonly environmentIdPath: string;
   readonly serverRuntimeStatePath: string;
   readonly secretsDir: string;
+  readonly usageDir: string;
 }
 
 /**
@@ -70,14 +71,21 @@ export interface ServerConfigShape extends ServerDerivedPaths {
 export const deriveServerPaths = Effect.fn(function* (
   baseDir: ServerConfigShape["baseDir"],
   devUrl: ServerConfigShape["devUrl"],
+  stateSubdir?: string | undefined,
 ): Effect.fn.Return<ServerDerivedPaths, never, Path.Path> {
   const { join } = yield* Path.Path;
-  const stateDir = join(baseDir, devUrl !== undefined ? "dev" : "userdata");
+  // When T3CODE_STATE_SUBDIR is set, honor it verbatim — lets a dev-mode
+  // server read/write the installed app's "userdata" store when explicitly
+  // opted in. Falls back to the default: "dev" in dev mode, "userdata" in
+  // production.
+  const subdir = stateSubdir?.trim() || (devUrl !== undefined ? "dev" : "userdata");
+  const stateDir = join(baseDir, subdir);
   const dbPath = join(stateDir, "state.sqlite");
   const attachmentsDir = join(stateDir, "attachments");
   const logsDir = join(stateDir, "logs");
   const providerLogsDir = join(logsDir, "provider");
   const providerStatusCacheDir = join(baseDir, "caches");
+  const usageDir = join(stateDir, "usage");
   return {
     stateDir,
     dbPath,
@@ -96,6 +104,7 @@ export const deriveServerPaths = Effect.fn(function* (
     environmentIdPath: join(stateDir, "environment-id"),
     serverRuntimeStatePath: join(stateDir, "server-runtime.json"),
     secretsDir: join(stateDir, "secrets"),
+    usageDir,
   };
 });
 
@@ -116,6 +125,7 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
       fs.makeDirectory(derivedPaths.providerStatusCacheDir, { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.anonymousIdPath), { recursive: true }),
       fs.makeDirectory(path.dirname(derivedPaths.serverRuntimeStatePath), { recursive: true }),
+      fs.makeDirectory(derivedPaths.usageDir, { recursive: true }),
     ],
     { concurrency: "unbounded" },
   );

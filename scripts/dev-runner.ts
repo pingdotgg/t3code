@@ -122,6 +122,8 @@ interface CreateDevRunnerEnvInput {
   readonly serverOffset: number;
   readonly webOffset: number;
   readonly t3Home: string | undefined;
+  readonly stateSubdir?: string | undefined;
+  readonly useUserdata?: boolean | undefined;
   readonly noBrowser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -136,6 +138,8 @@ export function createDevRunnerEnv({
   serverOffset,
   webOffset,
   t3Home,
+  stateSubdir,
+  useUserdata,
   noBrowser,
   autoBootstrapProjectFromCwd,
   logWebSocketEvents,
@@ -148,6 +152,8 @@ export function createDevRunnerEnv({
     const webPort = BASE_WEB_PORT + webOffset;
     const resolvedBaseDir = yield* resolveBaseDir(t3Home);
     const isDesktopMode = mode === "dev:desktop";
+    const resolvedStateSubdir =
+      stateSubdir?.trim() || (useUserdata === true ? "userdata" : undefined);
 
     const output: NodeJS.ProcessEnv = {
       ...baseEnv,
@@ -157,6 +163,12 @@ export function createDevRunnerEnv({
         `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
       T3CODE_HOME: resolvedBaseDir,
     };
+
+    if (resolvedStateSubdir !== undefined) {
+      output.T3CODE_STATE_SUBDIR = resolvedStateSubdir;
+    } else {
+      delete output.T3CODE_STATE_SUBDIR;
+    }
 
     if (!isDesktopMode) {
       output.T3CODE_PORT = String(serverPort);
@@ -365,6 +377,8 @@ export function resolveModePortOffsets<R = NetService>({
 interface DevRunnerCliInput {
   readonly mode: DevMode;
   readonly t3Home: string | undefined;
+  readonly stateSubdir?: string | undefined;
+  readonly useUserdata?: boolean | undefined;
   readonly noBrowser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -409,6 +423,8 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       serverOffset,
       webOffset,
       t3Home: input.t3Home,
+      stateSubdir: input.stateSubdir,
+      useUserdata: input.useUserdata,
       noBrowser: input.noBrowser,
       autoBootstrapProjectFromCwd: input.autoBootstrapProjectFromCwd,
       logWebSocketEvents: input.logWebSocketEvents,
@@ -422,9 +438,19 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         ? ` selectedOffset(server=${serverOffset},web=${webOffset})`
         : "";
 
+    const subdirSuffix = env.T3CODE_STATE_SUBDIR
+      ? ` stateSubdir=${env.T3CODE_STATE_SUBDIR}`
+      : "";
+
     yield* Effect.logInfo(
-      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.T3CODE_HOME)}`,
+      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.T3CODE_HOME)}${subdirSuffix}`,
     );
+
+    if (env.T3CODE_STATE_SUBDIR === "userdata") {
+      yield* Effect.logWarning(
+        "⚠️  dev-runner: --use-userdata is active; server will write to the installed app's state. Quit the installed app first.",
+      );
+    }
 
     if (input.dryRun) {
       return;
@@ -474,6 +500,18 @@ const devRunnerCli = Command.make("dev-runner", {
   t3Home: Flag.string("home-dir").pipe(
     Flag.withDescription("Base directory for all T3 Code data (equivalent to T3CODE_HOME)."),
     Flag.withFallbackConfig(optionalStringConfig("T3CODE_HOME")),
+  ),
+  stateSubdir: Flag.string("state-subdir").pipe(
+    Flag.withDescription(
+      "State directory name under T3CODE_HOME (e.g. 'dev' or 'userdata'; equivalent to T3CODE_STATE_SUBDIR).",
+    ),
+    Flag.withFallbackConfig(optionalStringConfig("T3CODE_STATE_SUBDIR")),
+  ),
+  useUserdata: Flag.boolean("use-userdata").pipe(
+    Flag.withDescription(
+      "Shortcut for --state-subdir=userdata; reads/writes the installed app's state. Quit the installed app first.",
+    ),
+    Flag.withDefault(false),
   ),
   noBrowser: Flag.boolean("no-browser").pipe(
     Flag.withDescription("Browser auto-open toggle (equivalent to T3CODE_NO_BROWSER)."),

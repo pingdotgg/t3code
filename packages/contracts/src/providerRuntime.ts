@@ -298,17 +298,51 @@ const ThreadMetadataUpdatedPayload = Schema.Struct({
 });
 export type ThreadMetadataUpdatedPayload = typeof ThreadMetadataUpdatedPayload.Type;
 
+/**
+ * Snapshot of how many tokens the model has consumed on a thread.
+ *
+ * Two distinct dimensions are reported here — don't confuse them:
+ *
+ * 1. **Context-window dimension** (for the ring display): how much of the
+ *    model's prompt window is currently occupied.
+ *    - `usedTokens` = input-side tokens **only** (input + cache-read +
+ *      cache-creation). Output and reasoning tokens are generated *out* of
+ *      the model and do not live in the prompt window, so they are
+ *      excluded — including them inflates the ring for long-output turns.
+ *    - `lastUsedTokens` = the same measure scoped to the most recent turn.
+ *    - `maxTokens` = the model's declared context-window size.
+ *
+ * 2. **Billing dimension** (for the cost ledger): how many tokens were
+ *    billed for this turn, class-by-class, so downstream pricing can apply
+ *    the correct tier.  These are *not* clamped to the context window —
+ *    per-turn output tokens are separate from what persists into context.
+ *    - `inputTokens` / `cachedInputTokens` / `cacheCreationInputTokens` /
+ *      `outputTokens` / `reasoningOutputTokens` — cumulative class totals.
+ *    - `lastXxxTokens` — the delta for the most recent turn.  The presence
+ *      of any `lastXxxTokens` field is the canonical signal that this
+ *      snapshot represents the end of a turn; mid-turn snapshots omit
+ *      them and flow only to the context-window activity (not the cost
+ *      ledger, see `ProviderRuntimeIngestion`).
+ *    - `totalProcessedTokens` — cumulative tokens billed across the
+ *      session (for display).
+ */
 export const ThreadTokenUsageSnapshot = Schema.Struct({
   usedTokens: NonNegativeInt,
   totalProcessedTokens: Schema.optional(NonNegativeInt),
   maxTokens: Schema.optional(PositiveInt),
   inputTokens: Schema.optional(NonNegativeInt),
   cachedInputTokens: Schema.optional(NonNegativeInt),
+  /**
+   * Tokens written to the provider's prompt cache this turn. Anthropic bills
+   * cache-write at 1.25× the base input rate; cache-read at 0.1× the base rate.
+   */
+  cacheCreationInputTokens: Schema.optional(NonNegativeInt),
   outputTokens: Schema.optional(NonNegativeInt),
   reasoningOutputTokens: Schema.optional(NonNegativeInt),
   lastUsedTokens: Schema.optional(NonNegativeInt),
   lastInputTokens: Schema.optional(NonNegativeInt),
   lastCachedInputTokens: Schema.optional(NonNegativeInt),
+  lastCacheCreationInputTokens: Schema.optional(NonNegativeInt),
   lastOutputTokens: Schema.optional(NonNegativeInt),
   lastReasoningOutputTokens: Schema.optional(NonNegativeInt),
   toolUses: Schema.optional(NonNegativeInt),
@@ -319,6 +353,8 @@ export type ThreadTokenUsageSnapshot = typeof ThreadTokenUsageSnapshot.Type;
 
 const ThreadTokenUsageUpdatedPayload = Schema.Struct({
   usage: ThreadTokenUsageSnapshot,
+  /** Resolved model slug for the turn this usage belongs to, if known. */
+  model: Schema.optional(TrimmedNonEmptyStringSchema),
 });
 export type ThreadTokenUsageUpdatedPayload = typeof ThreadTokenUsageUpdatedPayload.Type;
 

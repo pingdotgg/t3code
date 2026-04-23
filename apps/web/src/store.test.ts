@@ -741,9 +741,130 @@ describe("incremental orchestration updates", () => {
       localEnvironmentId,
     );
 
-    expect(threadsOf(next)[0]?.session?.status).toBe("running");
+    // The final `thread.message-sent` for the active turn optimistically
+    // flips session.status from "running" → "ready" and clears
+    // activeTurnId, so the stop button does not remain active while we
+    // wait for the server's follow-up `thread.session-set` event.
+    expect(threadsOf(next)[0]?.session?.status).toBe("ready");
+    expect(threadsOf(next)[0]?.session?.orchestrationStatus).toBe("ready");
+    expect(threadsOf(next)[0]?.session?.activeTurnId).toBeUndefined();
     expect(threadsOf(next)[0]?.latestTurn?.state).toBe("completed");
     expect(threadsOf(next)[0]?.messages).toHaveLength(1);
+  });
+
+  it("does not reconcile session when the completed turn is not the active turn", () => {
+    const thread = makeThread({
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "running",
+        requestedAt: "2026-02-27T00:00:00.000Z",
+        startedAt: "2026-02-27T00:00:00.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    });
+    const state = makeState(thread);
+
+    const next = applyOrchestrationEvents(
+      state,
+      [
+        makeEvent(
+          "thread.session-set",
+          {
+            threadId: thread.id,
+            session: {
+              threadId: thread.id,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: TurnId.make("turn-2"),
+              lastError: null,
+              updatedAt: "2026-02-27T00:00:02.000Z",
+            },
+          },
+          { sequence: 2 },
+        ),
+        makeEvent(
+          "thread.message-sent",
+          {
+            threadId: thread.id,
+            messageId: MessageId.make("assistant-1"),
+            role: "assistant",
+            text: "done",
+            turnId: TurnId.make("turn-1"),
+            streaming: false,
+            createdAt: "2026-02-27T00:00:03.000Z",
+            updatedAt: "2026-02-27T00:00:03.000Z",
+          },
+          { sequence: 3 },
+        ),
+      ],
+      localEnvironmentId,
+    );
+
+    // activeTurnId is turn-2 but the streaming:false message is for turn-1;
+    // do not reconcile — the server's session-set is still authoritative.
+    expect(threadsOf(next)[0]?.session?.status).toBe("running");
+    expect(threadsOf(next)[0]?.session?.activeTurnId).toBe(TurnId.make("turn-2"));
+  });
+
+  it("does not reconcile session when the final message is for an interrupted turn", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+
+    const next = applyOrchestrationEvents(
+      state,
+      [
+        makeEvent(
+          "thread.session-set",
+          {
+            threadId: thread.id,
+            session: {
+              threadId: thread.id,
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: TurnId.make("turn-1"),
+              lastError: null,
+              updatedAt: "2026-02-27T00:00:02.000Z",
+            },
+          },
+          { sequence: 2 },
+        ),
+        makeEvent(
+          "thread.turn-interrupt-requested",
+          {
+            threadId: thread.id,
+            turnId: TurnId.make("turn-1"),
+            createdAt: "2026-02-27T00:00:02.500Z",
+          },
+          { sequence: 3 },
+        ),
+        makeEvent(
+          "thread.message-sent",
+          {
+            threadId: thread.id,
+            messageId: MessageId.make("assistant-1"),
+            role: "assistant",
+            text: "partial",
+            turnId: TurnId.make("turn-1"),
+            streaming: false,
+            createdAt: "2026-02-27T00:00:03.000Z",
+            updatedAt: "2026-02-27T00:00:03.000Z",
+          },
+          { sequence: 4 },
+        ),
+      ],
+      localEnvironmentId,
+    );
+
+    // turn-interrupt-requested moved latestTurn to "interrupted"; the
+    // final message-sent keeps it interrupted and must NOT flip
+    // session.status to "ready" — only a cleanly completed turn triggers
+    // the optimistic reconcile.
+    expect(threadsOf(next)[0]?.latestTurn?.state).toBe("interrupted");
+    expect(threadsOf(next)[0]?.session?.status).toBe("running");
+    expect(threadsOf(next)[0]?.session?.activeTurnId).toBe(TurnId.make("turn-1"));
   });
 
   it("does not regress latestTurn when an older turn diff completes late", () => {

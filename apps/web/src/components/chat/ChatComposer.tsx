@@ -29,7 +29,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import {
@@ -77,6 +77,7 @@ import {
   renderProviderTraitsPicker,
 } from "./composerProviderRegistry";
 import { ContextWindowMeter } from "./ContextWindowMeter";
+import { CostMeter } from "./CostMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../vscode-icons";
 import { cn, randomUUID } from "~/lib/utils";
@@ -102,6 +103,12 @@ import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
+import {
+  costSummaryQueryOptions,
+  invalidateCostSummary,
+  EMPTY_COST_SUMMARY,
+  type CostSummary,
+} from "../../lib/costQuery";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 
@@ -269,6 +276,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
   activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
+  costSummary: CostSummary;
+  activeProvider: ProviderKind | null;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -290,6 +299,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   return (
     <>
       {props.activeContextWindow ? <ContextWindowMeter usage={props.activeContextWindow} /> : null}
+      <CostMeter summary={props.costSummary} activeProvider={props.activeProvider} />
       {props.isPreparingWorktree ? (
         <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
       ) : null}
@@ -471,7 +481,7 @@ export const ChatComposer = memo(
       routeThreadRef,
       draftId,
       activeThreadId,
-      activeThreadEnvironmentId: _activeThreadEnvironmentId,
+      activeThreadEnvironmentId,
       activeThread,
       isServerThread: _isServerThread,
       isLocalDraftThread: _isLocalDraftThread,
@@ -638,6 +648,43 @@ export const ChatComposer = memo(
       () => deriveLatestContextWindowSnapshot(activeThreadActivities ?? []),
       [activeThreadActivities],
     );
+
+    // ------------------------------------------------------------------
+    // Cost tracking (session + month-to-date spend)
+    // Server owns the ledger (apps/server/src/cost/*). Client fetches
+    // summary + invalidates on each new context-window.updated activity
+    // so the ring reflects the freshest write.
+    // ------------------------------------------------------------------
+    const costQueryClient = useQueryClient();
+    const costSummaryQuery = useQuery(
+      costSummaryQueryOptions({
+        environmentId: activeThreadEnvironmentId ?? null,
+        threadId: activeThreadId,
+      }),
+    );
+    const costSummary: CostSummary = costSummaryQuery.data ?? EMPTY_COST_SUMMARY;
+    const latestContextWindowActivityId = useMemo(() => {
+      if (!activeThreadActivities) return null;
+      for (let index = activeThreadActivities.length - 1; index >= 0; index -= 1) {
+        const activity = activeThreadActivities[index];
+        if (activity?.kind === "context-window.updated") {
+          return String(activity.id);
+        }
+      }
+      return null;
+    }, [activeThreadActivities]);
+    useEffect(() => {
+      if (!latestContextWindowActivityId || !activeThreadEnvironmentId) return;
+      void invalidateCostSummary(costQueryClient, {
+        environmentId: activeThreadEnvironmentId,
+        threadId: activeThreadId,
+      });
+    }, [
+      latestContextWindowActivityId,
+      activeThreadEnvironmentId,
+      activeThreadId,
+      costQueryClient,
+    ]);
 
     // ------------------------------------------------------------------
     // Composer-local state
@@ -1953,6 +2000,8 @@ export const ChatComposer = memo(
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     activeContextWindow={activeContextWindow}
+                    costSummary={costSummary}
+                    activeProvider={activeThreadModelSelection?.provider ?? selectedProvider ?? null}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     showPlanFollowUpPrompt={
