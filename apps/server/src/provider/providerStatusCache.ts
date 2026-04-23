@@ -1,10 +1,15 @@
 import * as nodePath from "node:path";
 import { type ServerProvider, ServerProvider as ServerProviderSchema } from "@marcode/contracts";
-import { Cause, Effect, FileSystem, Path, Schema } from "effect";
+import { Cause, Effect, FileSystem, Schema } from "effect";
 
-export const PROVIDER_CACHE_IDS = ["codex", "claudeAgent"] as const satisfies ReadonlyArray<
-  ServerProvider["provider"]
->;
+import { writeFileStringAtomically } from "../atomicWrite.ts";
+
+export const PROVIDER_CACHE_IDS = [
+  "codex",
+  "claudeAgent",
+  "opencode",
+  "cursor",
+] as const satisfies ReadonlyArray<ServerProvider["provider"]>;
 
 const decodeProviderStatusCache = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ServerProviderSchema),
@@ -13,6 +18,14 @@ const decodeProviderStatusCache = Schema.decodeUnknownEffect(
 const providerOrderRank = (provider: ServerProvider["provider"]): number => {
   const rank = PROVIDER_CACHE_IDS.indexOf(provider);
   return rank === -1 ? Number.MAX_SAFE_INTEGER : rank;
+};
+
+const mergeProviderModels = (
+  fallbackModels: ReadonlyArray<ServerProvider["models"][number]>,
+  cachedModels: ReadonlyArray<ServerProvider["models"][number]>,
+): ReadonlyArray<ServerProvider["models"][number]> => {
+  const fallbackSlugs = new Set(fallbackModels.map((model) => model.slug));
+  return [...fallbackModels, ...cachedModels.filter((model) => !fallbackSlugs.has(model.slug))];
 };
 
 export const orderProviderSnapshots = (
@@ -36,6 +49,7 @@ export const hydrateCachedProvider = (input: {
   const { message: _fallbackMessage, ...fallbackWithoutMessage } = input.fallbackProvider;
   const hydratedProvider: ServerProvider = {
     ...fallbackWithoutMessage,
+    models: mergeProviderModels(input.fallbackProvider.models, input.cachedProvider.models),
     installed: input.cachedProvider.installed,
     version: input.cachedProvider.version,
     status: input.cachedProvider.status,
@@ -84,22 +98,8 @@ export const readProviderStatusCache = (filePath: string) =>
 export const writeProviderStatusCache = (input: {
   readonly filePath: string;
   readonly provider: ServerProvider;
-}) => {
-  const tempPath = `${input.filePath}.${process.pid}.${Date.now()}.tmp`;
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const encoded = `${JSON.stringify(input.provider, null, 2)}\n`;
-
-    yield* fs.makeDirectory(path.dirname(input.filePath), { recursive: true });
-    yield* fs.writeFileString(tempPath, encoded);
-    yield* fs.rename(tempPath, input.filePath);
-  }).pipe(
-    Effect.ensuring(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true }));
-      }),
-    ),
-  );
-};
+}) =>
+  writeFileStringAtomically({
+    filePath: input.filePath,
+    contents: `${JSON.stringify(input.provider, null, 2)}\n`,
+  });

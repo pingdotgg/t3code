@@ -1,10 +1,12 @@
 import { type ProviderKind, PROVIDER_DISPLAY_NAMES } from "@marcode/contracts";
-import { ClaudeAI, Icon, OpenAI } from "../Icons";
+import { ClaudeAI, CursorIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";
 import { PROVIDER_OPTIONS } from "../../session-logic";
 
 export const PROVIDER_ICON_BY_PROVIDER: Record<ProviderKind, Icon> = {
   codex: OpenAI,
   claudeAgent: ClaudeAI,
+  opencode: OpenCodeIcon,
+  cursor: CursorIcon,
 };
 
 export type AvailableProviderOption = {

@@ -14,6 +14,8 @@ describe("bindFirstRevealTrigger", () => {
       [
         (fire: () => void) => window.once("ready-to-show", fire),
         (fire: () => void) => webContents.once("did-finish-load", fire),
+        (fire) => window.once("ready-to-show", fire),
+        (fire) => webContents.once("did-finish-load", fire),
       ],
       reveal,
     );
@@ -30,8 +32,8 @@ describe("bindFirstRevealTrigger", () => {
 
     bindFirstRevealTrigger(
       [
-        (fire: () => void) => window.once("ready-to-show", fire),
-        (fire: () => void) => webContents.once("did-finish-load", fire),
+        (fire) => window.once("ready-to-show", fire),
+        (fire) => webContents.once("did-finish-load", fire),
       ],
       reveal,
     );
@@ -48,8 +50,8 @@ describe("bindFirstRevealTrigger", () => {
 
     bindFirstRevealTrigger(
       [
-        (fire: () => void) => window.once("ready-to-show", fire),
-        (fire: () => void) => webContents.once("did-finish-load", fire),
+        (fire) => window.once("ready-to-show", fire),
+        (fire) => webContents.once("did-finish-load", fire),
       ],
       reveal,
     );
@@ -64,7 +66,7 @@ describe("bindFirstRevealTrigger", () => {
     const window = new EventEmitter();
     const reveal = vi.fn();
 
-    bindFirstRevealTrigger([(fire: () => void) => window.once("ready-to-show", fire)], reveal);
+    bindFirstRevealTrigger([(fire) => window.once("ready-to-show", fire)], reveal);
 
     window.emit("ready-to-show");
     window.emit("ready-to-show");

@@ -68,6 +68,44 @@ function isThreadSuppressed(threadId: ThreadId): boolean {
   return true;
 }
 
+// Persistent per-thread flag: true while a turn is running. The shell stream and
+// the detail stream can race each other — by the time a "ready" status arrives
+// in one stream, the stored session may already read "ready" from the other, so
+// we can't rely on reading `thread.session?.orchestrationStatus` to decide
+// whether a turn *was* active. This set is authoritative across batches.
+const threadsWithActiveTurn = new Set<ThreadId>();
+
+// Persistent recent-completion dedup. `thread.session-set` (ready) and
+// `thread.turn-diff-completed` arrive as two separate single-event batches in
+// normal operation; batch-local dedup wouldn't coalesce them. Cross-batch dedup
+// with a short TTL ensures one sound per real turn end.
+const COMPLETION_DEDUP_WINDOW_MS = 3_000;
+const recentlyFiredCompletion = new Map<ThreadId, number>();
+
+function wasRecentlyFired(threadId: ThreadId): boolean {
+  const firedAt = recentlyFiredCompletion.get(threadId);
+  if (firedAt === undefined) return false;
+  if (Date.now() - firedAt > COMPLETION_DEDUP_WINDOW_MS) {
+    recentlyFiredCompletion.delete(threadId);
+    return false;
+  }
+  return true;
+}
+
+function markCompletionFired(threadId: ThreadId): void {
+  recentlyFiredCompletion.set(threadId, Date.now());
+}
+
+/**
+ * Test-only: reset the module's persistent notification state. Call between
+ * `deriveTurnNotificationTriggers` test cases to ensure isolation.
+ */
+export function __resetTurnNotificationStateForTests(): void {
+  threadsWithActiveTurn.clear();
+  recentlyFiredCompletion.clear();
+  suppressedThreads.clear();
+}
+
 // Tracks turn ids the user has locally interrupted via the Stop button, so the
 // in-chat "Working…" indicator can clear immediately without waiting for a
 // provider-emitted turn.completed event (which may be slow, dropped, or hang).
@@ -120,10 +158,6 @@ export function deriveTurnNotificationTriggers(
   // dedupe between the primary session-set signal and the turn-diff-completed
   // fallback so we never fire two notifications for the same turn end.
   const completionFiredThreadIds = new Set<ThreadId>();
-  // Threads observed transitioning to "running" earlier in this batch, used
-  // when reconnect/replay delivers turn.started + turn.completed together and
-  // the stored session still reflects the pre-batch state.
-  const threadTransitionedToRunning = new Set<ThreadId>();
 
   for (const event of events) {
     if (event.type === "thread.session-set") {
@@ -131,7 +165,8 @@ export function deriveTurnNotificationTriggers(
       const newStatus = session.status;
 
       if (newStatus === "running") {
-        threadTransitionedToRunning.add(threadId);
+        // Arm the persistent active-turn flag. Cleared on completion below.
+        threadsWithActiveTurn.add(threadId);
       }
 
       const reason = COMPLETION_STATUS_TO_REASON[newStatus];
@@ -141,20 +176,24 @@ export function deriveTurnNotificationTriggers(
 
       if (isThreadSuppressed(threadId)) continue;
 
+      // STRICT GATE: only fire if we observed a `running` session-set event
+      // earlier (in this batch or a prior one). This is the single signal that
+      // a real turn actually started. Previous heuristics (stored
+      // orchestrationStatus / activeTurnId / latestTurn) all had failure modes
+      // where session.started's status=ready + stale store state misfired for
+      // OpenCode/Cursor — the flag below is authoritative.
+      if (!threadsWithActiveTurn.has(threadId)) continue;
+
       const thread = getThread(threadId);
       if (!thread) continue;
 
-      // Skip session-bootstrap completions (e.g. provider "session.started"
-      // maps to status:ready when no turn is active). A real turn completion
-      // always has one of: a session previously in running state, an
-      // activeTurnId on the prior session, a latestTurn still flagged
-      // running, or an in-batch running transition.
-      const turnWasActive =
-        thread.session?.orchestrationStatus === "running" ||
-        thread.session?.activeTurnId !== undefined ||
-        thread.latestTurn?.state === "running" ||
-        threadTransitionedToRunning.has(threadId);
-      if (!turnWasActive) continue;
+      if (wasRecentlyFired(threadId)) {
+        // Another event in the prior ~3s already fired this turn's completion
+        // (e.g. session-set from the detail stream + a stray shell-stream echo).
+        threadsWithActiveTurn.delete(threadId);
+        completionFiredThreadIds.add(threadId);
+        continue;
+      }
 
       const project = getProject(thread.projectId);
       triggers.push({
@@ -164,19 +203,26 @@ export function deriveTurnNotificationTriggers(
         projectName: project?.name || "Unknown project",
       });
       completionFiredThreadIds.add(threadId);
+      threadsWithActiveTurn.delete(threadId);
+      markCompletionFired(threadId);
       continue;
     }
 
     // Fallback signal: a turn-diff capture completing is a strong guarantee
     // that a turn ended — CheckpointReactor only fires this after an actual
-    // turn.completed runtime event. If the session-set path was dropped
-    // (subscription race, snapshot overwrite, missed batch), this still
-    // notifies the user and is deduped against the primary path above.
+    // turn.completed runtime event. Still gated on the armed flag so we never
+    // notify for a turn that never started from the client's perspective.
     if (event.type === "thread.turn-diff-completed") {
       const { threadId } = event.payload;
       if (completionFiredThreadIds.has(threadId)) continue;
       if (isThreadSuppressed(threadId)) continue;
       if (userInitiatedThreadIds.has(threadId)) continue;
+      if (!threadsWithActiveTurn.has(threadId)) continue;
+      if (wasRecentlyFired(threadId)) {
+        // The primary session-set path already fired in a nearby batch.
+        completionFiredThreadIds.add(threadId);
+        continue;
+      }
       const thread = getThread(threadId);
       if (!thread) continue;
       const project = getProject(thread.projectId);
@@ -187,6 +233,8 @@ export function deriveTurnNotificationTriggers(
         projectName: project?.name || "Unknown project",
       });
       completionFiredThreadIds.add(threadId);
+      threadsWithActiveTurn.delete(threadId);
+      markCompletionFired(threadId);
       continue;
     }
 

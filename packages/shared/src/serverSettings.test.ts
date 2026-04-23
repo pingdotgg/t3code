@@ -109,4 +109,30 @@ describe("serverSettings helpers", () => {
       },
     });
   });
+
+  it("replaces text generation selection across providers without leaking stale options", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      textGenerationModelSelection: {
+        provider: "codex" as const,
+        model: "gpt-5.4-mini",
+        options: {
+          reasoningEffort: "high" as const,
+          fastMode: true,
+        },
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        textGenerationModelSelection: {
+          provider: "opencode",
+          model: "openai/gpt-5",
+        },
+      }).textGenerationModelSelection,
+    ).toEqual({
+      provider: "opencode",
+      model: "openai/gpt-5",
+    });
+  });
 });

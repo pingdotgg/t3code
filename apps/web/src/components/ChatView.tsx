@@ -32,7 +32,11 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@marcode/client-runtime";
-import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@marcode/shared/model";
+import {
+  applyClaudePromptEffortPrefix,
+  createModelSelection,
+  normalizeModelSlug,
+} from "@marcode/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@marcode/shared/projectScripts";
 import { truncate } from "@marcode/shared/String";
 import {
@@ -245,6 +249,7 @@ import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPa
 import { ComposerPlanFollowUpBanner } from "./chat/ComposerPlanFollowUpBanner";
 import { SubagentDetailDrawer } from "./chat/SubagentDetailDrawer";
 import {
+  getComposerProviderControls,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
@@ -1340,12 +1345,12 @@ export default function ChatView({
   );
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
+  const composerProviderControls = useMemo(
+    () => getComposerProviderControls(selectedProvider),
+    [selectedProvider],
+  );
   const selectedModelSelection = useMemo<ModelSelection>(
-    () => ({
-      provider: selectedProvider,
-      model: selectedModel,
-      ...(selectedModelOptionsForDispatch ? { options: selectedModelOptionsForDispatch } : {}),
-    }),
+    () => createModelSelection(selectedProvider, selectedModel, selectedModelOptionsForDispatch),
     [selectedModel, selectedModelOptionsForDispatch, selectedProvider],
   );
   const selectedModelForPicker = selectedModel;
@@ -1768,6 +1773,8 @@ export default function ChatView({
       codex: providerStatuses.find((provider) => provider.provider === "codex")?.models ?? [],
       claudeAgent:
         providerStatuses.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
+      opencode: providerStatuses.find((provider) => provider.provider === "opencode")?.models ?? [],
+      cursor: providerStatuses.find((provider) => provider.provider === "cursor")?.models ?? [],
     }),
     [providerStatuses],
   );
@@ -3425,14 +3432,13 @@ export default function ChatView({
           }
         }
         const title = truncate(titleSeed);
-        const threadCreateModelSelection: ModelSelection = {
-          provider: selectedProvider,
-          model:
-            selectedModel ||
+        const threadCreateModelSelection = createModelSelection(
+          selectedProvider,
+          selectedModel ||
             activeProject.defaultModelSelection?.model ||
             DEFAULT_MODEL_BY_PROVIDER[selectedProvider],
-          ...(selectedModelSelection.options ? { options: selectedModelSelection.options } : {}),
-        };
+          selectedModelSelection.options,
+        );
 
         if (isFirstMessage && isServerThread) {
           await api.orchestration.dispatchCommand({
@@ -5140,28 +5146,32 @@ export default function ChatView({
                               </>
                             ) : null}
 
-                            <Separator
-                              orientation="vertical"
-                              className="mx-0.5 hidden h-4 sm:block"
-                            />
+                            {composerProviderControls.showInteractionModeToggle ? (
+                              <>
+                                <Separator
+                                  orientation="vertical"
+                                  className="mx-0.5 hidden h-4 sm:block"
+                                />
 
-                            <Button
-                              variant="ghost"
-                              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-                              size="sm"
-                              type="button"
-                              onClick={toggleInteractionMode}
-                              title={
-                                interactionMode === "plan"
-                                  ? "Plan mode — click to return to normal build mode"
-                                  : "Default mode — click to enter plan mode"
-                              }
-                            >
-                              <BotIcon />
-                              <span className="sr-only sm:not-sr-only">
-                                {interactionMode === "plan" ? "Plan" : "Build"}
-                              </span>
-                            </Button>
+                                <Button
+                                  variant="ghost"
+                                  className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+                                  size="sm"
+                                  type="button"
+                                  onClick={toggleInteractionMode}
+                                  title={
+                                    interactionMode === "plan"
+                                      ? "Plan mode — click to return to normal build mode"
+                                      : "Default mode — click to enter plan mode"
+                                  }
+                                >
+                                  <BotIcon />
+                                  <span className="sr-only sm:not-sr-only">
+                                    {interactionMode === "plan" ? "Plan" : "Build"}
+                                  </span>
+                                </Button>
+                              </>
+                            ) : null}
                           </>
                         )}
                       </div>

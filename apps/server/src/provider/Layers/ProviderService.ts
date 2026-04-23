@@ -159,7 +159,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
       Effect.tap((canonicalEvent) =>
-        canonicalEventLogger ? canonicalEventLogger.write(canonicalEvent, null) : Effect.void,
+        canonicalEventLogger
+          ? canonicalEventLogger.write(canonicalEvent, canonicalEvent.threadId)
+          : Effect.void,
       ),
       Effect.flatMap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
       Effect.asVoid,
@@ -470,10 +472,17 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       let metricProvider = "unknown";
       return yield* Effect.gen(function* () {
+        // Don't resurrect a dead session just to kill it. If the provider has
+        // no active session (process crashed, app was closed mid-turn, or
+        // recovery has no resume cursor), raise a validation error — the
+        // reactor's catchCause force-clears the orchestration thread state
+        // so the UI unblocks from "Working". Raising here (vs. returning
+        // silently) guarantees the reactor's catch path always runs for
+        // orphaned sessions.
         const routed = yield* resolveRoutableSession({
           threadId: input.threadId,
           operation: "ProviderService.interruptTurn",
-          allowRecovery: true,
+          allowRecovery: false,
         });
         metricProvider = routed.adapter.provider;
         yield* Effect.annotateCurrentSpan({
@@ -482,6 +491,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.thread_id": input.threadId,
           "provider.turn_id": input.turnId,
         });
+        if (!routed.isActive) {
+          return yield* toValidationError(
+            "ProviderService.interruptTurn",
+            `Provider session for thread '${input.threadId}' is not active; nothing to interrupt.`,
+          );
+        }
         yield* routed.adapter.interruptTurn(routed.threadId, input.turnId);
       }).pipe(
         withMetrics({

@@ -20,7 +20,7 @@ export default defineConfig([
     ...shared,
     entry: ["src/main.ts"],
     clean: true,
-    noExternal: (id) => id.startsWith("@marcode/"),
+    noExternal: (id) => id.startsWith("@marcode/") || id.startsWith("effect-acp"),
     define: embeddedJiraDefines,
   },
   {

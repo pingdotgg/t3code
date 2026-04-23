@@ -343,12 +343,25 @@ export function deriveMessagesTimelineRows(input: {
         ) {
           flushPendingWork();
           flushPendingExploration();
-          nextRows.push({
-            kind: "file-change",
-            id: current.id,
-            createdAt: current.createdAt,
-            entry: current.entry,
-          });
+          // Apply_patch / MultiEdit / any tool emitting multiple diff hunks in a
+          // single activity renders as ONE card per file, not a collapsed
+          // aggregate. Each per-file row reuses the existing FileChangeCard
+          // "single-hunk" code path so the user sees each diff inline instead
+          // of "N files changed — Show full diff".
+          const previews = current.entry.diffPreviews ?? [];
+          for (const [index, hunk] of previews.entries()) {
+            const rowId = previews.length === 1 ? current.id : `${current.id}#${index}`;
+            nextRows.push({
+              kind: "file-change",
+              id: rowId,
+              createdAt: current.createdAt,
+              entry: {
+                ...current.entry,
+                id: rowId,
+                diffPreviews: [hunk],
+              },
+            });
+          }
         } else if (isExplorationEntry(current.entry)) {
           flushPendingWork();
           if (pendingExploration.length === 0) {
