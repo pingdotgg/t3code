@@ -208,6 +208,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                 account: {
                   account: {
                     type: "chatgpt",
+                    email: "test@example.com",
                     planType: "pro",
                   },
                   requiresOpenaiAuth: false,

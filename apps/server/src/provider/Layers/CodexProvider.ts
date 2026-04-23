@@ -43,7 +43,7 @@ const PROVIDER_PROBE_TIMEOUT_MS = 8_000;
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
-  readonly rateLimits: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitSnapshot | undefined;
+  readonly rateLimits?: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitSnapshot;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
@@ -257,7 +257,6 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   if (!accountResponse.account && accountResponse.requiresOpenaiAuth) {
     return {
       account: accountResponse,
-      rateLimits: undefined,
       version,
       models: appendCustomCodexModels([], input.customModels ?? []),
       skills: [],
@@ -277,12 +276,15 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   return {
     account: accountResponse,
-    rateLimits: rateLimitsResponse?.rateLimits ?? undefined,
+    ...(rateLimitsResponse?.rateLimits ? { rateLimits: rateLimitsResponse.rateLimits } : {}),
     version,
     models: appendCustomCodexModels(models, input.customModels ?? []),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;
 }, Effect.scoped);
+
+const CODEX_PRIMARY_WINDOW_DURATION_MINS = 300; // ~5 hours (short / session window)
+const CODEX_SECONDARY_WINDOW_DURATION_MINS = 10080; // 7 days (weekly window)
 
 function resolveCodexManagedUsageLimits(
   checkedAt: string,
@@ -298,18 +300,27 @@ function resolveCodexManagedUsageLimits(
 
   const windows: RawUsageWindowInput[] = [];
 
-  const addWindow = (window?: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitWindow | null) => {
+  const addWindow = (
+    window?: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitWindow | null,
+    fallbackDurationMins?: number,
+  ) => {
     if (!window) return;
+    const durationMins =
+      typeof window.windowDurationMins === "number"
+        ? window.windowDurationMins
+        : fallbackDurationMins;
     windows.push({
       label: "Codex quota window",
       usedPercent: window.usedPercent,
-      ...(typeof window.resetsAt === "number" ? { resetsAt: new Date(window.resetsAt * 1000).toISOString() } : {}),
-      ...(typeof window.windowDurationMins === "number" ? { windowDurationMins: window.windowDurationMins } : {}),
+      ...(typeof window.resetsAt === "number"
+        ? { resetsAt: new Date(window.resetsAt * 1000).toISOString() }
+        : {}),
+      ...(typeof durationMins === "number" ? { windowDurationMins: durationMins } : {}),
     });
   };
 
-  addWindow(rateLimitsSnapshot.primary);
-  addWindow(rateLimitsSnapshot.secondary);
+  addWindow(rateLimitsSnapshot.primary, CODEX_PRIMARY_WINDOW_DURATION_MINS);
+  addWindow(rateLimitsSnapshot.secondary, CODEX_SECONDARY_WINDOW_DURATION_MINS);
 
   return makeUsageLimitsSnapshot({
     source: "codexAppServer",
