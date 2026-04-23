@@ -9,7 +9,7 @@ import {
   normalizeModelSlug,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
-import { getComposerProviderState } from "./components/chat/composerProviderRegistry";
+import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 import {
   getDefaultServerModel,
@@ -21,14 +21,6 @@ import { ModelEsque } from "./components/chat/providerIconUtils";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 
-export type ProviderCustomModelConfig = {
-  provider: ProviderKind;
-  title: string;
-  description: string;
-  placeholder: string;
-  example: string;
-};
-
 export interface AppModelOption {
   slug: string;
   name: string;
@@ -36,39 +28,6 @@ export interface AppModelOption {
   subProvider?: string;
   isCustom: boolean;
 }
-
-const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConfig> = {
-  codex: {
-    provider: "codex",
-    title: "Codex",
-    description: "Save additional Codex model slugs for the picker and `/model` command.",
-    placeholder: "your-codex-model-slug",
-    example: "gpt-6.7-codex-ultra-preview",
-  },
-  claudeAgent: {
-    provider: "claudeAgent",
-    title: "Claude",
-    description: "Save additional Claude model slugs for the picker and `/model` command.",
-    placeholder: "your-claude-model-slug",
-    example: "claude-sonnet-5-0",
-  },
-  cursor: {
-    provider: "cursor",
-    title: "Cursor",
-    description: "Save additional Cursor model slugs for the picker and `/model` command.",
-    placeholder: "your-cursor-model-slug",
-    example: "claude-sonnet-4-6",
-  },
-  opencode: {
-    provider: "opencode",
-    title: "OpenCode",
-    description: "Save additional OpenCode model slugs in `provider/model` format.",
-    placeholder: "openai/gpt-5",
-    example: "anthropic/claude-sonnet-4-5-20250929",
-  },
-};
-
-export const MODEL_PROVIDER_SETTINGS = Object.values(PROVIDER_CUSTOM_MODEL_CONFIG);
 
 export function normalizeCustomModelSlugs(
   models: Iterable<string | null | undefined>,
@@ -222,9 +181,7 @@ export function resolveAppModelSelectionState(
     model,
     models: getProviderModels(providers, provider),
     prompt: "",
-    modelOptions: {
-      [provider]: provider === selection.provider ? selection.options : undefined,
-    },
+    modelOptions: provider === selection.provider ? selection.options : undefined,
   });
 
   return createModelSelection(provider, model, modelOptionsForDispatch);

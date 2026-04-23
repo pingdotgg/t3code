@@ -17,6 +17,7 @@ import {
   type RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber, Layer, Random, Stream } from "effect";
 
@@ -333,13 +334,9 @@ describe("ClaudeAdapterLive", () => {
       yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-opus-4-6",
-          options: {
-            effort: "max",
-          },
-        },
+        modelSelection: createModelSelection("claudeAgent", "claude-opus-4-6", [
+          { id: "effort", value: "max" },
+        ]),
         runtimeMode: "full-access",
       });
 
@@ -380,13 +377,9 @@ describe("ClaudeAdapterLive", () => {
       yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-opus-4-7",
-          options: {
-            effort: "xhigh",
-          },
-        },
+        modelSelection: createModelSelection("claudeAgent", "claude-opus-4-7", [
+          { id: "effort", value: "xhigh" },
+        ]),
         runtimeMode: "full-access",
       });
 
@@ -405,13 +398,9 @@ describe("ClaudeAdapterLive", () => {
       yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
-          options: {
-            effort: "max",
-          },
-        },
+        modelSelection: createModelSelection("claudeAgent", "claude-sonnet-4-6", [
+          { id: "effort", value: "max" },
+        ]),
         runtimeMode: "full-access",
       });
 
@@ -430,13 +419,9 @@ describe("ClaudeAdapterLive", () => {
       yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-haiku-4-5",
-          options: {
-            effort: "high",
-          },
-        },
+        modelSelection: createModelSelection("claudeAgent", "claude-haiku-4-5", [
+          { id: "effort", value: "high" },
+        ]),
         runtimeMode: "full-access",
       });
 
@@ -455,13 +440,9 @@ describe("ClaudeAdapterLive", () => {
       yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-haiku-4-5",
-          options: {
-            thinking: false,
-          },
-        },
+        modelSelection: createModelSelection("claudeAgent", "claude-haiku-4-5", [
+          { id: "thinking", value: false },
+        ]),
         runtimeMode: "full-access",
       });
 
@@ -482,13 +463,9 @@ describe("ClaudeAdapterLive", () => {
       yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
-          options: {
-            thinking: false,
-          },
-        },
+        modelSelection: createModelSelection("claudeAgent", "claude-sonnet-4-6", [
+          { id: "thinking", value: false },
+        ]),
         runtimeMode: "full-access",
       });
 
@@ -507,13 +484,9 @@ describe("ClaudeAdapterLive", () => {
       yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-opus-4-6",
-          options: {
-            fastMode: true,
-          },
-        },
+        modelSelection: createModelSelection("claudeAgent", "claude-opus-4-6", [
+          { id: "fastMode", value: true },
+        ]),
         runtimeMode: "full-access",
       });
 
@@ -534,13 +507,9 @@ describe("ClaudeAdapterLive", () => {
       yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
-          options: {
-            fastMode: true,
-          },
-        },
+        modelSelection: createModelSelection("claudeAgent", "claude-sonnet-4-6", [
+          { id: "fastMode", value: true },
+        ]),
         runtimeMode: "full-access",
       });
 
@@ -559,13 +528,9 @@ describe("ClaudeAdapterLive", () => {
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: "claudeAgent",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
-          options: {
-            effort: "ultrathink",
-          },
-        },
+        modelSelection: createModelSelection("claudeAgent", "claude-sonnet-4-6", [
+          { id: "effort", value: "ultrathink" },
+        ]),
         runtimeMode: "full-access",
       });
 
@@ -573,13 +538,9 @@ describe("ClaudeAdapterLive", () => {
         threadId: session.threadId,
         input: "Investigate the edge cases",
         attachments: [],
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-sonnet-4-6",
-          options: {
-            effort: "ultrathink",
-          },
-        },
+        modelSelection: createModelSelection("claudeAgent", "claude-sonnet-4-6", [
+          { id: "effort", value: "ultrathink" },
+        ]),
       });
 
       const createInput = harness.getLastCreateQueryInput();
@@ -2794,13 +2755,9 @@ describe("ClaudeAdapterLive", () => {
       yield* adapter.sendTurn({
         threadId: session.threadId,
         input: "hello",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-opus-4-6",
-          options: {
-            contextWindow: "1m",
-          },
-        },
+        modelSelection: createModelSelection("claudeAgent", "claude-opus-4-6", [
+          { id: "contextWindow", value: "1m" },
+        ]),
         attachments: [],
       });
       yield* adapter.sendTurn({

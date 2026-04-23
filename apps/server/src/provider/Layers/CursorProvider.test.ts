@@ -8,6 +8,7 @@ import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import type { CursorSettings, ServerProviderModel } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 
 import {
   buildCursorProviderSnapshot,
@@ -26,6 +27,31 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mockAgentPath = path.join(__dirname, "../../../scripts/acp-mock-agent.ts");
+
+function selectDescriptor(
+  id: string,
+  label: string,
+  options: ReadonlyArray<{ id: string; label: string; isDefault?: boolean }>,
+) {
+  return {
+    id,
+    label,
+    type: "select" as const,
+    options: [...options],
+    ...(options.find((option) => option.isDefault)?.id
+      ? { currentValue: options.find((option) => option.isDefault)?.id }
+      : {}),
+  };
+}
+
+function booleanDescriptor(id: string, label: string, currentValue?: boolean) {
+  return {
+    id,
+    label,
+    type: "boolean" as const,
+    ...(typeof currentValue === "boolean" ? { currentValue } : {}),
+  };
+}
 
 async function makeMockAgentWrapper(extraEnv?: Record<string, string>) {
   const dir = await mkdtemp(path.join(os.tmpdir(), "cursor-provider-mock-"));
@@ -239,13 +265,7 @@ const baseCursorSettings: CursorSettings = {
   customModels: [],
 };
 
-const emptyCapabilities = {
-  reasoningEffortLevels: [],
-  supportsFastMode: false,
-  supportsThinkingToggle: false,
-  contextWindowOptions: [],
-  promptInjectedEffortLevels: [],
-} as const;
+const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 
 describe("getCursorFallbackModels", () => {
   it("does not publish any built-in cursor models before ACP discovery", () => {
@@ -309,52 +329,57 @@ describe("buildCursorProviderSnapshot", () => {
 
 describe("buildCursorCapabilitiesFromConfigOptions", () => {
   it("derives model capabilities from parameterized Cursor ACP config options", () => {
-    expect(buildCursorCapabilitiesFromConfigOptions(parameterizedGpt54ConfigOptions)).toEqual({
-      reasoningEffortLevels: [
-        { value: "low", label: "Low" },
-        { value: "medium", label: "Medium", isDefault: true },
-        { value: "high", label: "High" },
-        { value: "xhigh", label: "Extra High" },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: false,
-      contextWindowOptions: [
-        { value: "272k", label: "272K", isDefault: true },
-        { value: "1m", label: "1M" },
-      ],
-      promptInjectedEffortLevels: [],
-    });
+    expect(buildCursorCapabilitiesFromConfigOptions(parameterizedGpt54ConfigOptions)).toEqual(
+      createModelCapabilities({
+        optionDescriptors: [
+          selectDescriptor("reasoning", "Reasoning", [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium", isDefault: true },
+            { id: "high", label: "High" },
+            { id: "xhigh", label: "Extra High" },
+          ]),
+          selectDescriptor("contextWindow", "Context", [
+            { id: "272k", label: "272K", isDefault: true },
+            { id: "1m", label: "1M" },
+          ]),
+          booleanDescriptor("fastMode", "Fast", false),
+        ],
+      }),
+    );
   });
 
   it("detects boolean thinking toggles from model_config options", () => {
-    expect(buildCursorCapabilitiesFromConfigOptions(parameterizedClaudeConfigOptions)).toEqual({
-      reasoningEffortLevels: [
-        { value: "low", label: "Low" },
-        { value: "medium", label: "Medium" },
-        { value: "high", label: "High", isDefault: true },
-      ],
-      supportsFastMode: false,
-      supportsThinkingToggle: true,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    });
+    expect(buildCursorCapabilitiesFromConfigOptions(parameterizedClaudeConfigOptions)).toEqual(
+      createModelCapabilities({
+        optionDescriptors: [
+          selectDescriptor("reasoning", "Reasoning", [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High", isDefault: true },
+          ]),
+          booleanDescriptor("thinking", "Thinking", true),
+        ],
+      }),
+    );
   });
 
   it("prefers the newer model_option effort control over legacy thought_level", () => {
     expect(
       buildCursorCapabilitiesFromConfigOptions(parameterizedClaudeModelOptionConfigOptions),
-    ).toEqual({
-      reasoningEffortLevels: [
-        { value: "low", label: "Low" },
-        { value: "medium", label: "Medium" },
-        { value: "high", label: "High" },
-        { value: "max", label: "Max", isDefault: true },
-      ],
-      supportsFastMode: true,
-      supportsThinkingToggle: true,
-      contextWindowOptions: [],
-      promptInjectedEffortLevels: [],
-    });
+    ).toEqual(
+      createModelCapabilities({
+        optionDescriptors: [
+          selectDescriptor("reasoning", "Effort", [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium" },
+            { id: "high", label: "High" },
+            { id: "max", label: "Max", isDefault: true },
+          ]),
+          booleanDescriptor("fastMode", "Fast", true),
+          booleanDescriptor("thinking", "Thinking", true),
+        ],
+      }),
+    );
   });
 });
 
@@ -365,73 +390,39 @@ describe("buildCursorDiscoveredModelsFromConfigOptions", () => {
         slug: "default",
         name: "Auto",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [],
-          supportsFastMode: false,
-          supportsThinkingToggle: false,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        capabilities: emptyCapabilities,
       },
       {
         slug: "composer-2",
         name: "Composer 2",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [],
-          supportsFastMode: true,
-          supportsThinkingToggle: false,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        capabilities: createModelCapabilities({
+          optionDescriptors: [booleanDescriptor("fastMode", "Fast", true)],
+        }),
       },
       {
         slug: "gpt-5.4",
         name: "GPT-5.4",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [],
-          supportsFastMode: false,
-          supportsThinkingToggle: false,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        capabilities: emptyCapabilities,
       },
       {
         slug: "claude-sonnet-4-6",
         name: "Sonnet 4.6",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [],
-          supportsFastMode: false,
-          supportsThinkingToggle: false,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        capabilities: emptyCapabilities,
       },
       {
         slug: "claude-opus-4-6",
         name: "Opus 4.6",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [],
-          supportsFastMode: false,
-          supportsThinkingToggle: false,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        capabilities: emptyCapabilities,
       },
       {
         slug: "gpt-5.3-codex-spark",
         name: "Codex 5.3 Spark",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [],
-          supportsFastMode: false,
-          supportsThinkingToggle: false,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        capabilities: emptyCapabilities,
       },
     ]);
   });
@@ -645,11 +636,11 @@ describe("resolveCursorAcpBaseModelId", () => {
 describe("resolveCursorAcpConfigUpdates", () => {
   it("maps Cursor model options onto separate ACP config option updates", () => {
     expect(
-      resolveCursorAcpConfigUpdates(parameterizedGpt54ConfigOptions, {
-        reasoning: "xhigh",
-        fastMode: true,
-        contextWindow: "1m",
-      }),
+      resolveCursorAcpConfigUpdates(parameterizedGpt54ConfigOptions, [
+        { id: "reasoning", value: "xhigh" },
+        { id: "fastMode", value: true },
+        { id: "contextWindow", value: "1m" },
+      ]),
     ).toEqual([
       { configId: "reasoning", value: "extra-high" },
       { configId: "context", value: "1m" },
@@ -659,26 +650,26 @@ describe("resolveCursorAcpConfigUpdates", () => {
 
   it("maps boolean thinking toggles when the model exposes them separately", () => {
     expect(
-      resolveCursorAcpConfigUpdates(parameterizedClaudeConfigOptions, {
-        thinking: false,
-      }),
+      resolveCursorAcpConfigUpdates(parameterizedClaudeConfigOptions, [
+        { id: "thinking", value: false },
+      ]),
     ).toEqual([{ configId: "thinking", value: false }]);
   });
 
   it("maps explicit fastMode: false so the adapter can clear a prior fast selection", () => {
     expect(
-      resolveCursorAcpConfigUpdates(parameterizedGpt54ConfigOptions, {
-        fastMode: false,
-      }),
+      resolveCursorAcpConfigUpdates(parameterizedGpt54ConfigOptions, [
+        { id: "fastMode", value: false },
+      ]),
     ).toEqual([{ configId: "fast", value: "false" }]);
   });
 
   it("writes Cursor effort changes through the newer model_option config when available", () => {
     expect(
-      resolveCursorAcpConfigUpdates(parameterizedClaudeModelOptionConfigOptions, {
-        reasoning: "max",
-        thinking: false,
-      }),
+      resolveCursorAcpConfigUpdates(parameterizedClaudeModelOptionConfigOptions, [
+        { id: "reasoning", value: "max" },
+        { id: "thinking", value: false },
+      ]),
     ).toEqual([
       { configId: "effort", value: "max" },
       { configId: "thinking", value: "false" },

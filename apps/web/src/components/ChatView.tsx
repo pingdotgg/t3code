@@ -1,7 +1,6 @@
 import {
   type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
-  type ClaudeAgentEffort,
   type EnvironmentId,
   type MessageId,
   type ModelSelection,
@@ -26,7 +25,11 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime";
-import { applyClaudePromptEffortPrefix, createModelSelection } from "@t3tools/shared/model";
+import {
+  applyClaudePromptEffortPrefix,
+  createModelSelection,
+  resolvePromptInjectedEffort,
+} from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -306,10 +309,8 @@ function formatOutgoingPrompt(params: {
   text: string;
 }): string {
   const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
-  if (params.effort && caps.promptInjectedEffortLevels.includes(params.effort)) {
-    return applyClaudePromptEffortPrefix(params.text, params.effort as ClaudeAgentEffort | null);
-  }
-  return params.text;
+  const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
+  return applyClaudePromptEffortPrefix(params.text, promptEffort);
 }
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;

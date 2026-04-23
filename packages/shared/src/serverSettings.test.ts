@@ -1,5 +1,6 @@
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
+import { createModelSelection } from "./model.ts";
 import {
   applyServerSettingsPatch,
   extractPersistedServerObservabilitySettings,
@@ -56,14 +57,10 @@ describe("serverSettings helpers", () => {
   it("replaces text generation selection when provider/model are provided", () => {
     const current = {
       ...DEFAULT_SERVER_SETTINGS,
-      textGenerationModelSelection: {
-        provider: "codex" as const,
-        model: "gpt-5.4-mini",
-        options: {
-          reasoningEffort: "high" as const,
-          fastMode: true,
-        },
-      },
+      textGenerationModelSelection: createModelSelection("codex", "gpt-5.4-mini", [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ]),
     };
 
     expect(
@@ -82,45 +79,35 @@ describe("serverSettings helpers", () => {
   it("still deep merges text generation selection when only options are provided", () => {
     const current = {
       ...DEFAULT_SERVER_SETTINGS,
-      textGenerationModelSelection: {
-        provider: "codex" as const,
-        model: "gpt-5.4-mini",
-        options: {
-          reasoningEffort: "high" as const,
-          fastMode: true,
-        },
-      },
+      textGenerationModelSelection: createModelSelection("codex", "gpt-5.4-mini", [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ]),
     };
 
     expect(
       applyServerSettingsPatch(current, {
         textGenerationModelSelection: {
-          options: {
-            fastMode: false,
-          },
+          options: [{ id: "fastMode", value: false }],
         },
       }).textGenerationModelSelection,
     ).toEqual({
       provider: "codex",
       model: "gpt-5.4-mini",
-      options: {
-        reasoningEffort: "high",
-        fastMode: false,
-      },
+      options: [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: false },
+      ],
     });
   });
 
   it("replaces text generation selection across providers without leaking stale options", () => {
     const current = {
       ...DEFAULT_SERVER_SETTINGS,
-      textGenerationModelSelection: {
-        provider: "codex" as const,
-        model: "gpt-5.4-mini",
-        options: {
-          reasoningEffort: "high" as const,
-          fastMode: true,
-        },
-      },
+      textGenerationModelSelection: createModelSelection("codex", "gpt-5.4-mini", [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ]),
     };
 
     expect(
@@ -133,6 +120,28 @@ describe("serverSettings helpers", () => {
     ).toEqual({
       provider: "opencode",
       model: "openai/gpt-5",
+    });
+  });
+
+  it("accepts array-based text generation selection patches", () => {
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        textGenerationModelSelection: {
+          provider: "opencode",
+          model: "openai/gpt-5",
+          options: [
+            { id: "variant", value: "prod" },
+            { id: "agent", value: "build" },
+          ],
+        },
+      }).textGenerationModelSelection,
+    ).toEqual({
+      provider: "opencode",
+      model: "openai/gpt-5",
+      options: [
+        { id: "variant", value: "prod" },
+        { id: "agent", value: "build" },
+      ],
     });
   });
 });

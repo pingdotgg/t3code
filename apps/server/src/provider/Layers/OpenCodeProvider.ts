@@ -6,6 +6,8 @@ import type {
 } from "@t3tools/contracts";
 import { Cause, Data, Effect, Equal, Layer, Stream } from "effect";
 
+import { createModelCapabilities } from "@t3tools/shared/model";
+
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
@@ -25,6 +27,10 @@ import {
 import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 
 const PROVIDER = "opencode" as const;
+const OPENCODE_PRESENTATION = {
+  displayName: "OpenCode",
+  showInteractionModeToggle: false,
+} as const;
 const MINIMUM_OPENCODE_VERSION = "1.14.19";
 
 class OpenCodeProbeError extends Data.TaggedError("OpenCodeProbeError")<{
@@ -159,13 +165,9 @@ function inferDefaultAgent(agents: ReadonlyArray<Agent>): string | undefined {
   return agents.find((agent) => agent.name === "build")?.name ?? agents[0]?.name ?? undefined;
 }
 
-const DEFAULT_OPENCODE_MODEL_CAPABILITIES: ModelCapabilities = {
-  reasoningEffortLevels: [],
-  supportsFastMode: false,
-  supportsThinkingToggle: false,
-  contextWindowOptions: [],
-  promptInjectedEffortLevels: [],
-};
+const DEFAULT_OPENCODE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [],
+});
 
 function openCodeCapabilitiesForModel(input: {
   readonly providerID: string;
@@ -174,27 +176,46 @@ function openCodeCapabilitiesForModel(input: {
 }): ModelCapabilities {
   const variantValues = Object.keys(input.model.variants ?? {});
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
-  const variantOptions: ModelCapabilities["variantOptions"] = variantValues.map((value) =>
-    Object.assign(
-      { value, label: titleCaseSlug(value) },
-      defaultVariant === value ? { isDefault: true } : {},
-    ),
+  const variantOptions = variantValues.map((value) =>
+    defaultVariant === value
+      ? { id: value, label: titleCaseSlug(value), isDefault: true as const }
+      : { id: value, label: titleCaseSlug(value) },
   );
   const primaryAgents = input.agents.filter(
     (agent) => !agent.hidden && (agent.mode === "primary" || agent.mode === "all"),
   );
   const defaultAgent = inferDefaultAgent(primaryAgents);
-  const agentOptions: ModelCapabilities["agentOptions"] = primaryAgents.map((agent) =>
-    Object.assign(
-      { value: agent.name, label: titleCaseSlug(agent.name) },
-      defaultAgent === agent.name ? { isDefault: true } : {},
-    ),
+  const agentOptions = primaryAgents.map((agent) =>
+    defaultAgent === agent.name
+      ? { id: agent.name, label: titleCaseSlug(agent.name), isDefault: true as const }
+      : { id: agent.name, label: titleCaseSlug(agent.name) },
   );
-  return {
-    ...DEFAULT_OPENCODE_MODEL_CAPABILITIES,
-    ...(variantOptions.length > 0 ? { variantOptions } : {}),
-    ...(agentOptions.length > 0 ? { agentOptions } : {}),
-  };
+  return createModelCapabilities({
+    optionDescriptors: [
+      ...(variantOptions.length > 0
+        ? [
+            {
+              id: "variant",
+              label: "Variant",
+              type: "select" as const,
+              options: variantOptions,
+              ...(defaultVariant ? { currentValue: defaultVariant } : {}),
+            },
+          ]
+        : []),
+      ...(agentOptions.length > 0
+        ? [
+            {
+              id: "agent",
+              label: "Agent",
+              type: "select" as const,
+              options: agentOptions,
+              ...(defaultAgent ? { currentValue: defaultAgent } : {}),
+            },
+          ]
+        : []),
+    ],
+  });
 }
 
 function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerProviderModel> {
@@ -242,6 +263,7 @@ const makePendingOpenCodeProvider = (openCodeSettings: OpenCodeSettings): Server
   if (!openCodeSettings.enabled) {
     return buildServerProvider({
       provider: PROVIDER,
+      presentation: OPENCODE_PRESENTATION,
       enabled: false,
       checkedAt,
       models,
@@ -260,6 +282,7 @@ const makePendingOpenCodeProvider = (openCodeSettings: OpenCodeSettings): Server
 
   return buildServerProvider({
     provider: PROVIDER,
+    presentation: OPENCODE_PRESENTATION,
     enabled: true,
     checkedAt,
     models,
@@ -296,6 +319,7 @@ export const OpenCodeProviderLive = Layer.effect(
         });
         return buildServerProvider({
           provider: PROVIDER,
+          presentation: OPENCODE_PRESENTATION,
           enabled: input.settings.enabled,
           checkedAt,
           models: providerModelsFromSettings(
@@ -317,6 +341,7 @@ export const OpenCodeProviderLive = Layer.effect(
       if (!input.settings.enabled) {
         return buildServerProvider({
           provider: PROVIDER,
+          presentation: OPENCODE_PRESENTATION,
           enabled: false,
           checkedAt,
           models: providerModelsFromSettings(
@@ -368,6 +393,7 @@ export const OpenCodeProviderLive = Layer.effect(
         if (compareCliVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
           return buildServerProvider({
             provider: PROVIDER,
+            presentation: OPENCODE_PRESENTATION,
             enabled: input.settings.enabled,
             checkedAt,
             models: providerModelsFromSettings(
@@ -433,6 +459,7 @@ export const OpenCodeProviderLive = Layer.effect(
       const connectedCount = inventoryExit.value.providerList.connected.length;
       return buildServerProvider({
         provider: PROVIDER,
+        presentation: OPENCODE_PRESENTATION,
         enabled: true,
         checkedAt,
         models,

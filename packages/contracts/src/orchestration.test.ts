@@ -33,6 +33,13 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
+
+function getOptionValue(
+  options: ReadonlyArray<{ id: string; value: unknown }> | undefined,
+  id: string,
+): unknown {
+  return options?.find((option) => option.id === id)?.value;
+}
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
@@ -364,17 +371,95 @@ it.effect("accepts provider-scoped model options in thread.turn.start", () =>
       modelSelection: {
         provider: "codex",
         model: "gpt-5.3-codex",
-        options: {
-          reasoningEffort: "high",
-          fastMode: true,
-        },
+        options: [
+          { id: "reasoningEffort", value: "high" },
+          { id: "fastMode", value: true },
+        ],
       },
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.modelSelection?.provider, "codex");
-    assert.strictEqual(parsed.modelSelection?.options?.reasoningEffort, "high");
-    assert.strictEqual(parsed.modelSelection?.options?.fastMode, true);
+    assert.strictEqual(getOptionValue(parsed.modelSelection?.options, "reasoningEffort"), "high");
+    assert.strictEqual(getOptionValue(parsed.modelSelection?.options, "fastMode"), true);
   }),
+);
+
+it.effect("normalizes legacy object-shaped modelSelection.options on decode", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadCreatedPayload({
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Legacy options thread",
+      modelSelection: {
+        provider: "claudeAgent",
+        model: "claude-opus-4-6",
+        options: {
+          effort: "max",
+          fastMode: true,
+          // Falsy/garbage entries are dropped, matching migration 026.
+          emptyStr: "   ",
+          nullish: null,
+          nested: { foo: 1 },
+        },
+      },
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.modelSelection.provider, "claudeAgent");
+    assert.deepStrictEqual(parsed.modelSelection.options, [
+      { id: "effort", value: "max" },
+      { id: "fastMode", value: true },
+    ]);
+  }),
+);
+
+it.effect("normalizes legacy object-shaped defaultModelSelection.options on decode", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectCreatedPayload({
+      projectId: "project-1",
+      title: "Legacy default project",
+      workspaceRoot: "/tmp/legacy",
+      defaultModelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+        options: { reasoningEffort: "low" },
+      },
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.deepStrictEqual(parsed.defaultModelSelection?.options, [
+      { id: "reasoningEffort", value: "low" },
+    ]);
+  }),
+);
+
+it.effect(
+  "normalizes legacy object-shaped options on decode and re-encodes as canonical array",
+  () =>
+    Effect.gen(function* () {
+      const decoded = yield* decodeThreadCreatedPayload({
+        threadId: "thread-1",
+        projectId: "project-1",
+        title: "Round trip thread",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+          options: { fastMode: true },
+        },
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      });
+
+      const encoded = yield* Schema.encodeEffect(ThreadCreatedPayload)(decoded);
+      assert.deepStrictEqual(encoded.modelSelection.options, [{ id: "fastMode", value: true }]);
+    }),
 );
 
 it.effect("accepts a title seed in thread.turn.start", () =>

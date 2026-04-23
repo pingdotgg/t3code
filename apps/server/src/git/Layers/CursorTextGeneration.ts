@@ -108,7 +108,7 @@ const makeCursorTextGeneration = Effect.gen(function* () {
         yield* applyCursorAcpModelSelection({
           runtime,
           model: modelSelection.model,
-          modelOptions: modelSelection.options,
+          selections: modelSelection.options,
           mapError: ({ cause, configId, step }) =>
             mapCursorAcpError(
               operation,

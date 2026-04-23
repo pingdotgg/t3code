@@ -176,14 +176,16 @@ it.layer(makeTestLayer())("OpenCodeProviderLive", (it) => {
       const model = snapshot.models.find((entry) => entry.slug === "openai/gpt-5.4");
 
       assert.ok(model);
-      assert.equal(
-        model.capabilities?.variantOptions?.find((option) => option.isDefault)?.value,
-        "medium",
+      const variantDescriptor = model.capabilities?.optionDescriptors?.find(
+        (descriptor) => descriptor.id === "variant" && descriptor.type === "select",
       );
-      assert.equal(
-        model.capabilities?.agentOptions?.find((option) => option.isDefault)?.value,
-        "build",
+      assert.ok(variantDescriptor && variantDescriptor.type === "select");
+      assert.equal(variantDescriptor.options.find((option) => option.isDefault)?.id, "medium");
+      const agentDescriptor = model.capabilities?.optionDescriptors?.find(
+        (descriptor) => descriptor.id === "agent" && descriptor.type === "select",
       );
+      assert.ok(agentDescriptor && agentDescriptor.type === "select");
+      assert.equal(agentDescriptor.options.find((option) => option.isDefault)?.id, "build");
     }),
   );
 });

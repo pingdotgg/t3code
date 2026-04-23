@@ -6,6 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
+import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vitest";
 
 import { ServerSettingsError } from "@t3tools/contracts";
@@ -135,13 +136,11 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
           stagedPatch:
             "diff --git a/apps/server/src/git/Layers/CursorTextGeneration.ts b/apps/server/src/git/Layers/CursorTextGeneration.ts",
           modelSelection: {
-            provider: "cursor",
-            model: "gpt-5.4",
-            options: {
-              reasoning: "xhigh",
-              fastMode: true,
-              contextWindow: "1m",
-            },
+            ...createModelSelection("cursor", "gpt-5.4", [
+              { id: "reasoning", value: "xhigh" },
+              { id: "fastMode", value: true },
+              { id: "contextWindow", value: "1m" },
+            ]),
           },
         });
 

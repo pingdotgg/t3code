@@ -27,6 +27,11 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import {
+  getModelSelectionBooleanOptionValue,
+  getModelSelectionStringOptionValue,
+} from "@t3tools/shared/model";
+
+import {
   ProviderAdapterRequestError,
   ProviderAdapterProcessError,
   ProviderAdapterSessionClosedError,
@@ -1372,7 +1377,8 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           ...(input.modelSelection?.provider === "codex"
             ? { model: input.modelSelection.model }
             : {}),
-          ...(input.modelSelection?.provider === "codex" && input.modelSelection.options?.fastMode
+          ...(input.modelSelection?.provider === "codex" &&
+          getModelSelectionBooleanOptionValue(input.modelSelection, "fastMode") === true
             ? { serviceTier: "fast" }
             : {}),
         };
@@ -1485,19 +1491,26 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
     );
 
     const session = yield* requireSession(input.threadId);
+    const reasoningEffort =
+      input.modelSelection?.provider === "codex"
+        ? getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort")
+        : undefined;
+    const fastMode =
+      input.modelSelection?.provider === "codex"
+        ? getModelSelectionBooleanOptionValue(input.modelSelection, "fastMode")
+        : undefined;
     return yield* session.runtime
       .sendTurn({
         ...(input.input !== undefined ? { input: input.input } : {}),
         ...(input.modelSelection?.provider === "codex"
           ? { model: input.modelSelection.model }
           : {}),
-        ...(input.modelSelection?.provider === "codex" &&
-        input.modelSelection.options?.reasoningEffort !== undefined
-          ? { effort: input.modelSelection.options.reasoningEffort }
+        ...(reasoningEffort
+          ? {
+              effort: reasoningEffort as EffectCodexSchema.V2TurnStartParams__ReasoningEffort,
+            }
           : {}),
-        ...(input.modelSelection?.provider === "codex" && input.modelSelection.options?.fastMode
-          ? { serviceTier: "fast" }
-          : {}),
+        ...(fastMode === true ? { serviceTier: "fast" } : {}),
         ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })
