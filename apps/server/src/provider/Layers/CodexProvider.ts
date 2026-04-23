@@ -28,6 +28,7 @@ import { ServerSettingsError } from "@t3tools/contracts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { buildServerProvider } from "../providerSnapshot.ts";
 import { CodexProvider } from "../Services/CodexProvider.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 
@@ -222,7 +223,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       command: input.binaryPath,
       args: ["app-server"],
       cwd: input.cwd,
-      ...(input.homePath ? { env: { CODEX_HOME: input.homePath } } : {}),
+      ...(input.homePath ? { env: { CODEX_HOME: expandHomePath(input.homePath) } } : {}),
     }),
   );
   const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(

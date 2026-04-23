@@ -30,6 +30,7 @@ import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 
 const PROVIDER = "codex" as const;
 
@@ -683,7 +684,9 @@ export const makeCodexSessionRuntime = (
       .spawn(
         ChildProcess.make(options.binaryPath, ["app-server"], {
           cwd: options.cwd,
-          ...(options.homePath ? { env: { ...process.env, CODEX_HOME: options.homePath } } : {}),
+          ...(options.homePath
+            ? { env: { ...process.env, CODEX_HOME: expandHomePath(options.homePath) } }
+            : {}),
           shell: process.platform === "win32",
         }),
       )
