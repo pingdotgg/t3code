@@ -106,7 +106,7 @@ let needsProviderInvalidation = false;
 // - Threads with active work or pending user action are sticky and are never
 //   evicted while they remain non-idle.
 // - Capacity eviction only targets idle cached subscriptions.
-const THREAD_DETAIL_SUBSCRIPTION_IDLE_EVICTION_MS = 15 * 60 * 1000;
+const THREAD_DETAIL_SUBSCRIPTION_IDLE_EVICTION_MS = 2 * 60 * 1000;
 const MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS = 32;
 const NOOP = () => undefined;
 

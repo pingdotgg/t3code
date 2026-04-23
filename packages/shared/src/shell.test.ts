@@ -206,7 +206,7 @@ describe("readEnvironmentFromWindowsShell", () => {
       ) => string
     >(
       () =>
-        "__T3CODE_ENV_PATH_START__\nC:\\Users\\testuser\\AppData\\Roaming\\npm\n__T3CODE_ENV_PATH_END__\n",
+        "__MARCODE_ENV_PATH_START__\nC:\\Users\\testuser\\AppData\\Roaming\\npm\n__MARCODE_ENV_PATH_END__\n",
     );
 
     expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
@@ -228,7 +228,7 @@ describe("readEnvironmentFromWindowsShell", () => {
       ) => string
     >(
       () =>
-        "__T3CODE_ENV_FNM_DIR_START__\r\nC:\\Users\\testuser\\AppData\\Roaming\\fnm\r\n__T3CODE_ENV_FNM_DIR_END__\r\n",
+        "__MARCODE_ENV_FNM_DIR_START__\r\nC:\\Users\\testuser\\AppData\\Roaming\\fnm\r\n__MARCODE_ENV_FNM_DIR_END__\r\n",
     );
 
     expect(readEnvironmentFromWindowsShell(["FNM_DIR"], execFile)).toEqual({
@@ -243,7 +243,7 @@ describe("readEnvironmentFromWindowsShell", () => {
         args: ReadonlyArray<string>,
         options: { encoding: "utf8"; timeout: number },
       ) => string
-    >(() => "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n");
+    >(() => "__MARCODE_ENV_PATH_START__\nC:\\Tools\n__MARCODE_ENV_PATH_END__\n");
 
     expect(readEnvironmentFromWindowsShell(["PATH"], { loadProfile: true }, execFile)).toEqual({
       PATH: "C:\\Tools",
@@ -267,7 +267,7 @@ describe("readEnvironmentFromWindowsShell", () => {
       if (file === "pwsh.exe") {
         throw new Error("spawn pwsh.exe ENOENT");
       }
-      return "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n";
+      return "__MARCODE_ENV_PATH_START__\nC:\\Tools\n__MARCODE_ENV_PATH_END__\n";
     });
 
     expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({

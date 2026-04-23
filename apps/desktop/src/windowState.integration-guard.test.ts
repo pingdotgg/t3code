@@ -9,15 +9,21 @@ describe("window position persistence regression guard", () => {
   const mainSource = fs.readFileSync(MAIN_TS_PATH, "utf8");
 
   it("main.ts imports readWindowState from windowState module", () => {
-    expect(mainSource).toMatch(/import\s+.*readWindowState.*from\s+["']\.\/windowState["']/);
+    expect(mainSource).toMatch(
+      /import\s+.*readWindowState.*from\s+["']\.\/windowState(?:\.ts)?["']/,
+    );
   });
 
   it("main.ts imports writeWindowState from windowState module", () => {
-    expect(mainSource).toMatch(/import\s+.*writeWindowState.*from\s+["']\.\/windowState["']/);
+    expect(mainSource).toMatch(
+      /import\s+.*writeWindowState.*from\s+["']\.\/windowState(?:\.ts)?["']/,
+    );
   });
 
   it("main.ts imports resolveWindowBounds from windowState module", () => {
-    expect(mainSource).toMatch(/import\s+.*resolveWindowBounds.*from\s+["']\.\/windowState["']/);
+    expect(mainSource).toMatch(
+      /import\s+.*resolveWindowBounds.*from\s+["']\.\/windowState(?:\.ts)?["']/,
+    );
   });
 
   it("main.ts defines WINDOW_STATE_PATH constant", () => {
