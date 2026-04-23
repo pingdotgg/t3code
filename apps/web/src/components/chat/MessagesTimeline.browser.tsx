@@ -1,11 +1,13 @@
 import "../../index.css";
 
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, MessageId, TurnId } from "@t3tools/contracts";
 import { createRef } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
+
+import { useUiStateStore } from "../../uiStateStore";
 
 const scrollToEndSpy = vi.fn();
 const getStateSpy = vi.fn(() => ({ isAtEnd: true }));
@@ -68,6 +70,7 @@ function buildProps() {
     markdownCwd: undefined,
     resolvedTheme: "dark" as const,
     timestampFormat: "24-hour" as const,
+    defaultOpenChangedFiles: true,
     workspaceRoot: undefined,
     onIsAtEndChange: vi.fn(),
   };
@@ -78,6 +81,13 @@ describe("MessagesTimeline", () => {
     scrollToEndSpy.mockReset();
     getStateSpy.mockClear();
     vi.restoreAllMocks();
+    localStorage.clear();
+    useUiStateStore.setState({
+      projectExpandedById: {},
+      projectOrder: [],
+      threadLastVisitedAtById: {},
+      threadChangedFilesExpandedById: {},
+    });
     document.body.innerHTML = "";
   });
 
@@ -153,6 +163,168 @@ describe("MessagesTimeline", () => {
       expect(props.onIsAtEndChange).toHaveBeenCalledWith(true);
       expect(scrollToEndSpy).toHaveBeenCalledWith({ animated: false });
       expect(requestAnimationFrameSpy).toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("keeps changed-files collapsed for future turns in the same thread after a manual collapse", async () => {
+    const props = buildProps();
+    const firstAssistantMessageId = MessageId.make("assistant-1");
+    const secondAssistantMessageId = MessageId.make("assistant-2");
+    const firstTurnId = TurnId.make("turn-1");
+    const secondTurnId = TurnId.make("turn-2");
+    const firstTimelineEntry = {
+      id: "assistant-entry-1",
+      kind: "message" as const,
+      createdAt: "2026-04-13T12:00:00.000Z",
+      message: {
+        id: firstAssistantMessageId,
+        role: "assistant" as const,
+        text: "Updated files in the first turn",
+        turnId: firstTurnId,
+        createdAt: "2026-04-13T12:00:00.000Z",
+        completedAt: "2026-04-13T12:00:05.000Z",
+        streaming: false,
+      },
+    };
+    const secondTimelineEntry = {
+      id: "assistant-entry-2",
+      kind: "message" as const,
+      createdAt: "2026-04-13T12:01:00.000Z",
+      message: {
+        id: secondAssistantMessageId,
+        role: "assistant" as const,
+        text: "Updated files in the second turn",
+        turnId: secondTurnId,
+        createdAt: "2026-04-13T12:01:00.000Z",
+        completedAt: "2026-04-13T12:01:05.000Z",
+        streaming: false,
+      },
+    };
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[firstTimelineEntry]}
+        turnDiffSummaryByAssistantMessageId={
+          new Map([
+            [
+              firstAssistantMessageId,
+              {
+                turnId: firstTurnId,
+                completedAt: "2026-04-13T12:00:05.000Z",
+                files: [{ path: "src/first.ts", additions: 5, deletions: 2 }],
+                assistantMessageId: firstAssistantMessageId,
+              },
+            ],
+          ])
+        }
+      />,
+    );
+
+    try {
+      const collapseButton = page.getByRole("button", { name: "Collapse all" });
+      await expect.element(collapseButton).toBeVisible();
+      await collapseButton.click();
+
+      await vi.waitFor(
+        () => {
+          const expandAllButtons = [...document.querySelectorAll("button")].filter(
+            (button) => button.textContent?.trim() === "Expand all",
+          );
+          expect(expandAllButtons).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await screen.rerender(
+        <MessagesTimeline
+          {...props}
+          timelineEntries={[firstTimelineEntry, secondTimelineEntry]}
+          turnDiffSummaryByAssistantMessageId={
+            new Map([
+              [
+                firstAssistantMessageId,
+                {
+                  turnId: firstTurnId,
+                  completedAt: "2026-04-13T12:00:05.000Z",
+                  files: [{ path: "src/first.ts", additions: 5, deletions: 2 }],
+                  assistantMessageId: firstAssistantMessageId,
+                },
+              ],
+              [
+                secondAssistantMessageId,
+                {
+                  turnId: secondTurnId,
+                  completedAt: "2026-04-13T12:01:05.000Z",
+                  files: [{ path: "src/second.ts", additions: 3, deletions: 1 }],
+                  assistantMessageId: secondAssistantMessageId,
+                },
+              ],
+            ])
+          }
+        />,
+      );
+
+      await vi.waitFor(
+        () => {
+          const buttonLabels = [...document.querySelectorAll("button")].map((button) =>
+            button.textContent?.trim(),
+          );
+          expect(buttonLabels.filter((label) => label === "Expand all")).toHaveLength(2);
+          expect(buttonLabels).not.toContain("Collapse all");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("starts changed-files collapsed when the default is disabled", async () => {
+    const props = {
+      ...buildProps(),
+      defaultOpenChangedFiles: false,
+    };
+    const assistantMessageId = MessageId.make("assistant-default-closed");
+    const turnId = TurnId.make("turn-default-closed");
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          {
+            id: "assistant-entry-1",
+            kind: "message" as const,
+            createdAt: "2026-04-13T12:00:00.000Z",
+            message: {
+              id: assistantMessageId,
+              role: "assistant" as const,
+              text: "Updated files",
+              turnId,
+              createdAt: "2026-04-13T12:00:00.000Z",
+              completedAt: "2026-04-13T12:00:05.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+        turnDiffSummaryByAssistantMessageId={
+          new Map([
+            [
+              assistantMessageId,
+              {
+                turnId,
+                completedAt: "2026-04-13T12:00:05.000Z",
+                files: [{ path: "src/default-closed.ts", additions: 1, deletions: 0 }],
+                assistantMessageId,
+              },
+            ],
+          ])
+        }
+      />,
+    );
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Expand all" })).toBeVisible();
     } finally {
       await screen.unmount();
     }

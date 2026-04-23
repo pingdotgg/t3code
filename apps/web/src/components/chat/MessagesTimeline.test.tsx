@@ -94,6 +94,7 @@ function buildProps() {
     markdownCwd: undefined,
     resolvedTheme: "light" as const,
     timestampFormat: "locale" as const,
+    defaultOpenChangedFiles: true,
     workspaceRoot: undefined,
     onIsAtEndChange: () => {},
   };

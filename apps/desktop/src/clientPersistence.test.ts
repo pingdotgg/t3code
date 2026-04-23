@@ -52,6 +52,7 @@ const clientSettings: ClientSettings = {
   autoOpenPlanSidebar: false,
   confirmThreadArchive: true,
   confirmThreadDelete: false,
+  defaultOpenChangedFiles: true,
   diffWordWrap: true,
   favorites: [],
   sidebarProjectGroupingMode: "repository_path",
