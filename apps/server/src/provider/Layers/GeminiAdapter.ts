@@ -137,11 +137,20 @@ interface GeminiSessionContext {
   systemSettingsPath: string | undefined;
   stopped: boolean;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
+  cumulativePromptUsage: GeminiPromptUsageSnapshot | undefined;
 }
 
 export interface GeminiAdapterLiveOptions {
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+}
+
+export interface GeminiPromptUsageSnapshot {
+  readonly usedTokens: number;
+  readonly inputTokens?: number;
+  readonly cachedInputTokens?: number;
+  readonly outputTokens?: number;
+  readonly reasoningOutputTokens?: number;
 }
 
 function toMessage(cause: unknown, fallback: string): string {
@@ -484,7 +493,18 @@ function cleanupGeminiSystemSettings(systemSettingsPath: string | undefined): vo
   });
 }
 
-function normalizePromptUsage(value: unknown): ThreadTokenUsageSnapshot | undefined {
+function sumTokenUsageValue(
+  left: number | undefined,
+  right: number | undefined,
+): number | undefined {
+  if (left === undefined && right === undefined) {
+    return undefined;
+  }
+  return (left ?? 0) + (right ?? 0);
+}
+
+/** @internal - Exported for testing */
+export function normalizeGeminiPromptUsage(value: unknown): GeminiPromptUsageSnapshot | undefined {
   const usage = asRecord(value);
   const usedTokens = asNumber(usage?.totalTokens);
   if (usedTokens === undefined || usedTokens <= 0) {
@@ -503,16 +523,77 @@ function normalizePromptUsage(value: unknown): ThreadTokenUsageSnapshot | undefi
 
   return {
     usedTokens,
-    totalProcessedTokens: usedTokens,
     ...(inputTokens !== undefined ? { inputTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
     ...(outputTokens !== undefined ? { outputTokens } : {}),
     ...(thoughtTokens !== undefined ? { reasoningOutputTokens: thoughtTokens } : {}),
-    lastUsedTokens: usedTokens,
-    ...(inputTokens !== undefined ? { lastInputTokens: inputTokens } : {}),
-    ...(cachedInputTokens !== undefined ? { lastCachedInputTokens: cachedInputTokens } : {}),
-    ...(outputTokens !== undefined ? { lastOutputTokens: outputTokens } : {}),
-    ...(thoughtTokens !== undefined ? { lastReasoningOutputTokens: thoughtTokens } : {}),
+  };
+}
+
+/** @internal - Exported for testing */
+export function accumulateGeminiPromptUsage(
+  cumulativeUsage: GeminiPromptUsageSnapshot | undefined,
+  turnUsage: GeminiPromptUsageSnapshot,
+): GeminiPromptUsageSnapshot {
+  const inputTokens = sumTokenUsageValue(cumulativeUsage?.inputTokens, turnUsage.inputTokens);
+  const cachedInputTokens = sumTokenUsageValue(
+    cumulativeUsage?.cachedInputTokens,
+    turnUsage.cachedInputTokens,
+  );
+  const outputTokens = sumTokenUsageValue(cumulativeUsage?.outputTokens, turnUsage.outputTokens);
+  const reasoningOutputTokens = sumTokenUsageValue(
+    cumulativeUsage?.reasoningOutputTokens,
+    turnUsage.reasoningOutputTokens,
+  );
+
+  return {
+    usedTokens: (cumulativeUsage?.usedTokens ?? 0) + turnUsage.usedTokens,
+    ...(inputTokens !== undefined ? { inputTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
+    ...(outputTokens !== undefined ? { outputTokens } : {}),
+    ...(reasoningOutputTokens !== undefined ? { reasoningOutputTokens } : {}),
+  };
+}
+
+/** @internal - Exported for testing */
+export function buildGeminiPromptUsageSnapshot(
+  lastKnownUsage: ThreadTokenUsageSnapshot | undefined,
+  cumulativeUsage: GeminiPromptUsageSnapshot,
+  turnUsage: GeminiPromptUsageSnapshot,
+): ThreadTokenUsageSnapshot {
+  const keepContextWindowUsage =
+    typeof lastKnownUsage?.maxTokens === "number" &&
+    Number.isFinite(lastKnownUsage.maxTokens) &&
+    lastKnownUsage.maxTokens > 0;
+  const usedTokens = keepContextWindowUsage
+    ? lastKnownUsage.usedTokens
+    : cumulativeUsage.usedTokens;
+
+  return {
+    usedTokens,
+    totalProcessedTokens: cumulativeUsage.usedTokens,
+    ...(keepContextWindowUsage ? { maxTokens: lastKnownUsage.maxTokens } : {}),
+    ...(cumulativeUsage.inputTokens !== undefined
+      ? { inputTokens: cumulativeUsage.inputTokens }
+      : {}),
+    ...(cumulativeUsage.cachedInputTokens !== undefined
+      ? { cachedInputTokens: cumulativeUsage.cachedInputTokens }
+      : {}),
+    ...(cumulativeUsage.outputTokens !== undefined
+      ? { outputTokens: cumulativeUsage.outputTokens }
+      : {}),
+    ...(cumulativeUsage.reasoningOutputTokens !== undefined
+      ? { reasoningOutputTokens: cumulativeUsage.reasoningOutputTokens }
+      : {}),
+    lastUsedTokens: turnUsage.usedTokens,
+    ...(turnUsage.inputTokens !== undefined ? { lastInputTokens: turnUsage.inputTokens } : {}),
+    ...(turnUsage.cachedInputTokens !== undefined
+      ? { lastCachedInputTokens: turnUsage.cachedInputTokens }
+      : {}),
+    ...(turnUsage.outputTokens !== undefined ? { lastOutputTokens: turnUsage.outputTokens } : {}),
+    ...(turnUsage.reasoningOutputTokens !== undefined
+      ? { lastReasoningOutputTokens: turnUsage.reasoningOutputTokens }
+      : {}),
   };
 }
 
@@ -1128,9 +1209,22 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
           });
         }
 
-        const normalizedUsage = normalizePromptUsage(result.usage);
+        const normalizedUsage = normalizeGeminiPromptUsage(result.usage);
         if (normalizedUsage) {
-          yield* emitUsage(context, normalizedUsage, turnState.turnId, result.usage);
+          context.cumulativePromptUsage = accumulateGeminiPromptUsage(
+            context.cumulativePromptUsage,
+            normalizedUsage,
+          );
+          yield* emitUsage(
+            context,
+            buildGeminiPromptUsageSnapshot(
+              context.lastKnownTokenUsage,
+              context.cumulativePromptUsage,
+              normalizedUsage,
+            ),
+            turnState.turnId,
+            result.usage,
+          );
         }
 
         yield* offerRuntimeEvent({
@@ -1499,6 +1593,7 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
           systemSettingsPath: input.systemSettingsPath,
           stopped: false,
           lastKnownTokenUsage: undefined,
+          cumulativePromptUsage: undefined,
         };
 
         context.notificationFiber = yield* Stream.runDrain(

@@ -12,7 +12,13 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { GeminiAdapter } from "../Services/GeminiAdapter.ts";
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
-import { buildGeminiThinkingModelConfigAliases, makeGeminiAdapterLive } from "./GeminiAdapter.ts";
+import {
+  accumulateGeminiPromptUsage,
+  buildGeminiPromptUsageSnapshot,
+  buildGeminiThinkingModelConfigAliases,
+  makeGeminiAdapterLive,
+  normalizeGeminiPromptUsage,
+} from "./GeminiAdapter.ts";
 
 const tempDirs: Array<string> = [];
 
@@ -69,10 +75,7 @@ rl.on("line", (line) => {
     case "session/set_mode":
     case "session/set_model":
     case "session/prompt":
-      reply(
-        message.id,
-        message.method === "session/prompt" ? { stopReason: "completed" } : {},
-      );
+      reply(message.id, { stopReason: "completed" });
       return;
     default:
       reply(message.id, {});
@@ -175,6 +178,65 @@ describe("buildGeminiThinkingModelConfigAliases", () => {
 });
 
 describe("GeminiAdapterLive", () => {
+  it("accumulates Gemini prompt usage into cumulative and per-turn snapshots", () => {
+    const firstTurn = normalizeGeminiPromptUsage({
+      totalTokens: 120,
+      inputTokens: 80,
+      outputTokens: 40,
+    });
+    assert.ok(firstTurn);
+
+    const firstCumulative = accumulateGeminiPromptUsage(undefined, firstTurn);
+    expect(buildGeminiPromptUsageSnapshot(undefined, firstCumulative, firstTurn)).toEqual({
+      usedTokens: 120,
+      totalProcessedTokens: 120,
+      inputTokens: 80,
+      outputTokens: 40,
+      lastUsedTokens: 120,
+      lastInputTokens: 80,
+      lastOutputTokens: 40,
+    });
+
+    const secondTurn = normalizeGeminiPromptUsage({
+      totalTokens: 30,
+      inputTokens: 20,
+      outputTokens: 10,
+    });
+    assert.ok(secondTurn);
+
+    const secondCumulative = accumulateGeminiPromptUsage(firstCumulative, secondTurn);
+    expect(buildGeminiPromptUsageSnapshot(undefined, secondCumulative, secondTurn)).toEqual({
+      usedTokens: 150,
+      totalProcessedTokens: 150,
+      inputTokens: 100,
+      outputTokens: 50,
+      lastUsedTokens: 30,
+      lastInputTokens: 20,
+      lastOutputTokens: 10,
+    });
+
+    expect(
+      buildGeminiPromptUsageSnapshot(
+        {
+          usedTokens: 2_048,
+          totalProcessedTokens: 120,
+          maxTokens: 1_000_000,
+        },
+        secondCumulative,
+        secondTurn,
+      ),
+    ).toEqual({
+      usedTokens: 2_048,
+      totalProcessedTokens: 150,
+      maxTokens: 1_000_000,
+      inputTokens: 100,
+      outputTokens: 50,
+      lastUsedTokens: 30,
+      lastInputTokens: 20,
+      lastOutputTokens: 10,
+    });
+  });
+
   it("does not emit stale exit events when startSession replaces an existing session", async () => {
     await Effect.runPromise(
       Effect.scoped(
