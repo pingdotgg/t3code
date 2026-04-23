@@ -37,10 +37,23 @@ function normalizeSpawnError(command: string, args: readonly string[], error: un
   return new Error(`Failed to run ${commandLabel(command, args)}: ${error.message}`);
 }
 
+const WINDOWS_COMMAND_NOT_FOUND_PATTERNS = [
+  /is not recognized as an internal or external command/i,
+  /n.o . reconhecido como um comando interno/i,
+  /non . riconosciuto come comando interno o esterno/i,
+  /n.est pas reconnu en tant que commande interne/i,
+  /no se reconoce como un comando interno o externo/i,
+  /wird nicht als interner oder externer befehl/i,
+] as const;
+
+function hasWindowsCommandNotFoundMessage(output: string): boolean {
+  return WINDOWS_COMMAND_NOT_FOUND_PATTERNS.some((pattern) => pattern.test(output));
+}
+
 export function isWindowsCommandNotFound(code: number | null, stderr: string): boolean {
   if (process.platform !== "win32") return false;
   if (code === 9009) return true;
-  return /is not recognized as an internal or external command/i.test(stderr);
+  return hasWindowsCommandNotFoundMessage(stderr);
 }
 
 function normalizeExitError(
