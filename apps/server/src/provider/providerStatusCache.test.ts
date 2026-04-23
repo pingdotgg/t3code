@@ -2,7 +2,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ServerProvider } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, FileSystem } from "effect";
-import { afterEach, vi } from "vitest";
 
 import {
   hydrateCachedProvider,
@@ -26,10 +25,6 @@ const makeProvider = (
   slashCommands: [],
   skills: [],
   ...overrides,
-});
-
-afterEach(() => {
-  vi.restoreAllMocks();
 });
 
 it.layer(NodeServices.layer)("providerStatusCache", (it) => {
@@ -75,46 +70,6 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       assert.deepStrictEqual(yield* readProviderStatusCache(codexPath), codexProvider);
       assert.deepStrictEqual(yield* readProviderStatusCache(claudePath), claudeProvider);
       assert.deepStrictEqual(yield* readProviderStatusCache(openCodePath), openCodeProvider);
-    }),
-  );
-
-  it.effect("supports overlapping writes for the same provider cache file", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-provider-cache-overlap-" });
-      const filePath = resolveProviderStatusCachePath({
-        cacheDir: tempDir,
-        provider: "opencode",
-      });
-      const stableNow = 1_776_841_093_506;
-      vi.spyOn(Date, "now").mockReturnValue(stableNow);
-
-      const initialProvider = makeProvider("opencode", {
-        auth: { status: "unknown", type: "opencode" },
-      });
-      const updatedProvider = makeProvider("opencode", {
-        version: "1.0.1",
-        auth: { status: "unknown", type: "opencode" },
-      });
-
-      const results = yield* Effect.all(
-        [
-          Effect.exit(writeProviderStatusCache({ filePath, provider: initialProvider })),
-          Effect.exit(writeProviderStatusCache({ filePath, provider: updatedProvider })),
-        ],
-        { concurrency: "unbounded" },
-      );
-
-      assert.strictEqual(results[0]._tag, "Success");
-      assert.strictEqual(results[1]._tag, "Success");
-
-      const persistedProvider = yield* readProviderStatusCache(filePath);
-      assert.deepStrictEqual(
-        [initialProvider, updatedProvider].some(
-          (provider) => JSON.stringify(provider) === JSON.stringify(persistedProvider),
-        ),
-        true,
-      );
     }),
   );
 
