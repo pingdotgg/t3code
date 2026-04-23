@@ -45,6 +45,7 @@ import {
   ClaudeAgentEffort,
 } from "@marcode/contracts";
 import { applyClaudePromptEffortPrefix, resolveEffort, trimOrNull } from "@marcode/shared/model";
+import { extractPlanStepsFromTodos, isTodoWriteTool } from "@marcode/shared/toolActivity";
 import {
   Cause,
   DateTime,
@@ -515,36 +516,8 @@ function classifyRequestType(toolName: string): CanonicalRequestType {
       : "dynamic_tool_call";
 }
 
-function isTodoTool(toolName: string): boolean {
-  return toolName.toLowerCase().includes("todowrite");
-}
-
-type PlanStep = {
-  step: string;
-  status: "pending" | "inProgress" | "completed";
-};
-
-function extractPlanStepsFromTodoInput(input: Record<string, unknown>): PlanStep[] | null {
-  // TodoWrite format: { todos: [{ content, status, activeForm? }] }
-  const todos = input.todos;
-  if (!Array.isArray(todos) || todos.length === 0) {
-    return null;
-  }
-  return todos
-    .filter((t): t is Record<string, unknown> => t !== null && typeof t === "object")
-    .map((todo) => ({
-      step:
-        typeof todo.content === "string" && todo.content.trim().length > 0
-          ? todo.content.trim()
-          : "Task",
-      status:
-        todo.status === "completed"
-          ? "completed"
-          : todo.status === "in_progress"
-            ? "inProgress"
-            : "pending",
-    }));
-}
+const isTodoTool = isTodoWriteTool;
+const extractPlanStepsFromTodoInput = extractPlanStepsFromTodos;
 
 function summarizeToolRequest(toolName: string, input: Record<string, unknown>): string {
   const commandValue = input.command ?? input.cmd;

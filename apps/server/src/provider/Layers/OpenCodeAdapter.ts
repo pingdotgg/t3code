@@ -17,7 +17,11 @@ import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { classifyToolLifecycleItemType } from "@marcode/shared/toolActivity";
+import {
+  classifyToolLifecycleItemType,
+  extractPlanStepsFromTodos,
+  isTodoWriteTool,
+} from "@marcode/shared/toolActivity";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -738,6 +742,27 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
               };
               appendTurnItem(context, turnId, part);
               yield* emit(runtimeEvent);
+
+              // TodoWrite feeds the plan/tasks sidebar — mirror Claude's
+              // behavior: when the agent updates its todo list, translate it
+              // into a turn.plan.updated runtime event so the existing plan
+              // projection and sidebar renderer pick it up.
+              if (isTodoWriteTool(part.tool)) {
+                const planSteps = extractPlanStepsFromTodos(toolInput);
+                if (planSteps && planSteps.length > 0) {
+                  yield* emit({
+                    ...buildEventBase({
+                      threadId: context.session.threadId,
+                      turnId,
+                      itemId: part.callID,
+                      createdAt: toolStateCreatedAt(part),
+                      raw: event,
+                    }),
+                    type: "turn.plan.updated",
+                    payload: { plan: planSteps },
+                  });
+                }
+              }
             }
             break;
           }

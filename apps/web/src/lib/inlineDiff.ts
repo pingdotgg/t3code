@@ -30,6 +30,11 @@ const EDIT_TOOL_NAMES = new Set([
   "file_edit",
   "EditTool",
   "str_replace_editor",
+  "str_replace",
+  "str-replace",
+  "strReplace",
+  "search_replace",
+  "searchReplace",
 ]);
 
 const WRITE_TOOL_NAMES = new Set([
@@ -39,6 +44,21 @@ const WRITE_TOOL_NAMES = new Set([
   "WriteTool",
   "create_file",
   "CreateFile",
+  "create",
+]);
+
+// apply_patch tools embed the file path inside the patch text itself via
+// `*** Update File: <path>` / `*** Add File: <path>` / `*** Delete File: <path>`
+// markers — OpenCode, Codex, and Cursor's ACP patch extension all use this
+// format. Input key is usually `patchText` (OpenCode) but some providers use
+// `patch`, `diff`, or `input`.
+const PATCH_TOOL_NAMES = new Set([
+  "apply_patch",
+  "ApplyPatch",
+  "applyPatch",
+  "patch",
+  "Patch",
+  "apply-patch",
 ]);
 
 function splitLines(text: string): string[] {
@@ -273,6 +293,87 @@ function extractWriteHunk(input: Record<string, unknown>): InlineDiffHunk | null
   return { filePath, operation: "write", lines, fullLines, truncated, stats, patch };
 }
 
+/**
+ * Parse the `apply_patch` / `patch` tool's patchText format into per-file hunks.
+ *
+ * Format (OpenCode/Codex/Cursor convention):
+ *
+ *     *** Begin Patch
+ *     *** Update File: path/to/file.ts
+ *     @@ ...
+ *      context
+ *     -removed
+ *     +added
+ *     *** Add File: path/to/new.ts
+ *     +content line 1
+ *     +content line 2
+ *     *** Delete File: path/to/obsolete.ts
+ *     *** End Patch
+ */
+const PATCH_HEADER_RE = /^\*\*\*\s+(Begin|End)\s+Patch\s*$/i;
+const PATCH_FILE_MARKER_RE = /^\*\*\*\s+(Update|Add|Delete)\s+File:\s*(.+?)\s*$/i;
+
+function extractApplyPatchHunks(input: Record<string, unknown>): InlineDiffHunk[] {
+  const patchText =
+    asString(input.patchText) ??
+    asString(input.patch_text) ??
+    asString(input.patch) ??
+    asString(input.diff) ??
+    asString(input.input);
+  if (!patchText) return [];
+
+  const hunks: InlineDiffHunk[] = [];
+  let currentPath: string | null = null;
+  let currentOp: "edit" | "write" | "delete" = "edit";
+  let currentLines: DiffLine[] = [];
+
+  const flush = () => {
+    if (!currentPath || currentLines.length === 0) return;
+    const operation: InlineDiffHunk["operation"] = currentOp === "delete" ? "edit" : currentOp; // delete → show as edit removal
+    const stats = diffStats(currentLines);
+    const trimmed = currentOp === "write" ? currentLines : trimContext(currentLines);
+    const { lines, fullLines, truncated } = truncateDiffLines(trimmed);
+    const patch = buildUnifiedPatch(currentPath, currentLines, currentOp === "write");
+    hunks.push({ filePath: currentPath, operation, lines, fullLines, truncated, stats, patch });
+  };
+
+  for (const rawLine of patchText.split(/\r?\n/)) {
+    if (PATCH_HEADER_RE.test(rawLine)) {
+      flush();
+      currentPath = null;
+      currentLines = [];
+      continue;
+    }
+    const markerMatch = rawLine.match(PATCH_FILE_MARKER_RE);
+    if (markerMatch) {
+      flush();
+      const kind = markerMatch[1]?.toLowerCase();
+      currentPath = markerMatch[2] ?? null;
+      currentOp = kind === "add" ? "write" : kind === "delete" ? "delete" : "edit";
+      currentLines = [];
+      continue;
+    }
+    if (!currentPath) continue;
+    if (rawLine.startsWith("@@")) continue; // hunk headers — informational only
+    if (rawLine.startsWith("+")) {
+      currentLines.push({ type: "addition", content: rawLine.slice(1) });
+    } else if (rawLine.startsWith("-")) {
+      currentLines.push({ type: "deletion", content: rawLine.slice(1) });
+    } else if (rawLine.startsWith(" ")) {
+      currentLines.push({ type: "context", content: rawLine.slice(1) });
+    } else if (rawLine.length > 0) {
+      // Raw content for Add File sections (no +/- prefix for new files).
+      if (currentOp === "write") {
+        currentLines.push({ type: "addition", content: rawLine });
+      } else {
+        currentLines.push({ type: "context", content: rawLine });
+      }
+    }
+  }
+  flush();
+  return hunks;
+}
+
 export function extractDiffPreviews(payload: Record<string, unknown> | null): InlineDiffHunk[] {
   if (!payload) return [];
 
@@ -292,6 +393,10 @@ export function extractDiffPreviews(payload: Record<string, unknown> | null): In
   if (WRITE_TOOL_NAMES.has(toolName)) {
     const hunk = extractWriteHunk(input);
     return hunk ? [hunk] : [];
+  }
+
+  if (PATCH_TOOL_NAMES.has(toolName)) {
+    return extractApplyPatchHunks(input);
   }
 
   return [];

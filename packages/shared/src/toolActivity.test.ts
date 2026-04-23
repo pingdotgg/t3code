@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyToolLifecycleItemType, deriveToolActivityPresentation } from "./toolActivity.ts";
+import {
+  classifyToolLifecycleItemType,
+  deriveToolActivityPresentation,
+  extractPlanStepsFromTodos,
+  isTodoWriteTool,
+} from "./toolActivity.ts";
 
 describe("classifyToolLifecycleItemType", () => {
   it("routes mcp__ tools to mcp_tool_call", () => {
@@ -146,5 +151,84 @@ describe("toolActivity", () => {
     ).toEqual({
       summary: "Read file",
     });
+  });
+});
+
+describe("isTodoWriteTool", () => {
+  it("matches Claude's TodoWrite, OpenCode's todowrite, and Cursor ACP variants", () => {
+    expect(isTodoWriteTool("TodoWrite")).toBe(true);
+    expect(isTodoWriteTool("todowrite")).toBe(true);
+    expect(isTodoWriteTool("todo_write")).toBe(true);
+    expect(isTodoWriteTool("todo-write")).toBe(true);
+    expect(isTodoWriteTool("Todo.Write")).toBe(true);
+    expect(isTodoWriteTool("todos")).toBe(true);
+  });
+
+  it("ignores unrelated tools", () => {
+    expect(isTodoWriteTool("write")).toBe(false);
+    expect(isTodoWriteTool("Edit")).toBe(false);
+    expect(isTodoWriteTool("bash")).toBe(false);
+    expect(isTodoWriteTool(null)).toBe(false);
+    expect(isTodoWriteTool(undefined)).toBe(false);
+    expect(isTodoWriteTool("")).toBe(false);
+  });
+});
+
+describe("extractPlanStepsFromTodos", () => {
+  it("normalizes Claude/OpenCode-style todos into plan steps", () => {
+    const steps = extractPlanStepsFromTodos({
+      todos: [
+        { content: "Patch MessagesTimeline", status: "in_progress", priority: "high" },
+        { content: "Add regression coverage", status: "pending" },
+        { content: "Run typecheck", status: "completed" },
+      ],
+    });
+    expect(steps).toEqual([
+      { step: "Patch MessagesTimeline", status: "inProgress" },
+      { step: "Add regression coverage", status: "pending" },
+      { step: "Run typecheck", status: "completed" },
+    ]);
+  });
+
+  it("accepts ACP-style `inProgress` (camelCase) and `done` status aliases", () => {
+    const steps = extractPlanStepsFromTodos({
+      todos: [
+        { content: "a", status: "inProgress" },
+        { content: "b", status: "done" },
+        { content: "c", status: "in-progress" },
+      ],
+    });
+    expect(steps).toEqual([
+      { step: "a", status: "inProgress" },
+      { step: "b", status: "completed" },
+      { step: "c", status: "inProgress" },
+    ]);
+  });
+
+  it("falls back to activeForm when content is missing/empty", () => {
+    const steps = extractPlanStepsFromTodos({
+      todos: [
+        { activeForm: "Running build", status: "in_progress" },
+        { content: "", status: "pending" },
+      ],
+    });
+    expect(steps).toEqual([
+      { step: "Running build", status: "inProgress" },
+      { step: "Task", status: "pending" },
+    ]);
+  });
+
+  it("returns null for empty/absent todo lists", () => {
+    expect(extractPlanStepsFromTodos({ todos: [] })).toBeNull();
+    expect(extractPlanStepsFromTodos({})).toBeNull();
+    expect(extractPlanStepsFromTodos(null)).toBeNull();
+    expect(extractPlanStepsFromTodos(undefined)).toBeNull();
+  });
+
+  it("skips non-object entries inside the todos array", () => {
+    const steps = extractPlanStepsFromTodos({
+      todos: [null, "skip me", { content: "Real task", status: "pending" }, 42],
+    });
+    expect(steps).toEqual([{ step: "Real task", status: "pending" }]);
   });
 });

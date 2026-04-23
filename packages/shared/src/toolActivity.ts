@@ -184,6 +184,54 @@ function classifyToolAction(input: {
 }
 
 /**
+ * Plan step shape matching the `turn.plan.updated` runtime event payload.
+ * Matches ACP's plan entry statuses after normalization.
+ */
+export type PlanStep = {
+  readonly step: string;
+  readonly status: "pending" | "inProgress" | "completed";
+};
+
+/**
+ * Detect a TodoWrite-family tool. Claude calls it `TodoWrite`, OpenCode calls
+ * it `todowrite`, and Cursor (via ACP) can surface it under any casing. The
+ * match is deliberately lenient so custom agents using similar naming work too.
+ */
+export function isTodoWriteTool(toolName: string | null | undefined): boolean {
+  if (!toolName) return false;
+  const normalized = toolName.toLowerCase().replace(/[_\-.\s]/g, "");
+  return normalized.includes("todowrite") || normalized === "todos";
+}
+
+/**
+ * Normalize a TodoWrite input (`{ todos: [{ content, status, ... }] }`) into
+ * the plan-step shape that `turn.plan.updated` consumers expect. Returns null
+ * when the input is missing or the todos list is empty.
+ */
+export function extractPlanStepsFromTodos(
+  input: Record<string, unknown> | null | undefined,
+): PlanStep[] | null {
+  if (!input) return null;
+  const todos = input.todos;
+  if (!Array.isArray(todos) || todos.length === 0) return null;
+  const steps: PlanStep[] = [];
+  for (const raw of todos) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const todo = raw as Record<string, unknown>;
+    const content = asTrimmedString(todo.content) ?? asTrimmedString(todo.activeForm) ?? "Task";
+    const rawStatus = asTrimmedString(todo.status)?.toLowerCase();
+    const status: PlanStep["status"] =
+      rawStatus === "completed" || rawStatus === "done"
+        ? "completed"
+        : rawStatus === "in_progress" || rawStatus === "inprogress" || rawStatus === "in-progress"
+          ? "inProgress"
+          : "pending";
+    steps.push({ step: content, status });
+  }
+  return steps.length > 0 ? steps : null;
+}
+
+/**
  * Classify a tool invocation into a canonical ToolLifecycleItemType that the
  * web timeline card router understands. Provider-agnostic: accepts any subset
  * of hints a provider adapter can supply. Matches in order: toolName prefix,

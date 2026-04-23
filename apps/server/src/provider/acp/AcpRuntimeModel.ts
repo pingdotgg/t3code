@@ -2,6 +2,8 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import {
   classifyToolLifecycleItemType,
   deriveToolActivityPresentation,
+  extractPlanStepsFromTodos,
+  isTodoWriteTool,
 } from "@marcode/shared/toolActivity";
 import type { ToolLifecycleItemType } from "@marcode/contracts";
 
@@ -161,6 +163,30 @@ function normalizePlanStepStatus(raw: unknown): "pending" | "inProgress" | "comp
     default:
       return "pending";
   }
+}
+
+/**
+ * ACP doesn't mandate a canonical way to emit a todo list — some agents use
+ * the native `sessionUpdate: "plan"` stream, others (Cursor, Claude-style
+ * wrappers) surface it as a tool_call titled `TodoWrite` with
+ * `rawInput.todos`. Mirror those into `PlanUpdated` so the plan/tasks sidebar
+ * tracks both channels uniformly.
+ */
+function maybeEmitTodoWritePlan(
+  events: AcpParsedSessionEvent[],
+  title: string | null | undefined,
+  rawInput: unknown,
+  params: unknown,
+): void {
+  if (!isTodoWriteTool(title)) return;
+  if (!isRecord(rawInput)) return;
+  const steps = extractPlanStepsFromTodos(rawInput);
+  if (!steps || steps.length === 0) return;
+  events.push({
+    _tag: "PlanUpdated",
+    payload: { plan: steps },
+    rawPayload: params,
+  });
 }
 
 function normalizeToolCallStatus(
@@ -453,6 +479,7 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           toolCall,
           rawPayload: params,
         });
+        maybeEmitTodoWritePlan(events, upd.title, upd.rawInput, params);
       }
       break;
     }
@@ -464,6 +491,7 @@ export function parseSessionUpdateEvent(params: EffectAcpSchema.SessionNotificat
           toolCall,
           rawPayload: params,
         });
+        maybeEmitTodoWritePlan(events, upd.title, upd.rawInput, params);
       }
       break;
     }

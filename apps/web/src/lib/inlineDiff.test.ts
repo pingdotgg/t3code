@@ -256,3 +256,91 @@ describe("diffStats", () => {
     expect(diffStats(lines)).toEqual({ additions: 0, deletions: 0 });
   });
 });
+
+describe("extractDiffPreviews for apply_patch", () => {
+  const updatePatch = [
+    "*** Begin Patch",
+    "*** Update File: apps/web/src/example.ts",
+    "@@ -1,3 +1,3 @@",
+    " context line",
+    "-removed line",
+    "+added line",
+    "*** End Patch",
+  ].join("\n");
+
+  it("parses an Update File hunk into a file_change preview", () => {
+    const result = extractDiffPreviews({
+      data: {
+        toolName: "apply_patch",
+        input: { patchText: updatePatch },
+      },
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0]!.filePath).toBe("apps/web/src/example.ts");
+    expect(result[0]!.operation).toBe("edit");
+    expect(result[0]!.stats).toEqual({ additions: 1, deletions: 1 });
+  });
+
+  it("parses an Add File section as a write preview", () => {
+    const addPatch = [
+      "*** Begin Patch",
+      "*** Add File: apps/web/src/new.ts",
+      "export const value = 1;",
+      "export const other = 2;",
+      "*** End Patch",
+    ].join("\n");
+    const result = extractDiffPreviews({
+      data: {
+        toolName: "apply_patch",
+        input: { patchText: addPatch },
+      },
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0]!.filePath).toBe("apps/web/src/new.ts");
+    expect(result[0]!.operation).toBe("write");
+    expect(result[0]!.stats.additions).toBe(2);
+  });
+
+  it("parses multiple files in a single patchText", () => {
+    const multiPatch = [
+      "*** Begin Patch",
+      "*** Update File: a.ts",
+      "@@",
+      "-a",
+      "+A",
+      "*** Update File: b.ts",
+      "@@",
+      "-b",
+      "+B",
+      "*** End Patch",
+    ].join("\n");
+    const result = extractDiffPreviews({
+      data: {
+        toolName: "apply_patch",
+        input: { patchText: multiPatch },
+      },
+    });
+    expect(result).toHaveLength(2);
+    expect(result[0]!.filePath).toBe("a.ts");
+    expect(result[1]!.filePath).toBe("b.ts");
+  });
+
+  it("accepts alternate input keys (patch, diff) used by other providers", () => {
+    const result = extractDiffPreviews({
+      data: {
+        toolName: "Patch",
+        input: { patch: updatePatch },
+      },
+    });
+    expect(result).toHaveLength(1);
+    expect(result[0]!.filePath).toBe("apps/web/src/example.ts");
+  });
+
+  it("returns [] when the toolName isn't a known patch/edit/write variant", () => {
+    expect(
+      extractDiffPreviews({
+        data: { toolName: "bash", input: { patchText: updatePatch } },
+      }),
+    ).toEqual([]);
+  });
+});
