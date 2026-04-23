@@ -376,23 +376,45 @@ function isExecutableFile(
   }
 }
 
-export function isCommandAvailable(
+function findCommandPaths(
   command: string,
   options: CommandAvailabilityOptions = {},
-): boolean {
+  stopAfterFirstMatch = false,
+): ReadonlyArray<string> {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
   const commandCandidates = resolveCommandCandidates(command, platform, windowsPathExtensions);
+  const resolvedPaths: string[] = [];
+  const seenResolvedPaths = new Set<string>();
+
+  const addResolvedPath = (candidatePath: string): boolean => {
+    if (!isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
+      return false;
+    }
+
+    const normalizedPath = platform === "win32" ? candidatePath.toLowerCase() : candidatePath;
+    if (seenResolvedPaths.has(normalizedPath)) {
+      return false;
+    }
+
+    seenResolvedPaths.add(normalizedPath);
+    resolvedPaths.push(candidatePath);
+    return stopAfterFirstMatch;
+  };
 
   if (command.includes("/") || command.includes("\\")) {
-    return commandCandidates.some((candidate) =>
-      isExecutableFile(candidate, platform, windowsPathExtensions),
-    );
+    for (const candidate of commandCandidates) {
+      if (addResolvedPath(candidate)) {
+        return resolvedPaths;
+      }
+    }
+
+    return resolvedPaths;
   }
 
   const pathValue = resolvePathEnvironmentVariable(env);
-  if (pathValue.length === 0) return false;
+  if (pathValue.length === 0) return resolvedPaths;
   const pathEntries = pathValue
     .split(pathDelimiterForPlatform(platform))
     .map((entry) => stripWrappingQuotes(entry.trim()))
@@ -400,12 +422,27 @@ export function isCommandAvailable(
 
   for (const pathEntry of pathEntries) {
     for (const candidate of commandCandidates) {
-      if (isExecutableFile(join(pathEntry, candidate), platform, windowsPathExtensions)) {
-        return true;
+      if (addResolvedPath(join(pathEntry, candidate))) {
+        return resolvedPaths;
       }
     }
   }
-  return false;
+
+  return resolvedPaths;
+}
+
+export function resolveCommandPaths(
+  command: string,
+  options: CommandAvailabilityOptions = {},
+): ReadonlyArray<string> {
+  return findCommandPaths(command, options);
+}
+
+export function isCommandAvailable(
+  command: string,
+  options: CommandAvailabilityOptions = {},
+): boolean {
+  return findCommandPaths(command, options, true).length > 0;
 }
 
 export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {

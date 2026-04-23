@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -10,6 +14,7 @@ import {
   readEnvironmentFromWindowsShell,
   readPathFromLaunchctl,
   readPathFromLoginShell,
+  resolveCommandPaths,
   resolveKnownWindowsCliDirs,
   resolveWindowsEnvironment,
 } from "./shell.ts";
@@ -329,6 +334,36 @@ describe("isCommandAvailable", () => {
         env: { PATH: "", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
       }),
     ).toBe(false);
+  });
+});
+
+describe("resolveCommandPaths", () => {
+  it("returns every matching win32 command path in PATH order", () => {
+    const root = mkdtempSync(join(tmpdir(), "t3-shell-test-"));
+
+    try {
+      const nightlyDir = join(root, "Zed Nightly", "bin");
+      const stableDir = join(root, "Zed", "bin");
+      mkdirSync(nightlyDir, { recursive: true });
+      mkdirSync(stableDir, { recursive: true });
+
+      const nightlyPath = join(nightlyDir, "zed.CMD");
+      const stablePath = join(stableDir, "zed.CMD");
+      writeFileSync(nightlyPath, "@echo off\r\n");
+      writeFileSync(stablePath, "@echo off\r\n");
+
+      expect(
+        resolveCommandPaths("zed", {
+          platform: "win32",
+          env: {
+            PATH: `${nightlyDir};${stableDir}`,
+            PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          },
+        }),
+      ).toEqual([nightlyPath, stablePath]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
