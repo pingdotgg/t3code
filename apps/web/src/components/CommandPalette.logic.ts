@@ -151,22 +151,26 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
     const leadingContent = input.renderLeadingContent?.(thread);
     const trailingContent = input.renderTrailingContent?.(thread);
 
-    return {
-      kind: "action",
-      value: `thread:${thread.id}`,
-      searchTerms: [thread.title, projectTitle ?? "", thread.branch ?? ""],
-      title: thread.title,
-      description: descriptionParts.join(" · "),
-      timestamp: formatRelativeTimeLabel(
-        thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
-      ),
-      icon: input.icon,
-      ...(leadingContent ? { titleLeadingContent: leadingContent } : {}),
-      ...(trailingContent ? { titleTrailingContent: trailingContent } : {}),
-      run: async () => {
-        await input.runThread(thread);
+    return Object.assign(
+      {
+        kind: "action" as const,
+        value: `thread:${thread.id}`,
+        searchTerms: [thread.title, projectTitle ?? ``, thread.branch ?? ``],
+        title: thread.title,
+        description: descriptionParts.join(` · `),
+        timestamp: formatRelativeTimeLabel(
+          thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+        ),
+        icon: input.icon,
       },
-    };
+      leadingContent ? { titleLeadingContent: leadingContent } : {},
+      trailingContent ? { titleTrailingContent: trailingContent } : {},
+      {
+        run: async () => {
+          await input.runThread(thread);
+        },
+      },
+    );
   });
 }
 

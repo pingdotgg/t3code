@@ -1,83 +1,100 @@
-import type { ChildProcess } from "node:child_process";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Duration, Effect, Layer } from "effect";
 import { TestClock } from "effect/testing";
-import { beforeEach, expect, vi } from "vitest";
+import { NetService } from "@t3tools/shared/Net";
+import { beforeEach, expect } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import {
+  OpenCodeRuntime,
+  OpenCodeRuntimeError,
+  type OpenCodeRuntimeShape,
+} from "../../provider/opencodeRuntime.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 import { OpenCodeTextGenerationLive } from "./OpenCodeTextGeneration.ts";
 
-const runtimeMock = vi.hoisted(() => {
-  const state = {
+const runtimeMock = {
+  state: {
     startCalls: [] as string[],
     promptUrls: [] as string[],
     authHeaders: [] as Array<string | null>,
     closeCalls: [] as string[],
-    promptResult: undefined as { data?: { info?: { structured?: unknown } } } | undefined,
-  };
+    promptResult: undefined as
+      | { data?: { info?: { error?: unknown }; parts?: Array<{ type: string; text?: string }> } }
+      | undefined,
+  },
+  reset() {
+    this.state.startCalls.length = 0;
+    this.state.promptUrls.length = 0;
+    this.state.authHeaders.length = 0;
+    this.state.closeCalls.length = 0;
+    this.state.promptResult = undefined;
+  },
+};
 
-  return {
-    state,
-    reset() {
-      state.startCalls.length = 0;
-      state.promptUrls.length = 0;
-      state.authHeaders.length = 0;
-      state.closeCalls.length = 0;
-      state.promptResult = undefined;
-    },
-  };
-});
-
-vi.mock("../../provider/opencodeRuntime.ts", async () => {
-  const actual = await vi.importActual<typeof import("../../provider/opencodeRuntime.ts")>(
-    "../../provider/opencodeRuntime.ts",
-  );
-
-  return {
-    ...actual,
-    startOpenCodeServerProcess: vi.fn(async ({ binaryPath }: { binaryPath: string }) => {
+const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
+  startOpenCodeServerProcess: ({ binaryPath }) =>
+    Effect.gen(function* () {
       const index = runtimeMock.state.startCalls.length + 1;
       const url = `http://127.0.0.1:${4_300 + index}`;
       runtimeMock.state.startCalls.push(binaryPath);
+      // The production runtime binds server lifetime to the caller's scope.
+      // Mirror that here so the closeCalls probe observes scope close.
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          runtimeMock.state.closeCalls.push(url);
+        }),
+      );
       return {
         url,
-        process: {} as ChildProcess,
-        close: () => {
-          runtimeMock.state.closeCalls.push(url);
-        },
+        exitCode: Effect.never,
       };
     }),
-    createOpenCodeSdkClient: vi.fn(
-      ({ baseUrl, serverPassword }: { baseUrl: string; serverPassword?: string }) => ({
-        session: {
-          create: vi.fn(async () => ({ data: { id: `${baseUrl}/session` } })),
-          prompt: vi.fn(async () => {
-            runtimeMock.state.promptUrls.push(baseUrl);
-            runtimeMock.state.authHeaders.push(
-              serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
-            );
-            return (
-              runtimeMock.state.promptResult ?? {
-                data: {
-                  info: {
-                    structured: {
+  connectToOpenCodeServer: ({ serverUrl }) =>
+    Effect.succeed({
+      url: serverUrl ?? "http://127.0.0.1:4301",
+      exitCode: null,
+      external: Boolean(serverUrl),
+    }),
+  runOpenCodeCommand: () => Effect.succeed({ stdout: "", stderr: "", code: 0 }),
+  createOpenCodeSdkClient: ({ baseUrl, serverPassword }) =>
+    ({
+      session: {
+        create: async () => ({ data: { id: `${baseUrl}/session` } }),
+        prompt: async () => {
+          runtimeMock.state.promptUrls.push(baseUrl);
+          runtimeMock.state.authHeaders.push(
+            serverPassword ? `Basic ${btoa(`opencode:${serverPassword}`)}` : null,
+          );
+          return (
+            runtimeMock.state.promptResult ?? {
+              data: {
+                parts: [
+                  {
+                    type: "text",
+                    text: JSON.stringify({
                       subject: "Improve OpenCode reuse",
                       body: "Reuse one server for the full action.",
-                    },
+                    }),
                   },
-                },
-              }
-            );
-          }),
+                ],
+              },
+            }
+          );
         },
+      },
+    }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
+  loadOpenCodeInventory: () =>
+    Effect.fail(
+      new OpenCodeRuntimeError({
+        operation: "loadOpenCodeInventory",
+        detail: "OpenCodeRuntimeTestDouble.loadOpenCodeInventory not used in this test",
+        cause: null,
       }),
     ),
-  };
-});
+};
 
 const DEFAULT_TEST_MODEL_SELECTION = {
   provider: "opencode" as const,
@@ -87,6 +104,7 @@ const DEFAULT_TEST_MODEL_SELECTION = {
 const OPENCODE_TEXT_GENERATION_IDLE_TTL_MS = 30_000;
 
 const OpenCodeTextGenerationTestLayer = OpenCodeTextGenerationLive.pipe(
+  Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
   Layer.provideMerge(
     ServerSettingsService.layerTest({
       providers: {
@@ -101,10 +119,12 @@ const OpenCodeTextGenerationTestLayer = OpenCodeTextGenerationLive.pipe(
       prefix: "t3code-opencode-text-generation-test-",
     }),
   ),
+  Layer.provideMerge(NetService.layer),
   Layer.provideMerge(NodeServices.layer),
 );
 
 const OpenCodeTextGenerationExistingServerTestLayer = OpenCodeTextGenerationLive.pipe(
+  Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
   Layer.provideMerge(
     ServerSettingsService.layerTest({
       providers: {
@@ -121,6 +141,7 @@ const OpenCodeTextGenerationExistingServerTestLayer = OpenCodeTextGenerationLive
       prefix: "t3code-opencode-text-generation-existing-server-test-",
     }),
   ),
+  Layer.provideMerge(NetService.layer),
   Layer.provideMerge(NodeServices.layer),
 );
 
@@ -198,7 +219,7 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationLive", (it) => 
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("returns a typed missing-output error when OpenCode omits info.structured", () =>
+  it.effect("returns a typed empty-output error when OpenCode returns no text parts", () =>
     Effect.gen(function* () {
       runtimeMock.state.promptResult = { data: {} };
       const textGeneration = yield* TextGeneration;
@@ -213,7 +234,67 @@ it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationLive", (it) => 
         })
         .pipe(Effect.flip);
 
-      expect(error.message).toContain("OpenCode returned no structured output.");
+      expect(error.message).toContain("OpenCode returned empty output.");
+    }),
+  );
+
+  it.effect("parses JSON returned as plain text output", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.promptResult = {
+        data: {
+          parts: [
+            {
+              type: "text",
+              text: 'Here is the result:\n{"subject":"Tighten OpenCode parsing","body":"Handle JSON text output locally."}',
+            },
+          ],
+        },
+      };
+      const textGeneration = yield* TextGeneration;
+
+      const result = yield* textGeneration.generateCommitMessage({
+        cwd: process.cwd(),
+        branch: "feature/opencode-reuse",
+        stagedSummary: "M README.md",
+        stagedPatch: "diff --git a/README.md b/README.md",
+        modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+      });
+
+      expect(result).toEqual({
+        subject: "Tighten OpenCode parsing",
+        body: "Handle JSON text output locally.",
+      });
+    }),
+  );
+
+  it.effect("surfaces the upstream OpenCode structured-output error message", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.promptResult = {
+        data: {
+          info: {
+            error: {
+              name: "StructuredOutputError",
+              data: {
+                message: "Model did not produce structured output",
+                retries: 2,
+              },
+            },
+          },
+        },
+      };
+      const textGeneration = yield* TextGeneration;
+
+      const error = yield* textGeneration
+        .generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/opencode-reuse",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        })
+        .pipe(Effect.flip);
+
+      expect(error.message).toContain("Model did not produce structured output");
     }),
   );
 });
