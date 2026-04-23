@@ -6,6 +6,7 @@ import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
+import { topBarButtonLabelClassName, topBarGroupSeparatorClassName } from "../topBarActionStyles";
 import {
   AntigravityIcon,
   CursorIcon,
@@ -85,10 +86,12 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
   openInCwd,
+  compact = false,
 }: {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  compact?: boolean;
 }) {
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
@@ -113,6 +116,8 @@ export const OpenInPicker = memo(function OpenInPicker({
     () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
     [keybindings],
   );
+  const primaryButtonLabelClassName = topBarButtonLabelClassName(compact);
+  const groupSeparatorClassName = topBarGroupSeparatorClassName(compact);
 
   useEffect(() => {
     const handler = (e: globalThis.KeyboardEvent) => {
@@ -135,13 +140,12 @@ export const OpenInPicker = memo(function OpenInPicker({
         variant="outline"
         disabled={!preferredEditor || !openInCwd}
         onClick={() => openInEditor(preferredEditor)}
+        title={compact && primaryOption ? `Open in ${primaryOption.label}` : undefined}
       >
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
-        <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-          Open
-        </span>
+        <span className={primaryButtonLabelClassName}>Open</span>
       </Button>
-      <GroupSeparator className="hidden @3xl/header-actions:block" />
+      <GroupSeparator className={groupSeparatorClassName} />
       <Menu>
         <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
           <ChevronDownIcon aria-hidden="true" className="size-4" />

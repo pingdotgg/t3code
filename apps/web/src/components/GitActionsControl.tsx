@@ -7,7 +7,13 @@ import type {
 } from "@harness/contracts";
 import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { ChevronDownIcon, CloudUploadIcon, GitCommitIcon, InfoIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  CloudUploadIcon,
+  FolderGit2Icon,
+  GitCommitIcon,
+  InfoIcon,
+} from "lucide-react";
 import { GitHubIcon } from "./Icons";
 import {
   buildGitActionProgressStages,
@@ -54,11 +60,13 @@ import { readEnvironmentApi } from "~/environmentApi";
 import { readLocalApi } from "~/localApi";
 import { useStore } from "~/store";
 import { createThreadSelectorByRef } from "~/storeSelectors";
+import { topBarButtonLabelClassName, topBarGroupSeparatorClassName } from "./topBarActionStyles";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
+  compact?: boolean;
 }
 
 interface PendingDefaultBranchAction {
@@ -214,6 +222,7 @@ export default function GitActionsControl({
   gitCwd,
   activeThreadRef,
   draftId,
+  compact = false,
 }: GitActionsControlProps) {
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
   const threadToastData = useMemo(
@@ -242,6 +251,8 @@ export default function GitActionsControl({
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
   const activeGitActionProgressRef = useRef<ActiveGitActionProgress | null>(null);
+  const primaryButtonLabelClassName = topBarButtonLabelClassName(compact);
+  const groupSeparatorClassName = topBarGroupSeparatorClassName(compact);
   let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
 
   const updateActiveProgressToast = useCallback(() => {
@@ -871,8 +882,20 @@ export default function GitActionsControl({
           size="xs"
           disabled={initMutation.isPending}
           onClick={() => initMutation.mutate()}
+          title={compact ? "Initialize Git" : undefined}
         >
-          {initMutation.isPending ? "Initializing..." : "Initialize Git"}
+          {compact ? (
+            <>
+              <FolderGit2Icon className="size-3.5" />
+              <span className="sr-only">
+                {initMutation.isPending ? "Initializing Git" : "Initialize Git"}
+              </span>
+            </>
+          ) : initMutation.isPending ? (
+            "Initializing..."
+          ) : (
+            "Initialize Git"
+          )}
         </Button>
       ) : (
         <Group aria-label="Git actions" className="shrink-0">
@@ -886,13 +909,12 @@ export default function GitActionsControl({
                     className="cursor-not-allowed rounded-e-none border-e-0 opacity-64 before:rounded-e-none"
                     size="xs"
                     variant="outline"
+                    title={compact ? quickAction.label : undefined}
                   />
                 }
               >
                 <GitQuickActionIcon quickAction={quickAction} />
-                <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-                  {quickAction.label}
-                </span>
+                <span className={primaryButtonLabelClassName}>{quickAction.label}</span>
               </PopoverTrigger>
               <PopoverPopup tooltipStyle side="bottom" align="start">
                 {quickActionDisabledReason}
@@ -904,14 +926,13 @@ export default function GitActionsControl({
               size="xs"
               disabled={isGitActionRunning || quickAction.disabled}
               onClick={runQuickAction}
+              title={compact ? quickAction.label : undefined}
             >
               <GitQuickActionIcon quickAction={quickAction} />
-              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
-                {quickAction.label}
-              </span>
+              <span className={primaryButtonLabelClassName}>{quickAction.label}</span>
             </Button>
           )}
-          <GroupSeparator className="hidden @3xl/header-actions:block" />
+          <GroupSeparator className={groupSeparatorClassName} />
           <Menu
             onOpenChange={(open) => {
               if (open) {

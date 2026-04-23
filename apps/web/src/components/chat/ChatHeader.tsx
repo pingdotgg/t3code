@@ -89,9 +89,10 @@ export const ChatHeader = memo(function ChatHeader({
           </Badge>
         )}
       </div>
-      <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
+      <div className="flex shrink-0 items-center justify-end gap-2">
         {activeProjectScripts && (
           <ProjectScriptsControl
+            compact
             scripts={activeProjectScripts}
             keybindings={keybindings}
             preferredScriptId={preferredScriptId}
@@ -103,6 +104,7 @@ export const ChatHeader = memo(function ChatHeader({
         )}
         {activeProjectName && (
           <OpenInPicker
+            compact
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
@@ -110,6 +112,7 @@ export const ChatHeader = memo(function ChatHeader({
         )}
         {activeProjectName && (
           <GitActionsControl
+            compact
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
             {...(draftId ? { draftId } : {})}
