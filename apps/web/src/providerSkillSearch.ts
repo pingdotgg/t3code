@@ -1,4 +1,4 @@
-import type { ServerProviderSkill } from "@harness/contracts";
+import type { ServerLocalAgentSkill, ServerProviderSkill } from "@harness/contracts";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
@@ -7,7 +7,13 @@ import {
 
 import { formatProviderSkillDisplayName } from "./providerSkillPresentation";
 
-function scoreProviderSkill(skill: ServerProviderSkill, query: string): number | null {
+type SearchableSkill = ServerLocalAgentSkill | ServerProviderSkill;
+
+function isLocalSkill(skill: SearchableSkill): skill is ServerLocalAgentSkill {
+  return "source" in skill && skill.source === "local-agents";
+}
+
+function scoreProviderSkill(skill: SearchableSkill, query: string): number | null {
   const normalizedName = skill.name.toLowerCase();
   const normalizedLabel = formatProviderSkillDisplayName(skill).toLowerCase();
   const normalizedShortDescription = skill.shortDescription?.toLowerCase() ?? "";
@@ -67,10 +73,10 @@ function scoreProviderSkill(skill: ServerProviderSkill, query: string): number |
 }
 
 export function searchProviderSkills(
-  skills: ReadonlyArray<ServerProviderSkill>,
+  skills: ReadonlyArray<SearchableSkill>,
   query: string,
   limit = Number.POSITIVE_INFINITY,
-): ServerProviderSkill[] {
+): SearchableSkill[] {
   const enabledSkills = skills.filter((skill) => skill.enabled);
   const normalizedQuery = normalizeSearchQuery(query, { trimLeadingPattern: /^\$+/ });
 
@@ -79,7 +85,7 @@ export function searchProviderSkills(
   }
 
   const ranked: Array<{
-    item: ServerProviderSkill;
+    item: SearchableSkill;
     score: number;
     tieBreaker: string;
   }> = [];
@@ -95,7 +101,7 @@ export function searchProviderSkills(
       {
         item: skill,
         score,
-        tieBreaker: `${formatProviderSkillDisplayName(skill).toLowerCase()}\u0000${skill.name}`,
+        tieBreaker: `${isLocalSkill(skill) ? "0" : "1"}\u0000${formatProviderSkillDisplayName(skill).toLowerCase()}\u0000${skill.name}`,
       },
       limit,
     );

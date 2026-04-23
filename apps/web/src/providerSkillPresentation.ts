@@ -1,4 +1,4 @@
-import type { ServerProviderSkill } from "@harness/contracts";
+import type { ServerLocalAgentSkill, ServerProviderSkill } from "@harness/contracts";
 
 function titleCaseWords(value: string): string {
   return value
@@ -13,7 +13,7 @@ function normalizePathSeparators(pathValue: string): string {
 }
 
 export function formatProviderSkillDisplayName(
-  skill: Pick<ServerProviderSkill, "name" | "displayName">,
+  skill: Pick<ServerProviderSkill | ServerLocalAgentSkill, "name" | "displayName">,
 ): string {
   const displayName = skill.displayName?.trim();
   if (displayName) {
@@ -23,7 +23,7 @@ export function formatProviderSkillDisplayName(
 }
 
 export function formatProviderSkillInstallSource(
-  skill: Pick<ServerProviderSkill, "path" | "scope">,
+  skill: Pick<ServerProviderSkill | ServerLocalAgentSkill, "path" | "scope">,
 ): string | null {
   const normalizedPath = normalizePathSeparators(skill.path);
   if (normalizedPath.includes("/.codex/plugins/") || normalizedPath.includes("/.agents/plugins/")) {

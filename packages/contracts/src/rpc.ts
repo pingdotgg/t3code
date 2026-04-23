@@ -49,6 +49,9 @@ import {
   OrchestrationRpcSchemas,
 } from "./orchestration.ts";
 import {
+  ProjectLocalAgentInventoryError,
+  ProjectLocalAgentInventoryInput,
+  ProjectLocalAgentInventoryResult,
   ProjectReadFileInput,
   ProjectReadFileResult,
   ProjectReadFileRpcError,
@@ -86,6 +89,7 @@ export const WS_METHODS = {
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
+  projectsGetLocalAgentInventory: "projects.getLocalAgentInventory",
   projectsReadFile: "projects.readFile",
   projectsWriteFile: "projects.writeFile",
 
@@ -165,6 +169,15 @@ export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntr
   success: ProjectSearchEntriesResult,
   error: ProjectSearchEntriesError,
 });
+
+export const WsProjectsGetLocalAgentInventoryRpc = Rpc.make(
+  WS_METHODS.projectsGetLocalAgentInventory,
+  {
+    payload: ProjectLocalAgentInventoryInput,
+    success: ProjectLocalAgentInventoryResult,
+    error: ProjectLocalAgentInventoryError,
+  },
+);
 
 export const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
   payload: ProjectReadFileInput,
@@ -372,6 +385,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsProjectsSearchEntriesRpc,
+  WsProjectsGetLocalAgentInventoryRpc,
   WsProjectsReadFileRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,

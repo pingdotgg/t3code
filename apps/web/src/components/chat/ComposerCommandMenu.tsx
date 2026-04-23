@@ -1,6 +1,8 @@
 import {
   type ProjectEntry,
   type ProviderKind,
+  type ServerLocalAgentCommand,
+  type ServerLocalAgentSkill,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@harness/contracts";
@@ -42,6 +44,13 @@ export type ComposerCommandItem =
     }
   | {
       id: string;
+      type: "local-slash-command";
+      command: ServerLocalAgentCommand;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
       type: "provider-slash-command";
       provider: ProviderKind;
       command: ServerProviderSlashCommand;
@@ -53,6 +62,13 @@ export type ComposerCommandItem =
       type: "skill";
       provider: ProviderKind;
       skill: ServerProviderSkill;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "local-skill";
+      skill: ServerLocalAgentSkill;
       label: string;
       description: string;
     };
@@ -88,18 +104,31 @@ function groupCommandItems(
   groupSlashCommandSections: boolean,
 ): ComposerCommandGroup[] {
   if (triggerKind === "skill") {
-    return items.length > 0 ? [{ id: "skills", label: "Skills", items }] : [];
+    const localItems = items.filter((item) => item.type === "local-skill");
+    const providerItems = items.filter((item) => item.type === "skill");
+    const groups: ComposerCommandGroup[] = [];
+    if (localItems.length > 0) {
+      groups.push({ id: "project-skills", label: "Project", items: localItems });
+    }
+    if (providerItems.length > 0) {
+      groups.push({ id: "provider-skills", label: "Provider", items: providerItems });
+    }
+    return groups;
   }
   if (triggerKind !== "slash-command" || !groupSlashCommandSections) {
     return [{ id: "default", label: null, items }];
   }
 
   const builtInItems = items.filter((item) => item.type === "slash-command");
+  const localItems = items.filter((item) => item.type === "local-slash-command");
   const providerItems = items.filter((item) => item.type === "provider-slash-command");
 
   const groups: ComposerCommandGroup[] = [];
   if (builtInItems.length > 0) {
     groups.push({ id: "built-in", label: "Built-in", items: builtInItems });
+  }
+  if (localItems.length > 0) {
+    groups.push({ id: "project", label: "Project", items: localItems });
   }
   if (providerItems.length > 0) {
     groups.push({ id: "provider", label: "Provider", items: providerItems });
@@ -207,7 +236,11 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   onSelect: (item: ComposerCommandItem) => void;
 }) {
   const skillSourceLabel =
-    props.item.type === "skill" ? formatProviderSkillInstallSource(props.item.skill) : null;
+    props.item.type === "skill" || props.item.type === "local-skill"
+      ? formatProviderSkillInstallSource(props.item.skill)
+      : props.item.type === "local-slash-command"
+        ? "Project"
+        : null;
 
   return (
     <CommandItem
@@ -237,12 +270,12 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "slash-command" ? (
         <BotIcon className="size-4 shrink-0 text-muted-foreground/80" />
       ) : null}
-      {props.item.type === "provider-slash-command" ? (
+      {props.item.type === "local-slash-command" || props.item.type === "provider-slash-command" ? (
         <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
           <SkillGlyph className="size-3.5" />
         </span>
       ) : null}
-      {props.item.type === "skill" ? (
+      {props.item.type === "skill" || props.item.type === "local-skill" ? (
         <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
           <SkillGlyph className="size-3.5" />
         </span>

@@ -9,6 +9,7 @@ import type {
   ResolvedKeybindingsConfig,
   RuntimeMode,
   ScopedThreadRef,
+  ServerLocalAgentInventory,
   ServerProvider,
   ThreadId,
   TurnId,
@@ -105,6 +106,14 @@ import type { PendingApproval, PendingUserInput } from "../../session-logic";
 import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
+
+function isLocalAgentSkill(
+  skill:
+    | ServerLocalAgentInventory["skills"][number]
+    | NonNullable<ServerProvider["skills"]>[number],
+): skill is ServerLocalAgentInventory["skills"][number] {
+  return "source" in skill && skill.source === "local-agents";
+}
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
@@ -466,6 +475,8 @@ export interface ChatComposerProps {
 
   // Context window
   activeThreadActivities: Thread["activities"] | undefined;
+  localAgentInventory: ServerLocalAgentInventory;
+  localAgentInventoryLoading: boolean;
 
   // Misc
   resolvedTheme: "light" | "dark";
@@ -562,6 +573,8 @@ export const ChatComposer = memo(
       activeProjectDefaultModelSelection,
       activeThreadModelSelection,
       activeThreadActivities,
+      localAgentInventory,
+      localAgentInventoryLoading,
       resolvedTheme,
       settings,
       keybindings,
@@ -811,6 +824,13 @@ export const ChatComposer = memo(
             description: "Switch this thread back to normal build mode",
           },
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+        const localSlashCommandItems = localAgentInventory.commands.map((command) => ({
+          id: `local-slash-command:${command.path}`,
+          type: "local-slash-command" as const,
+          command,
+          label: `/${command.name}`,
+          description: command.description ?? command.inputHint ?? "Run project command",
+        }));
         const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
           (command) => ({
             id: `provider-slash-command:${selectedProvider}:${command.name}`,
@@ -822,7 +842,11 @@ export const ChatComposer = memo(
           }),
         );
         const query = composerTrigger.query.trim().toLowerCase();
-        const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
+        const slashCommandItems = [
+          ...builtInSlashCommandItems,
+          ...localSlashCommandItems,
+          ...providerSlashCommandItems,
+        ];
         if (!query) {
           return slashCommandItems;
         }
@@ -830,22 +854,43 @@ export const ChatComposer = memo(
       }
       if (composerTrigger.kind === "skill") {
         return searchProviderSkills(
-          selectedProviderStatus?.skills ?? [],
+          [...localAgentInventory.skills, ...(selectedProviderStatus?.skills ?? [])],
           composerTrigger.query,
-        ).map((skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: formatProviderSkillDisplayName(skill),
-          description:
+        ).map((skill) => {
+          const description =
             skill.shortDescription ??
             skill.description ??
-            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-        }));
+            (skill.scope ? `${skill.scope} skill` : "Run provider skill");
+
+          if (isLocalAgentSkill(skill)) {
+            return {
+              id: `local-skill:${skill.path}`,
+              type: "local-skill" as const,
+              skill,
+              label: formatProviderSkillDisplayName(skill),
+              description,
+            } satisfies Extract<ComposerCommandItem, { type: "local-skill" }>;
+          }
+
+          return {
+            id: `skill:${selectedProvider}:${skill.name}`,
+            type: "skill" as const,
+            provider: selectedProvider,
+            skill,
+            label: formatProviderSkillDisplayName(skill),
+            description,
+          } satisfies Extract<ComposerCommandItem, { type: "skill" }>;
+        });
       }
       return [];
-    }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries]);
+    }, [
+      composerTrigger,
+      localAgentInventory.commands,
+      localAgentInventory.skills,
+      selectedProvider,
+      selectedProviderStatus,
+      workspaceEntries,
+    ]);
 
     const composerMenuOpen = Boolean(composerTrigger);
     const composerMenuSearchKey = composerTrigger
@@ -908,10 +953,12 @@ export const ChatComposer = memo(
     ]);
 
     const isComposerMenuLoading =
-      composerTriggerKind === "path" &&
-      ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
-        workspaceEntriesQuery.isLoading ||
-        workspaceEntriesQuery.isFetching);
+      (composerTriggerKind === "path" &&
+        ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
+          workspaceEntriesQuery.isLoading ||
+          workspaceEntriesQuery.isFetching)) ||
+      ((composerTriggerKind === "skill" || composerTriggerKind === "slash-command") &&
+        localAgentInventoryLoading);
     const composerMenuEmptyState = useMemo(() => {
       if (composerTriggerKind === "skill") {
         return "No skills found. Try / to browse provider commands.";
@@ -1441,7 +1488,7 @@ export const ChatComposer = memo(
           }
           return;
         }
-        if (item.type === "provider-slash-command") {
+        if (item.type === "local-slash-command" || item.type === "provider-slash-command") {
           const replacement = `/${item.command.name} `;
           const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
             snapshot.value,
@@ -1459,7 +1506,7 @@ export const ChatComposer = memo(
           }
           return;
         }
-        if (item.type === "skill") {
+        if (item.type === "skill" || item.type === "local-skill") {
           const replacement = `$${item.skill.name} `;
           const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
             snapshot.value,
@@ -1927,7 +1974,10 @@ export const ChatComposer = memo(
                       ? composerTerminalContexts
                       : []
                   }
-                  skills={selectedProviderStatus?.skills ?? []}
+                  skills={[
+                    ...localAgentInventory.skills,
+                    ...(selectedProviderStatus?.skills ?? []),
+                  ]}
                   onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                   onChange={onPromptChange}
                   onCommandKeyDown={onComposerCommandKey}

@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ServerLocalAgentInventory } from "./localAgents.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_FILE_PATH_MAX_LENGTH = 512;
@@ -31,6 +32,14 @@ export const ProjectSearchEntriesResult = Schema.Struct({
   truncated: Schema.Boolean,
 });
 export type ProjectSearchEntriesResult = typeof ProjectSearchEntriesResult.Type;
+
+export const ProjectLocalAgentInventoryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+});
+export type ProjectLocalAgentInventoryInput = typeof ProjectLocalAgentInventoryInput.Type;
+
+export const ProjectLocalAgentInventoryResult = ServerLocalAgentInventory;
+export type ProjectLocalAgentInventoryResult = typeof ProjectLocalAgentInventoryResult.Type;
 
 export class ProjectSearchEntriesError extends Schema.TaggedErrorClass<ProjectSearchEntriesError>()(
   "ProjectSearchEntriesError",
@@ -109,6 +118,14 @@ export class ProjectFileVersionConflictError extends Schema.TaggedErrorClass<Pro
 
 export class ProjectReadFileError extends Schema.TaggedErrorClass<ProjectReadFileError>()(
   "ProjectReadFileError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class ProjectLocalAgentInventoryError extends Schema.TaggedErrorClass<ProjectLocalAgentInventoryError>()(
+  "ProjectLocalAgentInventoryError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),

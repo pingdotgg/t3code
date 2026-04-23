@@ -92,6 +92,10 @@ import {
 } from "./observability/Services/BrowserTraceCollector.ts";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import {
+  ProjectAgentInventory,
+  type ProjectAgentInventoryShape,
+} from "./project/Services/ProjectAgentInventory.ts";
+import {
   ProjectSetupScriptRunner,
   type ProjectSetupScriptRunnerShape,
 } from "./project/Services/ProjectSetupScriptRunner.ts";
@@ -206,16 +210,6 @@ const makeDefaultOrchestrationThreadShell = (
     ...overrides,
   };
 };
-
-const workspaceAndProjectServicesLayer = Layer.mergeAll(
-  WorkspacePathsLive,
-  WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive)),
-  WorkspaceFileSystemLive.pipe(
-    Layer.provide(WorkspacePathsLive),
-    Layer.provide(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
-  ),
-  ProjectFaviconResolverLive,
-);
 
 const browserOtlpTracingLayer = Layer.mergeAll(
   FetchHttpClient.layer,
@@ -340,6 +334,7 @@ const buildAppUnderTest = (options?: {
     gitManager?: Partial<GitManagerShape>;
     gitStatusBroadcaster?: Partial<GitStatusBroadcasterShape>;
     projectSetupScriptRunner?: Partial<ProjectSetupScriptRunnerShape>;
+    projectAgentInventory?: Partial<ProjectAgentInventoryShape>;
     terminalManager?: Partial<TerminalManagerShape>;
     orchestrationEngine?: Partial<OrchestrationEngineShape>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQueryShape>;
@@ -411,6 +406,15 @@ const buildAppUnderTest = (options?: {
         Layer.provide(workspaceEntriesLayer),
       ),
       ProjectFaviconResolverLive,
+      Layer.mock(ProjectAgentInventory)({
+        getInventory: () =>
+          Effect.succeed({
+            skills: [],
+            commands: [],
+          }),
+        invalidate: () => Effect.void,
+        ...options?.layers?.projectAgentInventory,
+      }),
     );
     const gitStatusBroadcasterLayer = options?.layers?.gitStatusBroadcaster
       ? Layer.mock(GitStatusBroadcaster)({

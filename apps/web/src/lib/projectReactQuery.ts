@@ -1,4 +1,8 @@
-import type { EnvironmentId, ProjectSearchEntriesResult } from "@harness/contracts";
+import type {
+  EnvironmentId,
+  ProjectLocalAgentInventoryResult,
+  ProjectSearchEntriesResult,
+} from "@harness/contracts";
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureEnvironmentApi } from "~/environmentApi";
 
@@ -6,6 +10,8 @@ export const projectQueryKeys = {
   all: ["projects"] as const,
   searchEntriesScope: (environmentId: EnvironmentId | null, cwd: string | null) =>
     ["projects", "search-entries", environmentId ?? null, cwd] as const,
+  localAgentInventoryScope: (environmentId: EnvironmentId | null, cwd: string | null) =>
+    ["projects", "local-agent-inventory", environmentId ?? null, cwd] as const,
   searchEntries: (
     environmentId: EnvironmentId | null,
     cwd: string | null,
@@ -20,6 +26,10 @@ const EMPTY_SEARCH_ENTRIES_RESULT: ProjectSearchEntriesResult = {
   entries: [],
   truncated: false,
 };
+const EMPTY_LOCAL_AGENT_INVENTORY_RESULT: ProjectLocalAgentInventoryResult = {
+  skills: [],
+  commands: [],
+};
 
 export function invalidateProjectQueries(
   queryClient: QueryClient,
@@ -28,12 +38,40 @@ export function invalidateProjectQueries(
   const environmentId = input?.environmentId ?? null;
   const cwd = input?.cwd ?? null;
   if (cwd !== null) {
-    return queryClient.invalidateQueries({
-      queryKey: projectQueryKeys.searchEntriesScope(environmentId, cwd),
-    });
+    return Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.searchEntriesScope(environmentId, cwd),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.localAgentInventoryScope(environmentId, cwd),
+      }),
+    ]);
   }
 
   return queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+}
+
+export function projectLocalAgentInventoryQueryOptions(input: {
+  environmentId: EnvironmentId | null;
+  cwd: string | null;
+  enabled?: boolean;
+  staleTime?: number;
+}) {
+  return queryOptions({
+    queryKey: projectQueryKeys.localAgentInventoryScope(input.environmentId, input.cwd),
+    queryFn: async () => {
+      if (!input.cwd || !input.environmentId) {
+        throw new Error("Project-local agent inventory is unavailable.");
+      }
+      const api = ensureEnvironmentApi(input.environmentId);
+      return api.projects.getLocalAgentInventory({
+        cwd: input.cwd,
+      });
+    },
+    enabled: (input.enabled ?? true) && input.environmentId !== null && input.cwd !== null,
+    staleTime: input.staleTime ?? DEFAULT_SEARCH_ENTRIES_STALE_TIME,
+    placeholderData: (previous) => previous ?? EMPTY_LOCAL_AGENT_INVENTORY_RESULT,
+  });
 }
 
 export function projectSearchEntriesQueryOptions(input: {

@@ -7,6 +7,7 @@ export * from "./provider.ts";
 export * from "./providerRuntime.ts";
 export * from "./model.ts";
 export * from "./keybindings.ts";
+export * from "./localAgents.ts";
 export * from "./server.ts";
 export * from "./settings.ts";
 export * from "./git.ts";

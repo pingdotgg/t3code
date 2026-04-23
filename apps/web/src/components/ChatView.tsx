@@ -9,6 +9,7 @@ import {
   type ProviderKind,
   type ProjectId,
   type ProviderApprovalDecision,
+  type ServerLocalAgentInventory,
   type ServerProvider,
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
@@ -30,10 +31,12 @@ import { applyClaudePromptEffortPrefix, createModelSelection } from "@harness/sh
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@harness/shared/projectScripts";
 import { truncate } from "@harness/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
+import { useQuery } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
+import { projectLocalAgentInventoryQueryOptions } from "~/lib/projectReactQuery";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
@@ -79,6 +82,7 @@ import {
   buildPlanImplementationPrompt,
   resolvePlanFollowUpSubmission,
 } from "../proposedPlan";
+import { expandProjectLocalAgentsPrompt } from "../localAgentPrompting";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -1487,6 +1491,13 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  const localAgentInventoryQuery = useQuery(
+    projectLocalAgentInventoryQueryOptions({
+      environmentId,
+      cwd: gitCwd,
+      enabled: gitCwd !== null,
+    }),
+  );
   const gitStatusQuery = useGitStatus({ environmentId, cwd: gitCwd });
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
@@ -2622,8 +2633,24 @@ export default function ChatView(props: ChatViewProps) {
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
+    const localAgentInventory: ServerLocalAgentInventory =
+      gitCwd !== null
+        ? ((localAgentInventoryQuery.data ??
+            (await api.projects.getLocalAgentInventory({
+              cwd: gitCwd,
+            }))) as ServerLocalAgentInventory)
+        : { skills: [], commands: [] };
+    const expandedPromptForSend =
+      gitCwd !== null
+        ? await expandProjectLocalAgentsPrompt({
+            api,
+            cwd: gitCwd,
+            prompt: promptForSend,
+            inventory: localAgentInventory,
+          })
+        : promptForSend;
     const messageTextForSend = appendTerminalContextsToPrompt(
-      promptForSend,
+      expandedPromptForSend,
       composerTerminalContextsSnapshot,
     );
     const messageIdForSend = newMessageId();
@@ -3626,6 +3653,10 @@ export default function ChatView(props: ChatViewProps) {
               activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
               activeThreadModelSelection={activeThread?.modelSelection}
               activeThreadActivities={activeThread?.activities}
+              localAgentInventory={localAgentInventoryQuery.data ?? { skills: [], commands: [] }}
+              localAgentInventoryLoading={
+                localAgentInventoryQuery.isLoading || localAgentInventoryQuery.isFetching
+              }
               resolvedTheme={resolvedTheme}
               settings={settings}
               keybindings={keybindings}
