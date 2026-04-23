@@ -8,7 +8,7 @@ import { SecretStoreError, ServerSecretStore } from "../Services/ServerSecretSto
 import { ServerSecretStoreLive } from "./ServerSecretStore.ts";
 
 const makeServerConfigLayer = () =>
-  ServerConfig.layerTest(process.cwd(), { prefix: "harness-secret-store-test-" });
+  ServerConfig.layerTest(process.cwd(), { prefix: "forma-secret-store-test-" });
 
 const makeServerSecretStoreLayer = () =>
   Layer.provide(ServerSecretStoreLive, makeServerConfigLayer());

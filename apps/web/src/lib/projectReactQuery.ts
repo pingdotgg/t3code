@@ -2,7 +2,7 @@ import type {
   EnvironmentId,
   ProjectLocalAgentInventoryResult,
   ProjectSearchEntriesResult,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { queryOptions, type QueryClient } from "@tanstack/react-query";
 import { ensureEnvironmentApi } from "~/environmentApi";
 

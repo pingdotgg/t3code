@@ -10,10 +10,10 @@ import {
   type ServerProvider,
   type TerminalEvent,
   ThreadId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ContextMenuItem } from "@harness/contracts";
+import type { ContextMenuItem } from "@forma/contracts";
 
 const showContextMenuFallbackMock =
   vi.fn<

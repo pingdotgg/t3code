@@ -64,23 +64,22 @@ describe("resolveMarkdownFileLinkTarget", () => {
   it("formats tooltip display paths relative to the cwd when possible", () => {
     expect(
       resolveMarkdownFileLinkMeta(
-        "file:///C:/Users/mike/dev-stuff/harness/apps/web/src/session-logic.ts#L501",
-        "C:/Users/mike/dev-stuff/harness",
+        "file:///C:/Users/mike/dev-stuff/forma/apps/web/src/session-logic.ts#L501",
+        "C:/Users/mike/dev-stuff/forma",
       ),
     ).toMatchObject({
-      displayPath: "harness/apps/web/src/session-logic.ts:501",
+      displayPath: "forma/apps/web/src/session-logic.ts:501",
     });
   });
 
   it("formats tooltip display paths relative to the cwd for slash-prefixed windows paths", () => {
     expect(
       resolveMarkdownFileLinkMeta(
-        "/C:/Users/mike/dev-stuff/harness/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
-        "C:/Users/mike/dev-stuff/harness",
+        "/C:/Users/mike/dev-stuff/forma/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
+        "C:/Users/mike/dev-stuff/forma",
       ),
     ).toMatchObject({
-      displayPath:
-        "harness/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
+      displayPath: "forma/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
     });
   });
 

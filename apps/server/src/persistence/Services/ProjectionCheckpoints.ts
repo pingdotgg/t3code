@@ -15,7 +15,7 @@ import {
   OrchestrationCheckpointStatus,
   ThreadId,
   TurnId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Option, Context, Schema } from "effect";
 import type { Effect } from "effect";
 
@@ -90,4 +90,4 @@ export interface ProjectionCheckpointRepositoryShape {
 export class ProjectionCheckpointRepository extends Context.Service<
   ProjectionCheckpointRepository,
   ProjectionCheckpointRepositoryShape
->()("harness/persistence/Services/ProjectionCheckpoints/ProjectionCheckpointRepository") {}
+>()("forma/persistence/Services/ProjectionCheckpoints/ProjectionCheckpointRepository") {}

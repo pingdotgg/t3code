@@ -4,8 +4,8 @@ import {
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
-} from "@harness/contracts";
-import { scopeThreadRef } from "@harness/client-runtime";
+} from "@forma/contracts";
+import { scopeThreadRef } from "@forma/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";

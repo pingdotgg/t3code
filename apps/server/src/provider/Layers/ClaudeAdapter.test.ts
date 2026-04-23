@@ -16,7 +16,7 @@ import {
   ProviderRuntimeEvent,
   type RuntimeMode,
   ThreadId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Fiber, Layer, Random, Stream } from "effect";
 
@@ -242,7 +242,7 @@ const RESUME_THREAD_ID = ThreadId.make("thread-claude-resume");
 
 describe("ClaudeAdapterLive", () => {
   it.effect("returns validation error for non-claude provider on startSession", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       const result = yield* adapter
@@ -263,12 +263,12 @@ describe("ClaudeAdapterLive", () => {
       );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("derives bypass permission mode from full-access runtime policy", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -277,18 +277,18 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
       assert.equal(createInput?.options.permissionMode, "bypassPermissions");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("loads Claude filesystem settings sources for SDK sessions", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -297,18 +297,18 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "approval-required",
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
       assert.equal(createInput?.options.permissionMode, undefined);
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("uses bypass permissions for full-access claude sessions", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -317,17 +317,17 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.equal(createInput?.options.permissionMode, "bypassPermissions");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("forwards claude effort levels into query options", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -343,16 +343,16 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.equal(createInput?.options.effort, "max");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("maps the Claude Opus 4.7 default effort to the SDK-supported max value", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -365,16 +365,16 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.equal(createInput?.options.effort, "max");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("maps xhigh effort for Claude Opus 4.7 to the SDK-supported max value", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -390,16 +390,16 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.equal(createInput?.options.effort, "max");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("falls back to default effort when unsupported max is requested for Sonnet 4.6", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -415,16 +415,16 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.equal(createInput?.options.effort, "high");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("ignores adaptive effort for Haiku 4.5", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -440,16 +440,16 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.equal(createInput?.options.effort, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("forwards Claude thinking toggle into SDK settings for Haiku 4.5", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -465,18 +465,18 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
         alwaysThinkingEnabled: false,
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("ignores Claude thinking toggle for non-Haiku models", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -492,16 +492,16 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.equal(createInput?.options.settings, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("forwards claude fast mode into SDK settings", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -517,18 +517,18 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
         fastMode: true,
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("ignores claude fast mode for non-opus models", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
@@ -544,16 +544,16 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.equal(createInput?.options.settings, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("treats ultrathink as a prompt keyword instead of a session effort", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
       const session = yield* adapter.startSession({
@@ -582,19 +582,19 @@ describe("ClaudeAdapterLive", () => {
         },
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.equal(createInput?.options.effort, "high");
       const promptText = yield* Effect.promise(() => readFirstPromptText(createInput));
       assert.equal(promptText, "Ultrathink:\nInvestigate the edge cases");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("embeds image attachments in Claude user messages", () => {
     const baseDir = mkdtempSync(path.join(os.tmpdir(), "claude-attachments-"));
-    const harness = makeHarness({
+    const forma = makeHarness({
       cwd: "/tmp/project-claude-attachments",
       baseDir,
     });
@@ -634,7 +634,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [attachment],
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       const promptMessage = yield* Effect.promise(() => readFirstPromptMessage(createInput));
       assert.isDefined(promptMessage);
       assert.deepEqual(promptMessage?.message.content, [
@@ -653,12 +653,12 @@ describe("ClaudeAdapterLive", () => {
       ]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("maps Claude stream/runtime messages to canonical provider runtime events", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -683,7 +683,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-1",
         uuid: "stream-0",
@@ -698,7 +698,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-1",
         uuid: "stream-1",
@@ -713,7 +713,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-1",
         uuid: "stream-2",
@@ -724,7 +724,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-1",
         uuid: "stream-3",
@@ -743,7 +743,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-1",
         uuid: "stream-4",
@@ -754,7 +754,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "assistant",
         session_id: "sdk-session-1",
         uuid: "assistant-1",
@@ -765,7 +765,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "result",
         subtype: "success",
         is_error: false,
@@ -830,12 +830,12 @@ describe("ClaudeAdapterLive", () => {
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("maps Claude reasoning deltas, streamed tool inputs, and tool results", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -856,7 +856,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-tool-streams",
         uuid: "stream-thinking",
@@ -871,7 +871,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-tool-streams",
         uuid: "stream-tool-start",
@@ -888,7 +888,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-tool-streams",
         uuid: "stream-tool-input-1",
@@ -903,7 +903,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-tool-streams",
         uuid: "stream-tool-stop",
@@ -914,7 +914,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "user",
         session_id: "sdk-session-tool-streams",
         uuid: "user-tool-result",
@@ -931,7 +931,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "result",
         subtype: "success",
         is_error: false,
@@ -1009,12 +1009,12 @@ describe("ClaudeAdapterLive", () => {
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("falls back to a default plan step label for blank TodoWrite content", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -1035,7 +1035,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-todo-plan",
         uuid: "stream-todo-start",
@@ -1052,7 +1052,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-todo-plan",
         uuid: "stream-todo-input",
@@ -1068,7 +1068,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-todo-plan",
         uuid: "stream-todo-stop",
@@ -1079,7 +1079,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "result",
         subtype: "success",
         is_error: false,
@@ -1100,12 +1100,12 @@ describe("ClaudeAdapterLive", () => {
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("classifies Claude Task tool invocations as collaboration agent work", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -1126,7 +1126,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-task",
         uuid: "stream-task-1",
@@ -1147,7 +1147,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "assistant",
         session_id: "sdk-session-task",
         uuid: "assistant-task-1",
@@ -1158,7 +1158,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "result",
         subtype: "success",
         is_error: false,
@@ -1176,12 +1176,12 @@ describe("ClaudeAdapterLive", () => {
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("treats user-aborted Claude results as interrupted without a runtime error", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -1202,7 +1202,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      harness.query.emit({
+      forma.query.emit({
         type: "result",
         subtype: "error_during_execution",
         is_error: false,
@@ -1235,12 +1235,12 @@ describe("ClaudeAdapterLive", () => {
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("closes the session when the Claude stream aborts after a turn starts", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const context = yield* Effect.context<never>();
       const runFork = Effect.runForkWith(context);
@@ -1268,7 +1268,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      harness.query.fail(new Error("All fibers interrupted without error"));
+      forma.query.fail(new Error("All fibers interrupted without error"));
 
       yield* Effect.yieldNow;
       yield* Effect.yieldNow;
@@ -1300,10 +1300,10 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(yield* adapter.hasSession(THREAD_ID), false);
       const sessions = yield* adapter.listSessions();
       assert.equal(sessions.length, 0);
-      assert.equal(harness.query.closeCalls, 1);
+      assert.equal(forma.query.closeCalls, 1);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
@@ -1444,7 +1444,7 @@ describe("ClaudeAdapterLive", () => {
   });
 
   it.effect("forwards Claude task progress summaries for subagent updates", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -1459,7 +1459,7 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      harness.query.emit({
+      forma.query.emit({
         type: "system",
         subtype: "task_progress",
         task_id: "task-subagent-1",
@@ -1486,12 +1486,12 @@ describe("ClaudeAdapterLive", () => {
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("emits thread token usage updates from Claude task progress", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -1506,7 +1506,7 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      harness.query.emit({
+      forma.query.emit({
         type: "system",
         subtype: "task_progress",
         task_id: "task-usage-1",
@@ -1540,12 +1540,12 @@ describe("ClaudeAdapterLive", () => {
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("emits Claude context window on result completion usage snapshots", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -1566,7 +1566,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      harness.query.emit({
+      forma.query.emit({
         type: "result",
         subtype: "success",
         is_error: false,
@@ -1589,7 +1589,7 @@ describe("ClaudeAdapterLive", () => {
           },
         },
       } as unknown as SDKMessage);
-      harness.query.finish();
+      forma.query.finish();
 
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
       const usageEvent = runtimeEvents.find((event) => event.type === "thread.token-usage.updated");
@@ -1607,12 +1607,12 @@ describe("ClaudeAdapterLive", () => {
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("clamps oversized Claude usage to the reported context window", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -1633,7 +1633,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      harness.query.emit({
+      forma.query.emit({
         type: "result",
         subtype: "success",
         is_error: false,
@@ -1653,7 +1653,7 @@ describe("ClaudeAdapterLive", () => {
           },
         },
       } as unknown as SDKMessage);
-      harness.query.finish();
+      forma.query.finish();
 
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
       const usageEvent = runtimeEvents.find((event) => event.type === "thread.token-usage.updated");
@@ -1670,14 +1670,14 @@ describe("ClaudeAdapterLive", () => {
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect(
     "preserves oversized Claude result totals after task progress snapshots are recorded",
     () => {
-      const harness = makeHarness();
+      const forma = makeHarness();
       return Effect.gen(function* () {
         const adapter = yield* ClaudeAdapter;
 
@@ -1698,7 +1698,7 @@ describe("ClaudeAdapterLive", () => {
           attachments: [],
         });
 
-        harness.query.emit({
+        forma.query.emit({
           type: "system",
           subtype: "task_progress",
           task_id: "task-usage-clamped",
@@ -1710,7 +1710,7 @@ describe("ClaudeAdapterLive", () => {
           uuid: "task-usage-progress-clamped",
         } as unknown as SDKMessage);
 
-        harness.query.emit({
+        forma.query.emit({
           type: "result",
           subtype: "success",
           is_error: false,
@@ -1730,7 +1730,7 @@ describe("ClaudeAdapterLive", () => {
             },
           },
         } as unknown as SDKMessage);
-        harness.query.finish();
+        forma.query.finish();
 
         const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
         const usageEvents = runtimeEvents.filter(
@@ -1750,7 +1750,7 @@ describe("ClaudeAdapterLive", () => {
         }
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
-        Effect.provide(harness.layer),
+        Effect.provide(forma.layer),
       );
     },
   );
@@ -1758,7 +1758,7 @@ describe("ClaudeAdapterLive", () => {
   it.effect(
     "emits completion only after turn result when assistant frames arrive before deltas",
     () => {
-      const harness = makeHarness();
+      const forma = makeHarness();
       return Effect.gen(function* () {
         const adapter = yield* ClaudeAdapter;
 
@@ -1779,7 +1779,7 @@ describe("ClaudeAdapterLive", () => {
           attachments: [],
         });
 
-        harness.query.emit({
+        forma.query.emit({
           type: "assistant",
           session_id: "sdk-session-early-assistant",
           uuid: "assistant-early",
@@ -1792,7 +1792,7 @@ describe("ClaudeAdapterLive", () => {
           },
         } as unknown as SDKMessage);
 
-        harness.query.emit({
+        forma.query.emit({
           type: "stream_event",
           session_id: "sdk-session-early-assistant",
           uuid: "stream-early",
@@ -1807,7 +1807,7 @@ describe("ClaudeAdapterLive", () => {
           },
         } as unknown as SDKMessage);
 
-        harness.query.emit({
+        forma.query.emit({
           type: "result",
           subtype: "success",
           is_error: false,
@@ -1843,13 +1843,13 @@ describe("ClaudeAdapterLive", () => {
         }
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
-        Effect.provide(harness.layer),
+        Effect.provide(forma.layer),
       );
     },
   );
 
   it.effect("creates a fresh assistant message when Claude reuses a text block index", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -1870,7 +1870,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-reused-text-index",
         uuid: "stream-reused-start-1",
@@ -1885,7 +1885,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-reused-text-index",
         uuid: "stream-reused-delta-1",
@@ -1900,7 +1900,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-reused-text-index",
         uuid: "stream-reused-stop-1",
@@ -1911,7 +1911,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-reused-text-index",
         uuid: "stream-reused-start-2",
@@ -1926,7 +1926,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-reused-text-index",
         uuid: "stream-reused-delta-2",
@@ -1941,7 +1941,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-reused-text-index",
         uuid: "stream-reused-stop-2",
@@ -1952,7 +1952,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "result",
         subtype: "success",
         is_error: false,
@@ -2010,12 +2010,12 @@ describe("ClaudeAdapterLive", () => {
       );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("falls back to assistant payload text when stream deltas are absent", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -2036,7 +2036,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      harness.query.emit({
+      forma.query.emit({
         type: "assistant",
         session_id: "sdk-session-fallback-text",
         uuid: "assistant-fallback",
@@ -2047,7 +2047,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "result",
         subtype: "success",
         is_error: false,
@@ -2079,12 +2079,12 @@ describe("ClaudeAdapterLive", () => {
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("segments Claude assistant text blocks around tool calls", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -2105,7 +2105,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-interleaved",
         uuid: "stream-text-1-start",
@@ -2120,7 +2120,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-interleaved",
         uuid: "stream-text-1-delta",
@@ -2135,7 +2135,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-interleaved",
         uuid: "stream-text-1-stop",
@@ -2146,7 +2146,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-interleaved",
         uuid: "stream-tool-start",
@@ -2166,7 +2166,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-interleaved",
         uuid: "stream-tool-stop",
@@ -2177,7 +2177,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "user",
         session_id: "sdk-session-interleaved",
         uuid: "user-tool-result-interleaved",
@@ -2194,7 +2194,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-interleaved",
         uuid: "stream-text-2-start",
@@ -2209,7 +2209,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-interleaved",
         uuid: "stream-text-2-delta",
@@ -2224,7 +2224,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-interleaved",
         uuid: "stream-text-2-stop",
@@ -2235,7 +2235,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "result",
         subtype: "success",
         is_error: false,
@@ -2301,12 +2301,12 @@ describe("ClaudeAdapterLive", () => {
       );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("does not fabricate provider thread ids before first SDK session_id", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -2329,7 +2329,7 @@ describe("ClaudeAdapterLive", () => {
       });
       assert.equal(turn.threadId, THREAD_ID);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-thread-real",
         uuid: "stream-thread-real",
@@ -2342,7 +2342,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "result",
         subtype: "success",
         is_error: false,
@@ -2379,12 +2379,12 @@ describe("ClaudeAdapterLive", () => {
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("bridges approval request/response lifecycle through canUseTool", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -2403,7 +2403,7 @@ describe("ClaudeAdapterLive", () => {
       });
       yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-approval-1",
         uuid: "stream-approval-thread",
@@ -2422,7 +2422,7 @@ describe("ClaudeAdapterLive", () => {
         return;
       }
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       const canUseTool = createInput?.options.canUseTool;
       assert.equal(typeof canUseTool, "function");
       if (!canUseTool) {
@@ -2488,12 +2488,12 @@ describe("ClaudeAdapterLive", () => {
       assert.equal((permissionResult as PermissionResult).behavior, "allow");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("classifies Agent tools and read-only Claude tools correctly for approvals", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -2505,7 +2505,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       const canUseTool = createInput?.options.canUseTool;
       assert.equal(typeof canUseTool, "function");
       if (!canUseTool) {
@@ -2561,12 +2561,12 @@ describe("ClaudeAdapterLive", () => {
       yield* Effect.promise(() => grepPermissionPromise);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("passes Claude resume ids without pinning a stale assistant checkpoint", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -2590,18 +2590,18 @@ describe("ClaudeAdapterLive", () => {
         turnCount: 3,
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       assert.equal(createInput?.options.resume, "550e8400-e29b-41d4-a716-446655440000");
       assert.equal(createInput?.options.sessionId, undefined);
       assert.equal(createInput?.options.resumeSessionAt, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("uses an app-generated Claude session id for fresh sessions", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -2611,7 +2611,7 @@ describe("ClaudeAdapterLive", () => {
         runtimeMode: "full-access",
       });
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       const sessionResumeCursor = session.resumeCursor as {
         threadId?: string;
         resume?: string;
@@ -2628,14 +2628,14 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(createInput?.options.sessionId, sessionResumeCursor.resume);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect(
     "supports rollbackThread by trimming in-memory turns and preserving earlier turns",
     () => {
-      const harness = makeHarness();
+      const forma = makeHarness();
       return Effect.gen(function* () {
         const adapter = yield* ClaudeAdapter;
 
@@ -2656,7 +2656,7 @@ describe("ClaudeAdapterLive", () => {
           (event) => event.type === "turn.completed",
         ).pipe(Stream.runHead, Effect.forkChild);
 
-        harness.query.emit({
+        forma.query.emit({
           type: "result",
           subtype: "success",
           is_error: false,
@@ -2682,7 +2682,7 @@ describe("ClaudeAdapterLive", () => {
           (event) => event.type === "turn.completed",
         ).pipe(Stream.runHead, Effect.forkChild);
 
-        harness.query.emit({
+        forma.query.emit({
           type: "result",
           subtype: "success",
           is_error: false,
@@ -2709,13 +2709,13 @@ describe("ClaudeAdapterLive", () => {
         assert.equal(threadAfterRollback.turns[0]?.id, firstTurn.turnId);
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
-        Effect.provide(harness.layer),
+        Effect.provide(forma.layer),
       );
     },
   );
 
   it.effect("updates model on sendTurn when model override is provided", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -2734,17 +2734,17 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6"]);
+      assert.deepEqual(forma.query.setModelCalls, ["claude-opus-4-6"]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect(
     "does not re-set the Claude model when the session already uses the same effective API model",
     () => {
-      const harness = makeHarness();
+      const forma = makeHarness();
       return Effect.gen(function* () {
         const adapter = yield* ClaudeAdapter;
         const modelSelection = {
@@ -2772,16 +2772,16 @@ describe("ClaudeAdapterLive", () => {
           attachments: [],
         });
 
-        assert.deepEqual(harness.query.setModelCalls, []);
+        assert.deepEqual(forma.query.setModelCalls, []);
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
-        Effect.provide(harness.layer),
+        Effect.provide(forma.layer),
       );
     },
   );
 
   it.effect("re-sets the Claude model when the effective API model changes", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -2813,15 +2813,15 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6[1m]", "claude-opus-4-6"]);
+      assert.deepEqual(forma.query.setModelCalls, ["claude-opus-4-6[1m]", "claude-opus-4-6"]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("sets plan permission mode on sendTurn when interactionMode is plan", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -2837,15 +2837,15 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      assert.deepEqual(harness.query.setPermissionModeCalls, ["plan"]);
+      assert.deepEqual(forma.query.setPermissionModeCalls, ["plan"]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("restores the base permission mode on sendTurn when interactionMode is ask", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -2861,10 +2861,10 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      assert.deepEqual(harness.query.setPermissionModeCalls, ["bypassPermissions"]);
+      assert.deepEqual(forma.query.setPermissionModeCalls, ["bypassPermissions"]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
@@ -2875,7 +2875,7 @@ describe("ClaudeAdapterLive", () => {
   ])(
     "restores $expectedBase permission mode after plan turn ($runtimeMode)",
     ({ runtimeMode, expectedBase }) => {
-      const harness = makeHarness();
+      const forma = makeHarness();
       return Effect.gen(function* () {
         const adapter = yield* ClaudeAdapter;
 
@@ -2899,7 +2899,7 @@ describe("ClaudeAdapterLive", () => {
           (event) => event.type === "turn.completed",
         ).pipe(Stream.runHead, Effect.forkChild);
 
-        harness.query.emit({
+        forma.query.emit({
           type: "result",
           subtype: "success",
           is_error: false,
@@ -2918,16 +2918,16 @@ describe("ClaudeAdapterLive", () => {
           attachments: [],
         });
 
-        assert.deepEqual(harness.query.setPermissionModeCalls, ["plan", expectedBase]);
+        assert.deepEqual(forma.query.setPermissionModeCalls, ["plan", expectedBase]);
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
-        Effect.provide(harness.layer),
+        Effect.provide(forma.layer),
       );
     },
   );
 
   it.effect("does not call setPermissionMode when interactionMode is absent", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -2942,15 +2942,15 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      assert.deepEqual(harness.query.setPermissionModeCalls, []);
+      assert.deepEqual(forma.query.setPermissionModeCalls, []);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("captures ExitPlanMode as a proposed plan and denies auto-exit", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -2970,7 +2970,7 @@ describe("ClaudeAdapterLive", () => {
       });
       yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       const canUseTool = createInput?.options.canUseTool;
       assert.equal(typeof canUseTool, "function");
       if (!canUseTool) {
@@ -3011,12 +3011,12 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(deniedResult.message?.includes("captured your proposed plan"), true);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("extracts proposed plans from assistant ExitPlanMode snapshots", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -3041,7 +3041,7 @@ describe("ClaudeAdapterLive", () => {
         (event) => event.type === "turn.proposed.completed",
       ).pipe(Stream.runHead, Effect.forkChild);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "assistant",
         session_id: "sdk-session-exit-plan",
         uuid: "assistant-exit-plan",
@@ -3082,12 +3082,12 @@ describe("ClaudeAdapterLive", () => {
       });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("handles AskUserQuestion via user-input.requested/resolved lifecycle", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -3108,7 +3108,7 @@ describe("ClaudeAdapterLive", () => {
       });
       yield* Stream.take(adapter.streamEvents, 1).pipe(Stream.runDrain);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-user-input-1",
         uuid: "stream-user-input-thread",
@@ -3127,7 +3127,7 @@ describe("ClaudeAdapterLive", () => {
         return;
       }
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       const canUseTool = createInput?.options.canUseTool;
       assert.equal(typeof canUseTool, "function");
       if (!canUseTool) {
@@ -3204,12 +3204,12 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(updatedInput.questions, askInput.questions);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("routes AskUserQuestion through user-input flow even in full-access mode", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -3223,7 +3223,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       const canUseTool = createInput?.options.canUseTool;
       assert.equal(typeof canUseTool, "function");
       if (!canUseTool) {
@@ -3272,12 +3272,12 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(updatedInput.answers, { "Deploy to which env?": "Staging" });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
   it.effect("denies AskUserQuestion when the waiting turn is aborted", () => {
-    const harness = makeHarness();
+    const forma = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
@@ -3289,7 +3289,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* Stream.take(adapter.streamEvents, 3).pipe(Stream.runDrain);
 
-      const createInput = harness.getLastCreateQueryInput();
+      const createInput = forma.getLastCreateQueryInput();
       const canUseTool = createInput?.options.canUseTool;
       assert.equal(typeof canUseTool, "function");
       if (!canUseTool) {
@@ -3340,7 +3340,7 @@ describe("ClaudeAdapterLive", () => {
       } satisfies PermissionResult);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 
@@ -3354,7 +3354,7 @@ describe("ClaudeAdapterLive", () => {
       };
     }> = [];
     const nativeThreadIds: Array<string | null> = [];
-    const harness = makeHarness({
+    const forma = makeHarness({
       nativeEventLogger: {
         filePath: "memory://claude-native-events",
         write: (event, threadId) => {
@@ -3384,7 +3384,7 @@ describe("ClaudeAdapterLive", () => {
         (event) => event.type === "turn.completed",
       ).pipe(Stream.runHead, Effect.forkChild);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "stream_event",
         session_id: "sdk-session-native-log",
         uuid: "stream-native-log",
@@ -3399,7 +3399,7 @@ describe("ClaudeAdapterLive", () => {
         },
       } as unknown as SDKMessage);
 
-      harness.query.emit({
+      forma.query.emit({
         type: "result",
         subtype: "success",
         is_error: false,
@@ -3442,7 +3442,7 @@ describe("ClaudeAdapterLive", () => {
       );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
-      Effect.provide(harness.layer),
+      Effect.provide(forma.layer),
     );
   });
 });

@@ -1,5 +1,5 @@
-import { scopedProjectKey, scopeProjectRef } from "@harness/client-runtime";
-import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@harness/contracts";
+import { scopedProjectKey, scopeProjectRef } from "@forma/client-runtime";
+import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@forma/contracts";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 import type { Project } from "./types";
 

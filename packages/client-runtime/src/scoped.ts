@@ -4,7 +4,7 @@ import type {
   ScopedProjectRef,
   ScopedThreadRef,
   ThreadId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 
 export function scopeProjectRef(
   environmentId: EnvironmentId,

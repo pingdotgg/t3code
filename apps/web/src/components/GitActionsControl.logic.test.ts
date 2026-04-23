@@ -1,4 +1,4 @@
-import type { GitStatusResult } from "@harness/contracts";
+import type { GitStatusResult } from "@forma/contracts";
 import { assert, describe, it } from "vitest";
 import {
   buildGitActionProgressStages,
@@ -1023,8 +1023,8 @@ describe("resolveLiveThreadBranchUpdate", () => {
 
   it("does not regress a semantic thread branch back to a temporary worktree branch", () => {
     const update = resolveLiveThreadBranchUpdate({
-      threadBranch: "harness/github-query-rate-limit",
-      gitStatus: status({ branch: "harness/bda76797" }),
+      threadBranch: "forma/github-query-rate-limit",
+      gitStatus: status({ branch: "forma/bda76797" }),
     });
 
     assert.equal(update, null);

@@ -1,4 +1,4 @@
-import type { ServerProvider } from "@harness/contracts";
+import type { ServerProvider } from "@forma/contracts";
 import type { Effect, Stream } from "effect";
 
 export interface ServerProviderShape {

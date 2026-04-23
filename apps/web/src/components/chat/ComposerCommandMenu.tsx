@@ -5,7 +5,7 @@ import {
   type ServerLocalAgentSkill,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { BotIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 

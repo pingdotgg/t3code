@@ -1,7 +1,7 @@
 import "../index.css";
 
-import { scopeThreadRef } from "@harness/client-runtime";
-import { ThreadId } from "@harness/contracts";
+import { scopeThreadRef } from "@forma/client-runtime";
+import { ThreadId } from "@forma/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 

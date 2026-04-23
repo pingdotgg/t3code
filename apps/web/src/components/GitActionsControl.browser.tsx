@@ -1,5 +1,5 @@
-import { scopeThreadRef } from "@harness/client-runtime";
-import { ThreadId } from "@harness/contracts";
+import { scopeThreadRef } from "@forma/client-runtime";
+import { ThreadId } from "@forma/contracts";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -252,7 +252,7 @@ function findButtonByText(text: string): HTMLButtonElement | null {
   ) ?? null) as HTMLButtonElement | null;
 }
 
-function Harness() {
+function Forma() {
   const [activeThreadRef, setActiveThreadRef] = useState(
     scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID),
   );
@@ -285,7 +285,7 @@ describe("GitActionsControl thread-scoped progress toast", () => {
 
     const host = document.createElement("div");
     document.body.append(host);
-    const screen = await render(<Harness />, { container: host });
+    const screen = await render(<Forma />, { container: host });
 
     try {
       const quickActionButton = findButtonByText("Push & create PR");

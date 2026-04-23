@@ -6,7 +6,7 @@ import type {
   GitStatusLocalResult,
   GitStatusResult,
   GitStatusStreamEvent,
-} from "@harness/contracts";
+} from "@forma/contracts";
 
 export interface GitStatusBroadcasterShape {
   readonly getStatus: (
@@ -24,4 +24,4 @@ export interface GitStatusBroadcasterShape {
 export class GitStatusBroadcaster extends Context.Service<
   GitStatusBroadcaster,
   GitStatusBroadcasterShape
->()("harness/git/Services/GitStatusBroadcaster") {}
+>()("forma/git/Services/GitStatusBroadcaster") {}

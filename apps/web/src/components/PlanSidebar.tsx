@@ -1,6 +1,6 @@
 import { memo, useState, useCallback } from "react";
-import type { EnvironmentId } from "@harness/contracts";
-import { type TimestampFormat } from "@harness/contracts/settings";
+import type { EnvironmentId } from "@forma/contracts";
+import { type TimestampFormat } from "@forma/contracts/settings";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";

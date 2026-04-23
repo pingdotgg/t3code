@@ -1,4 +1,4 @@
-import { MAX_KEYBINDING_VALUE_LENGTH, type KeybindingCommand } from "@harness/contracts";
+import { MAX_KEYBINDING_VALUE_LENGTH, type KeybindingCommand } from "@forma/contracts";
 import { describe, expect, it } from "vitest";
 
 import { commandForProjectScript } from "../projectScripts";

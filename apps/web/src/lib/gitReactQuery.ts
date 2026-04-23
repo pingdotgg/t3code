@@ -3,7 +3,7 @@ import {
   type GitActionProgressEvent,
   type GitStackedAction,
   type ThreadId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import {
   infiniteQueryOptions,
   mutationOptions,

@@ -8,7 +8,7 @@ import type {
   AuthRevokePairingLinkInput,
   AuthSessionId,
   AuthSessionState,
-} from "@harness/contracts";
+} from "@forma/contracts";
 
 import {
   getPairingTokenFromUrl,

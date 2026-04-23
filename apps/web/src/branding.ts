@@ -1,4 +1,4 @@
-import type { DesktopAppBranding } from "@harness/contracts";
+import type { DesktopAppBranding } from "@forma/contracts";
 
 function readInjectedDesktopAppBranding(): DesktopAppBranding | null {
   if (typeof window === "undefined") {

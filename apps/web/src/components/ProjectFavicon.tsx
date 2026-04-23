@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@harness/contracts";
+import type { EnvironmentId } from "@forma/contracts";
 import { FolderIcon } from "lucide-react";
 import { useState } from "react";
 import { resolveEnvironmentHttpUrl } from "../environments/runtime";

@@ -1,4 +1,4 @@
-import type { ProviderKind } from "@harness/contracts";
+import type { ProviderKind } from "@forma/contracts";
 
 /**
  * Model slugs that show a gold "NEW" chip in the model picker list.

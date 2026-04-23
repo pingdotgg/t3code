@@ -5,7 +5,7 @@ import { expect } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
 import { CodexTextGenerationLive } from "./CodexTextGeneration.ts";
-import { TextGenerationError } from "@harness/contracts";
+import { TextGenerationError } from "@forma/contracts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 
@@ -18,7 +18,7 @@ const CodexTextGenerationTestLayer = CodexTextGenerationLive.pipe(
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
-      prefix: "harness-codex-text-generation-test-",
+      prefix: "forma-codex-text-generation-test-",
     }),
   ),
   Layer.provideMerge(NodeServices.layer),
@@ -136,9 +136,9 @@ function makeFakeCodexBinary(
           ? [`printf "%s\\n" ${JSON.stringify(input.stderr)} >&2`]
           : []),
         'if [ -n "$output_path" ]; then',
-        "  cat > \"$output_path\" <<'__HARNESS_FAKE_CODEX_OUTPUT__'",
+        "  cat > \"$output_path\" <<'__FORMA_FAKE_CODEX_OUTPUT__'",
         input.output,
-        "__HARNESS_FAKE_CODEX_OUTPUT__",
+        "__FORMA_FAKE_CODEX_OUTPUT__",
         "fi",
         `exit ${input.exitCode ?? 0}`,
         "",
@@ -166,7 +166,7 @@ function withFakeCodexEnv<A, E, R>(
   return Effect.acquireUseRelease(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "harness-codex-text-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "forma-codex-text-" });
       const codexPath = yield* makeFakeCodexBinary(tempDir, input);
       const serverSettings = yield* ServerSettingsService;
       const previousSettings = yield* serverSettings.getSettings;

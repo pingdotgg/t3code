@@ -1,4 +1,4 @@
-import type { ServerAuthDescriptor } from "@harness/contracts";
+import type { ServerAuthDescriptor } from "@forma/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 
@@ -7,5 +7,5 @@ export interface ServerAuthPolicyShape {
 }
 
 export class ServerAuthPolicy extends Context.Service<ServerAuthPolicy, ServerAuthPolicyShape>()(
-  "harness/auth/Services/ServerAuthPolicy",
+  "forma/auth/Services/ServerAuthPolicy",
 ) {}

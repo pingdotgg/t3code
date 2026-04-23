@@ -1,5 +1,5 @@
-import { type ServerLifecycleWelcomePayload } from "@harness/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@harness/client-runtime";
+import { type ServerLifecycleWelcomePayload } from "@forma/contracts";
+import { scopedProjectKey, scopeProjectRef } from "@forma/client-runtime";
 import {
   Outlet,
   createRootRouteWithContext,

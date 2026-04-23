@@ -1,4 +1,4 @@
-import type { AuthClientMetadata, AuthClientMetadataDeviceType } from "@harness/contracts";
+import type { AuthClientMetadata, AuthClientMetadataDeviceType } from "@forma/contracts";
 import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as Crypto from "node:crypto";
 

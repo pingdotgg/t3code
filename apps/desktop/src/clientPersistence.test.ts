@@ -6,7 +6,7 @@ import {
   EnvironmentId,
   type ClientSettings,
   type PersistedSavedEnvironmentRecord,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 function makeTempPath(fileName: string): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "harness-client-persistence-test-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "forma-client-persistence-test-"));
   tempDirectories.push(directory);
   return path.join(directory, fileName);
 }

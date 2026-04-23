@@ -1,4 +1,4 @@
-import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@harness/contracts";
+import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@forma/contracts";
 
 export interface KnownEnvironmentConnectionTarget {
   readonly httpBaseUrl: string;

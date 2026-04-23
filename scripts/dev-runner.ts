@@ -4,7 +4,7 @@ import * as NodeOS from "node:os";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { NetService } from "@harness/shared/Net";
+import { NetService } from "@forma/shared/Net";
 import { Config, Data, Effect, Hash, Layer, Logger, Option, Path, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { ChildProcess } from "effect/unstable/process";
@@ -16,8 +16,8 @@ const MAX_PORT = 65535;
 const DESKTOP_DEV_LOOPBACK_HOST = "127.0.0.1";
 const DEV_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::1", "::"] as const;
 
-export const DEFAULT_HARNESS_HOME = Effect.map(Effect.service(Path.Path), (path) =>
-  path.join(NodeOS.homedir(), ".harness"),
+export const DEFAULT_FORMA_HOME = Effect.map(Effect.service(Path.Path), (path) =>
+  path.join(NodeOS.homedir(), ".forma"),
 );
 
 const MODE_ARGS = {
@@ -25,14 +25,14 @@ const MODE_ARGS = {
     "run",
     "dev",
     "--ui=tui",
-    "--filter=@harness/contracts",
-    "--filter=@harness/web",
-    "--filter=harness",
+    "--filter=@forma/contracts",
+    "--filter=@forma/web",
+    "--filter=forma",
     "--parallel",
   ],
-  "dev:server": ["run", "dev", "--filter=harness"],
-  "dev:web": ["run", "dev", "--filter=@harness/web"],
-  "dev:desktop": ["run", "dev", "--filter=@harness/desktop", "--filter=@harness/web", "--parallel"],
+  "dev:server": ["run", "dev", "--filter=forma"],
+  "dev:web": ["run", "dev", "--filter=@forma/web"],
+  "dev:desktop": ["run", "dev", "--filter=@forma/desktop", "--filter=@forma/web", "--parallel"],
 } as const satisfies Record<string, ReadonlyArray<string>>;
 
 type DevMode = keyof typeof MODE_ARGS;
@@ -72,8 +72,8 @@ const optionalUrlConfig = (name: string): Config.Config<URL | undefined> =>
   );
 
 const OffsetConfig = Config.all({
-  portOffset: optionalIntegerConfig("HARNESS_PORT_OFFSET"),
-  devInstance: optionalStringConfig("HARNESS_DEV_INSTANCE"),
+  portOffset: optionalIntegerConfig("FORMA_PORT_OFFSET"),
+  devInstance: optionalStringConfig("FORMA_DEV_INSTANCE"),
 });
 
 export function resolveOffset(config: {
@@ -82,11 +82,11 @@ export function resolveOffset(config: {
 }): { readonly offset: number; readonly source: string } {
   if (config.portOffset !== undefined) {
     if (config.portOffset < 0) {
-      throw new Error(`Invalid HARNESS_PORT_OFFSET: ${config.portOffset}`);
+      throw new Error(`Invalid FORMA_PORT_OFFSET: ${config.portOffset}`);
     }
     return {
       offset: config.portOffset,
-      source: `HARNESS_PORT_OFFSET=${config.portOffset}`,
+      source: `FORMA_PORT_OFFSET=${config.portOffset}`,
     };
   }
 
@@ -96,11 +96,11 @@ export function resolveOffset(config: {
   }
 
   if (/^\d+$/.test(seed)) {
-    return { offset: Number(seed), source: `numeric HARNESS_DEV_INSTANCE=${seed}` };
+    return { offset: Number(seed), source: `numeric FORMA_DEV_INSTANCE=${seed}` };
   }
 
   const offset = ((Hash.string(seed) >>> 0) % MAX_HASH_OFFSET) + 1;
-  return { offset, source: `hashed HARNESS_DEV_INSTANCE=${seed}` };
+  return { offset, source: `hashed FORMA_DEV_INSTANCE=${seed}` };
 }
 
 function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, never, Path.Path> {
@@ -112,7 +112,7 @@ function resolveBaseDir(baseDir: string | undefined): Effect.Effect<string, neve
       return path.resolve(configured);
     }
 
-    return yield* DEFAULT_HARNESS_HOME;
+    return yield* DEFAULT_FORMA_HOME;
   });
 }
 
@@ -121,7 +121,7 @@ interface CreateDevRunnerEnvInput {
   readonly baseEnv: NodeJS.ProcessEnv;
   readonly serverOffset: number;
   readonly webOffset: number;
-  readonly harnessHome: string | undefined;
+  readonly formaHome: string | undefined;
   readonly noBrowser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -135,7 +135,7 @@ export function createDevRunnerEnv({
   baseEnv,
   serverOffset,
   webOffset,
-  harnessHome,
+  formaHome,
   noBrowser,
   autoBootstrapProjectFromCwd,
   logWebSocketEvents,
@@ -146,7 +146,7 @@ export function createDevRunnerEnv({
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
-    const resolvedBaseDir = yield* resolveBaseDir(harnessHome);
+    const resolvedBaseDir = yield* resolveBaseDir(formaHome);
     const isDesktopMode = mode === "dev:desktop";
 
     const output: NodeJS.ProcessEnv = {
@@ -155,59 +155,59 @@ export function createDevRunnerEnv({
       VITE_DEV_SERVER_URL:
         devUrl?.toString() ??
         `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
-      HARNESS_HOME: resolvedBaseDir,
+      FORMA_HOME: resolvedBaseDir,
     };
 
     if (!isDesktopMode) {
-      output.HARNESS_PORT = String(serverPort);
+      output.FORMA_PORT = String(serverPort);
       output.VITE_HTTP_URL = `http://localhost:${serverPort}`;
       output.VITE_WS_URL = `ws://localhost:${serverPort}`;
     } else {
-      output.HARNESS_PORT = String(serverPort);
+      output.FORMA_PORT = String(serverPort);
       output.VITE_HTTP_URL = `http://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
       output.VITE_WS_URL = `ws://${DESKTOP_DEV_LOOPBACK_HOST}:${serverPort}`;
-      delete output.HARNESS_MODE;
-      delete output.HARNESS_NO_BROWSER;
-      delete output.HARNESS_HOST;
+      delete output.FORMA_MODE;
+      delete output.FORMA_NO_BROWSER;
+      delete output.FORMA_HOST;
     }
 
     if (!isDesktopMode && host !== undefined) {
-      output.HARNESS_HOST = host;
+      output.FORMA_HOST = host;
     }
 
     if (!isDesktopMode && noBrowser !== undefined) {
-      output.HARNESS_NO_BROWSER = noBrowser ? "1" : "0";
+      output.FORMA_NO_BROWSER = noBrowser ? "1" : "0";
     } else if (!isDesktopMode) {
-      delete output.HARNESS_NO_BROWSER;
+      delete output.FORMA_NO_BROWSER;
     }
 
     if (autoBootstrapProjectFromCwd !== undefined) {
-      output.HARNESS_AUTO_BOOTSTRAP_PROJECT_FROM_CWD = autoBootstrapProjectFromCwd ? "1" : "0";
+      output.FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD = autoBootstrapProjectFromCwd ? "1" : "0";
     } else {
-      delete output.HARNESS_AUTO_BOOTSTRAP_PROJECT_FROM_CWD;
+      delete output.FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD;
     }
 
     if (logWebSocketEvents !== undefined) {
-      output.HARNESS_LOG_WS_EVENTS = logWebSocketEvents ? "1" : "0";
+      output.FORMA_LOG_WS_EVENTS = logWebSocketEvents ? "1" : "0";
     } else {
-      delete output.HARNESS_LOG_WS_EVENTS;
+      delete output.FORMA_LOG_WS_EVENTS;
     }
 
     if (mode === "dev") {
-      output.HARNESS_MODE = "web";
-      delete output.HARNESS_DESKTOP_WS_URL;
+      output.FORMA_MODE = "web";
+      delete output.FORMA_DESKTOP_WS_URL;
     }
 
     if (mode === "dev:server" || mode === "dev:web") {
-      output.HARNESS_MODE = "web";
-      delete output.HARNESS_DESKTOP_WS_URL;
+      output.FORMA_MODE = "web";
+      delete output.FORMA_DESKTOP_WS_URL;
     }
 
     if (isDesktopMode) {
       output.HOST = DESKTOP_DEV_LOOPBACK_HOST;
-      delete output.HARNESS_DESKTOP_WS_URL;
+      delete output.FORMA_DESKTOP_WS_URL;
       // Vite may start before Electron has spawned the backend; suppress noisy proxy ECONNREFUSED logs.
-      output.HARNESS_DESKTOP_DEV = "1";
+      output.FORMA_DESKTOP_DEV = "1";
     }
 
     return output;
@@ -366,7 +366,7 @@ export function resolveModePortOffsets<R = NetService>({
 
 interface DevRunnerCliInput {
   readonly mode: DevMode;
-  readonly harnessHome: string | undefined;
+  readonly formaHome: string | undefined;
   readonly noBrowser: boolean | undefined;
   readonly autoBootstrapProjectFromCwd: boolean | undefined;
   readonly logWebSocketEvents: boolean | undefined;
@@ -383,7 +383,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       Effect.mapError(
         (cause) =>
           new DevRunnerError({
-            message: "Failed to read HARNESS_PORT_OFFSET/HARNESS_DEV_INSTANCE configuration.",
+            message: "Failed to read FORMA_PORT_OFFSET/FORMA_DEV_INSTANCE configuration.",
             cause,
           }),
       ),
@@ -410,7 +410,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
       baseEnv: process.env,
       serverOffset,
       webOffset,
-      harnessHome: input.harnessHome,
+      formaHome: input.formaHome,
       noBrowser: input.noBrowser,
       autoBootstrapProjectFromCwd: input.autoBootstrapProjectFromCwd,
       logWebSocketEvents: input.logWebSocketEvents,
@@ -425,7 +425,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         : "";
 
     yield* Effect.logInfo(
-      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.HARNESS_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.HARNESS_HOME)}`,
+      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.FORMA_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.FORMA_HOME)}`,
     );
 
     if (input.dryRun) {
@@ -473,33 +473,33 @@ const devRunnerCli = Command.make("dev-runner", {
   mode: Argument.choice("mode", DEV_RUNNER_MODES).pipe(
     Argument.withDescription("Development mode to run."),
   ),
-  harnessHome: Flag.string("home-dir").pipe(
-    Flag.withDescription("Base directory for all Harness data (equivalent to HARNESS_HOME)."),
-    Flag.withFallbackConfig(optionalStringConfig("HARNESS_HOME")),
+  formaHome: Flag.string("home-dir").pipe(
+    Flag.withDescription("Base directory for all Forma data (equivalent to FORMA_HOME)."),
+    Flag.withFallbackConfig(optionalStringConfig("FORMA_HOME")),
   ),
   noBrowser: Flag.boolean("no-browser").pipe(
-    Flag.withDescription("Browser auto-open toggle (equivalent to HARNESS_NO_BROWSER)."),
-    Flag.withFallbackConfig(optionalBooleanConfig("HARNESS_NO_BROWSER")),
+    Flag.withDescription("Browser auto-open toggle (equivalent to FORMA_NO_BROWSER)."),
+    Flag.withFallbackConfig(optionalBooleanConfig("FORMA_NO_BROWSER")),
   ),
   autoBootstrapProjectFromCwd: Flag.boolean("auto-bootstrap-project-from-cwd").pipe(
     Flag.withDescription(
-      "Auto-bootstrap toggle (equivalent to HARNESS_AUTO_BOOTSTRAP_PROJECT_FROM_CWD).",
+      "Auto-bootstrap toggle (equivalent to FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD).",
     ),
-    Flag.withFallbackConfig(optionalBooleanConfig("HARNESS_AUTO_BOOTSTRAP_PROJECT_FROM_CWD")),
+    Flag.withFallbackConfig(optionalBooleanConfig("FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD")),
   ),
   logWebSocketEvents: Flag.boolean("log-websocket-events").pipe(
-    Flag.withDescription("WebSocket event logging toggle (equivalent to HARNESS_LOG_WS_EVENTS)."),
+    Flag.withDescription("WebSocket event logging toggle (equivalent to FORMA_LOG_WS_EVENTS)."),
     Flag.withAlias("log-ws-events"),
-    Flag.withFallbackConfig(optionalBooleanConfig("HARNESS_LOG_WS_EVENTS")),
+    Flag.withFallbackConfig(optionalBooleanConfig("FORMA_LOG_WS_EVENTS")),
   ),
   host: Flag.string("host").pipe(
-    Flag.withDescription("Server host/interface override (forwards to HARNESS_HOST)."),
-    Flag.withFallbackConfig(optionalStringConfig("HARNESS_HOST")),
+    Flag.withDescription("Server host/interface override (forwards to FORMA_HOST)."),
+    Flag.withFallbackConfig(optionalStringConfig("FORMA_HOST")),
   ),
   port: Flag.integer("port").pipe(
     Flag.withSchema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }))),
-    Flag.withDescription("Server port override (forwards to HARNESS_PORT)."),
-    Flag.withFallbackConfig(optionalPortConfig("HARNESS_PORT")),
+    Flag.withDescription("Server port override (forwards to FORMA_PORT)."),
+    Flag.withFallbackConfig(optionalPortConfig("FORMA_PORT")),
   ),
   devUrl: Flag.string("dev-url").pipe(
     Flag.withSchema(Schema.URLFromString),

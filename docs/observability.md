@@ -1,6 +1,6 @@
 # Observability
 
-Harness has one server-side observability model:
+Forma has one server-side observability model:
 
 - pretty logs go to stdout for humans
 - completed spans go to a local NDJSON trace file
@@ -22,7 +22,7 @@ If you want a log message to show up in the trace file, emit it inside an active
 
 ### Traces
 
-Completed spans are written as NDJSON records to `serverTracePath` (by default, `~/.harness/userdata/logs/server.trace.ndjson`).
+Completed spans are written as NDJSON records to `serverTracePath` (by default, `~/.forma/userdata/logs/server.trace.ndjson`).
 
 Important fields in each record:
 
@@ -65,7 +65,7 @@ You do not need any extra env vars. Just run the app normally and inspect `serve
 Examples:
 
 ```bash
-npx harness
+npx forma
 ```
 
 ```bash
@@ -99,16 +99,16 @@ Default Grafana login:
 #### 2. Export OTLP env vars
 
 ```bash
-export HARNESS_OTLP_TRACES_URL=http://localhost:4318/v1/traces
-export HARNESS_OTLP_METRICS_URL=http://localhost:4318/v1/metrics
-export HARNESS_OTLP_SERVICE_NAME=harness-local
+export FORMA_OTLP_TRACES_URL=http://localhost:4318/v1/traces
+export FORMA_OTLP_METRICS_URL=http://localhost:4318/v1/metrics
+export FORMA_OTLP_SERVICE_NAME=forma-local
 ```
 
 Optional:
 
 ```bash
-export HARNESS_TRACE_MIN_LEVEL=Info
-export HARNESS_TRACE_TIMING_ENABLED=true
+export FORMA_TRACE_MIN_LEVEL=Info
+export FORMA_TRACE_TIMING_ENABLED=true
 ```
 
 #### 3. Launch the app from that same shell
@@ -116,7 +116,7 @@ export HARNESS_TRACE_TIMING_ENABLED=true
 CLI:
 
 ```bash
-npx harness
+npx forma
 ```
 
 Monorepo web/server dev:
@@ -133,23 +133,23 @@ node --run dev:desktop
 
 Packaged desktop app:
 
-Launch the actual app executable from the same shell so the desktop app and embedded backend inherit `HARNESS_OTLP_*`.
+Launch the actual app executable from the same shell so the desktop app and embedded backend inherit `FORMA_OTLP_*`.
 
 macOS app bundle example:
 
 ```bash
-HARNESS_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
-HARNESS_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
-HARNESS_OTLP_SERVICE_NAME=harness-desktop \
-"/Applications/Harness.app/Contents/MacOS/Harness"
+FORMA_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
+FORMA_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
+FORMA_OTLP_SERVICE_NAME=forma-desktop \
+"/Applications/Forma.app/Contents/MacOS/Forma"
 ```
 
 Direct binary example:
 
 ```bash
-HARNESS_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
-HARNESS_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
-HARNESS_OTLP_SERVICE_NAME=harness-desktop \
+FORMA_OTLP_TRACES_URL=http://localhost:4318/v1/traces \
+FORMA_OTLP_METRICS_URL=http://localhost:4318/v1/metrics \
+FORMA_OTLP_SERVICE_NAME=forma-desktop \
 ./path/to/your/desktop-app-binary
 ```
 
@@ -168,7 +168,7 @@ The trace file is the fastest way to inspect raw span data.
 Tail it:
 
 ```bash
-tail -f "$HARNESS_HOME/userdata/logs/server.trace.ndjson"
+tail -f "$FORMA_HOME/userdata/logs/server.trace.ndjson"
 ```
 
 In monorepo dev, use:
@@ -185,7 +185,7 @@ jq -c 'select(.exit._tag != "Success") | {
   durationMs,
   exit,
   attributes
-}' "$HARNESS_HOME/userdata/logs/server.trace.ndjson"
+}' "$FORMA_HOME/userdata/logs/server.trace.ndjson"
 ```
 
 Show slow spans:
@@ -196,7 +196,7 @@ jq -c 'select(.durationMs > 1000) | {
   durationMs,
   traceId,
   spanId
-}' "$HARNESS_HOME/userdata/logs/server.trace.ndjson"
+}' "$FORMA_HOME/userdata/logs/server.trace.ndjson"
 ```
 
 Inspect embedded log events:
@@ -213,7 +213,7 @@ jq -c 'select(any(.events[]?; .attributes["effect.logLevel"] != null)) | {
         level: .attributes["effect.logLevel"]
       }
   ]
-}' "$HARNESS_HOME/userdata/logs/server.trace.ndjson"
+}' "$FORMA_HOME/userdata/logs/server.trace.ndjson"
 ```
 
 Follow one trace:
@@ -224,7 +224,7 @@ jq -r 'select(.traceId == "TRACE_ID_HERE") | [
   .spanId,
   (.parentSpanId // "-"),
   .durationMs
-] | @tsv' "$HARNESS_HOME/userdata/logs/server.trace.ndjson"
+] | @tsv' "$FORMA_HOME/userdata/logs/server.trace.ndjson"
 ```
 
 Filter orchestration commands:
@@ -235,7 +235,7 @@ jq -c 'select(.attributes["orchestration.command_type"] != null) | {
   durationMs,
   commandType: .attributes["orchestration.command_type"],
   aggregateKind: .attributes["orchestration.aggregate_kind"]
-}' "$HARNESS_HOME/userdata/logs/server.trace.ndjson"
+}' "$FORMA_HOME/userdata/logs/server.trace.ndjson"
 ```
 
 Filter git activity:
@@ -250,7 +250,7 @@ jq -c 'select(.attributes["git.operation"] != null) | {
     .events[]
     | select(.name == "git.hook.started" or .name == "git.hook.finished")
   ]
-}' "$HARNESS_HOME/userdata/logs/server.trace.ndjson"
+}' "$FORMA_HOME/userdata/logs/server.trace.ndjson"
 ```
 
 ### Use Tempo When You Need A Real Trace Viewer
@@ -272,7 +272,7 @@ Recommended flow in Grafana:
 
 Good first searches:
 
-- service name such as `harness-local`, `harness-dev`, or `harness-desktop`
+- service name such as `forma-local`, `forma-dev`, or `forma-desktop`
 - span names like `sql.execute`, `git.runCommand`, `provider.sendTurn`
 - orchestration spans with attributes like `orchestration.command_type`
 
@@ -358,7 +358,7 @@ If you need those later, add client-side instrumentation or a dedicated server f
 
 Usually one of these is true:
 
-- `HARNESS_OTLP_TRACES_URL` was not set
+- `FORMA_OTLP_TRACES_URL` was not set
 - the app was launched from a different environment than the one where you exported the vars
 - the app was not fully restarted after changing env
 - Grafana is looking at the wrong time range or service name
@@ -482,19 +482,19 @@ It provides:
 
 Local trace file:
 
-- `HARNESS_TRACE_FILE`: override trace file path
-- `HARNESS_TRACE_MAX_BYTES`: per-file rotation size, default `10485760`
-- `HARNESS_TRACE_MAX_FILES`: rotated file count, default `10`
-- `HARNESS_TRACE_BATCH_WINDOW_MS`: flush window, default `200`
-- `HARNESS_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
-- `HARNESS_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
+- `FORMA_TRACE_FILE`: override trace file path
+- `FORMA_TRACE_MAX_BYTES`: per-file rotation size, default `10485760`
+- `FORMA_TRACE_MAX_FILES`: rotated file count, default `10`
+- `FORMA_TRACE_BATCH_WINDOW_MS`: flush window, default `200`
+- `FORMA_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
+- `FORMA_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
 
 OTLP export:
 
-- `HARNESS_OTLP_TRACES_URL`: OTLP trace endpoint
-- `HARNESS_OTLP_METRICS_URL`: OTLP metric endpoint
-- `HARNESS_OTLP_EXPORT_INTERVAL_MS`: export interval, default `10000`
-- `HARNESS_OTLP_SERVICE_NAME`: service name, default `harness-server`
+- `FORMA_OTLP_TRACES_URL`: OTLP trace endpoint
+- `FORMA_OTLP_METRICS_URL`: OTLP metric endpoint
+- `FORMA_OTLP_EXPORT_INTERVAL_MS`: export interval, default `10000`
+- `FORMA_OTLP_SERVICE_NAME`: service name, default `forma-server`
 
 If the OTLP URLs are unset, local tracing still works and metrics stay in-process only.
 

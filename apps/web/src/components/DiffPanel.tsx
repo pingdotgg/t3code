@@ -2,8 +2,8 @@ import { parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
 import { FileDiff, Virtualizer } from "@pierre/diffs/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { scopeThreadRef } from "@harness/client-runtime";
-import type { TurnId } from "@harness/contracts";
+import { scopeThreadRef } from "@forma/client-runtime";
+import type { TurnId } from "@forma/contracts";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,

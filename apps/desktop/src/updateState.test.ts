@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { DesktopUpdateState } from "@harness/contracts";
+import type { DesktopUpdateState } from "@forma/contracts";
 
 import {
   getCanRetryAfterDownloadFailure,
@@ -113,7 +113,7 @@ describe("getAutoUpdateDisabledReason", () => {
         disabledByEnv: true,
         hasUpdateFeedConfig: true,
       }),
-    ).toContain("HARNESS_DISABLE_AUTO_UPDATE");
+    ).toContain("FORMA_DISABLE_AUTO_UPDATE");
   });
 
   it("reports linux non-AppImage builds as disabled", () => {

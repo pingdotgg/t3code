@@ -11,7 +11,7 @@ import type {
   ServerProviderModel,
   ServerProviderState,
   ServerSettingsError,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { Cause, Effect, Equal, Exit, Layer, Option, Result, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -63,7 +63,7 @@ function buildInitialCursorProviderSnapshot(cursorSettings: CursorSettings): Ser
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Cursor is disabled in Harness settings.",
+        message: "Cursor is disabled in Forma settings.",
       },
     });
   }
@@ -334,7 +334,7 @@ const makeCursorAcpProbeRuntime = (cursorSettings: CursorSettings) =>
           cwd: process.cwd(),
         },
         cwd: process.cwd(),
-        clientInfo: { name: "harness-provider-probe", version: "0.0.0" },
+        clientInfo: { name: "forma-provider-probe", version: "0.0.0" },
         authMethodId: "cursor_login",
         clientCapabilities: CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES,
       }).pipe(Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner))),
@@ -970,7 +970,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
           version: null,
           status: "warning",
           auth: { status: "unknown" },
-          message: "Cursor is disabled in Harness settings.",
+          message: "Cursor is disabled in Forma settings.",
         },
       });
     }

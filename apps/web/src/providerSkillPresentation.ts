@@ -1,4 +1,4 @@
-import type { ServerLocalAgentSkill, ServerProviderSkill } from "@harness/contracts";
+import type { ServerLocalAgentSkill, ServerProviderSkill } from "@forma/contracts";
 
 function titleCaseWords(value: string): string {
   return value

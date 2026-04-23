@@ -26,19 +26,19 @@ import { OpenCodeTextGenerationLive } from "./OpenCodeTextGeneration.ts";
 // ---------------------------------------------------------------------------
 
 class CodexTextGen extends Context.Service<CodexTextGen, TextGenerationShape>()(
-  "harness/git/Layers/RoutingTextGeneration/CodexTextGen",
+  "forma/git/Layers/RoutingTextGeneration/CodexTextGen",
 ) {}
 
 class ClaudeTextGen extends Context.Service<ClaudeTextGen, TextGenerationShape>()(
-  "harness/git/Layers/RoutingTextGeneration/ClaudeTextGen",
+  "forma/git/Layers/RoutingTextGeneration/ClaudeTextGen",
 ) {}
 
 class CursorTextGen extends Context.Service<CursorTextGen, TextGenerationShape>()(
-  "harness/git/Layers/RoutingTextGeneration/CursorTextGen",
+  "forma/git/Layers/RoutingTextGeneration/CursorTextGen",
 ) {}
 
 class OpenCodeTextGen extends Context.Service<OpenCodeTextGen, TextGenerationShape>()(
-  "harness/git/Layers/RoutingTextGeneration/OpenCodeTextGen",
+  "forma/git/Layers/RoutingTextGeneration/OpenCodeTextGen",
 ) {}
 
 // ---------------------------------------------------------------------------

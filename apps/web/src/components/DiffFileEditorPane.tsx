@@ -1,5 +1,5 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
-import type { EnvironmentId } from "@harness/contracts";
+import type { EnvironmentId } from "@forma/contracts";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import {
   AlertTriangleIcon,

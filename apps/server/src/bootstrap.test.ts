@@ -50,7 +50,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const filePath = yield* fs.makeTempFileScoped({
-        prefix: "harness-bootstrap-",
+        prefix: "forma-bootstrap-",
         suffix: ".ndjson",
       });
 
@@ -77,7 +77,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const filePath = yield* fs.makeTempFileScoped({
-        prefix: "harness-bootstrap-",
+        prefix: "forma-bootstrap-",
         suffix: ".ndjson",
       });
 
@@ -119,7 +119,7 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
   it.effect("returns none when the bootstrap read times out before any value arrives", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "harness-bootstrap-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "forma-bootstrap-" });
       const fifoPath = path.join(tempDir, "bootstrap.pipe");
 
       yield* Effect.sync(() => execFileSync("mkfifo", [fifoPath]));

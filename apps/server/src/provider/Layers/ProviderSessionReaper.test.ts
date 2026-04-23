@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProjectId, ThreadId, TurnId, type OrchestrationReadModel } from "@harness/contracts";
+import { ProjectId, ThreadId, TurnId, type OrchestrationReadModel } from "@forma/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, Option, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -180,7 +180,7 @@ describe("ProviderSessionReaper", () => {
   it("reaps stale persisted sessions without active turns", async () => {
     const threadId = ThreadId.make("thread-reaper-stale");
     const now = new Date().toISOString();
-    const harness = await createHarness({
+    const forma = await createHarness({
       readModel: makeReadModel([
         {
           id: threadId,
@@ -217,17 +217,17 @@ describe("ProviderSessionReaper", () => {
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
 
-    await waitFor(() => harness.stopSession.mock.calls.length === 1);
+    await waitFor(() => forma.stopSession.mock.calls.length === 1);
 
-    expect(harness.stopSession.mock.calls[0]?.[0]).toEqual({ threadId });
-    expect(harness.stoppedThreadIds.has(threadId)).toBe(true);
+    expect(forma.stopSession.mock.calls[0]?.[0]).toEqual({ threadId });
+    expect(forma.stoppedThreadIds.has(threadId)).toBe(true);
   });
 
   it("skips stale sessions when the thread still has an active turn", async () => {
     const threadId = ThreadId.make("thread-reaper-active-turn");
     const turnId = TurnId.make("turn-reaper-active");
     const now = new Date().toISOString();
-    const harness = await createHarness({
+    const forma = await createHarness({
       readModel: makeReadModel([
         {
           id: threadId,
@@ -265,7 +265,7 @@ describe("ProviderSessionReaper", () => {
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(harness.stopSession).not.toHaveBeenCalled();
+    expect(forma.stopSession).not.toHaveBeenCalled();
     const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
     expect(Option.isSome(remaining)).toBe(true);
   });
@@ -273,7 +273,7 @@ describe("ProviderSessionReaper", () => {
   it("does not reap sessions that are still within the inactivity threshold", async () => {
     const threadId = ThreadId.make("thread-reaper-fresh");
     const now = new Date().toISOString();
-    const harness = await createHarness({
+    const forma = await createHarness({
       readModel: makeReadModel([
         {
           id: threadId,
@@ -311,7 +311,7 @@ describe("ProviderSessionReaper", () => {
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(harness.stopSession).not.toHaveBeenCalled();
+    expect(forma.stopSession).not.toHaveBeenCalled();
     const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
     expect(Option.isSome(remaining)).toBe(true);
   });
@@ -319,7 +319,7 @@ describe("ProviderSessionReaper", () => {
   it("skips persisted sessions that are already marked stopped", async () => {
     const threadId = ThreadId.make("thread-reaper-stopped");
     const now = new Date().toISOString();
-    const harness = await createHarness({
+    const forma = await createHarness({
       readModel: makeReadModel([
         {
           id: threadId,
@@ -357,7 +357,7 @@ describe("ProviderSessionReaper", () => {
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(harness.stopSession).not.toHaveBeenCalled();
+    expect(forma.stopSession).not.toHaveBeenCalled();
     const remaining = await runtime!.runPromise(repository.getByThreadId({ threadId }));
     expect(Option.isSome(remaining)).toBe(true);
   });
@@ -366,7 +366,7 @@ describe("ProviderSessionReaper", () => {
     const failedThreadId = ThreadId.make("thread-reaper-stop-failure");
     const reapedThreadId = ThreadId.make("thread-reaper-stop-success");
     const now = new Date().toISOString();
-    const harness = await createHarness({
+    const forma = await createHarness({
       readModel: makeReadModel([
         {
           id: failedThreadId,
@@ -438,9 +438,9 @@ describe("ProviderSessionReaper", () => {
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
 
-    await waitFor(() => harness.stopSession.mock.calls.length === 2);
+    await waitFor(() => forma.stopSession.mock.calls.length === 2);
 
-    expect(harness.stopSession.mock.calls.map(([request]) => request.threadId)).toEqual([
+    expect(forma.stopSession.mock.calls.map(([request]) => request.threadId)).toEqual([
       failedThreadId,
       reapedThreadId,
     ]);
@@ -450,7 +450,7 @@ describe("ProviderSessionReaper", () => {
     const defectThreadId = ThreadId.make("thread-reaper-stop-defect");
     const reapedThreadId = ThreadId.make("thread-reaper-stop-after-defect");
     const now = new Date().toISOString();
-    const harness = await createHarness({
+    const forma = await createHarness({
       readModel: makeReadModel([
         {
           id: defectThreadId,
@@ -517,9 +517,9 @@ describe("ProviderSessionReaper", () => {
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(reaper.start().pipe(Scope.provide(scope)));
 
-    await waitFor(() => harness.stopSession.mock.calls.length === 2);
+    await waitFor(() => forma.stopSession.mock.calls.length === 2);
 
-    expect(harness.stopSession.mock.calls.map(([request]) => request.threadId)).toEqual([
+    expect(forma.stopSession.mock.calls.map(([request]) => request.threadId)).toEqual([
       defectThreadId,
       reapedThreadId,
     ]);

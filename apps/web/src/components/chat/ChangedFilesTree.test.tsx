@@ -1,4 +1,4 @@
-import { TurnId } from "@harness/contracts";
+import { TurnId } from "@forma/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 

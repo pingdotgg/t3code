@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { useParams } from "@tanstack/react-router";
-import { type ScopedThreadRef, type ThreadId } from "@harness/contracts";
+import { type ScopedThreadRef, type ThreadId } from "@forma/contracts";
 import {
   CheckIcon,
   ChevronDownIcon,

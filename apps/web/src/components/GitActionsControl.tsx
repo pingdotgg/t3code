@@ -1,10 +1,10 @@
-import { type ScopedThreadRef } from "@harness/contracts";
+import { type ScopedThreadRef } from "@forma/contracts";
 import type {
   GitActionProgressEvent,
   GitRunStackedActionResult,
   GitStackedAction,
   GitStatusResult,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {

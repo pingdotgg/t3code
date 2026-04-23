@@ -1,4 +1,4 @@
-import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@harness/contracts";
+import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@forma/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const testEnvironmentId = EnvironmentId.make("environment-1");

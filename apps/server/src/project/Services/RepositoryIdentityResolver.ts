@@ -1,4 +1,4 @@
-import type { RepositoryIdentity } from "@harness/contracts";
+import type { RepositoryIdentity } from "@forma/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 
@@ -9,4 +9,4 @@ export interface RepositoryIdentityResolverShape {
 export class RepositoryIdentityResolver extends Context.Service<
   RepositoryIdentityResolver,
   RepositoryIdentityResolverShape
->()("harness/project/Services/RepositoryIdentityResolver") {}
+>()("forma/project/Services/RepositoryIdentityResolver") {}

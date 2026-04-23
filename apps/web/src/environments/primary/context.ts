@@ -2,15 +2,15 @@ import {
   attachEnvironmentDescriptor,
   createKnownEnvironment,
   type KnownEnvironment,
-} from "@harness/client-runtime";
-import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@harness/contracts";
+} from "@forma/client-runtime";
+import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@forma/contracts";
 import { create } from "zustand";
 
 import { BootstrapHttpError, retryTransientBootstrap } from "./auth";
 
 import { readPrimaryEnvironmentTarget, resolvePrimaryEnvironmentHttpUrl } from "./target";
 
-const SERVER_ENVIRONMENT_DESCRIPTOR_PATH = "/.well-known/harness/environment";
+const SERVER_ENVIRONMENT_DESCRIPTOR_PATH = "/.well-known/forma/environment";
 
 interface PrimaryEnvironmentBootstrapState {
   readonly descriptor: ExecutionEnvironmentDescriptor | null;

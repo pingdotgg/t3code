@@ -1,4 +1,4 @@
-import { EditorId, type ResolvedKeybindingsConfig } from "@harness/contracts";
+import { EditorId, type ResolvedKeybindingsConfig } from "@forma/contracts";
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";

@@ -1,5 +1,5 @@
 {
-  "name": "Harness Dev",
+  "name": "Forma Dev",
   "image": "debian:bookworm",
   "features": {
     "ghcr.io/devcontainers/features/git:1": {},

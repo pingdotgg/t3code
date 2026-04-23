@@ -5,7 +5,7 @@ import {
   type KeybindingShortcut,
   type KeybindingWhenNode,
   type ResolvedKeybindingsConfig,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import {
   formatShortcutLabel,
   isChatNewShortcut,

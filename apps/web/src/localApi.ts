@@ -1,4 +1,4 @@
-import type { ContextMenuItem, LocalApi } from "@harness/contracts";
+import type { ContextMenuItem, LocalApi } from "@forma/contracts";
 
 import { resetGitStatusStateForTests } from "./lib/gitStatusState";
 import { resetRequestLatencyStateForTests } from "./rpc/requestLatencyState";

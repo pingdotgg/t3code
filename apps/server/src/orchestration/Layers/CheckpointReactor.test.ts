@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-import type { ProviderKind, ProviderRuntimeEvent, ProviderSession } from "@harness/contracts";
+import type { ProviderKind, ProviderRuntimeEvent, ProviderSession } from "@forma/contracts";
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -12,7 +12,7 @@ import {
   ProjectId,
   ThreadId,
   TurnId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -174,7 +174,7 @@ function runGit(cwd: string, args: ReadonlyArray<string>) {
 }
 
 function createGitRepository() {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "harness-checkpoint-handler-"));
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "forma-checkpoint-handler-"));
   runGit(cwd, ["init", "--initial-branch=main"]);
   runGit(cwd, ["config", "user.email", "test@example.com"]);
   runGit(cwd, ["config", "user.name", "Test User"]);
@@ -264,7 +264,7 @@ describe("CheckpointReactor", () => {
     );
 
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
-      prefix: "harness-checkpoint-reactor-test-",
+      prefix: "forma-checkpoint-reactor-test-",
     });
     const gitStatusBroadcasterLayer = Layer.succeed(GitStatusBroadcaster, {
       getStatus: () => Effect.die("getStatus should not be called in this test"),
@@ -372,11 +372,11 @@ describe("CheckpointReactor", () => {
   }
 
   it("captures pre-turn baseline on turn.started and post-turn checkpoint on turn.completed", async () => {
-    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const forma = await createHarness({ seedFilesystemCheckpoints: false });
     const createdAt = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-capture"),
         threadId: ThreadId.make("thread-1"),
@@ -393,7 +393,7 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    harness.provider.emit({
+    forma.provider.emit({
       type: "turn.started",
       eventId: EventId.make("evt-turn-started-1"),
       provider: "codex",
@@ -402,13 +402,10 @@ describe("CheckpointReactor", () => {
       threadId: ThreadId.make("thread-1"),
       turnId: asTurnId("turn-1"),
     });
-    await waitForGitRefExists(
-      harness.cwd,
-      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
-    );
+    await waitForGitRefExists(forma.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0));
 
-    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
-    harness.provider.emit({
+    fs.writeFileSync(path.join(forma.cwd, "README.md"), "v2\n", "utf8");
+    forma.provider.emit({
       type: "turn.completed",
       eventId: EventId.make("evt-turn-completed-1"),
       provider: "codex",
@@ -419,28 +416,28 @@ describe("CheckpointReactor", () => {
       payload: { state: "completed" },
     });
 
-    await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
+    await waitForEvent(forma.engine, (event) => event.type === "thread.turn-diff-completed");
     const thread = await waitForThread(
-      harness.engine,
+      forma.engine,
       (entry) => entry.latestTurn?.turnId === "turn-1" && entry.checkpoints.length === 1,
     );
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
-    expect(
-      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0)),
-    ).toBe(true);
-    expect(
-      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
-    ).toBe(true);
+    expect(gitRefExists(forma.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0))).toBe(
+      true,
+    );
+    expect(gitRefExists(forma.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1))).toBe(
+      true,
+    );
     expect(
       gitShowFileAtRef(
-        harness.cwd,
+        forma.cwd,
         checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
         "README.md",
       ),
     ).toBe("v1\n");
     expect(
       gitShowFileAtRef(
-        harness.cwd,
+        forma.cwd,
         checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
         "README.md",
       ),
@@ -449,12 +446,12 @@ describe("CheckpointReactor", () => {
 
   it("refreshes local git status state on turn completion using the session cwd", async () => {
     const gitStatusRefreshCalls: string[] = [];
-    const harness = await createHarness({
+    const forma = await createHarness({
       seedFilesystemCheckpoints: false,
       gitStatusRefreshCalls,
     });
 
-    harness.provider.emit({
+    forma.provider.emit({
       type: "turn.completed",
       eventId: EventId.make("evt-turn-completed-refresh-local-status"),
       provider: "codex",
@@ -464,17 +461,17 @@ describe("CheckpointReactor", () => {
       payload: { state: "completed" },
     });
 
-    await harness.drain();
+    await forma.drain();
 
-    expect(gitStatusRefreshCalls).toEqual([harness.cwd]);
+    expect(gitStatusRefreshCalls).toEqual([forma.cwd]);
   });
 
   it("ignores auxiliary thread turn completion while primary turn is active", async () => {
-    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const forma = await createHarness({ seedFilesystemCheckpoints: false });
     const createdAt = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-primary-running"),
         threadId: ThreadId.make("thread-1"),
@@ -491,7 +488,7 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    harness.provider.emit({
+    forma.provider.emit({
       type: "turn.started",
       eventId: EventId.make("evt-turn-started-main"),
       provider: "codex",
@@ -500,14 +497,11 @@ describe("CheckpointReactor", () => {
       threadId: ThreadId.make("thread-1"),
       turnId: asTurnId("turn-main"),
     });
-    await waitForGitRefExists(
-      harness.cwd,
-      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
-    );
+    await waitForGitRefExists(forma.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0));
 
-    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
+    fs.writeFileSync(path.join(forma.cwd, "README.md"), "v2\n", "utf8");
 
-    harness.provider.emit({
+    forma.provider.emit({
       type: "turn.completed",
       eventId: EventId.make("evt-turn-completed-aux"),
       provider: "codex",
@@ -518,12 +512,12 @@ describe("CheckpointReactor", () => {
       payload: { state: "completed" },
     });
 
-    await harness.drain();
-    const midReadModel = await Effect.runPromise(harness.engine.getReadModel());
+    await forma.drain();
+    const midReadModel = await Effect.runPromise(forma.engine.getReadModel());
     const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(midThread?.checkpoints).toHaveLength(0);
 
-    harness.provider.emit({
+    forma.provider.emit({
       type: "turn.completed",
       eventId: EventId.make("evt-turn-completed-main"),
       provider: "codex",
@@ -535,21 +529,21 @@ describe("CheckpointReactor", () => {
     });
 
     const thread = await waitForThread(
-      harness.engine,
+      forma.engine,
       (entry) => entry.latestTurn?.turnId === "turn-main" && entry.checkpoints.length === 1,
     );
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
   });
 
   it("captures pre-turn and completion checkpoints for claude runtime events", async () => {
-    const harness = await createHarness({
+    const forma = await createHarness({
       seedFilesystemCheckpoints: false,
       providerName: "claudeAgent",
     });
     const createdAt = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-capture-claude"),
         threadId: ThreadId.make("thread-1"),
@@ -566,7 +560,7 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    harness.provider.emit({
+    forma.provider.emit({
       type: "turn.started",
       eventId: EventId.make("evt-turn-started-claude-1"),
       provider: "claudeAgent",
@@ -574,13 +568,10 @@ describe("CheckpointReactor", () => {
       threadId: ThreadId.make("thread-1"),
       turnId: asTurnId("turn-claude-1"),
     });
-    await waitForGitRefExists(
-      harness.cwd,
-      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
-    );
+    await waitForGitRefExists(forma.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0));
 
-    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
-    harness.provider.emit({
+    fs.writeFileSync(path.join(forma.cwd, "README.md"), "v2\n", "utf8");
+    forma.provider.emit({
       type: "turn.completed",
       eventId: EventId.make("evt-turn-completed-claude-1"),
       provider: "claudeAgent",
@@ -590,24 +581,24 @@ describe("CheckpointReactor", () => {
       payload: { state: "completed" },
     });
 
-    await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
+    await waitForEvent(forma.engine, (event) => event.type === "thread.turn-diff-completed");
     const thread = await waitForThread(
-      harness.engine,
+      forma.engine,
       (entry) => entry.latestTurn?.turnId === "turn-claude-1" && entry.checkpoints.length === 1,
     );
 
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
-    expect(
-      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
-    ).toBe(true);
+    expect(gitRefExists(forma.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1))).toBe(
+      true,
+    );
   });
 
   it("appends capture failure activity when turn diff summary cannot be derived", async () => {
-    const harness = await createHarness({ seedFilesystemCheckpoints: false });
+    const forma = await createHarness({ seedFilesystemCheckpoints: false });
     const createdAt = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-missing-baseline-diff"),
         threadId: ThreadId.make("thread-1"),
@@ -624,7 +615,7 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    harness.provider.emit({
+    forma.provider.emit({
       type: "turn.completed",
       eventId: EventId.make("evt-turn-completed-missing-baseline"),
       provider: "codex",
@@ -635,9 +626,9 @@ describe("CheckpointReactor", () => {
       payload: { state: "completed" },
     });
 
-    await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
+    await waitForEvent(forma.engine, (event) => event.type === "thread.turn-diff-completed");
     const thread = await waitForThread(
-      harness.engine,
+      forma.engine,
       (entry) =>
         entry.checkpoints.length === 1 &&
         entry.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
@@ -650,14 +641,14 @@ describe("CheckpointReactor", () => {
   });
 
   it("captures pre-turn baseline from project workspace root when thread worktree is unset", async () => {
-    const harness = await createHarness({
+    const forma = await createHarness({
       hasSession: false,
       seedFilesystemCheckpoints: false,
       threadWorktreePath: null,
     });
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-for-baseline"),
         threadId: ThreadId.make("thread-1"),
@@ -673,13 +664,10 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    await waitForGitRefExists(
-      harness.cwd,
-      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
-    );
+    await waitForGitRefExists(forma.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0));
     expect(
       gitShowFileAtRef(
-        harness.cwd,
+        forma.cwd,
         checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
         "README.md",
       ),
@@ -687,7 +675,7 @@ describe("CheckpointReactor", () => {
   });
 
   it("captures turn completion checkpoint from project workspace root when provider session cwd is unavailable", async () => {
-    const harness = await createHarness({
+    const forma = await createHarness({
       hasSession: false,
       seedFilesystemCheckpoints: false,
       threadWorktreePath: null,
@@ -695,7 +683,7 @@ describe("CheckpointReactor", () => {
     const createdAt = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-missing-provider-cwd"),
         threadId: ThreadId.make("thread-1"),
@@ -712,8 +700,8 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    fs.writeFileSync(path.join(harness.cwd, "README.md"), "v2\n", "utf8");
-    harness.provider.emit({
+    fs.writeFileSync(path.join(forma.cwd, "README.md"), "v2\n", "utf8");
+    forma.provider.emit({
       type: "turn.completed",
       eventId: EventId.make("evt-turn-completed-missing-provider-cwd"),
       provider: "codex",
@@ -724,13 +712,13 @@ describe("CheckpointReactor", () => {
       payload: { state: "completed" },
     });
 
-    await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
-    expect(
-      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1)),
-    ).toBe(true);
+    await waitForEvent(forma.engine, (event) => event.type === "thread.turn-diff-completed");
+    expect(gitRefExists(forma.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1))).toBe(
+      true,
+    );
     expect(
       gitShowFileAtRef(
-        harness.cwd,
+        forma.cwd,
         checkpointRefForThreadTurn(ThreadId.make("thread-1"), 1),
         "README.md",
       ),
@@ -738,11 +726,11 @@ describe("CheckpointReactor", () => {
   });
 
   it("ignores non-v2 checkpoint.captured runtime events", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const createdAt = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-checkpoint-captured"),
         threadId: ThreadId.make("thread-1"),
@@ -759,7 +747,7 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    harness.provider.emit({
+    forma.provider.emit({
       type: "checkpoint.captured",
       eventId: EventId.make("evt-checkpoint-captured-3"),
       provider: "codex",
@@ -771,8 +759,8 @@ describe("CheckpointReactor", () => {
       status: "completed",
     });
 
-    await harness.drain();
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    await forma.drain();
+    const readModel = await Effect.runPromise(forma.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 3)).toBe(
       false,
@@ -781,18 +769,18 @@ describe("CheckpointReactor", () => {
 
   it("continues processing runtime events after a single checkpoint runtime failure", async () => {
     const nonRepositorySessionCwd = fs.mkdtempSync(
-      path.join(os.tmpdir(), "harness-checkpoint-runtime-non-repo-"),
+      path.join(os.tmpdir(), "forma-checkpoint-runtime-non-repo-"),
     );
     tempDirs.push(nonRepositorySessionCwd);
 
-    const harness = await createHarness({
+    const forma = await createHarness({
       seedFilesystemCheckpoints: false,
       providerSessionCwd: nonRepositorySessionCwd,
     });
     const createdAt = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-non-repo-runtime"),
         threadId: ThreadId.make("thread-1"),
@@ -809,7 +797,7 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    harness.provider.emit({
+    forma.provider.emit({
       type: "turn.completed",
       eventId: EventId.make("evt-runtime-capture-failure"),
       provider: "codex",
@@ -820,7 +808,7 @@ describe("CheckpointReactor", () => {
       payload: { state: "completed" },
     });
 
-    harness.provider.emit({
+    forma.provider.emit({
       type: "turn.started",
       eventId: EventId.make("evt-turn-started-after-runtime-failure"),
       provider: "codex",
@@ -830,21 +818,18 @@ describe("CheckpointReactor", () => {
       turnId: asTurnId("turn-after-runtime-failure"),
     });
 
-    await waitForGitRefExists(
-      harness.cwd,
-      checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0),
+    await waitForGitRefExists(forma.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0));
+    expect(gitRefExists(forma.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0))).toBe(
+      true,
     );
-    expect(
-      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 0)),
-    ).toBe(true);
   });
 
   it("executes provider revert and emits thread.reverted for checkpoint revert requests", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const createdAt = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set"),
         threadId: ThreadId.make("thread-1"),
@@ -862,7 +847,7 @@ describe("CheckpointReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.diff.complete",
         commandId: CommandId.make("cmd-diff-1"),
         threadId: ThreadId.make("thread-1"),
@@ -876,7 +861,7 @@ describe("CheckpointReactor", () => {
       }),
     );
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.diff.complete",
         commandId: CommandId.make("cmd-diff-2"),
         threadId: ThreadId.make("thread-1"),
@@ -891,7 +876,7 @@ describe("CheckpointReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-revert-request"),
         threadId: ThreadId.make("thread-1"),
@@ -900,29 +885,29 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
-    const thread = await waitForThread(harness.engine, (entry) => entry.checkpoints.length === 1);
+    await waitForEvent(forma.engine, (event) => event.type === "thread.reverted");
+    const thread = await waitForThread(forma.engine, (entry) => entry.checkpoints.length === 1);
 
     expect(thread.latestTurn?.turnId).toBe("turn-1");
     expect(thread.checkpoints).toHaveLength(1);
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
-    expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
-    expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+    expect(forma.provider.rollbackConversation).toHaveBeenCalledTimes(1);
+    expect(forma.provider.rollbackConversation).toHaveBeenCalledWith({
       threadId: ThreadId.make("thread-1"),
       numTurns: 1,
     });
-    expect(fs.readFileSync(path.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
-    expect(
-      gitRefExists(harness.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2)),
-    ).toBe(false);
+    expect(fs.readFileSync(path.join(forma.cwd, "README.md"), "utf8")).toBe("v2\n");
+    expect(gitRefExists(forma.cwd, checkpointRefForThreadTurn(ThreadId.make("thread-1"), 2))).toBe(
+      false,
+    );
   });
 
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {
-    const harness = await createHarness({ providerName: "claudeAgent" });
+    const forma = await createHarness({ providerName: "claudeAgent" });
     const createdAt = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-claude"),
         threadId: ThreadId.make("thread-1"),
@@ -940,7 +925,7 @@ describe("CheckpointReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.diff.complete",
         commandId: CommandId.make("cmd-diff-claude-1"),
         threadId: ThreadId.make("thread-1"),
@@ -954,7 +939,7 @@ describe("CheckpointReactor", () => {
       }),
     );
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.diff.complete",
         commandId: CommandId.make("cmd-diff-claude-2"),
         threadId: ThreadId.make("thread-1"),
@@ -969,7 +954,7 @@ describe("CheckpointReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-revert-request-claude"),
         threadId: ThreadId.make("thread-1"),
@@ -978,20 +963,20 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
-    expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(1);
-    expect(harness.provider.rollbackConversation).toHaveBeenCalledWith({
+    await waitForEvent(forma.engine, (event) => event.type === "thread.reverted");
+    expect(forma.provider.rollbackConversation).toHaveBeenCalledTimes(1);
+    expect(forma.provider.rollbackConversation).toHaveBeenCalledWith({
       threadId: ThreadId.make("thread-1"),
       numTurns: 1,
     });
   });
 
   it("processes consecutive revert requests with deterministic rollback sequencing", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const createdAt = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-inline-revert"),
         threadId: ThreadId.make("thread-1"),
@@ -1009,7 +994,7 @@ describe("CheckpointReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.diff.complete",
         commandId: CommandId.make("cmd-inline-revert-diff-1"),
         threadId: ThreadId.make("thread-1"),
@@ -1023,7 +1008,7 @@ describe("CheckpointReactor", () => {
       }),
     );
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.diff.complete",
         commandId: CommandId.make("cmd-inline-revert-diff-2"),
         threadId: ThreadId.make("thread-1"),
@@ -1038,7 +1023,7 @@ describe("CheckpointReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-sequenced-revert-request-1"),
         threadId: ThreadId.make("thread-1"),
@@ -1047,7 +1032,7 @@ describe("CheckpointReactor", () => {
       }),
     );
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-sequenced-revert-request-0"),
         threadId: ThreadId.make("thread-1"),
@@ -1056,25 +1041,25 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    await harness.drain();
+    await forma.drain();
 
-    expect(harness.provider.rollbackConversation).toHaveBeenCalledTimes(2);
-    expect(harness.provider.rollbackConversation.mock.calls[0]?.[0]).toEqual({
+    expect(forma.provider.rollbackConversation).toHaveBeenCalledTimes(2);
+    expect(forma.provider.rollbackConversation.mock.calls[0]?.[0]).toEqual({
       threadId: ThreadId.make("thread-1"),
       numTurns: 1,
     });
-    expect(harness.provider.rollbackConversation.mock.calls[1]?.[0]).toEqual({
+    expect(forma.provider.rollbackConversation.mock.calls[1]?.[0]).toEqual({
       threadId: ThreadId.make("thread-1"),
       numTurns: 1,
     });
   });
 
   it("appends an error activity when revert is requested without an active session", async () => {
-    const harness = await createHarness({ hasSession: false });
+    const forma = await createHarness({ hasSession: false });
     const createdAt = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.checkpoint.revert",
         commandId: CommandId.make("cmd-revert-no-session"),
         threadId: ThreadId.make("thread-1"),
@@ -1083,13 +1068,13 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(forma.engine, (entry) =>
       entry.activities.some((activity) => activity.kind === "checkpoint.revert.failed"),
     );
 
     expect(thread.activities.some((activity) => activity.kind === "checkpoint.revert.failed")).toBe(
       true,
     );
-    expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
+    expect(forma.provider.rollbackConversation).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import { AuthClientMetadataDeviceType, AuthSessionId } from "@harness/contracts";
+import { AuthClientMetadataDeviceType, AuthSessionId } from "@forma/contracts";
 import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -90,4 +90,4 @@ export interface AuthSessionRepositoryShape {
 export class AuthSessionRepository extends Context.Service<
   AuthSessionRepository,
   AuthSessionRepositoryShape
->()("harness/persistence/Services/AuthSessions/AuthSessionRepository") {}
+>()("forma/persistence/Services/AuthSessions/AuthSessionRepository") {}

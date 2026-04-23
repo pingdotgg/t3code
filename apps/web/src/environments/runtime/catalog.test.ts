@@ -2,7 +2,7 @@ import {
   EnvironmentId,
   type LocalApi,
   type PersistedSavedEnvironmentRecord,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {

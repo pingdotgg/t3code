@@ -1,6 +1,6 @@
-import type { ProviderRuntimeEvent } from "@harness/contracts";
-import { ThreadId } from "@harness/contracts";
-import { DEFAULT_SERVER_SETTINGS } from "@harness/contracts/settings";
+import type { ProviderRuntimeEvent } from "@forma/contracts";
+import { ThreadId } from "@forma/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@forma/contracts/settings";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, assert } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, Queue, Stream } from "effect";
@@ -39,18 +39,18 @@ const makeWorkspaceDirectory = Effect.gen(function* () {
 
 interface IntegrationFixture {
   readonly cwd: string;
-  readonly harness: TestProviderAdapterHarness;
+  readonly forma: TestProviderAdapterHarness;
   readonly layer: Layer.Layer<ProviderService, unknown, never>;
 }
 
 const makeIntegrationFixture = Effect.gen(function* () {
   const cwd = yield* makeWorkspaceDirectory;
-  const harness = yield* makeTestProviderAdapterHarness();
+  const forma = yield* makeTestProviderAdapterHarness();
 
   const registry: typeof ProviderAdapterRegistry.Service = {
     getByProvider: (provider) =>
       provider === "codex"
-        ? Effect.succeed(harness.adapter)
+        ? Effect.succeed(forma.adapter)
         : Effect.fail(new ProviderUnsupportedError({ provider })),
     listProviders: () => Effect.succeed(["codex"]),
   };
@@ -70,7 +70,7 @@ const makeIntegrationFixture = Effect.gen(function* () {
 
   return {
     cwd,
-    harness,
+    forma,
     layer,
   } satisfies IntegrationFixture;
 });
@@ -98,13 +98,13 @@ const collectEventsDuring = <A, E, R>(
 
 const runTurn = (input: {
   readonly provider: ProviderServiceShape;
-  readonly harness: TestProviderAdapterHarness;
+  readonly forma: TestProviderAdapterHarness;
   readonly threadId: ThreadId;
   readonly userText: string;
   readonly response: TestTurnResponse;
 }) =>
   Effect.gen(function* () {
-    yield* input.harness.queueTurnResponse(input.threadId, input.response);
+    yield* input.forma.queueTurnResponse(input.threadId, input.response);
     return yield* collectEventsDuring(
       input.provider.streamEvents,
       input.response.events.length,
@@ -132,7 +132,7 @@ it.live("replays typed runtime fixture events", () =>
 
       const observedEvents = yield* runTurn({
         provider,
-        harness: fixture.harness,
+        forma: fixture.forma,
         threadId: session.threadId,
         userText: "hello",
         response: { events: codexTurnTextFixture },
@@ -164,7 +164,7 @@ it.live("replays file-changing fixture turn events", () =>
 
       const observedEvents = yield* runTurn({
         provider,
-        harness: fixture.harness,
+        forma: fixture.forma,
         threadId: session.threadId,
         userText: "make a small change",
         response: {
@@ -200,7 +200,7 @@ it.live("runs multi-turn tool/approval flow", () =>
 
       const firstTurnEvents = yield* runTurn({
         provider,
-        harness: fixture.harness,
+        forma: fixture.forma,
         threadId: session.threadId,
         userText: "turn 1",
         response: {
@@ -216,7 +216,7 @@ it.live("runs multi-turn tool/approval flow", () =>
 
       const secondTurnEvents = yield* runTurn({
         provider,
-        harness: fixture.harness,
+        forma: fixture.forma,
         threadId: session.threadId,
         userText: "turn 2 approval",
         response: {
@@ -251,7 +251,7 @@ it.live("rolls back provider conversation state only", () =>
 
       yield* runTurn({
         provider,
-        harness: fixture.harness,
+        forma: fixture.forma,
         threadId: session.threadId,
         userText: "turn 1",
         response: {
@@ -263,7 +263,7 @@ it.live("rolls back provider conversation state only", () =>
 
       yield* runTurn({
         provider,
-        harness: fixture.harness,
+        forma: fixture.forma,
         threadId: session.threadId,
         userText: "turn 2 approval",
         response: {
@@ -278,7 +278,7 @@ it.live("rolls back provider conversation state only", () =>
         numTurns: 1,
       });
 
-      const rollbackCalls = fixture.harness.getRollbackCalls(session.threadId);
+      const rollbackCalls = fixture.forma.getRollbackCalls(session.threadId);
       assert.deepEqual(rollbackCalls, [1]);
 
       const readme = yield* readFileString(join(fixture.cwd, "README.md"));

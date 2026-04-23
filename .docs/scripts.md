@@ -3,9 +3,9 @@
 - `bun run dev` — Starts contracts, server, and web in `turbo watch` mode.
 - `bun run dev:server` — Starts just the WebSocket server (uses Bun TypeScript execution).
 - `bun run dev:web` — Starts just the Vite dev server for the web app.
-- Dev commands default `HARNESS_STATE_DIR` to `~/.harness/dev` to keep dev state isolated from desktop/prod state.
+- Dev commands default `FORMA_STATE_DIR` to `~/.forma/dev` to keep dev state isolated from desktop/prod state.
 - Override server CLI-equivalent flags from root dev commands with `--`, for example:
-  `bun run dev -- --base-dir ~/.harness-2`
+  `bun run dev -- --base-dir ~/.forma-2`
 - `bun run start` — Runs the production server (serves built web app as static files).
 - `bun run build` — Builds contracts, web app, and server through Turbo.
 - `bun run typecheck` — Strict TypeScript checks for all packages.
@@ -20,8 +20,8 @@
 
 - Default build is unsigned/not notarized for local sharing.
 - The DMG build uses `assets/macos-icon-1024.png` as the production app icon source.
-- Desktop production windows load the bundled UI from `harness://app/index.html` (not a `127.0.0.1` document URL).
-- Desktop packaging includes `apps/server/dist` (the `harness` backend) and starts it on loopback with an auth token for WebSocket/API traffic.
+- Desktop production windows load the bundled UI from `forma://app/index.html` (not a `127.0.0.1` document URL).
+- Desktop packaging includes `apps/server/dist` (the `forma` backend) and starts it on loopback with an auth token for WebSocket/API traffic.
 - Your tester can still open it on macOS by right-clicking the app and choosing **Open** on first launch.
 - To keep staging files for debugging package contents, run: `bun run dist:desktop:dmg -- --keep-stage`
 - To allow code-signing/notarization when configured in CI/secrets, add: `--signed`.
@@ -33,10 +33,10 @@
 
 ## Running multiple dev instances
 
-Set `HARNESS_DEV_INSTANCE` to any value to deterministically shift all dev ports together.
+Set `FORMA_DEV_INSTANCE` to any value to deterministically shift all dev ports together.
 
 - Default ports: server `3773`, web `5733`
-- Shifted ports: `base + offset` (offset is hashed from `HARNESS_DEV_INSTANCE`)
-- Example: `HARNESS_DEV_INSTANCE=branch-a bun run dev:desktop`
+- Shifted ports: `base + offset` (offset is hashed from `FORMA_DEV_INSTANCE`)
+- Example: `FORMA_DEV_INSTANCE=branch-a bun run dev:desktop`
 
-If you want full control instead of hashing, set `HARNESS_PORT_OFFSET` to a numeric offset.
+If you want full control instead of hashing, set `FORMA_PORT_OFFSET` to a numeric offset.

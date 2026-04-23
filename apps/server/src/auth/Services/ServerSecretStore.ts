@@ -17,5 +17,5 @@ export interface ServerSecretStoreShape {
 }
 
 export class ServerSecretStore extends Context.Service<ServerSecretStore, ServerSecretStoreShape>()(
-  "harness/auth/Services/ServerSecretStore",
+  "forma/auth/Services/ServerSecretStore",
 ) {}

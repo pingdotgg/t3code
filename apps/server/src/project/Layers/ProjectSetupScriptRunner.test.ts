@@ -1,6 +1,6 @@
 import { Effect, Layer, Stream } from "effect";
 import { describe, expect, it, vi } from "vitest";
-import type { OrchestrationReadModel } from "@harness/contracts";
+import type { OrchestrationReadModel } from "@forma/contracts";
 
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { TerminalManager } from "../../terminal/Services/Manager.ts";
@@ -153,8 +153,8 @@ describe("ProjectSetupScriptRunner", () => {
       cwd: "/repo/worktrees/a",
       worktreePath: "/repo/worktrees/a",
       env: {
-        HARNESS_PROJECT_ROOT: "/repo/project",
-        HARNESS_WORKTREE_PATH: "/repo/worktrees/a",
+        FORMA_PROJECT_ROOT: "/repo/project",
+        FORMA_WORKTREE_PATH: "/repo/worktrees/a",
       },
     });
     expect(write).toHaveBeenCalledWith({

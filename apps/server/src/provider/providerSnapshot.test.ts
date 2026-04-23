@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ModelCapabilities } from "@harness/contracts";
+import type { ModelCapabilities } from "@forma/contracts";
 
 import { providerModelsFromSettings } from "./providerSnapshot.ts";
 

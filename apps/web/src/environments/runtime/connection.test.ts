@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@harness/contracts";
+import { EnvironmentId } from "@forma/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import { createEnvironmentConnection } from "./connection";

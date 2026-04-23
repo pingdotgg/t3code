@@ -1,10 +1,4 @@
-import {
-  CommandId,
-  EventId,
-  ProjectId,
-  ThreadId,
-  type OrchestrationEvent,
-} from "@harness/contracts";
+import { CommandId, EventId, ProjectId, ThreadId, type OrchestrationEvent } from "@forma/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -529,7 +523,7 @@ describe("orchestration projector", () => {
           threadId: "thread-1",
           turnId: "turn-1",
           checkpointTurnCount: 1,
-          checkpointRef: "refs/harness/checkpoints/thread-1/turn/1",
+          checkpointRef: "refs/forma/checkpoints/thread-1/turn/1",
           status: "ready",
           files: [],
           assistantMessageId: "assistant-msg-1",
@@ -603,7 +597,7 @@ describe("orchestration projector", () => {
           threadId: "thread-1",
           turnId: "turn-2",
           checkpointTurnCount: 2,
-          checkpointRef: "refs/harness/checkpoints/thread-1/turn/2",
+          checkpointRef: "refs/forma/checkpoints/thread-1/turn/2",
           status: "ready",
           files: [],
           assistantMessageId: "assistant-msg-2",
@@ -708,7 +702,7 @@ describe("orchestration projector", () => {
           threadId: "thread-revert",
           turnId: "turn-1",
           checkpointTurnCount: 1,
-          checkpointRef: "refs/harness/checkpoints/thread-revert/turn/1",
+          checkpointRef: "refs/forma/checkpoints/thread-revert/turn/1",
           status: "ready",
           files: [],
           assistantMessageId: "assistant-keep",
@@ -744,7 +738,7 @@ describe("orchestration projector", () => {
           threadId: "thread-revert",
           turnId: "turn-2",
           checkpointTurnCount: 2,
-          checkpointRef: "refs/harness/checkpoints/thread-revert/turn/2",
+          checkpointRef: "refs/forma/checkpoints/thread-revert/turn/2",
           status: "ready",
           files: [],
           assistantMessageId: "assistant-remove",
@@ -893,7 +887,7 @@ describe("orchestration projector", () => {
             threadId: "thread-capped",
             turnId: `turn-${index}`,
             checkpointTurnCount: index + 1,
-            checkpointRef: `refs/harness/checkpoints/thread-capped/turn/${index + 1}`,
+            checkpointRef: `refs/forma/checkpoints/thread-capped/turn/${index + 1}`,
             status: "ready",
             files: [],
             assistantMessageId: `msg-${index}`,

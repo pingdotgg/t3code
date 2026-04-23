@@ -1,4 +1,4 @@
-import { EnvironmentId, type GitBranch } from "@harness/contracts";
+import { EnvironmentId, type GitBranch } from "@forma/contracts";
 import { describe, expect, it } from "vitest";
 import {
   dedupeRemoteBranchesWithLocalMatches,
@@ -22,7 +22,7 @@ describe("resolveDraftEnvModeAfterBranchChange", () => {
     expect(
       resolveDraftEnvModeAfterBranchChange({
         nextWorktreePath: null,
-        currentWorktreePath: "/repo/.harness/worktrees/feature-a",
+        currentWorktreePath: "/repo/.forma/worktrees/feature-a",
         effectiveEnvMode: "worktree",
       }),
     ).toBe("local");
@@ -41,7 +41,7 @@ describe("resolveDraftEnvModeAfterBranchChange", () => {
   it("uses worktree mode when selecting a branch already attached to a worktree", () => {
     expect(
       resolveDraftEnvModeAfterBranchChange({
-        nextWorktreePath: "/repo/.harness/worktrees/feature-a",
+        nextWorktreePath: "/repo/.forma/worktrees/feature-a",
         currentWorktreePath: null,
         effectiveEnvMode: "local",
       }),
@@ -123,7 +123,7 @@ describe("resolveEffectiveEnvMode", () => {
   it("treats draft threads already attached to a worktree as current-checkout mode", () => {
     expect(
       resolveEffectiveEnvMode({
-        activeWorktreePath: "/repo/.harness/worktrees/feature-a",
+        activeWorktreePath: "/repo/.forma/worktrees/feature-a",
         hasServerThread: false,
         draftThreadEnvMode: "worktree",
       }),
@@ -154,7 +154,7 @@ describe("resolveCurrentWorkspaceLabel", () => {
   });
 
   it("describes the active checkout as a worktree when one is attached", () => {
-    expect(resolveCurrentWorkspaceLabel("/repo/.harness/worktrees/feature-a")).toBe(
+    expect(resolveCurrentWorkspaceLabel("/repo/.forma/worktrees/feature-a")).toBe(
       "Current worktree",
     );
   });
@@ -166,7 +166,7 @@ describe("resolveLockedWorkspaceLabel", () => {
   });
 
   it("uses a shorter label for an attached worktree", () => {
-    expect(resolveLockedWorkspaceLabel("/repo/.harness/worktrees/feature-a")).toBe("Worktree");
+    expect(resolveLockedWorkspaceLabel("/repo/.forma/worktrees/feature-a")).toBe("Worktree");
   });
 });
 
@@ -298,15 +298,15 @@ describe("resolveBranchSelectionTarget", () => {
     expect(
       resolveBranchSelectionTarget({
         activeProjectCwd: "/repo",
-        activeWorktreePath: "/repo/.harness/worktrees/feature-a",
+        activeWorktreePath: "/repo/.forma/worktrees/feature-a",
         branch: {
           isDefault: false,
-          worktreePath: "/repo/.harness/worktrees/feature-b",
+          worktreePath: "/repo/.forma/worktrees/feature-b",
         },
       }),
     ).toEqual({
-      checkoutCwd: "/repo/.harness/worktrees/feature-b",
-      nextWorktreePath: "/repo/.harness/worktrees/feature-b",
+      checkoutCwd: "/repo/.forma/worktrees/feature-b",
+      nextWorktreePath: "/repo/.forma/worktrees/feature-b",
       reuseExistingWorktree: true,
     });
   });
@@ -315,7 +315,7 @@ describe("resolveBranchSelectionTarget", () => {
     expect(
       resolveBranchSelectionTarget({
         activeProjectCwd: "/repo",
-        activeWorktreePath: "/repo/.harness/worktrees/feature-a",
+        activeWorktreePath: "/repo/.forma/worktrees/feature-a",
         branch: {
           isDefault: true,
           worktreePath: "/repo",
@@ -332,7 +332,7 @@ describe("resolveBranchSelectionTarget", () => {
     expect(
       resolveBranchSelectionTarget({
         activeProjectCwd: "/repo",
-        activeWorktreePath: "/repo/.harness/worktrees/feature-a",
+        activeWorktreePath: "/repo/.forma/worktrees/feature-a",
         branch: {
           isDefault: true,
           worktreePath: null,
@@ -349,15 +349,15 @@ describe("resolveBranchSelectionTarget", () => {
     expect(
       resolveBranchSelectionTarget({
         activeProjectCwd: "/repo",
-        activeWorktreePath: "/repo/.harness/worktrees/feature-a",
+        activeWorktreePath: "/repo/.forma/worktrees/feature-a",
         branch: {
           isDefault: false,
           worktreePath: null,
         },
       }),
     ).toEqual({
-      checkoutCwd: "/repo/.harness/worktrees/feature-a",
-      nextWorktreePath: "/repo/.harness/worktrees/feature-a",
+      checkoutCwd: "/repo/.forma/worktrees/feature-a",
+      nextWorktreePath: "/repo/.forma/worktrees/feature-a",
       reuseExistingWorktree: false,
     });
   });

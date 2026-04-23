@@ -1,4 +1,4 @@
-import type { TerminalEvent } from "@harness/contracts";
+import type { TerminalEvent } from "@forma/contracts";
 
 export function terminalRunningSubprocessFromEvent(event: TerminalEvent): boolean | null {
   switch (event.type) {

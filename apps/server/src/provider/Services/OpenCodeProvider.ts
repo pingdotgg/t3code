@@ -5,5 +5,5 @@ import type { ServerProviderShape } from "./ServerProvider.ts";
 export interface OpenCodeProviderShape extends ServerProviderShape {}
 
 export class OpenCodeProvider extends Context.Service<OpenCodeProvider, OpenCodeProviderShape>()(
-  "harness/provider/Services/OpenCodeProvider",
+  "forma/provider/Services/OpenCodeProvider",
 ) {}

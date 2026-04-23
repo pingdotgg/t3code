@@ -7,7 +7,7 @@ import {
   ProjectId,
   ThreadId,
   TurnId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -68,7 +68,7 @@ describe("TurnQueueReactor", () => {
 
   async function createHarness(options?: { autoStart?: boolean }) {
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
-      prefix: "harness-turn-queue-reactor-test-",
+      prefix: "forma-turn-queue-reactor-test-",
     });
     const orchestrationLayer = OrchestrationEngineLive.pipe(
       Layer.provide(OrchestrationProjectionSnapshotQueryLive),
@@ -262,9 +262,9 @@ describe("TurnQueueReactor", () => {
   }
 
   it("reconciles queued threads on startup and promotes the head when idle", async () => {
-    const harness = await createHarness({ autoStart: false });
-    await harness.dispatchBaseEntities();
-    await harness.setSession({
+    const forma = await createHarness({ autoStart: false });
+    await forma.dispatchBaseEntities();
+    await forma.setSession({
       threadId: THREAD_ID,
       status: "running",
       providerName: "codex",
@@ -273,13 +273,13 @@ describe("TurnQueueReactor", () => {
       lastError: null,
       updatedAt: NOW,
     });
-    await harness.enqueueTurn("queued-startup");
-    await harness.setSession(null);
+    await forma.enqueueTurn("queued-startup");
+    await forma.setSession(null);
 
-    await harness.startReactor();
+    await forma.startReactor();
 
     await waitFor(async () => {
-      const events = await harness.readEvents();
+      const events = await forma.readEvents();
       return (
         events.find(
           (event) =>
@@ -289,15 +289,15 @@ describe("TurnQueueReactor", () => {
       );
     });
 
-    const thread = await harness.readThread();
+    const thread = await forma.readThread();
     expect(thread?.turnQueue.items).toEqual([]);
     expect(thread?.turnQueue.status).toBe("idle");
   });
 
   it("promotes the next queued turn only after thread.turn-settled", async () => {
-    const harness = await createHarness();
-    await harness.dispatchBaseEntities();
-    await harness.setSession({
+    const forma = await createHarness();
+    await forma.dispatchBaseEntities();
+    await forma.setSession({
       threadId: THREAD_ID,
       status: "running",
       providerName: "codex",
@@ -306,12 +306,12 @@ describe("TurnQueueReactor", () => {
       lastError: null,
       updatedAt: NOW,
     });
-    await harness.enqueueTurn("queued-after-settle");
-    await harness.drain();
-    await harness.setSession(null);
-    await harness.drain();
+    await forma.enqueueTurn("queued-after-settle");
+    await forma.drain();
+    await forma.setSession(null);
+    await forma.drain();
 
-    const beforeSettleEvents = await harness.readEvents();
+    const beforeSettleEvents = await forma.readEvents();
     expect(
       beforeSettleEvents.some(
         (event) =>
@@ -320,10 +320,10 @@ describe("TurnQueueReactor", () => {
       ),
     ).toBe(false);
 
-    await harness.settleTurn("completed");
+    await forma.settleTurn("completed");
 
     await waitFor(async () => {
-      const events = await harness.readEvents();
+      const events = await forma.readEvents();
       return (
         events.find(
           (event) =>
@@ -335,9 +335,9 @@ describe("TurnQueueReactor", () => {
   });
 
   it("pauses queued turns after interrupted settlement", async () => {
-    const harness = await createHarness();
-    await harness.dispatchBaseEntities();
-    await harness.setSession({
+    const forma = await createHarness();
+    await forma.dispatchBaseEntities();
+    await forma.setSession({
       threadId: THREAD_ID,
       status: "running",
       providerName: "codex",
@@ -346,12 +346,12 @@ describe("TurnQueueReactor", () => {
       lastError: null,
       updatedAt: NOW,
     });
-    await harness.enqueueTurn("queued-interrupted");
-    await harness.setSession(null);
-    await harness.settleTurn("interrupted");
+    await forma.enqueueTurn("queued-interrupted");
+    await forma.setSession(null);
+    await forma.settleTurn("interrupted");
 
     const thread = await waitFor(async () => {
-      const current = await harness.readThread();
+      const current = await forma.readThread();
       return current?.turnQueue.status === "paused" ? current : null;
     });
 
@@ -362,9 +362,9 @@ describe("TurnQueueReactor", () => {
   });
 
   it("pauses queued turns when provider turn start fails", async () => {
-    const harness = await createHarness();
-    await harness.dispatchBaseEntities();
-    await harness.setSession({
+    const forma = await createHarness();
+    await forma.dispatchBaseEntities();
+    await forma.setSession({
       threadId: THREAD_ID,
       status: "running",
       providerName: "codex",
@@ -373,12 +373,12 @@ describe("TurnQueueReactor", () => {
       lastError: null,
       updatedAt: NOW,
     });
-    await harness.enqueueTurn("queued-provider-failure");
-    await harness.setSession(null);
-    await harness.appendActivity("provider.turn.start.failed");
+    await forma.enqueueTurn("queued-provider-failure");
+    await forma.setSession(null);
+    await forma.appendActivity("provider.turn.start.failed");
 
     const thread = await waitFor(async () => {
-      const current = await harness.readThread();
+      const current = await forma.readThread();
       return current?.turnQueue.status === "paused" ? current : null;
     });
 
@@ -389,9 +389,9 @@ describe("TurnQueueReactor", () => {
   });
 
   it("promotes the new head when the previous head is removed while idle", async () => {
-    const harness = await createHarness();
-    await harness.dispatchBaseEntities();
-    await harness.setSession({
+    const forma = await createHarness();
+    await forma.dispatchBaseEntities();
+    await forma.setSession({
       threadId: THREAD_ID,
       status: "running",
       providerName: "codex",
@@ -400,13 +400,13 @@ describe("TurnQueueReactor", () => {
       lastError: null,
       updatedAt: NOW,
     });
-    await harness.enqueueTurn("queued-head");
-    await harness.enqueueTurn("queued-next");
-    await harness.setSession(null);
-    await harness.removeQueuedTurn("queued-head");
+    await forma.enqueueTurn("queued-head");
+    await forma.enqueueTurn("queued-next");
+    await forma.setSession(null);
+    await forma.removeQueuedTurn("queued-head");
 
     await waitFor(async () => {
-      const events = await harness.readEvents();
+      const events = await forma.readEvents();
       return (
         events.find(
           (event) =>
@@ -416,7 +416,7 @@ describe("TurnQueueReactor", () => {
       );
     });
 
-    const thread = await harness.readThread();
+    const thread = await forma.readThread();
     expect(thread?.turnQueue.items).toEqual([]);
     expect(thread?.turnQueue.status).toBe("idle");
   });

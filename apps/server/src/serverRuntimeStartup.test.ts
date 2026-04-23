@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DEFAULT_MODEL_BY_PROVIDER, ProjectId, ThreadId } from "@harness/contracts";
+import { DEFAULT_MODEL_BY_PROVIDER, ProjectId, ThreadId } from "@forma/contracts";
 import { assert, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Option, Ref, Stream } from "effect";
 

@@ -18,7 +18,7 @@ import {
   type RuntimeMode,
   type ThreadId,
   TurnId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import {
   DateTime,
   Deferred,
@@ -489,7 +489,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
-            clientInfo: { name: "harness", version: "0.0.0" },
+            clientInfo: { name: "forma", version: "0.0.0" },
             ...acpNativeLoggers,
           }).pipe(
             Effect.provideService(Scope.Scope, sessionScope),

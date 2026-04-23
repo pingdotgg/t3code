@@ -39,16 +39,16 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
     Effect.gen(function* () {
       const capturedRequests: Array<RecordedBatchRequest> = [];
       const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
-        prefix: "harness-telemetry-base-",
+        prefix: "forma-telemetry-base-",
       });
 
       const telemetryLayer = AnalyticsServiceLayerLive.pipe(Layer.provideMerge(serverConfigLayer));
       const configLayer = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          HARNESS_TELEMETRY_ENABLED: true,
-          HARNESS_POSTHOG_KEY: "phc_test_key",
-          HARNESS_POSTHOG_HOST: "",
-          HARNESS_TELEMETRY_FLUSH_BATCH_SIZE: 20,
+          FORMA_TELEMETRY_ENABLED: true,
+          FORMA_POSTHOG_KEY: "phc_test_key",
+          FORMA_POSTHOG_HOST: "",
+          FORMA_TELEMETRY_FLUSH_BATCH_SIZE: 20,
         }),
       );
       const batchServerLayer = HttpServer.serve(

@@ -1,11 +1,11 @@
-# Harness
+# Forma
 
-Harness is a minimal web GUI for coding agents (currently Codex and Claude, more coming soon).
+Forma is a minimal web GUI for coding agents (currently Codex and Claude, more coming soon).
 
 ## Installation
 
 > [!WARNING]
-> Harness currently supports Codex and Claude.
+> Forma currently supports Codex and Claude.
 > Install and authenticate at least one provider before use:
 >
 > - Codex: install [Codex CLI](https://github.com/openai/codex) and run `codex login`
@@ -14,29 +14,29 @@ Harness is a minimal web GUI for coding agents (currently Codex and Claude, more
 ### Run without installing
 
 ```bash
-npx harness
+npx forma
 ```
 
 ### Desktop app
 
-Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/harness/releases), or from your favorite package registry:
+Install the latest version of the desktop app from [GitHub Releases](https://github.com/pingdotgg/forma/releases), or from your favorite package registry:
 
 #### Windows (`winget`)
 
 ```bash
-winget install Harness.Harness
+winget install Forma.Forma
 ```
 
 #### macOS (Homebrew)
 
 ```bash
-brew install --cask harness
+brew install --cask forma
 ```
 
 #### Arch Linux (AUR)
 
 ```bash
-yay -S harness-bin
+yay -S forma-bin
 ```
 
 ## Some notes

@@ -13,7 +13,7 @@ import {
   ProjectionPendingApprovalStatus,
   ThreadId,
   TurnId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -88,6 +88,4 @@ export interface ProjectionPendingApprovalRepositoryShape {
 export class ProjectionPendingApprovalRepository extends Context.Service<
   ProjectionPendingApprovalRepository,
   ProjectionPendingApprovalRepositoryShape
->()(
-  "harness/persistence/Services/ProjectionPendingApprovals/ProjectionPendingApprovalRepository",
-) {}
+>()("forma/persistence/Services/ProjectionPendingApprovals/ProjectionPendingApprovalRepository") {}

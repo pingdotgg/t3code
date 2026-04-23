@@ -1,5 +1,5 @@
-import { scopeThreadRef } from "@harness/client-runtime";
-import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@harness/contracts";
+import { scopeThreadRef } from "@forma/client-runtime";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@forma/contracts";
 import type { DraftId } from "./composerDraftStore";
 
 export type ThreadRouteTarget =

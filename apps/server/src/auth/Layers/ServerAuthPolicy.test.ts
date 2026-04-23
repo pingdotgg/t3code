@@ -20,9 +20,7 @@ const makeServerAuthPolicyLayer = (overrides?: Partial<ServerConfigShape>) =>
           } satisfies ServerConfigShape;
         }),
       ).pipe(
-        Layer.provide(
-          ServerConfig.layerTest(process.cwd(), { prefix: "harness-auth-policy-test-" }),
-        ),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "forma-auth-policy-test-" })),
       ),
     ),
   );

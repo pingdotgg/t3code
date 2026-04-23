@@ -3,8 +3,8 @@ import type {
   OrchestrationReadModel,
   ProjectId,
   ThreadId,
-} from "@harness/contracts";
-import { OrchestrationCommand } from "@harness/contracts";
+} from "@forma/contracts";
+import { OrchestrationCommand } from "@forma/contracts";
 import {
   Cause,
   Deferred,

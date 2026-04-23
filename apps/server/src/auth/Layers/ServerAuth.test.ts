@@ -21,7 +21,7 @@ const makeServerConfigLayer = (overrides?: Partial<ServerConfigShape>) =>
       } satisfies ServerConfigShape;
     }),
   ).pipe(
-    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "harness-auth-server-test-" })),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "forma-auth-server-test-" })),
   );
 
 const makeServerAuthLayer = (overrides?: Partial<ServerConfigShape>) =>

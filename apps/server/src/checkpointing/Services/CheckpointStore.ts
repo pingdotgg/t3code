@@ -14,7 +14,7 @@ import { Context } from "effect";
 import type { Effect } from "effect";
 
 import type { CheckpointStoreError } from "../Errors.ts";
-import { CheckpointRef } from "@harness/contracts";
+import { CheckpointRef } from "@forma/contracts";
 
 export interface CaptureCheckpointInput {
   readonly cwd: string;
@@ -96,5 +96,5 @@ export interface CheckpointStoreShape {
  * CheckpointStore - Service tag for checkpoint persistence and restore operations.
  */
 export class CheckpointStore extends Context.Service<CheckpointStore, CheckpointStoreShape>()(
-  "harness/checkpointing/Services/CheckpointStore",
+  "forma/checkpointing/Services/CheckpointStore",
 ) {}

@@ -1,7 +1,7 @@
 const TRANSPORT_ERROR_PATTERNS = [
   /\bSocketCloseError\b/i,
   /\bSocketOpenError\b/i,
-  /Unable to connect to the Harness server WebSocket\./i,
+  /Unable to connect to the Forma server WebSocket\./i,
   /\bping timeout\b/i,
 ] as const;
 

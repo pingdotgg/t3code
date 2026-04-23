@@ -1,4 +1,4 @@
-import type { AuthPairingLink } from "@harness/contracts";
+import type { AuthPairingLink } from "@forma/contracts";
 import { DateTime, Duration, Effect, Layer, PubSub, Ref, Stream } from "effect";
 import { Option } from "effect";
 

@@ -1,4 +1,4 @@
-import type { DesktopBridge } from "@harness/contracts";
+import type { DesktopBridge } from "@forma/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 function jsonResponse(body: unknown, init?: ResponseInit) {
@@ -30,7 +30,7 @@ function installTestBrowser(url: string) {
   };
 
   vi.stubGlobal("window", testWindow);
-  vi.stubGlobal("document", { title: "Harness" });
+  vi.stubGlobal("document", { title: "Forma" });
 
   return testWindow;
 }

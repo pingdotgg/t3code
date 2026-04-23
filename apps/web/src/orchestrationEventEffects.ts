@@ -1,4 +1,4 @@
-import type { OrchestrationEvent, ThreadId } from "@harness/contracts";
+import type { OrchestrationEvent, ThreadId } from "@forma/contracts";
 
 export interface OrchestrationBatchEffects {
   promoteDraftThreadIds: ThreadId[];

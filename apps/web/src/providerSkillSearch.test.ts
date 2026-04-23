@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { ServerProviderSkill } from "@harness/contracts";
+import type { ServerProviderSkill } from "@forma/contracts";
 
 import { searchProviderSkills } from "./providerSkillSearch";
 

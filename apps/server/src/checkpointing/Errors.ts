@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
-import { GitCommandError } from "@harness/contracts";
+import { GitCommandError } from "@forma/contracts";
 
 /**
  * CheckpointUnavailableError - Expected checkpoint does not exist.

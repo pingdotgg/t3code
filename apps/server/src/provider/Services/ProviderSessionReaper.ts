@@ -11,4 +11,4 @@ export interface ProviderSessionReaperShape {
 export class ProviderSessionReaper extends Context.Service<
   ProviderSessionReaper,
   ProviderSessionReaperShape
->()("harness/provider/Services/ProviderSessionReaper") {}
+>()("forma/provider/Services/ProviderSessionReaper") {}

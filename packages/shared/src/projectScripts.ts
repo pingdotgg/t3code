@@ -1,4 +1,4 @@
-import type { ProjectScript } from "@harness/contracts";
+import type { ProjectScript } from "@forma/contracts";
 
 interface ProjectScriptRuntimeEnvInput {
   project: {
@@ -21,10 +21,10 @@ export function projectScriptRuntimeEnv(
   input: ProjectScriptRuntimeEnvInput,
 ): Record<string, string> {
   const env: Record<string, string> = {
-    HARNESS_PROJECT_ROOT: input.project.cwd,
+    FORMA_PROJECT_ROOT: input.project.cwd,
   };
   if (input.worktreePath) {
-    env.HARNESS_WORKTREE_PATH = input.worktreePath;
+    env.FORMA_WORKTREE_PATH = input.worktreePath;
   }
   if (input.extraEnv) {
     return { ...env, ...input.extraEnv };

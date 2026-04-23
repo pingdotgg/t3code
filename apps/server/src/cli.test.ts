@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { NetService } from "@harness/shared/Net";
+import { NetService } from "@forma/shared/Net";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -62,7 +62,7 @@ const makeCliTestServerConfig = (baseDir: string) =>
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
       otlpExportIntervalMs: 10_000,
-      otlpServiceName: "harness-server",
+      otlpServiceName: "forma-server",
       mode: "web",
       port: 0,
       host: "127.0.0.1",
@@ -173,7 +173,7 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
 
   it.effect("executes auth pairing subcommands and redacts secrets from list output", () =>
     Effect.gen(function* () {
-      const baseDir = mkdtempSync(join(tmpdir(), "harness-cli-auth-pairing-test-"));
+      const baseDir = mkdtempSync(join(tmpdir(), "forma-cli-auth-pairing-test-"));
 
       const createdOutput = yield* captureStdout(
         runCli(["auth", "pairing", "create", "--base-dir", baseDir, "--json"]),
@@ -201,7 +201,7 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
 
   it.effect("executes auth session subcommands and redacts secrets from list output", () =>
     Effect.gen(function* () {
-      const baseDir = mkdtempSync(join(tmpdir(), "harness-cli-auth-session-test-"));
+      const baseDir = mkdtempSync(join(tmpdir(), "forma-cli-auth-session-test-"));
 
       const issuedOutput = yield* captureStdout(
         runCli(["auth", "session", "issue", "--base-dir", baseDir, "--json"]),
@@ -242,7 +242,7 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
       if (error._tag !== "ShowHelp") {
         assert.fail(`Expected ShowHelp, got ${error._tag}`);
       }
-      assert.deepEqual(error.commandPath, ["harness", "auth", "pairing", "create"]);
+      assert.deepEqual(error.commandPath, ["forma", "auth", "pairing", "create"]);
       const ttlError = error.errors[0] as CliError.CliError | undefined;
       if (!ttlError || ttlError._tag !== "InvalidValue") {
         assert.fail(`Expected InvalidValue, got ${String(ttlError?._tag)}`);
@@ -256,8 +256,8 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
 
   it.effect("adds, renames, and removes projects offline through the orchestration engine", () =>
     Effect.gen(function* () {
-      const baseDir = mkdtempSync(join(tmpdir(), "harness-cli-projects-offline-test-"));
-      const workspaceRoot = mkdtempSync(join(tmpdir(), "harness-cli-projects-workspace-"));
+      const baseDir = mkdtempSync(join(tmpdir(), "forma-cli-projects-offline-test-"));
+      const workspaceRoot = mkdtempSync(join(tmpdir(), "forma-cli-projects-workspace-"));
 
       yield* runCliWithRuntime([
         "project",
@@ -300,8 +300,8 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
 
   it.effect("routes project commands through a running server when runtime state is present", () =>
     Effect.gen(function* () {
-      const baseDir = mkdtempSync(join(tmpdir(), "harness-cli-projects-live-test-"));
-      const workspaceRoot = mkdtempSync(join(tmpdir(), "harness-cli-projects-live-workspace-"));
+      const baseDir = mkdtempSync(join(tmpdir(), "forma-cli-projects-live-test-"));
+      const workspaceRoot = mkdtempSync(join(tmpdir(), "forma-cli-projects-live-workspace-"));
 
       yield* withLiveProjectCliServer(baseDir, () =>
         Effect.gen(function* () {
@@ -329,7 +329,7 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
   it.effect("rejects dev-url on project commands", () =>
     Effect.gen(function* () {
       const workspaceRoot = mkdtempSync(
-        join(tmpdir(), "harness-cli-projects-unknown-option-workspace-"),
+        join(tmpdir(), "forma-cli-projects-unknown-option-workspace-"),
       );
       const error = yield* runCliWithRuntime([
         "project",
@@ -345,7 +345,7 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
       if (error._tag !== "ShowHelp") {
         assert.fail(`Expected ShowHelp, got ${error._tag}`);
       }
-      assert.deepEqual(error.commandPath, ["harness", "project", "add"]);
+      assert.deepEqual(error.commandPath, ["forma", "project", "add"]);
       const optionError = error.errors[0] as CliError.CliError | undefined;
       if (!optionError || optionError._tag !== "UnrecognizedOption") {
         assert.fail(`Expected UnrecognizedOption, got ${String(optionError?._tag)}`);

@@ -22,8 +22,8 @@ import type {
   ModelCapabilities,
   ServerProviderModel,
   ServerProviderSkill,
-} from "@harness/contracts";
-import { ServerSettingsError } from "@harness/contracts";
+} from "@forma/contracts";
+import { ServerSettingsError } from "@forma/contracts";
 
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { buildServerProvider } from "../providerSnapshot.ts";
@@ -202,7 +202,7 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   return {
     clientInfo: {
       name: "harness_desktop",
-      title: "Harness Desktop",
+      title: "Forma Desktop",
       version: packageJson.version,
     },
     capabilities: {
@@ -232,7 +232,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
   const initialize = yield* client.request("initialize", {
     clientInfo: {
       name: "harness_desktop",
-      title: "Harness Desktop",
+      title: "Forma Desktop",
       version: "0.1.0",
     },
     capabilities: {
@@ -300,7 +300,7 @@ const makePendingCodexProvider = (codexSettings: CodexSettings): ServerProvider 
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Codex is disabled in Harness settings.",
+        message: "Codex is disabled in Forma settings.",
       },
     });
   }
@@ -383,7 +383,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Codex is disabled in Harness settings.",
+        message: "Codex is disabled in Forma settings.",
       },
     });
   }

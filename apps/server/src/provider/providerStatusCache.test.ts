@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { ServerProvider } from "@harness/contracts";
+import type { ServerProvider } from "@forma/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, FileSystem } from "effect";
 
@@ -31,7 +31,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
   it.effect("writes and reads provider status snapshots", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "harness-provider-cache-" });
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "forma-provider-cache-" });
       const codexProvider = makeProvider("codex");
       const claudeProvider = makeProvider("claudeAgent", {
         status: "warning",
@@ -163,7 +163,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       version: null,
       status: "disabled",
       auth: { status: "unknown" },
-      message: "Codex is disabled in Harness settings.",
+      message: "Codex is disabled in Forma settings.",
     });
 
     assert.deepStrictEqual(

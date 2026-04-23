@@ -10,10 +10,10 @@
 import { Effect, Layer, Option, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { ClaudeModelSelection } from "@harness/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@harness/shared/git";
+import { ClaudeModelSelection } from "@forma/contracts";
+import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@forma/shared/git";
 
-import { TextGenerationError } from "@harness/contracts";
+import { TextGenerationError } from "@forma/contracts";
 import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -28,7 +28,7 @@ import {
   sanitizeThreadTitle,
   toJsonSchemaObject,
 } from "../Utils.ts";
-import { normalizeClaudeModelOptionsWithCapabilities } from "@harness/shared/model";
+import { normalizeClaudeModelOptionsWithCapabilities } from "@forma/shared/model";
 import { resolveClaudeApiModelId } from "../../provider/Layers/ClaudeProvider.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { getClaudeModelCapabilities } from "../../provider/Layers/ClaudeProvider.ts";

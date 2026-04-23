@@ -8,8 +8,8 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import type { ThreadId } from "@harness/contracts";
-import { RotatingFileSink } from "@harness/shared/logging";
+import type { ThreadId } from "@forma/contracts";
+import { RotatingFileSink } from "@forma/shared/logging";
 import { Effect, Exit, Logger, Scope, SynchronizedRef } from "effect";
 
 import { toSafeThreadAttachmentSegment } from "../../attachmentStore.ts";

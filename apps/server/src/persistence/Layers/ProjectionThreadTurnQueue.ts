@@ -1,4 +1,4 @@
-import { ModelSelection } from "@harness/contracts";
+import { ModelSelection } from "@forma/contracts";
 import { Effect, Layer, Schema, Struct } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";

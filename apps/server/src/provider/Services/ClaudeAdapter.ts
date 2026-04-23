@@ -26,5 +26,5 @@ export interface ClaudeAdapterShape extends ProviderAdapterShape<ProviderAdapter
  * ClaudeAdapter - Service tag for Claude Agent provider adapter operations.
  */
 export class ClaudeAdapter extends Context.Service<ClaudeAdapter, ClaudeAdapterShape>()(
-  "harness/provider/Services/ClaudeAdapter",
+  "forma/provider/Services/ClaudeAdapter",
 ) {}

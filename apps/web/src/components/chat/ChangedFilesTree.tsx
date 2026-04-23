@@ -1,4 +1,4 @@
-import { type TurnId } from "@harness/contracts";
+import { type TurnId } from "@forma/contracts";
 import { memo, useCallback, useMemo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";

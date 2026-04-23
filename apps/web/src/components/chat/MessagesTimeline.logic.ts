@@ -1,6 +1,6 @@
 import { type TimelineEntry, type WorkLogEntry } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
-import { type MessageId } from "@harness/contracts";
+import { type MessageId } from "@forma/contracts";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 

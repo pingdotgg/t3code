@@ -11,7 +11,7 @@ import {
   type UserInputQuestion,
   type ThreadId,
   type TurnId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 
 import type {
   ChatMessage,

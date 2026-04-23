@@ -25,7 +25,7 @@ import {
   WS_METHODS,
   WsRpcGroup,
   EditorId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { assert, it } from "@effect/vitest";
 import { assertFailure, assertInclude, assertTrue } from "@effect/vitest/utils";
 import {
@@ -295,9 +295,9 @@ const makeBrowserOtlpPayload = (spanName: string) =>
         url: collector.url,
         exportInterval: "10 millis",
         resource: {
-          serviceName: "harness-web",
+          serviceName: "forma-web",
           attributes: {
-            "service.runtime": "harness-web",
+            "service.runtime": "forma-web",
             "service.mode": "browser",
             "service.version": "test",
           },
@@ -349,7 +349,7 @@ const buildAppUnderTest = (options?: {
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const tempBaseDir = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: "harness-router-test-",
+      prefix: "forma-router-test-",
     });
     const baseDir = options?.config?.baseDir ?? tempBaseDir;
     const devUrl = options?.config?.devUrl;
@@ -364,7 +364,7 @@ const buildAppUnderTest = (options?: {
       otlpTracesUrl: undefined,
       otlpMetricsUrl: undefined,
       otlpExportIntervalMs: 10_000,
-      otlpServiceName: "harness-server",
+      otlpServiceName: "forma-server",
       mode: "desktop",
       port: 0,
       host: "127.0.0.1",
@@ -756,7 +756,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const staticDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "harness-router-static-",
+        prefix: "forma-router-static-",
       });
       const indexPath = path.join(staticDir, "index.html");
       yield* fileSystem.writeFileString(indexPath, "<html>router-static-ok</html>");
@@ -791,7 +791,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const projectDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "harness-router-project-favicon-",
+        prefix: "forma-router-project-favicon-",
       });
       yield* fileSystem.writeFileString(
         path.join(projectDir, "favicon.svg"),
@@ -820,7 +820,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const projectDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "harness-router-project-favicon-fallback-",
+        prefix: "forma-router-project-favicon-fallback-",
       });
 
       yield* buildAppUnderTest({
@@ -845,7 +845,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest();
 
-      const url = yield* getHttpServerUrl("/.well-known/harness/environment");
+      const url = yield* getHttpServerUrl("/.well-known/forma/environment");
       const response = yield* Effect.promise(() => fetch(url));
       const body = (yield* Effect.promise(() =>
         response.json(),
@@ -1343,7 +1343,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const projectDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "harness-router-project-favicon-query-token-",
+          prefix: "forma-router-project-favicon-query-token-",
         });
 
         yield* buildAppUnderTest();
@@ -1500,7 +1500,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               attributes: [
                 {
                   key: "service.name",
-                  value: { stringValue: "harness-web" },
+                  value: { stringValue: "forma-web" },
                 },
               ],
             },
@@ -1641,7 +1641,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             "rpc.method": "server.getSettings",
           },
           resourceAttributes: {
-            "service.name": "harness-web",
+            "service.name": "forma-web",
           },
           scope: {
             name: "effect",
@@ -1771,7 +1771,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.deepEqual(record.links, []);
         assert.equal(record.scope.name, scopeSpan.scope.name);
         assert.deepEqual(record.scope.attributes, {});
-        assert.equal(record.resourceAttributes["service.name"], "harness-web");
+        assert.equal(record.resourceAttributes["service.name"], "forma-web");
         assert.equal(record.status?.code, String(span.status.code));
       }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
@@ -1833,7 +1833,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const workspaceDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "harness-ws-auth-required-",
+        prefix: "forma-ws-auth-required-",
       });
       yield* fs.writeFileString(
         path.join(workspaceDir, "needle-file.ts"),
@@ -2043,7 +2043,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const workspaceDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "harness-ws-project-search-",
+        prefix: "forma-ws-project-search-",
       });
       yield* fs.writeFileString(
         path.join(workspaceDir, "needle-file.ts"),
@@ -2074,7 +2074,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const workspaceDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "harness-ws-project-search-gitignored-",
+        prefix: "forma-ws-project-search-gitignored-",
       });
       yield* fs.writeFileString(path.join(workspaceDir, ".gitignore"), ".venv/\n");
       yield* fs.makeDirectory(path.join(workspaceDir, ".venv", "lib"), { recursive: true });
@@ -2150,7 +2150,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const workspaceDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "harness-ws-project-write-",
+        prefix: "forma-ws-project-write-",
       });
 
       yield* buildAppUnderTest();
@@ -2178,7 +2178,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const workspaceDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "harness-ws-project-read-",
+        prefix: "forma-ws-project-read-",
       });
       yield* fs
         .makeDirectory(path.join(workspaceDir, "nested"), { recursive: true })
@@ -2211,7 +2211,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "harness-ws-project-create-" });
+      const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "forma-ws-project-create-" });
       const missingWorkspaceRoot = path.join(parentDir, "nested", "new-project");
 
       yield* buildAppUnderTest();
@@ -2245,7 +2245,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const workspaceDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "harness-ws-project-write-",
+        prefix: "forma-ws-project-write-",
       });
 
       yield* buildAppUnderTest();
@@ -2274,7 +2274,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const workspaceDir = yield* fs.makeTempDirectoryScoped({
-        prefix: "harness-ws-project-read-",
+        prefix: "forma-ws-project-read-",
       });
 
       yield* buildAppUnderTest();
@@ -3084,16 +3084,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
   it.effect("enriches replayed project events with repository identity metadata", () =>
     Effect.gen(function* () {
       const repositoryIdentity = {
-        canonicalKey: "github.com/t3tools/harness",
+        canonicalKey: "github.com/t3tools/forma",
         locator: {
           source: "git-remote" as const,
           remoteName: "origin",
-          remoteUrl: "git@github.com:Harness/harness.git",
+          remoteUrl: "git@github.com:Forma/forma.git",
         },
-        displayName: "Harness/harness",
+        displayName: "Forma/forma",
         provider: "github",
-        owner: "Harness",
-        name: "harness",
+        owner: "Forma",
+        name: "forma",
       };
 
       yield* buildAppUnderTest({
@@ -3575,7 +3575,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             isRepo: true,
             hasOriginRemote: true,
             isDefaultBranch: false,
-            branch: "harness/bootstrap-branch",
+            branch: "forma/bootstrap-branch",
             hasWorkingTreeChanges: false,
             workingTree: {
               files: [],
@@ -3591,7 +3591,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
           Effect.succeed({
             worktree: {
-              branch: "harness/bootstrap-branch",
+              branch: "forma/bootstrap-branch",
               path: "/tmp/bootstrap-worktree",
             },
           }),
@@ -3660,7 +3660,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 prepareWorktree: {
                   projectCwd: "/tmp/project",
                   baseBranch: "main",
-                  branch: "harness/bootstrap-branch",
+                  branch: "forma/bootstrap-branch",
                 },
                 runSetupScript: true,
               },
@@ -3683,7 +3683,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
           branch: "main",
-          newBranch: "harness/bootstrap-branch",
+          newBranch: "forma/bootstrap-branch",
           path: null,
         });
         assert.deepEqual(runForThread.mock.calls[0]?.[0], {
@@ -3716,7 +3716,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
         Effect.succeed({
           worktree: {
-            branch: "harness/bootstrap-branch",
+            branch: "forma/bootstrap-branch",
             path: "/tmp/bootstrap-worktree",
           },
         }),
@@ -3776,7 +3776,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               prepareWorktree: {
                 projectCwd: "/tmp/project",
                 baseBranch: "main",
-                branch: "harness/bootstrap-branch",
+                branch: "forma/bootstrap-branch",
               },
               runSetupScript: true,
             },
@@ -3809,7 +3809,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const createWorktree = vi.fn((_: Parameters<GitCoreShape["createWorktree"]>[0]) =>
         Effect.succeed({
           worktree: {
-            branch: "harness/bootstrap-branch",
+            branch: "forma/bootstrap-branch",
             path: "/tmp/bootstrap-worktree",
           },
         }),
@@ -3892,7 +3892,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               prepareWorktree: {
                 projectCwd: "/tmp/project",
                 baseBranch: "main",
-                branch: "harness/bootstrap-branch",
+                branch: "forma/bootstrap-branch",
               },
               runSetupScript: true,
             },
@@ -3975,7 +3975,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               prepareWorktree: {
                 projectCwd: "/tmp/project",
                 baseBranch: "main",
-                branch: "harness/bootstrap-branch",
+                branch: "forma/bootstrap-branch",
               },
               runSetupScript: false,
             },

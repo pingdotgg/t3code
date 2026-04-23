@@ -5,11 +5,11 @@ import type {
   GitStatusRemoteResult,
   GitStatusResult,
   GitStatusStreamEvent,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";
 
-export const WORKTREE_BRANCH_PREFIX = "harness";
+export const WORKTREE_BRANCH_PREFIX = "forma";
 const TEMP_WORKTREE_BRANCH_PATTERN = new RegExp(`^${WORKTREE_BRANCH_PREFIX}\\/[0-9a-f]{8}$`);
 
 /**

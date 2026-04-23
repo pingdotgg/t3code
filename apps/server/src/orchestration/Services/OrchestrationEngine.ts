@@ -14,7 +14,7 @@ import type {
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationReadModel,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Context } from "effect";
 import type { Effect, Stream } from "effect";
 
@@ -77,4 +77,4 @@ export interface OrchestrationEngineShape {
 export class OrchestrationEngineService extends Context.Service<
   OrchestrationEngineService,
   OrchestrationEngineShape
->()("harness/orchestration/Services/OrchestrationEngine/OrchestrationEngineService") {}
+>()("forma/orchestration/Services/OrchestrationEngine/OrchestrationEngineService") {}

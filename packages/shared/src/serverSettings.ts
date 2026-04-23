@@ -5,7 +5,7 @@ import {
   type CursorModelOptions,
   type OpenCodeModelOptions,
   type ServerSettingsPatch,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Schema } from "effect";
 import { deepMerge } from "./Struct.ts";
 import { fromLenientJson } from "./schemaJson.ts";

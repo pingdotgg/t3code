@@ -2,8 +2,8 @@ import type {
   GitRunStackedActionResult,
   GitStackedAction,
   GitStatusResult,
-} from "@harness/contracts";
-import { isTemporaryWorktreeBranch } from "@harness/shared/git";
+} from "@forma/contracts";
+import { isTemporaryWorktreeBranch } from "@forma/shared/git";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
@@ -370,4 +370,4 @@ export function resolveLiveThreadBranchUpdate(input: {
 }
 
 // Re-export from shared for backwards compatibility in this module's exports
-export { resolveAutoFeatureBranchName } from "@harness/shared/git";
+export { resolveAutoFeatureBranchName } from "@forma/shared/git";

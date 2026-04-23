@@ -1,4 +1,4 @@
-import type { ServerLocalAgentInventory } from "@harness/contracts";
+import type { ServerLocalAgentInventory } from "@forma/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 
@@ -10,4 +10,4 @@ export interface ProjectAgentInventoryShape {
 export class ProjectAgentInventory extends Context.Service<
   ProjectAgentInventory,
   ProjectAgentInventoryShape
->()("harness/project/ProjectAgentInventory") {}
+>()("forma/project/ProjectAgentInventory") {}

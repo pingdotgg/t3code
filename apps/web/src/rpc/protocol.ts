@@ -1,4 +1,4 @@
-import { WsRpcGroup } from "@harness/contracts";
+import { WsRpcGroup } from "@forma/contracts";
 import { Duration, Effect, Layer, Schedule } from "effect";
 import { RpcClient, RpcSerialization } from "effect/unstable/rpc";
 import * as Socket from "effect/unstable/socket/Socket";
@@ -121,7 +121,7 @@ export function createWsRpcProtocolLayer(
       socket.addEventListener(
         "error",
         () => {
-          lifecycle.onError("Unable to connect to the Harness server WebSocket.");
+          lifecycle.onError("Unable to connect to the Forma server WebSocket.");
         },
         { once: true },
       );

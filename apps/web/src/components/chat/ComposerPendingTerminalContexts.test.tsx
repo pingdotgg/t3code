@@ -1,4 +1,4 @@
-import { ThreadId } from "@harness/contracts";
+import { ThreadId } from "@forma/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 

@@ -20,16 +20,16 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   TerminalOpenInput,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import {
   parseScopedThreadKey,
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@harness/client-runtime";
-import { applyClaudePromptEffortPrefix, createModelSelection } from "@harness/shared/model";
-import { projectScriptCwd, projectScriptRuntimeEnv } from "@harness/shared/projectScripts";
-import { truncate } from "@harness/shared/String";
+} from "@forma/client-runtime";
+import { applyClaudePromptEffortPrefix, createModelSelection } from "@forma/shared/model";
+import { projectScriptCwd, projectScriptRuntimeEnv } from "@forma/shared/projectScripts";
+import { truncate } from "@forma/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
 import { useQuery } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -96,7 +96,7 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useCommandPaletteStore } from "../commandPaletteStore";
-import { buildTemporaryWorktreeBranchName } from "@harness/shared/git";
+import { buildTemporaryWorktreeBranchName } from "@forma/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { BranchToolbar } from "./BranchToolbar";

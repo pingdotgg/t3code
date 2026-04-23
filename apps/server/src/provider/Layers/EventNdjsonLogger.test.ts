@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { ThreadId } from "@harness/contracts";
+import { ThreadId } from "@forma/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect } from "effect";
 
@@ -30,7 +30,7 @@ function parseLogLine(line: string) {
 describe("EventNdjsonLogger", () => {
   it.effect("writes effect-style lines to thread-scoped files", () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-provider-log-"));
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "forma-provider-log-"));
       const basePath = path.join(tempDir, "provider-native.ndjson");
 
       try {
@@ -78,7 +78,7 @@ describe("EventNdjsonLogger", () => {
     "falls back to a global segment when orchestration thread id is missing or invalid",
     () =>
       Effect.gen(function* () {
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-provider-log-"));
+        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "forma-provider-log-"));
         const basePath = path.join(tempDir, "provider-canonical.ndjson");
 
         try {
@@ -114,7 +114,7 @@ describe("EventNdjsonLogger", () => {
 
   it.effect("serializes concurrent first writes for the same segment", () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-provider-log-"));
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "forma-provider-log-"));
       const basePath = path.join(tempDir, "provider-canonical.ndjson");
 
       try {
@@ -157,7 +157,7 @@ describe("EventNdjsonLogger", () => {
 
   it.effect("rotates per-thread files when max size is exceeded", () =>
     Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-provider-log-"));
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "forma-provider-log-"));
       const basePath = path.join(tempDir, "provider-native.ndjson");
 
       try {

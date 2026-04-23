@@ -1,8 +1,8 @@
 # Keybindings
 
-Harness reads keybindings from:
+Forma reads keybindings from:
 
-- `~/.harness/keybindings.json`
+- `~/.forma/keybindings.json`
 
 The file must be a JSON array of rules:
 

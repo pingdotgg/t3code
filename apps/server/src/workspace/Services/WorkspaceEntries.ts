@@ -14,7 +14,7 @@ import type {
   FilesystemBrowseResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
-} from "@harness/contracts";
+} from "@forma/contracts";
 
 export class WorkspaceEntriesError extends Schema.TaggedErrorClass<WorkspaceEntriesError>()(
   "WorkspaceEntriesError",
@@ -67,5 +67,5 @@ export interface WorkspaceEntriesShape {
  * WorkspaceEntries - Service tag for cached workspace entry search.
  */
 export class WorkspaceEntries extends Context.Service<WorkspaceEntries, WorkspaceEntriesShape>()(
-  "harness/workspace/Services/WorkspaceEntries",
+  "forma/workspace/Services/WorkspaceEntries",
 ) {}

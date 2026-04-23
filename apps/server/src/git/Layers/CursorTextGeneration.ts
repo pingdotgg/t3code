@@ -1,10 +1,10 @@
 import { Effect, Layer, Option, Ref, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { CursorModelSelection } from "@harness/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@harness/shared/git";
+import { CursorModelSelection } from "@forma/contracts";
+import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@forma/shared/git";
 
-import { TextGenerationError } from "@harness/contracts";
+import { TextGenerationError } from "@forma/contracts";
 import {
   type ThreadTitleGenerationResult,
   type TextGenerationShape,
@@ -87,7 +87,7 @@ const makeCursorTextGeneration = Effect.gen(function* () {
         cursorSettings,
         childProcessSpawner: commandSpawner,
         cwd,
-        clientInfo: { name: "harness-git-text", version: "0.0.0" },
+        clientInfo: { name: "forma-git-text", version: "0.0.0" },
       });
 
       yield* runtime.handleSessionUpdate((notification) => {

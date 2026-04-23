@@ -1,9 +1,9 @@
-import type { EnvironmentId, GitBranch, ProjectId } from "@harness/contracts";
+import type { EnvironmentId, GitBranch, ProjectId } from "@forma/contracts";
 import { Schema } from "effect";
 export {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
-} from "@harness/shared/git";
+} from "@forma/shared/git";
 
 export interface EnvironmentOption {
   environmentId: EnvironmentId;

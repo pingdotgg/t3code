@@ -7,7 +7,7 @@ import {
   type ServerConfigStreamEvent,
   type ServerLifecycleStreamEvent,
   type ServerProvider,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -218,7 +218,7 @@ describe("serverState", () => {
       payload: {
         environment: baseEnvironment,
         cwd: "/tmp/workspace",
-        projectName: "harness",
+        projectName: "forma",
         bootstrapProjectId: ProjectId.make("project-1"),
         bootstrapThreadId: ThreadId.make("thread-1"),
       },
@@ -227,7 +227,7 @@ describe("serverState", () => {
     expect(listener).toHaveBeenCalledWith({
       environment: baseEnvironment,
       cwd: "/tmp/workspace",
-      projectName: "harness",
+      projectName: "forma",
       bootstrapProjectId: ProjectId.make("project-1"),
       bootstrapThreadId: ThreadId.make("thread-1"),
     });
@@ -237,7 +237,7 @@ describe("serverState", () => {
     expect(lateListener).toHaveBeenCalledWith({
       environment: baseEnvironment,
       cwd: "/tmp/workspace",
-      projectName: "harness",
+      projectName: "forma",
       bootstrapProjectId: ProjectId.make("project-1"),
       bootstrapThreadId: ThreadId.make("thread-1"),
     });

@@ -62,7 +62,7 @@ All 7 sections are implemented. CI passes (format, lint, typecheck, test, browse
 ### 5. Replace polling-based orchestration waiting with receipts — DONE
 - `RuntimeReceiptBus` service defines three receipt types: `CheckpointBaselineCapturedReceipt`, `CheckpointDiffFinalizedReceipt` (with `status: "ready"|"missing"|"error"`), and `TurnProcessingQuiescedReceipt`.
 - `CheckpointReactor`, `ProviderCommandReactor`, and `ProviderRuntimeIngestion` use `DrainableWorker` and publish receipts on completion.
-- Integration harness and checkpoint tests await receipts instead of polling snapshots and git refs.
+- Integration forma and checkpoint tests await receipts instead of polling snapshots and git refs.
 
 ### 6. Centralize client transport state and decoding — DONE
 - `apps/web/src/wsTransport.ts` implements an explicit connection state machine: `connecting`, `open`, `reconnecting`, `closed`, `disposed`.
@@ -71,7 +71,7 @@ All 7 sections are implemented. CI passes (format, lint, typecheck, test, browse
 
 ### 7. Replace ad hoc test helpers with semantic test clients — MOSTLY DONE
 - `DrainableWorker` replaces timing-sensitive `Effect.sleep` with deterministic `drain()` across reactor tests.
-- Orchestration harness waits on receipts/barriers instead of `waitForThread`, `waitForGitRef`, and retry loops.
+- Orchestration forma waits on receipts/barriers instead of `waitForThread`, `waitForGitRef`, and retry loops.
 - Behavioral assertions moved to deterministic unit-style harnesses; narrow integration tests kept for real filesystem/socket behavior.
 - **Deferred:** Shared `WsTestClient` helper (connect, awaitSemanticWelcome, awaitTypedPush, trackSequence, matchRpcResponseById). Tests use direct transport subscription instead.
 

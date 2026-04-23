@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@harness/contracts";
+import type { EnvironmentId } from "@forma/contracts";
 
 import { resolveEnvironmentHttpUrl } from "./environments/runtime";
 

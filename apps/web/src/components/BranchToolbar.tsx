@@ -1,5 +1,5 @@
-import { scopeProjectRef, scopeThreadRef } from "@harness/client-runtime";
-import type { EnvironmentId, ThreadId } from "@harness/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
+import type { EnvironmentId, ThreadId } from "@forma/contracts";
 import { memo, useMemo } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";

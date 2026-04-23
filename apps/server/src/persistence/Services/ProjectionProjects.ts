@@ -6,7 +6,7 @@
  *
  * @module ProjectionProjectRepository
  */
-import { IsoDateTime, ModelSelection, ProjectId, ProjectScript } from "@harness/contracts";
+import { IsoDateTime, ModelSelection, ProjectId, ProjectScript } from "@forma/contracts";
 import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -76,4 +76,4 @@ export interface ProjectionProjectRepositoryShape {
 export class ProjectionProjectRepository extends Context.Service<
   ProjectionProjectRepository,
   ProjectionProjectRepositoryShape
->()("harness/persistence/Services/ProjectionProjects/ProjectionProjectRepository") {}
+>()("forma/persistence/Services/ProjectionProjects/ProjectionProjectRepository") {}

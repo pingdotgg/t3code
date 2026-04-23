@@ -7,7 +7,7 @@ import {
   ThreadId,
   type OrchestrationCommand,
   type OrchestrationReadModel,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Effect } from "effect";
 
 import {

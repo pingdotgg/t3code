@@ -1,4 +1,4 @@
-import { type ScopedProjectRef, type ScopedThreadRef, type ThreadId } from "@harness/contracts";
+import { type ScopedProjectRef, type ScopedThreadRef, type ThreadId } from "@forma/contracts";
 import { selectEnvironmentState, type AppState, type EnvironmentState } from "./store";
 import { type Project, type Thread } from "./types";
 import { getThreadFromEnvironmentState } from "./threadDerivation";

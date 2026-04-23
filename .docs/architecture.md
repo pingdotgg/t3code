@@ -1,6 +1,6 @@
 # Architecture
 
-Harness runs as a **Node.js WebSocket server** that wraps `codex app-server` (JSON-RPC over stdio) and serves a React web app.
+Forma runs as a **Node.js WebSocket server** that wraps `codex app-server` (JSON-RPC over stdio) and serves a React web app.
 
 ```
 ┌─────────────────────────────────┐

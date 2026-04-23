@@ -54,7 +54,7 @@ function describeExhaustedToast(): string {
 }
 
 function buildReconnectTitle(_status: WsConnectionStatus): string {
-  return "Disconnected from Harness Server";
+  return "Disconnected from Forma Server";
 }
 
 function describeRecoveredToast(
@@ -297,7 +297,7 @@ export function WebSocketConnectionCoordinator() {
               },
               description: describeExhaustedToast(),
               timeout: 0,
-              title: "Disconnected from Harness Server",
+              title: "Disconnected from Forma Server",
               type: "error",
             })
           : stackedThreadToast({
@@ -334,7 +334,7 @@ export function WebSocketConnectionCoordinator() {
     ) {
       const successToast = {
         description: describeRecoveredToast(previousDisconnectedAt, status.connectedAt),
-        title: "Reconnected to Harness Server",
+        title: "Reconnected to Forma Server",
         type: "success" as const,
         timeout: 0,
         data: {

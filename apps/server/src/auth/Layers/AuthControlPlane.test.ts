@@ -26,7 +26,7 @@ const makeServerConfigLayer = (
     }),
   ).pipe(
     Layer.provide(
-      ServerConfig.layerTest(process.cwd(), { prefix: "harness-auth-control-plane-test-" }),
+      ServerConfig.layerTest(process.cwd(), { prefix: "forma-auth-control-plane-test-" }),
     ),
   );
 

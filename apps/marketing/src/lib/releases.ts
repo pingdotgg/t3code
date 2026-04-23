@@ -1,9 +1,9 @@
-const REPO = "pingdotgg/harness";
+const REPO = "pingdotgg/forma";
 
 export const RELEASES_URL = `https://github.com/${REPO}/releases`;
 
 const API_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
-const CACHE_KEY = "harness-latest-release";
+const CACHE_KEY = "forma-latest-release";
 
 export interface ReleaseAsset {
   name: string;

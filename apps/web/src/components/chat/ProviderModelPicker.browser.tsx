@@ -1,12 +1,12 @@
-import { type ProviderKind, type ServerProvider } from "@harness/contracts";
-import { EnvironmentId } from "@harness/contracts";
+import { type ProviderKind, type ServerProvider } from "@forma/contracts";
+import { EnvironmentId } from "@forma/contracts";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { getCustomModelOptionsByProvider } from "../../modelSelection";
-import { DEFAULT_CLIENT_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@harness/contracts/settings";
+import { DEFAULT_CLIENT_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@forma/contracts/settings";
 import { __resetLocalApiForTests } from "../../localApi";
 
 // Mock the environments/runtime module to provide a mock primary environment connection
@@ -381,7 +381,7 @@ describe("ProviderModelPicker", () => {
 
   it("shows locked provider header and only its models in locked mode", async () => {
     localStorage.setItem(
-      "harness:client-settings:v1",
+      "forma:client-settings:v1",
       JSON.stringify({
         ...DEFAULT_CLIENT_SETTINGS,
         favorites: [
@@ -411,7 +411,7 @@ describe("ProviderModelPicker", () => {
         ]);
       });
     } finally {
-      localStorage.removeItem("harness:client-settings:v1");
+      localStorage.removeItem("forma:client-settings:v1");
       await mounted.cleanup();
     }
   });
@@ -767,7 +767,7 @@ describe("ProviderModelPicker", () => {
   });
 
   it("toggles favorite stars when clicked", async () => {
-    localStorage.removeItem("harness:client-settings:v1");
+    localStorage.removeItem("forma:client-settings:v1");
 
     const mounted = await mountPicker({
       provider: "claudeAgent",
@@ -807,12 +807,12 @@ describe("ProviderModelPicker", () => {
       });
     } finally {
       await mounted.cleanup();
-      localStorage.removeItem("harness:client-settings:v1");
+      localStorage.removeItem("forma:client-settings:v1");
     }
   });
 
   it("does not duplicate favorited models across favorites and all models sections", async () => {
-    localStorage.removeItem("harness:client-settings:v1");
+    localStorage.removeItem("forma:client-settings:v1");
 
     const mounted = await mountPicker({
       provider: "claudeAgent",
@@ -841,13 +841,13 @@ describe("ProviderModelPicker", () => {
       });
     } finally {
       await mounted.cleanup();
-      localStorage.removeItem("harness:client-settings:v1");
+      localStorage.removeItem("forma:client-settings:v1");
     }
   });
 
   it("shows favorited models first within the selected provider list", async () => {
     localStorage.setItem(
-      "harness:client-settings:v1",
+      "forma:client-settings:v1",
       JSON.stringify({
         ...DEFAULT_CLIENT_SETTINGS,
         favorites: [{ provider: "codex", model: "gpt-5.3-codex" }],
@@ -869,7 +869,7 @@ describe("ProviderModelPicker", () => {
       });
     } finally {
       await mounted.cleanup();
-      localStorage.removeItem("harness:client-settings:v1");
+      localStorage.removeItem("forma:client-settings:v1");
     }
   });
 

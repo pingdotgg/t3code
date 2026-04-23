@@ -15,8 +15,8 @@ import {
   RuntimeMode,
   ThreadId,
   TurnId,
-} from "@harness/contracts";
-import { normalizeModelSlug } from "@harness/shared/model";
+} from "@forma/contracts";
+import { normalizeModelSlug } from "@forma/shared/model";
 import { Deferred, Effect, Exit, Layer, Queue, Ref, Scope, Schema, Stream } from "effect";
 import * as SchemaIssue from "effect/SchemaIssue";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";

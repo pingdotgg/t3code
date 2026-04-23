@@ -1,4 +1,4 @@
-import { CheckpointRef, ProjectId, ThreadId, TurnId } from "@harness/contracts";
+import { CheckpointRef, ProjectId, ThreadId, TurnId } from "@forma/contracts";
 import { Effect, Layer, Option } from "effect";
 import { describe, expect, it } from "vitest";
 

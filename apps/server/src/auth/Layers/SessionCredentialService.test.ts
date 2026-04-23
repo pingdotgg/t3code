@@ -23,7 +23,7 @@ const makeServerConfigLayer = (
       } satisfies ServerConfigShape;
     }),
   ).pipe(
-    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "harness-auth-session-test-" })),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "forma-auth-session-test-" })),
   );
 
 const makeSessionCredentialLayer = (

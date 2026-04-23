@@ -1,5 +1,5 @@
 import { Effect, Exit, PubSub, Scope, Stream } from "effect";
-import { ORCHESTRATION_WS_METHODS, WS_METHODS, WsRpcGroup } from "@harness/contracts";
+import { ORCHESTRATION_WS_METHODS, WS_METHODS, WsRpcGroup } from "@forma/contracts";
 import { RpcMessage, RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 type RpcServerInstance = RpcServer.RpcServer<any>;

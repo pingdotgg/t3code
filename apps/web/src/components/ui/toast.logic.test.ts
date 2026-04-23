@@ -1,4 +1,4 @@
-import type { ScopedThreadRef } from "@harness/contracts";
+import type { ScopedThreadRef } from "@forma/contracts";
 import { assert, describe, it } from "vitest";
 import {
   buildVisibleToastLayout,

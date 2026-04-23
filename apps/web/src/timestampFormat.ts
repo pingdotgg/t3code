@@ -1,4 +1,4 @@
-import { type TimestampFormat } from "@harness/contracts/settings";
+import { type TimestampFormat } from "@forma/contracts/settings";
 
 export function getTimestampFormatOptions(
   timestampFormat: TimestampFormat,

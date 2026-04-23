@@ -1,4 +1,4 @@
-import { type ProviderKind, PROVIDER_DISPLAY_NAMES } from "@harness/contracts";
+import { type ProviderKind, PROVIDER_DISPLAY_NAMES } from "@forma/contracts";
 import { ClaudeAI, CursorIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";
 import { PROVIDER_OPTIONS } from "../../session-logic";
 

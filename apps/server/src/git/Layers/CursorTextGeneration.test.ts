@@ -8,7 +8,7 @@ import { it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { expect } from "vitest";
 
-import { ServerSettingsError } from "@harness/contracts";
+import { ServerSettingsError } from "@forma/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { TextGeneration } from "../Services/TextGeneration.ts";
@@ -26,7 +26,7 @@ const CursorTextGenerationTestLayer = CursorTextGenerationLive.pipe(
   Layer.provideMerge(ServerSettingsService.layerTest()),
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
-      prefix: "harness-cursor-text-generation-test-",
+      prefix: "forma-cursor-text-generation-test-",
     }),
   ),
   Layer.provideMerge(NodeServices.layer),
@@ -59,7 +59,7 @@ function withFakeAcpAgent<A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E | ServerSettingsError, R | ServerSettingsService> {
   return Effect.gen(function* () {
-    const tempDir = mkdtempSync(path.join(os.tmpdir(), "harness-cursor-text-acp-"));
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "forma-cursor-text-acp-"));
     const agentPath = makeAcpAgentWrapper(tempDir, env);
     const serverSettings = yield* ServerSettingsService;
     const previousSettings = yield* serverSettings.getSettings;
@@ -114,7 +114,7 @@ function waitForFileContent(path: string): Effect.Effect<string> {
 
 it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
   it.effect("uses ACP model config options instead of raw CLI model ids", () => {
-    const requestLogDir = mkdtempSync(path.join(os.tmpdir(), "harness-cursor-text-log-"));
+    const requestLogDir = mkdtempSync(path.join(os.tmpdir(), "forma-cursor-text-log-"));
     const requestLogPath = path.join(requestLogDir, "requests.ndjson");
 
     return withFakeAcpAgent(
@@ -260,7 +260,7 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
   );
 
   it.effect("closes the ACP child process after text generation completes", () => {
-    const exitLogDir = mkdtempSync(path.join(os.tmpdir(), "harness-cursor-text-exit-log-"));
+    const exitLogDir = mkdtempSync(path.join(os.tmpdir(), "forma-cursor-text-exit-log-"));
     const exitLogPath = path.join(exitLogDir, "exit.log");
 
     return withFakeAcpAgent(

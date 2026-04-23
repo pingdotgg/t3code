@@ -1,6 +1,6 @@
 # Remote Access
 
-Use this when you want to connect to a Harness server from another device such as a phone, tablet, or separate desktop app.
+Use this when you want to connect to a Forma server from another device such as a phone, tablet, or separate desktop app.
 
 ## Recommended Setup
 
@@ -29,13 +29,13 @@ If you are already running the desktop app and want to make it reachable from ot
 
 Use this when you want to run the server without a GUI, for example on a remote machine over SSH.
 
-Run the server with `harness serve`.
+Run the server with `forma serve`.
 
 ```bash
-npx harness serve --host "$(tailscale ip -4)"
+npx forma serve --host "$(tailscale ip -4)"
 ```
 
-`harness serve` starts the server without opening a browser and prints:
+`forma serve` starts the server without opening a browser and prints:
 
 - a connection string
 - a pairing token
@@ -48,11 +48,11 @@ From there, connect from another device in either of these ways:
 - in the desktop app, enter the full pairing URL
 - in the desktop app, enter the host and token separately
 
-Use `harness serve --help` for the full flag reference. It supports the same general startup options as the normal server command, including an optional `cwd` argument.
+Use `forma serve --help` for the full flag reference. It supports the same general startup options as the normal server command, including an optional `cwd` argument.
 
 > Note
 > The GUIs do not currently support adding projects on remote environments.
-> For now, use `harness project ...` on the server machine instead.
+> For now, use `forma project ...` on the server machine instead.
 > Full GUI support for remote project management is coming soon.
 
 ## How Pairing Works
@@ -61,7 +61,7 @@ The remote device does not need a long-lived secret up front.
 
 Instead:
 
-1. `harness serve` issues a one-time owner pairing token.
+1. `forma serve` issues a one-time owner pairing token.
 2. The remote device exchanges that token with the server.
 3. The server creates an authenticated session for that device.
 
@@ -69,7 +69,7 @@ After pairing, future access is session-based. You do not need to keep reusing t
 
 ## Managing Access Later
 
-Use `harness auth` to manage access after the initial pairing flow.
+Use `forma auth` to manage access after the initial pairing flow.
 
 Typical uses:
 
@@ -77,11 +77,11 @@ Typical uses:
 - inspect active sessions
 - revoke old pairing links or sessions
 
-Use `harness auth --help` and the nested subcommand help pages for the full reference.
+Use `forma auth --help` and the nested subcommand help pages for the full reference.
 
 ## Security Notes
 
 - Treat pairing URLs and pairing tokens like passwords.
 - Prefer binding `--host` to a trusted private address, such as a Tailnet IP, instead of exposing the server broadly.
 - Anyone with a valid pairing credential can create a session until that credential expires or is revoked.
-- Use `harness auth` to revoke credentials or sessions you no longer trust.
+- Use `forma auth` to revoke credentials or sessions you no longer trust.

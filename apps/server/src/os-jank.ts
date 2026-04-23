@@ -9,7 +9,7 @@ import {
   listLoginShellCandidates,
   mergePathEntries,
   readPathFromLaunchctl,
-} from "@harness/shared/shell";
+} from "@forma/shared/shell";
 
 type WindowsCommandAvailabilityChecker = (
   command: string,
@@ -95,7 +95,7 @@ export const expandHomePath = Effect.fn(function* (input: string) {
 export const resolveBaseDir = Effect.fn(function* (raw: string | undefined) {
   const { join, resolve } = yield* Path.Path;
   if (!raw || raw.trim().length === 0) {
-    return join(OS.homedir(), ".harness");
+    return join(OS.homedir(), ".forma");
   }
   return resolve(yield* expandHomePath(raw.trim()));
 });

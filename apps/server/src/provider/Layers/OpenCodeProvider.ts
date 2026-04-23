@@ -3,7 +3,7 @@ import type {
   OpenCodeSettings,
   ServerProvider,
   ServerProviderModel,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Cause, Data, Effect, Equal, Layer, Stream } from "effect";
 
 import { ServerConfig } from "../../config.ts";
@@ -252,8 +252,8 @@ const makePendingOpenCodeProvider = (openCodeSettings: OpenCodeSettings): Server
         auth: { status: "unknown" },
         message:
           openCodeSettings.serverUrl.trim().length > 0
-            ? "OpenCode is disabled in Harness settings. A server URL is configured."
-            : "OpenCode is disabled in Harness settings.",
+            ? "OpenCode is disabled in Forma settings. A server URL is configured."
+            : "OpenCode is disabled in Forma settings.",
       },
     });
   }
@@ -331,8 +331,8 @@ export const OpenCodeProviderLive = Layer.effect(
             status: "warning",
             auth: { status: "unknown" },
             message: isExternalServer
-              ? "OpenCode is disabled in Harness settings. A server URL is configured."
-              : "OpenCode is disabled in Harness settings.",
+              ? "OpenCode is disabled in Forma settings. A server URL is configured."
+              : "OpenCode is disabled in Forma settings.",
           },
         });
       }
@@ -360,7 +360,7 @@ export const OpenCodeProviderLive = Layer.effect(
         if (!version) {
           return fallback(
             new Error(
-              `Unable to determine OpenCode version from \`opencode --version\` output. Harness requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
+              `Unable to determine OpenCode version from \`opencode --version\` output. Forma requires OpenCode v${MINIMUM_OPENCODE_VERSION} or newer.`,
             ),
             null,
           );

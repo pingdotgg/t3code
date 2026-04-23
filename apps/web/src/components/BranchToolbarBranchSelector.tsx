@@ -1,5 +1,5 @@
-import { scopeProjectRef, scopeThreadRef } from "@harness/client-runtime";
-import type { EnvironmentId, GitBranch, ThreadId } from "@harness/contracts";
+import { scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
+import type { EnvironmentId, GitBranch, ThreadId } from "@forma/contracts";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronDownIcon } from "lucide-react";

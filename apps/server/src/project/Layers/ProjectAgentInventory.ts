@@ -4,13 +4,13 @@ import type {
   ServerLocalAgentCommand,
   ServerLocalAgentInventory,
   ServerLocalAgentSkill,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Cache, Duration, Effect, Exit, Layer, Path } from "effect";
 import {
   parseLocalAgentCommandJsonDocument,
   parseLocalAgentCommandMarkdownDocument,
   parseLocalAgentSkillDocument,
-} from "@harness/shared/localAgents";
+} from "@forma/shared/localAgents";
 
 import {
   ProjectAgentInventory,

@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { Command } from "effect/unstable/cli";
 
-import { NetService } from "@harness/shared/Net";
+import { NetService } from "@forma/shared/Net";
 import { cli } from "./cli.ts";
 import packageJson from "../package.json" with { type: "json" };
 

@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DEFAULT_SERVER_SETTINGS, ServerSettingsPatch } from "@harness/contracts";
+import { DEFAULT_SERVER_SETTINGS, ServerSettingsPatch } from "@forma/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Schema } from "effect";
 import { ServerConfig } from "./config.ts";
@@ -10,7 +10,7 @@ const makeServerSettingsLayer = () =>
     Layer.provideMerge(
       Layer.fresh(
         ServerConfig.layerTest(process.cwd(), {
-          prefix: "harness-server-settings-test-",
+          prefix: "forma-server-settings-test-",
         }),
       ),
     ),

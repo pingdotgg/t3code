@@ -1,4 +1,4 @@
-import { EnvironmentId, ProjectId, ThreadId } from "@harness/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@forma/contracts";
 import { describe, expect, it } from "vitest";
 
 import { createKnownEnvironment, getKnownEnvironmentHttpBaseUrl } from "./knownEnvironment.ts";

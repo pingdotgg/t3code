@@ -1,8 +1,8 @@
 import { Effect, Layer, Result, Schema, SchemaIssue } from "effect";
-import { TrimmedNonEmptyString } from "@harness/contracts";
+import { TrimmedNonEmptyString } from "@forma/contracts";
 
 import { runProcess } from "../../processRunner.ts";
-import { GitHubCliError } from "@harness/contracts";
+import { GitHubCliError } from "@forma/contracts";
 import {
   GitHubCli,
   type GitHubRepositoryCloneUrls,

@@ -1,4 +1,4 @@
-import { type ApprovalRequestId } from "@harness/contracts";
+import { type ApprovalRequestId } from "@forma/contracts";
 import { memo, useEffect, useEffectEvent, useRef } from "react";
 import { type PendingUserInput } from "../../session-logic";
 import {

@@ -6,10 +6,10 @@ import type {
   ServerProviderSlashCommand,
   ServerProviderModel,
   ServerProviderState,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Effect, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { normalizeModelSlug } from "@harness/shared/model";
+import { normalizeModelSlug } from "@forma/shared/model";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
 
 export const DEFAULT_TIMEOUT_MS = 4_000;

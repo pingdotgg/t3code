@@ -1,5 +1,5 @@
-import { EnvironmentId, ProjectId, ThreadId } from "@harness/contracts";
-import { scopeProjectRef } from "@harness/client-runtime";
+import { EnvironmentId, ProjectId, ThreadId } from "@forma/contracts";
+import { scopeProjectRef } from "@forma/client-runtime";
 import { describe, expect, it } from "vitest";
 
 import {

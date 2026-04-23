@@ -17,7 +17,7 @@ import {
   RuntimeMode,
   ThreadId,
   TurnId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -103,4 +103,4 @@ export interface ProjectionThreadRepositoryShape {
 export class ProjectionThreadRepository extends Context.Service<
   ProjectionThreadRepository,
   ProjectionThreadRepositoryShape
->()("harness/persistence/Services/ProjectionThreads/ProjectionThreadRepository") {}
+>()("forma/persistence/Services/ProjectionThreads/ProjectionThreadRepository") {}

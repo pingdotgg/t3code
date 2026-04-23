@@ -11,7 +11,7 @@ import {
   ThreadId,
   TurnId,
   ProviderKind,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Effect, Queue, Stream } from "effect";
 
 import {

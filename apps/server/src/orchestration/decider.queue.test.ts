@@ -7,7 +7,7 @@ import {
   TurnId,
   type OrchestrationQueuedTurn,
   type OrchestrationReadModel,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 

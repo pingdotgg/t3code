@@ -1,8 +1,4 @@
-import {
-  type ProviderApprovalDecision,
-  type ProviderKind,
-  type ThreadId,
-} from "@harness/contracts";
+import { type ProviderApprovalDecision, type ProviderKind, type ThreadId } from "@forma/contracts";
 import { Schema } from "effect";
 import * as EffectAcpErrors from "effect-acp/errors";
 

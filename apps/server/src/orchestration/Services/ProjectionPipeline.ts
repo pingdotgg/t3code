@@ -6,7 +6,7 @@
  *
  * @module OrchestrationProjectionPipeline
  */
-import type { OrchestrationEvent } from "@harness/contracts";
+import type { OrchestrationEvent } from "@forma/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 
@@ -39,4 +39,4 @@ export interface OrchestrationProjectionPipelineShape {
 export class OrchestrationProjectionPipeline extends Context.Service<
   OrchestrationProjectionPipeline,
   OrchestrationProjectionPipelineShape
->()("harness/orchestration/Services/ProjectionPipeline/OrchestrationProjectionPipeline") {}
+>()("forma/orchestration/Services/ProjectionPipeline/OrchestrationProjectionPipeline") {}

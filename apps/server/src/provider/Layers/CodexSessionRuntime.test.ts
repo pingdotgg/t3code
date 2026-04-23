@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 
 import { Effect, Schema } from "effect";
 import { describe, it } from "vitest";
-import { ThreadId } from "@harness/contracts";
+import { ThreadId } from "@forma/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import * as CodexRpc from "effect-codex-app-server/rpc";
 

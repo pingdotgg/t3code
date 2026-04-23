@@ -1,4 +1,4 @@
-import { ProviderInteractionMode, RuntimeMode } from "@harness/contracts";
+import { ProviderInteractionMode, RuntimeMode } from "@forma/contracts";
 import { memo, type ReactNode } from "react";
 import { EllipsisIcon, ListTodoIcon } from "lucide-react";
 import { Button } from "../ui/button";

@@ -7,16 +7,16 @@
       "outputs": ["dist-electron/**"],
     },
     "dev": {
-      "dependsOn": ["harness#build"],
+      "dependsOn": ["forma#build"],
       "persistent": true,
     },
     "start": {
-      "dependsOn": ["build", "@harness/web#build", "harness#build"],
+      "dependsOn": ["build", "@forma/web#build", "forma#build"],
       "cache": false,
       "persistent": true,
     },
     "smoke-test": {
-      "dependsOn": ["build", "@harness/web#build", "harness#build"],
+      "dependsOn": ["build", "@forma/web#build", "forma#build"],
       "cache": false,
       "outputs": [],
     },

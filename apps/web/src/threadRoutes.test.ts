@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { scopeThreadRef } from "@harness/client-runtime";
-import { ThreadId } from "@harness/contracts";
+import { scopeThreadRef } from "@forma/client-runtime";
+import { ThreadId } from "@forma/contracts";
 import { DraftId } from "./composerDraftStore";
 
 import {

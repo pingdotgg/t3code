@@ -13,12 +13,12 @@ import type {
   ServerProvider,
   ThreadId,
   TurnId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
-} from "@harness/contracts";
-import { createModelSelection, normalizeModelSlug } from "@harness/shared/model";
+} from "@forma/contracts";
+import { createModelSelection, normalizeModelSlug } from "@forma/shared/model";
 import {
   forwardRef,
   memo,
@@ -99,7 +99,7 @@ import {
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { resolveSelectableProvider, getProviderModels } from "../../providerModels";
-import type { UnifiedSettings } from "@harness/contracts/settings";
+import type { UnifiedSettings } from "@forma/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";

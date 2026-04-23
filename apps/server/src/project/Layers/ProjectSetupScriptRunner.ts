@@ -1,4 +1,4 @@
-import { projectScriptRuntimeEnv, setupProjectScript } from "@harness/shared/projectScripts";
+import { projectScriptRuntimeEnv, setupProjectScript } from "@forma/shared/projectScripts";
 import { Effect, Layer } from "effect";
 
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";

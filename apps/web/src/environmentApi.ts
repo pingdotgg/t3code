@@ -1,4 +1,4 @@
-import type { EnvironmentId, EnvironmentApi } from "@harness/contracts";
+import type { EnvironmentId, EnvironmentApi } from "@forma/contracts";
 
 import type { WsRpcClient } from "./rpc/wsRpcClient";
 import { readEnvironmentConnection } from "./environments/runtime";

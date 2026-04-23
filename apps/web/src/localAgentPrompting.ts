@@ -2,13 +2,13 @@ import type {
   EnvironmentApi,
   ServerLocalAgentCommand,
   ServerLocalAgentInventory,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import {
   parseLocalAgentCommandJsonDocument,
   parseLocalAgentCommandMarkdownDocument,
   parseLocalAgentSkillDocument,
   renderLocalAgentCommandPromptTemplate,
-} from "@harness/shared/localAgents";
+} from "@forma/shared/localAgents";
 
 const LOCAL_SKILL_TOKEN_REGEX = /(^|\s)\$([a-zA-Z][a-zA-Z0-9:_-]*)(?=\s|$)/g;
 

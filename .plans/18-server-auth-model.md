@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Define the long-term server auth architecture for Harness before first-class remote environments ship.
+Define the long-term server auth architecture for Forma before first-class remote environments ship.
 
 This plan is deliberately broader than the current WebSocket token check and narrower than a complete remote collaboration system. The goal is to make the server secure by default, keep local desktop UX frictionless, and leave clean integration points for future remote access methods.
 
@@ -29,7 +29,7 @@ This document is written in terms of Effect-native services and layers because a
 
 ### 1. Auth is a server concern
 
-Every privileged surface of the Harness server must go through the same auth policy engine:
+Every privileged surface of the Forma server must go through the same auth policy engine:
 
 - HTTP routes
 - WebSocket upgrades
@@ -291,7 +291,7 @@ export interface ServerAuthShape {
 }
 
 export class ServerAuth extends ServiceMap.Service<ServerAuth, ServerAuthShape>()(
-  "harness/ServerAuth",
+  "forma/ServerAuth",
 ) {}
 ```
 
@@ -547,31 +547,31 @@ The desktop shell is trusted to bootstrap the local renderer, but the renderer s
 Participants:
   DesktopMain   = Electron main
   SecretStore   = secure local secret backend
-  HarnessServer      = local backend child process
+  FormaServer        = local backend child process
   Frontend      = desktop renderer
 
 DesktopMain -> SecretStore : getOrCreate("server-signing-key")
 SecretStore --> DesktopMain : signing key available
 
-DesktopMain -> HarnessServer : spawn server (--bootstrap-fd ...)
-DesktopMain -> HarnessServer : send desktop bootstrap envelope
-note over HarnessServer : policy = DesktopManagedLocalPolicy
-note over HarnessServer : allowed pairing = desktop-bootstrap only
+DesktopMain -> FormaServer : spawn server (--bootstrap-fd ...)
+DesktopMain -> FormaServer : send desktop bootstrap envelope
+note over FormaServer : policy = DesktopManagedLocalPolicy
+note over FormaServer : allowed pairing = desktop-bootstrap only
 
 Frontend -> DesktopMain : request local bootstrap grant
 DesktopMain --> Frontend : short-lived desktop bootstrap grant
 
-Frontend -> HarnessServer : POST /api/auth/bootstrap
-HarnessServer -> HarnessServer : validate desktop bootstrap grant
-HarnessServer -> HarnessServer : create browser session
-HarnessServer --> Frontend : Set-Cookie: session=...
+Frontend -> FormaServer : POST /api/auth/bootstrap
+FormaServer -> FormaServer : validate desktop bootstrap grant
+FormaServer -> FormaServer : create browser session
+FormaServer --> Frontend : Set-Cookie: session=...
 
-Frontend -> HarnessServer : GET /ws + authenticated cookie
-HarnessServer -> HarnessServer : validate cookie session
-HarnessServer --> Frontend : websocket accepted
+Frontend -> FormaServer : GET /ws + authenticated cookie
+FormaServer -> FormaServer : validate cookie session
+FormaServer --> Frontend : websocket accepted
 ```
 
-### `npx harness` user
+### `npx forma` user
 
 This is the standalone local server flow.
 
@@ -579,27 +579,27 @@ There is no trusted desktop shell here, so pairing should be explicit.
 
 ```text
 Participants:
-  UserShell     = npx harness launcher
-  HarnessServer      = standalone local server
+  UserShell     = npx forma launcher
+  FormaServer        = standalone local server
   Browser       = browser tab
 
-UserShell -> HarnessServer : start server
-HarnessServer -> HarnessServer : getOrCreate("server-signing-key")
-note over HarnessServer : policy = LoopbackBrowserPolicy
+UserShell -> FormaServer : start server
+FormaServer -> FormaServer : getOrCreate("server-signing-key")
+note over FormaServer : policy = LoopbackBrowserPolicy
 
-UserShell -> HarnessServer : issue one-time pairing token
-HarnessServer --> UserShell : pairing URL or pairing token
+UserShell -> FormaServer : issue one-time pairing token
+FormaServer --> UserShell : pairing URL or pairing token
 
 UserShell --> Browser : open /pair?token=...
 
-Browser -> HarnessServer : GET /pair?token=...
-HarnessServer -> HarnessServer : validate one-time token
-HarnessServer -> HarnessServer : create browser session
-HarnessServer --> Browser : Set-Cookie: session=...
-HarnessServer --> Browser : redirect to app
+Browser -> FormaServer : GET /pair?token=...
+FormaServer -> FormaServer : validate one-time token
+FormaServer -> FormaServer : create browser session
+FormaServer --> Browser : Set-Cookie: session=...
+FormaServer --> Browser : redirect to app
 
-Browser -> HarnessServer : GET /ws + authenticated cookie
-HarnessServer --> Browser : websocket accepted
+Browser -> FormaServer : GET /ws + authenticated cookie
+FormaServer --> Browser : websocket accepted
 ```
 
 ### Phone user with tunneled host
@@ -619,29 +619,29 @@ Participants:
   DesktopUser   = user at the host machine
   DesktopMain   = desktop app
   Tunnel        = tunnel provider
-  HarnessServer      = Harness server
+  FormaServer        = Forma server
   PhoneBrowser  = mobile browser
 
 DesktopUser -> DesktopMain : enable remote access via tunnel
-DesktopMain -> HarnessServer : switch policy to RemoteReachablePolicy
-DesktopMain -> Tunnel : publish local Harness endpoint
+DesktopMain -> FormaServer : switch policy to RemoteReachablePolicy
+DesktopMain -> Tunnel : publish local Forma endpoint
 Tunnel --> DesktopMain : public https/wss URL
 
-DesktopMain -> HarnessServer : issue one-time pairing token
-HarnessServer --> DesktopMain : pairing token
+DesktopMain -> FormaServer : issue one-time pairing token
+FormaServer --> DesktopMain : pairing token
 DesktopMain -> DesktopUser : show QR code / shareable URL
 
 DesktopUser -> PhoneBrowser : scan QR / open URL
 PhoneBrowser -> Tunnel : GET https://public-host/pair?token=...
-Tunnel -> HarnessServer : forward request
-HarnessServer -> HarnessServer : validate one-time token
-HarnessServer -> HarnessServer : create mobile browser session
-HarnessServer --> PhoneBrowser : Set-Cookie: session=...
-HarnessServer --> PhoneBrowser : redirect to app
+Tunnel -> FormaServer : forward request
+FormaServer -> FormaServer : validate one-time token
+FormaServer -> FormaServer : create mobile browser session
+FormaServer --> PhoneBrowser : Set-Cookie: session=...
+FormaServer --> PhoneBrowser : redirect to app
 
 PhoneBrowser -> Tunnel : GET /ws + authenticated cookie
-Tunnel -> HarnessServer : forward websocket upgrade
-HarnessServer --> PhoneBrowser : websocket accepted
+Tunnel -> FormaServer : forward websocket upgrade
+FormaServer --> PhoneBrowser : websocket accepted
 ```
 
 ### Phone user with private network
@@ -653,26 +653,26 @@ The auth flow should stay the same.
 ```text
 Participants:
   DesktopUser   = user at the host machine
-  HarnessServer      = Harness server
+  FormaServer        = Forma server
   PrivateNet    = tailscale / private LAN
   PhoneBrowser  = mobile browser
 
-DesktopUser -> HarnessServer : enable private-network access
-HarnessServer -> HarnessServer : switch policy to RemoteReachablePolicy
-DesktopUser -> HarnessServer : issue one-time pairing token
-HarnessServer --> DesktopUser : pairing URL / QR
+DesktopUser -> FormaServer : enable private-network access
+FormaServer -> FormaServer : switch policy to RemoteReachablePolicy
+DesktopUser -> FormaServer : issue one-time pairing token
+FormaServer --> DesktopUser : pairing URL / QR
 
 DesktopUser -> PhoneBrowser : open private-network URL
 PhoneBrowser -> PrivateNet : GET http(s)://private-host/pair?token=...
-PrivateNet -> HarnessServer : route request
-HarnessServer -> HarnessServer : validate one-time token
-HarnessServer -> HarnessServer : create mobile browser session
-HarnessServer --> PhoneBrowser : Set-Cookie: session=...
-HarnessServer --> PhoneBrowser : redirect to app
+PrivateNet -> FormaServer : route request
+FormaServer -> FormaServer : validate one-time token
+FormaServer -> FormaServer : create mobile browser session
+FormaServer --> PhoneBrowser : Set-Cookie: session=...
+FormaServer --> PhoneBrowser : redirect to app
 
 PhoneBrowser -> PrivateNet : GET /ws + authenticated cookie
-PrivateNet -> HarnessServer : websocket upgrade
-HarnessServer --> PhoneBrowser : websocket accepted
+PrivateNet -> FormaServer : websocket upgrade
+FormaServer --> PhoneBrowser : websocket accepted
 ```
 
 ### Desktop user adding new SSH hosts
@@ -687,35 +687,35 @@ Participants:
   DesktopMain   = desktop app
   SSH           = ssh transport/session
   RemoteHost    = remote machine
-  RemoteHarness      = remote Harness server
+  RemoteFormaServer  = remote Forma server
   Frontend      = desktop renderer
 
 DesktopUser -> DesktopMain : add SSH host
 DesktopMain -> SSH : connect to remote host
-SSH -> RemoteHost : probe environment / verify harness availability
+SSH -> RemoteHost : probe environment / verify forma availability
 DesktopMain -> SSH : run remote launch command
-SSH -> RemoteHost : harness remote launch --json
-RemoteHost -> RemoteHarness : start or reuse server
-RemoteHarness --> RemoteHost : port + environment metadata
+SSH -> RemoteHost : forma remote launch --json
+RemoteHost -> RemoteFormaServer : start or reuse server
+RemoteFormaServer --> RemoteHost : port + environment metadata
 RemoteHost --> SSH : launch result JSON
 SSH --> DesktopMain : remote server details
 
 DesktopMain -> SSH : establish local port forward
 SSH --> DesktopMain : localhost:FORWARDED_PORT ready
 
-note over RemoteHarness : policy = RemoteReachablePolicy
-note over DesktopMain,RemoteHarness : desktop may use a trusted bootstrap flow here
+note over RemoteFormaServer : policy = RemoteReachablePolicy
+note over DesktopMain,RemoteFormaServer : desktop may use a trusted bootstrap flow here
 
 Frontend -> DesktopMain : request bootstrap for selected environment
 DesktopMain --> Frontend : short-lived bootstrap grant
 
-Frontend -> RemoteHarness : POST /api/auth/bootstrap via forwarded port
-RemoteHarness -> RemoteHarness : validate bootstrap grant
-RemoteHarness -> RemoteHarness : create browser session
-RemoteHarness --> Frontend : Set-Cookie: session=...
+Frontend -> RemoteFormaServer : POST /api/auth/bootstrap via forwarded port
+RemoteFormaServer -> RemoteFormaServer : validate bootstrap grant
+RemoteFormaServer -> RemoteFormaServer : create browser session
+RemoteFormaServer --> Frontend : Set-Cookie: session=...
 
-Frontend -> RemoteHarness : GET /ws + authenticated cookie
-RemoteHarness --> Frontend : websocket accepted
+Frontend -> RemoteFormaServer : GET /ws + authenticated cookie
+RemoteFormaServer --> Frontend : websocket accepted
 ```
 
 ## Storage decisions
@@ -779,7 +779,7 @@ Remote access is one reason this auth model matters, but the auth model should n
 
 Keep the design focused on:
 
-- one Harness server
+- one Forma server
 - one auth policy
 - multiple credential types
 - multiple future access methods

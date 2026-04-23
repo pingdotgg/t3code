@@ -1,4 +1,4 @@
-import { type ThreadId } from "@harness/contracts";
+import { type ThreadId } from "@forma/contracts";
 
 export interface TerminalContextSelection {
   terminalId: string;

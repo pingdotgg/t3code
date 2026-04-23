@@ -1,4 +1,4 @@
-import type { ScopedThreadRef, ThreadId } from "@harness/contracts";
+import type { ScopedThreadRef, ThreadId } from "@forma/contracts";
 
 export function shouldHideCollapsedToastContent(
   visibleToastIndex: number,

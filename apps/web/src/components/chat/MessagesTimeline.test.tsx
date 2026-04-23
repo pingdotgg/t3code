@@ -1,4 +1,4 @@
-import { EnvironmentId, MessageId } from "@harness/contracts";
+import { EnvironmentId, MessageId } from "@forma/contracts";
 import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -175,15 +175,15 @@ describe("MessagesTimeline", () => {
               createdAt: "2026-03-17T19:12:28.000Z",
               label: "Updated files",
               tone: "tool",
-              changedFiles: ["C:/Users/mike/dev-stuff/harness/apps/web/src/session-logic.ts"],
+              changedFiles: ["C:/Users/mike/dev-stuff/forma/apps/web/src/session-logic.ts"],
             },
           },
         ]}
-        workspaceRoot="C:/Users/mike/dev-stuff/harness"
+        workspaceRoot="C:/Users/mike/dev-stuff/forma"
       />,
     );
 
-    expect(markup).toContain("harness/apps/web/src/session-logic.ts");
-    expect(markup).not.toContain("C:/Users/mike/dev-stuff/harness/apps/web/src/session-logic.ts");
+    expect(markup).toContain("forma/apps/web/src/session-logic.ts");
+    expect(markup).not.toContain("C:/Users/mike/dev-stuff/forma/apps/web/src/session-logic.ts");
   });
 });

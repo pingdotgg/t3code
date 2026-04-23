@@ -3,13 +3,13 @@ import {
   type ProviderModelOptions,
   type ScopedThreadRef,
   type ServerProviderModel,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import {
   isClaudeUltrathinkPrompt,
   normalizeProviderModelOptionsWithCapabilities,
   resolveEffort,
   trimOrNull,
-} from "@harness/shared/model";
+} from "@forma/shared/model";
 import type { ReactNode } from "react";
 
 import type { DraftId } from "../../composerDraftStore";

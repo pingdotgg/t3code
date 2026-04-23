@@ -86,7 +86,7 @@ export interface NetServiceShape {
  * NetService - Service tag for startup networking helpers.
  */
 export class NetService extends Context.Service<NetService, NetServiceShape>()(
-  "@harness/shared/Net/NetService",
+  "@forma/shared/Net/NetService",
 ) {
   static readonly layer = Layer.sync(NetService, () => {
     /**

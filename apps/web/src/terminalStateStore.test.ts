@@ -1,5 +1,5 @@
-import { scopeThreadRef, scopedThreadKey } from "@harness/client-runtime";
-import { ThreadId, type TerminalEvent } from "@harness/contracts";
+import { scopeThreadRef, scopedThreadKey } from "@forma/client-runtime";
+import { ThreadId, type TerminalEvent } from "@forma/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {

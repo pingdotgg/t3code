@@ -1,6 +1,6 @@
-import type { RepositoryIdentity } from "@harness/contracts";
+import type { RepositoryIdentity } from "@forma/contracts";
 import { Cache, Duration, Effect, Exit, Layer } from "effect";
-import { detectGitHostingProviderFromRemoteUrl, normalizeGitRemoteUrl } from "@harness/shared/git";
+import { detectGitHostingProviderFromRemoteUrl, normalizeGitRemoteUrl } from "@forma/shared/git";
 
 import { runProcess } from "../../processRunner.ts";
 import {

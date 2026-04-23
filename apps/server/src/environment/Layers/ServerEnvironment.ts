@@ -1,4 +1,4 @@
-import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@harness/contracts";
+import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@forma/contracts";
 import { Effect, FileSystem, Layer, Path, Random } from "effect";
 
 import { ServerConfig } from "../../config.ts";

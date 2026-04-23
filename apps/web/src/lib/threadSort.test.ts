@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_RUNTIME_MODE, EnvironmentId, ProjectId, ThreadId } from "@harness/contracts";
+import { DEFAULT_RUNTIME_MODE, EnvironmentId, ProjectId, ThreadId } from "@forma/contracts";
 import type { Thread } from "../types";
 import { getLatestThreadForProject, sortThreads } from "./threadSort";
 

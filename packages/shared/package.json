@@ -1,5 +1,5 @@
 {
-  "name": "@harness/shared",
+  "name": "@forma/shared",
   "version": "0.0.0-alpha.1",
   "private": true,
   "type": "module",
@@ -83,7 +83,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@harness/contracts": "workspace:*",
+    "@forma/contracts": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {

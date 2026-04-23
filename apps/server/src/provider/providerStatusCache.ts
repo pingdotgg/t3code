@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as nodePath from "node:path";
-import { type ServerProvider, ServerProvider as ServerProviderSchema } from "@harness/contracts";
+import { type ServerProvider, ServerProvider as ServerProviderSchema } from "@forma/contracts";
 import { Cause, Effect, FileSystem, Path, Schema } from "effect";
 
 export const PROVIDER_CACHE_IDS = [

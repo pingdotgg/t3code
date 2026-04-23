@@ -2,7 +2,7 @@
  * Public Docs: https://cursor.com/docs/cli/acp#cursor-extension-methods
  * Additional reference provided by the Cursor team: https://anysphere.enterprise.slack.com/files/U068SSJE141/F0APT1HSZRP/cursor-acp-extension-method-schemas.md
  */
-import type { UserInputQuestion } from "@harness/contracts";
+import type { UserInputQuestion } from "@forma/contracts";
 import { Schema } from "effect";
 
 const CursorAskQuestionOption = Schema.Struct({

@@ -13,7 +13,7 @@ build/
 .logs/
 release/
 release-mock/
-.harness
+.forma
 .idea/
 apps/web/.playwright
 apps/web/playwright-report
@@ -22,3 +22,4 @@ apps/web/src/components/__screenshots__
 __screenshots__/
 .tanstack
 squashfs-root/
+.agents/

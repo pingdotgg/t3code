@@ -9,7 +9,7 @@ import { Context } from "effect";
 import type { Effect } from "effect";
 
 import type { ProcessRunResult } from "../../processRunner.ts";
-import type { GitHubCliError } from "@harness/contracts";
+import type { GitHubCliError } from "@forma/contracts";
 
 export interface GitHubPullRequestSummary {
   readonly number: number;
@@ -99,5 +99,5 @@ export interface GitHubCliShape {
  * GitHubCli - Service tag for GitHub CLI process execution.
  */
 export class GitHubCli extends Context.Service<GitHubCli, GitHubCliShape>()(
-  "harness/git/Services/GitHubCli",
+  "forma/git/Services/GitHubCli",
 ) {}

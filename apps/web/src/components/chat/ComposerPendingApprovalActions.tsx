@@ -1,4 +1,4 @@
-import { type ApprovalRequestId, type ProviderApprovalDecision } from "@harness/contracts";
+import { type ApprovalRequestId, type ProviderApprovalDecision } from "@forma/contracts";
 import { memo } from "react";
 import { Button } from "../ui/button";
 

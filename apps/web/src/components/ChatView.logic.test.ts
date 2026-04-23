@@ -1,5 +1,5 @@
-import { scopeThreadRef } from "@harness/client-runtime";
-import { EnvironmentId, ProjectId, ThreadId, TurnId } from "@harness/contracts";
+import { scopeThreadRef } from "@forma/client-runtime";
+import { EnvironmentId, ProjectId, ThreadId, TurnId } from "@forma/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type EnvironmentState, useStore } from "../store";
 import { type Thread } from "../types";

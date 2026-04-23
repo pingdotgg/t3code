@@ -6,7 +6,7 @@ describe("transportError", () => {
   it("detects websocket transport failures", () => {
     expect(isTransportConnectionErrorMessage("SocketCloseError: 1006")).toBe(true);
     expect(
-      isTransportConnectionErrorMessage("Unable to connect to the Harness server WebSocket."),
+      isTransportConnectionErrorMessage("Unable to connect to the Forma server WebSocket."),
     ).toBe(true);
     expect(isTransportConnectionErrorMessage("SocketOpenError: Timeout")).toBe(true);
   });

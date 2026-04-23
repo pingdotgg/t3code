@@ -1,5 +1,5 @@
 {
-  "name": "@harness/client-runtime",
+  "name": "@forma/client-runtime",
   "version": "0.0.0-alpha.1",
   "private": true,
   "type": "module",
@@ -15,7 +15,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@harness/contracts": "workspace:*"
+    "@forma/contracts": "workspace:*"
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",

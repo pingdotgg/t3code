@@ -18,7 +18,7 @@ import {
   ServerSettings,
   ServerSettingsError,
   type ServerSettingsPatch,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import {
   Cache,
   Deferred,
@@ -40,9 +40,9 @@ import {
 } from "effect";
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config.ts";
-import { type DeepPartial, deepMerge } from "@harness/shared/Struct";
-import { fromLenientJson } from "@harness/shared/schemaJson";
-import { applyServerSettingsPatch } from "@harness/shared/serverSettings";
+import { type DeepPartial, deepMerge } from "@forma/shared/Struct";
+import { fromLenientJson } from "@forma/shared/schemaJson";
+import { applyServerSettingsPatch } from "@forma/shared/serverSettings";
 
 export interface ServerSettingsShape {
   /** Start the settings runtime and attach file watching. */
@@ -66,7 +66,7 @@ export interface ServerSettingsShape {
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   ServerSettingsShape
->()("harness/serverSettings/ServerSettingsService") {
+>()("forma/serverSettings/ServerSettingsService") {
   static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) =>
     Layer.effect(
       ServerSettingsService,

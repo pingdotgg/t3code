@@ -1,4 +1,4 @@
-import { ThreadId } from "@harness/contracts";
+import { ThreadId } from "@forma/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { useThreadSelectionStore } from "./threadSelectionStore";

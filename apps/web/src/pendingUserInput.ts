@@ -1,4 +1,4 @@
-import type { UserInputQuestion } from "@harness/contracts";
+import type { UserInputQuestion } from "@forma/contracts";
 
 export interface PendingUserInputDraftAnswer {
   selectedOptionLabels?: string[];

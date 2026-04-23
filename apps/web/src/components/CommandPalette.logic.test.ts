@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { EnvironmentId, ProjectId, ThreadId } from "@harness/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@forma/contracts";
 import type { Thread } from "../types";
 import {
   buildThreadActionItems,

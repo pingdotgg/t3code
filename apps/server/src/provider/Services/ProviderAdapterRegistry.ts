@@ -7,7 +7,7 @@
  *
  * @module ProviderAdapterRegistry
  */
-import type { ProviderKind } from "@harness/contracts";
+import type { ProviderKind } from "@forma/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
 
@@ -37,6 +37,6 @@ export interface ProviderAdapterRegistryShape {
 export class ProviderAdapterRegistry extends Context.Service<
   ProviderAdapterRegistry,
   ProviderAdapterRegistryShape
->()("harness/provider/Services/ProviderAdapterRegistry") {}
+>()("forma/provider/Services/ProviderAdapterRegistry") {}
 
 // Dummy comment for workflow testing.

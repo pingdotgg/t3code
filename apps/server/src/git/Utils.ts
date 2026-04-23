@@ -5,7 +5,7 @@
  */
 import { Schema } from "effect";
 
-import { TextGenerationError } from "@harness/contracts";
+import { TextGenerationError } from "@forma/contracts";
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";

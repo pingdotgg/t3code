@@ -10,7 +10,7 @@ export interface PersistedDiffFileEditOverride {
 type PersistedDiffFileEditThreadState = Record<string, PersistedDiffFileEditOverride | undefined>;
 type PersistedDiffFileEditStorageState = Record<string, PersistedDiffFileEditThreadState>;
 
-const DIFF_FILE_EDIT_STORAGE_KEY = "harness:diff-file-edit-overrides:v1";
+const DIFF_FILE_EDIT_STORAGE_KEY = "forma:diff-file-edit-overrides:v1";
 
 let memoryStorageState: PersistedDiffFileEditStorageState = {};
 

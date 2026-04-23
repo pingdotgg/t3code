@@ -1,5 +1,5 @@
 import type { NetworkInterfaceInfo } from "node:os";
-import type { DesktopServerExposureMode } from "@harness/contracts";
+import type { DesktopServerExposureMode } from "@forma/contracts";
 
 const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
 const DESKTOP_LAN_BIND_HOST = "0.0.0.0";

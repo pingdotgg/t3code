@@ -19,7 +19,7 @@ import type {
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import type { Effect } from "effect";
 import type { Stream } from "effect";
 

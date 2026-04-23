@@ -19,7 +19,7 @@ import {
   type SDKUserMessage,
   type ModelUsage,
 } from "@anthropic-ai/claude-agent-sdk";
-import { parseCliArgs } from "@harness/shared/cliArgs";
+import { parseCliArgs } from "@forma/shared/cliArgs";
 import {
   ApprovalRequestId,
   type CanonicalItemType,
@@ -41,8 +41,8 @@ import {
   TurnId,
   type UserInputQuestion,
   ClaudeAgentEffort,
-} from "@harness/contracts";
-import { applyClaudePromptEffortPrefix, resolveEffort, trimOrNull } from "@harness/shared/model";
+} from "@forma/contracts";
+import { applyClaudePromptEffortPrefix, resolveEffort, trimOrNull } from "@forma/shared/model";
 import {
   Cause,
   DateTime,

@@ -22,9 +22,7 @@ const makeServerConfigLayer = (
       } satisfies ServerConfigShape;
     }),
   ).pipe(
-    Layer.provide(
-      ServerConfig.layerTest(process.cwd(), { prefix: "harness-auth-bootstrap-test-" }),
-    ),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "forma-auth-bootstrap-test-" })),
   );
 
 const makeBootstrapCredentialLayer = (

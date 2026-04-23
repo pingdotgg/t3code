@@ -1,5 +1,5 @@
-import { type KeybindingCommand, type FilesystemBrowseEntry } from "@harness/contracts";
-import type { SidebarThreadSortOrder } from "@harness/contracts/settings";
+import { type KeybindingCommand, type FilesystemBrowseEntry } from "@forma/contracts";
+import type { SidebarThreadSortOrder } from "@forma/contracts/settings";
 import { type ReactNode } from "react";
 import { sortThreads } from "../lib/threadSort";
 import { formatRelativeTimeLabel } from "../timestampFormat";

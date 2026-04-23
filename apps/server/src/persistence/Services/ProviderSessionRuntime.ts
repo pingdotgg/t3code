@@ -5,12 +5,7 @@
  *
  * @module ProviderSessionRuntimeRepository
  */
-import {
-  IsoDateTime,
-  ProviderSessionRuntimeStatus,
-  RuntimeMode,
-  ThreadId,
-} from "@harness/contracts";
+import { IsoDateTime, ProviderSessionRuntimeStatus, RuntimeMode, ThreadId } from "@forma/contracts";
 import { Option, Schema, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -78,4 +73,4 @@ export interface ProviderSessionRuntimeRepositoryShape {
 export class ProviderSessionRuntimeRepository extends Context.Service<
   ProviderSessionRuntimeRepository,
   ProviderSessionRuntimeRepositoryShape
->()("harness/persistence/Services/ProviderSessionRuntime/ProviderSessionRuntimeRepository") {}
+>()("forma/persistence/Services/ProviderSessionRuntime/ProviderSessionRuntimeRepository") {}

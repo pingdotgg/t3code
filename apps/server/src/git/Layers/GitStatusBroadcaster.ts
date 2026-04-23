@@ -17,8 +17,8 @@ import type {
   GitStatusLocalResult,
   GitStatusRemoteResult,
   GitStatusStreamEvent,
-} from "@harness/contracts";
-import { mergeGitStatusParts } from "@harness/shared/git";
+} from "@forma/contracts";
+import { mergeGitStatusParts } from "@forma/shared/git";
 
 import {
   GitStatusBroadcaster,

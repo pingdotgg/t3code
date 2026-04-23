@@ -3,8 +3,8 @@ import {
   PROVIDER_DISPLAY_NAMES,
   type ResolvedKeybindingsConfig,
   type ServerProvider,
-} from "@harness/contracts";
-import { resolveSelectableModel } from "@harness/shared/model";
+} from "@forma/contracts";
+import { resolveSelectableModel } from "@forma/shared/model";
 import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import { SearchIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";

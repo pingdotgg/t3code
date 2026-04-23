@@ -1,4 +1,4 @@
-import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "@harness/contracts";
+import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "@forma/contracts";
 import { memo } from "react";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { CircleAlertIcon } from "lucide-react";

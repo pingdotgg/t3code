@@ -1,4 +1,4 @@
-import type { DesktopRuntimeArch, DesktopRuntimeInfo } from "@harness/contracts";
+import type { DesktopRuntimeArch, DesktopRuntimeInfo } from "@forma/contracts";
 
 interface ResolveDesktopRuntimeInfoInput {
   readonly platform: NodeJS.Platform;

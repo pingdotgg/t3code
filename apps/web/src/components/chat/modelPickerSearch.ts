@@ -1,5 +1,5 @@
-import { type ProviderKind, PROVIDER_DISPLAY_NAMES } from "@harness/contracts";
-import { normalizeSearchQuery, scoreQueryMatch } from "@harness/shared/searchRanking";
+import { type ProviderKind, PROVIDER_DISPLAY_NAMES } from "@forma/contracts";
+import { normalizeSearchQuery, scoreQueryMatch } from "@forma/shared/searchRanking";
 
 type ModelPickerSearchableModel = {
   provider: ProviderKind;

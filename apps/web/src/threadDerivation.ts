@@ -1,4 +1,4 @@
-import type { MessageId, ThreadId, TurnId } from "@harness/contracts";
+import type { MessageId, ThreadId, TurnId } from "@forma/contracts";
 import type { EnvironmentState } from "./store";
 import type {
   ChatMessage,

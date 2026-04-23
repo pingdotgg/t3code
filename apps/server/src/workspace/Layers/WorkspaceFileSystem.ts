@@ -10,7 +10,7 @@ import {
   ProjectFileVersionConflictError,
   ProjectReadFileError,
   ProjectWriteFileError,
-} from "@harness/contracts";
+} from "@forma/contracts";
 
 import {
   WorkspaceFileSystem,

@@ -3,7 +3,7 @@ import type {
   ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Option, Context } from "effect";
 import type { Effect } from "effect";
 
@@ -59,4 +59,4 @@ export interface ProviderSessionDirectoryShape {
 export class ProviderSessionDirectory extends Context.Service<
   ProviderSessionDirectory,
   ProviderSessionDirectoryShape
->()("harness/provider/Services/ProviderSessionDirectory") {}
+>()("forma/provider/Services/ProviderSessionDirectory") {}

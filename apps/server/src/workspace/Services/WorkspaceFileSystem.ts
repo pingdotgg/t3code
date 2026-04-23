@@ -14,7 +14,7 @@ import type {
   ProjectReadFileResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import {
   ProjectFileBinaryError,
   ProjectFileNotFoundError,
@@ -22,7 +22,7 @@ import {
   ProjectFileVersionConflictError,
   ProjectReadFileError,
   ProjectWriteFileError,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { WorkspacePathOutsideRootError } from "./WorkspacePaths.ts";
 
 /**
@@ -65,4 +65,4 @@ export interface WorkspaceFileSystemShape {
 export class WorkspaceFileSystem extends Context.Service<
   WorkspaceFileSystem,
   WorkspaceFileSystemShape
->()("harness/workspace/Services/WorkspaceFileSystem") {}
+>()("forma/workspace/Services/WorkspaceFileSystem") {}

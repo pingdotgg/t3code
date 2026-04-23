@@ -1,5 +1,5 @@
-import type { DesktopEnvironmentBootstrap } from "@harness/contracts";
-import type { KnownEnvironment } from "@harness/client-runtime";
+import type { DesktopEnvironmentBootstrap } from "@forma/contracts";
+import type { KnownEnvironment } from "@forma/client-runtime";
 
 export interface PrimaryEnvironmentTarget {
   readonly source: KnownEnvironment["source"];

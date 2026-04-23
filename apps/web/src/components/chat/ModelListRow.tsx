@@ -1,4 +1,4 @@
-import { type ProviderKind } from "@harness/contracts";
+import { type ProviderKind } from "@forma/contracts";
 import { memo } from "react";
 import { StarIcon } from "lucide-react";
 import {

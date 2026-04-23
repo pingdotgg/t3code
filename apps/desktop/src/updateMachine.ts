@@ -2,7 +2,7 @@ import type {
   DesktopRuntimeInfo,
   DesktopUpdateChannel,
   DesktopUpdateState,
-} from "@harness/contracts";
+} from "@forma/contracts";
 
 import { getCanRetryAfterDownloadFailure, nextStatusAfterDownloadFailure } from "./updateState.ts";
 

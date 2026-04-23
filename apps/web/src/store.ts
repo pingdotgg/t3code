@@ -18,11 +18,11 @@ import type {
   ProjectId,
   ScopedProjectRef,
   ScopedThreadRef,
-} from "@harness/contracts";
-import { ProviderKind } from "@harness/contracts";
-import type { ThreadId, TurnId } from "@harness/contracts";
+} from "@forma/contracts";
+import { ProviderKind } from "@forma/contracts";
+import type { ThreadId, TurnId } from "@forma/contracts";
 import { Schema } from "effect";
-import { resolveModelSlugForProvider } from "@harness/shared/model";
+import { resolveModelSlugForProvider } from "@forma/shared/model";
 import { create } from "zustand";
 import {
   type ChatMessage,

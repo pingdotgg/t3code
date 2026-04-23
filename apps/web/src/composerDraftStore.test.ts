@@ -3,7 +3,7 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@harness/client-runtime";
+} from "@forma/client-runtime";
 import * as Schema from "effect/Schema";
 import {
   EnvironmentId,
@@ -11,7 +11,7 @@ import {
   ThreadId,
   type ModelSelection,
   type ProviderModelOptions,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {

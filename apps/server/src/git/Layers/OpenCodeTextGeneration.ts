@@ -5,8 +5,8 @@ import {
   TextGenerationError,
   type ChatAttachment,
   type OpenCodeModelSelection,
-} from "@harness/contracts";
-import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@harness/shared/git";
+} from "@forma/contracts";
+import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@forma/shared/git";
 
 import { ServerConfig } from "../../config.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
@@ -314,7 +314,7 @@ const makeOpenCodeTextGeneration = Effect.gen(function* () {
               : {}),
           });
           const session = await client.session.create({
-            title: `Harness ${input.operation}`,
+            title: `Forma ${input.operation}`,
             permission: [{ permission: "*", pattern: "*", action: "deny" }],
           });
           if (!session.data) {

@@ -63,19 +63,19 @@ describe("TerminalOpenInput", () => {
     const parsed = decodeSync(TerminalOpenInput, {
       threadId: "thread-1",
       cwd: "/tmp/project",
-      worktreePath: "/tmp/project/.harness/worktrees/feature-a",
+      worktreePath: "/tmp/project/.forma/worktrees/feature-a",
       cols: 100,
       rows: 24,
       env: {
-        HARNESS_PROJECT_ROOT: "/tmp/project",
+        FORMA_PROJECT_ROOT: "/tmp/project",
         CUSTOM_FLAG: "1",
       },
     });
     expect(parsed.env).toMatchObject({
-      HARNESS_PROJECT_ROOT: "/tmp/project",
+      FORMA_PROJECT_ROOT: "/tmp/project",
       CUSTOM_FLAG: "1",
     });
-    expect(parsed.worktreePath).toBe("/tmp/project/.harness/worktrees/feature-a");
+    expect(parsed.worktreePath).toBe("/tmp/project/.forma/worktrees/feature-a");
   });
 
   it("rejects invalid env keys", () => {
@@ -219,8 +219,8 @@ describe("TerminalEvent", () => {
         snapshot: {
           threadId: "thread-1",
           terminalId: DEFAULT_TERMINAL_ID,
-          cwd: "/tmp/project/.harness/worktrees/feature-a",
-          worktreePath: "/tmp/project/.harness/worktrees/feature-a",
+          cwd: "/tmp/project/.forma/worktrees/feature-a",
+          worktreePath: "/tmp/project/.forma/worktrees/feature-a",
           status: "running",
           pid: 1234,
           history: "",

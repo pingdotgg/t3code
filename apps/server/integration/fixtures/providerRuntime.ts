@@ -1,4 +1,4 @@
-import { EventId, RuntimeRequestId } from "@harness/contracts";
+import { EventId, RuntimeRequestId } from "@forma/contracts";
 import type { LegacyProviderRuntimeEvent } from "../TestProviderAdapter.integration.ts";
 
 const PROVIDER = "codex" as const;

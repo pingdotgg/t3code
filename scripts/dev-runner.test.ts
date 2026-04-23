@@ -13,12 +13,12 @@ import {
 
 it.layer(NodeServices.layer)("dev-runner", (it) => {
   describe("resolveOffset", () => {
-    it.effect("uses explicit HARNESS_PORT_OFFSET when provided", () =>
+    it.effect("uses explicit FORMA_PORT_OFFSET when provided", () =>
       Effect.sync(() => {
         const result = resolveOffset({ portOffset: 12, devInstance: undefined });
         assert.deepStrictEqual(result, {
           offset: 12,
-          source: "HARNESS_PORT_OFFSET=12",
+          source: "FORMA_PORT_OFFSET=12",
         });
       }),
     );
@@ -40,13 +40,13 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           }),
         );
 
-        assert.ok(error.includes("Invalid HARNESS_PORT_OFFSET"));
+        assert.ok(error.includes("Invalid FORMA_PORT_OFFSET"));
       }),
     );
   });
 
   describe("createDevRunnerEnv", () => {
-    it.effect("defaults HARNESS_HOME to ~/.harness when not provided", () =>
+    it.effect("defaults FORMA_HOME to ~/.forma when not provided", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const env = yield* createDevRunnerEnv({
@@ -54,7 +54,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          harnessHome: undefined,
+          formaHome: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -63,7 +63,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.HARNESS_HOME, path.resolve(NodeOS.homedir(), ".harness"));
+        assert.equal(env.FORMA_HOME, path.resolve(NodeOS.homedir(), ".forma"));
       }),
     );
 
@@ -75,7 +75,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          harnessHome: "/tmp/custom-harness",
+          formaHome: "/tmp/custom-forma",
           noBrowser: true,
           autoBootstrapProjectFromCwd: false,
           logWebSocketEvents: true,
@@ -84,14 +84,14 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: new URL("http://localhost:7331"),
         });
 
-        assert.equal(env.HARNESS_HOME, path.resolve("/tmp/custom-harness"));
-        assert.equal(env.HARNESS_PORT, "4222");
+        assert.equal(env.FORMA_HOME, path.resolve("/tmp/custom-forma"));
+        assert.equal(env.FORMA_PORT, "4222");
         assert.equal(env.VITE_HTTP_URL, "http://localhost:4222");
         assert.equal(env.VITE_WS_URL, "ws://localhost:4222");
-        assert.equal(env.HARNESS_NO_BROWSER, "1");
-        assert.equal(env.HARNESS_AUTO_BOOTSTRAP_PROJECT_FROM_CWD, "0");
-        assert.equal(env.HARNESS_LOG_WS_EVENTS, "1");
-        assert.equal(env.HARNESS_HOST, "0.0.0.0");
+        assert.equal(env.FORMA_NO_BROWSER, "1");
+        assert.equal(env.FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD, "0");
+        assert.equal(env.FORMA_LOG_WS_EVENTS, "1");
+        assert.equal(env.FORMA_HOST, "0.0.0.0");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://localhost:7331/");
       }),
     );
@@ -101,11 +101,11 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
           baseEnv: {
-            HARNESS_LOG_WS_EVENTS: "keep-me-out",
+            FORMA_LOG_WS_EVENTS: "keep-me-out",
           },
           serverOffset: 0,
           webOffset: 0,
-          harnessHome: undefined,
+          formaHome: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -114,8 +114,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.HARNESS_MODE, "web");
-        assert.equal(env.HARNESS_LOG_WS_EVENTS, undefined);
+        assert.equal(env.FORMA_MODE, "web");
+        assert.equal(env.FORMA_LOG_WS_EVENTS, undefined);
       }),
     );
 
@@ -124,11 +124,11 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const env = yield* createDevRunnerEnv({
           mode: "dev",
           baseEnv: {
-            HARNESS_LOG_WS_EVENTS: "1",
+            FORMA_LOG_WS_EVENTS: "1",
           },
           serverOffset: 0,
           webOffset: 0,
-          harnessHome: undefined,
+          formaHome: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: false,
@@ -137,11 +137,11 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.HARNESS_LOG_WS_EVENTS, "0");
+        assert.equal(env.FORMA_LOG_WS_EVENTS, "0");
       }),
     );
 
-    it.effect("uses custom harnessHome when provided", () =>
+    it.effect("uses custom formaHome when provided", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const env = yield* createDevRunnerEnv({
@@ -149,7 +149,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          harnessHome: "/tmp/my-harness",
+          formaHome: "/tmp/my-forma",
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -158,7 +158,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.HARNESS_HOME, path.resolve("/tmp/my-harness"));
+        assert.equal(env.FORMA_HOME, path.resolve("/tmp/my-forma"));
       }),
     );
 
@@ -168,15 +168,15 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         const env = yield* createDevRunnerEnv({
           mode: "dev:desktop",
           baseEnv: {
-            HARNESS_PORT: "13773",
-            HARNESS_MODE: "web",
-            HARNESS_NO_BROWSER: "0",
-            HARNESS_HOST: "0.0.0.0",
+            FORMA_PORT: "13773",
+            FORMA_MODE: "web",
+            FORMA_NO_BROWSER: "0",
+            FORMA_HOST: "0.0.0.0",
             VITE_WS_URL: "ws://localhost:13773",
           },
           serverOffset: 0,
           webOffset: 0,
-          harnessHome: "/tmp/my-harness",
+          formaHome: "/tmp/my-forma",
           noBrowser: true,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -185,17 +185,17 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.HARNESS_HOME, path.resolve("/tmp/my-harness"));
+        assert.equal(env.FORMA_HOME, path.resolve("/tmp/my-forma"));
         assert.equal(env.PORT, "5733");
         assert.equal(env.VITE_DEV_SERVER_URL, "http://127.0.0.1:5733");
         assert.equal(env.HOST, "127.0.0.1");
-        assert.equal(env.HARNESS_PORT, "4222");
+        assert.equal(env.FORMA_PORT, "4222");
         assert.equal(env.VITE_HTTP_URL, "http://127.0.0.1:4222");
-        assert.equal(env.HARNESS_MODE, undefined);
-        assert.equal(env.HARNESS_NO_BROWSER, undefined);
-        assert.equal(env.HARNESS_HOST, undefined);
+        assert.equal(env.FORMA_MODE, undefined);
+        assert.equal(env.FORMA_NO_BROWSER, undefined);
+        assert.equal(env.FORMA_HOST, undefined);
         assert.equal(env.VITE_WS_URL, "ws://127.0.0.1:4222");
-        assert.equal(env.HARNESS_DESKTOP_DEV, "1");
+        assert.equal(env.FORMA_DESKTOP_DEV, "1");
       }),
     );
 
@@ -206,7 +206,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           baseEnv: {},
           serverOffset: 0,
           webOffset: 0,
-          harnessHome: undefined,
+          formaHome: undefined,
           noBrowser: undefined,
           autoBootstrapProjectFromCwd: undefined,
           logWebSocketEvents: undefined,
@@ -215,7 +215,7 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           devUrl: undefined,
         });
 
-        assert.equal(env.HARNESS_PORT, "13773");
+        assert.equal(env.FORMA_PORT, "13773");
         assert.equal(env.VITE_HTTP_URL, "http://localhost:13773");
         assert.equal(env.VITE_WS_URL, "ws://localhost:13773");
       }),

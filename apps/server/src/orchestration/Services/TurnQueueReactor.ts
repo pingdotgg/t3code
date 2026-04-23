@@ -7,5 +7,5 @@ export interface TurnQueueReactorShape {
 }
 
 export class TurnQueueReactor extends Context.Service<TurnQueueReactor, TurnQueueReactorShape>()(
-  "harness/orchestration/Services/TurnQueueReactor",
+  "forma/orchestration/Services/TurnQueueReactor",
 ) {}

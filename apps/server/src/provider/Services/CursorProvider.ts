@@ -5,5 +5,5 @@ import type { ServerProviderShape } from "./ServerProvider.ts";
 export interface CursorProviderShape extends ServerProviderShape {}
 
 export class CursorProvider extends Context.Service<CursorProvider, CursorProviderShape>()(
-  "harness/provider/Services/CursorProvider",
+  "forma/provider/Services/CursorProvider",
 ) {}

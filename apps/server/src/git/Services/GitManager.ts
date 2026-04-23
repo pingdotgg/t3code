@@ -18,10 +18,10 @@ import {
   GitStatusRemoteResult,
   GitStatusInput,
   GitStatusResult,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Context } from "effect";
 import type { Effect } from "effect";
-import type { GitManagerServiceError } from "@harness/contracts";
+import type { GitManagerServiceError } from "@forma/contracts";
 
 export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
@@ -100,5 +100,5 @@ export interface GitManagerShape {
  * GitManager - Service tag for stacked Git workflow orchestration.
  */
 export class GitManager extends Context.Service<GitManager, GitManagerShape>()(
-  "harness/git/Services/GitManager",
+  "forma/git/Services/GitManager",
 ) {}

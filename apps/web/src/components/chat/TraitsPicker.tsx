@@ -7,7 +7,7 @@ import {
   type ProviderModelOptions,
   type ScopedThreadRef,
   type ServerProviderModel,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import {
   applyClaudePromptEffortPrefix,
   isClaudeUltrathinkPrompt,
@@ -16,7 +16,7 @@ import {
   getDefaultContextWindow,
   hasContextWindowOption,
   resolveEffort,
-} from "@harness/shared/model";
+} from "@forma/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
 import { ChevronDownIcon } from "lucide-react";

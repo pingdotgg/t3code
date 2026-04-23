@@ -36,22 +36,22 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cwd = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "harness-repository-identity-test-",
+        prefix: "forma-repository-identity-test-",
       });
 
       yield* git(cwd, ["init"]);
-      yield* git(cwd, ["remote", "add", "origin", "git@github.com:Harness/harness.git"]);
+      yield* git(cwd, ["remote", "add", "origin", "git@github.com:Forma/forma.git"]);
 
       const resolver = yield* RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(cwd);
 
       expect(identity).not.toBeNull();
-      expect(identity?.canonicalKey).toBe("github.com/harness/harness");
+      expect(identity?.canonicalKey).toBe("github.com/forma/forma");
       expect(normalizeResolvedPath(identity?.rootPath ?? "")).toBe(normalizeResolvedPath(cwd));
-      expect(identity?.displayName).toBe("harness/harness");
+      expect(identity?.displayName).toBe("forma/forma");
       expect(identity?.provider).toBe("github");
-      expect(identity?.owner).toBe("harness");
-      expect(identity?.name).toBe("harness");
+      expect(identity?.owner).toBe("forma");
+      expect(identity?.name).toBe("forma");
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
   );
 
@@ -59,19 +59,19 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const repoRoot = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "harness-repository-identity-nested-root-test-",
+        prefix: "forma-repository-identity-nested-root-test-",
       });
       const nestedWorkspace = `${repoRoot}/packages/web`;
 
       yield* fileSystem.makeDirectory(nestedWorkspace, { recursive: true });
       yield* git(repoRoot, ["init"]);
-      yield* git(repoRoot, ["remote", "add", "origin", "git@github.com:Harness/harness.git"]);
+      yield* git(repoRoot, ["remote", "add", "origin", "git@github.com:Forma/forma.git"]);
 
       const resolver = yield* RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(nestedWorkspace);
 
       expect(identity).not.toBeNull();
-      expect(identity?.canonicalKey).toBe("github.com/harness/harness");
+      expect(identity?.canonicalKey).toBe("github.com/forma/forma");
       expect(normalizeResolvedPath(identity?.rootPath ?? "")).toBe(normalizeResolvedPath(repoRoot));
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
   );
@@ -80,10 +80,10 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const nonGitDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "harness-repository-identity-non-git-",
+        prefix: "forma-repository-identity-non-git-",
       });
       const gitDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "harness-repository-identity-no-remote-",
+        prefix: "forma-repository-identity-no-remote-",
       });
 
       yield* git(gitDir, ["init"]);
@@ -101,20 +101,20 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cwd = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "harness-repository-identity-upstream-test-",
+        prefix: "forma-repository-identity-upstream-test-",
       });
 
       yield* git(cwd, ["init"]);
-      yield* git(cwd, ["remote", "add", "origin", "git@github.com:julius/harness.git"]);
-      yield* git(cwd, ["remote", "add", "upstream", "git@github.com:Harness/harness.git"]);
+      yield* git(cwd, ["remote", "add", "origin", "git@github.com:julius/forma.git"]);
+      yield* git(cwd, ["remote", "add", "upstream", "git@github.com:Forma/forma.git"]);
 
       const resolver = yield* RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(cwd);
 
       expect(identity).not.toBeNull();
       expect(identity?.locator.remoteName).toBe("upstream");
-      expect(identity?.canonicalKey).toBe("github.com/harness/harness");
-      expect(identity?.displayName).toBe("harness/harness");
+      expect(identity?.canonicalKey).toBe("github.com/forma/forma");
+      expect(identity?.displayName).toBe("forma/forma");
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
   );
 
@@ -122,20 +122,20 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cwd = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "harness-repository-identity-nested-group-test-",
+        prefix: "forma-repository-identity-nested-group-test-",
       });
 
       yield* git(cwd, ["init"]);
-      yield* git(cwd, ["remote", "add", "origin", "git@gitlab.com:Harness/platform/harness.git"]);
+      yield* git(cwd, ["remote", "add", "origin", "git@gitlab.com:Forma/platform/forma.git"]);
 
       const resolver = yield* RepositoryIdentityResolver;
       const identity = yield* resolver.resolve(cwd);
 
       expect(identity).not.toBeNull();
-      expect(identity?.canonicalKey).toBe("gitlab.com/harness/platform/harness");
-      expect(identity?.displayName).toBe("harness/platform/harness");
-      expect(identity?.owner).toBe("harness");
-      expect(identity?.name).toBe("harness");
+      expect(identity?.canonicalKey).toBe("gitlab.com/forma/platform/forma");
+      expect(identity?.displayName).toBe("forma/platform/forma");
+      expect(identity?.owner).toBe("forma");
+      expect(identity?.name).toBe("forma");
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
   );
 
@@ -145,7 +145,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const cwd = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "harness-repository-identity-late-remote-test-",
+          prefix: "forma-repository-identity-late-remote-test-",
         });
 
         yield* git(cwd, ["init"]);
@@ -154,7 +154,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         const initialIdentity = yield* resolver.resolve(cwd);
         expect(initialIdentity).toBeNull();
 
-        yield* git(cwd, ["remote", "add", "origin", "git@github.com:Harness/harness.git"]);
+        yield* git(cwd, ["remote", "add", "origin", "git@github.com:Forma/forma.git"]);
 
         for (const _attempt of [1, 2, 3]) {
           const cachedIdentity = yield* resolver.resolve(cwd);
@@ -165,8 +165,8 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
         const refreshedIdentity = yield* resolver.resolve(cwd);
         expect(refreshedIdentity).not.toBeNull();
-        expect(refreshedIdentity?.canonicalKey).toBe("github.com/harness/harness");
-        expect(refreshedIdentity?.name).toBe("harness");
+        expect(refreshedIdentity?.canonicalKey).toBe("github.com/forma/forma");
+        expect(refreshedIdentity?.name).toBe("forma");
       }).pipe(
         Effect.provide(
           Layer.merge(
@@ -184,30 +184,30 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cwd = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "harness-repository-identity-remote-change-test-",
+        prefix: "forma-repository-identity-remote-change-test-",
       });
 
       yield* git(cwd, ["init"]);
-      yield* git(cwd, ["remote", "add", "origin", "git@github.com:Harness/harness.git"]);
+      yield* git(cwd, ["remote", "add", "origin", "git@github.com:Forma/forma.git"]);
 
       const resolver = yield* RepositoryIdentityResolver;
       const initialIdentity = yield* resolver.resolve(cwd);
       expect(initialIdentity).not.toBeNull();
-      expect(initialIdentity?.canonicalKey).toBe("github.com/harness/harness");
+      expect(initialIdentity?.canonicalKey).toBe("github.com/forma/forma");
 
-      yield* git(cwd, ["remote", "set-url", "origin", "git@github.com:Harness/harness-next.git"]);
+      yield* git(cwd, ["remote", "set-url", "origin", "git@github.com:Forma/forma-next.git"]);
 
       const cachedIdentity = yield* resolver.resolve(cwd);
       expect(cachedIdentity).not.toBeNull();
-      expect(cachedIdentity?.canonicalKey).toBe("github.com/harness/harness");
+      expect(cachedIdentity?.canonicalKey).toBe("github.com/forma/forma");
 
       yield* TestClock.adjust(Duration.millis(180));
 
       const refreshedIdentity = yield* resolver.resolve(cwd);
       expect(refreshedIdentity).not.toBeNull();
-      expect(refreshedIdentity?.canonicalKey).toBe("github.com/harness/harness-next");
-      expect(refreshedIdentity?.displayName).toBe("harness/harness-next");
-      expect(refreshedIdentity?.name).toBe("harness-next");
+      expect(refreshedIdentity?.canonicalKey).toBe("github.com/forma/forma-next");
+      expect(refreshedIdentity?.displayName).toBe("forma/forma-next");
+      expect(refreshedIdentity?.name).toBe("forma-next");
     }).pipe(
       Effect.provide(
         Layer.merge(

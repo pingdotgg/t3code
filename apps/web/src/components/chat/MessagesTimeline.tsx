@@ -1,4 +1,4 @@
-import { type EnvironmentId, type MessageId, type TurnId } from "@harness/contracts";
+import { type EnvironmentId, type MessageId, type TurnId } from "@forma/contracts";
 import {
   createContext,
   memo,
@@ -52,7 +52,7 @@ import {
 } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
-import { type TimestampFormat } from "@harness/contracts/settings";
+import { type TimestampFormat } from "@forma/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
 
 import {

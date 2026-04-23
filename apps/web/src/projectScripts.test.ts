@@ -3,7 +3,7 @@ import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
   setupProjectScript,
-} from "@harness/shared/projectScripts";
+} from "@forma/shared/projectScripts";
 
 import {
   commandForProjectScript,
@@ -55,8 +55,8 @@ describe("projectScripts helpers", () => {
     });
 
     expect(env).toMatchObject({
-      HARNESS_PROJECT_ROOT: "/repo",
-      HARNESS_WORKTREE_PATH: "/repo/worktree-a",
+      FORMA_PROJECT_ROOT: "/repo",
+      FORMA_WORKTREE_PATH: "/repo/worktree-a",
     });
   });
 
@@ -64,14 +64,14 @@ describe("projectScripts helpers", () => {
     const env = projectScriptRuntimeEnv({
       project: { cwd: "/repo" },
       extraEnv: {
-        HARNESS_PROJECT_ROOT: "/custom-root",
+        FORMA_PROJECT_ROOT: "/custom-root",
         CUSTOM_FLAG: "1",
       },
     });
 
-    expect(env.HARNESS_PROJECT_ROOT).toBe("/custom-root");
+    expect(env.FORMA_PROJECT_ROOT).toBe("/custom-root");
     expect(env.CUSTOM_FLAG).toBe("1");
-    expect(env.HARNESS_WORKTREE_PATH).toBeUndefined();
+    expect(env.FORMA_WORKTREE_PATH).toBeUndefined();
   });
 
   it("prefers the worktree path for script cwd resolution", () => {

@@ -1,5 +1,5 @@
-import { parseScopedThreadKey, scopeProjectRef, scopeThreadRef } from "@harness/client-runtime";
-import { type ScopedThreadRef, ThreadId } from "@harness/contracts";
+import { parseScopedThreadKey, scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
+import { type ScopedThreadRef, ThreadId } from "@forma/contracts";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useRef } from "react";

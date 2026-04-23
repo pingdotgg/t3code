@@ -11,10 +11,10 @@ import {
   type ProviderSession,
   type RuntimeMode,
   type TurnId,
-} from "@harness/contracts";
-import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@harness/shared/git";
+} from "@forma/contracts";
+import { isTemporaryWorktreeBranch, WORKTREE_BRANCH_PREFIX } from "@forma/shared/git";
 import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } from "effect";
-import { makeDrainableWorker } from "@harness/shared/DrainableWorker";
+import { makeDrainableWorker } from "@forma/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";

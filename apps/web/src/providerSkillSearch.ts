@@ -1,9 +1,9 @@
-import type { ServerLocalAgentSkill, ServerProviderSkill } from "@harness/contracts";
+import type { ServerLocalAgentSkill, ServerProviderSkill } from "@forma/contracts";
 import {
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
-} from "@harness/shared/searchRanking";
+} from "@forma/shared/searchRanking";
 
 import { formatProviderSkillDisplayName } from "./providerSkillPresentation";
 

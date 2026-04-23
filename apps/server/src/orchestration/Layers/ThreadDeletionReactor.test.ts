@@ -1,4 +1,4 @@
-import { ThreadId } from "@harness/contracts";
+import { ThreadId } from "@forma/contracts";
 import { Cause, Effect, Exit } from "effect";
 import { describe, expect, it } from "vitest";
 

@@ -1,5 +1,5 @@
-import { scopeProjectRef } from "@harness/client-runtime";
-import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@harness/contracts";
+import { scopeProjectRef } from "@forma/client-runtime";
+import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@forma/contracts";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 interface ThreadContextLike {

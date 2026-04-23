@@ -7,7 +7,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Context, Schema } from "effect";
 import type { Effect, Option } from "effect";
 
@@ -73,4 +73,4 @@ export interface ProjectionThreadTurnQueueRepositoryShape {
 export class ProjectionThreadTurnQueueRepository extends Context.Service<
   ProjectionThreadTurnQueueRepository,
   ProjectionThreadTurnQueueRepositoryShape
->()("harness/persistence/Services/ProjectionThreadTurnQueue/ProjectionThreadTurnQueueRepository") {}
+>()("forma/persistence/Services/ProjectionThreadTurnQueue/ProjectionThreadTurnQueueRepository") {}

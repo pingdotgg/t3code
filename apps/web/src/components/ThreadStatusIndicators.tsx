@@ -1,5 +1,5 @@
-import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@harness/client-runtime";
-import type { GitStatusResult } from "@harness/contracts";
+import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@forma/client-runtime";
+import type { GitStatusResult } from "@forma/contracts";
 import { CloudIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
 import { usePrimaryEnvironmentId } from "../environments/primary";

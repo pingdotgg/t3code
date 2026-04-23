@@ -125,7 +125,7 @@ export const ensureServerDirectories = Effect.fn(function* (derivedPaths: Server
  * ServerConfig - Service tag for server runtime configuration.
  */
 export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShape>()(
-  "harness/config/ServerConfig",
+  "forma/config/ServerConfig",
 ) {
   static readonly layerTest = (cwd: string, baseDirOrPrefix: string | { prefix: string }) =>
     Layer.effect(
@@ -151,7 +151,7 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           otlpTracesUrl: undefined,
           otlpMetricsUrl: undefined,
           otlpExportIntervalMs: 10_000,
-          otlpServiceName: "harness-server",
+          otlpServiceName: "forma-server",
           cwd,
           baseDir,
           ...derivedPaths,

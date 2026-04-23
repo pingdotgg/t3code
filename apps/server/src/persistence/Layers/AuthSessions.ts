@@ -1,4 +1,4 @@
-import { AuthSessionId } from "@harness/contracts";
+import { AuthSessionId } from "@forma/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer, Option, Schema } from "effect";

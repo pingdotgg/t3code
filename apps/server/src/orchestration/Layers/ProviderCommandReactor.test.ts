@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type { ModelSelection, ProviderRuntimeEvent, ProviderSession } from "@harness/contracts";
+import type { ModelSelection, ProviderRuntimeEvent, ProviderSession } from "@forma/contracts";
 import {
   ApprovalRequestId,
   CommandId,
@@ -12,12 +12,12 @@ import {
   ProjectId,
   ThreadId,
   TurnId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, PubSub, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
-import { TextGenerationError } from "@harness/contracts";
+import { TextGenerationError } from "@forma/contracts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
@@ -103,7 +103,7 @@ describe("ProviderCommandReactor", () => {
     readonly sessionModelSwitch?: "unsupported" | "in-session";
   }) {
     const now = new Date().toISOString();
-    const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "harness-reactor-"));
+    const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "forma-reactor-"));
     createdBaseDirs.add(baseDir);
     const { stateDir } = deriveServerPathsSync(baseDir, undefined);
     createdStateDirs.add(stateDir);
@@ -203,7 +203,7 @@ describe("ProviderCommandReactor", () => {
       Effect.fail(
         new TextGenerationError({
           operation: "generateBranchName",
-          detail: "disabled in test harness",
+          detail: "disabled in test forma",
         }),
       ),
     );
@@ -211,7 +211,7 @@ describe("ProviderCommandReactor", () => {
       Effect.fail(
         new TextGenerationError({
           operation: "generateThreadTitle",
-          detail: "disabled in test harness",
+          detail: "disabled in test forma",
         }),
       ),
     );
@@ -319,11 +319,11 @@ describe("ProviderCommandReactor", () => {
   }
 
   it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-1"),
         threadId: ThreadId.make("thread-1"),
@@ -339,10 +339,10 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    expect(harness.startSession.mock.calls[0]?.[0]).toEqual(ThreadId.make("thread-1"));
-    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+    await waitFor(() => forma.startSession.mock.calls.length === 1);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 1);
+    expect(forma.startSession.mock.calls[0]?.[0]).toEqual(ThreadId.make("thread-1"));
+    expect(forma.startSession.mock.calls[0]?.[1]).toMatchObject({
       cwd: "/tmp/provider-project",
       modelSelection: {
         provider: "codex",
@@ -351,20 +351,20 @@ describe("ProviderCommandReactor", () => {
       runtimeMode: "approval-required",
     });
 
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await Effect.runPromise(forma.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
   it("generates a thread title on the first turn", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
     const seededTitle = "Please investigate reconnect failures after restar...";
-    harness.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
+    forma.generateThreadTitle.mockReturnValue(Effect.succeed({ title: "Generated title" }));
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.meta.update",
         commandId: CommandId.make("cmd-thread-title-seed"),
         threadId: ThreadId.make("thread-1"),
@@ -373,7 +373,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-title"),
         threadId: ThreadId.make("thread-1"),
@@ -390,30 +390,30 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
-    expect(harness.generateThreadTitle.mock.calls[0]?.[0]).toMatchObject({
+    await waitFor(() => forma.generateThreadTitle.mock.calls.length === 1);
+    expect(forma.generateThreadTitle.mock.calls[0]?.[0]).toMatchObject({
       message: "Please investigate reconnect failures after restarting the session.",
     });
 
     await waitFor(async () => {
-      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const readModel = await Effect.runPromise(forma.engine.getReadModel());
       return (
         readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title ===
         "Generated title"
       );
     });
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await Effect.runPromise(forma.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Generated title");
   });
 
   it("does not overwrite an existing custom thread title on the first turn", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
     const seededTitle = "Please investigate reconnect failures after restar...";
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.meta.update",
         commandId: CommandId.make("cmd-thread-title-custom"),
         threadId: ThreadId.make("thread-1"),
@@ -422,7 +422,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-title-preserve"),
         threadId: ThreadId.make("thread-1"),
@@ -439,26 +439,26 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    expect(harness.generateThreadTitle).not.toHaveBeenCalled();
+    await waitFor(() => forma.sendTurn.mock.calls.length === 1);
+    expect(forma.generateThreadTitle).not.toHaveBeenCalled();
 
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await Effect.runPromise(forma.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Keep this custom title");
   });
 
   it("matches the client-seeded title even when the outgoing prompt is reformatted", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
     const seededTitle = "Fix reconnect spinner on resume";
-    harness.generateThreadTitle.mockReturnValue(
+    forma.generateThreadTitle.mockReturnValue(
       Effect.succeed({
         title: "Reconnect spinner resume bug",
       }),
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.meta.update",
         commandId: CommandId.make("cmd-thread-title-formatted-seed"),
         threadId: ThreadId.make("thread-1"),
@@ -467,7 +467,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-title-formatted"),
         threadId: ThreadId.make("thread-1"),
@@ -484,35 +484,35 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+    await waitFor(() => forma.generateThreadTitle.mock.calls.length === 1);
     await waitFor(async () => {
-      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const readModel = await Effect.runPromise(forma.engine.getReadModel());
       return (
         readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title ===
         "Reconnect spinner resume bug"
       );
     });
 
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await Effect.runPromise(forma.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Reconnect spinner resume bug");
   });
 
   it("generates a worktree branch name for the first turn", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.meta.update",
         commandId: CommandId.make("cmd-thread-branch"),
         threadId: ThreadId.make("thread-1"),
-        branch: "harness/1234abcd",
+        branch: "forma/1234abcd",
         worktreePath: "/tmp/provider-project-worktree",
       }),
     );
 
-    harness.generateBranchName.mockImplementation((input: unknown) =>
+    forma.generateBranchName.mockImplementation((input: unknown) =>
       Effect.succeed({
         branch:
           typeof input === "object" &&
@@ -528,7 +528,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-branch-model"),
         threadId: ThreadId.make("thread-1"),
@@ -544,20 +544,20 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.generateBranchName.mock.calls.length === 1);
-    await waitFor(() => harness.refreshStatus.mock.calls.length === 1);
-    expect(harness.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
+    await waitFor(() => forma.generateBranchName.mock.calls.length === 1);
+    await waitFor(() => forma.refreshStatus.mock.calls.length === 1);
+    expect(forma.generateBranchName.mock.calls[0]?.[0]).toMatchObject({
       message: "Add a safer reconnect backoff.",
     });
-    expect(harness.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
+    expect(forma.refreshStatus.mock.calls[0]?.[0]).toBe("/tmp/provider-project-worktree");
   });
 
   it("forwards codex model options through session start and turn send", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-fast"),
         threadId: ThreadId.make("thread-1"),
@@ -581,9 +581,9 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+    await waitFor(() => forma.startSession.mock.calls.length === 1);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 1);
+    expect(forma.startSession.mock.calls[0]?.[1]).toMatchObject({
       modelSelection: {
         provider: "codex",
         model: "gpt-5.3-codex",
@@ -593,7 +593,7 @@ describe("ProviderCommandReactor", () => {
         },
       },
     });
-    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+    expect(forma.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       modelSelection: {
         provider: "codex",
@@ -607,13 +607,13 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("forwards claude effort options through session start and turn send", async () => {
-    const harness = await createHarness({
+    const forma = await createHarness({
       threadModelSelection: { provider: "claudeAgent", model: "claude-sonnet-4-6" },
     });
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-claude-effort"),
         threadId: ThreadId.make("thread-1"),
@@ -636,9 +636,9 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+    await waitFor(() => forma.startSession.mock.calls.length === 1);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 1);
+    expect(forma.startSession.mock.calls[0]?.[1]).toMatchObject({
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-sonnet-4-6",
@@ -647,7 +647,7 @@ describe("ProviderCommandReactor", () => {
         },
       },
     });
-    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+    expect(forma.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       modelSelection: {
         provider: "claudeAgent",
@@ -660,13 +660,13 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("forwards claude fast mode options through session start and turn send", async () => {
-    const harness = await createHarness({
+    const forma = await createHarness({
       threadModelSelection: { provider: "claudeAgent", model: "claude-opus-4-6" },
     });
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-claude-fast-mode"),
         threadId: ThreadId.make("thread-1"),
@@ -689,9 +689,9 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+    await waitFor(() => forma.startSession.mock.calls.length === 1);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 1);
+    expect(forma.startSession.mock.calls[0]?.[1]).toMatchObject({
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-opus-4-6",
@@ -700,7 +700,7 @@ describe("ProviderCommandReactor", () => {
         },
       },
     });
-    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+    expect(forma.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       modelSelection: {
         provider: "claudeAgent",
@@ -713,11 +713,11 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("forwards plan interaction mode to the provider turn request", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.interaction-mode.set",
         commandId: CommandId.make("cmd-interaction-mode-set-plan"),
         threadId: ThreadId.make("thread-1"),
@@ -727,7 +727,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-plan"),
         threadId: ThreadId.make("thread-1"),
@@ -743,19 +743,19 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
-    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+    await waitFor(() => forma.sendTurn.mock.calls.length === 1);
+    expect(forma.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       interactionMode: "plan",
     });
   });
 
   it("preserves the active session model when in-session model switching is unsupported", async () => {
-    const harness = await createHarness({ sessionModelSwitch: "unsupported" });
+    const forma = await createHarness({ sessionModelSwitch: "unsupported" });
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-unsupported-1"),
         threadId: ThreadId.make("thread-1"),
@@ -771,10 +771,10 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 1);
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-unsupported-2"),
         threadId: ThreadId.make("thread-1"),
@@ -790,9 +790,9 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 2);
 
-    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+    expect(forma.sendTurn.mock.calls[1]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       modelSelection: {
         provider: "codex",
@@ -802,13 +802,13 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("rejects a first turn when requested provider conflicts with the thread model", async () => {
-    const harness = await createHarness({
+    const forma = await createHarness({
       threadModelSelection: { provider: "codex", model: "gpt-5-codex" },
     });
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-provider-first"),
         threadId: ThreadId.make("thread-1"),
@@ -829,7 +829,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(async () => {
-      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const readModel = await Effect.runPromise(forma.engine.getReadModel());
       const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
       return (
         thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
@@ -837,10 +837,10 @@ describe("ProviderCommandReactor", () => {
       );
     });
 
-    expect(harness.startSession).not.toHaveBeenCalled();
-    expect(harness.sendTurn).not.toHaveBeenCalled();
+    expect(forma.startSession).not.toHaveBeenCalled();
+    expect(forma.sendTurn).not.toHaveBeenCalled();
 
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await Effect.runPromise(forma.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session).toBeNull();
     expect(
@@ -854,11 +854,11 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("reuses the same provider session when runtime mode is unchanged", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-unchanged-1"),
         threadId: ThreadId.make("thread-1"),
@@ -874,11 +874,11 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(() => forma.startSession.mock.calls.length === 1);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 1);
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-unchanged-2"),
         threadId: ThreadId.make("thread-1"),
@@ -894,19 +894,19 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
-    expect(harness.startSession.mock.calls.length).toBe(1);
-    expect(harness.stopSession.mock.calls.length).toBe(0);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 2);
+    expect(forma.startSession.mock.calls.length).toBe(1);
+    expect(forma.stopSession.mock.calls.length).toBe(0);
   });
 
   it("restarts claude sessions when claude effort changes", async () => {
-    const harness = await createHarness({
+    const forma = await createHarness({
       threadModelSelection: { provider: "claudeAgent", model: "claude-sonnet-4-6" },
     });
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-claude-effort-1"),
         threadId: ThreadId.make("thread-1"),
@@ -929,11 +929,11 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(() => forma.startSession.mock.calls.length === 1);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 1);
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-claude-effort-2"),
         threadId: ThreadId.make("thread-1"),
@@ -956,9 +956,9 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 2);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
-    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+    await waitFor(() => forma.startSession.mock.calls.length === 2);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 2);
+    expect(forma.startSession.mock.calls[1]?.[1]).toMatchObject({
       resumeCursor: { opaque: "resume-1" },
       modelSelection: {
         provider: "claudeAgent",
@@ -971,11 +971,11 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("restarts the provider session when runtime mode is updated on the thread", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("cmd-runtime-mode-set-initial-full-access"),
         threadId: ThreadId.make("thread-1"),
@@ -985,7 +985,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-runtime-mode-1"),
         threadId: ThreadId.make("thread-1"),
@@ -1001,11 +1001,11 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(() => forma.startSession.mock.calls.length === 1);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 1);
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("cmd-runtime-mode-set-1"),
         threadId: ThreadId.make("thread-1"),
@@ -1015,13 +1015,13 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(async () => {
-      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const readModel = await Effect.runPromise(forma.engine.getReadModel());
       const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
       return thread?.runtimeMode === "approval-required";
     });
-    await waitFor(() => harness.startSession.mock.calls.length === 2);
+    await waitFor(() => forma.startSession.mock.calls.length === 2);
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-runtime-mode-2"),
         threadId: ThreadId.make("thread-1"),
@@ -1037,38 +1037,38 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 3);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+    await waitFor(() => forma.startSession.mock.calls.length === 3);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 2);
 
-    expect(harness.stopSession.mock.calls.length).toBe(0);
-    expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
+    expect(forma.stopSession.mock.calls.length).toBe(0);
+    expect(forma.startSession.mock.calls[1]?.[1]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       resumeCursor: { opaque: "resume-1" },
       runtimeMode: "approval-required",
     });
-    expect(harness.startSession.mock.calls[2]?.[1]).toMatchObject({
+    expect(forma.startSession.mock.calls[2]?.[1]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       resumeCursor: { opaque: "resume-1" },
       runtimeMode: "full-access",
     });
-    expect(harness.sendTurn.mock.calls[1]?.[0]).toMatchObject({
+    expect(forma.sendTurn.mock.calls[1]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
     });
 
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await Effect.runPromise(forma.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("full-access");
   });
 
   it("does not inject derived model options when restarting claude on runtime mode changes", async () => {
-    const harness = await createHarness({
+    const forma = await createHarness({
       threadModelSelection: { provider: "claudeAgent", model: "claude-opus-4-6" },
     });
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-runtime-mode-claude"),
         threadId: ThreadId.make("thread-1"),
@@ -1086,7 +1086,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("cmd-runtime-mode-set-claude-no-options"),
         threadId: ThreadId.make("thread-1"),
@@ -1095,9 +1095,9 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await waitFor(() => forma.startSession.mock.calls.length === 1);
 
-    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+    expect(forma.startSession.mock.calls[0]?.[1]).toMatchObject({
       modelSelection: {
         provider: "claudeAgent",
         model: "claude-opus-4-6",
@@ -1107,11 +1107,11 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("does not stop the active session when restart fails before rebind", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("cmd-runtime-mode-set-initial-full-access-2"),
         threadId: ThreadId.make("thread-1"),
@@ -1121,7 +1121,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-restart-failure-1"),
         threadId: ThreadId.make("thread-1"),
@@ -1137,15 +1137,15 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(() => forma.startSession.mock.calls.length === 1);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 1);
 
-    harness.startSession.mockImplementationOnce(
+    forma.startSession.mockImplementationOnce(
       (_: unknown, __: unknown) => Effect.fail(new Error("simulated restart failure")) as never,
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.runtime-mode.set",
         commandId: CommandId.make("cmd-runtime-mode-set-restart-failure"),
         threadId: ThreadId.make("thread-1"),
@@ -1155,28 +1155,28 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(async () => {
-      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const readModel = await Effect.runPromise(forma.engine.getReadModel());
       const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
       return thread?.runtimeMode === "approval-required";
     });
-    await waitFor(() => harness.startSession.mock.calls.length === 2);
-    await harness.drain();
+    await waitFor(() => forma.startSession.mock.calls.length === 2);
+    await forma.drain();
 
-    expect(harness.stopSession.mock.calls.length).toBe(0);
-    expect(harness.sendTurn.mock.calls.length).toBe(1);
+    expect(forma.stopSession.mock.calls.length).toBe(0);
+    expect(forma.sendTurn.mock.calls.length).toBe(1);
 
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await Effect.runPromise(forma.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("full-access");
   });
 
   it("rejects provider changes after a thread is already bound to a session provider", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-provider-switch-1"),
         threadId: ThreadId.make("thread-1"),
@@ -1192,11 +1192,11 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(() => forma.startSession.mock.calls.length === 1);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 1);
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-provider-switch-2"),
         threadId: ThreadId.make("thread-1"),
@@ -1217,7 +1217,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(async () => {
-      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const readModel = await Effect.runPromise(forma.engine.getReadModel());
       const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
       return (
         thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
@@ -1225,11 +1225,11 @@ describe("ProviderCommandReactor", () => {
       );
     });
 
-    expect(harness.startSession.mock.calls.length).toBe(1);
-    expect(harness.sendTurn.mock.calls.length).toBe(1);
-    expect(harness.stopSession.mock.calls.length).toBe(0);
+    expect(forma.startSession.mock.calls.length).toBe(1);
+    expect(forma.sendTurn.mock.calls.length).toBe(1);
+    expect(forma.stopSession.mock.calls.length).toBe(0);
 
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await Effect.runPromise(forma.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.providerName).toBe("codex");
@@ -1244,11 +1244,11 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("reacts to thread.turn.interrupt-requested by calling provider interrupt", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set"),
         threadId: ThreadId.make("thread-1"),
@@ -1266,7 +1266,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.interrupt",
         commandId: CommandId.make("cmd-turn-interrupt"),
         threadId: ThreadId.make("thread-1"),
@@ -1275,18 +1275,18 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.interruptTurn.mock.calls.length === 1);
-    expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
+    await waitFor(() => forma.interruptTurn.mock.calls.length === 1);
+    expect(forma.interruptTurn.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
     });
   });
 
   it("starts a fresh session when only projected session state exists", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-stale"),
         threadId: ThreadId.make("thread-1"),
@@ -1304,7 +1304,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.turn.start",
         commandId: CommandId.make("cmd-turn-start-stale"),
         threadId: ThreadId.make("thread-1"),
@@ -1320,10 +1320,10 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.startSession.mock.calls.length === 1);
-    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    await waitFor(() => forma.startSession.mock.calls.length === 1);
+    await waitFor(() => forma.sendTurn.mock.calls.length === 1);
 
-    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+    expect(forma.startSession.mock.calls[0]?.[1]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       modelSelection: {
         provider: "codex",
@@ -1331,17 +1331,17 @@ describe("ProviderCommandReactor", () => {
       },
       runtimeMode: "approval-required",
     });
-    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+    expect(forma.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
     });
   });
 
   it("reacts to thread.approval.respond by forwarding provider approval response", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-approval"),
         threadId: ThreadId.make("thread-1"),
@@ -1359,7 +1359,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.approval.respond",
         commandId: CommandId.make("cmd-approval-respond"),
         threadId: ThreadId.make("thread-1"),
@@ -1369,8 +1369,8 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.respondToRequest.mock.calls.length === 1);
-    expect(harness.respondToRequest.mock.calls[0]?.[0]).toEqual({
+    await waitFor(() => forma.respondToRequest.mock.calls.length === 1);
+    expect(forma.respondToRequest.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
       requestId: "approval-request-1",
       decision: "accept",
@@ -1378,11 +1378,11 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("reacts to thread.user-input.respond by forwarding structured user input answers", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input"),
         threadId: ThreadId.make("thread-1"),
@@ -1400,7 +1400,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond"),
         threadId: ThreadId.make("thread-1"),
@@ -1412,8 +1412,8 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.respondToUserInput.mock.calls.length === 1);
-    expect(harness.respondToUserInput.mock.calls[0]?.[0]).toEqual({
+    await waitFor(() => forma.respondToUserInput.mock.calls.length === 1);
+    expect(forma.respondToUserInput.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
       requestId: "user-input-request-1",
       answers: {
@@ -1423,9 +1423,9 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("surfaces stale provider approval request failures without faking approval resolution", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
-    harness.respondToRequest.mockImplementation(() =>
+    forma.respondToRequest.mockImplementation(() =>
       Effect.fail(
         new ProviderAdapterRequestError({
           provider: "codex",
@@ -1436,7 +1436,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-approval-error"),
         threadId: ThreadId.make("thread-1"),
@@ -1454,7 +1454,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-approval-requested"),
         threadId: ThreadId.make("thread-1"),
@@ -1475,7 +1475,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.approval.respond",
         commandId: CommandId.make("cmd-approval-respond-stale"),
         threadId: ThreadId.make("thread-1"),
@@ -1486,7 +1486,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(async () => {
-      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const readModel = await Effect.runPromise(forma.engine.getReadModel());
       const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
       if (!thread) return false;
       return thread.activities.some(
@@ -1494,7 +1494,7 @@ describe("ProviderCommandReactor", () => {
       );
     });
 
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await Effect.runPromise(forma.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread).toBeDefined();
 
@@ -1518,9 +1518,9 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("surfaces stale provider user-input failures without faking user-input resolution", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
-    harness.respondToUserInput.mockImplementation(() =>
+    forma.respondToUserInput.mockImplementation(() =>
       Effect.fail(
         new ProviderAdapterRequestError({
           provider: "claudeAgent",
@@ -1531,7 +1531,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-user-input-error"),
         threadId: ThreadId.make("thread-1"),
@@ -1549,7 +1549,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make("cmd-user-input-requested"),
         threadId: ThreadId.make("thread-1"),
@@ -1582,7 +1582,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.user-input.respond",
         commandId: CommandId.make("cmd-user-input-respond-stale"),
         threadId: ThreadId.make("thread-1"),
@@ -1595,7 +1595,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await waitFor(async () => {
-      const readModel = await Effect.runPromise(harness.engine.getReadModel());
+      const readModel = await Effect.runPromise(forma.engine.getReadModel());
       const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
       if (!thread) return false;
       return thread.activities.some(
@@ -1603,7 +1603,7 @@ describe("ProviderCommandReactor", () => {
       );
     });
 
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await Effect.runPromise(forma.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread).toBeDefined();
 
@@ -1627,11 +1627,11 @@ describe("ProviderCommandReactor", () => {
   });
 
   it("reacts to thread.session.stop by stopping provider session and clearing thread session state", async () => {
-    const harness = await createHarness();
+    const forma = await createHarness();
     const now = new Date().toISOString();
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.set",
         commandId: CommandId.make("cmd-session-set-for-stop"),
         threadId: ThreadId.make("thread-1"),
@@ -1649,7 +1649,7 @@ describe("ProviderCommandReactor", () => {
     );
 
     await Effect.runPromise(
-      harness.engine.dispatch({
+      forma.engine.dispatch({
         type: "thread.session.stop",
         commandId: CommandId.make("cmd-session-stop"),
         threadId: ThreadId.make("thread-1"),
@@ -1657,8 +1657,8 @@ describe("ProviderCommandReactor", () => {
       }),
     );
 
-    await waitFor(() => harness.stopSession.mock.calls.length === 1);
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    await waitFor(() => forma.stopSession.mock.calls.length === 1);
+    const readModel = await Effect.runPromise(forma.engine.getReadModel());
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session).not.toBeNull();
     expect(thread?.session?.status).toBe("stopped");

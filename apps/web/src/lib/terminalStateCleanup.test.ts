@@ -1,5 +1,5 @@
-import { scopedThreadKey, scopeThreadRef } from "@harness/client-runtime";
-import { ThreadId } from "@harness/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@forma/client-runtime";
+import { ThreadId } from "@forma/contracts";
 import { describe, expect, it } from "vitest";
 
 import { collectActiveTerminalThreadIds } from "./terminalStateCleanup";

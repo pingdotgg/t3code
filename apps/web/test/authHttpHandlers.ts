@@ -2,7 +2,7 @@ import {
   EnvironmentId,
   type ExecutionEnvironmentDescriptor,
   type ServerAuthDescriptor,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { HttpResponse, http } from "msw";
 
 const TEST_SESSION_EXPIRES_AT = "2026-05-01T12:00:00.000Z";
@@ -21,7 +21,7 @@ const TEST_ENVIRONMENT_DESCRIPTOR: ExecutionEnvironmentDescriptor = {
 
 export function createAuthenticatedSessionHandlers(getAuthDescriptor: () => ServerAuthDescriptor) {
   return [
-    http.get("*/.well-known/harness/environment", () =>
+    http.get("*/.well-known/forma/environment", () =>
       HttpResponse.json(TEST_ENVIRONMENT_DESCRIPTOR),
     ),
     http.get("*/api/auth/session", () =>

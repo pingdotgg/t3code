@@ -4,7 +4,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationThreadActivity,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { describe, expect, it } from "vitest";
 
 import {

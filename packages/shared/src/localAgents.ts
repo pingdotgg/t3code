@@ -1,4 +1,4 @@
-import type { ServerLocalAgentCommand, ServerLocalAgentSkill } from "@harness/contracts";
+import type { ServerLocalAgentCommand, ServerLocalAgentSkill } from "@forma/contracts";
 
 type LocalAgentFrontmatter = Record<string, string>;
 

@@ -1,4 +1,4 @@
-import type { ProviderKind } from "@harness/contracts";
+import type { ProviderKind } from "@forma/contracts";
 import { it, assert, vi } from "@effect/vitest";
 import { assertFailure } from "@effect/vitest/utils";
 

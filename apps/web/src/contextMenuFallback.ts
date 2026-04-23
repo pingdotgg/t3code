@@ -1,4 +1,4 @@
-import type { ContextMenuItem } from "@harness/contracts";
+import type { ContextMenuItem } from "@forma/contracts";
 
 function clampMenuPosition(menu: HTMLDivElement, preferredLeft: number, preferredTop: number) {
   const rect = menu.getBoundingClientRect();

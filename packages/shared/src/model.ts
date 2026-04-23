@@ -10,7 +10,7 @@ import {
   type OpenCodeModelOptions,
   type ProviderKind,
   type ProviderModelOptions,
-} from "@harness/contracts";
+} from "@forma/contracts";
 
 export interface SelectableModelOption {
   slug: string;

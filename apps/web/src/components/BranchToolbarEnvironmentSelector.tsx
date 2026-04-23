@@ -1,4 +1,4 @@
-import type { EnvironmentId } from "@harness/contracts";
+import type { EnvironmentId } from "@forma/contracts";
 import { CloudIcon, MonitorIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 

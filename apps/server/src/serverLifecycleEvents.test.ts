@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@harness/contracts";
+import { EnvironmentId } from "@forma/contracts";
 import { assert, it } from "@effect/vitest";
 import { assertTrue } from "@effect/vitest/utils";
 import { Effect, Option } from "effect";

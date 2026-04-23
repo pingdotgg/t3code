@@ -272,7 +272,7 @@ const publishCmd = Command.make(
 // ---------------------------------------------------------------------------
 
 const cli = Command.make("cli").pipe(
-  Command.withDescription("Harness server build & publish CLI."),
+  Command.withDescription("Forma server build & publish CLI."),
   Command.withSubcommands([buildCmd, publishCmd]),
 );
 

@@ -10,12 +10,12 @@ import { CheckpointStoreLive } from "./CheckpointStore.ts";
 import { CheckpointStore } from "../Services/CheckpointStore.ts";
 import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
-import { GitCommandError } from "@harness/contracts";
+import { GitCommandError } from "@forma/contracts";
 import { ServerConfig } from "../../config.ts";
-import { ThreadId } from "@harness/contracts";
+import { ThreadId } from "@forma/contracts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
-  prefix: "harness-checkpoint-store-test-",
+  prefix: "forma-checkpoint-store-test-",
 });
 const GitCoreTestLayer = GitCoreLive.pipe(
   Layer.provide(ServerConfigLayer),

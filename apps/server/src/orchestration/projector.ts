@@ -1,10 +1,10 @@
-import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@harness/contracts";
+import type { OrchestrationEvent, OrchestrationReadModel, ThreadId } from "@forma/contracts";
 import {
   OrchestrationCheckpointSummary,
   OrchestrationMessage,
   OrchestrationSession,
   OrchestrationThread,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Effect, Schema } from "effect";
 
 import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "./Errors.ts";

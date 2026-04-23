@@ -13,7 +13,7 @@ const TestLayer = Layer.empty.pipe(
 const makeTempDir = Effect.fn("makeTempDir")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.makeTempDirectoryScoped({
-    prefix: "harness-project-paths-",
+    prefix: "forma-project-paths-",
   });
 });
 

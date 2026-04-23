@@ -21,7 +21,7 @@ import {
   ProviderStopSessionInput,
   type ProviderRuntimeEvent,
   type ProviderSession,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Effect, Layer, Option, PubSub, Schema, SchemaIssue, Stream } from "effect";
 
 import {
@@ -365,7 +365,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         if (!settings.providers[input.provider].enabled) {
           return yield* toValidationError(
             "ProviderService.startSession",
-            `Provider '${input.provider}' is disabled in Harness settings.`,
+            `Provider '${input.provider}' is disabled in Forma settings.`,
           );
         }
         const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(threadId));

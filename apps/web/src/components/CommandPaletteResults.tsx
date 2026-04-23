@@ -1,4 +1,4 @@
-import { type ResolvedKeybindingsConfig } from "@harness/contracts";
+import { type ResolvedKeybindingsConfig } from "@forma/contracts";
 import { ChevronRightIcon } from "lucide-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import {

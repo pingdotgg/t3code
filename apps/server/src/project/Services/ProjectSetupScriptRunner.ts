@@ -34,4 +34,4 @@ export interface ProjectSetupScriptRunnerShape {
 export class ProjectSetupScriptRunner extends Context.Service<
   ProjectSetupScriptRunner,
   ProjectSetupScriptRunnerShape
->()("harness/project/ProjectSetupScriptRunner") {}
+>()("forma/project/ProjectSetupScriptRunner") {}

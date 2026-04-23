@@ -1,6 +1,6 @@
 import { Cause, Exit, Result, Schema } from "effect";
-import { PositiveInt, TrimmedNonEmptyString } from "@harness/contracts";
-import { decodeJsonResult, formatSchemaError } from "@harness/shared/schemaJson";
+import { PositiveInt, TrimmedNonEmptyString } from "@forma/contracts";
+import { decodeJsonResult, formatSchemaError } from "@forma/shared/schemaJson";
 
 export interface NormalizedGitHubPullRequestRecord {
   readonly number: number;

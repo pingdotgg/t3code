@@ -8,5 +8,5 @@ export interface CursorAdapterShape extends ProviderAdapterShape<ProviderAdapter
 }
 
 export class CursorAdapter extends Context.Service<CursorAdapter, CursorAdapterShape>()(
-  "harness/provider/Services/CursorAdapter",
+  "forma/provider/Services/CursorAdapter",
 ) {}

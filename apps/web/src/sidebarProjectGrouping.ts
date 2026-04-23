@@ -1,5 +1,5 @@
-import { scopeProjectRef } from "@harness/client-runtime";
-import type { EnvironmentId, ScopedProjectRef } from "@harness/contracts";
+import { scopeProjectRef } from "@forma/client-runtime";
+import type { EnvironmentId, ScopedProjectRef } from "@forma/contracts";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,

@@ -7,7 +7,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Layer, Stream } from "effect";
 
-import { ApprovalRequestId, type ProviderRuntimeEvent, ThreadId } from "@harness/contracts";
+import { ApprovalRequestId, type ProviderRuntimeEvent, ThreadId } from "@forma/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -95,7 +95,7 @@ const cursorAdapterTestLayer = it.layer(
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), {
-        prefix: "harness-cursor-adapter-test-",
+        prefix: "forma-cursor-adapter-test-",
       }),
     ),
     Layer.provideMerge(NodeServices.layer),
@@ -621,7 +621,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
             Layer.provideMerge(ServerSettingsService.layerTest()),
             Layer.provideMerge(
               ServerConfig.layerTest(process.cwd(), {
-                prefix: "harness-cursor-adapter-test-",
+                prefix: "forma-cursor-adapter-test-",
               }),
             ),
             Layer.provideMerge(NodeServices.layer),

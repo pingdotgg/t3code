@@ -1,7 +1,8 @@
 import type { ComponentType } from "react";
-import { ArchiveIcon, ArrowLeftIcon, Link2Icon, Settings2Icon } from "lucide-react";
+import { ArchiveIcon, ArrowLeftIcon, Link2Icon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 
+import { SettingsHexIcon } from "../icons/custom";
 import {
   SidebarContent,
   SidebarFooter,
@@ -22,7 +23,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   to: SettingsSectionPath;
   icon: ComponentType<{ className?: string }>;
 }> = [
-  { label: "General", to: "/settings/general", icon: Settings2Icon },
+  { label: "General", to: "/settings/general", icon: SettingsHexIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
 ];

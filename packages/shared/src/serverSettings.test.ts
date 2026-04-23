@@ -1,4 +1,4 @@
-import { DEFAULT_SERVER_SETTINGS } from "@harness/contracts";
+import { DEFAULT_SERVER_SETTINGS } from "@forma/contracts";
 import { describe, expect, it } from "vitest";
 import {
   applyServerSettingsPatch,

@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId } from "@harness/contracts";
+import { ProjectId, ThreadId } from "@forma/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";

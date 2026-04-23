@@ -1,4 +1,4 @@
-import type { ServerAuthDescriptor } from "@harness/contracts";
+import type { ServerAuthDescriptor } from "@forma/contracts";
 import { Effect, Layer } from "effect";
 
 import { ServerConfig } from "../../config.ts";

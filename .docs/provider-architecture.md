@@ -7,7 +7,7 @@ The web app communicates with the server via WebSocket using a simple JSON-RPC-s
 
 Push channels: `server.welcome`, `server.configUpdated`, `terminal.event`, `orchestration.domainEvent`. Payloads are schema-validated at the transport boundary (`wsTransport.ts`). Decode failures produce structured `WsDecodeDiagnostic` with `code`, `reason`, and path info.
 
-Methods mirror the `NativeApi` interface defined in `@harness/contracts`:
+Methods mirror the `NativeApi` interface defined in `/contracts`:
 
 - `providers.startSession`, `providers.sendTurn`, `providers.interruptTurn`
 - `providers.respondToRequest`, `providers.stopSession`

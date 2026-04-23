@@ -5,8 +5,8 @@ import type {
   ServerConfig,
   ServerLifecycleWelcomePayload,
   TerminalEvent,
-} from "@harness/contracts";
-import type { KnownEnvironment } from "@harness/client-runtime";
+} from "@forma/contracts";
+import type { KnownEnvironment } from "@forma/client-runtime";
 
 import type { WsRpcClient } from "~/rpc/wsRpcClient";
 

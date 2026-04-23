@@ -6,7 +6,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationEvent,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { describe, expect, it } from "vitest";
 
 import { deriveOrchestrationBatchEffects } from "./orchestrationEventEffects";

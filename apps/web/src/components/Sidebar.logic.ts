@@ -1,5 +1,5 @@
 import * as React from "react";
-import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@harness/contracts/settings";
+import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@forma/contracts/settings";
 import {
   getThreadSortTimestamp,
   sortThreads,

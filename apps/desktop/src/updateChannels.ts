@@ -1,4 +1,4 @@
-import type { DesktopUpdateChannel } from "@harness/contracts";
+import type { DesktopUpdateChannel } from "@forma/contracts";
 
 const NIGHTLY_VERSION_PATTERN = /-nightly\.\d{8}\.\d+$/;
 

@@ -5,13 +5,13 @@ import {
   type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import {
   hasEffortLevel,
   normalizeModelSlug,
   resolveContextWindow,
   trimOrNull,
-} from "@harness/shared/model";
+} from "@forma/shared/model";
 
 const EMPTY_CAPABILITIES: ModelCapabilities = {
   reasoningEffortLevels: [],

@@ -1,4 +1,4 @@
-import { EnvironmentId } from "@harness/contracts";
+import { EnvironmentId } from "@forma/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockResolveRemotePairingTarget = vi.fn();

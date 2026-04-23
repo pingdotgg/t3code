@@ -7,7 +7,7 @@ import {
   type ServerConfig,
   type TerminalEvent,
   ThreadId,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { type QueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 import {
@@ -16,7 +16,7 @@ import {
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-} from "@harness/client-runtime";
+} from "@forma/client-runtime";
 
 import {
   markPromotedDraftThreadByRef,

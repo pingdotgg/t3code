@@ -3,14 +3,14 @@ import {
   type ModelSelection,
   type ProviderKind,
   type ServerProvider,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import {
   createModelSelection,
   normalizeModelSlug,
   resolveSelectableModel,
-} from "@harness/shared/model";
+} from "@forma/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderRegistry";
-import { UnifiedSettings } from "@harness/contracts/settings";
+import { UnifiedSettings } from "@forma/contracts/settings";
 import {
   getDefaultServerModel,
   getProviderModels,

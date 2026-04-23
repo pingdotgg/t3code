@@ -1,4 +1,4 @@
-import type { GitStatusRemoteResult, GitStatusResult } from "@harness/contracts";
+import type { GitStatusRemoteResult, GitStatusResult } from "@forma/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -12,23 +12,21 @@ import {
 
 describe("normalizeGitRemoteUrl", () => {
   it("canonicalizes equivalent GitHub remotes across protocol variants", () => {
-    expect(normalizeGitRemoteUrl("git@github.com:Harness/Harness.git")).toBe(
-      "github.com/harness/harness",
+    expect(normalizeGitRemoteUrl("git@github.com:Forma/Forma.git")).toBe("github.com/forma/forma");
+    expect(normalizeGitRemoteUrl("https://github.com/Forma/Forma.git")).toBe(
+      "github.com/forma/forma",
     );
-    expect(normalizeGitRemoteUrl("https://github.com/Harness/Harness.git")).toBe(
-      "github.com/harness/harness",
-    );
-    expect(normalizeGitRemoteUrl("ssh://git@github.com/Harness/Harness")).toBe(
-      "github.com/harness/harness",
+    expect(normalizeGitRemoteUrl("ssh://git@github.com/Forma/Forma")).toBe(
+      "github.com/forma/forma",
     );
   });
 
   it("preserves nested group paths for providers like GitLab", () => {
-    expect(normalizeGitRemoteUrl("git@gitlab.com:Harness/platform/Harness.git")).toBe(
-      "gitlab.com/harness/platform/harness",
+    expect(normalizeGitRemoteUrl("git@gitlab.com:Forma/platform/Forma.git")).toBe(
+      "gitlab.com/forma/platform/forma",
     );
-    expect(normalizeGitRemoteUrl("https://gitlab.com/Harness/platform/Harness.git")).toBe(
-      "gitlab.com/harness/platform/harness",
+    expect(normalizeGitRemoteUrl("https://gitlab.com/Forma/platform/Forma.git")).toBe(
+      "gitlab.com/forma/platform/forma",
     );
   });
 
@@ -44,12 +42,12 @@ describe("normalizeGitRemoteUrl", () => {
 
 describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
   it("extracts the owner and repository from common GitHub remote shapes", () => {
+    expect(parseGitHubRepositoryNameWithOwnerFromRemoteUrl("git@github.com:Forma/Forma.git")).toBe(
+      "Forma/Forma",
+    );
     expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("git@github.com:Harness/Harness.git"),
-    ).toBe("Harness/Harness");
-    expect(
-      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com/Harness/Harness.git"),
-    ).toBe("Harness/Harness");
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl("https://github.com/Forma/Forma.git"),
+    ).toBe("Forma/Forma");
   });
 });
 

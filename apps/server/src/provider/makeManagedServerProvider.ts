@@ -1,9 +1,9 @@
-import type { ServerProvider } from "@harness/contracts";
+import type { ServerProvider } from "@forma/contracts";
 import { Duration, Effect, Equal, Fiber, PubSub, Ref, Scope, Stream } from "effect";
 import * as Semaphore from "effect/Semaphore";
 
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
-import { ServerSettingsError } from "@harness/contracts";
+import { ServerSettingsError } from "@forma/contracts";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;

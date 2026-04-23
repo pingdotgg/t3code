@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "@harness/monorepo",
+      "name": "/monorepo",
       "devDependencies": {
         "@types/node": "^24.12.2",
         "oxfmt": "^0.40.0",
@@ -13,7 +13,7 @@
       },
     },
     "apps/desktop": {
-      "name": "@harness/desktop",
+      "name": "@forma/desktop",
       "version": "0.0.20",
       "dependencies": {
         "effect": "catalog:",
@@ -21,8 +21,8 @@
         "electron-updater": "^6.6.2",
       },
       "devDependencies": {
-        "@harness/contracts": "workspace:*",
-        "@harness/shared": "workspace:*",
+        "@forma/contracts": "workspace:*",
+        "@forma/shared": "workspace:*",
         "@types/node": "catalog:",
         "effect-acp": "workspace:*",
         "tsdown": "catalog:",
@@ -31,7 +31,7 @@
       },
     },
     "apps/marketing": {
-      "name": "@harness/marketing",
+      "name": "@forma/marketing",
       "version": "0.0.0",
       "dependencies": {
         "astro": "^6.0.4",
@@ -42,10 +42,10 @@
       },
     },
     "apps/server": {
-      "name": "harness",
+      "name": "forma",
       "version": "0.0.20",
       "bin": {
-        "harness": "./dist/bin.mjs",
+        "forma": "./dist/bin.mjs",
       },
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "^0.2.111",
@@ -61,9 +61,9 @@
       "devDependencies": {
         "@effect/language-service": "catalog:",
         "@effect/vitest": "catalog:",
-        "@harness/contracts": "workspace:*",
-        "@harness/shared": "workspace:*",
-        "@harness/web": "workspace:*",
+        "@forma/contracts": "workspace:*",
+        "@forma/shared": "workspace:*",
+        "@forma/web": "workspace:*",
         "@types/bun": "catalog:",
         "@types/node": "catalog:",
         "effect-acp": "workspace:*",
@@ -74,7 +74,7 @@
       },
     },
     "apps/web": {
-      "name": "@harness/web",
+      "name": "@forma/web",
       "version": "0.0.20",
       "dependencies": {
         "@base-ui/react": "^1.2.0",
@@ -83,10 +83,10 @@
         "@dnd-kit/sortable": "^10.0.0",
         "@dnd-kit/utilities": "^3.2.2",
         "@effect/atom-react": "catalog:",
+        "@forma/client-runtime": "workspace:*",
+        "@forma/contracts": "workspace:*",
+        "@forma/shared": "workspace:*",
         "@formkit/auto-animate": "^0.9.0",
-        "@harness/client-runtime": "workspace:*",
-        "@harness/contracts": "workspace:*",
-        "@harness/shared": "workspace:*",
         "@legendapp/list": "3.0.0-beta.44",
         "@lexical/react": "^0.41.0",
         "@monaco-editor/react": "^4.7.0",
@@ -130,10 +130,10 @@
       },
     },
     "packages/client-runtime": {
-      "name": "@harness/client-runtime",
+      "name": "@forma/client-runtime",
       "version": "0.0.0-alpha.1",
       "dependencies": {
-        "@harness/contracts": "workspace:*",
+        "@forma/contracts": "workspace:*",
       },
       "devDependencies": {
         "@effect/language-service": "catalog:",
@@ -142,7 +142,7 @@
       },
     },
     "packages/contracts": {
-      "name": "@harness/contracts",
+      "name": "@forma/contracts",
       "version": "0.0.20",
       "dependencies": {
         "effect": "catalog:",
@@ -186,10 +186,10 @@
       },
     },
     "packages/shared": {
-      "name": "@harness/shared",
+      "name": "@forma/shared",
       "version": "0.0.0-alpha.1",
       "dependencies": {
-        "@harness/contracts": "workspace:*",
+        "@forma/contracts": "workspace:*",
         "effect": "catalog:",
       },
       "devDependencies": {
@@ -201,12 +201,12 @@
       },
     },
     "scripts": {
-      "name": "@harness/scripts",
+      "name": "@forma/scripts",
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "^0.2.77",
         "@effect/platform-node": "catalog:",
-        "@harness/contracts": "workspace:*",
-        "@harness/shared": "workspace:*",
+        "@forma/contracts": "workspace:*",
+        "@forma/shared": "workspace:*",
         "effect": "catalog:",
       },
       "devDependencies": {
@@ -430,21 +430,21 @@
 
     "@floating-ui/utils": ["@floating-ui/utils@0.2.11", "", {}, "sha512-RiB/yIh78pcIxl6lLMG0CgBXAZ2Y0eVHqMPYugu+9U0AeT6YBeiJpf7lbdJNIugFP5SIjwNRgo4DhR1Qxi26Gg=="],
 
+    "@forma/client-runtime": ["@forma/client-runtime@workspace:packages/client-runtime"],
+
+    "@forma/contracts": ["@forma/contracts@workspace:packages/contracts"],
+
+    "@forma/desktop": ["@forma/desktop@workspace:apps/desktop"],
+
+    "@forma/marketing": ["@forma/marketing@workspace:apps/marketing"],
+
+    "@forma/scripts": ["@forma/scripts@workspace:scripts"],
+
+    "@forma/shared": ["@forma/shared@workspace:packages/shared"],
+
+    "@forma/web": ["@forma/web@workspace:apps/web"],
+
     "@formkit/auto-animate": ["@formkit/auto-animate@0.9.0", "", {}, "sha512-VhP4zEAacXS3dfTpJpJ88QdLqMTcabMg0jwpOSxZ/VzfQVfl3GkZSCZThhGC5uhq/TxPHPzW0dzr4H9Bb1OgKA=="],
-
-    "@harness/client-runtime": ["@harness/client-runtime@workspace:packages/client-runtime"],
-
-    "@harness/contracts": ["@harness/contracts@workspace:packages/contracts"],
-
-    "@harness/desktop": ["@harness/desktop@workspace:apps/desktop"],
-
-    "@harness/marketing": ["@harness/marketing@workspace:apps/marketing"],
-
-    "@harness/scripts": ["@harness/scripts@workspace:scripts"],
-
-    "@harness/shared": ["@harness/shared@workspace:packages/shared"],
-
-    "@harness/web": ["@harness/web@workspace:apps/web"],
 
     "@hono/node-server": ["@hono/node-server@1.19.14", "", { "peerDependencies": { "hono": "^4" } }, "sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw=="],
 
@@ -1210,6 +1210,8 @@
 
     "fontkitten": ["fontkitten@1.0.3", "", { "dependencies": { "tiny-inflate": "^1.0.3" } }, "sha512-Wp1zXWPVUPBmfoa3Cqc9ctaKuzKAV6uLstRqlR56kSjplf5uAce+qeyYym7F+PHbGTk+tCEdkCW6RD7DX/gBZw=="],
 
+    "forma": ["forma@workspace:apps/server"],
+
     "forwarded": ["forwarded@0.2.0", "", {}, "sha512-buRG0fpBtRHSTCOASe6hD258tEubFoRLb4ZNA6NxMVHNw2gOcwHo9wyablzMzOA5z9xA9L1KNjk/Nt6MT9aYow=="],
 
     "fresh": ["fresh@2.0.0", "", {}, "sha512-Rx/WycZ60HOaqLKAi6cHRKKI7zxWbJ31MhntmtwMoaTeF7XFH9hhBp8vITaMidfljRQ6eYWCKkaTK+ykVJHP2A=="],
@@ -1249,8 +1251,6 @@
     "graphql": ["graphql@16.13.1", "", {}, "sha512-gGgrVCoDKlIZ8fIqXBBb0pPKqDgki0Z/FSKNiQzSGj2uEYHr1tq5wmBegGwJx6QB5S5cM0khSBpi/JFHMCvsmQ=="],
 
     "h3": ["h3@1.15.6", "", { "dependencies": { "cookie-es": "^1.2.2", "crossws": "^0.3.5", "defu": "^6.1.4", "destr": "^2.0.5", "iron-webcrypto": "^1.2.1", "node-mock-http": "^1.0.4", "radix3": "^1.1.2", "ufo": "^1.6.3", "uncrypto": "^0.1.3" } }, "sha512-oi15ESLW5LRthZ+qPCi5GNasY/gvynSKUQxgiovrY63bPAtG59wtM+LSrlcwvOHAXzGrXVLnI97brbkdPF9WoQ=="],
-
-    "harness": ["harness@workspace:apps/server"],
 
     "has-property-descriptors": ["has-property-descriptors@1.0.2", "", { "dependencies": { "es-define-property": "^1.0.0" } }, "sha512-55JNKuIW+vq4Ke1BjOTjM2YctQIvCT7GFzHwmfZPGo5wnrgkid0YQtnAleFSqumZm4az3n2BS+erby5ipJdgrg=="],
 

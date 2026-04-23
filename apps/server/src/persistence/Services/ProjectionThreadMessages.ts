@@ -13,7 +13,7 @@ import {
   ThreadId,
   TurnId,
   IsoDateTime,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Schema, Context } from "effect";
 import type { Option } from "effect";
 import type { Effect } from "effect";
@@ -91,4 +91,4 @@ export interface ProjectionThreadMessageRepositoryShape {
 export class ProjectionThreadMessageRepository extends Context.Service<
   ProjectionThreadMessageRepository,
   ProjectionThreadMessageRepositoryShape
->()("harness/persistence/Services/ProjectionThreadMessages/ProjectionThreadMessageRepository") {}
+>()("forma/persistence/Services/ProjectionThreadMessages/ProjectionThreadMessageRepository") {}

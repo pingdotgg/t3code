@@ -2,7 +2,7 @@ import {
   insertRankedSearchResult,
   normalizeSearchQuery,
   scoreQueryMatch,
-} from "@harness/shared/searchRanking";
+} from "@forma/shared/searchRanking";
 
 import type { ComposerCommandItem } from "./ComposerCommandMenu";
 

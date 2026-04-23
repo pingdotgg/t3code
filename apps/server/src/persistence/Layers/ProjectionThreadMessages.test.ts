@@ -1,4 +1,4 @@
-import { MessageId, ThreadId } from "@harness/contracts";
+import { MessageId, ThreadId } from "@forma/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 

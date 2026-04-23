@@ -1,6 +1,6 @@
 import "../../index.css";
 
-import { EnvironmentId, type MessageId, type TurnId } from "@harness/contracts";
+import { EnvironmentId, type MessageId, type TurnId } from "@forma/contracts";
 import { createRef } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import { page } from "vitest/browser";

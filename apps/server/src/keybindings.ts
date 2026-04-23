@@ -19,7 +19,7 @@ import {
   ResolvedKeybindingsConfig,
   THREAD_JUMP_KEYBINDING_COMMANDS,
   type ServerConfigIssue,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import type { Mutable } from "effect/Types";
 import {
   Array,
@@ -46,7 +46,7 @@ import {
 } from "effect";
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config.ts";
-import { fromLenientJson } from "@harness/shared/schemaJson";
+import { fromLenientJson } from "@forma/shared/schemaJson";
 
 type WhenToken =
   | { type: "identifier"; value: string }
@@ -530,7 +530,7 @@ export interface KeybindingsShape {
  * Keybindings - Service tag for keybinding configuration operations.
  */
 export class Keybindings extends Context.Service<Keybindings, KeybindingsShape>()(
-  "harness/keybindings",
+  "forma/keybindings",
 ) {}
 
 const makeKeybindings = Effect.gen(function* () {

@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@harness/client-runtime";
+import { scopeThreadRef } from "@forma/client-runtime";
 import {
   CheckpointRef,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -9,7 +9,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationEvent,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { describe, expect, it } from "vitest";
 
 import {

@@ -9,7 +9,7 @@ import type {
   ProviderInteractionMode,
   RuntimeMode,
   SourceProposedPlanReference,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";

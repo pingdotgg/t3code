@@ -1,14 +1,14 @@
 {
-  "name": "harness",
+  "name": "forma",
   "version": "0.0.20",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/pingdotgg/harness",
+    "url": "https://github.com/pingdotgg/forma",
     "directory": "apps/server"
   },
   "bin": {
-    "harness": "./dist/bin.mjs"
+    "forma": "./dist/bin.mjs"
   },
   "files": [
     "dist"
@@ -38,9 +38,9 @@
   "devDependencies": {
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
-    "@harness/contracts": "workspace:*",
-    "@harness/shared": "workspace:*",
-    "@harness/web": "workspace:*",
+    "@forma/contracts": "workspace:*",
+    "@forma/shared": "workspace:*",
+    "@forma/web": "workspace:*",
     "@types/bun": "catalog:",
     "@types/node": "catalog:",
     "effect-acp": "workspace:*",

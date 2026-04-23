@@ -1,4 +1,4 @@
-import type { AuthClientSession, AuthPairingLink } from "@harness/contracts";
+import type { AuthClientSession, AuthPairingLink } from "@forma/contracts";
 import { DateTime, Effect, Layer } from "effect";
 
 import { BootstrapCredentialServiceLive } from "./BootstrapCredentialService.ts";

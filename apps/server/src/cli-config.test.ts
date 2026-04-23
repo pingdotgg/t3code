@@ -3,7 +3,7 @@ import os from "node:os";
 import { assert, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 
-import { NetService } from "@harness/shared/Net";
+import { NetService } from "@forma/shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "./config.ts";
 import { resolveServerConfig } from "./cli.ts";
@@ -18,13 +18,13 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpTracesUrl: undefined,
     otlpMetricsUrl: undefined,
     otlpExportIntervalMs: 10_000,
-    otlpServiceName: "harness-server",
+    otlpServiceName: "forma-server",
   } as const;
 
   const openBootstrapFd = Effect.fn(function* (payload: Record<string, unknown>) {
     const fs = yield* FileSystem.FileSystem;
     const filePath = yield* fs.makeTempFileScoped({
-      prefix: "harness-bootstrap-",
+      prefix: "forma-bootstrap-",
       suffix: ".ndjson",
     });
     yield* fs.writeFileString(filePath, `${JSON.stringify(payload)}\n`);
@@ -35,7 +35,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
   it.effect("falls back to effect/config values when flags are omitted", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
-      const baseDir = join(os.tmpdir(), "harness-cli-config-env-base");
+      const baseDir = join(os.tmpdir(), "forma-cli-config-env-base");
       const derivedPaths = yield* deriveServerPaths(baseDir, new URL("http://127.0.0.1:5173"));
       const resolved = yield* resolveServerConfig(
         {
@@ -57,15 +57,15 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HARNESS_LOG_LEVEL: "Warn",
-                  HARNESS_MODE: "desktop",
-                  HARNESS_PORT: "4001",
-                  HARNESS_HOST: "0.0.0.0",
-                  HARNESS_HOME: baseDir,
+                  FORMA_LOG_LEVEL: "Warn",
+                  FORMA_MODE: "desktop",
+                  FORMA_PORT: "4001",
+                  FORMA_HOST: "0.0.0.0",
+                  FORMA_HOME: baseDir,
                   VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
-                  HARNESS_NO_BROWSER: "true",
-                  HARNESS_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
-                  HARNESS_LOG_WS_EVENTS: "true",
+                  FORMA_NO_BROWSER: "true",
+                  FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
+                  FORMA_LOG_WS_EVENTS: "true",
                 },
               }),
             ),
@@ -97,7 +97,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
   it.effect("uses CLI flags when provided", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
-      const baseDir = join(os.tmpdir(), "harness-cli-config-flags-base");
+      const baseDir = join(os.tmpdir(), "forma-cli-config-flags-base");
       const derivedPaths = yield* deriveServerPaths(baseDir, new URL("http://127.0.0.1:4173"));
       const resolved = yield* resolveServerConfig(
         {
@@ -119,15 +119,15 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HARNESS_LOG_LEVEL: "Warn",
-                  HARNESS_MODE: "desktop",
-                  HARNESS_PORT: "4001",
-                  HARNESS_HOST: "0.0.0.0",
-                  HARNESS_HOME: join(os.tmpdir(), "ignored-base"),
+                  FORMA_LOG_LEVEL: "Warn",
+                  FORMA_MODE: "desktop",
+                  FORMA_PORT: "4001",
+                  FORMA_HOST: "0.0.0.0",
+                  FORMA_HOME: join(os.tmpdir(), "ignored-base"),
                   VITE_DEV_SERVER_URL: "http://127.0.0.1:5173",
-                  HARNESS_NO_BROWSER: "false",
-                  HARNESS_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
-                  HARNESS_LOG_WS_EVENTS: "false",
+                  FORMA_NO_BROWSER: "false",
+                  FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
+                  FORMA_LOG_WS_EVENTS: "false",
                 },
               }),
             ),
@@ -159,7 +159,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
   it.effect("preserves explicit false CLI boolean flags over env and bootstrap values", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
-      const baseDir = join(os.tmpdir(), "harness-cli-config-false-flags");
+      const baseDir = join(os.tmpdir(), "forma-cli-config-false-flags");
       const fd = yield* openBootstrapFd({
         noBrowser: true,
         autoBootstrapProjectFromCwd: true,
@@ -187,10 +187,10 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HARNESS_BOOTSTRAP_FD: String(fd),
-                  HARNESS_NO_BROWSER: "true",
-                  HARNESS_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
-                  HARNESS_LOG_WS_EVENTS: "true",
+                  FORMA_BOOTSTRAP_FD: String(fd),
+                  FORMA_NO_BROWSER: "true",
+                  FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
+                  FORMA_LOG_WS_EVENTS: "true",
                 },
               }),
             ),
@@ -222,12 +222,12 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
   it.effect("uses bootstrap envelope values as fallbacks when flags and env are absent", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
-      const baseDir = "/tmp/harness-bootstrap-home";
+      const baseDir = "/tmp/forma-bootstrap-home";
       const fd = yield* openBootstrapFd({
         mode: "desktop",
         port: 4888,
         host: "127.0.0.2",
-        harnessHome: baseDir,
+        formaHome: baseDir,
         devUrl: "http://127.0.0.1:5173",
         noBrowser: true,
         autoBootstrapProjectFromCwd: false,
@@ -257,7 +257,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HARNESS_BOOTSTRAP_FD: String(fd),
+                  FORMA_BOOTSTRAP_FD: String(fd),
                 },
               }),
             ),
@@ -293,7 +293,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "harness-cli-config-dirs-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "forma-cli-config-dirs-" });
       const customCwd = path.join(baseDir, "nested", "project");
 
       const resolved = yield* resolveServerConfig(
@@ -339,12 +339,12 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
   it.effect("applies flag then env precedence over bootstrap envelope values", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
-      const baseDir = join(os.tmpdir(), "harness-cli-config-env-wins");
+      const baseDir = join(os.tmpdir(), "forma-cli-config-env-wins");
       const fd = yield* openBootstrapFd({
         mode: "desktop",
         port: 4888,
         host: "127.0.0.2",
-        harnessHome: "/tmp/harness-bootstrap-home",
+        formaHome: "/tmp/forma-bootstrap-home",
         devUrl: "http://127.0.0.1:5173",
         noBrowser: false,
         autoBootstrapProjectFromCwd: false,
@@ -372,12 +372,12 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HARNESS_MODE: "web",
-                  HARNESS_BOOTSTRAP_FD: String(fd),
-                  HARNESS_HOME: baseDir,
-                  HARNESS_NO_BROWSER: "true",
-                  HARNESS_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
-                  HARNESS_LOG_WS_EVENTS: "true",
+                  FORMA_MODE: "web",
+                  FORMA_BOOTSTRAP_FD: String(fd),
+                  FORMA_HOME: baseDir,
+                  FORMA_NO_BROWSER: "true",
+                  FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
+                  FORMA_LOG_WS_EVENTS: "true",
                 },
               }),
             ),
@@ -410,7 +410,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "harness-cli-config-settings-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "forma-cli-config-settings-" });
       const derivedPaths = yield* deriveServerPaths(baseDir, undefined);
       yield* fs.makeDirectory(path.dirname(derivedPaths.settingsPath), { recursive: true });
       yield* fs.writeFileString(
@@ -473,7 +473,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
   it.effect("forces noBrowser and disables auto-bootstrap for headless startup presentation", () =>
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
-      const baseDir = join(os.tmpdir(), "harness-cli-config-headless-base");
+      const baseDir = join(os.tmpdir(), "forma-cli-config-headless-base");
       const derivedPaths = yield* deriveServerPaths(baseDir, undefined);
 
       const resolved = yield* resolveServerConfig(
@@ -499,8 +499,8 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
                 env: {
-                  HARNESS_NO_BROWSER: "false",
-                  HARNESS_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
+                  FORMA_NO_BROWSER: "false",
+                  FORMA_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "true",
                 },
               }),
             ),

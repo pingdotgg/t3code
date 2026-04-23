@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { TerminalEvent, TerminalSessionSnapshot } from "@harness/contracts";
+import type { TerminalEvent, TerminalSessionSnapshot } from "@forma/contracts";
 import { terminalRunningSubprocessFromEvent } from "./terminalActivity";
 
 const snapshot: TerminalSessionSnapshot = {

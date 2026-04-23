@@ -1,6 +1,6 @@
 import { queryOptions, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import type { DesktopUpdateState } from "@harness/contracts";
+import type { DesktopUpdateState } from "@forma/contracts";
 
 export const desktopUpdateQueryKeys = {
   all: ["desktop", "update"] as const,

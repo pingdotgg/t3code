@@ -1,4 +1,4 @@
-import type { AuthPairingLink, ServerAuthBootstrapMethod } from "@harness/contracts";
+import type { AuthPairingLink, ServerAuthBootstrapMethod } from "@forma/contracts";
 import { Data, DateTime, Duration, Context } from "effect";
 import type { Effect, Stream } from "effect";
 
@@ -54,4 +54,4 @@ export interface BootstrapCredentialServiceShape {
 export class BootstrapCredentialService extends Context.Service<
   BootstrapCredentialService,
   BootstrapCredentialServiceShape
->()("harness/auth/Services/BootstrapCredentialService") {}
+>()("forma/auth/Services/BootstrapCredentialService") {}

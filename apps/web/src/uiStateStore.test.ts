@@ -1,4 +1,4 @@
-import { ProjectId, ThreadId } from "@harness/contracts";
+import { ProjectId, ThreadId } from "@forma/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {

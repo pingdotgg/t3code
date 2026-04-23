@@ -5,8 +5,8 @@ import {
   type TerminalEvent,
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
-} from "@harness/contracts";
-import { makeKeyedCoalescingWorker } from "@harness/shared/KeyedCoalescingWorker";
+} from "@forma/contracts";
+import { makeKeyedCoalescingWorker } from "@forma/shared/KeyedCoalescingWorker";
 import {
   Effect,
   Encoding,
@@ -653,7 +653,7 @@ function toSessionKey(threadId: string, terminalId: string): string {
 
 function shouldExcludeTerminalEnvKey(key: string): boolean {
   const normalizedKey = key.toUpperCase();
-  if (normalizedKey.startsWith("HARNESS_")) {
+  if (normalizedKey.startsWith("FORMA_")) {
     return true;
   }
   if (normalizedKey.startsWith("VITE_")) {

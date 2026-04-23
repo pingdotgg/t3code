@@ -1,11 +1,11 @@
-import { getKnownEnvironmentHttpBaseUrl } from "@harness/client-runtime";
+import { getKnownEnvironmentHttpBaseUrl } from "@forma/client-runtime";
 import type {
   AuthSessionRole,
   EnvironmentId,
   ExecutionEnvironmentDescriptor,
   PersistedSavedEnvironmentRecord,
   ServerConfig,
-} from "@harness/contracts";
+} from "@forma/contracts";
 import { create } from "zustand";
 
 import { ensureLocalApi } from "../../localApi";

@@ -1,4 +1,4 @@
-import { EnvironmentId, ThreadId, type EnvironmentApi } from "@harness/contracts";
+import { EnvironmentId, ThreadId, type EnvironmentApi } from "@forma/contracts";
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkpointDiffQueryOptions, providerQueryKeys } from "./providerReactQuery";

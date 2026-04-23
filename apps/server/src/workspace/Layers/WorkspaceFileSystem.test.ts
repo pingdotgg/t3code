@@ -11,7 +11,7 @@ import { WorkspaceFileSystem } from "../Services/WorkspaceFileSystem.ts";
 import { WorkspaceEntriesLive } from "./WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./WorkspacePaths.ts";
-import { PROJECT_TEXT_FILE_MAX_BYTES } from "@harness/contracts";
+import { PROJECT_TEXT_FILE_MAX_BYTES } from "@forma/contracts";
 
 const ProjectLayer = WorkspaceFileSystemLive.pipe(
   Layer.provide(WorkspacePathsLive),
@@ -25,7 +25,7 @@ const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(GitCoreLive),
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), {
-      prefix: "harness-workspace-files-test-",
+      prefix: "forma-workspace-files-test-",
     }),
   ),
   Layer.provideMerge(NodeServices.layer),
@@ -34,7 +34,7 @@ const TestLayer = Layer.empty.pipe(
 const makeTempDir = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   return yield* fileSystem.makeTempDirectoryScoped({
-    prefix: "harness-workspace-files-",
+    prefix: "forma-workspace-files-",
   });
 });
 

@@ -1,4 +1,4 @@
-// This file mostly exists because we want dev mode to say "Harness (Dev)" instead of "electron"
+// This file mostly exists because we want dev mode to say "Forma (Dev)" instead of "electron"
 
 import { spawnSync } from "node:child_process";
 import {
@@ -17,8 +17,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const APP_DISPLAY_NAME = isDevelopment ? "Harness (Dev)" : "Harness (Alpha)";
-const APP_BUNDLE_ID = isDevelopment ? "local.harness.desktop.dev" : "local.harness.desktop";
+const APP_DISPLAY_NAME = isDevelopment ? "Forma (Dev)" : "Forma (Alpha)";
+const APP_BUNDLE_ID = isDevelopment ? "local.forma.desktop.dev" : "local.forma.desktop";
 const LAUNCHER_VERSION = 2;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

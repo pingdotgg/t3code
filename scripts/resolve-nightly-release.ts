@@ -55,7 +55,7 @@ export const resolveNightlyReleaseMetadata = (
     baseVersion,
     version,
     tag: `v${version}`,
-    name: `Harness Nightly ${version} (${shortSha})`,
+    name: `Forma Nightly ${version} (${shortSha})`,
     shortSha,
   };
 };

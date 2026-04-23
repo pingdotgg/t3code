@@ -1,4 +1,4 @@
-import { MessageId } from "@harness/contracts";
+import { MessageId } from "@forma/contracts";
 import { describe, expect, it } from "vitest";
 
 import { buildBootstrapInput } from "./historyBootstrap";

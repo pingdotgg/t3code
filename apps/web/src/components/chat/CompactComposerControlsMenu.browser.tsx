@@ -3,8 +3,8 @@ import {
   EnvironmentId,
   ModelSelection,
   ThreadId,
-} from "@harness/contracts";
-import { scopedThreadKey, scopeThreadRef } from "@harness/client-runtime";
+} from "@forma/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@forma/client-runtime";
 import "../../index.css";
 
 import { page } from "vitest/browser";

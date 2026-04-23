@@ -11,8 +11,8 @@ import {
   EnvironmentId,
   type ServerProvider,
   ThreadId,
-} from "@harness/contracts";
-import { scopedThreadKey, scopeThreadRef } from "@harness/client-runtime";
+} from "@forma/contracts";
+import { scopedThreadKey, scopeThreadRef } from "@forma/client-runtime";
 import { page } from "vitest/browser";
 import { useCallback } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -26,7 +26,7 @@ import {
   useComposerThreadDraft,
   useEffectiveComposerModelState,
 } from "../../composerDraftStore";
-import { DEFAULT_CLIENT_SETTINGS } from "@harness/contracts/settings";
+import { DEFAULT_CLIENT_SETTINGS } from "@forma/contracts/settings";
 
 // ── Claude TraitsPicker tests ─────────────────────────────────────────
 
