@@ -109,11 +109,11 @@ export function applyServerSettingsPatch(
                   ),
                 }
               : {
-                provider,
-                model,
-                ...withModelSelectionOptions(
-                  selectionPatch.options as CopilotModelOptions | undefined,
-                ),
-              },
+                  provider,
+                  model,
+                  ...withModelSelectionOptions(
+                    selectionPatch.options as CopilotModelOptions | undefined,
+                  ),
+                },
   };
 }

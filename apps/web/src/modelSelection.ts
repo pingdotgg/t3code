@@ -64,7 +64,7 @@ const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConf
     title: "GitHub Copilot",
     description: "Save additional Copilot model slugs for the picker and `/model` command.",
     placeholder: "your-copilot-model-slug",
-    example: "gpt-5",
+    example: "auto",
   },
   opencode: {
     provider: "opencode",

@@ -1584,8 +1584,8 @@ export function GeneralSettingsPanel() {
                               : providerCard.provider === "opencode"
                                 ? "openai/gpt-5"
                                 : providerCard.provider === "copilot"
-                                  ? "gpt-5"
-                                : "claude-sonnet-5-0"
+                                  ? "auto"
+                                  : "claude-sonnet-5-0"
                           }
                           spellCheck={false}
                         />

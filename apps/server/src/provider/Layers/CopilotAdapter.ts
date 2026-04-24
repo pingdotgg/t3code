@@ -671,10 +671,7 @@ function makeCopilotAdapter(options?: CopilotAdapterLiveOptions) {
         yield* Deferred.succeed(pending.decision, decision);
       });
 
-    const respondToUserInput: CopilotAdapterShape["respondToUserInput"] = (
-      threadId,
-      requestId,
-    ) =>
+    const respondToUserInput: CopilotAdapterShape["respondToUserInput"] = (threadId, requestId) =>
       Effect.gen(function* () {
         const _ctx = yield* requireSession(threadId);
         return yield* new ProviderAdapterRequestError({
