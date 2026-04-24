@@ -19,7 +19,6 @@ import {
   RawEventId,
   RunAttemptId,
   RunId,
-  RuntimeItemId,
   RuntimeRequestId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -31,6 +30,7 @@ import {
   ProviderApprovalDecision,
   ProviderInteractionMode,
   ProviderKind,
+  ProviderRequestKind,
   ProviderUserInputAnswers,
   RuntimeMode,
 } from "./orchestration.ts";
@@ -225,6 +225,7 @@ export const OrchestrationV2Run = Schema.Struct({
   rootNodeId: Schema.NullOr(NodeId),
   activeAttemptId: Schema.NullOr(RunAttemptId),
   status: OrchestrationV2RunStatus,
+  queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   requestedAt: Schema.DateTimeUtc,
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
   completedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -294,7 +295,7 @@ export const OrchestrationV2ExecutionNode = Schema.Struct({
   countsForRun: Schema.Boolean,
   providerThreadId: Schema.NullOr(ProviderThreadId),
   providerTurnId: Schema.NullOr(ProviderTurnId),
-  runtimeItemId: Schema.NullOr(RuntimeItemId),
+  nativeItemRef: Schema.NullOr(OrchestrationV2ProviderRef),
   runtimeRequestId: Schema.NullOr(RuntimeRequestId),
   checkpointScopeId: Schema.NullOr(CheckpointScopeId),
   startedAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -398,44 +399,14 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
 });
 export type OrchestrationV2ProviderTurn = typeof OrchestrationV2ProviderTurn.Type;
 
-export const OrchestrationV2RuntimeItem = Schema.Struct({
-  id: RuntimeItemId,
-  nodeId: NodeId,
-  providerTurnId: Schema.NullOr(ProviderTurnId),
-  nativeItemRef: Schema.NullOr(OrchestrationV2ProviderRef),
-  ordinal: PositiveInt,
-  kind: Schema.Literals([
-    "assistant_message",
-    "reasoning",
-    "plan",
-    "todo_list",
-    "command_execution",
-    "file_change",
-    "mcp_tool_call",
-    "dynamic_tool_call",
-    "collab_agent_tool_call",
-    "web_search",
-    "unknown",
-  ]),
-  status: Schema.Literals(["pending", "running", "completed", "failed", "cancelled"]),
-  title: Schema.NullOr(Schema.String),
-  detail: Schema.NullOr(Schema.String),
-});
-export type OrchestrationV2RuntimeItem = typeof OrchestrationV2RuntimeItem.Type;
-
 export const OrchestrationV2RuntimeRequest = Schema.Struct({
   id: RuntimeRequestId,
   nodeId: NodeId,
   providerTurnId: Schema.NullOr(ProviderTurnId),
-  runtimeItemId: Schema.NullOr(RuntimeItemId),
   nativeRequestRef: Schema.NullOr(OrchestrationV2ProviderRef),
-  kind: Schema.Literals([
-    "command_approval",
-    "file_read_approval",
-    "file_change_approval",
-    "dynamic_tool_call",
-    "user_input",
-    "auth_refresh",
+  kind: Schema.Union([
+    ProviderRequestKind,
+    Schema.Literals(["dynamic_tool_call", "user_input", "auth_refresh"]),
   ]),
   status: Schema.Literals(["pending", "resolved", "expired", "cancelled"]),
   responseCapability: Schema.Union([
@@ -461,39 +432,47 @@ export const OrchestrationV2ConversationMessage = Schema.Struct({
 });
 export type OrchestrationV2ConversationMessage = typeof OrchestrationV2ConversationMessage.Type;
 
-export const OrchestrationV2PlanArtifact = Schema.Struct({
+export const OrchestrationV2PlanStep = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  text: TrimmedNonEmptyString,
+  status: Schema.Literals(["pending", "running", "completed"]),
+});
+export type OrchestrationV2PlanStep = typeof OrchestrationV2PlanStep.Type;
+
+export const OrchestrationV2UserInputQuestion = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  header: TrimmedNonEmptyString,
+  question: TrimmedNonEmptyString,
+  options: Schema.Array(
+    Schema.Struct({
+      label: TrimmedNonEmptyString,
+      description: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type OrchestrationV2UserInputQuestion = typeof OrchestrationV2UserInputQuestion.Type;
+
+const OrchestrationV2PlanArtifactBaseFields = {
   id: PlanId,
   threadId: ThreadId,
   runId: Schema.NullOr(RunId),
   nodeId: NodeId,
-  kind: Schema.Literals(["proposed_plan", "todo_list", "questions"]),
   status: Schema.Literals(["draft", "active", "completed", "superseded"]),
-  markdown: Schema.optional(Schema.String),
-  steps: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        id: TrimmedNonEmptyString,
-        text: TrimmedNonEmptyString,
-        status: Schema.Literals(["pending", "running", "completed"]),
-      }),
-    ),
-  ),
-  questions: Schema.optional(
-    Schema.Array(
-      Schema.Struct({
-        id: TrimmedNonEmptyString,
-        header: TrimmedNonEmptyString,
-        question: TrimmedNonEmptyString,
-        options: Schema.Array(
-          Schema.Struct({
-            label: TrimmedNonEmptyString,
-            description: TrimmedNonEmptyString,
-          }),
-        ),
-      }),
-    ),
-  ),
-});
+} as const;
+
+export const OrchestrationV2PlanArtifact = Schema.Union([
+  Schema.Struct({
+    ...OrchestrationV2PlanArtifactBaseFields,
+    kind: Schema.Literal("proposed_plan"),
+    markdown: Schema.String,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2PlanArtifactBaseFields,
+    kind: Schema.Literal("todo_list"),
+    steps: Schema.Array(OrchestrationV2PlanStep),
+    explanation: Schema.optional(Schema.String),
+  }),
+]);
 export type OrchestrationV2PlanArtifact = typeof OrchestrationV2PlanArtifact.Type;
 
 export const OrchestrationV2CheckpointFileSummary = Schema.Struct({
@@ -514,7 +493,7 @@ export const OrchestrationV2Checkpoint = Schema.Struct({
   ordinalWithinScope: PositiveInt,
   appRunOrdinal: Schema.NullOr(PositiveInt),
   ref: CheckpointRef,
-  status: Schema.Literals(["ready", "missing", "error"]),
+  status: Schema.Literals(["ready", "missing", "error", "stale"]),
   files: Schema.Array(OrchestrationV2CheckpointFileSummary),
   capturedAt: Schema.DateTimeUtc,
 });
@@ -538,7 +517,7 @@ const OrchestrationV2TurnItemBaseFields = {
   nodeId: Schema.NullOr(NodeId),
   providerThreadId: Schema.NullOr(ProviderThreadId),
   providerTurnId: Schema.NullOr(ProviderTurnId),
-  runtimeItemId: Schema.NullOr(RuntimeItemId),
+  nativeItemRef: Schema.NullOr(OrchestrationV2ProviderRef),
   parentItemId: Schema.NullOr(TurnItemId),
   ordinal: NonNegativeInt,
   status: OrchestrationV2TurnItemStatus,
@@ -586,19 +565,23 @@ export const OrchestrationV2TurnItem = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
-    type: Schema.Literal("plan"),
+    type: Schema.Literal("proposed_plan"),
     planId: PlanId,
-    planKind: Schema.Literals(["proposed_plan", "todo_list", "questions"]),
-    markdown: Schema.optional(Schema.String),
-    steps: Schema.optional(
-      Schema.Array(
-        Schema.Struct({
-          id: TrimmedNonEmptyString,
-          text: TrimmedNonEmptyString,
-          status: Schema.Literals(["pending", "running", "completed"]),
-        }),
-      ),
-    ),
+    markdown: Schema.String,
+    streaming: Schema.Boolean,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("todo_list"),
+    planId: PlanId,
+    steps: Schema.Array(OrchestrationV2PlanStep),
+    explanation: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("user_input_request"),
+    requestId: RuntimeRequestId,
+    questions: Schema.Array(OrchestrationV2UserInputQuestion),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -633,14 +616,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("approval_request"),
     requestId: RuntimeRequestId,
-    requestKind: Schema.Literals([
-      "command_approval",
-      "file_read_approval",
-      "file_change_approval",
-      "dynamic_tool_call",
-      "user_input",
-      "auth_refresh",
-    ]),
+    requestKind: ProviderRequestKind,
     prompt: Schema.optional(Schema.String),
   }),
   Schema.Struct({
@@ -649,6 +625,16 @@ export const OrchestrationV2TurnItem = Schema.Union([
     checkpointId: CheckpointId,
     scopeId: CheckpointScopeId,
     files: Schema.Array(OrchestrationV2CheckpointFileSummary),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("run_interrupt_request"),
+    message: Schema.String,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemBaseFields,
+    type: Schema.Literal("run_interrupt_result"),
+    message: Schema.String,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -746,8 +732,18 @@ export const OrchestrationV2DomainEvent = Schema.Union([
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("run-attempt.updated"),
+    payload: OrchestrationV2RunAttempt,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("node.updated"),
     payload: OrchestrationV2ExecutionNode,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("provider-session.updated"),
+    payload: OrchestrationV2ProviderSession,
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -758,11 +754,6 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     ...OrchestrationV2EventBase.fields,
     type: Schema.Literal("provider-turn.updated"),
     payload: OrchestrationV2ProviderTurn,
-  }),
-  Schema.Struct({
-    ...OrchestrationV2EventBase.fields,
-    type: Schema.Literal("runtime-item.updated"),
-    payload: OrchestrationV2RuntimeItem,
   }),
   Schema.Struct({
     ...OrchestrationV2EventBase.fields,
@@ -810,7 +801,6 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   providerSessions: Schema.Array(OrchestrationV2ProviderSession),
   providerThreads: Schema.Array(OrchestrationV2ProviderThread),
   providerTurns: Schema.Array(OrchestrationV2ProviderTurn),
-  runtimeItems: Schema.Array(OrchestrationV2RuntimeItem),
   runtimeRequests: Schema.Array(OrchestrationV2RuntimeRequest),
   messages: Schema.Array(OrchestrationV2ConversationMessage),
   plans: Schema.Array(OrchestrationV2PlanArtifact),
@@ -821,6 +811,367 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   updatedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
+
+export const OrchestrationV2StoredEvent = Schema.Struct({
+  sequence: NonNegativeInt,
+  commandId: Schema.NullOr(CommandId),
+  event: OrchestrationV2DomainEvent,
+});
+export type OrchestrationV2StoredEvent = typeof OrchestrationV2StoredEvent.Type;
+
+export const OrchestrationV2AppThreadJson = OrchestrationV2AppThread.mapFields((fields) => ({
+  ...fields,
+  createdAt: Schema.DateTimeUtcFromString,
+  updatedAt: Schema.DateTimeUtcFromString,
+  archivedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  deletedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+}));
+export type OrchestrationV2AppThreadJson = typeof OrchestrationV2AppThreadJson.Type;
+
+export const OrchestrationV2RunJson = OrchestrationV2Run.mapFields((fields) => ({
+  ...fields,
+  requestedAt: Schema.DateTimeUtcFromString,
+  startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+}));
+export type OrchestrationV2RunJson = typeof OrchestrationV2RunJson.Type;
+
+export const OrchestrationV2RunAttemptJson = OrchestrationV2RunAttempt.mapFields((fields) => ({
+  ...fields,
+  startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+}));
+export type OrchestrationV2RunAttemptJson = typeof OrchestrationV2RunAttemptJson.Type;
+
+export const OrchestrationV2ExecutionNodeJson = OrchestrationV2ExecutionNode.mapFields(
+  (fields) => ({
+    ...fields,
+    startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+    completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  }),
+);
+export type OrchestrationV2ExecutionNodeJson = typeof OrchestrationV2ExecutionNodeJson.Type;
+
+export const OrchestrationV2CheckpointScopeJson = OrchestrationV2CheckpointScope.mapFields(
+  (fields) => ({
+    ...fields,
+    createdAt: Schema.DateTimeUtcFromString,
+  }),
+);
+export type OrchestrationV2CheckpointScopeJson = typeof OrchestrationV2CheckpointScopeJson.Type;
+
+export const OrchestrationV2ProviderSessionJson = OrchestrationV2ProviderSession.mapFields(
+  (fields) => ({
+    ...fields,
+    createdAt: Schema.DateTimeUtcFromString,
+    updatedAt: Schema.DateTimeUtcFromString,
+  }),
+);
+export type OrchestrationV2ProviderSessionJson = typeof OrchestrationV2ProviderSessionJson.Type;
+
+export const OrchestrationV2ProviderThreadJson = OrchestrationV2ProviderThread.mapFields(
+  (fields) => ({
+    ...fields,
+    createdAt: Schema.DateTimeUtcFromString,
+    updatedAt: Schema.DateTimeUtcFromString,
+  }),
+);
+export type OrchestrationV2ProviderThreadJson = typeof OrchestrationV2ProviderThreadJson.Type;
+
+export const OrchestrationV2ContextHandoffJson = OrchestrationV2ContextHandoff.mapFields(
+  (fields) => ({
+    ...fields,
+    createdAt: Schema.DateTimeUtcFromString,
+    updatedAt: Schema.DateTimeUtcFromString,
+  }),
+);
+export type OrchestrationV2ContextHandoffJson = typeof OrchestrationV2ContextHandoffJson.Type;
+
+export const OrchestrationV2ProviderTurnJson = OrchestrationV2ProviderTurn.mapFields((fields) => ({
+  ...fields,
+  startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+}));
+export type OrchestrationV2ProviderTurnJson = typeof OrchestrationV2ProviderTurnJson.Type;
+
+export const OrchestrationV2RuntimeRequestJson = OrchestrationV2RuntimeRequest.mapFields(
+  (fields) => ({
+    ...fields,
+    createdAt: Schema.DateTimeUtcFromString,
+    resolvedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  }),
+);
+export type OrchestrationV2RuntimeRequestJson = typeof OrchestrationV2RuntimeRequestJson.Type;
+
+export const OrchestrationV2ConversationMessageJson = OrchestrationV2ConversationMessage.mapFields(
+  (fields) => ({
+    ...fields,
+    createdAt: Schema.DateTimeUtcFromString,
+    updatedAt: Schema.DateTimeUtcFromString,
+  }),
+);
+export type OrchestrationV2ConversationMessageJson =
+  typeof OrchestrationV2ConversationMessageJson.Type;
+
+export const OrchestrationV2CheckpointJson = OrchestrationV2Checkpoint.mapFields((fields) => ({
+  ...fields,
+  capturedAt: Schema.DateTimeUtcFromString,
+}));
+export type OrchestrationV2CheckpointJson = typeof OrchestrationV2CheckpointJson.Type;
+
+const OrchestrationV2TurnItemJsonBaseFields = {
+  ...OrchestrationV2TurnItemBaseFields,
+  startedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  completedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  updatedAt: Schema.DateTimeUtcFromString,
+} as const;
+
+export const OrchestrationV2TurnItemJson = Schema.Union([
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("user_message"),
+    messageId: MessageId,
+    text: Schema.String,
+    attachments: Schema.Array(ChatAttachment),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("assistant_message"),
+    messageId: MessageId,
+    text: Schema.String,
+    streaming: Schema.Boolean,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("reasoning"),
+    text: Schema.String,
+    streaming: Schema.Boolean,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("proposed_plan"),
+    planId: PlanId,
+    markdown: Schema.String,
+    streaming: Schema.Boolean,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("todo_list"),
+    planId: PlanId,
+    steps: Schema.Array(OrchestrationV2PlanStep),
+    explanation: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("user_input_request"),
+    requestId: RuntimeRequestId,
+    questions: Schema.Array(OrchestrationV2UserInputQuestion),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("file_change"),
+    fileName: TrimmedNonEmptyString,
+    additions: Schema.optional(NonNegativeInt),
+    deletions: Schema.optional(NonNegativeInt),
+    diffStr: Schema.optional(Schema.String),
+    oldStr: Schema.optional(Schema.String),
+    newStr: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("command_execution"),
+    input: Schema.String,
+    output: Schema.optional(Schema.String),
+    exitCode: Schema.optional(Schema.Int),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("file_search"),
+    pattern: Schema.optional(Schema.String),
+    results: Schema.optional(Schema.Array(OrchestrationV2FileSearchResult)),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("web_search"),
+    patterns: Schema.optional(Schema.Array(Schema.String)),
+    results: Schema.optional(Schema.Array(OrchestrationV2WebSearchResult)),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("approval_request"),
+    requestId: RuntimeRequestId,
+    requestKind: ProviderRequestKind,
+    prompt: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("checkpoint"),
+    checkpointId: CheckpointId,
+    scopeId: CheckpointScopeId,
+    files: Schema.Array(OrchestrationV2CheckpointFileSummary),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("run_interrupt_request"),
+    message: Schema.String,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("run_interrupt_result"),
+    message: Schema.String,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("compaction"),
+    provider: Schema.NullOr(ProviderKind),
+    summary: Schema.optional(Schema.String),
+    beforeTokenCount: Schema.optional(NonNegativeInt),
+    afterTokenCount: Schema.optional(NonNegativeInt),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("handoff"),
+    contextHandoffId: ContextHandoffId,
+    fromProviderThreadIds: Schema.Array(ProviderThreadId),
+    toProviderThreadId: ProviderThreadId,
+    fromProviders: Schema.Array(ProviderKind),
+    toProvider: ProviderKind,
+    strategy: Schema.Literals([
+      "delta_since_target_last_seen",
+      "full_thread_summary",
+      "checkpoint_summary",
+      "manual_context",
+    ]),
+    summary: Schema.optional(Schema.String),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("fork"),
+    source: Schema.Union([
+      Schema.Struct({ type: Schema.Literal("run"), threadId: ThreadId, runId: RunId }),
+      Schema.Struct({ type: Schema.Literal("node"), nodeId: NodeId }),
+      Schema.Struct({
+        type: Schema.Literal("provider_thread"),
+        providerThreadId: ProviderThreadId,
+        providerTurnId: Schema.optional(ProviderTurnId),
+      }),
+    ]),
+    targetThreadId: ThreadId,
+    providerThreadId: Schema.optional(ProviderThreadId),
+  }),
+  Schema.Struct({
+    ...OrchestrationV2TurnItemJsonBaseFields,
+    type: Schema.Literal("dynamic_tool"),
+    toolName: Schema.NullOr(TrimmedNonEmptyString),
+    input: Schema.Unknown,
+    output: Schema.optional(Schema.Unknown),
+  }),
+]);
+export type OrchestrationV2TurnItemJson = typeof OrchestrationV2TurnItemJson.Type;
+
+const OrchestrationV2JsonEventBaseFields = {
+  ...OrchestrationV2EventBase.fields,
+  occurredAt: Schema.DateTimeUtcFromString,
+} as const;
+
+export const OrchestrationV2RawProviderEventJson = OrchestrationV2RawProviderEvent.mapFields(
+  (fields) => ({
+    ...fields,
+    observedAt: Schema.DateTimeUtcFromString,
+  }),
+);
+export type OrchestrationV2RawProviderEventJson = typeof OrchestrationV2RawProviderEventJson.Type;
+
+export const OrchestrationV2DomainEventJson = Schema.Union([
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("thread.created"),
+    payload: OrchestrationV2AppThreadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run.created"),
+    payload: OrchestrationV2RunJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run.updated"),
+    payload: OrchestrationV2RunJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run-attempt.created"),
+    payload: OrchestrationV2RunAttemptJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("run-attempt.updated"),
+    payload: OrchestrationV2RunAttemptJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("node.updated"),
+    payload: OrchestrationV2ExecutionNodeJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("provider-session.updated"),
+    payload: OrchestrationV2ProviderSessionJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("provider-thread.updated"),
+    payload: OrchestrationV2ProviderThreadJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("provider-turn.updated"),
+    payload: OrchestrationV2ProviderTurnJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("runtime-request.updated"),
+    payload: OrchestrationV2RuntimeRequestJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("message.updated"),
+    payload: OrchestrationV2ConversationMessageJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("turn-item.updated"),
+    payload: OrchestrationV2TurnItemJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("plan.updated"),
+    payload: OrchestrationV2PlanArtifact,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("checkpoint-scope.created"),
+    payload: OrchestrationV2CheckpointScopeJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("checkpoint.captured"),
+    payload: OrchestrationV2CheckpointJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("context-handoff.updated"),
+    payload: OrchestrationV2ContextHandoffJson,
+  }),
+]);
+export type OrchestrationV2DomainEventJson = typeof OrchestrationV2DomainEventJson.Type;
+
+export const OrchestrationV2StoredEventJson = Schema.Struct({
+  sequence: NonNegativeInt,
+  commandId: Schema.NullOr(CommandId),
+  event: OrchestrationV2DomainEventJson,
+});
+export type OrchestrationV2StoredEventJson = typeof OrchestrationV2StoredEventJson.Type;
 
 export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
@@ -855,6 +1206,20 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queued-message.promote-to-steer"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    queuedRunId: RunId,
+    targetRunId: RunId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("queued-run.reorder"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    beforeRunId: Schema.NullOr(RunId),
   }),
   Schema.Struct({
     type: Schema.Literal("runtime-request.respond"),
@@ -894,6 +1259,77 @@ export const OrchestrationV2Command = Schema.Union([
   }),
 ]);
 export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
+
+export const ORCHESTRATION_V2_WS_METHODS = {
+  dispatchCommand: "orchestrationV2.dispatchCommand",
+  getThreadProjection: "orchestrationV2.getThreadProjection",
+  subscribeThread: "orchestrationV2.subscribeThread",
+} as const;
+
+export const OrchestrationV2DispatchCommandResult = Schema.Struct({
+  sequence: NonNegativeInt,
+});
+export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
+
+export const OrchestrationV2GetThreadProjectionInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type OrchestrationV2GetThreadProjectionInput =
+  typeof OrchestrationV2GetThreadProjectionInput.Type;
+
+export const OrchestrationV2ThreadStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("snapshot"),
+    snapshotSequence: NonNegativeInt,
+    projection: OrchestrationV2ThreadProjection,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("event"),
+    sequence: NonNegativeInt,
+    event: OrchestrationV2DomainEvent,
+  }),
+]);
+export type OrchestrationV2ThreadStreamItem = typeof OrchestrationV2ThreadStreamItem.Type;
+
+export class OrchestrationV2DispatchCommandError extends Schema.TaggedErrorClass<OrchestrationV2DispatchCommandError>()(
+  "OrchestrationV2DispatchCommandError",
+  {
+    commandId: CommandId,
+    commandType: Schema.String,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedErrorClass<OrchestrationV2GetThreadProjectionError>()(
+  "OrchestrationV2GetThreadProjectionError",
+  {
+    threadId: ThreadId,
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export const OrchestrationV2RpcError = Schema.Union([
+  OrchestrationV2DispatchCommandError,
+  OrchestrationV2GetThreadProjectionError,
+]);
+export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
+
+export const OrchestrationV2RpcSchemas = {
+  dispatchCommand: {
+    input: OrchestrationV2Command,
+    output: OrchestrationV2DispatchCommandResult,
+  },
+  getThreadProjection: {
+    input: OrchestrationV2GetThreadProjectionInput,
+    output: OrchestrationV2ThreadProjection,
+  },
+  subscribeThread: {
+    input: OrchestrationV2GetThreadProjectionInput,
+    output: OrchestrationV2ThreadStreamItem,
+  },
+} as const;
 
 export const ProviderReplayEntry = Schema.Union([
   Schema.Struct({
