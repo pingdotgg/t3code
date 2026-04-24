@@ -31,6 +31,7 @@ import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import { buildServerProvider } from "../providerSnapshot.ts";
 import { CodexProvider } from "../Services/CodexProvider.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
+import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 
@@ -400,6 +401,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   ServerSettingsError,
   ServerSettingsService | ChildProcessSpawner.ChildProcessSpawner
 > {
+  const serverConfig = yield* Effect.serviceOption(ServerConfig);
   const codexSettings = yield* Effect.service(ServerSettingsService).pipe(
     Effect.flatMap((service) => service.getSettings),
     Effect.map((settings) => settings.providers.codex),
@@ -428,7 +430,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const probeResult = yield* probe({
     binaryPath: codexSettings.binaryPath,
     homePath: codexSettings.homePath,
-    cwd: process.cwd(),
+    cwd: Option.match(serverConfig, {
+      onNone: () => process.cwd(),
+      onSome: (config) => config.cwd,
+    }),
     customModels: codexSettings.customModels,
   }).pipe(Effect.timeoutOption(Duration.millis(PROVIDER_PROBE_TIMEOUT_MS)), Effect.result);
 
@@ -496,8 +501,10 @@ export const CodexProviderLive = Layer.effect(
   CodexProvider,
   Effect.gen(function* () {
     const serverSettings = yield* ServerSettingsService;
+    const serverConfig = yield* ServerConfig;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const checkProvider = checkCodexProviderStatus().pipe(
+      Effect.provideService(ServerConfig, serverConfig),
       Effect.provideService(ServerSettingsService, serverSettings),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     );

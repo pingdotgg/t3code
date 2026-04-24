@@ -179,6 +179,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
   "ProviderRegistry",
   (it) => {
     describe("checkCodexProviderStatus", () => {
+      it.effect("uses configured server cwd for Codex skill discovery when available", () => {
+        const configuredCwd = `${process.cwd()}-provider-cwd`;
+        const requestedInputs: Array<{ readonly cwd: string }> = [];
+
+        return checkCodexProviderStatus((input) => {
+          requestedInputs.push({ cwd: input.cwd });
+          return Effect.succeed(makeCodexProbeSnapshot());
+        }).pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              assert.deepStrictEqual(requestedInputs, [{ cwd: configuredCwd }]);
+            }),
+          ),
+          Effect.provide(
+            Layer.provideMerge(
+              ServerConfig.layerTest(configuredCwd, { prefix: "t3-provider-registry-" }),
+              NodeServices.layer,
+            ),
+          ),
+        );
+      });
+
       it.effect("uses the app-server account and model list for provider status", () =>
         Effect.gen(function* () {
           const status = yield* checkCodexProviderStatus(() =>
