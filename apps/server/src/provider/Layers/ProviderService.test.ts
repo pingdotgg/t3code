@@ -1119,7 +1119,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           Layer.provide(Layer.succeed(ProviderAdapterRegistry, firstRegistry)),
           Layer.provide(firstDirectoryLayer),
           Layer.provide(defaultServerSettingsLayer),
-          Layer.provide(AnalyticsService.layerTest),
+          Layer.provide(AnalyticsServiceNoopLive),
         );
 
         const initial = yield* Effect.gen(function* () {
@@ -1147,7 +1147,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
           Layer.provide(Layer.succeed(ProviderAdapterRegistry, secondRegistry)),
           Layer.provide(secondDirectoryLayer),
           Layer.provide(defaultServerSettingsLayer),
-          Layer.provide(AnalyticsService.layerTest),
+          Layer.provide(AnalyticsServiceNoopLive),
         );
 
         secondClaude.startSession.mockClear();
