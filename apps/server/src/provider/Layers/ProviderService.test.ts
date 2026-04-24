@@ -892,9 +892,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         modelSelection: {
           provider: "claudeAgent",
           model: "claude-opus-4-6",
-          options: {
-            effort: "max",
-          },
+          options: [{ id: "effort", value: "max" }],
         },
         runtimeMode: "full-access",
       });
@@ -925,9 +923,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.deepEqual(startPayload.modelSelection, {
           provider: "claudeAgent",
           model: "claude-opus-4-6",
-          options: {
-            effort: "max",
-          },
+          options: [{ id: "effort", value: "max" }],
         });
         assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
         assert.equal(startPayload.threadId, initial.threadId);

@@ -30,6 +30,12 @@ export interface ProviderProbeResult {
   readonly message?: string;
 }
 
+export interface ServerProviderPresentation {
+  readonly displayName: string;
+  readonly badgeLabel?: string;
+  readonly showInteractionModeToggle?: boolean;
+}
+
 export function nonEmptyTrimmed(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
@@ -129,8 +135,52 @@ export function providerModelsFromSettings(
   return [...resolvedBuiltInModels, ...customEntries];
 }
 
+export function buildSelectOptionDescriptor(input: {
+  readonly id: string;
+  readonly label: string;
+  readonly options:
+    | ReadonlyArray<{ value: string; label: string; isDefault?: boolean | undefined }>
+    | undefined;
+  readonly description?: string;
+  readonly promptInjectedValues?: ReadonlyArray<string>;
+}) {
+  const options = (input.options ?? []).map((option) =>
+    option.isDefault
+      ? { id: option.value, label: option.label, isDefault: true }
+      : { id: option.value, label: option.label },
+  );
+  const currentValue = options.find((option) => option.isDefault)?.id;
+  return {
+    id: input.id,
+    label: input.label,
+    type: "select" as const,
+    options,
+    ...(currentValue ? { currentValue } : {}),
+    ...(input.description ? { description: input.description } : {}),
+    ...(input.promptInjectedValues && input.promptInjectedValues.length > 0
+      ? { promptInjectedValues: [...input.promptInjectedValues] }
+      : {}),
+  };
+}
+
+export function buildBooleanOptionDescriptor(input: {
+  readonly id: string;
+  readonly label: string;
+  readonly currentValue?: boolean;
+  readonly description?: string;
+}) {
+  return {
+    id: input.id,
+    label: input.label,
+    type: "boolean" as const,
+    ...(input.description ? { description: input.description } : {}),
+    ...(typeof input.currentValue === "boolean" ? { currentValue: input.currentValue } : {}),
+  };
+}
+
 export function buildServerProvider(input: {
   provider: ServerProvider["provider"];
+  presentation: ServerProviderPresentation;
   enabled: boolean;
   checkedAt: string;
   models: ReadonlyArray<ServerProviderModel>;
@@ -140,6 +190,11 @@ export function buildServerProvider(input: {
 }): ServerProvider {
   return {
     provider: input.provider,
+    displayName: input.presentation.displayName,
+    ...(input.presentation.badgeLabel ? { badgeLabel: input.presentation.badgeLabel } : {}),
+    ...(typeof input.presentation.showInteractionModeToggle === "boolean"
+      ? { showInteractionModeToggle: input.presentation.showInteractionModeToggle }
+      : {}),
     enabled: input.enabled,
     installed: input.probe.installed,
     version: input.probe.version,
