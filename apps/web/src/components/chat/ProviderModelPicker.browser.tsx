@@ -937,6 +937,53 @@ describe("ProviderModelPicker", () => {
     }
   });
 
+  // Regression: slugs with colons (e.g. Ollama-style `gpt-oss:120b`) must survive
+  // the `${provider}:${slug}` combobox key round-trip.
+  it("dispatches callback when the selected model slug contains a colon", async () => {
+    const providers: ReadonlyArray<ServerProvider> = [
+      buildOpenCodeProvider([
+        {
+          slug: "litellm_provider/baseline",
+          name: "Baseline",
+          subProvider: "LiteLLM",
+          isCustom: false,
+          capabilities: createModelCapabilities({ optionDescriptors: [] }),
+        },
+        {
+          slug: "litellm_provider/gpt-oss:120b",
+          name: "openai/gpt-oss-120b",
+          subProvider: "LiteLLM",
+          isCustom: false,
+          capabilities: createModelCapabilities({ optionDescriptors: [] }),
+        },
+      ]),
+    ];
+    const mounted = await mountPicker({
+      provider: "opencode",
+      model: "litellm_provider/baseline",
+      lockedProvider: "opencode",
+      providers,
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        expect(getModelPickerListText()).toContain("openai/gpt-oss-120b");
+      });
+
+      const modelRow = page.getByText("openai/gpt-oss-120b").first();
+      await modelRow.click();
+
+      expect(mounted.onProviderModelChange).toHaveBeenCalledWith(
+        "opencode",
+        "litellm_provider/gpt-oss:120b",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("only shows codex spark when the server reports it", async () => {
     const providersWithoutSpark: ReadonlyArray<ServerProvider> = [
       buildCodexProvider([
