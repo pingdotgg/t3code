@@ -9,6 +9,7 @@ const makeApi = (files: Record<string, string>): EnvironmentApi =>
     terminal: {} as EnvironmentApi["terminal"],
     filesystem: {} as EnvironmentApi["filesystem"],
     git: {} as EnvironmentApi["git"],
+    preview: {} as EnvironmentApi["preview"],
     orchestration: {} as EnvironmentApi["orchestration"],
     projects: {
       getLocalAgentInventory: vi.fn(),

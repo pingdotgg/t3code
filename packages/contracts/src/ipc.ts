@@ -30,6 +30,14 @@ import type {
   ProjectWriteFileResult,
 } from "./project.ts";
 import type {
+  PreviewCloseInput,
+  PreviewOpenInput,
+  PreviewRestartInput,
+  PreviewSessionSnapshot,
+  PreviewSessionStreamEvent,
+  PreviewSubscribeInput,
+} from "./preview.ts";
+import type {
   ServerConfig,
   ServerProviderUpdatedPayload,
   ServerUpsertKeybindingResult,
@@ -292,6 +300,18 @@ export interface EnvironmentApi {
     subscribeThread: (
       input: OrchestrationSubscribeThreadInput,
       callback: (event: OrchestrationThreadStreamItem) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
+  };
+  preview: {
+    open: (input: PreviewOpenInput) => Promise<PreviewSessionSnapshot>;
+    close: (input: PreviewCloseInput) => Promise<void>;
+    restart: (input: PreviewRestartInput) => Promise<PreviewSessionSnapshot>;
+    subscribe: (
+      input: PreviewSubscribeInput,
+      callback: (event: PreviewSessionStreamEvent) => void,
       options?: {
         onResubscribe?: () => void;
       },

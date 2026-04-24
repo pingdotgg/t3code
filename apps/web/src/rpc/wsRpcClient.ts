@@ -6,6 +6,7 @@ import {
   type GitStatusStreamEvent,
   type LocalApi,
   ORCHESTRATION_WS_METHODS,
+  type PreviewSessionStreamEvent,
   type ServerSettingsPatch,
   WS_METHODS,
 } from "@forma/contracts";
@@ -63,6 +64,16 @@ export interface WsRpcClient {
     readonly restart: RpcUnaryMethod<typeof WS_METHODS.terminalRestart>;
     readonly close: RpcUnaryMethod<typeof WS_METHODS.terminalClose>;
     readonly onEvent: RpcStreamMethod<typeof WS_METHODS.subscribeTerminalEvents>;
+  };
+  readonly preview: {
+    readonly open: RpcUnaryMethod<typeof WS_METHODS.previewOpen>;
+    readonly close: RpcUnaryMethod<typeof WS_METHODS.previewClose>;
+    readonly restart: RpcUnaryMethod<typeof WS_METHODS.previewRestart>;
+    readonly subscribe: (
+      input: RpcInput<typeof WS_METHODS.subscribePreview>,
+      listener: (event: PreviewSessionStreamEvent) => void,
+      options?: StreamSubscriptionOptions,
+    ) => () => void;
   };
   readonly projects: {
     readonly getLocalAgentInventory: RpcUnaryMethod<
@@ -142,6 +153,17 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       onEvent: (listener, options) =>
         transport.subscribe(
           (client) => client[WS_METHODS.subscribeTerminalEvents]({}),
+          listener,
+          options,
+        ),
+    },
+    preview: {
+      open: (input) => transport.request((client) => client[WS_METHODS.previewOpen](input)),
+      close: (input) => transport.request((client) => client[WS_METHODS.previewClose](input)),
+      restart: (input) => transport.request((client) => client[WS_METHODS.previewRestart](input)),
+      subscribe: (input, listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribePreview](input),
           listener,
           options,
         ),

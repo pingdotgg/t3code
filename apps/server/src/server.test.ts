@@ -86,6 +86,7 @@ import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./server
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
 import { TerminalManager, type TerminalManagerShape } from "./terminal/Services/Manager.ts";
+import { PreviewManager, type PreviewManagerShape } from "./preview/Services/Manager.ts";
 import {
   BrowserTraceCollector,
   type BrowserTraceCollectorShape,
@@ -336,6 +337,7 @@ const buildAppUnderTest = (options?: {
     projectSetupScriptRunner?: Partial<ProjectSetupScriptRunnerShape>;
     projectAgentInventory?: Partial<ProjectAgentInventoryShape>;
     terminalManager?: Partial<TerminalManagerShape>;
+    previewManager?: Partial<PreviewManagerShape>;
     orchestrationEngine?: Partial<OrchestrationEngineShape>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQueryShape>;
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
@@ -471,6 +473,47 @@ const buildAppUnderTest = (options?: {
       Layer.provide(
         Layer.mock(TerminalManager)({
           ...options?.layers?.terminalManager,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(PreviewManager)({
+          open: () =>
+            Effect.succeed({
+              threadId: defaultThreadId,
+              cwd: "/tmp/default-project",
+              worktreePath: null,
+              workspaceRoot: "/tmp/default-project",
+              status: "unsupported",
+              baseUrl: null,
+              manifestUrl: null,
+              command: [],
+              launchCwd: null,
+              pid: null,
+              startedAt: null,
+              updatedAt: new Date(0).toISOString(),
+              error: null,
+              logs: [],
+            }),
+          close: () => Effect.void,
+          restart: () =>
+            Effect.succeed({
+              threadId: defaultThreadId,
+              cwd: "/tmp/default-project",
+              worktreePath: null,
+              workspaceRoot: "/tmp/default-project",
+              status: "unsupported",
+              baseUrl: null,
+              manifestUrl: null,
+              command: [],
+              launchCwd: null,
+              pid: null,
+              startedAt: null,
+              updatedAt: new Date(0).toISOString(),
+              error: null,
+              logs: [],
+            }),
+          subscribe: () => Stream.empty,
+          ...options?.layers?.previewManager,
         }),
       ),
       Layer.provide(

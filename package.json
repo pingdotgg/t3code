@@ -58,6 +58,7 @@
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },
   "devDependencies": {
+    "@forma/preview-react": "workspace:*",
     "@types/node": "^24.12.2",
     "oxfmt": "^0.40.0",
     "oxlint": "^1.61.0",

@@ -16,3 +16,4 @@ export * from "./editor.ts";
 export * from "./project.ts";
 export * from "./filesystem.ts";
 export * from "./rpc.ts";
+export * from "./preview.ts";

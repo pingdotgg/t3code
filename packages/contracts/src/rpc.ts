@@ -63,6 +63,15 @@ import {
   ProjectWriteFileRpcError,
 } from "./project.ts";
 import {
+  PreviewCloseInput,
+  PreviewManagerRpcError,
+  PreviewOpenInput,
+  PreviewRestartInput,
+  PreviewSessionSnapshot,
+  PreviewSessionStreamEvent,
+  PreviewSubscribeInput,
+} from "./preview.ts";
+import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalError,
@@ -120,6 +129,11 @@ export const WS_METHODS = {
   terminalRestart: "terminal.restart",
   terminalClose: "terminal.close",
 
+  // Preview methods
+  previewOpen: "preview.open",
+  previewClose: "preview.close",
+  previewRestart: "preview.restart",
+
   // Server meta
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
@@ -130,6 +144,7 @@ export const WS_METHODS = {
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
+  subscribePreview: "subscribePreview",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -306,6 +321,23 @@ export const WsTerminalCloseRpc = Rpc.make(WS_METHODS.terminalClose, {
   error: TerminalError,
 });
 
+export const WsPreviewOpenRpc = Rpc.make(WS_METHODS.previewOpen, {
+  payload: PreviewOpenInput,
+  success: PreviewSessionSnapshot,
+  error: PreviewManagerRpcError,
+});
+
+export const WsPreviewCloseRpc = Rpc.make(WS_METHODS.previewClose, {
+  payload: PreviewCloseInput,
+  error: PreviewManagerRpcError,
+});
+
+export const WsPreviewRestartRpc = Rpc.make(WS_METHODS.previewRestart, {
+  payload: PreviewRestartInput,
+  success: PreviewSessionSnapshot,
+  error: PreviewManagerRpcError,
+});
+
 export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.dispatchCommand,
   {
@@ -359,6 +391,13 @@ export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTermina
   stream: true,
 });
 
+export const WsSubscribePreviewRpc = Rpc.make(WS_METHODS.subscribePreview, {
+  payload: PreviewSubscribeInput,
+  success: PreviewSessionStreamEvent,
+  error: PreviewManagerRpcError,
+  stream: true,
+});
+
 export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerConfig, {
   payload: Schema.Struct({}),
   success: ServerConfigStreamEvent,
@@ -408,7 +447,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsTerminalClearRpc,
   WsTerminalRestartRpc,
   WsTerminalCloseRpc,
+  WsPreviewOpenRpc,
+  WsPreviewCloseRpc,
+  WsPreviewRestartRpc,
   WsSubscribeTerminalEventsRpc,
+  WsSubscribePreviewRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

@@ -33,7 +33,8 @@
     "@pierre/diffs": "^1.1.0-beta.16",
     "effect": "catalog:",
     "node-pty": "^1.1.0",
-    "open": "^10.1.0"
+    "open": "^10.1.0",
+    "typescript": "catalog:"
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",
@@ -46,7 +47,6 @@
     "effect-acp": "workspace:*",
     "effect-codex-app-server": "workspace:*",
     "tsdown": "catalog:",
-    "typescript": "catalog:",
     "vitest": "catalog:"
   },
   "engines": {

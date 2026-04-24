@@ -16,6 +16,13 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       close: (input) => rpcClient.terminal.close(input as never),
       onEvent: (callback) => rpcClient.terminal.onEvent(callback),
     },
+    preview: {
+      open: rpcClient.preview.open,
+      close: rpcClient.preview.close,
+      restart: rpcClient.preview.restart,
+      subscribe: (input, callback, options) =>
+        rpcClient.preview.subscribe(input, callback, options),
+    },
     projects: {
       getLocalAgentInventory: rpcClient.projects.getLocalAgentInventory,
       readFile: rpcClient.projects.readFile,
