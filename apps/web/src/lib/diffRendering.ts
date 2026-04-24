@@ -1,9 +1,13 @@
+import type { FileDiffMetadata } from "@pierre/diffs";
+
 export const DIFF_THEME_NAMES = {
   light: "pierre-light",
   dark: "pierre-dark",
 } as const;
 
 export type DiffThemeName = (typeof DIFF_THEME_NAMES)[keyof typeof DIFF_THEME_NAMES];
+
+export const MAX_RENDERABLE_DIFF_LINE_LENGTH = 500_000;
 
 export function resolveDiffThemeName(theme: "light" | "dark"): DiffThemeName {
   return theme === "dark" ? DIFF_THEME_NAMES.dark : DIFF_THEME_NAMES.light;
@@ -36,4 +40,13 @@ export function buildPatchCacheKey(patch: string, scope = "diff-panel"): string 
     SECONDARY_HASH_MULTIPLIER,
   ).toString(36);
   return `${scope}:${normalizedPatch.length}:${primary}:${secondary}`;
+}
+
+export function canRenderFileDiff(
+  fileDiff: Pick<FileDiffMetadata, "additionLines" | "deletionLines">,
+): boolean {
+  return (
+    fileDiff.additionLines.every((line) => line.length <= MAX_RENDERABLE_DIFF_LINE_LENGTH) &&
+    fileDiff.deletionLines.every((line) => line.length <= MAX_RENDERABLE_DIFF_LINE_LENGTH)
+  );
 }

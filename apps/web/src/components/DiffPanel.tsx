@@ -27,8 +27,7 @@ import { readLocalApi } from "../localApi";
 import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
-import { buildPatchCacheKey } from "../lib/diffRendering";
-import { resolveDiffThemeName } from "../lib/diffRendering";
+import { buildPatchCacheKey, canRenderFileDiff, resolveDiffThemeName } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { selectProjectByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
@@ -306,12 +305,22 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     if (!renderablePatch || renderablePatch.kind !== "files") {
       return [];
     }
-    return renderablePatch.files.toSorted((left, right) =>
-      resolveFileDiffPath(left).localeCompare(resolveFileDiffPath(right), undefined, {
-        numeric: true,
-        sensitivity: "base",
-      }),
-    );
+    return renderablePatch.files
+      .map((fileDiff) => ({
+        canRender: canRenderFileDiff(fileDiff),
+        fileDiff,
+        filePath: resolveFileDiffPath(fileDiff),
+      }))
+      .toSorted((left, right) => {
+        const renderOrder = Number(!left.canRender) - Number(!right.canRender);
+        if (renderOrder !== 0) {
+          return renderOrder;
+        }
+        return left.filePath.localeCompare(right.filePath, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+      });
   }, [renderablePatch]);
 
   useEffect(() => {
@@ -600,8 +609,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   intersectionObserverMargin: 1200,
                 }}
               >
-                {renderableFiles.map((fileDiff) => {
-                  const filePath = resolveFileDiffPath(fileDiff);
+                {renderableFiles.map(({ canRender, fileDiff, filePath }) => {
                   const fileKey = buildFileDiffRenderKey(fileDiff);
                   const themedFileKey = `${fileKey}:${resolvedTheme}`;
                   return (
@@ -629,8 +637,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                           theme: resolveDiffThemeName(resolvedTheme),
                           themeType: resolvedTheme as DiffThemeType,
                           unsafeCSS: DIFF_PANEL_UNSAFE_CSS,
+                          collapsed: !canRender,
                         }}
                       />
+
+                      {!canRender && (
+                        <div className="px-3 py-3 text-[11px] leading-relaxed text-muted-foreground">
+                          <p>
+                            This file is too large to display. Open the file to inspect the change.
+                          </p>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
