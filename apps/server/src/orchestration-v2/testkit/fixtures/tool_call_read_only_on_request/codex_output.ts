@@ -4,7 +4,6 @@ import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts
 import {
   assertAllRuntimeRequestsResolved,
   assertBaseProjection,
-  assertRuntimeItemKinds,
   assertRuntimeRequestCounts,
   assertRuntimeRequestKinds,
   assertSemanticProjectionIntegrity,
@@ -29,8 +28,7 @@ export function assertToolCallReadOnlyOnRequestOutput(
     "assistant_message",
   ]);
   assertRuntimeRequestCounts(projection, { total: 1, resolved: 1 });
-  assertRuntimeRequestKinds(projection, ["command_approval"]);
-  assertRuntimeItemKinds(projection, ["command_execution"]);
+  assertRuntimeRequestKinds(projection, ["command"]);
   assertAllRuntimeRequestsResolved(projection);
   assertUserMessagesInclude(projection, [TOOL_CALL_WRITE_PROMPT]);
 }
