@@ -103,7 +103,7 @@ type ToolCapabilities = {
 };
 ```
 
-Weak providers may produce only textual tool summaries. The adapter can still create `RuntimeItem` records by scoped ordinal.
+Weak providers may produce only textual tool summaries. The adapter can still create ordered `turnItems` and execution nodes by scoped ordinal.
 
 ## Approval Capabilities
 
@@ -263,11 +263,13 @@ type ProviderAdapter = {
   readThreadSnapshot?(input): ProviderThreadSnapshot;
   rollbackThread?(input): ProviderThreadSnapshot | void;
   forkThread?(input): ProviderThread;
-  streamRawEvents(): Stream<RawProviderEvent>;
+  streamEvents(): Stream<ProviderAdapterEvent>;
 };
 ```
 
 Optional methods are guarded by capabilities. The orchestration layer should not call optional methods without checking capability or going through a policy wrapper.
+
+Raw provider frames should be logged by the provider transport/runtime as bounded diagnostics. Adapter streams should expose normalized provider events that the V2 normalizer can turn into app orchestration events.
 
 ## Capability-Driven UI
 
