@@ -9,6 +9,7 @@ export function messageSteeringInput(): OrchestratorFixtureInput {
         text: "Actually, respond with exactly: steering fixture observed",
         targetRunIndex: 1,
       },
+      { type: "approve_next_runtime_request" },
     ],
   };
 }

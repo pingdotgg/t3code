@@ -15,9 +15,8 @@ NodeId                execution graph node
 ProviderSessionId     live/resumable provider runtime session
 ProviderThreadId      app handle for provider-native conversation
 ProviderTurnId        app handle for provider-native turn
-RuntimeItemId         app handle for provider item/tool/message artifact
 RuntimeRequestId      app handle for provider callback/request
-RawEventId            raw provider event log id
+RawEventId            optional raw provider diagnostic frame id
 CheckpointId          app checkpoint id
 PlanId                app plan/todo/question artifact id
 ```
@@ -57,7 +56,7 @@ ProviderTurn:
   providerThreadId + nativeTurnRef
   or providerThreadId + turnOrdinal
 
-RuntimeItem:
+Node / TurnItem:
   providerTurnId + nativeItemRef
   or providerTurnId + itemOrdinal
 
@@ -89,14 +88,14 @@ type IdentityBinding = {
     providerTurnId: ProviderTurnId | null;
   };
   correlation: "native_exact" | "native_scoped" | "ordinal" | "fingerprint" | "synthetic";
-  firstRawEventId: RawEventId;
-  lastRawEventId: RawEventId;
+  firstRawEventId?: RawEventId;
+  lastRawEventId?: RawEventId;
   createdAt: string;
   updatedAt: string;
 };
 ```
 
-This is not meant to be a large identity subsystem. It is the minimal durable place that says, "this native thing corresponds to this app thing."
+This is not meant to be a large identity subsystem. It is the minimal durable place that says, "this native thing corresponds to this app thing." Raw event references are optional diagnostic pointers; the binding itself must not require production SQLite to retain raw provider frames forever.
 
 ## ID Allocation Rules
 
@@ -119,7 +118,7 @@ requestOrdinalWithinProviderTurn
 messageOrdinalWithinNode
 ```
 
-Ordinals are assigned by the normalizer when events are processed. They must be replay-deterministic for a given raw event log.
+Ordinals are assigned by the normalizer when provider frames are processed. They must be replay-deterministic for a given provider transcript.
 
 ## Fingerprints
 
@@ -131,11 +130,11 @@ Examples:
 ProviderTurn fingerprint:
   providerThreadId + runId + providerTurnOrdinalWithinProviderThread
 
-RuntimeItem fingerprint:
+Node / TurnItem fingerprint:
   providerTurnId + itemKind + itemOrdinalWithinProviderTurn + toolName?
 
 RuntimeRequest fingerprint:
-  providerTurnId + requestKind + itemId? + requestOrdinalWithinProviderTurn
+  providerTurnId + requestKind + nativeItemRef? + requestOrdinalWithinProviderTurn
 ```
 
 Do not use complete assistant text as a primary fingerprint. Text is mutable, can stream in chunks, and can be duplicated.
@@ -155,7 +154,7 @@ type RuntimeEvent = {
   providerSessionId: ProviderSessionId | null;
   providerThreadId: ProviderThreadId | null;
   providerTurnId: ProviderTurnId | null;
-  itemId: RuntimeItemId | null;
+  nativeItemRef: string | null;
   requestId: RuntimeRequestId | null;
   providerRefs: ProviderRefs;
   payload: unknown;
@@ -209,7 +208,6 @@ For Codex:
 
 ```text
 collabAgentToolCall item
-  -> RuntimeItem
   -> ExecutionNode(kind="subagent" or "tool_call")
 receiverThreadIds[]
   -> ProviderThread records
@@ -223,11 +221,11 @@ For weak providers, the adapter may create a child node by ordinal under the act
 
 ## Replay Determinism
 
-Given the same raw event log and same initial app state, normalization must produce the same ids.
+Given the same provider transcript and same initial app state, normalization must produce the same ids.
 
 Requirements:
 
 - Identity bindings are persisted as events or durable rows.
 - Generated ids can be random if the binding is persisted before downstream projection.
 - Fixture replay may use deterministic id generation to make assertions easier.
-- Reprocessing the same raw event should find the existing binding, not allocate another entity.
+- Reprocessing the same provider frame should find the existing binding, not allocate another entity.

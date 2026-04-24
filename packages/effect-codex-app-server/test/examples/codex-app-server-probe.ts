@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 
 import * as CodexClient from "../../src/client.ts";
 import type * as CodexRpc from "../../src/_generated/meta.gen.ts";
+import type * as CodexSchema from "../../src/schema.ts";
 
 const DEFAULT_OUT_DIR = "test/fixtures/codex-app-server-probes";
 const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok";
@@ -14,6 +15,27 @@ const TOOL_CALL_WRITE_PROMPT =
 const SUBAGENT_PROMPT = "Spawn 2 subagents, one to read package.json and one to read tsconfig.json";
 const TURN_INTERRUPT_PROMPT =
   "Do not answer immediately. First run the local shell command `sleep 30`, then respond with exactly: interrupt fixture should not finish naturally.";
+const PROVIDER_THREAD_RESUME_FIRST_PROMPT =
+  "Respond with exactly: provider thread resume fixture first turn complete";
+const PROVIDER_THREAD_RESUME_SECOND_PROMPT =
+  "Using the conversation history available in this resumed thread, first repeat the exact final answer you gave in the previous turn. Then on a new line write exactly: provider thread resume fixture second turn complete";
+const TODO_LIST_PROMPT =
+  "Use the update_plan tool to track exactly three steps: inspect package.json, inspect tsconfig.json, report completion. Then read package.json and tsconfig.json, and answer exactly: todo list fixture complete";
+const PLAN_QUESTIONS_PROMPT =
+  "Use request_user_input to ask one multiple-choice clarifying question about whether this fixture should prefer strict schemas or UI flexibility. After receiving the answer, respond exactly: plan questions fixture complete";
+const PROPOSED_PLAN_PROMPT =
+  "Create a short implementation plan for adding deterministic replay fixtures. Do not ask questions. Present the final plan in a proposed plan block.";
+const PROBE_PLAN_MODE_DEVELOPER_INSTRUCTIONS =
+  process.env.CODEX_PROBE_PLAN_DEVELOPER_INSTRUCTIONS ??
+  "You are in Plan mode. Prefer request_user_input for clarifying questions. When presenting a complete plan, wrap it in <proposed_plan> and </proposed_plan>.";
+const CODEX_CLIENT_INFO = {
+  name: "t3code_desktop",
+  title: "T3 Code Desktop",
+  version: "0.1.0",
+} as const;
+const CODEX_CLIENT_CAPABILITIES = {
+  experimentalApi: true,
+} as const;
 
 const SCENARIO_NAMES = [
   "simple",
@@ -22,13 +44,19 @@ const SCENARIO_NAMES = [
   "tool_call_restricted_granular",
   "subagent",
   "multi_turn",
+  "provider_thread_resume",
+  "todo_list",
+  "plan_questions",
+  "proposed_plan",
   "message_steering",
   "turn_interrupt",
   "thread_rollback",
 ] as const;
 
 type ScenarioName = (typeof SCENARIO_NAMES)[number];
-type TurnStartParams = CodexRpc.ClientRequestParamsByMethod["turn/start"];
+type TurnStartParams = CodexRpc.ClientRequestParamsByMethod["turn/start"] & {
+  readonly collaborationMode?: CodexSchema.V2TurnStartParams__CollaborationMode;
+};
 type TurnStartInput = TurnStartParams["input"];
 type TurnStartResponse = CodexRpc.ClientRequestResponsesByMethod["turn/start"];
 type SandboxPolicy = NonNullable<TurnStartParams["sandboxPolicy"]>;
@@ -68,6 +96,7 @@ type ProbeStep =
       readonly label: string;
       readonly numTurns: number;
     };
+type TurnProbeStep = Exclude<ProbeStep, { readonly type: "rollback" }>;
 
 interface ProbeScenario {
   readonly name: ScenarioName;
@@ -237,6 +266,19 @@ function granularApprovalPolicy(): ApprovalPolicy {
   };
 }
 
+function collaborationMode(
+  mode: Extract<CodexSchema.V2TurnStartParams__ModeKind, "plan">,
+): CodexSchema.V2TurnStartParams__CollaborationMode {
+  return {
+    mode,
+    settings: {
+      developer_instructions: PROBE_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+      model: "gpt-5.4",
+      reasoning_effort: "medium",
+    },
+  };
+}
+
 function scenarios(): ReadonlyArray<ProbeScenario> {
   return [
     {
@@ -352,6 +394,85 @@ function scenarios(): ReadonlyArray<ProbeScenario> {
               prompt: "Respond with exactly: second fixture turn complete",
             },
           ],
+        },
+      ],
+    },
+    {
+      name: "provider_thread_resume",
+      fileName: "provider_thread_resume.ndjson",
+      description:
+        "One provider-native thread is started, completed, then resumed by thread id in a fresh app-server session.",
+      runs: [
+        {
+          name: "resume-provider-thread",
+          description:
+            "First turn completes, the app-server runtime is restarted, thread/resume loads the existing provider thread, then a second turn completes.",
+          steps: [
+            {
+              type: "turn",
+              label: "first-before-resume",
+              prompt: PROVIDER_THREAD_RESUME_FIRST_PROMPT,
+            },
+            {
+              type: "turn",
+              label: "second-after-resume",
+              prompt: PROVIDER_THREAD_RESUME_SECOND_PROMPT,
+            },
+          ],
+        },
+      ],
+    },
+    {
+      name: "todo_list",
+      fileName: "todo_list.ndjson",
+      description: "One turn that asks Codex to emit progress through update_plan.",
+      runs: [
+        {
+          name: "todo-list",
+          description: "Default-mode turn that should surface turn/plan/updated notifications.",
+          prompt: TODO_LIST_PROMPT,
+          turnDefaults: {
+            approvalPolicy: "never",
+            sandboxPolicy: readOnlyFullAccessSandbox(),
+          },
+          steps: [{ type: "turn", label: "todo-list", prompt: TODO_LIST_PROMPT }],
+        },
+      ],
+    },
+    {
+      name: "plan_questions",
+      fileName: "plan_questions.ndjson",
+      description: "One plan-mode turn that asks a structured clarifying question.",
+      runs: [
+        {
+          name: "plan-questions",
+          description: "Plan-mode turn intended to surface item/tool/requestUserInput.",
+          prompt: PLAN_QUESTIONS_PROMPT,
+          turnDefaults: {
+            approvalPolicy: "never",
+            collaborationMode: collaborationMode("plan"),
+            sandboxPolicy: readOnlyFullAccessSandbox(),
+          },
+          steps: [{ type: "turn", label: "plan-questions", prompt: PLAN_QUESTIONS_PROMPT }],
+        },
+      ],
+    },
+    {
+      name: "proposed_plan",
+      fileName: "proposed_plan.ndjson",
+      description: "One plan-mode turn that emits a proposed plan document.",
+      runs: [
+        {
+          name: "proposed-plan",
+          description:
+            "Plan-mode turn intended to surface item/plan/delta and completed plan item.",
+          prompt: PROPOSED_PLAN_PROMPT,
+          turnDefaults: {
+            approvalPolicy: "never",
+            collaborationMode: collaborationMode("plan"),
+            sandboxPolicy: readOnlyFullAccessSandbox(),
+          },
+          steps: [{ type: "turn", label: "proposed-plan", prompt: PROPOSED_PLAN_PROMPT }],
         },
       ],
     },
@@ -631,6 +752,7 @@ function installProbeHandlers({
 }
 
 function runProbeSession({
+  scenario,
   run,
   recorder,
 }: {
@@ -668,41 +790,32 @@ function runProbeSession({
     const beforeApprovalResponse = () =>
       approvalGate ? Deferred.await(approvalGate) : Effect.void;
 
-    yield* Effect.gen(function* () {
+    const initializeClient = Effect.gen(function* () {
       const client = yield* CodexClient.CodexAppServerClient;
 
       yield* installProbeHandlers({ client, startTurn, completeTurn, beforeApprovalResponse });
 
       yield* client.request("initialize", {
-        clientInfo: {
-          name: "effect-codex-app-server-probe",
-          title: "Effect Codex App Server Probe",
-          version: "0.0.0",
-        },
-        capabilities: {
-          experimentalApi: true,
-          optOutNotificationMethods: null,
-        },
+        clientInfo: CODEX_CLIENT_INFO,
+        capabilities: CODEX_CLIENT_CAPABILITIES,
       });
 
       yield* client.notify("initialized", undefined);
 
-      const thread = yield* client.request("thread/start", {});
+      return client;
+    });
 
-      for (const [stepIndex, step] of run.steps.entries()) {
-        if (step.type === "rollback") {
-          yield* client.request("thread/rollback", {
-            threadId: thread.thread.id,
-            numTurns: step.numTurns,
-          });
-          continue;
-        }
-
+    const runTurnStep = (
+      client: CodexClient.CodexAppServerClientShape,
+      threadId: string,
+      step: TurnProbeStep,
+    ) =>
+      Effect.gen(function* () {
         const turnParams: TurnStartParams = {
           ...run.turnDefaults,
-          ...("turnOverrides" in step ? step.turnOverrides : undefined),
+          ...step.turnOverrides,
           input: turnInput(step.prompt),
-          threadId: thread.thread.id,
+          threadId,
         };
 
         if (step.type === "steeredTurn") {
@@ -719,7 +832,7 @@ function runProbeSession({
           yield* client.request("turn/steer", {
             expectedTurnId: turnId,
             input: turnInput(step.steer),
-            threadId: thread.thread.id,
+            threadId,
           });
           if (approvalGate) {
             yield* Deferred.succeed(approvalGate, void 0);
@@ -730,13 +843,75 @@ function runProbeSession({
         if (step.type === "interruptedTurn") {
           yield* Effect.sleep(`${step.interruptAfterMs} millis`);
           yield* client.request("turn/interrupt", {
-            threadId: thread.thread.id,
+            threadId,
             turnId,
           });
         }
 
         const completed = yield* getCompletion(turnId);
         yield* Deferred.await(completed);
+      });
+
+    if (scenario.name === "provider_thread_resume") {
+      const firstStep = run.steps[0];
+      const secondStep = run.steps[1];
+      if (
+        !firstStep ||
+        !secondStep ||
+        firstStep.type === "rollback" ||
+        secondStep.type === "rollback"
+      ) {
+        throw new Error("provider_thread_resume probe requires two turn steps.");
+      }
+
+      const firstThread = yield* Effect.gen(function* () {
+        const client = yield* initializeClient;
+        const thread = yield* client.request("thread/start", {});
+        yield* runTurnStep(client, thread.thread.id, firstStep);
+        return thread;
+      }).pipe(
+        Effect.provide(
+          makeCodexLayer({
+            recorder,
+          }),
+        ),
+      );
+
+      yield* recorder.writeRecord({
+        type: "runtime_exit",
+        status: "success",
+      });
+
+      yield* Effect.gen(function* () {
+        const client = yield* initializeClient;
+        const thread = yield* client.request("thread/resume", {
+          threadId: firstThread.thread.id,
+        });
+        yield* runTurnStep(client, thread.thread.id, secondStep);
+      }).pipe(
+        Effect.provide(
+          makeCodexLayer({
+            recorder,
+          }),
+        ),
+      );
+      return;
+    }
+
+    yield* Effect.gen(function* () {
+      const client = yield* initializeClient;
+      const thread = yield* client.request("thread/start", {});
+
+      for (const [stepIndex, step] of run.steps.entries()) {
+        if (step.type === "rollback") {
+          yield* client.request("thread/rollback", {
+            threadId: thread.thread.id,
+            numTurns: step.numTurns,
+          });
+          continue;
+        }
+
+        yield* runTurnStep(client, thread.thread.id, step);
         void stepIndex;
       }
     }).pipe(
