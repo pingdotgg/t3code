@@ -138,6 +138,27 @@ function readOpenCodeResumeState(resumeCursor: unknown): OpenCodeResumeState | u
   };
 }
 
+function getOpenCodeErrorStatus(cause: unknown): number | undefined {
+  if (!cause || typeof cause !== "object") {
+    return undefined;
+  }
+
+  const error = cause as {
+    readonly status?: unknown;
+    readonly response?: {
+      readonly status?: unknown;
+    };
+  };
+  if (typeof error.response?.status === "number") {
+    return error.response.status;
+  }
+  return typeof error.status === "number" ? error.status : undefined;
+}
+
+function isMissingOpenCodeResumeSession(cause: OpenCodeRuntimeError): boolean {
+  return cause.operation === "session.get" && getOpenCodeErrorStatus(cause.cause) === 404;
+}
+
 /**
  * Map a tagged OpenCodeRuntimeError produced by {@link runOpenCodeSdk} into
  * the adapter-boundary `ProviderAdapterRequestError`. SDK-method-level call
@@ -1077,20 +1098,25 @@ export function makeOpenCodeAdapter(
                 directory,
                 ...(server.external && serverPassword ? { serverPassword } : {}),
               });
-              const openCodeSession = yield* resumeState
+              const createOpenCodeSession = runOpenCodeSdk("session.create", () =>
+                client.session.create({
+                  title: `T3 Code ${input.threadId}`,
+                  permission: buildOpenCodePermissionRules(input.runtimeMode),
+                }),
+              ).pipe(Effect.map((response) => ({ response, resumed: false as const })));
+              const openCodeSessionStart = yield* resumeState
                 ? runOpenCodeSdk("session.get", () =>
                     client.session.get({ sessionID: resumeState.sessionID }),
+                  ).pipe(
+                    Effect.map((response) => ({ response, resumed: true as const })),
+                    Effect.catchIf(isMissingOpenCodeResumeSession, () => createOpenCodeSession),
                   )
-                : runOpenCodeSdk("session.create", () =>
-                    client.session.create({
-                      title: `T3 Code ${input.threadId}`,
-                      permission: buildOpenCodePermissionRules(input.runtimeMode),
-                    }),
-                  );
-              if (!openCodeSession.data) {
+                : createOpenCodeSession;
+              if (!openCodeSessionStart.response.data) {
+                const operation = openCodeSessionStart.resumed ? "session.get" : "session.create";
                 return yield* new OpenCodeRuntimeError({
-                  operation: resumeState ? "session.get" : "session.create",
-                  detail: resumeState
+                  operation,
+                  detail: openCodeSessionStart.resumed
                     ? "OpenCode session.get returned no session payload."
                     : "OpenCode session.create returned no session payload.",
                 });
@@ -1099,8 +1125,8 @@ export function makeOpenCodeAdapter(
                 sessionScope,
                 server,
                 client,
-                openCodeSession: openCodeSession.data,
-                resumed: resumeState !== undefined,
+                openCodeSession: openCodeSessionStart.response.data,
+                resumed: openCodeSessionStart.resumed,
               };
             }).pipe(Effect.provideService(Scope.Scope, sessionScope)),
           );
@@ -1462,6 +1488,7 @@ export function makeOpenCodeAdapter(
       provider: PROVIDER,
       capabilities: {
         sessionModelSwitch: "in-session",
+        resumeCursorInvalidationReasons: ["runtime-mode-change", "cwd-change"],
       },
       startSession,
       sendTurn,
