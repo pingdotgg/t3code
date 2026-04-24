@@ -25,6 +25,7 @@ import { Route as SettingsConnectionsRouteImport } from './routes/settings.conne
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
+import { Route as DebugOrchestrationV2RouteImport } from './routes/debug.orchestration-v2'
 import { Route as ConnectCallbackRouteImport } from './routes/connect_.callback'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
@@ -109,6 +110,11 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   path: '/projects/$projectKey',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DebugOrchestrationV2Route = DebugOrchestrationV2RouteImport.update({
+  id: '/debug/orchestration-v2',
+  path: '/debug/orchestration-v2',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConnectCallbackRoute = ConnectCallbackRouteImport.update({
   id: '/connect_/callback',
   path: '/connect/callback',
@@ -139,6 +145,7 @@ export interface FileRoutesByFullPath {
   '/usage': typeof UsageRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/connect/callback': typeof ConnectCallbackRoute
+  '/debug/orchestration-v2': typeof DebugOrchestrationV2Route
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -159,6 +166,7 @@ export interface FileRoutesByTo {
   '/usage': typeof UsageRoute
   '/pull-requests': typeof ChatPullRequestsRoute
   '/connect/callback': typeof ConnectCallbackRoute
+  '/debug/orchestration-v2': typeof DebugOrchestrationV2Route
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -182,6 +190,7 @@ export interface FileRoutesById {
   '/usage': typeof UsageRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
   '/connect_/callback': typeof ConnectCallbackRoute
+  '/debug/orchestration-v2': typeof DebugOrchestrationV2Route
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -206,6 +215,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/pull-requests'
     | '/connect/callback'
+    | '/debug/orchestration-v2'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -226,6 +236,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/pull-requests'
     | '/connect/callback'
+    | '/debug/orchestration-v2'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -248,6 +259,7 @@ export interface FileRouteTypes {
     | '/usage'
     | '/_chat/pull-requests'
     | '/connect_/callback'
+    | '/debug/orchestration-v2'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -270,6 +282,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRouteWithChildren
   UsageRoute: typeof UsageRoute
   ConnectCallbackRoute: typeof ConnectCallbackRoute
+  DebugOrchestrationV2Route: typeof DebugOrchestrationV2Route
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
 }
 
@@ -387,6 +400,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/debug/orchestration-v2': {
+      id: '/debug/orchestration-v2'
+      path: '/debug/orchestration-v2'
+      fullPath: '/debug/orchestration-v2'
+      preLoaderRoute: typeof DebugOrchestrationV2RouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/connect_/callback': {
       id: '/connect_/callback'
       path: '/connect/callback'
@@ -469,6 +489,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRouteWithChildren,
   UsageRoute: UsageRoute,
   ConnectCallbackRoute: ConnectCallbackRoute,
+  DebugOrchestrationV2Route: DebugOrchestrationV2Route,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
 }
 export const routeTree = rootRouteImport

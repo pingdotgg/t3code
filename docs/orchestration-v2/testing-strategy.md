@@ -14,13 +14,15 @@ command dispatch
   -> real ProviderAdapter
   -> replayed ProviderRuntime transport
   -> real adapter normalizer
-  -> real EventLog
-  -> real Projection
+  -> real V2 event store/sink using production persistence semantics
+  -> real V2 projection/projector
   -> real Checkpoint policy
   -> assertions
 ```
 
-The replay framework replaces the external provider process or network stream. It does not replace the adapter, normalizer, event log, projection, command router, checkpoint policy, or business logic.
+The replay framework replaces the external provider process or network stream. It does not replace the adapter, normalizer, command/event infrastructure, projection reducers/projectors, checkpoint policy, or business logic.
+
+Raw provider frames in replay transcripts are realistic transport evidence. In production, equivalent raw frames are diagnostic log data with bounded retention. Integration tests should still use real normalized orchestration persistence/projections so replay input exercises the same adapter and orchestration paths as live provider output.
 
 ## Allowed Test Substitutes
 
@@ -38,7 +40,7 @@ Not allowed in integration tests:
 - mocked orchestrator.
 - mocked provider adapter.
 - mocked provider event normalizer.
-- mocked event log.
+- mocked command/event infrastructure or V2 event sink.
 - mocked projection reducer.
 - mocked checkpoint service behavior.
 - mocked provider capability policy.
@@ -100,6 +102,8 @@ The replay runtime owns deterministic transport semantics:
 
 The replay runtime must not know what a turn, plan, approval, subagent, or checkpoint means. Provider adapters interpret provider-specific frames.
 
+Recovery tests use replay only at the provider transport boundary. App restart is tested by tearing down and recreating the outermost orchestrator/server layer against durable persistence. Idle cleanup and crash recovery are tested through production lifecycle services such as the session reaper or runtime recovery policy. Tests must not add adapter or orchestrator methods whose only purpose is to restart sessions for assertions.
+
 ## Provider Transcript Formats
 
 Each provider can have its own raw frame format inside the generic replay envelope.
@@ -152,15 +156,19 @@ Additional tests should be added only when they protect a new invariant or repro
 - Fixtures should include enough outbound expectations to prove the app sent the correct provider commands.
 - Fixtures should include protocol metadata, provider version, model, cwd policy, and capture timestamp.
 - Fixture playback must be deterministic under Effect `TestClock` and deterministic `Random` layers.
-- When a provider transcript is generated from a real run, keep the original raw event ordering.
+- When a provider transcript is generated from a real run, keep the original provider frame ordering.
 - Redaction should preserve ids, method names, lifecycle ordering, and correlation structure.
+- Fixture transcripts are test input and diagnostic evidence. They do not imply production stores all raw provider frames in SQLite.
 
 ## Assertions
 
-Assertions should prefer final projections and durable event logs over incidental implementation calls.
+Assertions should prefer final projections and durable normalized orchestration events over incidental implementation calls.
 
 Good assertions:
 
+- duplicate command dispatch returns the original receipt sequence without replaying provider transport.
+- stored-event sequence monotonicity.
+- snapshot sequence plus stream-after-sequence behavior.
 - run status and ordinal.
 - active/final run attempt.
 - execution node parent/child structure.
@@ -168,7 +176,7 @@ Good assertions:
 - checkpoint scope hierarchy.
 - pending/resolved runtime requests.
 - handoff coverage and strategy.
-- raw event count and normalized event count when relevant.
+- replay transcript frame count and normalized event count when relevant.
 
 Weak assertions:
 

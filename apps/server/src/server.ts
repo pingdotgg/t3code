@@ -130,27 +130,11 @@ import {
   makePersistedServerRuntimeState,
   persistServerRuntimeState,
 } from "./serverRuntimeState.ts";
-import { orchestrationHttpApiLayer } from "./orchestration/http.ts";
-import * as NetService from "@t3tools/shared/Net";
-import * as RelayClient from "@t3tools/shared/relayClient";
-import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
-import { forkParked, ServerActivation } from "./serverActivation.ts";
-
-// MCP handoff thread IDs include escaped provenance and can exceed find-my-way's
-// 100-character default for one path segment.
-export const HTTP_ROUTER_CONFIG = {
-  maxParamLength: 512,
-} as const;
-
-// Effect's default preemptive shutdown waits 20s before finalizing request scopes.
-// T3's primary transport is long-lived WebSocket RPC, whose Effect scope finalizer
-// already closes the websocket gracefully. Do not add an artificial drain before
-// those finalizers get a chance to run.
-const HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS = 0;
-const ResourceAttributionLayerLive = ResourceAttribution.layer;
-const ApplicationObservabilityLive = ObservabilityLive.pipe(
-  Layer.provideMerge(ResourceAttributionLayerLive),
-);
+import {
+  orchestrationDispatchRouteLayer,
+  orchestrationSnapshotRouteLayer,
+} from "./orchestration/http.ts";
+import { OrchestrationV2LayerLive } from "./orchestration-v2/runtimeLayer.ts";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -388,16 +372,14 @@ const WorkspaceLayerLive = Layer.mergeAll(
   WorkspaceFileSystemLayerLive,
 );
 
-const ProjectFaviconResolverLayerLive = ProjectFaviconResolver.layer.pipe(
-  Layer.provide(WorkspacePaths.layer),
-  Layer.provide(T3ProjectFileLoader.layer),
+const OrchestrationV2RuntimeLayerLive = OrchestrationV2LayerLive.pipe(
+  Layer.provide(CheckpointStoreLive),
+  Layer.provide(GitCoreLive),
+  Layer.provide(PersistenceLayerLive),
+  Layer.provide(ServerSettingsLive),
 );
 
-const ServerEnvironmentLayerLive = ServerEnvironment.layer.pipe(
-  Layer.provide(ServerSecretStore.layer),
-);
-
-const AuthLayerLive = EnvironmentAuth.layer.pipe(
+const AuthLayerLive = ServerAuthLive.pipe(
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provide(ServerEnvironmentLayerLive),
   Layer.provide(ServerSecretStore.layer),
@@ -496,16 +478,12 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(RepositoryIdentityResolver.layer),
   Layer.provideMerge(ServerEnvironmentLayerLive),
   Layer.provideMerge(AuthLayerLive),
-  Layer.provideMerge(ServerSecretStore.layer),
-  Layer.provideMerge(
-    Layer.mergeAll(
-      CloudCliTokenManager.layer.pipe(
-        Layer.provide(ServerSecretStore.layer),
-        Layer.provide(ExternalLauncher.layer),
-      ),
-      CloudManagedEndpointRuntimeLive,
-    ),
-  ),
+  Layer.provideMerge(OrchestrationV2RuntimeLayerLive),
+
+  // Misc.
+  Layer.provideMerge(AnalyticsServiceLayerLive),
+  Layer.provideMerge(OpenLive),
+  Layer.provideMerge(ServerLifecycleEventsLive),
 );
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(

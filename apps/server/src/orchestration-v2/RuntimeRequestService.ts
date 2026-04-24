@@ -1,6 +1,8 @@
 import {
   NodeId,
   OrchestrationV2RuntimeRequest,
+  ProviderApprovalDecision,
+  ProviderUserInputAnswers,
   RuntimeRequestId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -60,11 +62,13 @@ export interface RuntimeRequestServiceV2Shape {
   readonly respond: (input: {
     readonly threadId: ThreadId;
     readonly requestId: RuntimeRequestId;
-    readonly response: unknown;
+    readonly decision?: ProviderApprovalDecision;
+    readonly answers?: ProviderUserInputAnswers;
+    readonly response?: unknown;
   }) => Effect.Effect<OrchestrationV2RuntimeRequest, RuntimeRequestServiceV2Error>;
 }
 
 export class RuntimeRequestServiceV2 extends Context.Service<
   RuntimeRequestServiceV2,
   RuntimeRequestServiceV2Shape
->()("t3/orchestration-v2/Services/RuntimeRequestService") {}
+>()("t3/orchestration-v2/RuntimeRequestService") {}

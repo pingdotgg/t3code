@@ -124,16 +124,12 @@ import {
   RelayClientInstallProgressEventSchema,
   RelayClientStatusSchema,
 } from "./relayClient.ts";
+  ORCHESTRATION_V2_WS_METHODS,
+  OrchestrationV2DispatchCommandError,
+  OrchestrationV2GetThreadProjectionError,
+  OrchestrationV2RpcSchemas,
+} from "./orchestrationV2.ts";
 import {
-  ProjectListEntriesError,
-  ProjectListEntriesInput,
-  ProjectListEntriesResult,
-  ProjectReadFileError,
-  ProjectReadFileInput,
-  ProjectReadFileResult,
-  ProjectSearchContentsError,
-  ProjectSearchContentsInput,
-  ProjectSearchContentsResult,
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -1114,6 +1110,34 @@ export const WsOrchestrationSubscribeThreadRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationV2DispatchCommandRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
+  {
+    payload: OrchestrationV2RpcSchemas.dispatchCommand.input,
+    success: OrchestrationV2RpcSchemas.dispatchCommand.output,
+    error: OrchestrationV2DispatchCommandError,
+  },
+);
+
+export const WsOrchestrationV2GetThreadProjectionRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
+  {
+    payload: OrchestrationV2RpcSchemas.getThreadProjection.input,
+    success: OrchestrationV2RpcSchemas.getThreadProjection.output,
+    error: OrchestrationV2GetThreadProjectionError,
+  },
+);
+
+export const WsOrchestrationV2SubscribeThreadRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.subscribeThread,
+  {
+    payload: OrchestrationV2RpcSchemas.subscribeThread.input,
+    success: OrchestrationV2RpcSchemas.subscribeThread.output,
+    error: OrchestrationV2GetThreadProjectionError,
+    stream: true,
+  },
+);
+
 export const WsSubscribeTerminalEventsRpc = Rpc.make(WS_METHODS.subscribeTerminalEvents, {
   payload: Schema.Struct({}),
   success: TerminalEvent,
@@ -1293,4 +1317,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationGetArchivedShellSnapshotRpc,
   WsOrchestrationSubscribeShellRpc,
   WsOrchestrationSubscribeThreadRpc,
+  WsOrchestrationV2DispatchCommandRpc,
+  WsOrchestrationV2GetThreadProjectionRpc,
+  WsOrchestrationV2SubscribeThreadRpc,
 );

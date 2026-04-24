@@ -210,12 +210,19 @@ If the provider does not support interruption:
 
 ## Resumption
 
-Resumption has two meanings:
+Resumption has three related meanings:
 
 1. Resume an app thread in the UI from persisted projection.
 2. Resume a provider-native conversation/session.
+3. Recover or recreate a live provider runtime process while preserving app and provider-thread continuity.
 
 V2 always supports app-thread resumption from stored events/projections. Provider-thread resumption is a required provider adapter primitive. Every provider harness must expose a cursor/session/thread handle that can be used to resume prior provider state.
+
+Provider runtime recovery is also a core primitive, not a test-only hook. The same recovery path is used when:
+
+- the user restarts the app/server and all provider processes are gone,
+- an idle-session reaper intentionally releases provider processes,
+- a provider process crashes or loses network and policy allows retry.
 
 ```text
 open app thread
@@ -232,6 +239,19 @@ start ProviderSession
 provider resume
 bind new ProviderSessionId to ProviderThread
 ```
+
+Provider runtime recovery flow:
+
+```text
+provider runtime unavailable
+  -> mark ProviderSession stopped/error with reason
+  -> remove live runtime handle from ProviderSessionManager
+  -> keep ProviderThread and nativeThreadRef durable
+  -> on next work, open a new provider runtime
+  -> resume the active ProviderThread before starting/retrying work
+```
+
+Idle cleanup and crash recovery must use production lifecycle APIs. Tests may recreate the outermost layer/runtime or drive the same reaper/recovery service with deterministic clock and replayed provider transport, but they must not use test-only session restart methods.
 
 If provider resume fails:
 

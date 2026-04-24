@@ -3,8 +3,10 @@ import { OrchestrationV2Command, type ProviderReplayTranscript } from "@t3tools/
 import { Effect, Schema } from "effect";
 import { readFile } from "node:fs/promises";
 
+import { layer as idAllocatorLayer } from "../IdAllocator.ts";
+import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
-import { fixtureIds, materializeFixtureInput } from "./fixtures/shared.ts";
+import { materializeFixtureInput } from "./fixtures/shared.ts";
 import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 
 async function readTranscript(file: URL): Promise<ProviderReplayTranscript> {
@@ -32,23 +34,24 @@ describe("orchestrator replay fixture contract", () => {
 
       for (const provider of fixture.providers) {
         const transcript = await readTranscript(provider.transcriptFile);
-        const materialized = materializeFixtureInput({
-          scenario: fixture.name,
-          fixtureInput: fixture.buildInput(),
-          modelSelection: provider.modelSelection,
-        });
-        const ids = fixtureIds(fixture.name);
+        const materialized = await Effect.runPromise(
+          materializeFixtureInput({
+            scenario: fixture.name,
+            fixtureInput: fixture.buildInput(),
+            modelSelection: provider.modelSelection,
+          }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime),
+        );
         const firstCommand = materialized.commands[0];
 
         assert.equal(transcript.scenario, fixture.name);
         assert.equal(transcript.provider, provider.provider);
         assert.equal(provider.modelSelection.provider, provider.provider);
-        assert.equal(materialized.projectionThreadIds[0], ids.threadId);
+        assert.isDefined(materialized.projectionThreadIds[0]);
         assert.equal(firstCommand?.type, "thread.create");
         if (firstCommand?.type !== "thread.create") {
           throw new Error(`${fixture.name}/${provider.provider} must start with thread.create`);
         }
-        assert.equal(firstCommand.threadId, ids.threadId);
+        assert.equal(firstCommand.threadId, materialized.projectionThreadIds[0]);
         assert.equal(materialized.commands.length, fixture.buildInput().steps.length + 1);
         assert.isAtLeast(materialized.steps.length, materialized.commands.length);
         assert.equal(typeof provider.assertOutput, "function");
@@ -64,7 +67,12 @@ describe("orchestrator replay fixture contract", () => {
 
         for (const command of materialized.commands) {
           assert.isTrue(
-            materialized.steps.some((step) => step.type === "dispatch" && step.command === command),
+            materialized.steps.some(
+              (step) =>
+                (step.type === "dispatch" && step.command === command) ||
+                (step.type === "respond_to_next_runtime_request" &&
+                  step.commandId === command.commandId),
+            ),
             `${fixture.name}/${provider.provider} command ${command.commandId} must appear in the timeline`,
           );
         }
