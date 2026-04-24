@@ -51,6 +51,7 @@ const readline = require("node:readline");
 let sessionCounter = 0;
 let currentModeId = "yolo";
 let currentSessionId = "session-" + process.pid + "-0";
+let pendingPrompt = null;
 
 const reply = (id, result) => {
   process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
@@ -94,6 +95,25 @@ rl.on("line", (line) => {
         message.params && typeof message.params.sessionId === "string"
           ? message.params.sessionId
           : currentSessionId;
+      const promptBlocks = Array.isArray(message.params?.prompt) ? message.params.prompt : [];
+      const promptText = promptBlocks
+        .filter((block) => block && block.type === "text" && typeof block.text === "string")
+        .map((block) => block.text)
+        .join("\\n");
+      if (promptText.includes("wait for interrupt")) {
+        pendingPrompt = {
+          id: message.id,
+          sessionId,
+        };
+        notify("session/update", {
+          sessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "still working..." },
+          },
+        });
+        return;
+      }
       if (currentModeId === "plan") {
         notify("session/update", {
           sessionId,
@@ -135,12 +155,15 @@ rl.on("line", (line) => {
       reply(message.id, { stopReason: "end_turn" });
       return;
     }
+    case "session/cancel":
+      return;
     default:
       reply(message.id, {});
   }
 });
 
 process.on("SIGTERM", () => {
+  pendingPrompt = null;
   setTimeout(() => process.exit(1), 75);
 });
 `,
@@ -383,6 +406,80 @@ describe("GeminiAdapterLive", () => {
           expect(proposedEvent.payload.planMarkdown).toBe(
             "# Gemini plan\n\n- inspect the existing implementation\n- ship the requested change",
           );
+        }).pipe(Effect.provide(makeHarness())),
+      ),
+    );
+  });
+
+  it("falls back to interrupting the turn locally when Gemini ignores session/cancel", async () => {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const adapter = yield* GeminiAdapter;
+          const eventsRef = yield* Ref.make<Array<ProviderRuntimeEvent>>([]);
+
+          yield* Stream.runForEach(adapter.streamEvents, (event) =>
+            Ref.update(eventsRef, (events) => [...events, event]),
+          ).pipe(Effect.forkScoped);
+
+          const threadId = ThreadId.make("thread-gemini-unsupported-cancel");
+          yield* adapter.startSession({
+            provider: "gemini",
+            threadId,
+            runtimeMode: "full-access",
+          });
+
+          const started = yield* adapter.sendTurn({
+            threadId,
+            input: "wait for interrupt",
+            attachments: [],
+          });
+
+          for (let remainingAttempts = 50; remainingAttempts > 0; remainingAttempts -= 1) {
+            const events = yield* Ref.get(eventsRef);
+            if (
+              events.some(
+                (event) =>
+                  event.type === "content.delta" &&
+                  event.turnId === started.turnId &&
+                  event.payload.delta === "still working...",
+              )
+            ) {
+              break;
+            }
+            yield* Effect.sleep("10 millis");
+          }
+
+          yield* adapter.interruptTurn(threadId, started.turnId);
+
+          for (let remainingAttempts = 100; remainingAttempts > 0; remainingAttempts -= 1) {
+            const events = yield* Ref.get(eventsRef);
+            if (
+              events.some(
+                (event) =>
+                  event.type === "turn.completed" &&
+                  event.turnId === started.turnId &&
+                  event.payload.state === "interrupted",
+              ) &&
+              events.some((event) => event.type === "session.exited")
+            ) {
+              break;
+            }
+            yield* Effect.sleep("10 millis");
+          }
+
+          const events = yield* Ref.get(eventsRef);
+          expect(
+            events.some(
+              (event) =>
+                event.type === "turn.completed" &&
+                event.turnId === started.turnId &&
+                event.payload.state === "interrupted" &&
+                event.payload.stopReason === "cancelled",
+            ),
+          ).toBe(true);
+          expect(events.some((event) => event.type === "session.exited")).toBe(true);
+          expect(events.some((event) => event.type === "runtime.error")).toBe(false);
         }).pipe(Effect.provide(makeHarness())),
       ),
     );

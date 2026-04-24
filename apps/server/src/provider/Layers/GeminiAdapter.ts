@@ -140,6 +140,7 @@ interface GeminiSessionContext {
   sessionFilePath: string | undefined;
   systemSettingsPath: string | undefined;
   stopped: boolean;
+  interruptedTurnIds: Set<TurnId>;
   lastKnownTokenUsage: ThreadTokenUsageSnapshot | undefined;
   cumulativePromptUsage: GeminiPromptUsageSnapshot | undefined;
 }
@@ -1246,6 +1247,10 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
         readonly usage?: unknown;
         readonly errorMessage?: string;
       },
+      options?: {
+        readonly persistSnapshot?: boolean;
+        readonly emitReadyState?: boolean;
+      },
     ) =>
       Effect.gen(function* () {
         const turnState = context.turnState;
@@ -1337,34 +1342,43 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
           },
         });
 
-        const storedTurn = yield* persistTurnSnapshot(
-          context,
-          turnState.turnId,
-          turnState.items,
-        ).pipe(
-          Effect.catch((error) =>
-            emitRuntimeWarning(context, error.message, {
-              method: "session/snapshot",
-              payload: {
-                message: error.message,
-              },
-            }).pipe(
-              Effect.as({
-                id: turnState.turnId,
-                items: cloneUnknownArray(turnState.items),
-              } satisfies GeminiStoredTurn),
-            ),
-          ),
-        );
-
-        context.turns.push(storedTurn);
         context.turnState = undefined;
+
+        if (options?.persistSnapshot !== false) {
+          const storedTurn = yield* persistTurnSnapshot(
+            context,
+            turnState.turnId,
+            turnState.items,
+          ).pipe(
+            Effect.catch((error) =>
+              emitRuntimeWarning(context, error.message, {
+                method: "session/snapshot",
+                payload: {
+                  message: error.message,
+                },
+              }).pipe(
+                Effect.as({
+                  id: turnState.turnId,
+                  items: cloneUnknownArray(turnState.items),
+                } satisfies GeminiStoredTurn),
+              ),
+            ),
+          );
+
+          context.turns.push(storedTurn);
+        }
+
         updateGeminiSession(context, {
-          status: "ready",
+          ...(options?.emitReadyState === false ? {} : { status: "ready" as const }),
           activeTurnId: undefined,
           resumeCursor: buildResumeCursor(context),
           lastError: result.state === "failed" ? result.errorMessage : undefined,
         });
+
+        if (options?.emitReadyState === false) {
+          return;
+        }
+
         yield* emitSessionState(context, "ready");
       });
 
@@ -1515,6 +1529,9 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
             ),
         );
         if (promptResult._tag === "Failure") {
+          if (context.interruptedTurnIds.delete(turnId)) {
+            return;
+          }
           const error = promptResult.failure;
           const message = toMessage(error, "Gemini turn failed.");
           yield* emitRuntimeError(context, message, error, turnId);
@@ -1529,6 +1546,9 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
         const responseRecord = asRecord(response);
         const stopReason =
           typeof responseRecord?.stopReason === "string" ? responseRecord.stopReason : null;
+        if (context.interruptedTurnIds.delete(turnId)) {
+          return;
+        }
         // Let queued ACP session updates land on the notification fiber before
         // finalizing the turn so derived plan/message state is complete.
         yield* Effect.sleep("10 millis");
@@ -1693,6 +1713,7 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
           sessionFilePath: input.sessionFilePath,
           systemSettingsPath: input.systemSettingsPath,
           stopped: false,
+          interruptedTurnIds: new Set<TurnId>(),
           lastKnownTokenUsage: undefined,
           cumulativePromptUsage: undefined,
         };
@@ -1893,11 +1914,28 @@ function makeGeminiAdapter(options?: GeminiAdapterLiveOptions) {
             return;
           }
           yield* settlePendingApprovalsAsCancelled(context.pendingApprovals);
-          yield* context.acp.cancel.pipe(
-            Effect.mapError((cause) =>
-              mapAcpToAdapterError(PROVIDER, threadId, "session/cancel", cause),
-            ),
+          const interruptedTurnId = context.turnState.turnId;
+          // ACP cancellation is a fire-and-forget notification. Gemini CLI can
+          // ignore it and continue running, so if the turn is still active
+          // after the notification is sent we finalize it locally and tear down
+          // the session to make the stop button deterministic.
+          yield* Effect.ignore(context.acp.cancel);
+          if (context.turnState?.turnId !== interruptedTurnId) {
+            return;
+          }
+          context.interruptedTurnIds.add(interruptedTurnId);
+          yield* finishTurn(
+            context,
+            {
+              state: "interrupted",
+              stopReason: "cancelled",
+            },
+            {
+              persistSnapshot: false,
+              emitReadyState: false,
+            },
           );
+          yield* stopSessionInternal(context);
         }),
       );
 
