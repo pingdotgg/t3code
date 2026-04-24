@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
-import { buildPatchCacheKey } from "./diffRendering";
+import {
+  buildPatchCacheKey,
+  canRenderFileDiff,
+  MAX_RENDERABLE_DIFF_LINE_LENGTH,
+} from "./diffRendering";
 
 describe("buildPatchCacheKey", () => {
   it("returns a stable cache key for identical content", () => {
@@ -27,5 +31,25 @@ describe("buildPatchCacheKey", () => {
     expect(buildPatchCacheKey(patch, "diff-panel:light")).not.toBe(
       buildPatchCacheKey(patch, "diff-panel:dark"),
     );
+  });
+});
+
+describe("diff render line limits", () => {
+  it("rejects file diffs with pathological line lengths", () => {
+    expect(
+      canRenderFileDiff({
+        additionLines: ["small"],
+        deletionLines: ["x".repeat(MAX_RENDERABLE_DIFF_LINE_LENGTH + 1)],
+      }),
+    ).toBe(false);
+  });
+
+  it("allows file diffs within the line length limit", () => {
+    expect(
+      canRenderFileDiff({
+        additionLines: ["x".repeat(MAX_RENDERABLE_DIFF_LINE_LENGTH)],
+        deletionLines: ["small"],
+      }),
+    ).toBe(true);
   });
 });
