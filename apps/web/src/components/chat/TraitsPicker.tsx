@@ -1,20 +1,17 @@
 import {
-  type ClaudeModelOptions,
-  type CodexModelOptions,
-  type OpenCodeModelOptions,
   type ProviderKind,
-  type ProviderModelOptions,
+  type ProviderOptionDescriptor,
+  type ProviderOptionSelection,
   type ScopedThreadRef,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import {
   applyClaudePromptEffortPrefix,
+  buildProviderOptionSelectionsFromDescriptors,
+  getProviderOptionCurrentLabel,
+  getProviderOptionCurrentValue,
+  getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
-  trimOrNull,
-  getDefaultEffort,
-  getDefaultContextWindow,
-  hasContextWindowOption,
-  resolveEffort,
 } from "@t3tools/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
@@ -33,12 +30,7 @@ import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 
-type ProviderOptions = ProviderModelOptions[ProviderKind];
-type NamedOption = {
-  value: string;
-  label: string;
-  isDefault?: boolean | undefined;
-};
+type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
 type TraitsPersistence =
   | {
@@ -53,61 +45,34 @@ type TraitsPersistence =
 
 const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
 
-function getRawEffort(
-  provider: ProviderKind,
-  modelOptions: ProviderOptions | null | undefined,
+function replaceDescriptorCurrentValue(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  descriptorId: string,
+  currentValue: string | boolean | undefined,
+): ReadonlyArray<ProviderOptionDescriptor> {
+  return descriptors.map((descriptor) =>
+    descriptor.id !== descriptorId
+      ? descriptor
+      : descriptor.type === "boolean"
+        ? {
+            ...descriptor,
+            ...(typeof currentValue === "boolean" ? { currentValue } : {}),
+          }
+        : {
+            ...descriptor,
+            ...(typeof currentValue === "string" ? { currentValue } : {}),
+          },
+  );
+}
+
+function getDescriptorStringValue(
+  descriptor: Extract<ProviderOptionDescriptor, { type: "select" }> | null,
 ): string | null {
-  if (provider === "codex") {
-    return trimOrNull((modelOptions as CodexModelOptions | undefined)?.reasoningEffort);
+  if (!descriptor) {
+    return null;
   }
-  if (provider === "opencode") {
-    return trimOrNull((modelOptions as OpenCodeModelOptions | undefined)?.variant);
-  }
-  return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.effort);
-}
-
-function getRawAgent(modelOptions: ProviderOptions | null | undefined): string | null {
-  return trimOrNull((modelOptions as OpenCodeModelOptions | undefined)?.agent);
-}
-
-function resolveNamedOption(
-  options: ReadonlyArray<NamedOption>,
-  raw: string | null,
-): NamedOption | null {
-  if (raw) {
-    const matchingOption = options.find((option) => option.value === raw);
-    if (matchingOption) {
-      return matchingOption;
-    }
-  }
-  return options.find((option) => option.isDefault) ?? null;
-}
-
-function getRawContextWindow(
-  provider: ProviderKind,
-  modelOptions: ProviderOptions | null | undefined,
-): string | null {
-  if (provider === "claudeAgent") {
-    return trimOrNull((modelOptions as ClaudeModelOptions | undefined)?.contextWindow);
-  }
-  return null;
-}
-
-function buildNextOptions(
-  provider: ProviderKind,
-  modelOptions: ProviderOptions | null | undefined,
-  patch: Record<string, unknown>,
-): ProviderOptions {
-  if (provider === "codex") {
-    return { ...(modelOptions as CodexModelOptions | undefined), ...patch } as CodexModelOptions;
-  }
-  if (provider === "opencode") {
-    return {
-      ...(modelOptions as OpenCodeModelOptions | undefined),
-      ...patch,
-    } as OpenCodeModelOptions;
-  }
-  return { ...(modelOptions as ClaudeModelOptions | undefined), ...patch } as ClaudeModelOptions;
+  const value = getProviderOptionCurrentValue(descriptor);
+  return typeof value === "string" ? value : null;
 }
 
 function getSelectedTraits(
@@ -119,70 +84,114 @@ function getSelectedTraits(
   allowPromptInjectedEffort: boolean,
 ) {
   const caps = getProviderModelCapabilities(models, model, provider);
-  const effortLevels =
-    provider === "opencode"
-      ? (caps.variantOptions ?? [])
-      : allowPromptInjectedEffort
-        ? caps.reasoningEffortLevels
-        : caps.reasoningEffortLevels.filter(
-            (option) => !caps.promptInjectedEffortLevels.includes(option.value),
-          );
-
-  // Resolve effort from options (provider-specific key)
-  const rawEffort = getRawEffort(provider, modelOptions);
-  const effort =
-    provider === "opencode"
-      ? (resolveNamedOption(effortLevels, rawEffort)?.value ?? null)
-      : (resolveEffort(caps, rawEffort) ?? null);
-
-  // Thinking toggle (only for models that support it)
-  const thinkingEnabled = caps.supportsThinkingToggle
-    ? ((modelOptions as ClaudeModelOptions | undefined)?.thinking ?? true)
-    : null;
-
-  // Fast mode
-  const fastModeEnabled =
-    caps.supportsFastMode &&
-    (modelOptions as { fastMode?: boolean } | undefined)?.fastMode === true;
-
-  // Context window
-  const contextWindowOptions = caps.contextWindowOptions;
-  const rawContextWindow = getRawContextWindow(provider, modelOptions);
-  const defaultContextWindow = getDefaultContextWindow(caps);
-  const contextWindow =
-    rawContextWindow && hasContextWindowOption(caps, rawContextWindow)
-      ? rawContextWindow
-      : defaultContextWindow;
+  const descriptors = getProviderOptionDescriptors({
+    caps,
+    selections: modelOptions,
+  });
+  const selectDescriptors = descriptors.filter(
+    (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
+      descriptor.type === "select",
+  );
+  const booleanDescriptors = descriptors.filter(
+    (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "boolean" }> =>
+      descriptor.type === "boolean",
+  );
+  const primarySelectDescriptor = selectDescriptors[0] ?? null;
+  const contextWindowDescriptor =
+    selectDescriptors.find((descriptor) => descriptor.id === "contextWindow") ?? null;
+  const agentDescriptor = selectDescriptors.find((descriptor) => descriptor.id === "agent") ?? null;
+  const fastModeDescriptor =
+    booleanDescriptors.find((descriptor) => descriptor.id === "fastMode") ?? null;
+  const thinkingDescriptor =
+    booleanDescriptors.find((descriptor) => descriptor.id === "thinking") ?? null;
 
   // Prompt-controlled effort (e.g. ultrathink in prompt text)
   const ultrathinkPromptControlled =
     allowPromptInjectedEffort &&
-    caps.promptInjectedEffortLevels.length > 0 &&
+    (primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0 &&
     isClaudeUltrathinkPrompt(prompt);
 
   // Check if "ultrathink" appears in the body text (not just our prefix)
   const ultrathinkInBodyText =
     ultrathinkPromptControlled && isClaudeUltrathinkPrompt(prompt.replace(/^Ultrathink:\s*/i, ""));
-
-  const agentOptions = caps.agentOptions ?? [];
-  const selectedAgentOption =
-    provider === "opencode" ? resolveNamedOption(agentOptions, getRawAgent(modelOptions)) : null;
+  const effort =
+    (ultrathinkPromptControlled
+      ? "ultrathink"
+      : getDescriptorStringValue(primarySelectDescriptor)) ?? null;
+  const thinkingEnabled =
+    typeof thinkingDescriptor?.currentValue === "boolean" ? thinkingDescriptor.currentValue : null;
+  const fastModeEnabled =
+    typeof fastModeDescriptor?.currentValue === "boolean" ? fastModeDescriptor.currentValue : false;
+  const contextWindow = getDescriptorStringValue(contextWindowDescriptor);
+  const selectedAgent = getDescriptorStringValue(agentDescriptor);
+  const selectedAgentLabel = agentDescriptor
+    ? getProviderOptionCurrentLabel(agentDescriptor)
+    : null;
 
   return {
     caps,
+    descriptors,
+    selectDescriptors,
+    booleanDescriptors,
+    primarySelectDescriptor,
+    contextWindowDescriptor,
+    agentDescriptor,
+    fastModeDescriptor,
+    thinkingDescriptor,
     effort,
-    effortLevels,
     thinkingEnabled,
     fastModeEnabled,
-    contextWindowOptions,
     contextWindow,
-    defaultContextWindow,
     ultrathinkPromptControlled,
     ultrathinkInBodyText,
-    agentOptions,
-    selectedAgent: selectedAgentOption?.value ?? null,
-    selectedAgentLabel: selectedAgentOption?.label ?? null,
+    selectedAgent,
+    selectedAgentLabel,
   };
+}
+
+function getTraitsSectionVisibility(input: {
+  provider: ProviderKind;
+  models: ReadonlyArray<ServerProviderModel>;
+  model: string | null | undefined;
+  prompt: string;
+  modelOptions: ProviderOptions | null | undefined;
+  allowPromptInjectedEffort?: boolean;
+}) {
+  const selected = getSelectedTraits(
+    input.provider,
+    input.models,
+    input.model,
+    input.prompt,
+    input.modelOptions,
+    input.allowPromptInjectedEffort ?? true,
+  );
+
+  const showEffort = selected.primarySelectDescriptor !== null;
+  const showThinking = selected.thinkingDescriptor !== null;
+  const showFastMode = selected.fastModeDescriptor !== null;
+  const showContextWindow = selected.contextWindowDescriptor !== null;
+  const showAgent = selected.agentDescriptor !== null;
+
+  return {
+    ...selected,
+    showEffort,
+    showThinking,
+    showFastMode,
+    showContextWindow,
+    showAgent,
+    hasAnyControls: showEffort || showThinking || showFastMode || showContextWindow || showAgent,
+  };
+}
+
+export function shouldRenderTraitsControls(input: {
+  provider: ProviderKind;
+  models: ReadonlyArray<ServerProviderModel>;
+  model: string | null | undefined;
+  prompt: string;
+  modelOptions: ProviderOptions | null | undefined;
+  allowPromptInjectedEffort?: boolean;
+}): boolean {
+  return getTraitsSectionVisibility(input).hasAnyControls;
 }
 
 export interface TraitsMenuContentProps {
@@ -219,191 +228,115 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
         return;
       }
       setProviderModelOptions(threadTarget, provider, nextOptions, {
+        model,
         persistSticky: true,
       });
     },
-    [persistence, provider, setProviderModelOptions],
+    [model, persistence, provider, setProviderModelOptions],
   );
   const {
-    caps,
-    effort,
-    effortLevels,
-    thinkingEnabled,
-    fastModeEnabled,
-    contextWindowOptions,
-    contextWindow,
-    defaultContextWindow,
+    descriptors,
+    selectDescriptors,
+    booleanDescriptors,
+    primarySelectDescriptor,
     ultrathinkPromptControlled,
     ultrathinkInBodyText,
-    agentOptions,
-    selectedAgent,
-  } = getSelectedTraits(provider, models, model, prompt, modelOptions, allowPromptInjectedEffort);
-  const defaultEffort = getDefaultEffort(caps);
+    hasAnyControls,
+  } = getTraitsSectionVisibility({
+    provider,
+    models,
+    model,
+    prompt,
+    modelOptions,
+    allowPromptInjectedEffort,
+  });
+  const updateDescriptors = (nextDescriptors: ReadonlyArray<ProviderOptionDescriptor>) => {
+    updateModelOptions(buildProviderOptionSelectionsFromDescriptors(nextDescriptors));
+  };
 
-  const handleEffortChange = useCallback(
-    (value: string) => {
-      if (!value) return;
-      const nextOption = effortLevels.find((option) => option.value === value);
-      if (!nextOption) return;
-      if (provider === "opencode") {
-        updateModelOptions(buildNextOptions(provider, modelOptions, { variant: nextOption.value }));
-        return;
-      }
-      if (caps.promptInjectedEffortLevels.includes(nextOption.value)) {
-        const nextPrompt =
-          prompt.trim().length === 0
-            ? ULTRATHINK_PROMPT_PREFIX
-            : applyClaudePromptEffortPrefix(prompt, "ultrathink");
-        onPromptChange(nextPrompt);
-        return;
-      }
-      if (ultrathinkInBodyText) return;
-      if (ultrathinkPromptControlled) {
-        const stripped = prompt.replace(/^Ultrathink:\s*/i, "");
-        onPromptChange(stripped);
-      }
-      const effortKey = provider === "codex" ? "reasoningEffort" : "effort";
-      updateModelOptions(
-        buildNextOptions(provider, modelOptions, { [effortKey]: nextOption.value }),
-      );
-    },
-    [
-      ultrathinkPromptControlled,
-      ultrathinkInBodyText,
-      modelOptions,
-      onPromptChange,
-      updateModelOptions,
-      effortLevels,
-      prompt,
-      caps.promptInjectedEffortLevels,
-      provider,
-    ],
-  );
+  const handleSelectChange = (
+    descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
+    value: string,
+  ) => {
+    if (!value) return;
+    if (descriptor.promptInjectedValues?.includes(value)) {
+      const nextPrompt =
+        prompt.trim().length === 0
+          ? ULTRATHINK_PROMPT_PREFIX
+          : applyClaudePromptEffortPrefix(prompt, "ultrathink");
+      onPromptChange(nextPrompt);
+      return;
+    }
+    if (ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id) return;
+    if (ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id) {
+      const stripped = prompt.replace(/^Ultrathink:\s*/i, "");
+      onPromptChange(stripped);
+    }
+    updateDescriptors(replaceDescriptorCurrentValue(descriptors, descriptor.id, value));
+  };
 
-  if (
-    effort === null &&
-    thinkingEnabled === null &&
-    contextWindowOptions.length <= 1 &&
-    agentOptions.length === 0
-  ) {
+  if (!hasAnyControls) {
     return null;
   }
 
   return (
     <>
-      {effort ? (
-        <>
+      {selectDescriptors.map((descriptor, index) => (
+        <div key={descriptor.id}>
+          {index > 0 ? <MenuDivider /> : null}
           <MenuGroup>
             <div className="px-2 pt-1.5 pb-1 font-medium text-muted-foreground text-xs">
-              {provider === "opencode" ? "Variant" : "Effort"}
+              {descriptor.label}
             </div>
-            {ultrathinkInBodyText ? (
+            {ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id ? (
               <div className="px-2 pb-1.5 text-muted-foreground/80 text-xs">
-                Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change effort.
+                Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change this
+                option.
               </div>
             ) : null}
             <MenuRadioGroup
-              value={ultrathinkPromptControlled ? "ultrathink" : effort}
-              onValueChange={handleEffortChange}
+              value={
+                ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id
+                  ? "ultrathink"
+                  : (getDescriptorStringValue(descriptor) ?? "")
+              }
+              onValueChange={(value) => handleSelectChange(descriptor, value)}
             >
-              {effortLevels.map((option) => (
+              {descriptor.options.map((option) => (
                 <MenuRadioItem
-                  key={option.value}
-                  value={option.value}
-                  disabled={ultrathinkInBodyText}
+                  key={option.id}
+                  value={option.id}
+                  disabled={ultrathinkInBodyText && descriptor.id === primarySelectDescriptor?.id}
                 >
-                  {option.label}
-                  {(provider === "opencode" ? option.isDefault : option.value === defaultEffort)
-                    ? " (default)"
-                    : ""}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </MenuGroup>
-        </>
-      ) : thinkingEnabled !== null ? (
-        <MenuGroup>
-          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Thinking</div>
-          <MenuRadioGroup
-            value={thinkingEnabled ? "on" : "off"}
-            onValueChange={(value) => {
-              updateModelOptions(
-                buildNextOptions(provider, modelOptions, { thinking: value === "on" }),
-              );
-            }}
-          >
-            <MenuRadioItem value="on">On (default)</MenuRadioItem>
-            <MenuRadioItem value="off">Off</MenuRadioItem>
-          </MenuRadioGroup>
-        </MenuGroup>
-      ) : null}
-      {caps.supportsFastMode ? (
-        <>
-          <MenuDivider />
-          <MenuGroup>
-            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Fast Mode</div>
-            <MenuRadioGroup
-              value={fastModeEnabled ? "on" : "off"}
-              onValueChange={(value) => {
-                updateModelOptions(
-                  buildNextOptions(provider, modelOptions, { fastMode: value === "on" }),
-                );
-              }}
-            >
-              <MenuRadioItem value="off">off</MenuRadioItem>
-              <MenuRadioItem value="on">on</MenuRadioItem>
-            </MenuRadioGroup>
-          </MenuGroup>
-        </>
-      ) : null}
-      {contextWindowOptions.length > 1 ? (
-        <>
-          <MenuDivider />
-          <MenuGroup>
-            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
-              Context Window
-            </div>
-            <MenuRadioGroup
-              value={contextWindow ?? defaultContextWindow ?? ""}
-              onValueChange={(value) => {
-                updateModelOptions(
-                  buildNextOptions(provider, modelOptions, {
-                    contextWindow: value,
-                  }),
-                );
-              }}
-            >
-              {contextWindowOptions.map((option) => (
-                <MenuRadioItem key={option.value} value={option.value}>
-                  {option.label}
-                  {option.value === defaultContextWindow ? " (default)" : ""}
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </MenuGroup>
-        </>
-      ) : null}
-      {agentOptions.length > 0 ? (
-        <>
-          <MenuDivider />
-          <MenuGroup>
-            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Agent</div>
-            <MenuRadioGroup
-              value={selectedAgent ?? ""}
-              onValueChange={(value) => {
-                updateModelOptions(buildNextOptions(provider, modelOptions, { agent: value }));
-              }}
-            >
-              {agentOptions.map((option) => (
-                <MenuRadioItem key={option.value} value={option.value}>
                   {option.label}
                   {option.isDefault ? " (default)" : ""}
                 </MenuRadioItem>
               ))}
             </MenuRadioGroup>
           </MenuGroup>
-        </>
-      ) : null}
+        </div>
+      ))}
+      {booleanDescriptors.map((descriptor, index) => (
+        <div key={descriptor.id}>
+          {index > 0 || selectDescriptors.length > 0 ? <MenuDivider /> : null}
+          <MenuGroup>
+            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">
+              {descriptor.label}
+            </div>
+            <MenuRadioGroup
+              value={descriptor.currentValue === true ? "on" : "off"}
+              onValueChange={(value) => {
+                updateDescriptors(
+                  replaceDescriptorCurrentValue(descriptors, descriptor.id, value === "on"),
+                );
+              }}
+            >
+              <MenuRadioItem value="on">On</MenuRadioItem>
+              <MenuRadioItem value="off">Off</MenuRadioItem>
+            </MenuRadioGroup>
+          </MenuGroup>
+        </div>
+      ))}
     </>
   );
 });
@@ -421,40 +354,44 @@ export const TraitsPicker = memo(function TraitsPicker({
   ...persistence
 }: TraitsMenuContentProps & TraitsPersistence) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const {
-    caps,
-    effort,
-    effortLevels,
-    thinkingEnabled,
-    fastModeEnabled,
-    contextWindowOptions,
-    contextWindow,
-    defaultContextWindow,
-    ultrathinkPromptControlled,
-    selectedAgentLabel,
-  } = getSelectedTraits(provider, models, model, prompt, modelOptions, allowPromptInjectedEffort);
+  const { descriptors, primarySelectDescriptor, ultrathinkPromptControlled } =
+    getTraitsSectionVisibility({
+      provider,
+      models,
+      model,
+      prompt,
+      modelOptions,
+      allowPromptInjectedEffort,
+    });
+  if (
+    !shouldRenderTraitsControls({
+      provider,
+      models,
+      model,
+      prompt,
+      modelOptions,
+      allowPromptInjectedEffort,
+    })
+  ) {
+    return null;
+  }
 
-  const effortLabel = effort
-    ? (effortLevels.find((l) => l.value === effort)?.label ?? effort)
-    : null;
-  const contextWindowLabel =
-    contextWindowOptions.length > 1 && contextWindow !== defaultContextWindow
-      ? (contextWindowOptions.find((o) => o.value === contextWindow)?.label ?? null)
-      : null;
-  const triggerLabel = [
-    ultrathinkPromptControlled
-      ? "Ultrathink"
-      : effortLabel
-        ? effortLabel
-        : thinkingEnabled === null
-          ? null
-          : `Thinking ${thinkingEnabled ? "On" : "Off"}`,
-    ...(caps.supportsFastMode && fastModeEnabled ? ["Fast"] : []),
-    ...(contextWindowLabel ? [contextWindowLabel] : []),
-    ...(selectedAgentLabel ? [selectedAgentLabel] : []),
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const triggerLabel =
+    descriptors
+      .map((descriptor) => {
+        if (ultrathinkPromptControlled && descriptor.id === primarySelectDescriptor?.id) {
+          return "Ultrathink";
+        }
+        if (descriptor.type === "boolean") {
+          if (descriptor.id === "fastMode") {
+            return descriptor.currentValue === true ? "Fast" : "Normal";
+          }
+          return `${descriptor.label} ${descriptor.currentValue === true ? "On" : "Off"}`;
+        }
+        return getProviderOptionCurrentLabel(descriptor);
+      })
+      .filter((label): label is string => typeof label === "string" && label.length > 0)
+      .join(" · ") || "";
 
   const isCodexStyle = provider === "codex";
 

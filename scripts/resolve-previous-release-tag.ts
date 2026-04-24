@@ -75,11 +75,17 @@ const parseStableTag = (tag: string): StableVersion | undefined => {
   const [, major, minor, patch, prerelease] = match;
   if (!major || !minor || !patch) return undefined;
 
+  const prereleaseIdentifiers = prerelease ? prerelease.split(".") : [];
+  // Nightly tags also start with `v` and carry a `nightly.*` prerelease
+  // identifier. They must not be considered stable candidates when resolving
+  // the previous stable tag.
+  if (prereleaseIdentifiers[0] === "nightly") return undefined;
+
   return {
     major: Number(major),
     minor: Number(minor),
     patch: Number(patch),
-    prerelease: prerelease ? prerelease.split(".") : [],
+    prerelease: prereleaseIdentifiers,
   };
 };
 
@@ -92,7 +98,9 @@ const compareNightlyVersions = (left: NightlyVersion, right: NightlyVersion): nu
 };
 
 const parseNightlyTag = (tag: string): NightlyVersion | undefined => {
-  const match = /^nightly-v(\d+)\.(\d+)\.(\d+)-nightly\.(\d{8})\.(\d+)$/.exec(tag);
+  // Accept both the current `v<semver>` format and the legacy `nightly-v<semver>`
+  // format so release note diffs keep working across the tag-format transition.
+  const match = /^(?:nightly-)?v(\d+)\.(\d+)\.(\d+)-nightly\.(\d{8})\.(\d+)$/.exec(tag);
   if (!match) return undefined;
 
   const [, major, minor, patch, date, runNumber] = match;

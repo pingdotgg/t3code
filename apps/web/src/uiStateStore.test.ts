@@ -1,9 +1,13 @@
 import { ProjectId, ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   clearThreadUi,
+  hydratePersistedProjectState,
   markThreadUnread,
+  PERSISTED_STATE_KEY,
+  type PersistedUiState,
+  persistState,
   reorderProjects,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
@@ -183,40 +187,43 @@ describe("uiStateStore pure functions", () => {
     });
 
     const next = syncProjects(initialState, [
-      { key: project1, cwd: "/tmp/project-1" },
-      { key: project2, cwd: "/tmp/project-2" },
-      { key: project3, cwd: "/tmp/project-3" },
+      { key: project1, logicalKey: project1, cwd: "/tmp/project-1" },
+      { key: project2, logicalKey: project2, cwd: "/tmp/project-2" },
+      { key: project3, logicalKey: project3, cwd: "/tmp/project-3" },
     ]);
 
     expect(next.projectOrder).toEqual([project2, project1, project3]);
     expect(next.projectExpandedById[project2]).toBe(false);
   });
 
-  it("syncProjects preserves manual order when a project is recreated with the same cwd", () => {
-    const oldProject1 = ProjectId.make("project-1");
-    const oldProject2 = ProjectId.make("project-2");
-    const recreatedProject2 = ProjectId.make("project-2b");
+  it("syncProjects preserves manual order across project id churn at the same cwd", () => {
+    // Under the current design, physical key and logical key are both
+    // cwd-derived, so an internal project-id change doesn't alter the store
+    // keys. This test locks in that stability: re-syncing the same cwds keeps
+    // manual order and collapse state.
+    const keyProject1 = "env-local:/tmp/project-1";
+    const keyProject2 = "env-local:/tmp/project-2";
     const initialState = syncProjects(
       makeUiState({
         projectExpandedById: {
-          [oldProject1]: true,
-          [oldProject2]: false,
+          [keyProject1]: true,
+          [keyProject2]: false,
         },
-        projectOrder: [oldProject2, oldProject1],
+        projectOrder: [keyProject2, keyProject1],
       }),
       [
-        { key: oldProject1, cwd: "/tmp/project-1" },
-        { key: oldProject2, cwd: "/tmp/project-2" },
+        { key: keyProject1, logicalKey: keyProject1, cwd: "/tmp/project-1" },
+        { key: keyProject2, logicalKey: keyProject2, cwd: "/tmp/project-2" },
       ],
     );
 
     const next = syncProjects(initialState, [
-      { key: oldProject1, cwd: "/tmp/project-1" },
-      { key: recreatedProject2, cwd: "/tmp/project-2" },
+      { key: keyProject1, logicalKey: keyProject1, cwd: "/tmp/project-1" },
+      { key: keyProject2, logicalKey: keyProject2, cwd: "/tmp/project-2" },
     ]);
 
-    expect(next.projectOrder).toEqual([recreatedProject2, oldProject1]);
-    expect(next.projectExpandedById[recreatedProject2]).toBe(false);
+    expect(next.projectOrder).toEqual([keyProject2, keyProject1]);
+    expect(next.projectExpandedById[keyProject2]).toBe(false);
   });
 
   it("syncProjects returns a new state when only project cwd changes", () => {
@@ -228,14 +235,68 @@ describe("uiStateStore pure functions", () => {
         },
         projectOrder: [project1],
       }),
-      [{ key: project1, cwd: "/tmp/project-1" }],
+      [{ key: project1, logicalKey: project1, cwd: "/tmp/project-1" }],
     );
 
-    const next = syncProjects(initialState, [{ key: project1, cwd: "/tmp/project-1-renamed" }]);
+    const next = syncProjects(initialState, [
+      { key: project1, logicalKey: project1, cwd: "/tmp/project-1-renamed" },
+    ]);
 
     expect(next).not.toBe(initialState);
     expect(next.projectOrder).toEqual([project1]);
     expect(next.projectExpandedById[project1]).toBe(false);
+  });
+
+  it("syncProjects keys projectExpandedById by the logical key, not the physical key", () => {
+    // In repository grouping mode, multiple physical projects (different
+    // environments or different repo-relative paths) collapse into one
+    // logical group. The group's expand state must be keyed by the logical
+    // key so clicks on the grouped row toggle the shared state, and so the
+    // state survives subsequent syncProjects calls (which rebuild the map
+    // from incoming inputs).
+    const physicalLocal = "env-local:/repo/project";
+    const physicalRemote = "env-remote:/repo/project";
+    const logicalKey = "repo-canonical-key";
+
+    const initial = syncProjects(makeUiState(), [
+      { key: physicalLocal, logicalKey, cwd: "/repo/project" },
+      { key: physicalRemote, logicalKey, cwd: "/repo/project" },
+    ]);
+
+    expect(initial.projectExpandedById).toEqual({ [logicalKey]: true });
+
+    const afterCollapse = { ...initial, projectExpandedById: { [logicalKey]: false } };
+    const next = syncProjects(afterCollapse, [
+      { key: physicalLocal, logicalKey, cwd: "/repo/project" },
+      { key: physicalRemote, logicalKey, cwd: "/repo/project" },
+    ]);
+
+    expect(next.projectExpandedById[logicalKey]).toBe(false);
+  });
+
+  it("syncProjects preserves expand state when a project's logical key changes", () => {
+    // Example: late-arriving repo metadata flips grouping identity from the
+    // physical key to a canonical repository key. The row did not actually
+    // change, so the user's collapse choice must carry over.
+    const physicalKey = "env-local:/repo/project";
+    const previousLogicalKey = physicalKey;
+    const nextLogicalKey = "repo-canonical-key";
+
+    const initial = syncProjects(makeUiState(), [
+      { key: physicalKey, logicalKey: previousLogicalKey, cwd: "/repo/project" },
+    ]);
+
+    expect(initial.projectExpandedById[previousLogicalKey]).toBe(true);
+
+    const afterCollapse = {
+      ...initial,
+      projectExpandedById: { [previousLogicalKey]: false },
+    };
+    const next = syncProjects(afterCollapse, [
+      { key: physicalKey, logicalKey: nextLogicalKey, cwd: "/repo/project" },
+    ]);
+
+    expect(next.projectExpandedById[nextLogicalKey]).toBe(false);
   });
 
   it("syncThreads prunes missing thread UI state", () => {
@@ -344,5 +405,158 @@ describe("uiStateStore pure functions", () => {
     const next = setThreadChangedFilesExpanded(initialState, thread1, "turn-1", true);
 
     expect(next.threadChangedFilesExpandedById).toEqual({});
+  });
+});
+
+describe("uiStateStore persistence round-trip", () => {
+  function createLocalStorageStub(): Storage {
+    const store = new Map<string, string>();
+    return {
+      clear: () => {
+        store.clear();
+      },
+      getItem: (key) => store.get(key) ?? null,
+      key: (index) => [...store.keys()][index] ?? null,
+      get length() {
+        return store.size;
+      },
+      removeItem: (key) => {
+        store.delete(key);
+      },
+      setItem: (key, value) => {
+        store.set(key, value);
+      },
+    };
+  }
+
+  let localStorageStub: Storage;
+
+  beforeEach(() => {
+    localStorageStub = createLocalStorageStub();
+    vi.stubGlobal("window", { localStorage: localStorageStub });
+    vi.stubGlobal("localStorage", localStorageStub);
+    // Reset module-level persistence state so tests don't bleed into each other.
+    hydratePersistedProjectState({ collapsedProjectCwds: [], expandedProjectCwds: [] });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("preserves all-collapsed project state across restart", () => {
+    // Regression: pre-fix, persistState only wrote `expandedProjectCwds`, so
+    // an empty array on rehydrate was indistinguishable from a fresh install
+    // and the syncProjects fallback re-expanded every row.
+    const projectA = { key: "kA", logicalKey: "kA", cwd: "/projA" };
+    const projectB = { key: "kB", logicalKey: "kB", cwd: "/projB" };
+
+    let state = syncProjects(makeUiState(), [projectA, projectB]);
+    state = setProjectExpanded(state, projectA.key, false);
+    state = setProjectExpanded(state, projectB.key, false);
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    hydratePersistedProjectState(persisted);
+    const rehydrated = syncProjects(makeUiState(), [projectA, projectB]);
+
+    expect(rehydrated.projectExpandedById).toEqual({
+      [projectA.key]: false,
+      [projectB.key]: false,
+    });
+  });
+
+  it("respects mixed expand state on rehydrate and defaults new projects to expanded", () => {
+    const projectA = { key: "kA", logicalKey: "kA", cwd: "/projA" };
+    const projectB = { key: "kB", logicalKey: "kB", cwd: "/projB" };
+    const projectC = { key: "kC", logicalKey: "kC", cwd: "/projC" };
+
+    let state = syncProjects(makeUiState(), [projectA, projectB]);
+    state = setProjectExpanded(state, projectB.key, false);
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    hydratePersistedProjectState(persisted);
+    const rehydrated = syncProjects(makeUiState(), [projectA, projectB, projectC]);
+
+    expect(rehydrated.projectExpandedById).toEqual({
+      [projectA.key]: true,
+      [projectB.key]: false,
+      [projectC.key]: true,
+    });
+  });
+
+  it("preserves legacy not-in-expanded-list = collapsed for one upgrade session", () => {
+    // Pre-fix shape only stored expandedProjectCwds. Absence of
+    // collapsedProjectCwds opts the session into the legacy fallback so
+    // upgrade users do not see previously collapsed rows pop open.
+    hydratePersistedProjectState({
+      expandedProjectCwds: ["/projA"],
+    });
+
+    const rehydrated = syncProjects(makeUiState(), [
+      { key: "kA", logicalKey: "kA", cwd: "/projA" },
+      { key: "kB", logicalKey: "kB", cwd: "/projB" },
+    ]);
+
+    expect(rehydrated.projectExpandedById).toEqual({
+      kA: true,
+      kB: false,
+    });
+  });
+
+  it("preserves manual project order across restart", () => {
+    const projectA = { key: "kOrderA", logicalKey: "kOrderA", cwd: "/order-projA" };
+    const projectB = { key: "kOrderB", logicalKey: "kOrderB", cwd: "/order-projB" };
+    const projectC = { key: "kOrderC", logicalKey: "kOrderC", cwd: "/order-projC" };
+
+    let state = syncProjects(makeUiState(), [projectA, projectB, projectC]);
+    state = reorderProjects(state, [projectC.key], [projectA.key]);
+    expect(state.projectOrder).toEqual([projectC.key, projectA.key, projectB.key]);
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.projectOrderCwds).toEqual([projectC.cwd, projectA.cwd, projectB.cwd]);
+
+    hydratePersistedProjectState(persisted);
+    // Fresh state (empty projectOrder) so syncProjects derives order from
+    // persistedProjectOrderCwds rather than the in-memory projectOrder branch.
+    const rehydrated = syncProjects(makeUiState(), [projectA, projectB, projectC]);
+
+    expect(rehydrated.projectOrder).toEqual([projectC.key, projectA.key, projectB.key]);
+  });
+
+  it("preserves expand state across restart when project's logical key changes", () => {
+    // After restart, in-memory previousExpandedById is empty, so the
+    // previousLogicalKey-to-state bridge in syncProjects cannot help. The
+    // persisted-cwd fallback is the only mechanism that can carry collapse
+    // state across a restart that also flips a project into a new logical
+    // group (e.g. late-arriving repo metadata). This locks in that path.
+    const physicalKey = "env-local:/lk-restart-proj";
+    const previousLogicalKey = physicalKey;
+    const cwd = "/lk-restart-proj";
+
+    let state = syncProjects(makeUiState(), [
+      { key: physicalKey, logicalKey: previousLogicalKey, cwd },
+    ]);
+    state = setProjectExpanded(state, previousLogicalKey, false);
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    hydratePersistedProjectState(persisted);
+
+    const nextLogicalKey = "lk-restart-canonical";
+    const rehydrated = syncProjects(makeUiState(), [
+      { key: physicalKey, logicalKey: nextLogicalKey, cwd },
+    ]);
+
+    expect(rehydrated.projectExpandedById[nextLogicalKey]).toBe(false);
   });
 });

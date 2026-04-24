@@ -9,56 +9,25 @@ import {
   normalizeModelSlug,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
-import { getComposerProviderState } from "./components/chat/composerProviderRegistry";
+import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { UnifiedSettings } from "@t3tools/contracts/settings";
 import {
   getDefaultServerModel,
   getProviderModels,
   resolveSelectableProvider,
 } from "./providerModels";
+import { ModelEsque } from "./components/chat/providerIconUtils";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 
-export type ProviderCustomModelConfig = {
-  provider: ProviderKind;
-  title: string;
-  description: string;
-  placeholder: string;
-  example: string;
-};
-
 export interface AppModelOption {
   slug: string;
   name: string;
+  shortName?: string;
+  subProvider?: string;
   isCustom: boolean;
 }
-
-const PROVIDER_CUSTOM_MODEL_CONFIG: Record<ProviderKind, ProviderCustomModelConfig> = {
-  codex: {
-    provider: "codex",
-    title: "Codex",
-    description: "Save additional Codex model slugs for the picker and `/model` command.",
-    placeholder: "your-codex-model-slug",
-    example: "gpt-6.7-codex-ultra-preview",
-  },
-  claudeAgent: {
-    provider: "claudeAgent",
-    title: "Claude",
-    description: "Save additional Claude model slugs for the picker and `/model` command.",
-    placeholder: "your-claude-model-slug",
-    example: "claude-sonnet-5-0",
-  },
-  opencode: {
-    provider: "opencode",
-    title: "OpenCode",
-    description: "Save additional OpenCode model slugs in `provider/model` format.",
-    placeholder: "openai/gpt-5",
-    example: "anthropic/claude-sonnet-4-5-20250929",
-  },
-};
-
-export const MODEL_PROVIDER_SETTINGS = Object.values(PROVIDER_CUSTOM_MODEL_CONFIG);
 
 export function normalizeCustomModelSlugs(
   models: Iterable<string | null | undefined>,
@@ -96,9 +65,11 @@ export function getAppModelOptions(
   selectedModel?: string | null,
 ): AppModelOption[] {
   const options: AppModelOption[] = getProviderModels(providers, provider).map(
-    ({ slug, name, isCustom }) => ({
+    ({ slug, name, shortName, subProvider, isCustom }) => ({
       slug,
       name,
+      ...(shortName ? { shortName } : {}),
+      ...(subProvider ? { subProvider } : {}),
       isCustom,
     }),
   );
@@ -162,7 +133,7 @@ export function getCustomModelOptionsByProvider(
   providers: ReadonlyArray<ServerProvider>,
   selectedProvider?: ProviderKind | null,
   selectedModel?: string | null,
-): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
+): Record<ProviderKind, ReadonlyArray<ModelEsque>> {
   return {
     codex: getAppModelOptions(
       settings,
@@ -175,6 +146,12 @@ export function getCustomModelOptionsByProvider(
       providers,
       "claudeAgent",
       selectedProvider === "claudeAgent" ? selectedModel : undefined,
+    ),
+    cursor: getAppModelOptions(
+      settings,
+      providers,
+      "cursor",
+      selectedProvider === "cursor" ? selectedModel : undefined,
     ),
     opencode: getAppModelOptions(
       settings,
@@ -204,9 +181,7 @@ export function resolveAppModelSelectionState(
     model,
     models: getProviderModels(providers, provider),
     prompt: "",
-    modelOptions: {
-      [provider]: provider === selection.provider ? selection.options : undefined,
-    },
+    modelOptions: provider === selection.provider ? selection.options : undefined,
   });
 
   return createModelSelection(provider, model, modelOptionsForDispatch);

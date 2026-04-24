@@ -5,15 +5,19 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+import { createModelCapabilities, normalizeModelSlug } from "@t3tools/shared/model";
 
-const EMPTY_CAPABILITIES: ModelCapabilities = {
-  reasoningEffortLevels: [],
-  supportsFastMode: false,
-  supportsThinkingToggle: false,
-  contextWindowOptions: [],
-  promptInjectedEffortLevels: [],
-};
+const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [],
+});
+
+export function formatProviderKindLabel(provider: ProviderKind): string {
+  return provider
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
 
 export function getProviderModels(
   providers: ReadonlyArray<ServerProvider>,
@@ -29,11 +33,29 @@ export function getProviderSnapshot(
   return providers.find((candidate) => candidate.provider === provider);
 }
 
+export function getProviderDisplayName(
+  providers: ReadonlyArray<ServerProvider>,
+  provider: ProviderKind,
+): string {
+  const snapshot = getProviderSnapshot(providers, provider);
+  return snapshot?.displayName?.trim() || formatProviderKindLabel(provider);
+}
+
+export function getProviderInteractionModeToggle(
+  providers: ReadonlyArray<ServerProvider>,
+  provider: ProviderKind,
+): boolean {
+  return getProviderSnapshot(providers, provider)?.showInteractionModeToggle ?? true;
+}
+
 export function isProviderEnabled(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderKind,
 ): boolean {
-  return getProviderSnapshot(providers, provider)?.enabled ?? true;
+  if (providers.length === 0) {
+    return true;
+  }
+  return getProviderSnapshot(providers, provider)?.enabled ?? false;
 }
 
 export function resolveSelectableProvider(

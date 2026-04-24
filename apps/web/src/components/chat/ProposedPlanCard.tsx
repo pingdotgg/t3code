@@ -24,7 +24,7 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../ui/dialog";
-import { toastManager } from "../ui/toast";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import { readEnvironmentApi } from "~/environmentApi";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 
@@ -45,11 +45,13 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     onError: (error) => {
-      toastManager.add({
-        type: "error",
-        title: "Could not copy plan",
-        description: error instanceof Error ? error.message : "An error occurred while copying.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not copy plan",
+          description: error instanceof Error ? error.message : "An error occurred while copying.",
+        }),
+      );
     },
   });
   const savePathInputId = useId();
@@ -73,11 +75,13 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
 
   const openSaveDialog = () => {
     if (!workspaceRoot) {
-      toastManager.add({
-        type: "error",
-        title: "Workspace path is unavailable",
-        description: "This thread does not have a workspace path to save into.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Workspace path is unavailable",
+          description: "This thread does not have a workspace path to save into.",
+        }),
+      );
       return;
     }
     setSavePath((existing) => (existing.length > 0 ? existing : downloadFilename));
@@ -114,11 +118,13 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
         });
       })
       .catch((error) => {
-        toastManager.add({
-          type: "error",
-          title: "Could not save plan",
-          description: error instanceof Error ? error.message : "An error occurred while saving.",
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not save plan",
+            description: error instanceof Error ? error.message : "An error occurred while saving.",
+          }),
+        );
       })
       .then(
         () => {

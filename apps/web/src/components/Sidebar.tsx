@@ -75,11 +75,13 @@ import { useUiStateStore } from "../uiStateStore";
 import {
   resolveShortcutCommand,
   shortcutLabelForCommand,
-  shouldShowThreadJumpHints,
+  shouldShowThreadJumpHintsForModifiers,
   threadJumpCommandForIndex,
   threadJumpIndexFromCommand,
   threadTraversalDirectionFromCommand,
 } from "../keybindings";
+import { useModelPickerOpen } from "../modelPickerOpenState";
+import { useShortcutModifierState } from "../shortcutModifierState";
 import { useGitStatus } from "../lib/gitStatusState";
 import { readLocalApi } from "../localApi";
 import { useComposerDraftStore } from "../composerDraftStore";
@@ -92,7 +94,7 @@ import {
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
-import { toastManager } from "./ui/toast";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { Kbd } from "./ui/kbd";
@@ -166,7 +168,11 @@ import { CommandDialogTrigger } from "./ui/command";
 import { readEnvironmentApi } from "../environmentApi";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
-import { derivePhysicalProjectKey, deriveProjectGroupingOverrideKey } from "../logicalProject";
+import {
+  derivePhysicalProjectKey,
+  deriveProjectGroupingOverrideKey,
+  getProjectOrderKey,
+} from "../logicalProject";
 import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
@@ -198,24 +204,6 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
   repository_path: "Group by repository path",
   separate: "Keep separate",
 };
-
-function threadJumpLabelMapsEqual(
-  left: ReadonlyMap<string, string>,
-  right: ReadonlyMap<string, string>,
-): boolean {
-  if (left === right) {
-    return true;
-  }
-  if (left.size !== right.size) {
-    return false;
-  }
-  for (const [key, value] of left) {
-    if (right.get(key) !== value) {
-      return false;
-    }
-  }
-  return true;
-}
 
 function formatProjectMemberActionLabel(
   member: SidebarProjectGroupMember,
@@ -962,11 +950,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     },
     onError: (error) => {
-      toastManager.add({
-        type: "error",
-        title: "Failed to copy thread ID",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy thread ID",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
     },
   });
   const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{
@@ -980,11 +970,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
     },
     onError: (error) => {
-      toastManager.add({
-        type: "error",
-        title: "Failed to copy path",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy path",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
     },
   });
   const openPrLink = useCallback((event: React.MouseEvent<HTMLElement>, prUrl: string) => {
@@ -1001,11 +993,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     }
 
     void api.shell.openExternal(prUrl).catch((error) => {
-      toastManager.add({
-        type: "error",
-        title: "Unable to open PR link",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to open PR link",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
     });
   }, []);
   const sidebarThreads = useStore(
@@ -1311,72 +1305,73 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const memberProjectRef = scopeProjectRef(member.environmentId, member.id);
       const memberThreadCount = memberThreadCountByPhysicalKey.get(member.physicalProjectKey) ?? 0;
       if (memberThreadCount > 0) {
-        const warningToastId = toastManager.add({
-          type: "warning",
-          title: "Project is not empty",
-          description: "Delete all threads in this project before removing it.",
-          data: {
-            actionLayout: "stacked-end",
+        const warningToastId = toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Project is not empty",
+            description: "Delete all threads in this project before removing it.",
             actionVariant: "destructive",
-          },
-          actionProps: {
-            children: "Delete anyway",
-            onClick: () => {
-              void (async () => {
-                toastManager.close(warningToastId);
-                await new Promise<void>((resolve) => {
-                  window.setTimeout(resolve, 180);
-                });
+            actionProps: {
+              children: "Delete anyway",
+              onClick: () => {
+                void (async () => {
+                  toastManager.close(warningToastId);
+                  await new Promise<void>((resolve) => {
+                    window.setTimeout(resolve, 180);
+                  });
 
-                const latestProjectThreads = selectSidebarThreadsForProjectRefs(
-                  useStore.getState(),
-                  [memberProjectRef],
-                );
-                const confirmed = await api.dialogs.confirm(
-                  latestProjectThreads.length > 0
-                    ? [
-                        `Remove project "${member.name}" and delete its ${latestProjectThreads.length} thread${
-                          latestProjectThreads.length === 1 ? "" : "s"
-                        }?`,
-                        `Path: ${member.cwd}`,
-                        ...(member.environmentLabel
-                          ? [`Environment: ${member.environmentLabel}`]
-                          : []),
-                        "This permanently clears conversation history for those threads.",
-                        "This removes only this project entry.",
-                        "This action cannot be undone.",
-                      ].join("\n")
-                    : [
-                        `Remove project "${member.name}"?`,
-                        `Path: ${member.cwd}`,
-                        ...(member.environmentLabel
-                          ? [`Environment: ${member.environmentLabel}`]
-                          : []),
-                        "This removes only this project entry.",
-                      ].join("\n"),
-                );
-                if (!confirmed) {
-                  return;
-                }
+                  const latestProjectThreads = selectSidebarThreadsForProjectRefs(
+                    useStore.getState(),
+                    [memberProjectRef],
+                  );
+                  const confirmed = await api.dialogs.confirm(
+                    latestProjectThreads.length > 0
+                      ? [
+                          `Remove project "${member.name}" and delete its ${latestProjectThreads.length} thread${
+                            latestProjectThreads.length === 1 ? "" : "s"
+                          }?`,
+                          `Path: ${member.cwd}`,
+                          ...(member.environmentLabel
+                            ? [`Environment: ${member.environmentLabel}`]
+                            : []),
+                          "This permanently clears conversation history for those threads.",
+                          "This removes only this project entry.",
+                          "This action cannot be undone.",
+                        ].join("\n")
+                      : [
+                          `Remove project "${member.name}"?`,
+                          `Path: ${member.cwd}`,
+                          ...(member.environmentLabel
+                            ? [`Environment: ${member.environmentLabel}`]
+                            : []),
+                          "This removes only this project entry.",
+                        ].join("\n"),
+                  );
+                  if (!confirmed) {
+                    return;
+                  }
 
-                await removeProject(member, { force: true });
-              })().catch((error) => {
-                const message =
-                  error instanceof Error ? error.message : "Unknown error removing project.";
-                console.error("Failed to remove project", {
-                  projectId: member.id,
-                  environmentId: member.environmentId,
-                  error,
+                  await removeProject(member, { force: true });
+                })().catch((error) => {
+                  const message =
+                    error instanceof Error ? error.message : "Unknown error removing project.";
+                  console.error("Failed to remove project", {
+                    projectId: member.id,
+                    environmentId: member.environmentId,
+                    error,
+                  });
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: `Failed to remove "${member.name}"`,
+                      description: message,
+                    }),
+                  );
                 });
-                toastManager.add({
-                  type: "error",
-                  title: `Failed to remove "${member.name}"`,
-                  description: message,
-                });
-              });
+              },
             },
-          },
-        });
+          }),
+        );
         return;
       }
 
@@ -1400,11 +1395,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           environmentId: member.environmentId,
           error,
         });
-        toastManager.add({
-          type: "error",
-          title: `Failed to remove "${member.name}"`,
-          description: message,
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Failed to remove "${member.name}"`,
+            description: message,
+          }),
+        );
       }
     },
     [memberThreadCountByPhysicalKey, removeProject],
@@ -1717,11 +1714,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       try {
         await archiveThread(threadRef);
       } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: "Failed to archive thread",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to archive thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
       }
     },
     [archiveThread],
@@ -1769,11 +1768,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           title: trimmed,
         });
       } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: "Failed to rename thread",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to rename thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
       }
       finishRename();
     },
@@ -1806,11 +1807,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
     const api = readEnvironmentApi(projectRenameTarget.environmentId);
     if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Failed to rename project",
-        description: "Project API unavailable.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to rename project",
+          description: "Project API unavailable.",
+        }),
+      );
       return;
     }
 
@@ -1823,11 +1826,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       });
       closeProjectRenameDialog();
     } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Failed to rename project",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to rename project",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
     }
   }, [closeProjectRenameDialog, projectRenameTarget, projectRenameTitle]);
 
@@ -1897,11 +1902,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
       if (clicked === "copy-path") {
         if (!threadWorkspacePath) {
-          toastManager.add({
-            type: "error",
-            title: "Path unavailable",
-            description: "This thread does not have a workspace path to copy.",
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Path unavailable",
+              description: "This thread does not have a workspace path to copy.",
+            }),
+          );
           return;
         }
         copyPathToClipboard(threadWorkspacePath, { path: threadWorkspacePath });
@@ -2715,6 +2722,8 @@ export default function Sidebar() {
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const platform = navigator.platform;
+  const shortcutModifiers = useShortcutModifierState();
+  const modelPickerOpen = useModelPickerOpen();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const savedEnvironmentRegistry = useSavedEnvironmentRegistryStore((s) => s.byId);
   const savedEnvironmentRuntimeById = useSavedEnvironmentRuntimeStore((s) => s.byId);
@@ -2722,7 +2731,7 @@ export default function Sidebar() {
     return orderItemsByPreferredIds({
       items: projects,
       preferredIds: projectOrder,
-      getId: (project) => scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+      getId: getProjectOrderKey,
     });
   }, [projectOrder, projects]);
 
@@ -2822,8 +2831,9 @@ export default function Sidebar() {
             routeThreadRef,
           ).terminalOpen
         : false,
+      modelPickerOpen,
     }),
-    [routeThreadRef],
+    [modelPickerOpen, routeThreadRef],
   );
   const newThreadShortcutLabelOptions = useMemo(
     () => ({
@@ -3016,12 +3026,37 @@ export default function Sidebar() {
     () => [...threadJumpCommandByKey.keys()],
     [threadJumpCommandByKey],
   );
-  const [threadJumpLabelByKey, setThreadJumpLabelByKey] =
-    useState<ReadonlyMap<string, string>>(EMPTY_THREAD_JUMP_LABELS);
-  const threadJumpLabelsRef = useRef<ReadonlyMap<string, string>>(EMPTY_THREAD_JUMP_LABELS);
-  threadJumpLabelsRef.current = threadJumpLabelByKey;
-  const showThreadJumpHintsRef = useRef(showThreadJumpHints);
-  showThreadJumpHintsRef.current = showThreadJumpHints;
+  const sidebarShortcutContext = useMemo(
+    () => ({
+      terminalFocus: false,
+      terminalOpen: routeThreadRef
+        ? selectThreadTerminalState(
+            useTerminalStateStore.getState().terminalStateByThreadKey,
+            routeThreadRef,
+          ).terminalOpen
+        : false,
+      modelPickerOpen,
+    }),
+    [modelPickerOpen, routeThreadRef],
+  );
+  const threadJumpLabelByKey = useMemo(
+    () =>
+      buildThreadJumpLabelMap({
+        keybindings,
+        platform,
+        terminalOpen: sidebarShortcutContext.terminalOpen,
+        threadJumpCommandByKey,
+      }),
+    [keybindings, platform, sidebarShortcutContext.terminalOpen, threadJumpCommandByKey],
+  );
+  const shouldShowThreadJumpHintsNow = shouldShowThreadJumpHintsForModifiers(
+    shortcutModifiers,
+    keybindings,
+    {
+      platform,
+      context: sidebarShortcutContext,
+    },
+  );
   const visibleThreadJumpLabelByKey = showThreadJumpHints
     ? threadJumpLabelByKey
     : EMPTY_THREAD_JUMP_LABELS;
@@ -3052,52 +3087,12 @@ export default function Sidebar() {
   }, [prewarmedSidebarThreadRefs]);
 
   useEffect(() => {
-    const clearThreadJumpHints = () => {
-      setThreadJumpLabelByKey((current) =>
-        current === EMPTY_THREAD_JUMP_LABELS ? current : EMPTY_THREAD_JUMP_LABELS,
-      );
-      updateThreadJumpHintsVisibility(false);
-    };
-    const shouldIgnoreThreadJumpHintUpdate = (event: globalThis.KeyboardEvent) =>
-      !event.metaKey &&
-      !event.ctrlKey &&
-      !event.altKey &&
-      !event.shiftKey &&
-      event.key !== "Meta" &&
-      event.key !== "Control" &&
-      event.key !== "Alt" &&
-      event.key !== "Shift" &&
-      !showThreadJumpHintsRef.current &&
-      threadJumpLabelsRef.current === EMPTY_THREAD_JUMP_LABELS;
+    updateThreadJumpHintsVisibility(shouldShowThreadJumpHintsNow);
+  }, [shouldShowThreadJumpHintsNow, updateThreadJumpHintsVisibility]);
 
+  useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (shouldIgnoreThreadJumpHintUpdate(event)) {
-        return;
-      }
       const shortcutContext = getCurrentSidebarShortcutContext();
-      const shouldShowHints = shouldShowThreadJumpHints(event, keybindings, {
-        platform,
-        context: shortcutContext,
-      });
-      if (!shouldShowHints) {
-        if (
-          showThreadJumpHintsRef.current ||
-          threadJumpLabelsRef.current !== EMPTY_THREAD_JUMP_LABELS
-        ) {
-          clearThreadJumpHints();
-        }
-      } else {
-        setThreadJumpLabelByKey((current) => {
-          const nextLabelMap = buildThreadJumpLabelMap({
-            keybindings,
-            platform,
-            terminalOpen: shortcutContext.terminalOpen,
-            threadJumpCommandByKey,
-          });
-          return threadJumpLabelMapsEqual(current, nextLabelMap) ? current : nextLabelMap;
-        });
-        updateThreadJumpHintsVisibility(true);
-      }
 
       if (event.defaultPrevented || event.repeat) {
         return;
@@ -3147,43 +3142,10 @@ export default function Sidebar() {
       navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
     };
 
-    const onWindowKeyUp = (event: globalThis.KeyboardEvent) => {
-      if (shouldIgnoreThreadJumpHintUpdate(event)) {
-        return;
-      }
-      const shortcutContext = getCurrentSidebarShortcutContext();
-      const shouldShowHints = shouldShowThreadJumpHints(event, keybindings, {
-        platform,
-        context: shortcutContext,
-      });
-      if (!shouldShowHints) {
-        clearThreadJumpHints();
-        return;
-      }
-      setThreadJumpLabelByKey((current) => {
-        const nextLabelMap = buildThreadJumpLabelMap({
-          keybindings,
-          platform,
-          terminalOpen: shortcutContext.terminalOpen,
-          threadJumpCommandByKey,
-        });
-        return threadJumpLabelMapsEqual(current, nextLabelMap) ? current : nextLabelMap;
-      });
-      updateThreadJumpHintsVisibility(true);
-    };
-
-    const onWindowBlur = () => {
-      clearThreadJumpHints();
-    };
-
     window.addEventListener("keydown", onWindowKeyDown);
-    window.addEventListener("keyup", onWindowKeyUp);
-    window.addEventListener("blur", onWindowBlur);
 
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
-      window.removeEventListener("keyup", onWindowKeyUp);
-      window.removeEventListener("blur", onWindowBlur);
     };
   }, [
     getCurrentSidebarShortcutContext,
@@ -3193,9 +3155,7 @@ export default function Sidebar() {
     platform,
     routeThreadKey,
     sidebarThreadByKey,
-    threadJumpCommandByKey,
     threadJumpThreadKeys,
-    updateThreadJumpHintsVisibility,
   ]);
 
   useEffect(() => {
@@ -3279,18 +3239,22 @@ export default function Sidebar() {
           if (!shouldToastDesktopUpdateActionResult(result)) return;
           const actionError = getDesktopUpdateActionError(result);
           if (!actionError) return;
-          toastManager.add({
-            type: "error",
-            title: "Could not download update",
-            description: actionError,
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not download update",
+              description: actionError,
+            }),
+          );
         })
         .catch((error) => {
-          toastManager.add({
-            type: "error",
-            title: "Could not start update download",
-            description: error instanceof Error ? error.message : "An unexpected error occurred.",
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not start update download",
+              description: error instanceof Error ? error.message : "An unexpected error occurred.",
+            }),
+          );
         });
       return;
     }
@@ -3306,18 +3270,22 @@ export default function Sidebar() {
           if (!shouldToastDesktopUpdateActionResult(result)) return;
           const actionError = getDesktopUpdateActionError(result);
           if (!actionError) return;
-          toastManager.add({
-            type: "error",
-            title: "Could not install update",
-            description: actionError,
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not install update",
+              description: actionError,
+            }),
+          );
         })
         .catch((error) => {
-          toastManager.add({
-            type: "error",
-            title: "Could not install update",
-            description: error instanceof Error ? error.message : "An unexpected error occurred.",
-          });
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not install update",
+              description: error instanceof Error ? error.message : "An unexpected error occurred.",
+            }),
+          );
         });
     }
   }, [desktopUpdateButtonAction, desktopUpdateButtonDisabled, desktopUpdateState]);

@@ -37,7 +37,7 @@ import {
   ComboboxStatus,
   ComboboxTrigger,
 } from "./ui/combobox";
-import { toastManager } from "./ui/toast";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 
 interface BranchToolbarBranchSelectorProps {
   environmentId: EnvironmentId;
@@ -161,88 +161,102 @@ function handleCheckoutError(
 ): void {
   const dirtyWorktree = parseDirtyWorktreeError(error);
   if (dirtyWorktree) {
-    toastManager.add({
-      type: "warning",
-      title: "Uncommitted changes block checkout.",
-      description: formatDirtyWorktreeDescription(dirtyWorktree.files),
-      actionProps: {
-        children: "Stash & Switch",
-        onClick: () => {
-          ctx.runBranchAction(async () => {
-            try {
-              await ctx.api.git.stashAndCheckout({ cwd: ctx.cwd, branch: ctx.branch });
-              await invalidateGitQueries(ctx.queryClient, {
-                environmentId: ctx.environmentId,
-                cwd: ctx.cwd,
-              });
-              ctx.onSuccess();
-            } catch (stashError) {
-              if (isStashConflictError(stashError)) {
+    toastManager.add(
+      stackedThreadToast({
+        type: "warning",
+        title: "Uncommitted changes block checkout.",
+        description: formatDirtyWorktreeDescription(dirtyWorktree.files),
+        actionProps: {
+          children: "Stash & Switch",
+          onClick: () => {
+            ctx.runBranchAction(async () => {
+              try {
+                await ctx.api.git.stashAndCheckout({ cwd: ctx.cwd, branch: ctx.branch });
                 await invalidateGitQueries(ctx.queryClient, {
                   environmentId: ctx.environmentId,
                   cwd: ctx.cwd,
                 });
                 ctx.onSuccess();
-                toastManager.add({
-                  type: "warning",
-                  title: "Stash could not be applied.",
-                  description:
-                    "Your stashed changes could not be applied to this branch. They are saved in the stash.",
-                  actionProps: {
-                    children: "Discard stash",
-                    onClick: () => {
-                      ctx.runBranchAction(async () => {
-                        const confirmed = await readLocalApi()?.dialogs.confirm(
-                          "Drop the most recent stash entry? This cannot be undone.",
-                        );
-                        if (!confirmed) return;
-                        try {
-                          await ctx.api.git.stashDrop({ cwd: ctx.cwd });
-                        } catch (dropError) {
-                          toastManager.add({
-                            type: "error",
-                            title: "Failed to drop stash.",
-                            description: toBranchActionErrorMessage(dropError),
+              } catch (stashError) {
+                if (isStashConflictError(stashError)) {
+                  await invalidateGitQueries(ctx.queryClient, {
+                    environmentId: ctx.environmentId,
+                    cwd: ctx.cwd,
+                  });
+                  ctx.onSuccess();
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "warning",
+                      title: "Stash could not be applied.",
+                      description:
+                        "Your stashed changes could not be applied to this branch. They are saved in the stash.",
+                      actionProps: {
+                        children: "Discard stash",
+                        onClick: () => {
+                          ctx.runBranchAction(async () => {
+                            const confirmed = await readLocalApi()?.dialogs.confirm(
+                              "Drop the most recent stash entry? This cannot be undone.",
+                            );
+                            if (!confirmed) return;
+                            try {
+                              await ctx.api.git.stashDrop({ cwd: ctx.cwd });
+                            } catch (dropError) {
+                              toastManager.add(
+                                stackedThreadToast({
+                                  type: "error",
+                                  title: "Failed to drop stash.",
+                                  description: toBranchActionErrorMessage(dropError),
+                                }),
+                              );
+                            }
                           });
-                        }
-                      });
-                    },
-                  },
-                });
-              } else if (parseDirtyWorktreeError(stashError)) {
-                toastManager.add({
-                  type: "error",
-                  title: "Cannot switch branches.",
-                  description:
-                    "Some conflicting files are not covered by git stash (e.g., files in .gitignore). Remove or move them manually before switching.",
-                });
-              } else {
-                toastManager.add({
-                  type: "error",
-                  title: "Failed to stash and switch.",
-                  description: toBranchActionErrorMessage(stashError),
-                });
+                        },
+                      },
+                    }),
+                  );
+                } else if (parseDirtyWorktreeError(stashError)) {
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: "Cannot switch branches.",
+                      description:
+                        "Some conflicting files are not covered by git stash (e.g., files in .gitignore). Remove or move them manually before switching.",
+                    }),
+                  );
+                } else {
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: "Failed to stash and switch.",
+                      description: toBranchActionErrorMessage(stashError),
+                    }),
+                  );
+                }
               }
-            }
-          });
+            });
+          },
         },
-      },
-    });
+      }),
+    );
     return;
   }
   if (isUnresolvedIndexError(error)) {
-    toastManager.add({
-      type: "error",
-      title: "Unresolved conflicts in the repository.",
-      description: toBranchActionErrorMessage(error),
-    });
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Unresolved conflicts in the repository.",
+        description: toBranchActionErrorMessage(error),
+      }),
+    );
     return;
   }
-  toastManager.add({
-    type: "error",
-    title: ctx.fallbackTitle,
-    description: toBranchActionErrorMessage(error),
-  });
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title: ctx.fallbackTitle,
+      description: toBranchActionErrorMessage(error),
+    }),
+  );
 }
 
 function getBranchTriggerLabel(input: {

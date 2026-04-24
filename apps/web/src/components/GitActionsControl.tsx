@@ -38,7 +38,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
-import { toastManager, type ThreadToastData } from "~/components/ui/toast";
+import { stackedThreadToast, toastManager, type ThreadToastData } from "~/components/ui/toast";
 import { openInPreferredEditor } from "~/editorPreferences";
 import {
   gitInitMutationOptions,
@@ -474,12 +474,14 @@ export default function GitActionsControl({
       return;
     }
     void api.shell.openExternal(prUrl).catch((err: unknown) => {
-      toastManager.add({
-        type: "error",
-        title: "Unable to open PR link",
-        description: err instanceof Error ? err.message : "An error occurred.",
-        data: threadToastData,
-      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to open PR link",
+          description: err instanceof Error ? err.message : "An error occurred.",
+          ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+        }),
+      );
     });
   }, [gitStatusForActions, threadToastData]);
 
@@ -670,33 +672,44 @@ export default function GitActionsControl({
           };
         }
 
-        const successToastBase = {
-          type: "success",
-          title: result.toast.title,
-          description: result.toast.description,
-          timeout: 0,
-          data: {
-            ...scopedToastData,
-            dismissAfterVisibleMs: 10_000,
-          },
-        } as const;
+        const successToastData = {
+          ...scopedToastData,
+          dismissAfterVisibleMs: 10_000,
+        };
 
         if (toastActionProps) {
-          toastManager.update(resolvedProgressToastId, {
-            ...successToastBase,
-            actionProps: toastActionProps,
-          });
+          toastManager.update(
+            resolvedProgressToastId,
+            stackedThreadToast({
+              type: "success",
+              title: result.toast.title,
+              description: result.toast.description,
+              timeout: 0,
+              actionProps: toastActionProps,
+              actionVariant: "outline",
+              data: successToastData,
+            }),
+          );
         } else {
-          toastManager.update(resolvedProgressToastId, successToastBase);
+          toastManager.update(resolvedProgressToastId, {
+            type: "success",
+            title: result.toast.title,
+            description: result.toast.description,
+            timeout: 0,
+            data: successToastData,
+          });
         }
       } catch (err) {
         activeGitActionProgressRef.current = null;
-        toastManager.update(resolvedProgressToastId, {
-          type: "error",
-          title: "Action failed",
-          description: err instanceof Error ? err.message : "An error occurred.",
-          data: scopedToastData,
-        });
+        toastManager.update(
+          resolvedProgressToastId,
+          stackedThreadToast({
+            type: "error",
+            title: "Action failed",
+            description: err instanceof Error ? err.message : "An error occurred.",
+            ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
+          }),
+        );
       }
     },
   );
@@ -753,7 +766,10 @@ export default function GitActionsControl({
     }
     if (quickAction.kind === "run_pull") {
       const promise = pullMutation.mutateAsync();
-      toastManager.promise(promise, {
+      void toastManager.promise<
+        Awaited<ReturnType<typeof pullMutation.mutateAsync>>,
+        ThreadToastData
+      >(promise, {
         loading: { title: "Pulling...", data: threadToastData },
         success: (result) => ({
           title: result.status === "pulled" ? "Pulled" : "Already up to date",
@@ -832,12 +848,14 @@ export default function GitActionsControl({
       }
       const target = resolvePathLinkTarget(filePath, gitCwd);
       void openInPreferredEditor(api, target).catch((error) => {
-        toastManager.add({
-          type: "error",
-          title: "Unable to open file",
-          description: error instanceof Error ? error.message : "An error occurred.",
-          data: threadToastData,
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to open file",
+            description: error instanceof Error ? error.message : "An error occurred.",
+            ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+          }),
+        );
       });
     },
     [gitCwd, threadToastData],

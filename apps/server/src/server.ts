@@ -21,6 +21,7 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime.ts";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter.ts";
 import { makeClaudeAdapterLive } from "./provider/Layers/ClaudeAdapter.ts";
+import { makeCursorAdapterLive } from "./provider/Layers/CursorAdapter.ts";
 import { makeOpenCodeAdapterLive } from "./provider/Layers/OpenCodeAdapter.ts";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
 import { makeProviderServiceLive } from "./provider/Layers/ProviderService.ts";
@@ -75,6 +76,7 @@ import {
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http.ts";
+import { NetService } from "@t3tools/shared/Net";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -160,10 +162,14 @@ const ProviderLayerLive = Layer.unwrap(
     const openCodeAdapterLayer = makeOpenCodeAdapterLive(
       nativeEventLogger ? { nativeEventLogger } : undefined,
     );
+    const cursorAdapterLayer = makeCursorAdapterLive(
+      nativeEventLogger ? { nativeEventLogger } : undefined,
+    );
     const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
       Layer.provide(codexAdapterLayer),
       Layer.provide(claudeAdapterLayer),
       Layer.provide(openCodeAdapterLayer),
+      Layer.provide(cursorAdapterLayer),
       Layer.provideMerge(ProviderSessionDirectoryLayerLive),
     );
     return makeProviderServiceLive(
@@ -238,6 +244,7 @@ const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(AnalyticsServiceLayerLive),
   Layer.provideMerge(OpenLive),
   Layer.provideMerge(ServerLifecycleEventsLive),
+  Layer.provide(NetService.layer),
 );
 
 const RuntimeServicesLive = ServerRuntimeStartupLive.pipe(

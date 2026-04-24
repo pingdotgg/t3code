@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*.*.*"
+      - "!v*-nightly.*"
   schedule:
     - cron: "0 */3 * * *"
   workflow_dispatch:
@@ -41,7 +42,7 @@ jobs:
       - id: check
         name: Compare HEAD to last nightly tag
         run: |
-          last_nightly_tag=$(git tag --list 'nightly-v*' --sort=-creatordate | head -n 1)
+          last_nightly_tag=$(git tag --list 'v*-nightly.*' 'nightly-v*' --sort=-creatordate | head -n 1)
           if [[ -z "$last_nightly_tag" ]]; then
             echo "No previous nightly tag found. Proceeding with release."
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
@@ -171,6 +172,7 @@ jobs:
   build:
     name: Build ${{ matrix.label }}
     needs: preflight
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     strategy:
@@ -353,6 +355,7 @@ jobs:
   publish_cli:
     name: Publish CLI to npm
     needs: [preflight, build]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -387,9 +390,18 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: [preflight, build, publish_cli]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
+      - id: app_token
+        name: Mint release app token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - name: Checkout
         uses: actions/checkout@v6
         with:
@@ -474,6 +486,7 @@ jobs:
             release-assets/*.blockmap
             release-assets/*.yml
           fail_on_unmatched_files: true
+          token: ${{ steps.app_token.outputs.token }}
 
       - name: Publish first release
         if: needs.preflight.outputs.previous_tag == ''
@@ -493,10 +506,11 @@ jobs:
             release-assets/*.blockmap
             release-assets/*.yml
           fail_on_unmatched_files: true
+          token: ${{ steps.app_token.outputs.token }}
 
   finalize:
     name: Finalize release
-    if: needs.preflight.outputs.release_channel == 'stable'
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
     needs: [preflight, release]
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
