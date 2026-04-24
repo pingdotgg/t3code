@@ -1,14 +1,35 @@
-import type { ProviderKind } from "@t3tools/contracts";
-import { Effect, Layer } from "effect";
+import { ProviderKind } from "@t3tools/contracts";
+import { Context, Effect, Layer, Schema } from "effect";
 
-import { ProviderAdapterV2, type ProviderAdapterV2Shape } from "../Services/ProviderAdapter.ts";
-import {
-  ProviderAdapterRegistryLookupError,
+import { ProviderAdapterV2, type ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+
+export class ProviderAdapterRegistryLookupError extends Schema.TaggedErrorClass<ProviderAdapterRegistryLookupError>()(
+  "ProviderAdapterRegistryLookupError",
+  {
+    provider: ProviderKind,
+  },
+) {
+  override get message(): string {
+    return `No orchestration provider adapter is registered for ${this.provider}.`;
+  }
+}
+
+export const ProviderAdapterRegistryV2Error = Schema.Union([ProviderAdapterRegistryLookupError]);
+export type ProviderAdapterRegistryV2Error = typeof ProviderAdapterRegistryV2Error.Type;
+
+export interface ProviderAdapterRegistryV2Shape {
+  readonly get: (
+    provider: ProviderKind,
+  ) => Effect.Effect<ProviderAdapterV2Shape, ProviderAdapterRegistryV2Error>;
+  readonly list: () => Effect.Effect<ReadonlyArray<ProviderKind>>;
+}
+
+export class ProviderAdapterRegistryV2 extends Context.Service<
   ProviderAdapterRegistryV2,
-  type ProviderAdapterRegistryV2Shape,
-} from "../Services/ProviderAdapterRegistry.ts";
+  ProviderAdapterRegistryV2Shape
+>()("t3/orchestration-v2/ProviderAdapterRegistry") {}
 
-export function makeProviderAdapterRegistryV2Layer(
+export function makeLayer(
   adapters: ReadonlyArray<ProviderAdapterV2Shape>,
 ): Layer.Layer<ProviderAdapterRegistryV2> {
   return Layer.succeed(
@@ -27,13 +48,13 @@ export function makeProviderAdapterRegistryV2Layer(
   );
 }
 
-export function makeSingleProviderAdapterRegistryV2Layer(
+export function makeSingleLayer(
   adapter: ProviderAdapterV2Shape,
 ): Layer.Layer<ProviderAdapterRegistryV2> {
-  return makeProviderAdapterRegistryV2Layer([adapter]);
+  return makeLayer([adapter]);
 }
 
-export const ProviderAdapterRegistryV2FromSingleAdapterLayer: Layer.Layer<
+export const layerFromProviderAdapter: Layer.Layer<
   ProviderAdapterRegistryV2,
   never,
   ProviderAdapterV2
