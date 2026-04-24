@@ -37,4 +37,4 @@ export interface ContextHandoffServiceV2Shape {
 export class ContextHandoffServiceV2 extends Context.Service<
   ContextHandoffServiceV2,
   ContextHandoffServiceV2Shape
->()("t3/orchestration-v2/Services/ContextHandoffService") {}
+>()("t3/orchestration-v2/ContextHandoffService") {}
