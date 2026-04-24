@@ -23,7 +23,18 @@ The central separation is:
 - `ProviderSession`: a live or resumable provider process/runtime.
 - `ContextHandoff`: a provider-switch summary that bridges runs into another provider thread.
 
-Provider-specific lifecycle is preserved in provider refs and raw events. App behavior is driven by app-owned ids and graph relationships.
+Provider-specific lifecycle is preserved in provider refs and diagnostic raw-provider logs. App behavior is driven by app-owned ids, V2-native orchestration events, and graph relationships.
+
+V2 events are durable because they are the app state transition log. Raw provider frames are not durable app state. They may be attached by optional correlation ids such as `rawEventId`, but the canonical durable row is the normalized V2 event.
+
+Every committed V2 event has a store-assigned monotonically increasing `sequence`. Projection snapshots and websocket streams use that sequence as the cursor boundary:
+
+```text
+read snapshot at sequence N
+  -> stream committed V2 events where sequence > N
+```
+
+The sequence belongs to the stored event envelope, not the provider event and not the domain payload. Provider-native ordering is preserved separately through provider refs and diagnostic logs. Clients should treat the snapshot's `snapshotSequence` as the authoritative cursor and apply only subsequent events with a greater sequence.
 
 ## Entity Summary
 
@@ -103,13 +114,6 @@ ProviderTurn
   nativeTurnRef?
   nodeId
   runAttemptId?
-  status
-
-RuntimeItem
-  id: RuntimeItemId
-  nodeId
-  providerItemRef?
-  kind
   status
 
 RuntimeRequest
@@ -254,7 +258,7 @@ type ExecutionNode = {
   countsForRun: boolean;
   providerThreadId: ProviderThreadId | null;
   providerTurnId: ProviderTurnId | null;
-  runtimeItemId: RuntimeItemId | null;
+  nativeItemRef: ProviderRef | null;
   runtimeRequestId: RuntimeRequestId | null;
   checkpointScopeId: CheckpointScopeId | null;
   startedAt: string | null;
@@ -305,6 +309,10 @@ type ProviderSession = {
 ```
 
 A provider session may host one or more provider threads if the provider supports it. If a provider only supports one active conversation per process, V2 still models that as one provider thread attached to the session.
+
+The session entity is durable metadata for a live-or-recoverable runtime, not the runtime handle itself. The in-memory process/client handle may disappear because the server restarted, an idle reaper released it, or the provider process crashed. In all cases, the app keeps the `ProviderSession`, `ProviderThread`, and native resume refs in durable state, then recreates the live runtime through the normal provider session manager path.
+
+Provider runtime ids and ordinals must not depend on adapter process memory. If a value is persisted or must survive recovery, it is allocated by the orchestrator/correlation/id services or derived from durable provider refs.
 
 ## ProviderThread
 
@@ -385,37 +393,6 @@ type ProviderTurn = {
 
 Codex has strong native turn ids. Weaker providers may only have ordinals. Both map into `ProviderTurnId`.
 
-## RuntimeItem
-
-Items are provider-visible work units inside a turn or node.
-
-```ts
-type RuntimeItem = {
-  id: RuntimeItemId;
-  nodeId: NodeId;
-  providerTurnId: ProviderTurnId | null;
-  nativeItemRef: string | null;
-  ordinal: number;
-  kind:
-    | "assistant_message"
-    | "reasoning"
-    | "plan"
-    | "todo_list"
-    | "command_execution"
-    | "file_change"
-    | "mcp_tool_call"
-    | "dynamic_tool_call"
-    | "collab_agent_tool_call"
-    | "web_search"
-    | "unknown";
-  status: "pending" | "running" | "completed" | "failed" | "cancelled";
-  title: string | null;
-  detail: string | null;
-};
-```
-
-The item id is app-owned. Provider-native item ids are refs.
-
 ## RuntimeRequest
 
 Requests represent provider-originated callbacks that require app/user response.
@@ -425,12 +402,11 @@ type RuntimeRequest = {
   id: RuntimeRequestId;
   nodeId: NodeId;
   providerTurnId: ProviderTurnId | null;
-  runtimeItemId: RuntimeItemId | null;
   nativeRequestRef: string | null;
   kind:
-    | "command_approval"
-    | "file_read_approval"
-    | "file_change_approval"
+    | "command"
+    | "file-read"
+    | "file-change"
     | "dynamic_tool_call"
     | "user_input"
     | "auth_refresh";
@@ -442,6 +418,10 @@ type RuntimeRequest = {
   resolvedAt: string | null;
 };
 ```
+
+The permission kinds are the same canonical domain values used by V1 `ProviderRequestKind`.
+Adapters map provider-native callback names such as Codex `item/commandExecution/requestApproval`
+and Claude tool permission names into these app-level values.
 
 Requests may remain visible after restart, but they are only respondable if their `responseCapability` is live.
 
@@ -468,7 +448,7 @@ Provider message chunks are collected through items/content events and projected
 
 ## Plans, Questions, And Todo Lists
 
-V2 treats these as structured runtime items or nodes.
+V2 treats these as structured turn items or execution nodes.
 
 ```ts
 type PlanArtifact = {
@@ -501,7 +481,7 @@ type Checkpoint = {
   ordinalWithinScope: number;
   appRunOrdinal: number | null;
   ref: string;
-  status: "ready" | "missing" | "error";
+  status: "ready" | "missing" | "error" | "stale";
   files: CheckpointFileSummary[];
   capturedAt: string;
 };
@@ -509,9 +489,9 @@ type Checkpoint = {
 
 A child/subagent provider turn can create a child checkpoint. It does not create an app-run checkpoint unless it is running as a first-class app run in a forked/promoted thread.
 
-## Raw Event Log
+## Raw Provider Diagnostics
 
-The raw event log is append-only evidence.
+Raw provider diagnostics are append-only evidence for debugging, support, and replay fixture generation. They should be written to bounded rotating log files, not treated as canonical durable SQLite state.
 
 ```ts
 type RawProviderEvent = {
@@ -528,7 +508,17 @@ type RawProviderEvent = {
 };
 ```
 
-No domain behavior should depend on parsing historic UI events if raw provider events are available.
+No domain behavior should depend on parsing historic UI events if raw provider diagnostics are available. Production behavior should depend on normalized orchestration events/entities and provider refs. Raw provider frames are evidence and replay input, not the source of truth for normal app state.
+
+Normalized V2 entities should preserve enough correlation metadata to explain and route behavior:
+
+- provider kind.
+- provider session/thread/turn refs.
+- provider item/request refs when available.
+- native id strength.
+- diagnostic log location or raw frame reference when useful.
+
+The replay framework can use raw provider transcripts as input without requiring production SQLite to store every raw frame.
 
 ## Projections
 
@@ -542,11 +532,13 @@ V2 should expose separate projections:
 
 The UI can remain simple while the graph remains precise.
 
+Projection streaming should use the existing app snapshot-plus-cursor contract. A thread-detail subscription should return a projection snapshot at sequence `N`, then stream only events after `N`. The frontend should not receive events already reflected in the snapshot. Reconnects may reset from a fresh snapshot instead of replaying local client state; the fresh snapshot and its `snapshotSequence` become the new cursor boundary.
+
 ## Turn Item Projection
 
-The frontend should not reconstruct display order by merging `messages`, `runtimeItems`, `plans`, checkpoints, approvals, and activities itself. V2 should expose an ordered `turnItems` projection for thread detail rendering.
+The frontend should not reconstruct display order by merging `messages`, `plans`, checkpoints, approvals, and activities itself. V2 exposes an ordered `turnItems` projection for thread detail rendering.
 
-`turnItems` are projection records, not the canonical source of truth. The canonical graph remains normalized in runs, attempts, nodes, runtime items, requests, messages, plans, and checkpoints. The projection reducer is responsible for turning that graph into a deterministic display stream.
+`turnItems` are projection records, not the canonical source of truth. The canonical graph remains normalized in runs, attempts, nodes, requests, messages, plans, and checkpoints. Provider-native item refs live directly on nodes and turn items where correlation is needed.
 
 Known common tools should have structured item variants so the frontend can render stable custom components without parsing provider text:
 
@@ -603,4 +595,4 @@ Compaction, handoff, and fork are orchestration lifecycle items, not dynamic too
 - `handoff`: records the context bridge from one or more source provider threads/providers to a target provider thread/provider.
 - `fork`: records that the user or system created a new app thread from a run, node, or provider thread.
 
-The UI can render known variants with deterministic components and render `dynamic_tool` as expandable JSON input/output. Each turn item keeps refs back to `runId`, `nodeId`, `providerTurnId`, and `runtimeItemId` so debug views can jump from the display stream back into the graph.
+The UI can render known variants with deterministic components and render `dynamic_tool` as expandable JSON input/output. Each turn item keeps refs back to `runId`, `nodeId`, `providerTurnId`, and `nativeItemRef` so debug views can jump from the display stream back into the graph and provider logs.
