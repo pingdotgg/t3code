@@ -1,6 +1,11 @@
 import { Effect, Layer } from "effect";
 import { PtyAdapter } from "../Services/PTY.ts";
-import type { PtyAdapterShape, PtyExitEvent, PtyProcess } from "../Services/PTY.ts";
+import {
+  PtySpawnError,
+  type PtyAdapterShape,
+  type PtyExitEvent,
+  type PtyProcess,
+} from "../Services/PTY.ts";
 
 class BunPtyProcess implements PtyProcess {
   private readonly dataListeners = new Set<(data: string) => void>();
@@ -99,22 +104,30 @@ export const layer = Layer.effect(
     }
     return {
       spawn: (input) =>
-        Effect.sync(() => {
-          let processHandle: BunPtyProcess | null = null;
-          const command = [input.shell, ...(input.args ?? [])];
-          const subprocess = Bun.spawn(command, {
-            cwd: input.cwd,
-            env: input.env,
-            terminal: {
-              cols: input.cols,
-              rows: input.rows,
-              data: (_terminal, data) => {
-                processHandle?.emitData(data);
+        Effect.try({
+          try: () => {
+            let processHandle: BunPtyProcess | null = null;
+            const command = [input.shell, ...(input.args ?? [])];
+            const subprocess = Bun.spawn(command, {
+              cwd: input.cwd,
+              env: input.env,
+              terminal: {
+                cols: input.cols,
+                rows: input.rows,
+                data: (_terminal, data) => {
+                  processHandle?.emitData(data);
+                },
               },
-            },
-          });
-          processHandle = new BunPtyProcess(subprocess);
-          return processHandle;
+            });
+            processHandle = new BunPtyProcess(subprocess);
+            return processHandle as PtyProcess;
+          },
+          catch: (cause) =>
+            new PtySpawnError({
+              adapter: "bun-pty",
+              message: cause instanceof Error ? cause.message : "Failed to spawn PTY process",
+              cause,
+            }),
         }),
     } satisfies PtyAdapterShape;
   }),
