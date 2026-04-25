@@ -1,4 +1,4 @@
-import { type CursorModelOptions, type CursorSettings } from "@t3tools/contracts";
+import { type CursorSettings, type ProviderOptionSelection } from "@t3tools/contracts";
 import { Effect, Layer, Scope } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpErrors from "effect-acp/errors";
@@ -76,7 +76,7 @@ interface CursorAcpModelSelectionRuntime {
 export function applyCursorAcpModelSelection<E>(input: {
   readonly runtime: CursorAcpModelSelectionRuntime;
   readonly model: string | null | undefined;
-  readonly modelOptions: CursorModelOptions | null | undefined;
+  readonly selections: ReadonlyArray<ProviderOptionSelection> | null | undefined;
   readonly mapError: (context: CursorAcpModelSelectionErrorContext) => E;
 }): Effect.Effect<void, E> {
   return Effect.gen(function* () {
@@ -91,7 +91,7 @@ export function applyCursorAcpModelSelection<E>(input: {
 
     const configUpdates = resolveCursorAcpConfigUpdates(
       yield* input.runtime.getConfigOptions,
-      input.modelOptions,
+      input.selections,
     );
     for (const update of configUpdates) {
       yield* input.runtime.setConfigOption(update.configId, update.value).pipe(

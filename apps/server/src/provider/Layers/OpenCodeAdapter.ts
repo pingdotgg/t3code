@@ -13,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { Cause, Effect, Exit, Layer, Queue, Ref, Scope, Stream } from "effect";
 import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -1146,11 +1147,11 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
 
         const agent =
           input.modelSelection?.provider === PROVIDER
-            ? input.modelSelection.options?.agent
+            ? getModelSelectionStringOptionValue(input.modelSelection, "agent")
             : undefined;
         const variant =
           input.modelSelection?.provider === PROVIDER
-            ? input.modelSelection.options?.variant
+            ? getModelSelectionStringOptionValue(input.modelSelection, "variant")
             : undefined;
 
         context.activeTurnId = turnId;

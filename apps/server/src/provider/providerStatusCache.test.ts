@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ServerProvider } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
 import { Effect, FileSystem } from "effect";
 
@@ -9,6 +10,8 @@ import {
   resolveProviderStatusCachePath,
   writeProviderStatusCache,
 } from "./providerStatusCache.ts";
+
+const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 
 const makeProvider = (
   provider: ServerProvider["provider"],
@@ -81,13 +84,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
           slug: "gpt-5-mini",
           name: "GPT-5 Mini",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: emptyCapabilities,
         },
       ],
       message: "Cached message",
@@ -106,13 +103,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
           slug: "gpt-5.4",
           name: "GPT-5.4",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: emptyCapabilities,
         },
       ],
       message: "Pending refresh",
@@ -131,13 +122,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
             slug: "gpt-5-mini",
             name: "GPT-5 Mini",
             isCustom: false,
-            capabilities: {
-              reasoningEffortLevels: [],
-              supportsFastMode: false,
-              supportsThinkingToggle: false,
-              contextWindowOptions: [],
-              promptInjectedEffortLevels: [],
-            },
+            capabilities: emptyCapabilities,
           },
         ],
         installed: cachedCodex.installed,

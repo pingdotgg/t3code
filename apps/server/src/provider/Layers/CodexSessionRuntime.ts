@@ -30,6 +30,7 @@ import {
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
 } from "../CodexDeveloperInstructions.ts";
+import { expandHomePath } from "../../pathExpansion.ts";
 
 const PROVIDER = "codex" as const;
 
@@ -468,6 +469,7 @@ function readNotificationThreadId(notification: CodexServerNotification): string
     case "item/commandExecution/outputDelta":
     case "item/commandExecution/terminalInteraction":
     case "item/fileChange/outputDelta":
+    case "item/fileChange/patchUpdated":
     case "serverRequest/resolved":
     case "item/mcpToolCall/progress":
     case "item/reasoning/summaryTextDelta":
@@ -476,7 +478,8 @@ function readNotificationThreadId(notification: CodexServerNotification): string
     case "thread/compacted":
     case "thread/realtime/started":
     case "thread/realtime/itemAdded":
-    case "thread/realtime/transcriptUpdated":
+    case "thread/realtime/transcript/delta":
+    case "thread/realtime/transcript/done":
     case "thread/realtime/outputAudio/delta":
     case "thread/realtime/sdp":
     case "thread/realtime/error":
@@ -530,6 +533,7 @@ function readRouteFields(notification: CodexServerNotification): {
     case "item/commandExecution/outputDelta":
     case "item/commandExecution/terminalInteraction":
     case "item/fileChange/outputDelta":
+    case "item/fileChange/patchUpdated":
     case "item/reasoning/summaryTextDelta":
     case "item/reasoning/summaryPartAdded":
     case "item/reasoning/textDelta":
@@ -680,7 +684,9 @@ export const makeCodexSessionRuntime = (
       .spawn(
         ChildProcess.make(options.binaryPath, ["app-server"], {
           cwd: options.cwd,
-          ...(options.homePath ? { env: { ...process.env, CODEX_HOME: options.homePath } } : {}),
+          ...(options.homePath
+            ? { env: { ...process.env, CODEX_HOME: expandHomePath(options.homePath) } }
+            : {}),
           shell: process.platform === "win32",
         }),
       )
