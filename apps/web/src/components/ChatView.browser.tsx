@@ -215,6 +215,18 @@ function createMockEnvironmentApi(input: {
       restart: (() => {
         throw new Error("Not implemented in browser test.");
       }) as EnvironmentApi["preview"]["restart"],
+      scope: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["preview"]["scope"],
+      catalog: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["preview"]["catalog"],
+      generate: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["preview"]["generate"],
+      regenerate: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["preview"]["regenerate"],
       subscribe: (() => () => undefined) as EnvironmentApi["preview"]["subscribe"],
     },
     orchestration: {

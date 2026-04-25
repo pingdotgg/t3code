@@ -33,8 +33,13 @@ describe("PreviewRenderControlMessage", () => {
         source: "forma-preview-parent",
         type: "update",
         loadToken: "preview-load-token",
+        renderToken: "generated-render-token",
         caseId: "large",
         viewportWidth: 1024,
+        controlValues: {
+          variant: "secondary",
+          disabled: false,
+        },
       }),
     ).toBe(true);
   });
@@ -47,6 +52,7 @@ describe("PreviewRenderControlMessage", () => {
         loadToken: "preview-load-token",
         caseId: "default",
         viewportWidth: null,
+        controlValues: {},
       }),
     ).toBe(true);
   });
@@ -59,6 +65,7 @@ describe("PreviewRenderControlMessage", () => {
         loadToken: "preview-load-token",
         caseId: "default",
         viewportWidth: 0,
+        controlValues: {},
       }),
     ).toBe(false);
   });

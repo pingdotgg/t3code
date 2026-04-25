@@ -36,6 +36,10 @@ describe("inspectPreviewConfig", () => {
         '    include: ["src/**/*.preview.tsx"],',
         '    exclude: ["src/**/__tests__/*.preview.tsx"],',
         "  },",
+        "  graph: {",
+        '    include: ["src/**/*.{ts,tsx,js,jsx}"],',
+        '    exclude: ["src/**/__generated__/**"],',
+        "  },",
         "});",
         "",
       ].join("\n"),
@@ -53,6 +57,10 @@ describe("inspectPreviewConfig", () => {
       scan: {
         include: ["src/**/*.preview.tsx"],
         exclude: ["src/**/__tests__/*.preview.tsx"],
+      },
+      graph: {
+        include: ["src/**/*.{ts,tsx,js,jsx}"],
+        exclude: ["src/**/__generated__/**"],
       },
     });
   });
@@ -89,7 +97,6 @@ describe("inspectPreviewConfig", () => {
       },
       scan: {
         include: ["src/**/*.preview.tsx"],
-        exclude: undefined,
       },
     });
   });

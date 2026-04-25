@@ -20,6 +20,10 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       open: rpcClient.preview.open,
       close: rpcClient.preview.close,
       restart: rpcClient.preview.restart,
+      scope: rpcClient.preview.scope,
+      catalog: rpcClient.preview.catalog,
+      generate: rpcClient.preview.generate,
+      regenerate: rpcClient.preview.regenerate,
       subscribe: (input, callback, options) =>
         rpcClient.preview.subscribe(input, callback, options),
     },

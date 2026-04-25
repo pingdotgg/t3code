@@ -69,6 +69,10 @@ export interface WsRpcClient {
     readonly open: RpcUnaryMethod<typeof WS_METHODS.previewOpen>;
     readonly close: RpcUnaryMethod<typeof WS_METHODS.previewClose>;
     readonly restart: RpcUnaryMethod<typeof WS_METHODS.previewRestart>;
+    readonly scope: RpcUnaryMethod<typeof WS_METHODS.previewScope>;
+    readonly catalog: RpcUnaryMethod<typeof WS_METHODS.previewCatalog>;
+    readonly generate: RpcUnaryMethod<typeof WS_METHODS.previewGenerate>;
+    readonly regenerate: RpcUnaryMethod<typeof WS_METHODS.previewRegenerate>;
     readonly subscribe: (
       input: RpcInput<typeof WS_METHODS.subscribePreview>,
       listener: (event: PreviewSessionStreamEvent) => void,
@@ -161,6 +165,11 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       open: (input) => transport.request((client) => client[WS_METHODS.previewOpen](input)),
       close: (input) => transport.request((client) => client[WS_METHODS.previewClose](input)),
       restart: (input) => transport.request((client) => client[WS_METHODS.previewRestart](input)),
+      scope: (input) => transport.request((client) => client[WS_METHODS.previewScope](input)),
+      catalog: (input) => transport.request((client) => client[WS_METHODS.previewCatalog](input)),
+      generate: (input) => transport.request((client) => client[WS_METHODS.previewGenerate](input)),
+      regenerate: (input) =>
+        transport.request((client) => client[WS_METHODS.previewRegenerate](input)),
       subscribe: (input, listener, options) =>
         transport.subscribe(
           (client) => client[WS_METHODS.subscribePreview](input),

@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
 
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const PreviewThreadId = TrimmedNonEmptyString;
 const PreviewPath = TrimmedNonEmptyString;
@@ -8,6 +8,31 @@ const PreviewUrl = TrimmedNonEmptyString;
 const PreviewCommandPart = Schema.String.check(Schema.isNonEmpty()).check(
   Schema.isMaxLength(8_192),
 );
+const PreviewComponentId = TrimmedNonEmptyString;
+export type PreviewComponentId = typeof PreviewComponentId.Type;
+
+export const PreviewComponentKind = Schema.Literals(["component", "legacy"]);
+export type PreviewComponentKind = typeof PreviewComponentKind.Type;
+
+export const PreviewPropKind = Schema.Literals([
+  "boolean",
+  "enum",
+  "number",
+  "text",
+  "children",
+  "callback",
+  "unknown",
+]);
+export type PreviewPropKind = typeof PreviewPropKind.Type;
+
+export const PreviewPropSummary = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  kind: PreviewPropKind,
+  required: Schema.Boolean,
+  options: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+});
+export type PreviewPropSummary = typeof PreviewPropSummary.Type;
 
 export const PreviewViewportPreset = Schema.Literals(["sm", "md", "lg", "xl"]);
 export type PreviewViewportPreset = typeof PreviewViewportPreset.Type;
@@ -42,6 +67,140 @@ export const PreviewManifest = Schema.Struct({
   entries: Schema.Array(PreviewManifestEntry),
 });
 export type PreviewManifest = typeof PreviewManifest.Type;
+
+export const PreviewCatalogEntry = Schema.Struct({
+  id: PreviewComponentId,
+  label: TrimmedNonEmptyString,
+  componentPath: PreviewPath,
+  exportName: TrimmedNonEmptyString,
+  kind: PreviewComponentKind,
+  propSummary: Schema.Array(PreviewPropSummary),
+  sourceHash: TrimmedNonEmptyString,
+  usageHints: Schema.Array(TrimmedNonEmptyString),
+  supported: Schema.Boolean,
+  unsupportedReason: Schema.optional(TrimmedNonEmptyString),
+  legacyPreviewPath: Schema.optional(PreviewPath),
+});
+export type PreviewCatalogEntry = typeof PreviewCatalogEntry.Type;
+
+export const PreviewCatalogManifest = Schema.Struct({
+  generatedAt: TrimmedNonEmptyString,
+  appRoot: PreviewPath,
+  entries: Schema.Array(PreviewCatalogEntry),
+});
+export type PreviewCatalogManifest = typeof PreviewCatalogManifest.Type;
+
+export const PreviewScopeMode = Schema.Literal("thread-first");
+export type PreviewScopeMode = typeof PreviewScopeMode.Type;
+
+export const PreviewScopeDirection = Schema.Literals(["forward", "reverse", "both"]);
+export type PreviewScopeDirection = typeof PreviewScopeDirection.Type;
+
+export const PreviewScopeReason = Schema.Literals([
+  "changed",
+  "same-file",
+  "import",
+  "importer",
+  "legacy",
+]);
+export type PreviewScopeReason = typeof PreviewScopeReason.Type;
+
+export const PreviewScopedEntry = Schema.Struct({
+  id: PreviewComponentId,
+  label: TrimmedNonEmptyString,
+  componentPath: PreviewPath,
+  exportName: TrimmedNonEmptyString,
+  kind: PreviewComponentKind,
+  propSummary: Schema.Array(PreviewPropSummary),
+  sourceHash: TrimmedNonEmptyString,
+  usageHints: Schema.Array(TrimmedNonEmptyString),
+  supported: Schema.Boolean,
+  unsupportedReason: Schema.optional(TrimmedNonEmptyString),
+  legacyPreviewPath: Schema.optional(PreviewPath),
+  relationship: PreviewScopeReason,
+  distance: NonNegativeInt,
+});
+export type PreviewScopedEntry = typeof PreviewScopedEntry.Type;
+
+export const PreviewScopeManifest = Schema.Struct({
+  generatedAt: TrimmedNonEmptyString,
+  appRoot: PreviewPath,
+  entries: Schema.Array(PreviewScopedEntry),
+});
+export type PreviewScopeManifest = typeof PreviewScopeManifest.Type;
+
+export const PreviewGenerationStatus = Schema.Literals(["pending", "ready", "error"]);
+export type PreviewGenerationStatus = typeof PreviewGenerationStatus.Type;
+
+export const PreviewGenerationWarningSeverity = Schema.Literals(["info", "warn", "error"]);
+export type PreviewGenerationWarningSeverity = typeof PreviewGenerationWarningSeverity.Type;
+
+export const PreviewGenerationWarning = Schema.Struct({
+  code: TrimmedNonEmptyString,
+  message: TrimmedNonEmptyString,
+  severity: PreviewGenerationWarningSeverity,
+});
+export type PreviewGenerationWarning = typeof PreviewGenerationWarning.Type;
+
+export const PreviewGenerationConfidence = Schema.Literals(["high", "medium", "low"]);
+export type PreviewGenerationConfidence = typeof PreviewGenerationConfidence.Type;
+
+export const PreviewGeneratedCaseManifest = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  viewport: Schema.optional(PreviewViewport),
+});
+export type PreviewGeneratedCaseManifest = typeof PreviewGeneratedCaseManifest.Type;
+
+export const PreviewControlKind = Schema.Literals(["boolean", "enum", "number", "text"]);
+export type PreviewControlKind = typeof PreviewControlKind.Type;
+
+export const PreviewControlOption = Schema.Struct({
+  value: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+});
+export type PreviewControlOption = typeof PreviewControlOption.Type;
+
+export const PreviewControlValue = Schema.Union([
+  Schema.Boolean,
+  Schema.Int,
+  TrimmedNonEmptyString,
+]);
+export type PreviewControlValue = typeof PreviewControlValue.Type;
+
+export const PreviewControlValueMap = Schema.Record(Schema.String, PreviewControlValue);
+export type PreviewControlValueMap = typeof PreviewControlValueMap.Type;
+
+export const PreviewControlDefinition = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  kind: PreviewControlKind,
+  required: Schema.Boolean,
+  options: Schema.optional(Schema.Array(PreviewControlOption)),
+  min: Schema.optional(Schema.Int),
+  max: Schema.optional(Schema.Int),
+  defaultValue: Schema.optional(PreviewControlValue),
+});
+export type PreviewControlDefinition = typeof PreviewControlDefinition.Type;
+
+const PreviewGeneratedRenderToken = TrimmedNonEmptyString;
+export type PreviewGeneratedRenderToken = typeof PreviewGeneratedRenderToken.Type;
+
+export const PreviewGenerationSnapshot = Schema.Struct({
+  componentId: PreviewComponentId,
+  label: TrimmedNonEmptyString,
+  status: PreviewGenerationStatus,
+  generatedAt: TrimmedNonEmptyString,
+  sourceHash: TrimmedNonEmptyString,
+  confidence: PreviewGenerationConfidence,
+  renderToken: Schema.NullOr(PreviewGeneratedRenderToken),
+  defaultCaseId: Schema.NullOr(TrimmedNonEmptyString),
+  cases: Schema.Array(PreviewGeneratedCaseManifest),
+  controls: Schema.Array(PreviewControlDefinition),
+  warnings: Schema.Array(PreviewGenerationWarning),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type PreviewGenerationSnapshot = typeof PreviewGenerationSnapshot.Type;
 
 export const PreviewSessionStatus = Schema.Literals([
   "unsupported",
@@ -121,6 +280,38 @@ export const PreviewSubscribeInput = Schema.Struct({
 });
 export type PreviewSubscribeInput = typeof PreviewSubscribeInput.Type;
 
+export const PreviewCatalogInput = Schema.Struct({
+  threadId: PreviewThreadId,
+});
+export type PreviewCatalogInput = typeof PreviewCatalogInput.Type;
+
+export const PreviewScopeInput = Schema.Struct({
+  threadId: PreviewThreadId,
+  changedFiles: Schema.Array(TrimmedNonEmptyString),
+  mode: PreviewScopeMode,
+  hopCount: NonNegativeInt,
+  direction: PreviewScopeDirection,
+  visualOnly: Schema.Boolean,
+});
+export type PreviewScopeInput = typeof PreviewScopeInput.Type;
+
+export const PreviewGenerationInput = Schema.Struct({
+  threadId: PreviewThreadId,
+  componentId: PreviewComponentId,
+});
+export type PreviewGenerationInput = typeof PreviewGenerationInput.Type;
+
+export const PreviewRegenerateInput = PreviewGenerationInput;
+export type PreviewRegenerateInput = typeof PreviewRegenerateInput.Type;
+
+export const PreviewRegisterGeneratedInput = Schema.Struct({
+  componentId: PreviewComponentId,
+  componentPath: PreviewPath,
+  sourceHash: TrimmedNonEmptyString,
+  moduleSource: TrimmedNonEmptyString,
+});
+export type PreviewRegisterGeneratedInput = typeof PreviewRegisterGeneratedInput.Type;
+
 const PreviewSnapshotStreamEvent = Schema.Struct({
   type: Schema.Literal("snapshot"),
   snapshot: PreviewSessionSnapshot,
@@ -156,8 +347,10 @@ export const PreviewRenderControlMessage = Schema.Struct({
   source: Schema.Literal("forma-preview-parent"),
   type: Schema.Literal("update"),
   loadToken: TrimmedNonEmptyString,
+  renderToken: Schema.optional(PreviewGeneratedRenderToken),
   caseId: TrimmedNonEmptyString,
   viewportWidth: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+  controlValues: PreviewControlValueMap,
 });
 export type PreviewRenderControlMessage = typeof PreviewRenderControlMessage.Type;
 

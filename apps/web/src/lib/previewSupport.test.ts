@@ -7,14 +7,15 @@ describe("buildPreviewRenderUrl", () => {
     expect(
       buildPreviewRenderUrl({
         baseUrl: "http://127.0.0.1:43123",
-        previewId: "src/components/ui/button.preview.tsx",
+        previewId: "apps/web/src/components/ui/button.tsx#Button",
         caseId: "default",
         theme: "dark",
         viewportWidth: 1024,
         token: "preview-load-token",
+        renderToken: "generated-render-token",
       }),
     ).toBe(
-      "http://127.0.0.1:43123/__forma/render/src%2Fcomponents%2Fui%2Fbutton.preview.tsx?case=default&theme=dark&viewportWidth=1024&token=preview-load-token",
+      "http://127.0.0.1:43123/__forma/render/apps%2Fweb%2Fsrc%2Fcomponents%2Fui%2Fbutton.tsx%23Button?case=default&theme=dark&viewportWidth=1024&token=preview-load-token&renderToken=generated-render-token",
     );
   });
 });
@@ -37,24 +38,30 @@ describe("deriveChangedPreviewTabs", () => {
         ],
         previewEntries: [
           {
-            id: "src/components/ui/button.preview.tsx",
+            id: "apps/web/src/components/ui/button.tsx#Button",
             label: "Button",
             componentPath: "apps/web/src/components/ui/button.tsx",
-            previewPath: "apps/web/src/components/ui/button.preview.tsx",
-            defaultCaseId: "default",
-            cases: [{ id: "default", label: "Default" }],
+            exportName: "Button",
+            kind: "component",
+            propSummary: [],
+            sourceHash: "button-source-hash",
+            usageHints: [],
+            supported: true,
           },
         ],
         workspaceRoot: "/Users/me/project",
       }),
     ).toEqual([
       {
-        id: "src/components/ui/button.preview.tsx",
+        id: "apps/web/src/components/ui/button.tsx#Button",
         label: "Button",
         componentPath: "apps/web/src/components/ui/button.tsx",
-        previewPath: "apps/web/src/components/ui/button.preview.tsx",
-        defaultCaseId: "default",
-        cases: [{ id: "default", label: "Default" }],
+        exportName: "Button",
+        kind: "component",
+        propSummary: [],
+        sourceHash: "button-source-hash",
+        usageHints: [],
+        supported: true,
       },
     ]);
   });

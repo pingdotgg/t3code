@@ -63,10 +63,17 @@ import {
   ProjectWriteFileRpcError,
 } from "./project.ts";
 import {
+  PreviewCatalogInput,
+  PreviewCatalogManifest,
   PreviewCloseInput,
+  PreviewGenerationInput,
+  PreviewGenerationSnapshot,
   PreviewManagerRpcError,
   PreviewOpenInput,
+  PreviewRegenerateInput,
   PreviewRestartInput,
+  PreviewScopeInput,
+  PreviewScopeManifest,
   PreviewSessionSnapshot,
   PreviewSessionStreamEvent,
   PreviewSubscribeInput,
@@ -133,6 +140,10 @@ export const WS_METHODS = {
   previewOpen: "preview.open",
   previewClose: "preview.close",
   previewRestart: "preview.restart",
+  previewScope: "preview.scope",
+  previewCatalog: "preview.catalog",
+  previewGenerate: "preview.generate",
+  previewRegenerate: "preview.regenerate",
 
   // Server meta
   serverGetConfig: "server.getConfig",
@@ -338,6 +349,30 @@ export const WsPreviewRestartRpc = Rpc.make(WS_METHODS.previewRestart, {
   error: PreviewManagerRpcError,
 });
 
+export const WsPreviewCatalogRpc = Rpc.make(WS_METHODS.previewCatalog, {
+  payload: PreviewCatalogInput,
+  success: PreviewCatalogManifest,
+  error: PreviewManagerRpcError,
+});
+
+export const WsPreviewScopeRpc = Rpc.make(WS_METHODS.previewScope, {
+  payload: PreviewScopeInput,
+  success: PreviewScopeManifest,
+  error: PreviewManagerRpcError,
+});
+
+export const WsPreviewGenerateRpc = Rpc.make(WS_METHODS.previewGenerate, {
+  payload: PreviewGenerationInput,
+  success: PreviewGenerationSnapshot,
+  error: PreviewManagerRpcError,
+});
+
+export const WsPreviewRegenerateRpc = Rpc.make(WS_METHODS.previewRegenerate, {
+  payload: PreviewRegenerateInput,
+  success: PreviewGenerationSnapshot,
+  error: PreviewManagerRpcError,
+});
+
 export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   ORCHESTRATION_WS_METHODS.dispatchCommand,
   {
@@ -450,6 +485,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewOpenRpc,
   WsPreviewCloseRpc,
   WsPreviewRestartRpc,
+  WsPreviewScopeRpc,
+  WsPreviewCatalogRpc,
+  WsPreviewGenerateRpc,
+  WsPreviewRegenerateRpc,
   WsSubscribeTerminalEventsRpc,
   WsSubscribePreviewRpc,
   WsSubscribeServerConfigRpc,

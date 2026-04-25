@@ -1,4 +1,4 @@
-import type { PreviewViewportPreset } from "@forma/contracts";
+import type { PreviewControlValueMap, PreviewViewportPreset } from "@forma/contracts";
 import { create } from "zustand";
 
 const PREVIEW_PERSISTED_STATE_KEY = "forma:preview-state:v1";
@@ -8,6 +8,7 @@ export type PreviewViewportMode = "auto" | PreviewViewportPreset | "responsive";
 export interface PreviewThreadUiState {
   readonly selectedPreviewId: string | null;
   readonly selectedCaseByPreviewId: Record<string, string>;
+  readonly selectedControlValuesByPreviewId: Record<string, PreviewControlValueMap>;
   readonly pinned: boolean;
   readonly viewportMode: PreviewViewportMode;
 }
@@ -20,6 +21,11 @@ interface PreviewStateStore {
   readonly byThreadKey: Record<string, PreviewThreadUiState>;
   readonly setSelectedPreview: (threadKey: string, previewId: string | null) => void;
   readonly setSelectedCase: (threadKey: string, previewId: string, caseId: string) => void;
+  readonly setControlValues: (
+    threadKey: string,
+    previewId: string,
+    controlValues: PreviewControlValueMap,
+  ) => void;
   readonly setPinned: (threadKey: string, pinned: boolean) => void;
   readonly setViewportMode: (threadKey: string, viewportMode: PreviewViewportMode) => void;
 }
@@ -27,9 +33,31 @@ interface PreviewStateStore {
 const DEFAULT_THREAD_STATE: PreviewThreadUiState = {
   selectedPreviewId: null,
   selectedCaseByPreviewId: {},
+  selectedControlValuesByPreviewId: {},
   pinned: false,
   viewportMode: "auto",
 };
+
+function sanitizeControlValueMap(value: unknown): PreviewControlValueMap {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).flatMap(([controlId, controlValue]) => {
+      if (typeof controlId !== "string" || controlId.length === 0) {
+        return [];
+      }
+      if (
+        typeof controlValue === "string" ||
+        typeof controlValue === "number" ||
+        typeof controlValue === "boolean"
+      ) {
+        return [[controlId, controlValue]];
+      }
+      return [];
+    }),
+  );
+}
 
 function sanitizeThreadState(value: unknown): PreviewThreadUiState | null {
   if (!value || typeof value !== "object") {
@@ -50,6 +78,19 @@ function sanitizeThreadState(value: unknown): PreviewThreadUiState | null {
           ),
         )
       : {};
+  const selectedControlValuesByPreviewId =
+    record.selectedControlValuesByPreviewId &&
+    typeof record.selectedControlValuesByPreviewId === "object"
+      ? Object.fromEntries(
+          Object.entries(
+            record.selectedControlValuesByPreviewId as Record<string, unknown>,
+          ).flatMap(([previewId, controlValues]) =>
+            typeof previewId === "string" && previewId.length > 0
+              ? [[previewId, sanitizeControlValueMap(controlValues)]]
+              : [],
+          ),
+        )
+      : {};
   const viewportMode =
     record.viewportMode === "auto" ||
     record.viewportMode === "responsive" ||
@@ -66,6 +107,7 @@ function sanitizeThreadState(value: unknown): PreviewThreadUiState | null {
         ? record.selectedPreviewId
         : null,
     selectedCaseByPreviewId,
+    selectedControlValuesByPreviewId,
     pinned: record.pinned === true,
     viewportMode,
   };
@@ -148,6 +190,22 @@ export const usePreviewStateStore = create<PreviewStateStore>()((set) => ({
           selectedCaseByPreviewId: {
             ...currentThreadState.selectedCaseByPreviewId,
             [previewId]: caseId,
+          },
+        },
+      };
+      persistPreviewState(nextState);
+      return { byThreadKey: nextState };
+    }),
+  setControlValues: (threadKey, previewId, controlValues) =>
+    set((state) => {
+      const currentThreadState = threadStateFor(state.byThreadKey, threadKey);
+      const nextState = {
+        ...state.byThreadKey,
+        [threadKey]: {
+          ...currentThreadState,
+          selectedControlValuesByPreviewId: {
+            ...currentThreadState.selectedControlValuesByPreviewId,
+            [previewId]: controlValues,
           },
         },
       };

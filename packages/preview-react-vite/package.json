@@ -18,12 +18,12 @@
     "@forma/contracts": "workspace:*",
     "@forma/preview-react": "workspace:*",
     "effect": "catalog:",
-    "tinyglobby": "^0.2.15"
+    "tinyglobby": "^0.2.15",
+    "typescript": "catalog:"
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",
     "@types/node": "catalog:",
-    "typescript": "catalog:",
     "vitest": "catalog:"
   },
   "peerDependencies": {

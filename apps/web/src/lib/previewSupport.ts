@@ -1,7 +1,10 @@
 import type {
   EnvironmentId,
+  PreviewCatalogEntry,
   PreviewCaseManifest,
-  PreviewManifestEntry,
+  PreviewControlDefinition,
+  PreviewControlValueMap,
+  PreviewGenerationSnapshot,
   PreviewViewport,
   PreviewViewportPreset,
 } from "@forma/contracts";
@@ -63,9 +66,9 @@ function changedPathMatchesTarget(changedPath: string, targetPath: string): bool
 
 export function deriveChangedPreviewTabs(input: {
   readonly workEntries: ReadonlyArray<WorkLogEntry>;
-  readonly previewEntries: ReadonlyArray<PreviewManifestEntry>;
+  readonly previewEntries: ReadonlyArray<PreviewCatalogEntry>;
   readonly workspaceRoot: string | null | undefined;
-}): PreviewManifestEntry[] {
+}): PreviewCatalogEntry[] {
   const previewEntriesById = new Map(input.previewEntries.map((entry) => [entry.id, entry]));
   const orderedPreviewIds: string[] = [];
   const seenPreviewIds = new Set<string>();
@@ -76,7 +79,9 @@ export function deriveChangedPreviewTabs(input: {
       for (const previewEntry of input.previewEntries) {
         if (
           changedPathMatchesTarget(normalizedChangedFile, previewEntry.componentPath) ||
-          changedPathMatchesTarget(normalizedChangedFile, previewEntry.previewPath)
+          (previewEntry.legacyPreviewPath
+            ? changedPathMatchesTarget(normalizedChangedFile, previewEntry.legacyPreviewPath)
+            : false)
         ) {
           if (!seenPreviewIds.has(previewEntry.id)) {
             seenPreviewIds.add(previewEntry.id);
@@ -104,6 +109,7 @@ export function buildPreviewRenderUrl(input: {
   readonly theme: "light" | "dark";
   readonly viewportWidth: number | null;
   readonly token: string;
+  readonly renderToken?: string | null;
 }): string {
   const url = new URL(`/__forma/render/${encodeURIComponent(input.previewId)}`, input.baseUrl);
   url.searchParams.set("case", input.caseId);
@@ -112,6 +118,9 @@ export function buildPreviewRenderUrl(input: {
     url.searchParams.set("viewportWidth", `${input.viewportWidth}`);
   }
   url.searchParams.set("token", input.token);
+  if (input.renderToken) {
+    url.searchParams.set("renderToken", input.renderToken);
+  }
   return url.toString();
 }
 
@@ -204,4 +213,31 @@ export function viewportModeLabel(mode: PreviewViewportMode): string {
 
 export function previewCaseLabel(caseEntry: PreviewCaseManifest): string {
   return caseEntry.label;
+}
+
+export function defaultControlValuesForGeneration(
+  generation: PreviewGenerationSnapshot | null | undefined,
+): PreviewControlValueMap {
+  if (!generation) {
+    return {};
+  }
+  return Object.fromEntries(
+    generation.controls.flatMap((control) =>
+      control.defaultValue !== undefined ? [[control.id, control.defaultValue]] : [],
+    ),
+  );
+}
+
+export function mergeControlValuesForGeneration(input: {
+  readonly generation: PreviewGenerationSnapshot | null | undefined;
+  readonly currentValues: PreviewControlValueMap | undefined;
+}): PreviewControlValueMap {
+  return {
+    ...defaultControlValuesForGeneration(input.generation),
+    ...input.currentValues,
+  };
+}
+
+export function controlLabel(control: PreviewControlDefinition): string {
+  return control.label;
 }
