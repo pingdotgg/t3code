@@ -7,7 +7,6 @@ import type {
   ProviderInteractionMode,
   ProviderKind,
   ResolvedKeybindingsConfig,
-  RuntimeMode,
   ScopedThreadRef,
   ServerLocalAgentInventory,
   ServerProvider,
@@ -78,7 +77,6 @@ import {
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
 } from "./composerProviderRegistry";
-import { ContextWindowMeter } from "./ContextWindowMeter";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../vscode-icons";
 import { cn, randomUUID } from "~/lib/utils";
@@ -87,23 +85,13 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import {
-  BotIcon,
-  CircleAlertIcon,
-  ListTodoIcon,
-  type LucideIcon,
-  LockIcon,
-  LockOpenIcon,
-  PenLineIcon,
-  XIcon,
-} from "lucide-react";
+import { BotIcon, CircleAlertIcon, ListTodoIcon, type LucideIcon, XIcon } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { resolveSelectableProvider, getProviderModels } from "../../providerModels";
 import type { UnifiedSettings } from "@forma/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
-import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 
@@ -117,28 +105,6 @@ function isLocalAgentSkill(
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
-const runtimeModeConfig: Record<
-  RuntimeMode,
-  { label: string; description: string; icon: LucideIcon }
-> = {
-  "approval-required": {
-    label: "Supervised",
-    description: "Ask before commands and file changes.",
-    icon: LockIcon,
-  },
-  "auto-accept-edits": {
-    label: "Auto-accept edits",
-    description: "Auto-approve edits, ask before other actions.",
-    icon: PenLineIcon,
-  },
-  "full-access": {
-    label: "Full access",
-    description: "Allow commands and edits without prompts.",
-    icon: LockOpenIcon,
-  },
-};
-
-const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 const interactionModeConfig: Record<
   ProviderInteractionMode,
   { label: string; description: string; icon: LucideIcon }
@@ -191,23 +157,21 @@ const terminalContextIdListsEqual = (
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
 
-const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
+const ComposerFooterInteractionControls = memo(function ComposerFooterInteractionControls(props: {
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
-  runtimeMode: RuntimeMode;
-  runtimeModeLocked: boolean;
-  runtimeModeLockReason?: string | undefined;
   showPlanToggle: boolean;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
   onInteractionModeChange: (mode: ProviderInteractionMode) => void;
-  onRuntimeModeChange: (mode: RuntimeMode) => void;
   onTogglePlanSidebar: () => void;
 }) {
+  if (!props.showInteractionModeToggle && !props.showPlanToggle) {
+    return null;
+  }
+
   const interactionModeOption = interactionModeConfig[props.interactionMode];
   const InteractionModeIcon = interactionModeOption.icon;
-  const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
-  const RuntimeModeIcon = runtimeModeOption.icon;
 
   return (
     <>
@@ -252,54 +216,14 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
               })}
             </SelectPopup>
           </Select>
-
-          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
         </>
       ) : null}
 
-      <Select
-        value={props.runtimeMode}
-        onValueChange={(value) => props.onRuntimeModeChange(value!)}
-      >
-        <SelectTrigger
-          variant="ghost"
-          size="sm"
-          className="font-medium"
-          aria-label="Runtime mode"
-          title={
-            props.runtimeModeLocked ? props.runtimeModeLockReason : runtimeModeOption.description
-          }
-        >
-          <RuntimeModeIcon className="size-4" />
-          <SelectValue>{runtimeModeOption.label}</SelectValue>
-        </SelectTrigger>
-        <SelectPopup alignItemWithTrigger={false}>
-          {runtimeModeOptions.map((mode) => {
-            const option = runtimeModeConfig[mode];
-            const OptionIcon = option.icon;
-            const disabled = props.runtimeModeLocked && mode !== "approval-required";
-            return (
-              <SelectItem key={mode} value={mode} className="min-w-64 py-2" disabled={disabled}>
-                <div className="grid min-w-0 gap-0.5">
-                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                    <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                    {option.label}
-                  </span>
-                  <span className="text-muted-foreground text-xs leading-4">
-                    {disabled
-                      ? `${option.description} Unavailable in ASK mode.`
-                      : option.description}
-                  </span>
-                </div>
-              </SelectItem>
-            );
-          })}
-        </SelectPopup>
-      </Select>
-
       {props.showPlanToggle ? (
         <>
-          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+          {props.showInteractionModeToggle ? (
+            <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+          ) : null}
           <Button
             variant="ghost"
             className={cn(
@@ -328,7 +252,6 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
-  activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -350,7 +273,6 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
 }) {
   return (
     <>
-      {props.activeContextWindow ? <ContextWindowMeter usage={props.activeContextWindow} /> : null}
       {props.isPreparingWorktree ? (
         <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
       ) : null}
@@ -462,10 +384,7 @@ export interface ChatComposerProps {
   planSidebarOpen: boolean;
 
   // Mode
-  runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
-  runtimeModeLocked: boolean;
-  runtimeModeLockReason?: string | undefined;
 
   // Provider / model
   lockedProvider: ProviderKind | null;
@@ -473,8 +392,6 @@ export interface ChatComposerProps {
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
 
-  // Context window
-  activeThreadActivities: Thread["activities"] | undefined;
   localAgentInventory: ServerLocalAgentInventory;
   localAgentInventoryLoading: boolean;
 
@@ -517,7 +434,6 @@ export interface ChatComposerProps {
 
   onProviderModelSelect: (provider: ProviderKind, model: string) => void;
   toggleInteractionMode: () => void;
-  handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
   togglePlanSidebar: () => void;
 
@@ -564,15 +480,11 @@ export const ChatComposer = memo(
       sidebarProposedPlan,
       planSidebarLabel,
       planSidebarOpen,
-      runtimeMode,
       interactionMode,
-      runtimeModeLocked,
-      runtimeModeLockReason,
       lockedProvider,
       providerStatuses,
       activeProjectDefaultModelSelection,
       activeThreadModelSelection,
-      activeThreadActivities,
       localAgentInventory,
       localAgentInventoryLoading,
       resolvedTheme,
@@ -597,7 +509,6 @@ export const ChatComposer = memo(
       onChangeActivePendingUserInputCustomAnswer,
       onProviderModelSelect,
       toggleInteractionMode,
-      handleRuntimeModeChange,
       handleInteractionModeChange,
       togglePlanSidebar,
       focusComposer,
@@ -706,14 +617,6 @@ export const ChatComposer = memo(
         ? selectedModelForPicker
         : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
     }, [modelOptionsByProvider, selectedModelForPicker, selectedProvider]);
-
-    // ------------------------------------------------------------------
-    // Context window
-    // ------------------------------------------------------------------
-    const activeContextWindow = useMemo(
-      () => deriveLatestContextWindowSnapshot(activeThreadActivities ?? []),
-      [activeThreadActivities],
-    );
 
     // ------------------------------------------------------------------
     // Composer-local state
@@ -2052,16 +1955,12 @@ export const ChatComposer = memo(
                         interactionMode={interactionMode}
                         planSidebarLabel={planSidebarLabel}
                         planSidebarOpen={planSidebarOpen}
-                        runtimeMode={runtimeMode}
-                        runtimeModeLocked={runtimeModeLocked}
-                        runtimeModeLockReason={runtimeModeLockReason}
                         showInteractionModeToggle={
                           composerProviderControls.showInteractionModeToggle
                         }
                         traitsMenuContent={providerTraitsMenuContent}
                         onInteractionModeChange={handleInteractionModeChange}
                         onTogglePlanSidebar={togglePlanSidebar}
-                        onRuntimeModeChange={handleRuntimeModeChange}
                       />
                     ) : (
                       <>
@@ -2074,19 +1973,15 @@ export const ChatComposer = memo(
                             {providerTraitsPicker}
                           </>
                         ) : null}
-                        <ComposerFooterModeControls
+                        <ComposerFooterInteractionControls
                           showInteractionModeToggle={
                             composerProviderControls.showInteractionModeToggle
                           }
                           interactionMode={interactionMode}
-                          runtimeMode={runtimeMode}
-                          runtimeModeLocked={runtimeModeLocked}
-                          runtimeModeLockReason={runtimeModeLockReason}
                           showPlanToggle={showPlanSidebarToggle}
                           planSidebarLabel={planSidebarLabel}
                           planSidebarOpen={planSidebarOpen}
                           onInteractionModeChange={handleInteractionModeChange}
-                          onRuntimeModeChange={handleRuntimeModeChange}
                           onTogglePlanSidebar={togglePlanSidebar}
                         />
                       </>
@@ -2103,7 +1998,6 @@ export const ChatComposer = memo(
                   >
                     <ComposerFooterPrimaryActions
                       compact={isComposerPrimaryActionsCompact}
-                      activeContextWindow={activeContextWindow}
                       pendingAction={pendingPrimaryAction}
                       isRunning={phase === "running"}
                       turnQueueStatus={turnQueue.status}

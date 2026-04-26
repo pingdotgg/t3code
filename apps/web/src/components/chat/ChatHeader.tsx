@@ -9,7 +9,7 @@ import { scopeThreadRef } from "@forma/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { DiffIcon, TerminalSquareIcon } from "lucide-react";
+import { ChevronRightIcon, DiffIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
@@ -72,16 +72,32 @@ export const ChatHeader = memo(function ChatHeader({
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-        <h2
-          className="min-w-0 shrink truncate text-sm font-medium text-foreground"
-          title={activeThreadTitle}
-        >
-          {activeThreadTitle}
-        </h2>
-        {activeProjectName && (
-          <Badge variant="outline" className="min-w-0 shrink overflow-hidden">
-            <span className="min-w-0 truncate">{activeProjectName}</span>
-          </Badge>
+        {activeProjectName ? (
+          <nav
+            aria-label="Thread breadcrumb"
+            className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
+          >
+            <span
+              className="min-w-0 shrink truncate text-sm font-medium text-muted-foreground"
+              title={activeProjectName}
+            >
+              {activeProjectName}
+            </span>
+            <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground/70" aria-hidden />
+            <h2
+              className="min-w-0 shrink truncate text-sm font-medium text-foreground"
+              title={activeThreadTitle}
+            >
+              {activeThreadTitle}
+            </h2>
+          </nav>
+        ) : (
+          <h2
+            className="min-w-0 shrink truncate text-sm font-medium text-foreground"
+            title={activeThreadTitle}
+          >
+            {activeThreadTitle}
+          </h2>
         )}
         {activeProjectName && !isGitRepo && (
           <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">

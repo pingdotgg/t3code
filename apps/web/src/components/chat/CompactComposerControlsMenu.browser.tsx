@@ -21,8 +21,6 @@ async function mountMenu(props?: {
   modelSelection?: ModelSelection;
   prompt?: string;
   interactionMode?: "default" | "ask" | "plan";
-  runtimeMode?: "approval-required" | "auto-accept-edits" | "full-access";
-  runtimeModeLocked?: boolean;
 }) {
   const threadId = ThreadId.make("thread-compact-menu");
   const threadRef = scopeThreadRef(LOCAL_ENVIRONMENT_ID, threadId);
@@ -131,8 +129,6 @@ async function mountMenu(props?: {
       interactionMode={props?.interactionMode ?? "default"}
       planSidebarLabel="Plan"
       planSidebarOpen={false}
-      runtimeMode={props?.runtimeMode ?? "approval-required"}
-      runtimeModeLocked={props?.runtimeModeLocked ?? false}
       showInteractionModeToggle
       traitsMenuContent={
         <TraitsMenuContent
@@ -147,7 +143,6 @@ async function mountMenu(props?: {
       }
       onInteractionModeChange={vi.fn()}
       onTogglePlanSidebar={vi.fn()}
-      onRuntimeModeChange={vi.fn()}
     />,
     { container: host },
   );
@@ -276,11 +271,9 @@ describe("CompactComposerControlsMenu", () => {
     });
   });
 
-  it("locks access controls while ask mode is active", async () => {
+  it("keeps mode controls available while ask mode is active", async () => {
     await using _ = await mountMenu({
       interactionMode: "ask",
-      runtimeMode: "approval-required",
-      runtimeModeLocked: true,
     });
 
     await page.getByLabelText("More composer controls").click();
@@ -290,7 +283,7 @@ describe("CompactComposerControlsMenu", () => {
       expect(text).toContain("Build");
       expect(text).toContain("Ask");
       expect(text).toContain("Read/explain only. No writes.");
-      expect(text).toContain("ASK mode locks access to Supervised.");
+      expect(text).not.toContain("Access");
     });
   });
 
@@ -303,12 +296,9 @@ describe("CompactComposerControlsMenu", () => {
         interactionMode="default"
         planSidebarLabel="Plan"
         planSidebarOpen={false}
-        runtimeMode="approval-required"
-        runtimeModeLocked={false}
         showInteractionModeToggle={false}
         onInteractionModeChange={vi.fn()}
         onTogglePlanSidebar={vi.fn()}
-        onRuntimeModeChange={vi.fn()}
       />,
       { container: host },
     );
@@ -320,9 +310,9 @@ describe("CompactComposerControlsMenu", () => {
       expect(text).not.toContain("Mode");
       expect(text).not.toContain("Build");
       expect(text).not.toContain("Plan");
-      expect(text).toContain("Access");
-      expect(text).toContain("Supervised");
-      expect(text).toContain("Full access");
+      expect(text).not.toContain("Access");
+      expect(text).not.toContain("Supervised");
+      expect(text).not.toContain("Full access");
     });
 
     await screen.unmount();

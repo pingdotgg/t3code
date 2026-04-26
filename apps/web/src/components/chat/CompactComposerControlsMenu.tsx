@@ -1,4 +1,4 @@
-import { ProviderInteractionMode, RuntimeMode } from "@forma/contracts";
+import { ProviderInteractionMode } from "@forma/contracts";
 import { memo, type ReactNode } from "react";
 import { EllipsisIcon, ListTodoIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -17,14 +17,10 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   interactionMode: ProviderInteractionMode;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
-  runtimeMode: RuntimeMode;
-  runtimeModeLocked: boolean;
-  runtimeModeLockReason?: string | undefined;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
   onInteractionModeChange: (mode: ProviderInteractionMode) => void;
   onTogglePlanSidebar: () => void;
-  onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   const interactionModeDescription =
     props.interactionMode === "ask"
@@ -32,6 +28,9 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
       : props.interactionMode === "plan"
         ? "Research and propose a plan without implementing."
         : "Explore and implement changes.";
+  const showDividerBeforePlanSidebar = Boolean(
+    props.activePlan && props.traitsMenuContent && !props.showInteractionModeToggle,
+  );
 
   return (
     <Menu>
@@ -74,30 +73,9 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             <MenuDivider />
           </>
         ) : null}
-        <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Access</div>
-        {props.runtimeModeLocked ? (
-          <div className="px-2 pb-1 text-muted-foreground/70 text-xs">
-            {props.runtimeModeLockReason ?? "ASK mode locks access to Supervised."}
-          </div>
-        ) : null}
-        <MenuRadioGroup
-          value={props.runtimeMode}
-          onValueChange={(value) => {
-            if (!value || value === props.runtimeMode) return;
-            props.onRuntimeModeChange(value as RuntimeMode);
-          }}
-        >
-          <MenuRadioItem value="approval-required">Supervised</MenuRadioItem>
-          <MenuRadioItem value="auto-accept-edits" disabled={props.runtimeModeLocked}>
-            Auto-accept edits
-          </MenuRadioItem>
-          <MenuRadioItem value="full-access" disabled={props.runtimeModeLocked}>
-            Full access
-          </MenuRadioItem>
-        </MenuRadioGroup>
         {props.activePlan ? (
           <>
-            <MenuDivider />
+            {showDividerBeforePlanSidebar ? <MenuDivider /> : null}
             <MenuItem onClick={props.onTogglePlanSidebar}>
               <ListTodoIcon className="size-4 shrink-0" />
               {props.planSidebarOpen

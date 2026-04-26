@@ -12,13 +12,18 @@ function formatPercentage(value: number | null): string | null {
   return `${Math.round(value)}%`;
 }
 
-export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
+export function ContextWindowMeter(props: {
+  usage: ContextWindowSnapshot;
+  variant?: "icon" | "labeled";
+}) {
   const { usage } = props;
+  const variant = props.variant ?? "icon";
   const usedPercentage = formatPercentage(usage.usedPercentage);
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
   const radius = 9.75;
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference - (normalizedPercentage / 100) * circumference;
+  const visibleLabel = usedPercentage ?? formatContextWindowTokens(usage.usedTokens);
 
   return (
     <Popover>
@@ -29,7 +34,10 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
         render={
           <button
             type="button"
-            className="group inline-flex items-center justify-center rounded-full transition-opacity hover:opacity-85"
+            className={cn(
+              "group inline-flex items-center justify-center transition-opacity hover:opacity-85",
+              variant === "labeled" ? "gap-1.5 rounded-md px-1 py-0.5" : "rounded-full",
+            )}
             aria-label={
               usage.maxTokens !== null && usedPercentage
                 ? `Context window ${usedPercentage} used`
@@ -69,11 +77,18 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
                   "text-muted-foreground",
                 )}
               >
-                {usage.usedPercentage !== null
-                  ? Math.round(usage.usedPercentage)
-                  : formatContextWindowTokens(usage.usedTokens)}
+                {variant === "labeled" ? (
+                  <span className="block size-1.5 rounded-full bg-current" />
+                ) : usage.usedPercentage !== null ? (
+                  Math.round(usage.usedPercentage)
+                ) : (
+                  formatContextWindowTokens(usage.usedTokens)
+                )}
               </span>
             </span>
+            {variant === "labeled" ? (
+              <span className="text-muted-foreground text-xs">{visibleLabel}</span>
+            ) : null}
           </button>
         }
       />

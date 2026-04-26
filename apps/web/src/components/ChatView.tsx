@@ -99,8 +99,9 @@ import { useCommandPaletteStore } from "../commandPaletteStore";
 import { buildTemporaryWorktreeBranchName } from "@forma/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
-import { BranchToolbar } from "./BranchToolbar";
+import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { ComposerMetaBar } from "./ComposerMetaBar";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { ChevronDownIcon } from "lucide-react";
@@ -911,7 +912,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [environmentId, routeKind, threadId]);
 
   // Compute the list of environments this logical project spans, used to
-  // drive the environment picker in BranchToolbar.
+  // drive the environment picker in the composer meta bar.
   const allProjects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const savedEnvironmentRegistry = useSavedEnvironmentRegistryStore((s) => s.byId);
@@ -967,6 +968,10 @@ export default function ChatView(props: ChatViewProps) {
     savedEnvironmentRuntimeById,
   ]);
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
+  const activeContextWindow = useMemo(
+    () => deriveLatestContextWindowSnapshot(activeThread?.activities ?? []),
+    [activeThread?.activities],
+  );
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -3611,7 +3616,7 @@ export default function ChatView(props: ChatViewProps) {
           </div>
 
           {/* Input bar */}
-          <div className={cn("px-3 pt-1.5 sm:px-5 sm:pt-2", isGitRepo ? "pb-1" : "pb-3 sm:pb-4")}>
+          <div className="px-3 pb-3 pt-1.5 sm:px-5 sm:pb-4 sm:pt-2">
             <ChatComposer
               ref={composerRef}
               composerDraftTarget={composerDraftTarget}
@@ -3644,15 +3649,11 @@ export default function ChatView(props: ChatViewProps) {
               sidebarProposedPlan={sidebarProposedPlan as { turnId?: TurnId } | null}
               planSidebarLabel={planSidebarLabel}
               planSidebarOpen={planSidebarOpen}
-              runtimeMode={runtimeMode}
               interactionMode={interactionMode}
-              runtimeModeLocked={runtimeModeLocked}
-              runtimeModeLockReason={runtimeModeLockReason}
               lockedProvider={lockedProvider}
               providerStatuses={providerStatuses as ServerProvider[]}
               activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
               activeThreadModelSelection={activeThread?.modelSelection}
-              activeThreadActivities={activeThread?.activities}
               localAgentInventory={localAgentInventoryQuery.data ?? { skills: [], commands: [] }}
               localAgentInventoryLoading={
                 localAgentInventoryQuery.isLoading || localAgentInventoryQuery.isFetching
@@ -3681,7 +3682,6 @@ export default function ChatView(props: ChatViewProps) {
               }
               onProviderModelSelect={onProviderModelSelect}
               toggleInteractionMode={toggleInteractionMode}
-              handleRuntimeModeChange={handleRuntimeModeChange}
               handleInteractionModeChange={handleInteractionModeChange}
               togglePlanSidebar={togglePlanSidebar}
               focusComposer={focusComposer}
@@ -3689,13 +3689,11 @@ export default function ChatView(props: ChatViewProps) {
               setThreadError={setThreadError}
               onExpandImage={onExpandTimelineImage}
             />
-          </div>
-
-          {isGitRepo && (
-            <BranchToolbar
+            <ComposerMetaBar
               environmentId={activeThread.environmentId}
               threadId={activeThread.id}
               {...(routeKind === "draft" && draftId ? { draftId } : {})}
+              showGitControls={isGitRepo}
               onEnvModeChange={onEnvModeChange}
               {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
               {...(canOverrideServerThreadEnvMode
@@ -3706,6 +3704,11 @@ export default function ChatView(props: ChatViewProps) {
                 : {})}
               envLocked={envLocked}
               onComposerFocusRequest={scheduleComposerFocus}
+              runtimeMode={runtimeMode}
+              runtimeModeLocked={runtimeModeLocked}
+              runtimeModeLockReason={runtimeModeLockReason}
+              activeContextWindow={activeContextWindow}
+              onRuntimeModeChange={handleRuntimeModeChange}
               {...(canCheckoutPullRequestIntoThread
                 ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                 : {})}
@@ -3716,7 +3719,7 @@ export default function ChatView(props: ChatViewProps) {
                   }
                 : {})}
             />
-          )}
+          </div>
           {pullRequestDialogState ? (
             <PullRequestThreadDialog
               key={pullRequestDialogState.key}
