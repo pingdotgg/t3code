@@ -1576,7 +1576,9 @@ const formatPreviewToolCall = (
           const sorted = preview.getAttribute("data-project-sort") !== "alpha";
           preview.setAttribute("data-project-sort", sorted ? "alpha" : "original");
           projects
-            .toSorted((a, b) =>
+            .slice()
+            // eslint-disable-next-line unicorn/no-array-sort -- toSorted is not available in older browsers.
+            .sort((a, b) =>
               sorted
                 ? (a.dataset.projectId ?? "").localeCompare(b.dataset.projectId ?? "")
                 : Number(a.dataset.projectIndex ?? 0) - Number(b.dataset.projectIndex ?? 0),
