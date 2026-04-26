@@ -1,12 +1,8 @@
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { ServerResponse } from "node:http";
 import path from "node:path";
 
 import {
-  PreviewCatalogManifest,
   PreviewManifest,
-  PreviewRegisterGeneratedInput,
-  PreviewScopeInput,
-  PreviewScopeManifest,
   type PreviewCaseManifest,
   type PreviewManifestEntry,
 } from "@forma/contracts";
@@ -15,27 +11,15 @@ import { Schema } from "effect";
 import { glob } from "tinyglobby";
 import type { Plugin, ViteDevServer } from "vite";
 import { normalizePath } from "vite";
-import {
-  buildPreviewCatalog,
-  buildPreviewSourceGraph,
-  buildScopedPreviewEntries,
-  type DiscoveredCatalogEntry,
-  resolvePreviewPaths as resolveCatalogPreviewPaths,
-} from "./catalog.ts";
 
 const DEFAULT_SCAN_INCLUDE = ["src/**/*.preview.tsx"] as const;
 const DEFAULT_SCAN_EXCLUDE = ["**/*.test.*", "**/*.spec.*", "**/node_modules/**"] as const;
 
 const MANIFEST_ROUTE = "/__forma/manifest";
-const CATALOG_ROUTE = "/__forma/catalog";
-const SCOPE_ROUTE = "/__forma/scope";
-const GENERATED_PREVIEW_ROUTE = "/__forma/generated-previews";
 const RENDER_ROUTE_PREFIX = "/__forma/render/";
 const RENDER_RUNTIME_ROUTE = "/__forma/render-runtime.js";
 const VIRTUAL_RENDER_RUNTIME_ID = "virtual:forma-preview-runtime";
 const RESOLVED_VIRTUAL_RENDER_RUNTIME_ID = `\0${VIRTUAL_RENDER_RUNTIME_ID}`;
-const VIRTUAL_GENERATED_PREVIEW_ID = "virtual:forma-generated-preview";
-const RESOLVED_VIRTUAL_GENERATED_PREVIEW_ID = `\0${VIRTUAL_GENERATED_PREVIEW_ID}`;
 
 interface FormaPreviewVitePluginOptions {
   readonly configPath?: string | undefined;
@@ -54,13 +38,6 @@ interface ScannedPreviewFile {
 interface LoadedPreviewDefinition {
   readonly file: ScannedPreviewFile;
   readonly definition: PreviewDefinition;
-}
-
-interface RegisteredGeneratedPreview {
-  readonly componentId: string;
-  readonly componentPath: string;
-  readonly sourceHash: string;
-  readonly moduleSource: string;
 }
 
 function toPosixPath(input: string): string {
@@ -116,33 +93,6 @@ function respondHtml(res: ServerResponse, statusCode: number, value: string): vo
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "*");
   res.end(value);
-}
-
-async function readJsonBody(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of req) {
-    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  }
-  const rawBody = Buffer.concat(chunks).toString("utf8").trim();
-  return rawBody.length > 0 ? JSON.parse(rawBody) : {};
-}
-
-function buildGeneratedPreviewModuleId(renderToken: string): string {
-  return `${VIRTUAL_GENERATED_PREVIEW_ID}?token=${encodeURIComponent(renderToken)}`;
-}
-
-function parseGeneratedPreviewModuleId(id: string): string | null {
-  const rawId = id.startsWith(RESOLVED_VIRTUAL_GENERATED_PREVIEW_ID)
-    ? id.slice(RESOLVED_VIRTUAL_GENERATED_PREVIEW_ID.length)
-    : id.startsWith(VIRTUAL_GENERATED_PREVIEW_ID)
-      ? id.slice(VIRTUAL_GENERATED_PREVIEW_ID.length)
-      : null;
-  if (rawId === null) {
-    return null;
-  }
-  const queryString = rawId.startsWith("?") ? rawId.slice(1) : rawId;
-  const params = new URLSearchParams(queryString);
-  return params.get("token");
 }
 
 function resolvePreviewPaths(
@@ -333,46 +283,6 @@ function renderDocument(scriptUrl: string): string {
         }
       })();
     </script>
-    <script>
-      (() => {
-        const params = new URLSearchParams(window.location.search);
-        const loadToken = params.get("token") ?? "preview-load";
-        const previewId = decodeURIComponent(window.location.pathname.split("/__forma/render/")[1] ?? "unknown-preview");
-        const caseId = params.get("case") ?? "default";
-
-        function sanitizeMessage(error) {
-          if (typeof error === "string" && error.trim().length > 0) {
-            return error.trim();
-          }
-          if (error instanceof Error && error.message.trim().length > 0) {
-            return error.message.trim();
-          }
-          return "Preview render failed.";
-        }
-
-        function postError(message) {
-          window.parent?.postMessage(
-            {
-              source: "forma-preview",
-              type: "error",
-              loadToken,
-              previewId,
-              caseId,
-              message,
-            },
-            "*",
-          );
-        }
-
-        window.addEventListener("error", (event) => {
-          postError(sanitizeMessage(event.error ?? event.message));
-        });
-
-        window.addEventListener("unhandledrejection", (event) => {
-          postError(sanitizeMessage(event.reason));
-        });
-      })();
-    </script>
   </head>
   <body>
     <div id="root"></div>
@@ -382,48 +292,21 @@ function renderDocument(scriptUrl: string): string {
       window.$RefreshReg$ = () => {};
       window.$RefreshSig$ = () => (type) => type;
       window.__vite_plugin_react_preamble_installed__ = true;
-      import "/@vite/client";
-
-      const params = new URLSearchParams(window.location.search);
-      const loadToken = params.get("token") ?? "preview-load";
-      const previewId = decodeURIComponent(
-        window.location.pathname.split("/__forma/render/")[1] ?? "unknown-preview",
-      );
-      const caseId = params.get("case") ?? "default";
-
-      try {
-        await import(${JSON.stringify(scriptUrl)});
-      } catch (error) {
-        const message =
-          error instanceof Error && error.message.trim().length > 0
-            ? error.message.trim()
-            : "Preview runtime failed to load.";
-        window.parent?.postMessage(
-          {
-            source: "forma-preview",
-            type: "error",
-            loadToken,
-            previewId,
-            caseId,
-            message,
-          },
-          "*",
-        );
-        throw error;
-      }
     </script>
+    <script type="module" src="/@vite/client"></script>
+    <script type="module" src="${scriptUrl}"></script>
   </body>
 </html>`;
 }
 
 function renderRuntimeModule(input: {
-  readonly previewId: string;
-  readonly previewImportPath: string;
+  readonly previewFile: ScannedPreviewFile;
   readonly requestedCaseId: string | null;
   readonly loadToken: string;
   readonly globalWrapperImportPath: string | undefined;
   readonly globalWrapperExportName: string | undefined;
 }): string {
+  const previewImportPath = toViteFsPath(input.previewFile.absolutePreviewPath);
   const globalWrapperImport = (() => {
     if (!input.globalWrapperImportPath) {
       return "const formaPreviewGlobalWrapper = null;\n";
@@ -441,11 +324,11 @@ function renderRuntimeModule(input: {
   return `
 import React from "react";
 import ReactDOM from "react-dom/client";
-import previewDefinition from ${JSON.stringify(input.previewImportPath)};
+import previewDefinition from ${JSON.stringify(previewImportPath)};
 ${globalWrapperImport}
 import { wrapPreviewNode } from "@forma/preview-react";
 
-const previewId = ${JSON.stringify(input.previewId)};
+const previewId = ${JSON.stringify(input.previewFile.id)};
 const requestedCaseId = ${JSON.stringify(input.requestedCaseId)};
 const loadToken = ${JSON.stringify(input.loadToken)};
 const initialViewportWidth = (() => {
@@ -502,8 +385,6 @@ function isControlMessage(value) {
     record.loadToken === loadToken &&
     typeof record.caseId === "string" &&
     record.caseId.trim().length > 0 &&
-    record.controlValues &&
-    typeof record.controlValues === "object" &&
     (record.viewportWidth === null ||
       (typeof record.viewportWidth === "number" &&
         Number.isInteger(record.viewportWidth) &&
@@ -567,7 +448,7 @@ class PreviewCaseErrorBoundary extends React.Component {
   }
 }
 
-function PreviewCaseFrame({ caseId, controlValues, renderCase }) {
+function PreviewCaseFrame({ caseId, renderCase }) {
   React.useEffect(() => {
     postMessageToParent({
       source: "forma-preview",
@@ -576,14 +457,13 @@ function PreviewCaseFrame({ caseId, controlValues, renderCase }) {
       previewId,
       caseId,
     });
-  }, [caseId, controlValues]);
-  return renderCase({ controls: controlValues });
+  }, [caseId]);
+  return renderCase();
 }
 
 function PreviewRoot() {
   const [activeCaseId, setActiveCaseId] = React.useState(requestedCaseId ?? "default");
   const [activeViewportWidth, setActiveViewportWidth] = React.useState(initialViewportWidth);
-  const [activeControlValues, setActiveControlValues] = React.useState({});
 
   React.useEffect(() => {
     setViewportWidth(activeViewportWidth);
@@ -597,7 +477,6 @@ function PreviewRoot() {
 
       setActiveCaseId(event.data.caseId);
       setActiveViewportWidth(event.data.viewportWidth);
-      setActiveControlValues(event.data.controlValues);
     };
 
     window.addEventListener("message", handleMessage);
@@ -630,7 +509,6 @@ function PreviewRoot() {
       },
       children: React.createElement(PreviewCaseFrame, {
         caseId: resolvedCaseId,
-        controlValues: activeControlValues,
         renderCase: previewCase.render,
       }),
     }),
@@ -670,7 +548,6 @@ function buildRuntimeModuleId(input: {
   readonly previewId: string;
   readonly requestedCaseId: string | null;
   readonly loadToken: string;
-  readonly renderToken: string | null;
 }): string {
   const query = new URLSearchParams();
   query.set("previewId", input.previewId);
@@ -678,9 +555,6 @@ function buildRuntimeModuleId(input: {
     query.set("case", input.requestedCaseId);
   }
   query.set("token", input.loadToken);
-  if (input.renderToken) {
-    query.set("renderToken", input.renderToken);
-  }
   return `${VIRTUAL_RENDER_RUNTIME_ID}?${query.toString()}`;
 }
 
@@ -688,7 +562,6 @@ function parseRuntimeModuleId(id: string): {
   readonly previewId: string;
   readonly requestedCaseId: string | null;
   readonly loadToken: string;
-  readonly renderToken: string | null;
 } | null {
   const rawId = id.startsWith(RESOLVED_VIRTUAL_RENDER_RUNTIME_ID)
     ? id.slice(RESOLVED_VIRTUAL_RENDER_RUNTIME_ID.length)
@@ -711,7 +584,6 @@ function parseRuntimeModuleId(id: string): {
     previewId,
     requestedCaseId: params.get("case"),
     loadToken,
-    renderToken: params.get("renderToken"),
   };
 }
 
@@ -728,105 +600,28 @@ export function formaPreviewVitePlugin(
   previewConfig: FormaPreviewConfig,
   options: FormaPreviewVitePluginOptions = {},
 ): Plugin {
-  const generatedPreviews = new Map<string, RegisteredGeneratedPreview>();
-  const generatedTokensByComponentPath = new Map<string, Set<string>>();
-  let cachedCatalog: {
-    readonly manifest: PreviewCatalogManifest;
-    readonly entries: readonly DiscoveredCatalogEntry[];
-    readonly entriesById: ReadonlyMap<string, DiscoveredCatalogEntry>;
-  } | null = null;
-  let cachedSourceGraph: Awaited<ReturnType<typeof buildPreviewSourceGraph>> | null = null;
-
-  const rememberGeneratedPreview = (
-    renderToken: string,
-    registration: RegisteredGeneratedPreview,
-  ) => {
-    generatedPreviews.set(renderToken, registration);
-    const tokens =
-      generatedTokensByComponentPath.get(registration.componentPath) ?? new Set<string>();
-    tokens.add(renderToken);
-    generatedTokensByComponentPath.set(registration.componentPath, tokens);
-  };
-
-  const clearGeneratedPreviewsForComponentPath = (componentPath: string) => {
-    const existingTokens = generatedTokensByComponentPath.get(componentPath);
-    if (!existingTokens) {
-      return;
-    }
-    for (const token of existingTokens) {
-      generatedPreviews.delete(token);
-    }
-    generatedTokensByComponentPath.delete(componentPath);
-  };
-
-  const loadCatalog = async () => {
-    const nextCatalog = await buildPreviewCatalog(previewConfig, options.configPath);
-    cachedCatalog = {
-      manifest: nextCatalog.manifest,
-      entries: nextCatalog.entries,
-      entriesById: new Map(
-        nextCatalog.entries.map((entry: DiscoveredCatalogEntry) => [entry.id, entry]),
-      ),
-    };
-    return cachedCatalog;
-  };
-
-  const ensureCatalog = async () => cachedCatalog ?? loadCatalog();
-  const loadSourceGraph = async () => {
-    const nextGraph = await buildPreviewSourceGraph(previewConfig, options.configPath);
-    cachedSourceGraph = nextGraph;
-    return nextGraph;
-  };
-  const ensureSourceGraph = async () => cachedSourceGraph ?? loadSourceGraph();
-
   return {
     name: "forma-preview-vite",
     resolveId(id) {
       if (id.startsWith(VIRTUAL_RENDER_RUNTIME_ID)) {
         return `${RESOLVED_VIRTUAL_RENDER_RUNTIME_ID}${id.slice(VIRTUAL_RENDER_RUNTIME_ID.length)}`;
       }
-      if (id.startsWith(VIRTUAL_GENERATED_PREVIEW_ID)) {
-        return `${RESOLVED_VIRTUAL_GENERATED_PREVIEW_ID}${id.slice(VIRTUAL_GENERATED_PREVIEW_ID.length)}`;
-      }
       return null;
     },
     async load(id) {
-      const generatedPreviewToken = parseGeneratedPreviewModuleId(id);
-      if (generatedPreviewToken) {
-        const registeredPreview = generatedPreviews.get(generatedPreviewToken);
-        if (!registeredPreview) {
-          throw new Error(`Unknown generated preview token: ${generatedPreviewToken}`);
-        }
-        return registeredPreview.moduleSource;
-      }
-
       const runtimeModule = parseRuntimeModuleId(id);
       if (!runtimeModule) {
         return null;
       }
 
-      const previewImportPath = runtimeModule.renderToken
-        ? (() => {
-            const registeredPreview = generatedPreviews.get(runtimeModule.renderToken!);
-            if (!registeredPreview) {
-              throw new Error(`Unknown generated preview token: ${runtimeModule.renderToken}`);
-            }
-            return buildGeneratedPreviewModuleId(runtimeModule.renderToken!);
-          })()
-        : (() => {
-            const files = scanPreviewFiles(previewConfig, options.configPath);
-            return files.then((legacyFiles) => {
-              const previewFile = legacyFiles.find((entry) => entry.id === runtimeModule.previewId);
-              if (!previewFile) {
-                throw new Error(`Unknown preview id: ${runtimeModule.previewId}`);
-              }
-              return toViteFsPath(previewFile.absolutePreviewPath);
-            });
-          })();
+      const files = await scanPreviewFiles(previewConfig, options.configPath);
+      const previewFile = files.find((entry) => entry.id === runtimeModule.previewId);
+      if (!previewFile) {
+        throw new Error(`Unknown preview id: ${runtimeModule.previewId}`);
+      }
 
       return renderRuntimeModule({
-        previewId: runtimeModule.previewId,
-        previewImportPath: await previewImportPath,
+        previewFile,
         requestedCaseId: runtimeModule.requestedCaseId,
         loadToken: runtimeModule.loadToken,
         globalWrapperImportPath: options.globalWrapperImportPath,
@@ -834,22 +629,6 @@ export function formaPreviewVitePlugin(
       });
     },
     configureServer(server) {
-      server.watcher.on("add", () => {
-        cachedCatalog = null;
-        cachedSourceGraph = null;
-      });
-      server.watcher.on("unlink", () => {
-        cachedCatalog = null;
-        cachedSourceGraph = null;
-      });
-      server.watcher.on("change", (changedPath) => {
-        const { configRoot } = resolveCatalogPreviewPaths(previewConfig, options.configPath);
-        const relativeChangedPath = toPosixPath(path.relative(configRoot, changedPath));
-        cachedCatalog = null;
-        cachedSourceGraph = null;
-        clearGeneratedPreviewsForComponentPath(relativeChangedPath);
-      });
-
       server.middlewares.use((req, res, next) => {
         void (async () => {
           const url = req.url ? new URL(req.url, "http://127.0.0.1") : null;
@@ -860,57 +639,6 @@ export function formaPreviewVitePlugin(
 
           if (req.method === "OPTIONS" && url.pathname === MANIFEST_ROUTE) {
             respondJson(res, 200, {});
-            return;
-          }
-
-          if (req.method === "OPTIONS" && url.pathname === CATALOG_ROUTE) {
-            respondJson(res, 200, {});
-            return;
-          }
-
-          if (req.method === "OPTIONS" && url.pathname === SCOPE_ROUTE) {
-            respondJson(res, 200, {});
-            return;
-          }
-
-          if (req.method === "OPTIONS" && url.pathname === GENERATED_PREVIEW_ROUTE) {
-            respondJson(res, 200, {});
-            return;
-          }
-
-          if (url.pathname === CATALOG_ROUTE) {
-            try {
-              const catalog = await ensureCatalog();
-              respondJson(res, 200, catalog.manifest);
-            } catch (error) {
-              respondJson(res, 500, {
-                message:
-                  error instanceof Error ? error.message : "Failed to build preview catalog.",
-              });
-            }
-            return;
-          }
-
-          if (req.method === "POST" && url.pathname === SCOPE_ROUTE) {
-            try {
-              const scopeInput = Schema.decodeUnknownSync(PreviewScopeInput)(
-                await readJsonBody(req),
-              );
-              const graph = await ensureSourceGraph();
-              const scope = await buildScopedPreviewEntries({
-                previewConfig,
-                configPath: options.configPath,
-                workspaceRoot: graph.configRoot,
-                scope: scopeInput,
-                graph,
-              });
-              respondJson(res, 200, Schema.decodeUnknownSync(PreviewScopeManifest)(scope.manifest));
-            } catch (error) {
-              respondJson(res, 400, {
-                message:
-                  error instanceof Error ? error.message : "Failed to build scoped preview list.",
-              });
-            }
             return;
           }
 
@@ -926,28 +654,6 @@ export function formaPreviewVitePlugin(
               respondJson(res, 500, {
                 message:
                   error instanceof Error ? error.message : "Failed to build preview manifest.",
-              });
-            }
-            return;
-          }
-
-          if (req.method === "POST" && url.pathname === GENERATED_PREVIEW_ROUTE) {
-            try {
-              const registration = Schema.decodeUnknownSync(PreviewRegisterGeneratedInput)(
-                await readJsonBody(req),
-              );
-              const renderToken = crypto.randomUUID();
-              rememberGeneratedPreview(renderToken, {
-                componentId: registration.componentId,
-                componentPath: registration.componentPath,
-                sourceHash: registration.sourceHash,
-                moduleSource: registration.moduleSource,
-              });
-              respondJson(res, 200, { renderToken });
-            } catch (error) {
-              respondJson(res, 400, {
-                message:
-                  error instanceof Error ? error.message : "Failed to register generated preview.",
               });
             }
             return;
@@ -969,7 +675,6 @@ export function formaPreviewVitePlugin(
                   previewId,
                   requestedCaseId: url.searchParams.get("case"),
                   loadToken: url.searchParams.get("token") ?? "preview-load",
-                  renderToken: url.searchParams.get("renderToken"),
                 }),
               );
               if (!transformed) {
@@ -1000,10 +705,6 @@ export function formaPreviewVitePlugin(
             const token = url.searchParams.get("token");
             if (token) {
               scriptUrl.searchParams.set("token", token);
-            }
-            const renderToken = url.searchParams.get("renderToken");
-            if (renderToken) {
-              scriptUrl.searchParams.set("renderToken", renderToken);
             }
             respondHtml(res, 200, renderDocument(scriptUrl.pathname + scriptUrl.search));
             return;

@@ -30,16 +30,9 @@ import type {
   ProjectWriteFileResult,
 } from "./project.ts";
 import type {
-  PreviewCatalogInput,
-  PreviewCatalogManifest,
   PreviewCloseInput,
-  PreviewGenerationInput,
-  PreviewGenerationSnapshot,
   PreviewOpenInput,
-  PreviewRegenerateInput,
   PreviewRestartInput,
-  PreviewScopeInput,
-  PreviewScopeManifest,
   PreviewSessionSnapshot,
   PreviewSessionStreamEvent,
   PreviewSubscribeInput,
@@ -316,10 +309,6 @@ export interface EnvironmentApi {
     open: (input: PreviewOpenInput) => Promise<PreviewSessionSnapshot>;
     close: (input: PreviewCloseInput) => Promise<void>;
     restart: (input: PreviewRestartInput) => Promise<PreviewSessionSnapshot>;
-    scope: (input: PreviewScopeInput) => Promise<PreviewScopeManifest>;
-    catalog: (input: PreviewCatalogInput) => Promise<PreviewCatalogManifest>;
-    generate: (input: PreviewGenerationInput) => Promise<PreviewGenerationSnapshot>;
-    regenerate: (input: PreviewRegenerateInput) => Promise<PreviewGenerationSnapshot>;
     subscribe: (
       input: PreviewSubscribeInput,
       callback: (event: PreviewSessionStreamEvent) => void,

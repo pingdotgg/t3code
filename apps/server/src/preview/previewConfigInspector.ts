@@ -87,8 +87,6 @@ const PREVIEW_CONFIG_INSPECTOR_SOURCE = [
   "  const rootExpression = unwrapExpression(exportAssignment.expression);",
   "  if (!ts.isObjectLiteralExpression(rootExpression)) fail('Preview config default export must resolve to an object literal.');",
   "  const appRoot = stringValue(propertyExpression(rootExpression, 'appRoot'));",
-  "  const framework = stringValue(propertyExpression(rootExpression, 'framework')) ?? undefined;",
-  "  const bundler = stringValue(propertyExpression(rootExpression, 'bundler')) ?? undefined;",
   "  const serverObject = objectValue(propertyExpression(rootExpression, 'server'));",
   "  if (!appRoot || !serverObject) fail('Preview config requires appRoot and server.');",
   "  const command = stringArray(propertyExpression(serverObject, 'command'));",
@@ -98,34 +96,7 @@ const PREVIEW_CONFIG_INSPECTOR_SOURCE = [
   "  const scanObject = objectValue(propertyExpression(rootExpression, 'scan'));",
   "  const include = scanObject ? stringArray(propertyExpression(scanObject, 'include')) ?? undefined : undefined;",
   "  const exclude = scanObject ? stringArray(propertyExpression(scanObject, 'exclude')) ?? undefined : undefined;",
-  "  const componentsObject = objectValue(propertyExpression(rootExpression, 'components'));",
-  "  const componentInclude = componentsObject ? stringArray(propertyExpression(componentsObject, 'include')) ?? undefined : undefined;",
-  "  const componentExclude = componentsObject ? stringArray(propertyExpression(componentsObject, 'exclude')) ?? undefined : undefined;",
-  "  const graphObject = objectValue(propertyExpression(rootExpression, 'graph'));",
-  "  const graphInclude = graphObject ? stringArray(propertyExpression(graphObject, 'include')) ?? undefined : undefined;",
-  "  const graphExclude = graphObject ? stringArray(propertyExpression(graphObject, 'exclude')) ?? undefined : undefined;",
-  "  const payload = {",
-  "    appRoot,",
-  "    ...(framework ? { framework } : {}),",
-  "    ...(bundler ? { bundler } : {}),",
-  "    server: { command, ...(cwd ? { cwd } : {}), ...(env ? { env } : {}) },",
-  "    ...(",
-  "      include || exclude",
-  "        ? { scan: { ...(include ? { include } : {}), ...(exclude ? { exclude } : {}) } }",
-  "        : {}",
-  "    ),",
-  "    ...(",
-  "      componentInclude || componentExclude",
-  "        ? { components: { ...(componentInclude ? { include: componentInclude } : {}), ...(componentExclude ? { exclude: componentExclude } : {}) } }",
-  "        : {}",
-  "    ),",
-  "    ...(",
-  "      graphInclude || graphExclude",
-  "        ? { graph: { ...(graphInclude ? { include: graphInclude } : {}), ...(graphExclude ? { exclude: graphExclude } : {}) } }",
-  "        : {}",
-  "    ),",
-  "  };",
-  "  process.stdout.write(JSON.stringify(payload));",
+  "  process.stdout.write(JSON.stringify({ appRoot, server: { command, cwd, env }, scan: { include, exclude } }));",
   "}",
   "",
   "main().catch((error) => {",
@@ -135,22 +106,12 @@ const PREVIEW_CONFIG_INSPECTOR_SOURCE = [
 
 export interface SerializablePreviewConfig {
   readonly appRoot: string;
-  readonly framework?: "react" | undefined;
-  readonly bundler?: "vite" | undefined;
   readonly server: {
     readonly command: readonly [string, ...string[]];
     readonly cwd?: string | undefined;
     readonly env?: Readonly<Record<string, string>> | undefined;
   };
   readonly scan?: {
-    readonly include?: readonly string[] | undefined;
-    readonly exclude?: readonly string[] | undefined;
-  };
-  readonly components?: {
-    readonly include?: readonly string[] | undefined;
-    readonly exclude?: readonly string[] | undefined;
-  };
-  readonly graph?: {
     readonly include?: readonly string[] | undefined;
     readonly exclude?: readonly string[] | undefined;
   };

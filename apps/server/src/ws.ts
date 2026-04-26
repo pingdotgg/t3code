@@ -991,22 +991,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.previewRestart, previewManager.restart(input), {
             "rpc.aggregate": "preview",
           }),
-        [WS_METHODS.previewScope]: (input) =>
-          observeRpcEffect(WS_METHODS.previewScope, previewManager.scope(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewCatalog]: (input) =>
-          observeRpcEffect(WS_METHODS.previewCatalog, previewManager.catalog(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewGenerate]: (input) =>
-          observeRpcEffect(WS_METHODS.previewGenerate, previewManager.generate(input), {
-            "rpc.aggregate": "preview",
-          }),
-        [WS_METHODS.previewRegenerate]: (input) =>
-          observeRpcEffect(WS_METHODS.previewRegenerate, previewManager.regenerate(input), {
-            "rpc.aggregate": "preview",
-          }),
         [WS_METHODS.subscribeTerminalEvents]: (_input) =>
           observeRpcStream(
             WS_METHODS.subscribeTerminalEvents,

@@ -1,4 +1,4 @@
-import type { PreviewControlValueMap, PreviewViewport } from "@forma/contracts";
+import type { PreviewViewport } from "@forma/contracts";
 import { createElement, type ComponentType, type ReactNode } from "react";
 
 export interface PreviewWrapperProps {
@@ -7,12 +7,8 @@ export interface PreviewWrapperProps {
 
 export type PreviewWrapper = ComponentType<PreviewWrapperProps>;
 
-export interface PreviewCaseRenderContext {
-  readonly controls: PreviewControlValueMap;
-}
-
 export interface PreviewCaseDefinition {
-  readonly render: (context: PreviewCaseRenderContext) => ReactNode;
+  readonly render: () => ReactNode;
   readonly label?: string | undefined;
   readonly viewport?: PreviewViewport | undefined;
 }
@@ -27,22 +23,12 @@ export interface PreviewDefinition {
 
 export interface FormaPreviewConfig {
   readonly appRoot: string;
-  readonly framework?: "react" | undefined;
-  readonly bundler?: "vite" | undefined;
   readonly server: {
     readonly command: readonly [string, ...string[]];
     readonly cwd?: string | undefined;
     readonly env?: Readonly<Record<string, string>> | undefined;
   };
   readonly scan?: {
-    readonly include?: readonly string[] | undefined;
-    readonly exclude?: readonly string[] | undefined;
-  };
-  readonly components?: {
-    readonly include?: readonly string[] | undefined;
-    readonly exclude?: readonly string[] | undefined;
-  };
-  readonly graph?: {
     readonly include?: readonly string[] | undefined;
     readonly exclude?: readonly string[] | undefined;
   };

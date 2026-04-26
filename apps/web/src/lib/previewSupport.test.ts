@@ -7,15 +7,14 @@ describe("buildPreviewRenderUrl", () => {
     expect(
       buildPreviewRenderUrl({
         baseUrl: "http://127.0.0.1:43123",
-        previewId: "apps/web/src/components/ui/button.tsx#Button",
+        previewId: "src/components/ui/button.preview.tsx",
         caseId: "default",
         theme: "dark",
         viewportWidth: 1024,
         token: "preview-load-token",
-        renderToken: "generated-render-token",
       }),
     ).toBe(
-      "http://127.0.0.1:43123/__forma/render/apps%2Fweb%2Fsrc%2Fcomponents%2Fui%2Fbutton.tsx%23Button?case=default&theme=dark&viewportWidth=1024&token=preview-load-token&renderToken=generated-render-token",
+      "http://127.0.0.1:43123/__forma/render/src%2Fcomponents%2Fui%2Fbutton.preview.tsx?case=default&theme=dark&viewportWidth=1024&token=preview-load-token",
     );
   });
 });
@@ -38,30 +37,24 @@ describe("deriveChangedPreviewTabs", () => {
         ],
         previewEntries: [
           {
-            id: "apps/web/src/components/ui/button.tsx#Button",
+            id: "src/components/ui/button.preview.tsx",
             label: "Button",
             componentPath: "apps/web/src/components/ui/button.tsx",
-            exportName: "Button",
-            kind: "component",
-            propSummary: [],
-            sourceHash: "button-source-hash",
-            usageHints: [],
-            supported: true,
+            previewPath: "apps/web/src/components/ui/button.preview.tsx",
+            defaultCaseId: "default",
+            cases: [{ id: "default", label: "Default" }],
           },
         ],
         workspaceRoot: "/Users/me/project",
       }),
     ).toEqual([
       {
-        id: "apps/web/src/components/ui/button.tsx#Button",
+        id: "src/components/ui/button.preview.tsx",
         label: "Button",
         componentPath: "apps/web/src/components/ui/button.tsx",
-        exportName: "Button",
-        kind: "component",
-        propSummary: [],
-        sourceHash: "button-source-hash",
-        usageHints: [],
-        supported: true,
+        previewPath: "apps/web/src/components/ui/button.preview.tsx",
+        defaultCaseId: "default",
+        cases: [{ id: "default", label: "Default" }],
       },
     ]);
   });

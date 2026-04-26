@@ -3,15 +3,8 @@ import { access, constants as fsConstants } from "node:fs/promises";
 import path from "node:path";
 
 import {
-  PreviewCatalogManifest,
-  type PreviewCatalogEntry,
-  type PreviewGenerationSnapshot,
   PreviewManagerError,
   PreviewManifest,
-  PreviewRegisterGeneratedInput,
-  PreviewScopeManifest,
-  type PreviewScopedEntry,
-  type PreviewScopeInput,
   type PreviewOpenInput,
   type PreviewRestartInput,
   type PreviewSessionError,
@@ -23,10 +16,6 @@ import { NetService } from "@forma/shared/Net";
 import { Effect, Layer, PubSub, Schema, Stream } from "effect";
 
 import { PreviewManager, type PreviewManagerShape } from "../Services/Manager.ts";
-import {
-  buildGeneratedPreview,
-  buildLegacyPreviewModuleSource,
-} from "../generatedPreviewBuilder.ts";
 import { inspectPreviewConfig, type SerializablePreviewConfig } from "../previewConfigInspector.ts";
 
 const PREVIEW_CONFIG_FILENAME = "forma.preview.ts";
@@ -35,20 +24,12 @@ const PREVIEW_READY_TIMEOUT_MS = 30_000;
 const PREVIEW_READY_POLL_INTERVAL_MS = 500;
 const PREVIEW_IDLE_TIMEOUT_MS = 60_000;
 const PREVIEW_LOG_LIMIT = 200;
-const PREVIEW_CATALOG_ROUTE = "/__forma/catalog";
-const PREVIEW_MANIFEST_ROUTE = "/__forma/manifest";
-const PREVIEW_SCOPE_ROUTE = "/__forma/scope";
-const PREVIEW_GENERATED_PREVIEW_ROUTE = "/__forma/generated-previews";
-
-type PreviewDiscoverableEntry = PreviewCatalogEntry | PreviewScopedEntry;
 
 interface PreviewSessionState {
   readonly threadId: string;
   cwd: string;
   worktreePath: string | null;
   workspaceRoot: string;
-  configRoot: string;
-  appRoot: string;
   status: PreviewSessionSnapshot["status"];
   baseUrl: string | null;
   manifestUrl: string | null;
@@ -63,23 +44,6 @@ interface PreviewSessionState {
   idleTimeout: ReturnType<typeof setTimeout> | null;
   launchId: number;
   launchConfigKey: string | null;
-  catalogCache: PreviewCatalogManifest | null;
-  catalogEntriesById: Map<string, PreviewCatalogEntry>;
-  scopeCache: Map<string, PreviewScopeManifest>;
-  scopedEntriesById: Map<string, PreviewScopedEntry>;
-  discoveredEntriesById: Map<string, PreviewDiscoverableEntry>;
-  generationCache: Map<string, PreviewGenerationSnapshot>;
-}
-
-function resolveEntryForGeneration(
-  session: PreviewSessionState,
-  componentId: string,
-): PreviewDiscoverableEntry | undefined {
-  return (
-    session.scopedEntriesById.get(componentId) ??
-    session.discoveredEntriesById.get(componentId) ??
-    session.catalogEntriesById.get(componentId)
-  );
 }
 
 function nowIso(): string {
@@ -158,95 +122,6 @@ async function findPreviewConfigPath(startDirectory: string): Promise<string | n
     }
     currentDirectory = parentDirectory;
   }
-}
-
-function normalizeScopePath(pathValue: string): string {
-  return pathValue.replaceAll("\\", "/");
-}
-
-function normalizeChangedFileForScope(input: {
-  readonly changedFile: string;
-  readonly configRoot: string;
-  readonly workspaceRoot: string;
-}): string | null {
-  const trimmedChangedFile = input.changedFile.trim();
-  if (trimmedChangedFile.length === 0) {
-    return null;
-  }
-
-  const normalizedConfigRoot = normalizeScopePath(path.resolve(input.configRoot)).replace(
-    /\/+$/,
-    "",
-  );
-  const normalizedWorkspaceRoot = normalizeScopePath(path.resolve(input.workspaceRoot)).replace(
-    /\/+$/,
-    "",
-  );
-
-  const relativeToWorkspaceRoot = (absolutePath: string): string | null => {
-    if (
-      absolutePath === normalizedWorkspaceRoot ||
-      absolutePath.startsWith(`${normalizedWorkspaceRoot}/`)
-    ) {
-      return normalizeScopePath(path.relative(normalizedWorkspaceRoot, absolutePath));
-    }
-    return null;
-  };
-
-  const relativeToConfigRoot = (absolutePath: string): string | null => {
-    if (
-      absolutePath === normalizedConfigRoot ||
-      absolutePath.startsWith(`${normalizedConfigRoot}/`)
-    ) {
-      return normalizeScopePath(path.relative(normalizedConfigRoot, absolutePath));
-    }
-    return null;
-  };
-
-  if (path.isAbsolute(trimmedChangedFile)) {
-    const absoluteChangedFile = normalizeScopePath(path.resolve(trimmedChangedFile));
-    const workspaceRelativePath = relativeToWorkspaceRoot(absoluteChangedFile);
-    if (workspaceRelativePath !== null) {
-      return workspaceRelativePath;
-    }
-    const configRelativePath = relativeToConfigRoot(absoluteChangedFile);
-    if (configRelativePath !== null) {
-      return configRelativePath;
-    }
-    return normalizeScopePath(trimmedChangedFile);
-  }
-
-  const fromWorkspaceRoot = normalizeScopePath(
-    path.resolve(normalizedWorkspaceRoot, trimmedChangedFile),
-  );
-  const workspaceRelativePath = relativeToWorkspaceRoot(fromWorkspaceRoot);
-  if (workspaceRelativePath !== null) {
-    return workspaceRelativePath;
-  }
-
-  const fromConfigRoot = normalizeScopePath(path.resolve(normalizedConfigRoot, trimmedChangedFile));
-  const configRelativePath = relativeToConfigRoot(fromConfigRoot);
-  if (configRelativePath !== null) {
-    return configRelativePath;
-  }
-
-  return normalizeScopePath(trimmedChangedFile).replace(/^\.\/+/, "");
-}
-
-function scopeCacheKey(input: {
-  readonly changedFiles: ReadonlyArray<string>;
-  readonly mode: PreviewScopeInput["mode"];
-  readonly hopCount: number;
-  readonly direction: PreviewScopeInput["direction"];
-  readonly visualOnly: boolean;
-}): string {
-  return JSON.stringify({
-    changedFiles: [...input.changedFiles].toSorted(),
-    mode: input.mode,
-    hopCount: input.hopCount,
-    direction: input.direction,
-    visualOnly: input.visualOnly,
-  });
 }
 
 function sleep(ms: number): Promise<void> {
@@ -330,12 +205,6 @@ export const PreviewManagerLive = Layer.effect(
       session.baseUrl = null;
       session.manifestUrl = null;
       session.launchConfigKey = null;
-      session.catalogCache = null;
-      session.catalogEntriesById.clear();
-      session.scopeCache.clear();
-      session.scopedEntriesById.clear();
-      session.discoveredEntriesById.clear();
-      session.generationCache.clear();
       if (processHandle) {
         try {
           killProcess(processHandle);
@@ -360,7 +229,6 @@ export const PreviewManagerLive = Layer.effect(
       session.cwd = cwd;
       session.worktreePath = worktreePath;
       session.workspaceRoot = workspaceRoot;
-      session.appRoot = workspaceRoot;
       session.status = "unsupported";
       session.baseUrl = null;
       session.manifestUrl = null;
@@ -410,142 +278,6 @@ export const PreviewManagerLive = Layer.effect(
       throw new Error(lastErrorMessage);
     };
 
-    const fetchJson = async <T>(input: {
-      readonly session: PreviewSessionState;
-      readonly pathname: string;
-      readonly schema: Schema.Schema<T>;
-      readonly init?: RequestInit | undefined;
-      readonly errorMessage: string;
-    }): Promise<T> => {
-      if (!input.session.baseUrl) {
-        throw new Error("Preview server is not ready.");
-      }
-      const response = await fetch(`${input.session.baseUrl}${input.pathname}`, {
-        headers: {
-          accept: "application/json",
-          ...input.init?.headers,
-        },
-        ...input.init,
-      });
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(
-          detail.trim().length > 0
-            ? `${input.errorMessage} ${detail.trim()}`
-            : `${input.errorMessage} (${response.status}).`,
-        );
-      }
-      return Schema.decodeUnknownSync(input.schema as never)(await response.json()) as T;
-    };
-
-    const loadCatalogForSession = async (
-      session: PreviewSessionState,
-      options?: { force?: boolean | undefined },
-    ): Promise<PreviewCatalogManifest> => {
-      if (session.catalogCache && !options?.force) {
-        return session.catalogCache;
-      }
-      const catalog = await fetchJson({
-        session,
-        pathname: PREVIEW_CATALOG_ROUTE,
-        schema: PreviewCatalogManifest,
-        errorMessage: "Failed to load preview catalog.",
-      });
-      session.catalogCache = catalog;
-      session.catalogEntriesById = new Map(catalog.entries.map((entry) => [entry.id, entry]));
-      session.discoveredEntriesById = new Map([
-        ...session.discoveredEntriesById,
-        ...catalog.entries.map((entry) => [entry.id, entry] as const),
-      ]);
-      return catalog;
-    };
-
-    const loadScopeForSession = async (
-      session: PreviewSessionState,
-      input: PreviewScopeInput,
-      options?: { force?: boolean | undefined },
-    ): Promise<PreviewScopeManifest> => {
-      const normalizedChangedFiles = [
-        ...new Set(
-          input.changedFiles
-            .map((changedFile) =>
-              normalizeChangedFileForScope({
-                changedFile,
-                configRoot: session.configRoot,
-                workspaceRoot: session.workspaceRoot,
-              }),
-            )
-            .filter((value): value is string => value !== null),
-        ),
-      ];
-      const cacheKey = scopeCacheKey({
-        changedFiles: normalizedChangedFiles,
-        mode: input.mode,
-        hopCount: input.hopCount,
-        direction: input.direction,
-        visualOnly: input.visualOnly,
-      });
-
-      if (!options?.force) {
-        const cachedScope = session.scopeCache.get(cacheKey);
-        if (cachedScope) {
-          return cachedScope;
-        }
-      }
-
-      const scope = await fetchJson({
-        session,
-        pathname: PREVIEW_SCOPE_ROUTE,
-        schema: PreviewScopeManifest,
-        init: {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            ...input,
-            changedFiles: normalizedChangedFiles,
-          }),
-        },
-        errorMessage: "Failed to load scoped preview entries.",
-      });
-      session.scopeCache.set(cacheKey, scope);
-      session.scopedEntriesById = new Map(scope.entries.map((entry) => [entry.id, entry]));
-      session.discoveredEntriesById = new Map([
-        ...session.discoveredEntriesById,
-        ...scope.entries.map((entry) => [entry.id, entry] as const),
-      ]);
-      return scope;
-    };
-
-    const loadLegacyManifestForSession = async (session: PreviewSessionState) =>
-      fetchJson({
-        session,
-        pathname: PREVIEW_MANIFEST_ROUTE,
-        schema: PreviewManifest,
-        errorMessage: "Failed to load legacy preview manifest.",
-      });
-
-    const registerGeneratedPreview = async (input: {
-      readonly session: PreviewSessionState;
-      readonly registration: PreviewRegisterGeneratedInput;
-    }): Promise<string> => {
-      const registrationResult = await fetchJson({
-        session: input.session,
-        pathname: PREVIEW_GENERATED_PREVIEW_ROUTE,
-        schema: Schema.Struct({ renderToken: Schema.String }),
-        init: {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(input.registration),
-        },
-        errorMessage: "Failed to register generated preview.",
-      });
-      return registrationResult.renderToken;
-    };
-
     const ensureSession = (threadId: string): PreviewSessionState => {
       const existing = sessions.get(threadId);
       if (existing) {
@@ -556,8 +288,6 @@ export const PreviewManagerLive = Layer.effect(
         cwd: "",
         worktreePath: null,
         workspaceRoot: "",
-        configRoot: "",
-        appRoot: "",
         status: "unsupported",
         baseUrl: null,
         manifestUrl: null,
@@ -572,12 +302,6 @@ export const PreviewManagerLive = Layer.effect(
         idleTimeout: null,
         launchId: 0,
         launchConfigKey: null,
-        catalogCache: null,
-        catalogEntriesById: new Map(),
-        scopeCache: new Map(),
-        scopedEntriesById: new Map(),
-        discoveredEntriesById: new Map(),
-        generationCache: new Map(),
       };
       sessions.set(threadId, created);
       return created;
@@ -604,8 +328,6 @@ export const PreviewManagerLive = Layer.effect(
         session.cwd = input.cwd;
         session.worktreePath = input.worktreePath ?? null;
         session.workspaceRoot = workspaceRoot;
-        session.configRoot = workspaceRoot;
-        session.appRoot = workspaceRoot;
         session.status = "error";
         session.error = previewError({
           reason: "config-invalid",
@@ -621,7 +343,6 @@ export const PreviewManagerLive = Layer.effect(
       }
 
       const configRoot = path.dirname(configPath);
-      const appRoot = path.resolve(configRoot, inspectedConfig.appRoot);
       const launchCwd = path.resolve(
         configRoot,
         inspectedConfig.server.cwd ?? inspectedConfig.appRoot,
@@ -649,7 +370,7 @@ export const PreviewManagerLive = Layer.effect(
 
       const port = await Effect.runPromise(net.reserveLoopbackPort(PREVIEW_HOST));
       const baseUrl = `http://${PREVIEW_HOST}:${port}`;
-      const manifestUrl = `${baseUrl}${PREVIEW_MANIFEST_ROUTE}`;
+      const manifestUrl = `${baseUrl}/__forma/manifest`;
       const runtimeEnv: NodeJS.ProcessEnv = {
         ...process.env,
         ...inspectedConfig.server.env,
@@ -673,8 +394,6 @@ export const PreviewManagerLive = Layer.effect(
       session.cwd = input.cwd;
       session.worktreePath = input.worktreePath ?? null;
       session.workspaceRoot = workspaceRoot;
-      session.configRoot = configRoot;
-      session.appRoot = appRoot;
       session.status = "starting";
       session.baseUrl = baseUrl;
       session.manifestUrl = manifestUrl;
@@ -758,155 +477,6 @@ export const PreviewManagerLive = Layer.effect(
       return toSnapshot(session);
     };
 
-    const generationErrorSnapshot = (input: {
-      readonly componentId: string;
-      readonly label: string;
-      readonly sourceHash: string;
-      readonly message: string;
-    }): PreviewGenerationSnapshot => ({
-      componentId: input.componentId,
-      label: input.label,
-      status: "error",
-      generatedAt: nowIso(),
-      sourceHash: input.sourceHash,
-      confidence: "low",
-      renderToken: null,
-      defaultCaseId: null,
-      cases: [],
-      controls: [],
-      warnings: [
-        {
-          code: "generation-failed",
-          message: input.message,
-          severity: "error",
-        },
-      ],
-      message: input.message,
-    });
-
-    const generatePreviewForComponent = async (input: {
-      readonly session: PreviewSessionState;
-      readonly componentId: string;
-      readonly force: boolean;
-    }): Promise<PreviewGenerationSnapshot> => {
-      if (input.session.status !== "ready" || !input.session.baseUrl) {
-        throw new Error("Preview server is not ready.");
-      }
-
-      if (input.force) {
-        input.session.generationCache.delete(input.componentId);
-      } else {
-        const cachedGeneration = input.session.generationCache.get(input.componentId);
-        if (cachedGeneration) {
-          return cachedGeneration;
-        }
-      }
-
-      let entry = resolveEntryForGeneration(input.session, input.componentId);
-      if (!entry && input.session.catalogCache) {
-        await loadCatalogForSession(input.session, { force: input.force });
-        entry = resolveEntryForGeneration(input.session, input.componentId);
-      }
-      if (!entry) {
-        return generationErrorSnapshot({
-          componentId: input.componentId,
-          label: "Unknown preview",
-          sourceHash: "missing",
-          message: `Preview component ${input.componentId} was not found in the current preview scope.`,
-        });
-      }
-
-      if (entry.kind === "legacy" && entry.legacyPreviewPath) {
-        const manifest = await loadLegacyManifestForSession(input.session);
-        const legacyPreview = manifest.entries.find(
-          (manifestEntry) => manifestEntry.previewPath === entry.legacyPreviewPath,
-        );
-        if (!legacyPreview) {
-          const snapshot = generationErrorSnapshot({
-            componentId: entry.id,
-            label: entry.label,
-            sourceHash: entry.sourceHash,
-            message: `Legacy preview ${entry.legacyPreviewPath} was not found in the preview manifest.`,
-          });
-          input.session.generationCache.set(entry.id, snapshot);
-          return snapshot;
-        }
-
-        const renderToken = await registerGeneratedPreview({
-          session: input.session,
-          registration: {
-            componentId: entry.id,
-            componentPath: entry.componentPath,
-            sourceHash: entry.sourceHash,
-            moduleSource: buildLegacyPreviewModuleSource(
-              path.resolve(input.session.configRoot, entry.legacyPreviewPath),
-            ),
-          },
-        });
-        const snapshot: PreviewGenerationSnapshot = {
-          componentId: entry.id,
-          label: entry.label,
-          status: "ready",
-          generatedAt: nowIso(),
-          sourceHash: entry.sourceHash,
-          confidence: "high",
-          renderToken,
-          defaultCaseId: legacyPreview.defaultCaseId,
-          cases: legacyPreview.cases,
-          controls: [],
-          warnings: [],
-          message: null,
-        };
-        input.session.generationCache.set(entry.id, snapshot);
-        return snapshot;
-      }
-
-      const globalCssPath = path.resolve(input.session.appRoot, "src/index.css");
-      const generatedPreview = buildGeneratedPreview({
-        entry,
-        absoluteComponentPath: path.resolve(input.session.configRoot, entry.componentPath),
-        absoluteAppRoot: input.session.appRoot,
-        globalCssPath: (await pathExists(globalCssPath)) ? globalCssPath : null,
-      });
-
-      try {
-        const renderToken = await registerGeneratedPreview({
-          session: input.session,
-          registration: {
-            componentId: entry.id,
-            componentPath: entry.componentPath,
-            sourceHash: entry.sourceHash,
-            moduleSource: generatedPreview.moduleSource,
-          },
-        });
-        const snapshot: PreviewGenerationSnapshot = {
-          componentId: entry.id,
-          label: generatedPreview.label,
-          status: "ready",
-          generatedAt: nowIso(),
-          sourceHash: entry.sourceHash,
-          confidence: generatedPreview.confidence,
-          renderToken,
-          defaultCaseId: generatedPreview.defaultCaseId,
-          cases: generatedPreview.cases,
-          controls: generatedPreview.controls,
-          warnings: generatedPreview.warnings,
-          message: null,
-        };
-        input.session.generationCache.set(entry.id, snapshot);
-        return snapshot;
-      } catch (error) {
-        const snapshot = generationErrorSnapshot({
-          componentId: entry.id,
-          label: entry.label,
-          sourceHash: entry.sourceHash,
-          message: error instanceof Error ? error.message : "Failed to register generated preview.",
-        });
-        input.session.generationCache.set(entry.id, snapshot);
-        return snapshot;
-      }
-    };
-
     yield* Effect.addFinalizer(() =>
       Effect.promise(async () => {
         await Promise.all(
@@ -964,63 +534,6 @@ export const PreviewManagerLive = Layer.effect(
             new PreviewManagerError({
               message:
                 cause instanceof Error ? cause.message : "Failed to restart preview session.",
-              cause,
-            }),
-        }),
-      catalog: (input) =>
-        Effect.tryPromise({
-          try: async () => {
-            const session = ensureSession(input.threadId);
-            return loadCatalogForSession(session, { force: true });
-          },
-          catch: (cause) =>
-            new PreviewManagerError({
-              message: cause instanceof Error ? cause.message : "Failed to load preview catalog.",
-              cause,
-            }),
-        }),
-      scope: (input) =>
-        Effect.tryPromise({
-          try: async () => {
-            const session = ensureSession(input.threadId);
-            return loadScopeForSession(session, input, { force: true });
-          },
-          catch: (cause) =>
-            new PreviewManagerError({
-              message:
-                cause instanceof Error ? cause.message : "Failed to load scoped preview entries.",
-              cause,
-            }),
-        }),
-      generate: (input) =>
-        Effect.tryPromise({
-          try: async () => {
-            const session = ensureSession(input.threadId);
-            return generatePreviewForComponent({
-              session,
-              componentId: input.componentId,
-              force: false,
-            });
-          },
-          catch: (cause) =>
-            new PreviewManagerError({
-              message: cause instanceof Error ? cause.message : "Failed to generate preview.",
-              cause,
-            }),
-        }),
-      regenerate: (input) =>
-        Effect.tryPromise({
-          try: async () => {
-            const session = ensureSession(input.threadId);
-            return generatePreviewForComponent({
-              session,
-              componentId: input.componentId,
-              force: true,
-            });
-          },
-          catch: (cause) =>
-            new PreviewManagerError({
-              message: cause instanceof Error ? cause.message : "Failed to regenerate preview.",
               cause,
             }),
         }),
