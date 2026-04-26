@@ -1,25 +1,12 @@
-import { fileURLToPath } from "node:url";
-
 import tailwindcss from "@tailwindcss/vite";
-import { formaPreviewVitePlugin } from "@forma/preview-react-vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { createLogger, defineConfig, type LogOptions, type Logger } from "vite";
-import previewConfig from "../../forma.preview.ts";
-import { BlueprintPreviewSurface } from "./src/components/preview/BlueprintPreviewSurface";
 import pkg from "./package.json" with { type: "json" };
 
-const previewConfigPath = fileURLToPath(new URL("../../forma.preview.ts", import.meta.url));
-const previewGlobalWrapperPath = fileURLToPath(
-  new URL("./src/components/preview/BlueprintPreviewSurface.tsx", import.meta.url),
-);
-const appPreviewConfig = {
-  ...previewConfig,
-  wrapper: BlueprintPreviewSurface,
-};
-const port = Number(process.env.FORMA_PREVIEW_PORT ?? process.env.PORT ?? 5733);
-const host = process.env.FORMA_PREVIEW_HOST?.trim() || process.env.HOST?.trim() || "localhost";
+const port = Number(process.env.PORT ?? 5733);
+const host = process.env.HOST?.trim() || "localhost";
 const configuredHttpUrl = process.env.VITE_HTTP_URL?.trim();
 const configuredWsUrl = process.env.VITE_WS_URL?.trim();
 const sourcemapEnv = process.env.FORMA_WEB_SOURCEMAP?.trim().toLowerCase();
@@ -96,11 +83,6 @@ export default defineConfig({
       presets: [reactCompilerPreset()],
     }),
     tailwindcss(),
-    formaPreviewVitePlugin(appPreviewConfig, {
-      configPath: previewConfigPath,
-      globalWrapperImportPath: previewGlobalWrapperPath,
-      globalWrapperExportName: "BlueprintPreviewSurface",
-    }),
   ],
   optimizeDeps: {
     include: ["@pierre/diffs", "@pierre/diffs/react", "@pierre/diffs/worker/worker.js"],
@@ -118,7 +100,6 @@ export default defineConfig({
     host,
     port,
     strictPort: true,
-    cors: true,
     ...(devProxyTarget
       ? {
           proxy: {

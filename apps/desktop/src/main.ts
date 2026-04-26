@@ -726,9 +726,6 @@ function resolveAboutCommitHash(): string | null {
 }
 
 function resolveBackendEntry(): string {
-  if (!app.isPackaged) {
-    return Path.join(resolveAppRoot(), "apps/server/src/bin.ts");
-  }
   return Path.join(resolveAppRoot(), "apps/server/dist/bin.mjs");
 }
 
