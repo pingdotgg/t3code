@@ -1275,93 +1275,6 @@ const previewTurns: Record<string, PreviewTurn[]> = {
         },
       ],
     },
-    model: {
-      title: "Model",
-      width: 252,
-      sections: [
-        {
-          label: "OpenAI",
-          items: [
-            { label: "GPT-5.4", detail: "Balanced", target: "model" },
-            { label: "GPT-5.4 Mini", detail: "Fast", target: "model" },
-            { label: "GPT-5.3 Codex", detail: "Code optimized", target: "model" },
-          ],
-        },
-        {
-          label: "Recent",
-          items: [{ label: "GPT-5.2", detail: "Long-running work", target: "model" }],
-        },
-      ],
-    },
-    effort: {
-      title: "Reasoning effort",
-      width: 238,
-      sections: [
-        {
-          items: [
-            { label: "Low", detail: "Quick edits", target: "effort" },
-            { label: "Medium", detail: "Balanced", target: "effort" },
-            { label: "High", detail: "Default", target: "effort" },
-            { label: "Extra high", detail: "Deep tasks", target: "effort" },
-          ],
-        },
-      ],
-    },
-    access: {
-      title: "Access",
-      width: 264,
-      sections: [
-        {
-          items: [
-            { label: "Full access", detail: "Can edit and run commands", target: "access" },
-            { label: "Auto-accept edits", detail: "Edits do not pause", target: "access" },
-            { label: "Supervised", detail: "Ask before sensitive actions", target: "access" },
-          ],
-        },
-      ],
-    },
-    worktree: {
-      title: "Worktree",
-      width: 288,
-      sections: [
-        {
-          label: "Run on",
-          items: [
-            { label: "Current checkout", detail: "apps/marketing", target: "worktree" },
-            { label: "New worktree", detail: "Isolated branch", target: "worktree" },
-            { label: "Existing worktree", detail: "Resume local path", target: "worktree" },
-          ],
-        },
-        {
-          label: "Recent",
-          items: [
-            { label: "t3code/marketing-ui-mirror", detail: "~/.t3/worktrees/..." },
-            { label: "feature/thread-hotkeys", detail: "apps/web" },
-          ],
-        },
-      ],
-    },
-    branch: {
-      title: "Branch",
-      width: 292,
-      sections: [
-        {
-          label: "Local branches",
-          items: [
-            { label: "main", detail: "Base branch", target: "branch" },
-            { label: "t3code/marketing-ui-mirror", detail: "Preview work", target: "branch" },
-            { label: "feature/thread-hotkeys", detail: "Recent work", target: "branch" },
-          ],
-        },
-        {
-          label: "Actions",
-          items: [
-            { label: "Create branch from current", detail: "New worktree" },
-            { label: "Refresh branches", detail: "git fetch" },
-          ],
-        },
-      ],
-    },
   };
 
   const modelFavoriteKey = (providerId: string, model: string) => `${providerId}:${model}`;
@@ -1472,6 +1385,30 @@ const previewTurns: Record<string, PreviewTurn[]> = {
         }
       };
 
+      const getSelectedFastMode = () => {
+        const scope = getActiveView() ?? previewElement;
+        if (scope instanceof HTMLElement && scope.dataset.selectedFastMode) {
+          return scope.dataset.selectedFastMode === "true";
+        }
+
+        const isFast = (getSelectedValue("effort") ?? "Low · Fast").includes("Fast");
+        if (scope instanceof HTMLElement) {
+          scope.dataset.selectedFastMode = String(isFast);
+        }
+        return isFast;
+      };
+
+      const setSelectedFastMode = (enabled: boolean) => {
+        const scope = getActiveView() ?? previewElement;
+        if (scope instanceof HTMLElement) {
+          scope.dataset.selectedFastMode = String(enabled);
+        }
+      };
+
+      const formatEffortLabel = (effort: string, providerId = getSelectedProvider()) => {
+        return providerId === "openai" && getSelectedFastMode() ? `${effort} · Fast` : effort;
+      };
+
       const updateAccessIcon = (mode: string) => {
         const scope = getActiveView() ?? preview;
         for (const existingIcon of scope.querySelectorAll<SVGElement>("[data-preview-access-icon]")) {
@@ -1572,10 +1509,8 @@ const previewTurns: Record<string, PreviewTurn[]> = {
           existingIcon.replaceWith(nextIcon);
         }
 
-        if (providerId !== "openai") {
-          const currentEffort = getSelectedValue("effort") ?? "Low";
-          updateVisibleLabels("effort", currentEffort.split(" · ")[0] ?? "Low");
-        }
+        const currentEffort = (getSelectedValue("effort") ?? "Low").split(" · ")[0] ?? "Low";
+        updateVisibleLabels("effort", formatEffortLabel(currentEffort, providerId));
       };
 
       const favoriteModelKeys = new Set<string>();
@@ -1681,7 +1616,11 @@ const previewTurns: Record<string, PreviewTurn[]> = {
             : providerIconMarkup[item.icon] ?? "";
           button.innerHTML = `${icon}${item.sparkle ? '<span class="app-preview__model-rail-badge">✦</span>' : ""}${item.clock ? '<span class="app-preview__model-rail-clock"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"></circle><path d="M12 8v4l2.5 1.5" fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.7"></path></svg></span>' : ""}`;
           if (!item.disabled) {
-            button.addEventListener("click", () => renderModelMenu(item.id));
+            button.addEventListener("click", (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              renderModelMenu(item.id);
+            });
           }
           rail.append(button);
         }
@@ -1767,7 +1706,7 @@ const previewTurns: Record<string, PreviewTurn[]> = {
         const selectedEffort = selectedEffortLabel.split(" · ")[0] ?? "Low";
         const selectedProvider = getSelectedProvider();
         const showFastMode = selectedProvider === "openai";
-        const selectedFastMode = showFastMode && selectedEffortLabel.includes("Fast");
+        const selectedFastMode = showFastMode && getSelectedFastMode();
         const selectedAccess = getSelectedValue("access") ?? "Full access";
         const effortOptions = [
           { label: "Low", detail: "" },
@@ -1815,7 +1754,7 @@ const previewTurns: Record<string, PreviewTurn[]> = {
           button.innerHTML = `<span class="app-preview__select-check">${checkIcon}</span><span class="app-preview__select-copy">${menuName === "access" ? `<span class="app-preview__select-icon">${icon}</span>` : ""}<span><strong>${option.label}${menuName === "effort" && option.label === "Medium" ? " (default)" : ""}</strong>${option.detail ? `<small>${option.detail}</small>` : ""}</span></span>`;
           button.addEventListener("click", () => {
             if (menuName === "effort") {
-              updateVisibleLabels("effort", `${option.label}${selectedFastMode && showFastMode ? " · Fast" : ""}`);
+              updateVisibleLabels("effort", formatEffortLabel(option.label, selectedProvider));
             } else {
               updateVisibleLabels("access", option.label);
               if (accessValue) {
@@ -1848,7 +1787,9 @@ const previewTurns: Record<string, PreviewTurn[]> = {
             const checkIcon = selected ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.252 12.7 10.2 18.63 18.748 5.37" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>' : "";
             button.innerHTML = `<span class="app-preview__select-check">${checkIcon}</span><span class="app-preview__select-copy"><span><strong>${option}</strong></span></span>`;
             button.addEventListener("click", () => {
-              updateVisibleLabels("effort", `${selectedEffort}${option === "On" ? " · Fast" : ""}`);
+              const fastModeEnabled = option === "On";
+              setSelectedFastMode(fastModeEnabled);
+              updateVisibleLabels("effort", fastModeEnabled ? `${selectedEffort} · Fast` : selectedEffort);
               if (popover) {
                 popover.hidden = true;
               }
