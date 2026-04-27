@@ -10,15 +10,17 @@ export const THREAD_BREADCRUMB_PROJECT_DIVIDER_CLASS_NAME =
 export const THREAD_BREADCRUMB_SEPARATOR_ICON_CLASS_NAME =
   "size-2.5 shrink-0 fill-muted-foreground/70";
 
-export function ThreadBreadcrumbProjectChipContent({
-  icon,
-  label,
-  labelClassName,
-}: {
+interface ThreadBreadcrumbChipContentProps {
   icon: ReactNode;
   label: string;
   labelClassName?: string;
-}) {
+}
+
+export function ThreadBreadcrumbChipContent({
+  icon,
+  label,
+  labelClassName,
+}: ThreadBreadcrumbChipContentProps) {
   return (
     <>
       {icon}
@@ -26,4 +28,8 @@ export function ThreadBreadcrumbProjectChipContent({
       <span className={cn("min-w-0 truncate", labelClassName)}>{label}</span>
     </>
   );
+}
+
+export function ThreadBreadcrumbProjectChipContent(props: ThreadBreadcrumbChipContentProps) {
+  return <ThreadBreadcrumbChipContent {...props} />;
 }

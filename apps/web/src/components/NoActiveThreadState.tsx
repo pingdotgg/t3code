@@ -44,16 +44,16 @@ import { LogomarkForma } from "./LogomarkForma";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { DesktopSidebarReopenButton } from "./sidebar/DesktopSidebarReopenButton";
 import {
+  ThreadBreadcrumbChipContent,
   ThreadBreadcrumbProjectChipContent,
   THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME,
-  THREAD_BREADCRUMB_SEPARATOR_ICON_CLASS_NAME,
 } from "./ThreadBreadcrumb";
-import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
+import { ThreadRowLeadingStatus } from "./ThreadStatusIndicators";
 import { AddProjectIcon, NewThreadIcon, SettingsHexIcon, SidebarArchiveIcon } from "./icons/custom";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./ui/menu";
-import { SidebarInset, SidebarTrigger } from "./ui/sidebar";
+import { SidebarInset, SidebarTrigger, useSidebar } from "./ui/sidebar";
 
 const ACTION_CARD_CLASS_NAME =
   "relative isolate h-auto min-h-[11.5rem] w-full overflow-hidden rounded-[20px] border-border/55 bg-card/34 px-5 py-5 text-left whitespace-normal shadow-md shadow-black/5 transition-all duration-150 ease-out before:rounded-[19px] hover:-translate-y-0.5 hover:border-border/80 hover:bg-accent/24 hover:shadow-lg hover:ring-4 hover:ring-foreground/6 hover:ring-offset-4 hover:ring-offset-background active:translate-y-0 active:scale-[0.985] active:shadow-md";
@@ -117,19 +117,23 @@ function resolveThreadWorkspacePath(
   return item.thread.worktreePath ?? item.project?.cwd ?? null;
 }
 
-function renderThreadProjectBreadcrumbIcon(
-  item: ReturnType<typeof getNoActiveThreadRecentThreadItems>[number],
-) {
-  if (!item.project) {
-    return <CubeIcon className="size-3.5 shrink-0 fill-current opacity-70" aria-hidden />;
-  }
+function renderThreadProjectBreadcrumbIcon() {
+  return <CubeIcon className="size-3 shrink-0 fill-current opacity-70" aria-hidden />;
+}
 
+function ThreadBranchIcon() {
   return (
-    <ProjectFavicon
-      environmentId={item.project.environmentId}
-      cwd={item.project.cwd}
-      className="size-3.5 rounded-sm"
-    />
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      aria-hidden="true"
+      focusable="false"
+      className="size-3 shrink-0 fill-current opacity-70"
+    >
+      <path d="M9.5 3.25a2.25 2.25 0 0 1 4.315-.894c.164.378.22.795.164 1.203A2.25 2.25 0 0 1 12.5 5.371V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.25 2.25 0 1 1-1.5 0V5.37a2.25 2.25 0 1 1 1.5 0v1.836a2.492 2.492 0 0 1 1-.208h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.499.75.75 0 0 0 0-1.5Zm-7.5 9.499a.75.75 0 1 0 0 1.499.75.75 0 0 0 0-1.5Z" />
+    </svg>
   );
 }
 
@@ -166,12 +170,13 @@ function ThreadListRow({
     item.thread.session?.status === "running" && item.thread.session.activeTurnId != null;
   const canArchive = !isThreadRunning;
   const workspacePath = resolveThreadWorkspacePath(item);
-  const defaultMetaClassName = cn(
-    "transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] group-hover/recent-thread:opacity-0 group-focus-within/recent-thread:opacity-0 pointer-coarse:opacity-100",
+  const defaultChevronClassName = cn(
+    "pointer-coarse:opacity-0 transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] group-hover/recent-thread:opacity-0 group-focus-within/recent-thread:opacity-0",
+    MICRO_FADE_MOTION_CLASS_NAME,
     isConfirmingArchive && "opacity-0",
   );
   const actionRailClassName = cn(
-    "pointer-events-none absolute top-1/2 right-0 flex -translate-y-1/2 items-center gap-1 opacity-0 group-hover/recent-thread:pointer-events-auto group-hover/recent-thread:opacity-100 group-focus-within/recent-thread:pointer-events-auto group-focus-within/recent-thread:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100",
+    "pointer-events-none absolute top-1/2 right-5 flex -translate-y-1/2 items-center gap-1 opacity-0 group-hover/recent-thread:pointer-events-auto group-hover/recent-thread:opacity-100 group-focus-within/recent-thread:pointer-events-auto group-focus-within/recent-thread:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100",
     MICRO_FADE_MOTION_CLASS_NAME,
     isConfirmingArchive && "pointer-events-auto opacity-100",
   );
@@ -267,134 +272,128 @@ function ThreadListRow({
         role="button"
         tabIndex={0}
         data-testid={`no-active-thread-thread-row-${item.thread.id}`}
-        className="flex w-full items-start gap-4 rounded-[1.35rem] px-5 py-4 text-left transition-colors hover:bg-accent/18 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:bg-accent/18"
+        className="relative flex w-full items-start gap-4 rounded-[1.35rem] px-5 py-4 text-left transition-colors hover:bg-accent/18 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:bg-accent/18"
         onClick={onOpen}
         onKeyDown={handleRowKeyDown}
       >
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 pr-16">
           <div className="flex min-w-0 items-center gap-2">
             <ThreadRowLeadingStatus thread={item.thread} compact />
             <span className="truncate text-sm font-medium leading-5 text-foreground">
               {item.thread.title}
             </span>
           </div>
-          <div className="mt-2 flex min-w-0 items-center justify-between gap-4">
-            <div className="flex min-w-0 items-center gap-1.5 overflow-hidden text-xs text-muted-foreground/72">
+          <div className="mt-2 flex min-w-0 items-center gap-1.5 overflow-hidden text-xs text-muted-foreground/72">
+            <span
+              className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} text-[11px] leading-none`}
+              title={workspacePath ?? resolveThreadProjectLabel(item)}
+            >
+              <ThreadBreadcrumbProjectChipContent
+                icon={renderThreadProjectBreadcrumbIcon()}
+                label={resolveThreadProjectLabel(item)}
+              />
+            </span>
+            {item.thread.branch ? (
               <span
                 className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} text-[11px] leading-none`}
-                title={workspacePath ?? resolveThreadProjectLabel(item)}
+                title={item.thread.branch}
               >
-                <ThreadBreadcrumbProjectChipContent
-                  icon={renderThreadProjectBreadcrumbIcon(item)}
-                  label={resolveThreadProjectLabel(item)}
+                <ThreadBreadcrumbChipContent
+                  icon={<ThreadBranchIcon />}
+                  label={item.thread.branch}
                 />
               </span>
-              {item.thread.branch ? (
-                <ChevronRightIcon
-                  className={THREAD_BREADCRUMB_SEPARATOR_ICON_CLASS_NAME}
-                  aria-hidden
-                />
-              ) : null}
-              {item.thread.branch ? (
-                <span
-                  className="min-w-0 truncate text-[11px] font-medium text-muted-foreground/82"
-                  title={item.thread.branch}
-                >
-                  #{item.thread.branch}
-                </span>
-              ) : null}
-            </div>
+            ) : null}
+            <span className="shrink-0 text-[11px] text-muted-foreground/68">
+              {formatRelativeTimeLabel(getThreadTimestamp(item.thread))}
+            </span>
+          </div>
+        </div>
 
-            <div className="relative flex min-w-[5.75rem] shrink-0 flex-col items-end gap-2 pr-9">
-              <span className={cn("text-[11px] text-muted-foreground/68", defaultMetaClassName)}>
-                {formatRelativeTimeLabel(getThreadTimestamp(item.thread))}
-              </span>
-              <div className={cn("text-muted-foreground/62", defaultMetaClassName)}>
-                <ThreadRowTrailingStatus thread={item.thread} />
-              </div>
+        <span
+          className={cn(
+            "pointer-events-none absolute top-1/2 right-6 -translate-y-1/2 text-muted-foreground/46",
+            defaultChevronClassName,
+          )}
+          aria-hidden
+        >
+          <ChevronRightIcon className="size-3 fill-current" />
+        </span>
 
-              <div
-                data-testid={`no-active-thread-thread-actions-${item.thread.id}`}
-                className={actionRailClassName}
+        <div
+          data-testid={`no-active-thread-thread-actions-${item.thread.id}`}
+          className={actionRailClassName}
+        >
+          {isConfirmingArchive ? (
+            <button
+              type="button"
+              data-testid={`no-active-thread-thread-archive-confirm-${item.thread.id}`}
+              aria-label={`Confirm archive ${item.thread.title}`}
+              className="pointer-coarse:hidden inline-flex h-7 cursor-pointer items-center rounded-full bg-destructive/12 px-2.5 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
+              onPointerDown={stopPointerEventPropagation}
+              onClick={handleArchiveConfirmation}
+            >
+              Confirm
+            </button>
+          ) : canArchive ? (
+            confirmThreadArchive ? (
+              <button
+                type="button"
+                data-testid={`no-active-thread-thread-archive-${item.thread.id}`}
+                aria-label={`Archive ${item.thread.title}`}
+                className="pointer-coarse:hidden inline-flex size-7 cursor-pointer items-center justify-center rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
+                onPointerDown={stopPointerEventPropagation}
+                onClick={handleStartArchiveConfirmation}
               >
-                {isConfirmingArchive ? (
-                  <button
-                    type="button"
-                    data-testid={`no-active-thread-thread-archive-confirm-${item.thread.id}`}
-                    aria-label={`Confirm archive ${item.thread.title}`}
-                    className="pointer-coarse:hidden inline-flex h-7 cursor-pointer items-center rounded-full bg-destructive/12 px-2.5 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
-                    onPointerDown={stopPointerEventPropagation}
-                    onClick={handleArchiveConfirmation}
-                  >
-                    Confirm
-                  </button>
-                ) : canArchive ? (
-                  confirmThreadArchive ? (
-                    <button
-                      type="button"
-                      data-testid={`no-active-thread-thread-archive-${item.thread.id}`}
-                      aria-label={`Archive ${item.thread.title}`}
-                      className="pointer-coarse:hidden inline-flex size-7 cursor-pointer items-center justify-center rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
-                      onPointerDown={stopPointerEventPropagation}
-                      onClick={handleStartArchiveConfirmation}
-                    >
-                      <SidebarArchiveIcon className="size-3.5" />
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      data-testid={`no-active-thread-thread-archive-${item.thread.id}`}
-                      aria-label={`Archive ${item.thread.title}`}
-                      className="pointer-coarse:hidden inline-flex size-7 cursor-pointer items-center justify-center rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
-                      onPointerDown={stopPointerEventPropagation}
-                      onClick={handleArchiveImmediately}
-                    >
-                      <SidebarArchiveIcon className="size-3.5" />
-                    </button>
-                  )
-                ) : null}
+                <SidebarArchiveIcon className="size-3.5" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                data-testid={`no-active-thread-thread-archive-${item.thread.id}`}
+                aria-label={`Archive ${item.thread.title}`}
+                className="pointer-coarse:hidden inline-flex size-7 cursor-pointer items-center justify-center rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
+                onPointerDown={stopPointerEventPropagation}
+                onClick={handleArchiveImmediately}
+              >
+                <SidebarArchiveIcon className="size-3.5" />
+              </button>
+            )
+          ) : null}
 
-                <div
-                  onClick={stopMouseEventPropagation}
-                  onPointerDown={stopPointerEventPropagation}
+          <div onClick={stopMouseEventPropagation} onPointerDown={stopPointerEventPropagation}>
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button
+                    aria-label="Recent thread actions"
+                    size="icon-xs"
+                    variant="ghost"
+                    data-testid={`no-active-thread-thread-menu-trigger-${item.thread.id}`}
+                    className="size-7 rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground data-[popup-open]:bg-accent/80 data-[popup-open]:text-foreground"
+                  />
+                }
+              >
+                <EllipsisIcon aria-hidden="true" className="size-3.5" />
+              </MenuTrigger>
+              <MenuPopup align="end" side="bottom" className="min-w-40">
+                <MenuItem
+                  disabled={!item.thread.latestTurn?.completedAt}
+                  onClick={handleMarkUnread}
                 >
-                  <Menu>
-                    <MenuTrigger
-                      render={
-                        <Button
-                          aria-label="Recent thread actions"
-                          size="icon-xs"
-                          variant="ghost"
-                          data-testid={`no-active-thread-thread-menu-trigger-${item.thread.id}`}
-                          className="size-7 rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground data-[popup-open]:bg-accent/80 data-[popup-open]:text-foreground"
-                        />
-                      }
-                    >
-                      <EllipsisIcon aria-hidden="true" className="size-3.5" />
-                    </MenuTrigger>
-                    <MenuPopup align="end" side="bottom" className="min-w-40">
-                      <MenuItem
-                        disabled={!item.thread.latestTurn?.completedAt}
-                        onClick={handleMarkUnread}
-                      >
-                        Mark unread
-                      </MenuItem>
-                      <MenuItem disabled={!workspacePath} onClick={handleCopyPath}>
-                        Copy path
-                      </MenuItem>
-                      <MenuItem onClick={handleCopyThreadId}>Copy thread ID</MenuItem>
-                      {canArchive ? (
-                        <MenuItem onClick={handleArchiveFromMenu}>Archive</MenuItem>
-                      ) : null}
-                      <MenuSeparator />
-                      <MenuItem variant="destructive" onClick={handleDelete}>
-                        Delete
-                      </MenuItem>
-                    </MenuPopup>
-                  </Menu>
-                </div>
-              </div>
-            </div>
+                  Mark unread
+                </MenuItem>
+                <MenuItem disabled={!workspacePath} onClick={handleCopyPath}>
+                  Copy path
+                </MenuItem>
+                <MenuItem onClick={handleCopyThreadId}>Copy thread ID</MenuItem>
+                {canArchive ? <MenuItem onClick={handleArchiveFromMenu}>Archive</MenuItem> : null}
+                <MenuSeparator />
+                <MenuItem variant="destructive" onClick={handleDelete}>
+                  Delete
+                </MenuItem>
+              </MenuPopup>
+            </Menu>
           </div>
         </div>
       </div>
@@ -438,6 +437,7 @@ function ProjectListRow({
 
 export function NoActiveThreadState() {
   const navigate = useNavigate();
+  const { isMobile, open } = useSidebar();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
   const projectOrder = useUiStateStore((store) => store.projectOrder);
@@ -489,6 +489,7 @@ export function NoActiveThreadState() {
     ],
   );
   const singleProject = projects.length === 1 ? (projects[0] ?? null) : null;
+  const showSidebarControls = isElectron || isMobile || !open;
 
   const openThread = useCallback(
     async (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => {
@@ -604,24 +605,29 @@ export function NoActiveThreadState() {
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         <header
           className={cn(
-            "border-b border-border px-3 sm:px-5",
+            "px-3 sm:px-5",
             isElectron
               ? "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]"
               : "py-2 sm:py-3",
           )}
         >
           {isElectron ? (
-            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground/50 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
-              <DesktopSidebarReopenButton />
-              <span>No active thread</span>
+            <div className="flex min-w-0 flex-1 items-center gap-2 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
+              {showSidebarControls ? (
+                <>
+                  <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+                  <DesktopSidebarReopenButton />
+                </>
+              ) : null}
             </div>
           ) : (
             <div className="flex min-h-7 items-center gap-2 sm:min-h-6">
-              <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-              <DesktopSidebarReopenButton />
-              <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">
-                No active thread
-              </span>
+              {showSidebarControls ? (
+                <>
+                  <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+                  <DesktopSidebarReopenButton />
+                </>
+              ) : null}
             </div>
           )}
         </header>

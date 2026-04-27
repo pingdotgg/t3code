@@ -101,7 +101,7 @@ export const ChatHeader = memo(function ChatHeader({
               title={activeProjectName}
             >
               <ThreadBreadcrumbProjectChipContent
-                icon={<CubeIcon className="size-4 shrink-0 fill-current opacity-70" aria-hidden />}
+                icon={<CubeIcon className="size-3 shrink-0 fill-current opacity-70" aria-hidden />}
                 label={activeProjectName}
               />
             </button>
