@@ -71,6 +71,16 @@ async function waitFor(
 }
 
 describe("ProviderCommandReactor", () => {
+  type HarnessOptions = {
+    readonly baseDir?: string;
+    readonly threadModelSelection?: ModelSelection;
+    readonly sessionModelSwitch?: "unsupported" | "in-session";
+    readonly startSessionImplementation?: (
+      input: unknown,
+      session: ProviderSession,
+    ) => Effect.Effect<ProviderSession>;
+  };
+
   let runtime: ManagedRuntime.ManagedRuntime<
     OrchestrationEngineService | ProviderCommandReactor,
     unknown
@@ -98,11 +108,7 @@ describe("ProviderCommandReactor", () => {
     createdBaseDirs.clear();
   });
 
-  async function createHarness(input?: {
-    readonly baseDir?: string;
-    readonly threadModelSelection?: ModelSelection;
-    readonly sessionModelSwitch?: "unsupported" | "in-session";
-  }) {
+  async function createHarness(input?: HarnessOptions) {
     const now = new Date().toISOString();
     const baseDir = input?.baseDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
     createdBaseDirs.add(baseDir);
@@ -115,28 +121,32 @@ describe("ProviderCommandReactor", () => {
       provider: "codex",
       model: "gpt-5-codex",
     };
-    const startSession = vi.fn((_: unknown, input: unknown) => {
+    const startSessionImplementation: NonNullable<HarnessOptions["startSessionImplementation"]> =
+      input?.startSessionImplementation ??
+      ((_: unknown, session: ProviderSession) => Effect.succeed(session));
+    const startSession = vi.fn((_: unknown, startInput: unknown) => {
       const sessionIndex = nextSessionIndex++;
       const resumeCursor =
-        typeof input === "object" && input !== null && "resumeCursor" in input
-          ? input.resumeCursor
+        typeof startInput === "object" && startInput !== null && "resumeCursor" in startInput
+          ? startInput.resumeCursor
           : undefined;
       const threadId =
-        typeof input === "object" &&
-        input !== null &&
-        "threadId" in input &&
-        typeof input.threadId === "string"
-          ? ThreadId.make(input.threadId)
+        typeof startInput === "object" &&
+        startInput !== null &&
+        "threadId" in startInput &&
+        typeof startInput.threadId === "string"
+          ? ThreadId.make(startInput.threadId)
           : ThreadId.make(`thread-${sessionIndex}`);
       const session: ProviderSession = {
         provider: modelSelection.provider,
         status: "ready" as const,
         runtimeMode:
-          typeof input === "object" &&
-          input !== null &&
-          "runtimeMode" in input &&
-          (input.runtimeMode === "approval-required" || input.runtimeMode === "full-access")
-            ? input.runtimeMode
+          typeof startInput === "object" &&
+          startInput !== null &&
+          "runtimeMode" in startInput &&
+          (startInput.runtimeMode === "approval-required" ||
+            startInput.runtimeMode === "full-access")
+            ? startInput.runtimeMode
             : "full-access",
         ...(typeof input === "object" &&
         input !== null &&
@@ -150,8 +160,13 @@ describe("ProviderCommandReactor", () => {
         createdAt: now,
         updatedAt: now,
       };
-      runtimeSessions.push(session);
-      return Effect.succeed(session);
+      return startSessionImplementation(startInput, session).pipe(
+        Effect.tap((resolvedSession) =>
+          Effect.sync(() => {
+            runtimeSessions.push(resolvedSession);
+          }),
+        ),
+      );
     });
     const sendTurn = vi.fn((_: unknown) =>
       Effect.succeed({
@@ -362,6 +377,96 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("does not let one hung thread start block another thread", async () => {
+    const harness = await createHarness({
+      startSessionImplementation: (input, session) => {
+        const threadId =
+          typeof input === "object" &&
+          input !== null &&
+          "threadId" in input &&
+          typeof input.threadId === "string"
+            ? input.threadId
+            : null;
+        return threadId === "thread-1" ? Effect.never : Effect.succeed(session);
+      },
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-create-2"),
+        threadId: ThreadId.make("thread-2"),
+        projectId: asProjectId("project-1"),
+        title: "Thread 2",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-hung-thread-1"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-hung-thread-1"),
+          role: "user",
+          text: "thread one hangs on start",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-hung-thread-2"),
+        threadId: ThreadId.make("thread-2"),
+        message: {
+          messageId: asMessageId("user-message-hung-thread-2"),
+          role: "user",
+          text: "thread two should still run",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length >= 2);
+    await waitFor(() =>
+      harness.sendTurn.mock.calls.some(
+        ([payload]) =>
+          typeof payload === "object" &&
+          payload !== null &&
+          "threadId" in payload &&
+          payload.threadId === ThreadId.make("thread-2"),
+      ),
+    );
+
+    expect(
+      harness.sendTurn.mock.calls.some(
+        ([payload]) =>
+          typeof payload === "object" &&
+          payload !== null &&
+          "threadId" in payload &&
+          payload.threadId === ThreadId.make("thread-1"),
+      ),
+    ).toBe(false);
   });
 
   it("generates a thread title on the first turn", async () => {
