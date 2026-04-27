@@ -70,6 +70,11 @@
 :root {
   color-scheme: light;
   --radius: 0.625rem;
+  --motion-duration-micro: 120ms;
+  --motion-duration-ui: 200ms;
+  --motion-duration-modal: 260ms;
+  --motion-ease-out: cubic-bezier(0.215, 0.61, 0.355, 1);
+  --motion-ease-in-out: cubic-bezier(0.645, 0.045, 0.355, 1);
   --background: var(--color-white);
   --app-chrome-background: var(--background);
   --foreground: var(--color-neutral-800);
@@ -125,6 +130,35 @@
     --success-foreground: var(--color-emerald-400);
     --warning: var(--color-amber-500);
     --warning-foreground: var(--color-amber-400);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-floating-positioner {
+    transition: none !important;
+    scale: 1 !important;
+    translate: 0 0 !important;
+    transform: none !important;
+  }
+
+  .motion-modal-popup,
+  .motion-floating-popup,
+  .motion-sheet-popup {
+    transition-property: opacity !important;
+    scale: 1 !important;
+    translate: 0 0 !important;
+    transform: none !important;
+  }
+
+  .motion-modal-popup[data-ending-style],
+  .motion-modal-popup[data-starting-style],
+  .motion-floating-popup[data-ending-style],
+  .motion-floating-popup[data-starting-style],
+  .motion-sheet-popup[data-ending-style],
+  .motion-sheet-popup[data-starting-style] {
+    scale: 1 !important;
+    translate: 0 0 !important;
+    transform: none !important;
   }
 }
 
@@ -398,6 +432,13 @@ code {
   .pixel-grid__cell,
   .pixel-grid-loader__cell {
     transition: none;
+  }
+
+  .ultrathink-frame,
+  .ultrathink-chroma,
+  .ultrathink-pill,
+  .ultrathink-word {
+    animation: none !important;
   }
 }
 

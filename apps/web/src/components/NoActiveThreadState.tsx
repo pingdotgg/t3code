@@ -22,7 +22,7 @@ export function NoActiveThreadState() {
               <span>No active thread</span>
             </div>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="flex min-h-7 items-center gap-2 sm:min-h-6">
               <SidebarTrigger className="size-7 shrink-0 md:hidden" />
               <DesktopSidebarReopenButton />
               <span className="text-sm font-medium text-foreground md:text-muted-foreground/60">

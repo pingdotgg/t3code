@@ -18,6 +18,7 @@ import {
   WS_METHODS,
   OrchestrationSessionStatus,
   DEFAULT_SERVER_SETTINGS,
+  type DesktopBridge,
 } from "@forma/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@forma/client-runtime";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
@@ -1510,6 +1511,91 @@ function dispatchSidebarToggleShortcut(): void {
   );
 }
 
+function createDesktopBridgeMenuActionStub(): {
+  bridge: DesktopBridge;
+  emitMenuAction: (action: "open-settings" | "toggle-sidebar") => void;
+} {
+  let menuActionListener: ((action: "open-settings" | "toggle-sidebar") => void) | null = null;
+  const idleUpdateState = {
+    enabled: false,
+    status: "idle" as const,
+    channel: "latest" as const,
+    currentVersion: "0.0.0-test",
+    hostArch: "arm64" as const,
+    appArch: "arm64" as const,
+    runningUnderArm64Translation: false,
+    availableVersion: null,
+    downloadedVersion: null,
+    downloadPercent: null,
+    checkedAt: null,
+    message: null,
+    errorContext: null,
+    canRetry: false,
+  };
+
+  return {
+    bridge: {
+      getAppBranding: vi.fn().mockReturnValue(null),
+      getLocalEnvironmentBootstrap: vi.fn().mockReturnValue({
+        label: "Local environment",
+        httpBaseUrl: "http://127.0.0.1:3773",
+        wsBaseUrl: "ws://127.0.0.1:3773",
+        bootstrapToken: "desktop-bootstrap-token",
+      }),
+      getClientSettings: vi.fn().mockResolvedValue(null),
+      setClientSettings: vi.fn().mockResolvedValue(undefined),
+      getSavedEnvironmentRegistry: vi.fn().mockResolvedValue([]),
+      setSavedEnvironmentRegistry: vi.fn().mockResolvedValue(undefined),
+      getSavedEnvironmentSecret: vi.fn().mockResolvedValue(null),
+      setSavedEnvironmentSecret: vi.fn().mockResolvedValue(true),
+      removeSavedEnvironmentSecret: vi.fn().mockResolvedValue(undefined),
+      getServerExposureState: vi.fn().mockResolvedValue({
+        mode: "local-only" as const,
+        endpointUrl: null,
+        advertisedHost: null,
+      }),
+      setServerExposureMode: vi.fn().mockResolvedValue({
+        mode: "local-only" as const,
+        endpointUrl: null,
+        advertisedHost: null,
+      }),
+      pickFolder: vi.fn().mockResolvedValue(null),
+      confirm: vi.fn().mockResolvedValue(false),
+      setTheme: vi.fn().mockResolvedValue(undefined),
+      showContextMenu: vi.fn().mockResolvedValue(null),
+      openExternal: vi.fn().mockResolvedValue(true),
+      onMenuAction: (listener) => {
+        menuActionListener = listener;
+        return () => {
+          if (menuActionListener === listener) {
+            menuActionListener = null;
+          }
+        };
+      },
+      getUpdateState: vi.fn().mockResolvedValue(idleUpdateState),
+      setUpdateChannel: vi.fn().mockResolvedValue(idleUpdateState),
+      checkForUpdate: vi.fn().mockResolvedValue({
+        checked: false,
+        state: idleUpdateState,
+      }),
+      downloadUpdate: vi.fn().mockResolvedValue({
+        accepted: false,
+        completed: false,
+        state: idleUpdateState,
+      }),
+      installUpdate: vi.fn().mockResolvedValue({
+        accepted: false,
+        completed: false,
+        state: idleUpdateState,
+      }),
+      onUpdateState: () => () => {},
+    },
+    emitMenuAction: (action) => {
+      menuActionListener?.(action);
+    },
+  };
+}
+
 function releaseModShortcut(key?: string): void {
   window.dispatchEvent(
     new KeyboardEvent("keyup", {
@@ -1941,6 +2027,49 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       dispatchSidebarToggleShortcut();
+      await vi.waitFor(
+        () => {
+          expect(sidebar.dataset.state).toBe("expanded");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("toggles the desktop sidebar from native menu actions", async () => {
+    const desktopBridge = createDesktopBridgeMenuActionStub();
+    window.desktopBridge = desktopBridge.bridge;
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sidebar-menu-action" as MessageId,
+        targetText: "sidebar menu action",
+      }),
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const sidebar = await waitForElement(
+        () =>
+          document.querySelector(
+            "[data-slot='sidebar'][data-side='left']",
+          ) as HTMLDivElement | null,
+        "Desktop sidebar did not render.",
+      );
+      expect(sidebar.dataset.state).toBe("expanded");
+
+      desktopBridge.emitMenuAction("toggle-sidebar");
+      await vi.waitFor(
+        () => {
+          expect(sidebar.dataset.state).toBe("collapsed");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      desktopBridge.emitMenuAction("toggle-sidebar");
       await vi.waitFor(
         () => {
           expect(sidebar.dataset.state).toBe("expanded");

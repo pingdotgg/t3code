@@ -1,6 +1,5 @@
 import { useEffect, type ReactNode } from "react";
-import { useParams } from "@tanstack/react-router";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 
 import ThreadSidebar from "./Sidebar";
 import { Sidebar, SidebarProvider, SidebarRail, useSidebar } from "./ui/sidebar";
@@ -20,6 +19,7 @@ const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
 const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 
 function AppSidebarGlobalShortcuts() {
+  const navigate = useNavigate();
   const { toggleSidebar } = useSidebar();
   const keybindings = useServerKeybindings();
   const routeTarget = useParams({
@@ -59,12 +59,32 @@ function AppSidebarGlobalShortcuts() {
     };
   }, [keybindings, terminalOpen, toggleSidebar]);
 
+  useEffect(() => {
+    const onMenuAction = window.desktopBridge?.onMenuAction;
+    if (typeof onMenuAction !== "function") {
+      return;
+    }
+
+    const unsubscribe = onMenuAction((action) => {
+      if (action === "toggle-sidebar") {
+        toggleSidebar();
+        return;
+      }
+
+      if (action === "open-settings") {
+        void navigate({ to: "/settings" });
+      }
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [navigate, toggleSidebar]);
+
   return null;
 }
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
-  const navigate = useNavigate();
-
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       syncShortcutModifierStateFromKeyboardEvent(event);
@@ -86,23 +106,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       window.removeEventListener("blur", onWindowBlur);
     };
   }, []);
-
-  useEffect(() => {
-    const onMenuAction = window.desktopBridge?.onMenuAction;
-    if (typeof onMenuAction !== "function") {
-      return;
-    }
-
-    const unsubscribe = onMenuAction((action) => {
-      if (action === "open-settings") {
-        void navigate({ to: "/settings" });
-      }
-    });
-
-    return () => {
-      unsubscribe?.();
-    };
-  }, [navigate]);
 
   return (
     <SidebarProvider defaultOpen>

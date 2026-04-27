@@ -23,6 +23,7 @@ import type {
   ClientSettings,
   DesktopTheme,
   DesktopAppBranding,
+  DesktopMenuAction,
   DesktopServerExposureMode,
   DesktopServerExposureState,
   DesktopUpdateChannel,
@@ -839,7 +840,7 @@ function registerDesktopProtocol(): void {
   desktopProtocolRegistered = true;
 }
 
-function dispatchMenuAction(action: string): void {
+function dispatchMenuAction(action: DesktopMenuAction): void {
   const existingWindow =
     BrowserWindow.getFocusedWindow() ?? mainWindow ?? BrowserWindow.getAllWindows()[0];
   const targetWindow = existingWindow ?? createWindow();
@@ -970,6 +971,12 @@ function configureApplicationMenu(): void {
         { role: "zoomIn", accelerator: "CmdOrCtrl+=" },
         { role: "zoomIn", accelerator: "CmdOrCtrl+Plus", visible: false },
         { role: "zoomOut" },
+        { type: "separator" },
+        {
+          label: "Toggle Sidebar",
+          accelerator: "CmdOrCtrl+B",
+          click: () => dispatchMenuAction("toggle-sidebar"),
+        },
         { type: "separator" },
         { role: "togglefullscreen" },
       ],

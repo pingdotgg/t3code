@@ -152,7 +152,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               disabled={isResponding}
               onClick={() => handleOptionSelection(activeQuestion.id, option.label)}
               className={cn(
-                "group flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-all duration-150",
+                "group flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left transition-[background-color,border-color,color,box-shadow] [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)]",
                 isSelected
                   ? "border-blue-500/40 bg-blue-500/8 text-foreground"
                   : "border-transparent bg-muted/20 text-foreground/80 hover:bg-muted/40 hover:border-border/40",
@@ -162,7 +162,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               {shortcutKey !== null ? (
                 <kbd
                   className={cn(
-                    "flex size-5 shrink-0 items-center justify-center rounded text-[11px] font-medium tabular-nums transition-colors duration-150",
+                    "flex size-5 shrink-0 items-center justify-center rounded text-[11px] font-medium tabular-nums transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)]",
                     isSelected
                       ? "bg-blue-500/20 text-blue-400"
                       : "bg-muted/40 text-muted-foreground/50 group-hover:bg-muted/60 group-hover:text-muted-foreground/70",

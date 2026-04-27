@@ -1,3 +1,4 @@
+import { MICRO_FADE_MOTION_CLASS_NAME } from "~/lib/motion";
 import { cn } from "~/lib/utils";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -35,7 +36,8 @@ export function ContextWindowMeter(props: {
           <button
             type="button"
             className={cn(
-              "group inline-flex items-center justify-center transition-opacity hover:opacity-85",
+              "group inline-flex items-center justify-center hover:opacity-85",
+              MICRO_FADE_MOTION_CLASS_NAME,
               variant === "labeled" ? "gap-1.5 rounded-md px-1 py-0.5" : "rounded-full",
             )}
             aria-label={
@@ -68,7 +70,7 @@ export function ContextWindowMeter(props: {
                   strokeLinecap="round"
                   strokeDasharray={circumference}
                   strokeDashoffset={dashOffset}
-                  className="transition-[stroke-dashoffset] duration-500 ease-out motion-reduce:transition-none"
+                  className="transition-[stroke-dashoffset] [transition-duration:var(--motion-duration-ui)] [transition-timing-function:var(--motion-ease-out)] motion-reduce:transition-none"
                 />
               </svg>
               <span

@@ -14,9 +14,9 @@ import {
   IconArrowLeft as ArrowLeftIcon,
   IconArrowUp as ArrowUpIcon,
   IconArrowshapeTurnUpBackward as CornerLeftUpIcon,
+  IconBubbleLeftAndTextBubbleRight as ThreadIcon,
   IconFolder as FolderIcon,
   IconFolderBadgePlus as FolderPlusIcon,
-  IconMessage as MessageSquareIcon,
   IconPencilAndOutline as PencilAndOutlineIcon,
 } from "symbols-react";
 import {
@@ -504,7 +504,7 @@ function OpenCommandPaletteDialog() {
         ...(activeThreadId ? { activeThreadId } : {}),
         projectTitleById,
         sortOrder: settings.sidebarThreadSortOrder,
-        icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
+        icon: <ThreadIcon className={ITEM_ICON_CLASS} />,
         renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
         renderTrailingContent: (thread) => <ThreadRowTrailingStatus thread={thread} />,
         runThread: async (thread) => {

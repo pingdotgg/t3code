@@ -36,6 +36,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { MICRO_FADE_MOTION_CLASS_NAME } from "~/lib/motion";
 import {
   computeStableMessagesTimelineRows,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
@@ -351,7 +352,12 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                   />
                 )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
-                  <div className="flex items-center gap-1.5 opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+                  <div
+                    className={cn(
+                      "flex items-center gap-1.5 opacity-0 focus-within:opacity-100 group-hover:opacity-100",
+                      MICRO_FADE_MOTION_CLASS_NAME,
+                    )}
+                  >
                     {displayedUserMessage.copyText && (
                       <MessageCopyButton text={displayedUserMessage.copyText} />
                     )}
@@ -431,7 +437,12 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                     )}
                   </p>
                   {assistantCopyState.visible ? (
-                    <div className="flex items-center opacity-0 transition-opacity duration-200  group-hover/assistant:opacity-100">
+                    <div
+                      className={cn(
+                        "flex items-center opacity-0 group-hover/assistant:opacity-100",
+                        MICRO_FADE_MOTION_CLASS_NAME,
+                      )}
+                    >
                       <MessageCopyButton
                         text={assistantCopyState.text ?? ""}
                         size="icon-xs"
@@ -550,7 +561,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
           {hasOverflow && (
             <button
               type="button"
-              className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
+              className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] hover:text-foreground/75"
               onClick={() => setIsExpanded((v) => !v)}
             >
               {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
@@ -951,7 +962,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
 
   return (
     <div className="rounded-lg px-1 py-1">
-      <div className="flex items-center gap-2 transition-[opacity,translate] duration-200">
+      <div className="flex items-center gap-2 transition-[opacity,transform] [transition-duration:var(--motion-duration-ui)] [transition-timing-function:var(--motion-ease-out)]">
         <span
           className={cn("flex size-5 shrink-0 items-center justify-center", iconConfig.className)}
         >

@@ -211,7 +211,7 @@ const PlanSidebar = memo(function PlanSidebar({
                 <div
                   key={`${step.status}:${step.step}`}
                   className={cn(
-                    "flex items-start gap-2.5 rounded-lg px-2.5 py-2 transition-colors duration-200",
+                    "flex items-start gap-2.5 rounded-lg px-2.5 py-2 transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)]",
                     step.status === "inProgress" && "bg-blue-500/5",
                     step.status === "completed" && "bg-emerald-500/5",
                   )}
@@ -243,9 +243,9 @@ const PlanSidebar = memo(function PlanSidebar({
                 onClick={() => setProposedPlanExpanded((v) => !v)}
               >
                 {proposedPlanExpanded ? (
-                  <ChevronDownIcon className="size-2.5 shrink-0 fill-muted-foreground/40 transition-transform" />
+                  <ChevronDownIcon className="size-2.5 shrink-0 fill-muted-foreground/40 transition-transform [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)]" />
                 ) : (
-                  <ChevronRightIcon className="size-2.5 shrink-0 fill-muted-foreground/40 transition-transform" />
+                  <ChevronRightIcon className="size-2.5 shrink-0 fill-muted-foreground/40 transition-transform [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)]" />
                 )}
                 <span className="text-[10px] font-semibold tracking-widest text-muted-foreground/40 uppercase group-hover:text-muted-foreground/60">
                   {planTitle ?? "Full Plan"}

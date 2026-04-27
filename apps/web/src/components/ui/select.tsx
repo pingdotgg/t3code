@@ -12,11 +12,15 @@ import {
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
+import {
+  FLOATING_SURFACE_POPUP_MOTION_CLASS_NAME,
+  FLOATING_SURFACE_POSITIONER_MOTION_CLASS_NAME,
+} from "~/lib/motion";
 
 const Select = SelectPrimitive.Root;
 
 const selectTriggerVariants = cva(
-  "relative inline-flex cursor-pointer select-none items-center justify-between gap-2 border rounded-lg text-left text-base outline-none transition-[color,box-shadow,background-color] data-disabled:pointer-events-none data-disabled:opacity-64 sm:text-sm [&_svg]:fill-current [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4",
+  "relative inline-flex cursor-pointer select-none items-center justify-between gap-2 border rounded-lg text-left text-base outline-none transition-[color,box-shadow,background-color] [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] data-disabled:pointer-events-none data-disabled:opacity-64 sm:text-sm [&_svg]:fill-current [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4",
   {
     defaultVariants: {
       size: "default",
@@ -132,13 +136,16 @@ function SelectPopup({
         alignItemWithTrigger={alignItemWithTrigger}
         alignOffset={alignOffset}
         anchor={anchor}
-        className="z-50 select-none"
+        className={cn("z-50 select-none", FLOATING_SURFACE_POSITIONER_MOTION_CLASS_NAME)}
         data-slot="select-positioner"
         side={side}
         sideOffset={sideOffset}
       >
         <SelectPrimitive.Popup
-          className="origin-(--transform-origin) text-foreground"
+          className={cn(
+            "relative origin-(--transform-origin) text-foreground",
+            FLOATING_SURFACE_POPUP_MOTION_CLASS_NAME,
+          )}
           data-slot="select-popup"
           {...props}
         >
@@ -179,15 +186,18 @@ function SelectItem({
   return (
     <SelectPrimitive.Item
       className={cn(
-        "grid min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-default items-center gap-2 rounded-sm py-1 text-base outline-none data-disabled:pointer-events-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:fill-current [&_svg]:pointer-events-none [&_svg]:shrink-0",
-        hideIndicator ? "grid-cols-[1fr] ps-3 pe-3" : "grid-cols-[1rem_1fr] ps-2 pe-4",
+        "flex min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-default items-center gap-2 rounded-sm py-1 text-base outline-none data-disabled:pointer-events-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        hideIndicator ? "ps-3 pe-3" : "ps-3 pe-2",
         className,
       )}
       data-slot="select-item"
       {...props}
     >
       {hideIndicator ? null : (
-        <SelectPrimitive.ItemIndicator className="col-start-1" data-slot="select-item-indicator">
+        <SelectPrimitive.ItemIndicator
+          className="ml-auto inline-flex shrink-0 items-center justify-center text-current"
+          data-slot="select-item-indicator"
+        >
           <svg
             fill="none"
             height="24"
@@ -197,16 +207,13 @@ function SelectItem({
             strokeWidth="2"
             viewBox="0 0 24 24"
             width="24"
-            xmlns="http://www.w3.org/1500/svg"
+            xmlns="http://www.w3.org/2000/svg"
           >
             <path d="M5.252 12.7 10.2 18.63 18.748 5.37" />
           </svg>
         </SelectPrimitive.ItemIndicator>
       )}
-      <SelectPrimitive.ItemText
-        className={cn("min-w-0", hideIndicator ? "col-start-1" : "col-start-2")}
-        data-slot="select-item-text"
-      >
+      <SelectPrimitive.ItemText className="min-w-0 flex-1" data-slot="select-item-text">
         {children}
       </SelectPrimitive.ItemText>
     </SelectPrimitive.Item>

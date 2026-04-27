@@ -13,7 +13,7 @@ export function DesktopSidebarReopenButton() {
       <TooltipTrigger
         render={
           <SidebarTrigger
-            className="hidden shrink-0 md:-ml-3 md:inline-flex"
+            className="hidden shrink-0 md:-ml-3 md:inline-flex md:size-6"
             data-testid="desktop-sidebar-reopen-trigger"
           />
         }

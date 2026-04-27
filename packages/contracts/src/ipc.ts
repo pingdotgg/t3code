@@ -150,6 +150,8 @@ export interface PickFolderOptions {
   initialPath?: string | null;
 }
 
+export type DesktopMenuAction = "open-settings" | "toggle-sidebar";
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
@@ -172,7 +174,7 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
-  onMenuAction: (listener: (action: string) => void) => () => void;
+  onMenuAction: (listener: (action: DesktopMenuAction) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;

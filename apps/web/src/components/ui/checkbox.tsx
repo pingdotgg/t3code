@@ -18,7 +18,7 @@ function Checkbox({ className, ...props }: CheckboxPrimitive.Root.Props) {
         className="-inset-px absolute flex items-center justify-center rounded-[.25rem] text-primary-foreground data-unchecked:hidden data-checked:bg-primary data-indeterminate:text-foreground"
         data-slot="checkbox-indicator"
         render={(props, state) => (
-          <span {...props}>
+          <span {...props} className="flex size-full items-center justify-center">
             {state.indeterminate ? (
               <svg
                 className="size-3.5 sm:size-3"

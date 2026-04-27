@@ -59,6 +59,11 @@ import {
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
 import { APP_BASE_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
+import {
+  MICRO_FADE_MOTION_CLASS_NAME,
+  MICRO_FADE_TRANSFORM_MOTION_CLASS_NAME,
+  SIDEBAR_LIST_AUTO_ANIMATE_OPTIONS,
+} from "../lib/motion";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { cn, isMacPlatform, newCommandId } from "../lib/utils";
 import {
@@ -195,10 +200,6 @@ const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
 };
-const SIDEBAR_LIST_ANIMATION_OPTIONS = {
-  duration: 180,
-  easing: "ease-out",
-} as const;
 const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
@@ -395,7 +396,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const threadMetaClassName = isConfirmingArchive
     ? "pointer-events-none opacity-0"
     : !isThreadRunning
-      ? "pointer-events-none transition-opacity duration-150 group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0"
+      ? cn(
+          "pointer-events-none group-hover/menu-sub-item:opacity-0 group-focus-within/menu-sub-item:opacity-0",
+          MICRO_FADE_MOTION_CLASS_NAME,
+        )
       : "pointer-events-none";
   const clearConfirmingArchive = useCallback(() => {
     setConfirmingArchiveThreadKey((current) => (current === threadKey ? null : current));
@@ -648,7 +652,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 data-thread-selection-safe
                 data-testid={`thread-archive-confirm-${thread.id}`}
                 aria-label={`Confirm archive ${thread.title}`}
-                className="absolute top-1/2 right-1 inline-flex h-5 -translate-y-1/2 cursor-pointer items-center rounded-full bg-destructive/12 px-2 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
+                className="absolute top-1/2 right-1 inline-flex h-5 -translate-y-1/2 cursor-pointer items-center rounded-full bg-destructive/12 px-2 text-[10px] font-medium text-destructive transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
                 onPointerDown={stopPropagationOnPointerDown}
                 onClick={handleConfirmArchiveClick}
               >
@@ -656,13 +660,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               </button>
             ) : !isThreadRunning ? (
               appSettingsConfirmThreadArchive ? (
-                <div className="pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity duration-150 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
+                <div
+                  className={cn(
+                    "pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 opacity-0 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100",
+                    MICRO_FADE_MOTION_CLASS_NAME,
+                  )}
+                >
                   <button
                     type="button"
                     data-thread-selection-safe
                     data-testid={`thread-archive-${thread.id}`}
                     aria-label={`Archive ${thread.title}`}
-                    className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
+                    className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
                     onPointerDown={stopPropagationOnPointerDown}
                     onClick={handleStartArchiveConfirmation}
                   >
@@ -673,13 +682,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <div className="pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity duration-150 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
+                      <div
+                        className={cn(
+                          "pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 opacity-0 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100",
+                          MICRO_FADE_MOTION_CLASS_NAME,
+                        )}
+                      >
                         <button
                           type="button"
                           data-thread-selection-safe
                           data-testid={`thread-archive-${thread.id}`}
                           aria-label={`Archive ${thread.title}`}
-                          className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
+                          className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
                           onPointerDown={stopPropagationOnPointerDown}
                           onClick={handleArchiveImmediateClick}
                         >
@@ -2009,15 +2023,25 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               <SidebarStatusGlyph
                 compact
                 status={projectStatus}
-                className="absolute inset-0 m-auto transition-opacity duration-150 group-hover/project-header:opacity-0"
+                className={cn(
+                  "absolute inset-0 m-auto group-hover/project-header:opacity-0",
+                  MICRO_FADE_MOTION_CLASS_NAME,
+                )}
               />
-              <ChevronRightIcon className="absolute inset-0 m-auto size-2.5 fill-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/project-header:opacity-100" />
+              <ChevronRightIcon
+                className={cn(
+                  "absolute inset-0 m-auto size-2.5 fill-muted-foreground/70 opacity-0 group-hover/project-header:opacity-100",
+                  MICRO_FADE_MOTION_CLASS_NAME,
+                )}
+              />
             </span>
           ) : (
             <ChevronRightIcon
-              className={`-ml-0.5 size-2.5 shrink-0 fill-muted-foreground/70 transition-transform duration-150 ${
-                projectExpanded ? "rotate-90" : ""
-              }`}
+              className={cn(
+                "-ml-0.5 size-2.5 shrink-0 fill-muted-foreground/70",
+                MICRO_FADE_TRANSFORM_MOTION_CLASS_NAME,
+                projectExpanded && "rotate-90",
+              )}
             />
           )}
           <ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />
@@ -2045,7 +2069,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                       ? "Remote project"
                       : "Available in multiple environments"
                   }
-                  className="pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/50 transition-opacity duration-150 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0 [&_svg]:fill-current"
+                  className={cn(
+                    "pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/50 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0 [&_svg]:fill-current",
+                    MICRO_FADE_MOTION_CLASS_NAME,
+                  )}
                 />
               }
             >
@@ -2059,12 +2086,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         <Tooltip>
           <TooltipTrigger
             render={
-              <div className="pointer-events-none absolute top-1 right-1.5 opacity-0 transition-opacity duration-150 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+              <div
+                className={cn(
+                  "pointer-events-none absolute top-1 right-1.5 opacity-0 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100",
+                  MICRO_FADE_MOTION_CLASS_NAME,
+                )}
+              >
                 <button
                   type="button"
                   aria-label={`Create new thread in ${project.displayName}`}
                   data-testid="new-thread-button"
-                  className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
+                  className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
                   onClick={handleCreateThreadClick}
                 >
                   <PencilAndOutlineIcon className="size-3.5" />
@@ -2973,7 +3005,7 @@ export default function Sidebar() {
     if (!node || animatedProjectListsRef.current.has(node)) {
       return;
     }
-    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
+    autoAnimate(node, SIDEBAR_LIST_AUTO_ANIMATE_OPTIONS);
     animatedProjectListsRef.current.add(node);
   }, []);
 
@@ -2982,7 +3014,7 @@ export default function Sidebar() {
     if (!node || animatedThreadListsRef.current.has(node)) {
       return;
     }
-    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
+    autoAnimate(node, SIDEBAR_LIST_AUTO_ANIMATE_OPTIONS);
     animatedThreadListsRef.current.add(node);
   }, []);
 

@@ -1731,7 +1731,7 @@ export const ChatComposer = memo(
         >
           <div
             className={cn(
-              "group rounded-[22px] p-px transition-colors duration-200",
+              "group rounded-[22px] p-px transition-[background-color,border-color] [transition-duration:var(--motion-duration-ui)] [transition-timing-function:var(--motion-ease-in-out)]",
               composerProviderState.composerFrameClassName,
             )}
             onDragEnter={onComposerDragEnter}
@@ -1741,7 +1741,7 @@ export const ChatComposer = memo(
           >
             <div
               className={cn(
-                "rounded-[20px] border transition-colors duration-200 backdrop-blur-md",
+                "rounded-[20px] border backdrop-blur-md transition-[background-color,border-color,box-shadow] [transition-duration:var(--motion-duration-ui)] [transition-timing-function:var(--motion-ease-in-out)]",
                 "border-gray-200/50 bg-white/95 shadow-[0_3px_8px_rgba(0,0,0,0.1),0_2px_4px_rgba(0,0,0,0.06)]",
                 "dark:border-transparent dark:bg-zinc-900/80 dark:shadow-[inset_0_1px_2px_rgba(255,255,255,0.2),inset_0_-4px_30px_rgba(47,44,48,0.9),0_4px_16px_rgba(0,0,0,0.4)]",
                 "focus-within:border-ring/45 focus-within:shadow-[0_3px_12px_rgba(0,0,0,0.12),0_2px_6px_rgba(0,0,0,0.08)]",
