@@ -324,6 +324,11 @@ describe("WsTransport", () => {
     const secondSocket = getSocket();
     expect(secondSocket).not.toBe(firstSocket);
     expect(firstSocket.readyState).toBe(MockWebSocket.CLOSED);
+    expect(getWsConnectionStatus()).toMatchObject({
+      closeCode: null,
+      closeReason: null,
+      phase: "connecting",
+    });
 
     const requestPromise = transport.request((client) =>
       client[WS_METHODS.serverUpsertKeybinding]({
@@ -356,6 +361,58 @@ describe("WsTransport", () => {
     await expect(requestPromise).resolves.toEqual({
       keybindings: [],
       issues: [],
+    });
+
+    await transport.dispose();
+  });
+
+  it("ignores stale socket lifecycle events after a reconnect starts a new session", async () => {
+    const onClose = vi.fn();
+    const transport = createTransport("ws://localhost:3020", { onClose });
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const firstSocket = getSocket();
+    firstSocket.open();
+
+    await waitFor(() => {
+      expect(getWsConnectionStatus()).toMatchObject({
+        hasConnected: true,
+        phase: "connected",
+      });
+    });
+
+    await transport.reconnect();
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(2);
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(getWsConnectionStatus()).toMatchObject({
+      closeCode: null,
+      closeReason: null,
+      phase: "connecting",
+    });
+
+    const secondSocket = getSocket();
+    secondSocket.open();
+
+    await waitFor(() => {
+      expect(getWsConnectionStatus()).toMatchObject({
+        phase: "connected",
+      });
+    });
+
+    firstSocket.close(1006, "stale close");
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(getWsConnectionStatus()).toMatchObject({
+      closeCode: null,
+      closeReason: null,
+      phase: "connected",
     });
 
     await transport.dispose();
