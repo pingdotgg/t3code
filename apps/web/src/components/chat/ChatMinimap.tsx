@@ -129,7 +129,7 @@ export const ChatMinimap = memo(function ChatMinimap({
         data-expanded={isOpen ? "true" : undefined}
       >
         <PreviewCardTrigger
-          className="pointer-events-auto flex h-full min-h-0 flex-col items-end"
+          className="pointer-events-auto"
           closeDelay={COLLAPSE_DELAY_MS}
           delay={EXPAND_DELAY_MS}
           render={<div />}
@@ -175,7 +175,7 @@ function DashesStrip({
 
   return (
     <ul
-      className="flex max-h-full flex-col items-end gap-1 overflow-hidden px-1 py-1 @md/chat:px-1.5"
+      className="flex flex-col items-end gap-1 px-1 py-1 @md/chat:px-1.5"
       data-testid="chat-minimap-list"
     >
       {visibleEntries.map((entry, index) => {
