@@ -58,6 +58,7 @@ const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
+const TEMPORARY_PACK_FILE_PREFIX = "tmp_pack_";
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
 const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitStatusDetails>({
@@ -923,15 +924,96 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   ): Effect.Effect<void, GitCommandError> => {
     const fetchCwd =
       path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-    return executeGit(
-      "GitCore.fetchRemoteForStatus",
-      fetchCwd,
-      ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
-      {
-        allowNonZeroExit: true,
-        timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
-      },
-    ).pipe(Effect.asVoid);
+
+    const readTemporaryPackFiles = Effect.fn("readTemporaryPackFiles")(function* () {
+      const packDir = path.join(gitCommonDir, "objects", "pack");
+      const entries = yield* fileSystem
+        .readDirectory(packDir, { recursive: false })
+        .pipe(Effect.orElseSucceed(() => [] as Array<string>));
+      return new Set(
+        entries.filter((entry) => entry.startsWith(TEMPORARY_PACK_FILE_PREFIX)),
+      ) as ReadonlySet<string>;
+    });
+
+    const listFetchHeadLockPaths = Effect.fn("listFetchHeadLockPaths")(function* () {
+      const worktreesDir = path.join(gitCommonDir, "worktrees");
+      const worktreeEntries = yield* fileSystem
+        .readDirectory(worktreesDir, { recursive: false })
+        .pipe(Effect.orElseSucceed(() => [] as Array<string>));
+      return [
+        path.join(gitCommonDir, "FETCH_HEAD.lock"),
+        ...worktreeEntries.map((entry) => path.join(worktreesDir, entry, "FETCH_HEAD.lock")),
+      ];
+    });
+
+    const hasConcurrentFetchLock = Effect.fn("hasConcurrentFetchLock")(function* () {
+      const fetchHeadLockPaths = yield* listFetchHeadLockPaths();
+      for (const fetchHeadLockPath of fetchHeadLockPaths) {
+        if (yield* fileSystem.exists(fetchHeadLockPath).pipe(Effect.orElseSucceed(() => false))) {
+          return true;
+        }
+      }
+      return false;
+    });
+
+    const removeLeakedTemporaryPackFiles = Effect.fn("removeLeakedTemporaryPackFiles")(function* (
+      temporaryPackFilesBeforeFetch: ReadonlySet<string>,
+    ) {
+      if (yield* hasConcurrentFetchLock()) {
+        yield* Effect.logWarning(
+          "skipped leaked temporary git pack cleanup while another fetch is active",
+          {
+            gitCommonDir,
+          },
+        );
+        return;
+      }
+
+      const packDir = path.join(gitCommonDir, "objects", "pack");
+      const entries = yield* fileSystem
+        .readDirectory(packDir, { recursive: false })
+        .pipe(Effect.orElseSucceed(() => [] as Array<string>));
+      const leakedPackFiles = entries.filter(
+        (entry) =>
+          entry.startsWith(TEMPORARY_PACK_FILE_PREFIX) && !temporaryPackFilesBeforeFetch.has(entry),
+      );
+      if (leakedPackFiles.length === 0) {
+        return;
+      }
+
+      yield* Effect.logWarning("removed leaked temporary git pack files after failed refresh", {
+        gitCommonDir,
+        leakedPackFiles,
+      });
+
+      yield* Effect.forEach(
+        leakedPackFiles,
+        (entry) =>
+          fileSystem.remove(path.join(packDir, entry), { force: true }).pipe(
+            Effect.catch((error) =>
+              Effect.logWarning("failed to remove leaked temporary git pack file", {
+                gitCommonDir,
+                packFile: entry,
+                error: error.message,
+              }),
+            ),
+          ),
+        { concurrency: "unbounded" },
+      );
+    });
+
+    return Effect.gen(function* () {
+      const temporaryPackFilesBeforeFetch = yield* readTemporaryPackFiles();
+      yield* executeGit(
+        "GitCore.fetchRemoteForStatus",
+        fetchCwd,
+        ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
+        {
+          timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
+          fallbackErrorMessage: "git fetch failed",
+        },
+      ).pipe(Effect.tapError(() => removeLeakedTemporaryPackFiles(temporaryPackFilesBeforeFetch)));
+    }).pipe(Effect.asVoid);
   };
 
   const resolveGitCommonDir = Effect.fn("resolveGitCommonDir")(function* (cwd: string) {
