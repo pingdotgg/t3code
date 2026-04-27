@@ -18,6 +18,7 @@ import {
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
+import { DesktopSidebarReopenButton } from "../sidebar/DesktopSidebarReopenButton";
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
@@ -75,8 +76,9 @@ export const ChatHeader = memo(function ChatHeader({
 }: ChatHeaderProps) {
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden md:overflow-visible sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+        <DesktopSidebarReopenButton />
         {activeProjectName ? (
           <nav
             aria-label="Thread breadcrumb"

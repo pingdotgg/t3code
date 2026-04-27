@@ -1,11 +1,8 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
-import {
-  IconSidebarLeading as PanelLeftCloseIcon,
-  IconSidebarLeft as PanelLeftIcon,
-} from "symbols-react";
 import * as React from "react";
+import { SidebarPanelIcon } from "~/components/icons/custom";
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -306,10 +303,15 @@ function Sidebar({
 }
 
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
-  const { toggleSidebar, openMobile } = useSidebar();
+  const { isMobile, open, openMobile, toggleSidebar } = useSidebar();
+  const isOpen = isMobile ? openMobile : open;
+  const defaultLabel = isOpen ? (isMobile ? "Close sidebar" : "Collapse sidebar") : "Open sidebar";
+  const ariaLabel = props["aria-label"] ?? defaultLabel;
 
   return (
     <Button
+      {...props}
+      aria-label={ariaLabel}
       className={cn("size-7", className)}
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
@@ -318,11 +320,11 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
         toggleSidebar();
       }}
       size="icon"
+      title={props.title ?? defaultLabel}
       variant="ghost"
-      {...props}
     >
-      {openMobile ? <PanelLeftCloseIcon /> : <PanelLeftIcon />}
-      <span className="sr-only">Toggle Sidebar</span>
+      <SidebarPanelIcon />
+      <span className="sr-only">{ariaLabel}</span>
     </Button>
   );
 }

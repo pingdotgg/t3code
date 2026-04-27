@@ -1497,6 +1497,19 @@ function dispatchChatNewShortcut(): void {
   );
 }
 
+function dispatchSidebarToggleShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "b",
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 function releaseModShortcut(key?: string): void {
   window.dispatchEvent(
     new KeyboardEvent("keyup", {
@@ -1534,6 +1547,26 @@ async function openCommandPaletteFromTrigger(): Promise<void> {
   await waitForElement(
     () => document.querySelector('[data-testid="command-palette"]'),
     "Command palette should have opened from the sidebar trigger.",
+  );
+}
+
+async function waitForDesktopSidebarCollapseTrigger(): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () =>
+      document.querySelector(
+        '[data-testid="desktop-sidebar-collapse-trigger"]',
+      ) as HTMLButtonElement | null,
+    "Desktop sidebar collapse trigger did not render.",
+  );
+}
+
+async function waitForDesktopSidebarReopenTrigger(): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () =>
+      document.querySelector(
+        'header [data-testid="desktop-sidebar-reopen-trigger"]',
+      ) as HTMLButtonElement | null,
+    "Desktop sidebar reopen trigger did not render in the header.",
   );
 }
 
@@ -1807,6 +1840,113 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       await expect.element(page.getByText("No threads yet")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("collapses the desktop sidebar and reopens it from the chat header", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sidebar-collapse" as MessageId,
+        targetText: "sidebar collapse",
+      }),
+    });
+
+    try {
+      const sidebar = await waitForElement(
+        () =>
+          document.querySelector(
+            "[data-slot='sidebar'][data-side='left']",
+          ) as HTMLDivElement | null,
+        "Desktop sidebar did not render.",
+      );
+      expect(sidebar.dataset.state).toBe("expanded");
+
+      const collapseTrigger = await waitForDesktopSidebarCollapseTrigger();
+      await collapseTrigger.click();
+      await vi.waitFor(
+        () => {
+          expect(sidebar.dataset.state).toBe("collapsed");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const reopenTrigger = await waitForDesktopSidebarReopenTrigger();
+      await expect.element(reopenTrigger).toBeVisible();
+      await reopenTrigger.click();
+      await vi.waitFor(
+        () => {
+          expect(sidebar.dataset.state).toBe("expanded");
+          expect(
+            document.querySelector('[data-testid="desktop-sidebar-reopen-trigger"]'),
+          ).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("toggles the desktop sidebar from the global keyboard shortcut", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sidebar-shortcut" as MessageId,
+        targetText: "sidebar shortcut",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "sidebar.toggle",
+              shortcut: {
+                key: "b",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const sidebar = await waitForElement(
+        () =>
+          document.querySelector(
+            "[data-slot='sidebar'][data-side='left']",
+          ) as HTMLDivElement | null,
+        "Desktop sidebar did not render.",
+      );
+      expect(sidebar.dataset.state).toBe("expanded");
+
+      dispatchSidebarToggleShortcut();
+      await vi.waitFor(
+        () => {
+          expect(sidebar.dataset.state).toBe("collapsed");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      dispatchSidebarToggleShortcut();
+      await vi.waitFor(
+        () => {
+          expect(sidebar.dataset.state).toBe("expanded");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }

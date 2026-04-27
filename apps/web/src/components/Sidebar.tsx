@@ -2398,7 +2398,7 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron: boolean;
 }) {
   const wordmark = (
-    <div className="flex items-center gap-2">
+    <div className="flex min-w-0 flex-1 items-center gap-2">
       <SidebarTrigger className="shrink-0 md:hidden" />
       <Tooltip>
         <TooltipTrigger
@@ -2421,13 +2421,30 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
       </Tooltip>
     </div>
   );
+  const desktopCollapseTrigger = (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <SidebarTrigger
+            className="hidden shrink-0 md:-mr-2 md:inline-flex"
+            data-testid="desktop-sidebar-collapse-trigger"
+          />
+        }
+      />
+      <TooltipPopup side="bottom">Collapse sidebar</TooltipPopup>
+    </Tooltip>
+  );
 
   return isElectron ? (
-    <SidebarHeader className="drag-region relative isolate h-[52px] flex-row items-center gap-2 overflow-hidden px-4 py-0 wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)]">
-      <div className="relative z-10">{wordmark}</div>
+    <SidebarHeader className="drag-region relative isolate h-[52px] flex-row items-center justify-between gap-2 overflow-hidden px-4 py-0 wco:h-[env(titlebar-area-height)] wco:pl-[calc(env(titlebar-area-x)+1em)]">
+      <div className="relative z-10 min-w-0 flex-1">{wordmark}</div>
+      {desktopCollapseTrigger}
     </SidebarHeader>
   ) : (
-    <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">{wordmark}</SidebarHeader>
+    <SidebarHeader className="flex-row items-center justify-between gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
+      {wordmark}
+      {desktopCollapseTrigger}
+    </SidebarHeader>
   );
 });
 
@@ -2560,7 +2577,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             <CommandDialogTrigger
               render={
                 <SidebarMenuButton
-                  className="gap-2 border rounded-xl border-border/60 bg-accent/70 px-2 py-1.5 text-muted-foreground/70 shadow-sm/5 transition-colors hover:bg-accent/85 hover:text-foreground focus-visible:ring-0"
+                  className="gap-2 border rounded-xl border-border/60 bg-accent/70 px-2.5 py-1.5 h-9 text-muted-foreground/70 shadow-sm/5 transition-colors hover:bg-accent/85 hover:text-foreground focus-visible:ring-0"
                   data-testid="command-palette-trigger"
                 />
               }

@@ -6,12 +6,21 @@ import {
   SidebarMenuButton,
   SidebarMenuSubButton,
   SidebarProvider,
+  SidebarTrigger,
 } from "./sidebar";
 
 function renderSidebarButton(className?: string) {
   return renderToStaticMarkup(
     <SidebarProvider>
       <SidebarMenuButton className={className}>Projects</SidebarMenuButton>
+    </SidebarProvider>,
+  );
+}
+
+function renderSidebarTrigger(defaultOpen = true) {
+  return renderToStaticMarkup(
+    <SidebarProvider defaultOpen={defaultOpen}>
+      <SidebarTrigger />
     </SidebarProvider>,
   );
 }
@@ -49,5 +58,21 @@ describe("sidebar interactive cursors", () => {
 
     expect(html).toContain('data-slot="sidebar-menu-sub-button"');
     expect(html).toContain("cursor-pointer");
+  });
+});
+
+describe("SidebarTrigger", () => {
+  it("uses a collapse label and title when the desktop sidebar is open", () => {
+    const html = renderSidebarTrigger();
+
+    expect(html).toContain('aria-label="Collapse sidebar"');
+    expect(html).toContain('title="Collapse sidebar"');
+  });
+
+  it("uses an open label and title when the desktop sidebar is collapsed", () => {
+    const html = renderSidebarTrigger(false);
+
+    expect(html).toContain('aria-label="Open sidebar"');
+    expect(html).toContain('title="Open sidebar"');
   });
 });

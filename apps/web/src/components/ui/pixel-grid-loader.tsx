@@ -126,7 +126,7 @@ const PIXEL_GRID_PRESETS = {
 } as const;
 
 const PIXEL_GRID_VARIANT_DEFAULT_PRESET = {
-  sidebar: "wave-lr",
+  sidebar: "spiral-cw",
   chat: "spiral-cw",
 } as const;
 
