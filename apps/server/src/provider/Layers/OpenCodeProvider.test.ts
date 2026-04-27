@@ -23,6 +23,7 @@ const runtimeMock = {
     runVersionError: null as Error | null,
     versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
+    closeCalls: 0,
     inventory: {
       providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
@@ -32,6 +33,7 @@ const runtimeMock = {
     this.state.runVersionError = null;
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
+    this.state.closeCalls = 0;
     this.state.inventory = {
       providerList: { connected: [], all: [] as unknown[], default: {} },
       agents: [] as unknown[],
@@ -46,10 +48,19 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       exitCode: Effect.never,
     }),
   connectToOpenCodeServer: ({ serverUrl }) =>
-    Effect.succeed({
-      url: serverUrl ?? "http://127.0.0.1:4301",
-      exitCode: null,
-      external: Boolean(serverUrl),
+    Effect.gen(function* () {
+      if (!serverUrl) {
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            runtimeMock.state.closeCalls += 1;
+          }),
+        );
+      }
+      return {
+        url: serverUrl ?? "http://127.0.0.1:4301",
+        exitCode: null,
+        external: Boolean(serverUrl),
+      };
     }),
   runOpenCodeCommand: () =>
     runtimeMock.state.runVersionError
@@ -186,6 +197,15 @@ it.layer(makeTestLayer())("OpenCodeProviderLive", (it) => {
       );
       assert.ok(agentDescriptor && agentDescriptor.type === "select");
       assert.equal(agentDescriptor.options.find((option) => option.isDefault)?.id, "build");
+    }),
+  );
+
+  it.effect("closes the local OpenCode server scope after provider refresh", () =>
+    Effect.gen(function* () {
+      const provider = yield* OpenCodeProvider;
+      yield* provider.refresh;
+
+      assert.equal(runtimeMock.state.closeCalls, 1);
     }),
   );
 });
