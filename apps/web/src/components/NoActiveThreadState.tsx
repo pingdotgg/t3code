@@ -1,7 +1,12 @@
 import { scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
 import type { ScopedThreadRef } from "@forma/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { IconEllipsis as EllipsisIcon, IconMagnifyingglass as SearchIcon } from "symbols-react";
+import {
+  IconChevronRight as ChevronRightIcon,
+  IconCube as CubeIcon,
+  IconEllipsis as EllipsisIcon,
+  IconMagnifyingglass as SearchIcon,
+} from "symbols-react";
 import {
   useCallback,
   useMemo,
@@ -38,6 +43,11 @@ import {
 import { LogomarkForma } from "./LogomarkForma";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { DesktopSidebarReopenButton } from "./sidebar/DesktopSidebarReopenButton";
+import {
+  ThreadBreadcrumbProjectChipContent,
+  THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME,
+  THREAD_BREADCRUMB_SEPARATOR_ICON_CLASS_NAME,
+} from "./ThreadBreadcrumb";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { AddProjectIcon, NewThreadIcon, SettingsHexIcon, SidebarArchiveIcon } from "./icons/custom";
 import { Button } from "./ui/button";
@@ -105,6 +115,22 @@ function resolveThreadWorkspacePath(
   item: ReturnType<typeof getNoActiveThreadRecentThreadItems>[number],
 ): string | null {
   return item.thread.worktreePath ?? item.project?.cwd ?? null;
+}
+
+function renderThreadProjectBreadcrumbIcon(
+  item: ReturnType<typeof getNoActiveThreadRecentThreadItems>[number],
+) {
+  if (!item.project) {
+    return <CubeIcon className="size-3.5 shrink-0 fill-current opacity-70" aria-hidden />;
+  }
+
+  return (
+    <ProjectFavicon
+      environmentId={item.project.environmentId}
+      cwd={item.project.cwd}
+      className="size-3.5 rounded-sm"
+    />
+  );
 }
 
 function stopPointerEventPropagation(event: PointerEvent<HTMLElement>) {
@@ -253,12 +279,27 @@ function ThreadListRow({
             </span>
           </div>
           <div className="mt-2 flex min-w-0 items-center justify-between gap-4">
-            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground/72">
-              <span className="truncate" title={workspacePath ?? undefined}>
-                {resolveThreadProjectLabel(item)}
+            <div className="flex min-w-0 items-center gap-1.5 overflow-hidden text-xs text-muted-foreground/72">
+              <span
+                className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} text-[11px] leading-none`}
+                title={workspacePath ?? resolveThreadProjectLabel(item)}
+              >
+                <ThreadBreadcrumbProjectChipContent
+                  icon={renderThreadProjectBreadcrumbIcon(item)}
+                  label={resolveThreadProjectLabel(item)}
+                />
               </span>
               {item.thread.branch ? (
-                <span className="inline-flex shrink-0 items-center rounded-full border border-border/65 bg-background/72 px-2 py-0.5 text-[10px] font-medium tracking-tight text-muted-foreground/80">
+                <ChevronRightIcon
+                  className={THREAD_BREADCRUMB_SEPARATOR_ICON_CLASS_NAME}
+                  aria-hidden
+                />
+              ) : null}
+              {item.thread.branch ? (
+                <span
+                  className="min-w-0 truncate text-[11px] font-medium text-muted-foreground/82"
+                  title={item.thread.branch}
+                >
                   #{item.thread.branch}
                 </span>
               ) : null}

@@ -24,6 +24,7 @@ import { normalizeModelSlug } from "@forma/shared/model";
 import { createModelSelection } from "@forma/shared/model";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
+import { isThemePreference, THEME_OPTIONS } from "../../theme";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -79,21 +80,6 @@ import {
   useServerObservability,
   useServerProviders,
 } from "../../rpc/serverState";
-
-const THEME_OPTIONS = [
-  {
-    value: "system",
-    label: "System",
-  },
-  {
-    value: "light",
-    label: "Light",
-  },
-  {
-    value: "dark",
-    label: "Dark",
-  },
-] as const;
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -832,7 +818,7 @@ export function GeneralSettingsPanel() {
             <Select
               value={theme}
               onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark") {
+                if (isThemePreference(value)) {
                   setTheme(value);
                 }
               }}

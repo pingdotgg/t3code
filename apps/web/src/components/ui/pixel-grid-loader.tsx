@@ -181,6 +181,7 @@ export function PixelGridLoader({
   const cellRefs = useRef<Array<HTMLSpanElement | null>>([]);
   const { name: presetName, config } = resolvePreset(preset, variant);
   const resolvedCellColors = colors ?? ("colors" in config ? config.colors : undefined);
+  const useInlineContainerColor = color !== "currentColor" && !isNamedColor(color);
 
   useEffect(() => {
     const cells = cellRefs.current.slice(0, PIXEL_GRID_CELL_IDS.length);
@@ -277,7 +278,7 @@ export function PixelGridLoader({
           "--pixel-grid-cell-size": "2px",
         } as React.CSSProperties)
       : {}),
-    ...(color && !isNamedColor(color) ? colorVars(color) : {}),
+    ...(useInlineContainerColor ? colorVars(color) : {}),
     ...style,
   } as React.CSSProperties;
 
@@ -286,6 +287,7 @@ export function PixelGridLoader({
       aria-hidden={ariaHidden}
       className={cn("pixel-grid pixel-grid-loader", containerClassName, className)}
       data-pixel-grid-preset={presetName}
+      data-pixel-grid-variant={variant}
       data-slot="pixel-grid-loader"
       style={containerStyle}
       {...props}

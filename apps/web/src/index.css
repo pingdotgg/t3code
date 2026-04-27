@@ -68,13 +68,18 @@
 }
 
 :root {
-  color-scheme: light;
   --radius: 0.625rem;
   --motion-duration-micro: 120ms;
   --motion-duration-ui: 200ms;
   --motion-duration-modal: 260ms;
   --motion-ease-out: cubic-bezier(0.215, 0.61, 0.355, 1);
   --motion-ease-in-out: cubic-bezier(0.645, 0.045, 0.355, 1);
+  --composer-surface-overlay-shadow: inset 0 0 0 0 transparent;
+}
+
+:root,
+:root[data-theme="light"] {
+  color-scheme: light;
   --background: var(--color-white);
   --app-chrome-background: var(--background);
   --foreground: var(--color-neutral-800);
@@ -101,36 +106,291 @@
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
   --warning-foreground: var(--color-amber-700);
+  --composer-surface-fill: --alpha(var(--color-white) / 95%);
+  --composer-surface-border: --alpha(var(--color-black) / 12%);
+  --composer-surface-shadow: 0 3px 8px rgba(0, 0, 0, 0.1), 0 2px 4px rgba(0, 0, 0, 0.06);
+  --composer-surface-focus-shadow: 0 3px 12px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
+  --composer-banner-background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.88) 0%,
+    rgba(246, 247, 250, 0.78) 100%
+  );
+  --composer-banner-border: --alpha(var(--color-black) / 10%);
+  --composer-banner-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.02);
+  --composer-footer-separator-background-color: var(--color-white);
+  --composer-footer-separator-background-opacity: 100%;
+  --composer-footer-separator-border-color: var(--composer-surface-border);
+  --composer-footer-separator-border-opacity: 100%;
+}
 
-  @variant dark {
-    color-scheme: dark;
-    --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
-    --app-chrome-background: var(--background);
-    --foreground: var(--color-neutral-100);
-    --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
-    --card-foreground: var(--color-neutral-100);
-    --popover: color-mix(in srgb, var(--background) 98%, var(--color-white));
-    --popover-foreground: var(--color-neutral-100);
-    --primary: oklch(0.588 0.217 264);
-    --primary-foreground: var(--color-white);
-    --secondary: --alpha(var(--color-white) / 4%);
-    --secondary-foreground: var(--color-neutral-100);
-    --muted: --alpha(var(--color-white) / 4%);
-    --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
-    --accent: --alpha(var(--color-white) / 4%);
-    --accent-foreground: var(--color-neutral-100);
-    --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
-    --border: --alpha(var(--color-white) / 6%);
-    --input: --alpha(var(--color-white) / 8%);
-    --ring: oklch(0.588 0.217 264);
-    --destructive-foreground: var(--color-red-400);
-    --info: var(--color-blue-500);
-    --info-foreground: var(--color-blue-400);
-    --success: var(--color-emerald-500);
-    --success-foreground: var(--color-emerald-400);
-    --warning: var(--color-amber-500);
-    --warning-foreground: var(--color-amber-400);
-  }
+:root[data-theme="noir"] {
+  color-scheme: dark;
+  --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
+  --app-chrome-background: var(--background);
+  --foreground: var(--color-neutral-100);
+  --card: color-mix(in srgb, var(--background) 98%, var(--color-white));
+  --card-foreground: var(--color-neutral-100);
+  --popover: color-mix(in srgb, var(--background) 98%, var(--color-white));
+  --popover-foreground: var(--color-neutral-100);
+  --primary: oklch(0.588 0.217 264);
+  --primary-foreground: var(--color-white);
+  --secondary: --alpha(var(--color-white) / 4%);
+  --secondary-foreground: var(--color-neutral-100);
+  --muted: --alpha(var(--color-white) / 4%);
+  --muted-foreground: color-mix(in srgb, var(--color-neutral-500) 90%, var(--color-white));
+  --accent: --alpha(var(--color-white) / 4%);
+  --accent-foreground: var(--color-neutral-100);
+  --destructive: color-mix(in srgb, var(--color-red-500) 90%, var(--color-white));
+  --border: --alpha(var(--color-white) / 6%);
+  --input: --alpha(var(--color-white) / 8%);
+  --ring: oklch(0.588 0.217 264);
+  --destructive-foreground: var(--color-red-400);
+  --info: var(--color-blue-500);
+  --info-foreground: var(--color-blue-400);
+  --success: var(--color-emerald-500);
+  --success-foreground: var(--color-emerald-400);
+  --warning: var(--color-amber-500);
+  --warning-foreground: var(--color-amber-400);
+  --composer-surface-fill: --alpha(var(--color-zinc-900) / 80%);
+  --composer-surface-border: --alpha(var(--color-white) / 10%);
+  --composer-surface-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.2), inset 0 -4px 30px rgba(47, 44, 48, 0.9),
+    0 4px 16px rgba(0, 0, 0, 0.4);
+  --composer-surface-focus-shadow:
+    inset 0 1px 2px rgba(255, 255, 255, 0.22), inset 0 -4px 30px rgba(47, 44, 48, 0.9),
+    0 4px 20px rgba(0, 0, 0, 0.5);
+  --composer-banner-background: linear-gradient(
+    180deg,
+    rgba(28, 31, 39, 0.78) 0%,
+    rgba(20, 22, 29, 0.68) 100%
+  );
+  --composer-banner-border: --alpha(var(--color-white) / 10%);
+  --composer-banner-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 -1px 0 rgba(0, 0, 0, 0.24);
+  --composer-footer-separator-background-color: var(--composer-surface-border);
+  --composer-footer-separator-background-opacity: 100%;
+  --composer-footer-separator-border-color: var(--color-black);
+  --composer-footer-separator-border-opacity: 90%;
+}
+
+:root[data-theme="dawn"] {
+  color-scheme: light;
+  --background: #f6ebe2;
+  --app-chrome-background: var(--background);
+  --foreground: #42352e;
+  --card: color-mix(in srgb, #ffffff 82%, var(--background));
+  --card-foreground: var(--foreground);
+  --popover: color-mix(in srgb, #ffffff 86%, var(--background));
+  --popover-foreground: var(--foreground);
+  --primary: #b98038;
+  --primary-foreground: var(--color-white);
+  --secondary: rgba(112, 78, 58, 0.055);
+  --secondary-foreground: var(--foreground);
+  --muted: rgba(112, 78, 58, 0.06);
+  --muted-foreground: color-mix(in srgb, var(--foreground) 72%, white);
+  --accent: rgba(212, 170, 124, 0.12);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--color-red-500);
+  --border: rgba(72, 42, 28, 0.1);
+  --input: rgba(72, 42, 28, 0.12);
+  --ring: #c6924c;
+  --destructive-foreground: var(--color-red-700);
+  --info: var(--color-blue-500);
+  --info-foreground: var(--color-blue-700);
+  --success: var(--color-emerald-500);
+  --success-foreground: var(--color-emerald-700);
+  --warning: var(--color-amber-500);
+  --warning-foreground: var(--color-amber-700);
+  --composer-surface-fill: linear-gradient(
+    180deg,
+    rgba(255, 253, 250, 0.95) 0%,
+    rgba(248, 236, 224, 0.9) 100%
+  );
+  --composer-surface-border: --alpha(var(--color-black) / 12%);
+  --composer-surface-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 8px 20px rgba(131, 87, 52, 0.08),
+    0 2px 5px rgba(80, 52, 32, 0.06);
+  --composer-surface-focus-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82), 0 10px 24px rgba(131, 87, 52, 0.1),
+    0 3px 8px rgba(80, 52, 32, 0.08);
+  --composer-banner-background: linear-gradient(
+    180deg,
+    rgba(255, 249, 243, 0.9) 0%,
+    rgba(243, 227, 212, 0.88) 100%
+  );
+  --composer-banner-border: --alpha(var(--color-black) / 10%);
+  --composer-banner-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.86), inset 0 -1px 0 rgba(126, 83, 52, 0.04);
+  --composer-footer-separator-background-color: var(--color-white);
+  --composer-footer-separator-background-opacity: 100%;
+  --composer-footer-separator-border-color: var(--composer-surface-border);
+  --composer-footer-separator-border-opacity: 100%;
+}
+
+:root[data-theme="dusk"] {
+  color-scheme: light;
+  --background: #f5e8e3;
+  --app-chrome-background: var(--background);
+  --foreground: #47312d;
+  --card: color-mix(in srgb, #ffffff 80%, var(--background));
+  --card-foreground: var(--foreground);
+  --popover: color-mix(in srgb, #ffffff 84%, var(--background));
+  --popover-foreground: var(--foreground);
+  --primary: #b3634d;
+  --primary-foreground: var(--color-white);
+  --secondary: rgba(103, 63, 56, 0.055);
+  --secondary-foreground: var(--foreground);
+  --muted: rgba(103, 63, 56, 0.06);
+  --muted-foreground: color-mix(in srgb, var(--foreground) 74%, white);
+  --accent: rgba(199, 118, 96, 0.11);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--color-red-500);
+  --border: rgba(73, 36, 34, 0.1);
+  --input: rgba(73, 36, 34, 0.12);
+  --ring: #c47458;
+  --destructive-foreground: var(--color-red-700);
+  --info: var(--color-blue-500);
+  --info-foreground: var(--color-blue-700);
+  --success: var(--color-emerald-500);
+  --success-foreground: var(--color-emerald-700);
+  --warning: var(--color-amber-500);
+  --warning-foreground: var(--color-amber-700);
+  --composer-surface-fill: linear-gradient(
+    180deg,
+    rgba(255, 251, 248, 0.94) 0%,
+    rgba(245, 231, 225, 0.92) 100%
+  );
+  --composer-surface-border: --alpha(var(--color-black) / 12%);
+  --composer-surface-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.75), 0 8px 18px rgba(119, 69, 58, 0.08),
+    0 2px 5px rgba(84, 46, 42, 0.06);
+  --composer-surface-focus-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 10px 22px rgba(119, 69, 58, 0.1),
+    0 3px 8px rgba(84, 46, 42, 0.08);
+  --composer-banner-background: linear-gradient(
+    180deg,
+    rgba(255, 246, 241, 0.88) 0%,
+    rgba(242, 223, 216, 0.86) 100%
+  );
+  --composer-banner-border: --alpha(var(--color-black) / 10%);
+  --composer-banner-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.84), inset 0 -1px 0 rgba(116, 67, 57, 0.05);
+  --composer-footer-separator-background-color: var(--color-white);
+  --composer-footer-separator-background-opacity: 100%;
+  --composer-footer-separator-border-color: var(--composer-surface-border);
+  --composer-footer-separator-border-opacity: 100%;
+}
+
+:root[data-theme="midnight"] {
+  color-scheme: dark;
+  --background: #171b22;
+  --app-chrome-background: var(--background);
+  --foreground: #edf2fb;
+  --card: color-mix(in srgb, #10151c 86%, var(--background));
+  --card-foreground: var(--foreground);
+  --popover: color-mix(in srgb, #0f141b 90%, var(--background));
+  --popover-foreground: var(--foreground);
+  --primary: #8fa8cd;
+  --primary-foreground: #10151c;
+  --secondary: rgba(255, 255, 255, 0.045);
+  --secondary-foreground: var(--foreground);
+  --muted: rgba(255, 255, 255, 0.05);
+  --muted-foreground: color-mix(in srgb, var(--foreground) 72%, black);
+  --accent: rgba(143, 168, 205, 0.13);
+  --accent-foreground: var(--foreground);
+  --destructive: color-mix(in srgb, var(--color-red-500) 88%, var(--color-white));
+  --border: rgba(255, 255, 255, 0.075);
+  --input: rgba(255, 255, 255, 0.09);
+  --ring: #9bb0d2;
+  --destructive-foreground: var(--color-red-300);
+  --info: var(--color-blue-400);
+  --info-foreground: var(--color-blue-300);
+  --success: var(--color-emerald-400);
+  --success-foreground: var(--color-emerald-300);
+  --warning: var(--color-amber-400);
+  --warning-foreground: var(--color-amber-300);
+  --composer-surface-fill: linear-gradient(
+    180deg,
+    rgba(24, 29, 38, 0.92) 0%,
+    rgba(18, 22, 30, 0.88) 100%
+  );
+  --composer-surface-border: --alpha(var(--color-white) / 10%);
+  --composer-surface-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -12px 28px rgba(7, 12, 21, 0.52),
+    0 8px 22px rgba(3, 6, 12, 0.4);
+  --composer-surface-focus-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.11), inset 0 -12px 28px rgba(7, 12, 21, 0.56),
+    0 10px 26px rgba(3, 6, 12, 0.46);
+  --composer-banner-background: linear-gradient(
+    180deg,
+    rgba(32, 38, 48, 0.78) 0%,
+    rgba(22, 27, 36, 0.72) 100%
+  );
+  --composer-banner-border: --alpha(var(--color-white) / 10%);
+  --composer-banner-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 0 -1px 0 rgba(0, 0, 0, 0.24);
+  --composer-footer-separator-background-color: var(--composer-surface-border);
+  --composer-footer-separator-background-opacity: 100%;
+  --composer-footer-separator-border-color: var(--color-black);
+  --composer-footer-separator-border-opacity: 90%;
+}
+
+:root[data-theme="stone"] {
+  color-scheme: dark;
+  --composer-surface-overlay-shadow: inset 0 0 0 1px rgba(158, 89, 71, 0.1);
+  --background: #211917;
+  --app-chrome-background: var(--background);
+  --foreground: #f1ece6;
+  --card: color-mix(in srgb, #191211 88%, var(--background));
+  --card-foreground: var(--foreground);
+  --popover: color-mix(in srgb, #171110 90%, var(--background));
+  --popover-foreground: var(--foreground);
+  --primary: #b47b60;
+  --primary-foreground: #180f0d;
+  --secondary: rgba(255, 255, 255, 0.045);
+  --secondary-foreground: var(--foreground);
+  --muted: rgba(255, 255, 255, 0.05);
+  --muted-foreground: color-mix(in srgb, var(--foreground) 72%, black);
+  --accent: rgba(180, 123, 96, 0.13);
+  --accent-foreground: var(--foreground);
+  --destructive: color-mix(in srgb, var(--color-red-500) 88%, var(--color-white));
+  --border: rgba(255, 255, 255, 0.075);
+  --input: rgba(255, 255, 255, 0.09);
+  --ring: #bf8567;
+  --destructive-foreground: var(--color-red-300);
+  --info: var(--color-blue-400);
+  --info-foreground: var(--color-blue-300);
+  --success: var(--color-emerald-400);
+  --success-foreground: var(--color-emerald-300);
+  --warning: var(--color-amber-400);
+  --warning-foreground: var(--color-amber-300);
+  --composer-surface-fill: linear-gradient(
+    180deg,
+    rgba(44, 31, 29, 0.92) 0%,
+    rgba(30, 20, 19, 0.9) 100%
+  );
+  --composer-surface-border: --alpha(var(--color-white) / 10%);
+  --composer-surface-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -16px 34px rgba(82, 37, 30, 0.42),
+    inset 0 -4px 12px rgba(144, 72, 56, 0.16), 0 8px 22px rgba(10, 5, 4, 0.42),
+    0 3px 10px rgba(98, 42, 34, 0.14);
+  --composer-surface-focus-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.11), inset 0 -18px 38px rgba(92, 40, 32, 0.46),
+    inset 0 -4px 14px rgba(161, 79, 61, 0.19), 0 10px 26px rgba(10, 5, 4, 0.48),
+    0 4px 12px rgba(112, 47, 38, 0.16);
+  --composer-banner-background: linear-gradient(
+    180deg,
+    rgba(60, 42, 38, 0.82) 0%,
+    rgba(35, 24, 22, 0.74) 100%
+  );
+  --composer-banner-border: --alpha(var(--color-white) / 10%);
+  --composer-banner-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 0 -1px 0 rgba(126, 55, 45, 0.18);
+  --composer-footer-separator-background-color: var(--composer-surface-border);
+  --composer-footer-separator-background-opacity: 100%;
+  --composer-footer-separator-border-color: var(--color-black);
+  --composer-footer-separator-border-opacity: 90%;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -279,9 +539,27 @@ code {
 }
 
 :root {
-  --pixel-off: oklch(35% 0.04 195 / 0.5);
-  --pixel-on: oklch(85% 0.15 195);
-  --pixel-glow: oklch(75% 0.18 195 / 0.8);
+  --pixel-grid-chat-off: color-mix(in oklch, var(--primary) 18%, var(--background));
+  --pixel-grid-chat-on: color-mix(in oklch, var(--primary) 76%, var(--color-white));
+  --pixel-grid-chat-glow: color-mix(in oklch, var(--primary) 56%, transparent);
+  --pixel-grid-sidebar-off: color-mix(in oklch, currentColor 18%, var(--background));
+  --pixel-grid-sidebar-on: color-mix(in oklch, currentColor 76%, var(--color-white));
+  --pixel-grid-sidebar-glow: color-mix(in oklch, currentColor 58%, transparent);
+  --pixel-off: var(--pixel-grid-chat-off);
+  --pixel-on: var(--pixel-grid-chat-on);
+  --pixel-glow: var(--pixel-grid-chat-glow);
+}
+
+.pixel-grid-loader[data-pixel-grid-variant="chat"] {
+  --pixel-off: var(--pixel-grid-chat-off);
+  --pixel-on: var(--pixel-grid-chat-on);
+  --pixel-glow: var(--pixel-grid-chat-glow);
+}
+
+.pixel-grid-loader[data-pixel-grid-variant="sidebar"] {
+  --pixel-off: var(--pixel-grid-sidebar-off);
+  --pixel-on: var(--pixel-grid-sidebar-on);
+  --pixel-glow: var(--pixel-grid-sidebar-glow);
 }
 
 .pixel-grid--cyan {
@@ -454,6 +732,31 @@ code {
 .thread-terminal-drawer .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
   width: 6px !important;
   left: 0 !important;
+}
+
+.chat-composer-surface {
+  background: var(--composer-surface-fill);
+  border-color: var(--composer-surface-border);
+  box-shadow: var(--composer-surface-overlay-shadow), var(--composer-surface-shadow);
+}
+
+.chat-composer-surface:focus-within {
+  border-color: color-mix(in srgb, var(--ring) 45%, transparent);
+  box-shadow: var(--composer-surface-overlay-shadow), var(--composer-surface-focus-shadow);
+}
+
+.chat-composer-banner {
+  background: var(--composer-banner-background);
+  border-color: var(--composer-banner-border);
+  box-shadow: var(--composer-banner-shadow);
+}
+
+.ultrathink-composer-surface {
+  --composer-surface-overlay-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+:root:not(.dark) .ultrathink-composer-surface {
+  --composer-surface-overlay-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 
 /* Reasoning select -- clickable label surface */

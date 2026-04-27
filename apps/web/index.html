@@ -8,30 +8,7 @@
     <meta name="theme-color" content="#161616" />
     <link rel="icon" href="/favicon.ico" sizes="48x48" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <script>
-      (() => {
-        const LIGHT_BACKGROUND = "#ffffff";
-        const DARK_BACKGROUND = "#161616";
-        const themeColorMeta = document.querySelector('meta[name="theme-color"]');
-        try {
-          const storedTheme = window.localStorage.getItem("forma:theme");
-          const theme =
-            storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
-              ? storedTheme
-              : "system";
-          const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-          const isDark = theme === "dark" || (theme === "system" && prefersDark);
-          document.documentElement.classList.toggle("dark", isDark);
-          const chromeColor = isDark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
-          document.documentElement.style.backgroundColor = chromeColor;
-          themeColorMeta?.setAttribute("content", chromeColor);
-        } catch {
-          document.documentElement.classList.add("dark");
-          document.documentElement.style.backgroundColor = DARK_BACKGROUND;
-          themeColorMeta?.setAttribute("content", DARK_BACKGROUND);
-        }
-      })();
-    </script>
+    <script type="module" src="/src/themeBootstrap.ts"></script>
     <style>
       html,
       body,
@@ -53,9 +30,29 @@
           sans-serif;
       }
 
-      html.dark body {
+      html[data-theme="noir"] body {
         background: #161616;
         color: #f5f5f5;
+      }
+
+      html[data-theme="dawn"] body {
+        background: #f6ebe2;
+        color: #42352e;
+      }
+
+      html[data-theme="dusk"] body {
+        background: #f5e8e3;
+        color: #47312d;
+      }
+
+      html[data-theme="midnight"] body {
+        background: #171b22;
+        color: #edf2fb;
+      }
+
+      html[data-theme="stone"] body {
+        background: #211917;
+        color: #f1ece6;
       }
 
       #boot-shell {

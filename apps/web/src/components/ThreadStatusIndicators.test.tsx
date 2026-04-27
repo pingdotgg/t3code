@@ -22,6 +22,7 @@ describe("ThreadStatusLabel", () => {
     expect(markup).toContain('data-slot="pixel-grid-loader"');
     expect(markup).toContain('data-status-glyph="grid"');
     expect(markup).toContain('data-pixel-grid-preset="spiral-cw"');
+    expect(markup).toContain('data-pixel-grid-variant="sidebar"');
     expect(markup.match(/data-slot="pixel-grid-loader-cell"/g)).toHaveLength(9);
   });
 

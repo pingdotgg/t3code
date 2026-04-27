@@ -75,6 +75,7 @@ import {
 } from "./composerInlineChip";
 import { ComposerPendingTerminalContextChip } from "./chat/ComposerPendingTerminalContexts";
 import { formatProviderSkillDisplayName } from "~/providerSkillPresentation";
+import { readResolvedThemeModeFromDocument } from "../theme";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 const COMPOSER_EDITOR_HMR_KEY = `composer-editor-${Math.random().toString(36).slice(2)}`;
@@ -446,7 +447,7 @@ function isComposerInlineTokenNode(candidate: unknown): candidate is ComposerInl
 }
 
 function resolvedThemeFromDocument(): "light" | "dark" {
-  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+  return readResolvedThemeModeFromDocument();
 }
 
 function terminalContextSignature(contexts: ReadonlyArray<TerminalContextDraft>): string {

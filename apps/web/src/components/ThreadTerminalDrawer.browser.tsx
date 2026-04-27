@@ -8,6 +8,8 @@ import { render } from "vitest-browser-react";
 const {
   terminalConstructorSpy,
   terminalDisposeSpy,
+  terminalInstances,
+  terminalRefreshSpy,
   fitAddonFitSpy,
   fitAddonLoadSpy,
   environmentApiById,
@@ -16,6 +18,8 @@ const {
 } = vi.hoisted(() => ({
   terminalConstructorSpy: vi.fn(),
   terminalDisposeSpy: vi.fn(),
+  terminalInstances: [] as Array<{ options: { theme?: unknown } }>,
+  terminalRefreshSpy: vi.fn(),
   fitAddonFitSpy: vi.fn(),
   fitAddonLoadSpy: vi.fn(),
   environmentApiById: new Map<string, { terminal: { open: ReturnType<typeof vi.fn> } }>(),
@@ -53,6 +57,8 @@ vi.mock("@xterm/xterm", () => ({
     };
 
     constructor(options: unknown) {
+      this.options = (options as { theme?: unknown }) ?? {};
+      terminalInstances.push(this);
       terminalConstructorSpy(options);
     }
 
@@ -70,7 +76,9 @@ vi.mock("@xterm/xterm", () => ({
 
     focus() {}
 
-    refresh() {}
+    refresh() {
+      terminalRefreshSpy();
+    }
 
     scrollToBottom() {}
 
@@ -210,11 +218,14 @@ async function mountTerminalViewport(props: {
 
 describe("TerminalViewport", () => {
   afterEach(() => {
+    delete document.documentElement.dataset.theme;
     environmentApiById.clear();
     readEnvironmentApiMock.mockClear();
     readLocalApiMock.mockClear();
     terminalConstructorSpy.mockClear();
     terminalDisposeSpy.mockClear();
+    terminalInstances.length = 0;
+    terminalRefreshSpy.mockClear();
     fitAddonFitSpy.mockClear();
     fitAddonLoadSpy.mockClear();
   });
@@ -313,6 +324,62 @@ describe("TerminalViewport", () => {
           }),
         }),
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("uses the resolved preset palette for terminal accents", async () => {
+    document.documentElement.dataset.theme = "stone";
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(terminalConstructorSpy).toHaveBeenCalledTimes(1);
+      });
+
+      expect(terminalConstructorSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          theme: expect.objectContaining({
+            cursor: "rgb(234, 196, 177)",
+            selectionBackground: "rgba(181, 113, 88, 0.24)",
+          }),
+        }),
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("refreshes the terminal theme when only the preset changes", async () => {
+    document.documentElement.dataset.theme = "stone";
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(terminalInstances).toHaveLength(1);
+      });
+
+      document.documentElement.dataset.theme = "midnight";
+
+      await vi.waitFor(() => {
+        expect(terminalInstances[0]?.options.theme).toEqual(
+          expect.objectContaining({
+            cursor: "rgb(188, 208, 240)",
+          }),
+        );
+      });
+      expect(terminalRefreshSpy).toHaveBeenCalled();
     } finally {
       await mounted.cleanup();
     }

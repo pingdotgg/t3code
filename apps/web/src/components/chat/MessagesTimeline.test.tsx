@@ -46,6 +46,17 @@ beforeAll(() => {
     toggle: () => {},
     contains: () => false,
   };
+  const querySelector = vi.fn(() => null);
+  const createElement = vi.fn(() => ({
+    name: "",
+    setAttribute: () => {},
+  }));
+  const head = {
+    append: () => {},
+  };
+  const bodyStyle: Record<string, string> = {
+    backgroundColor: "",
+  };
 
   vi.stubGlobal("localStorage", {
     getItem: () => null,
@@ -67,8 +78,18 @@ beforeAll(() => {
   vi.stubGlobal("document", {
     documentElement: {
       classList,
+      dataset: {},
+      style: {
+        backgroundColor: "",
+      },
       offsetHeight: 0,
     },
+    body: {
+      style: bodyStyle,
+    },
+    head,
+    querySelector,
+    createElement,
   });
 });
 
@@ -200,6 +221,7 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain('data-slot="pixel-grid-loader"');
     expect(markup).toContain('data-pixel-grid-preset="spiral-cw"');
+    expect(markup).toContain('data-pixel-grid-variant="chat"');
     expect(markup).toContain("Working for");
   });
 });

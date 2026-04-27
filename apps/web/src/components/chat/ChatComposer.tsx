@@ -1741,24 +1741,20 @@ export const ChatComposer = memo(
           >
             <div
               className={cn(
-                "rounded-[20px] border backdrop-blur-md transition-[background-color,border-color,box-shadow] [transition-duration:var(--motion-duration-ui)] [transition-timing-function:var(--motion-ease-in-out)]",
-                "border-gray-200/50 bg-white/95 shadow-[0_3px_8px_rgba(0,0,0,0.1),0_2px_4px_rgba(0,0,0,0.06)]",
-                "dark:border-transparent dark:bg-zinc-900/80 dark:shadow-[inset_0_1px_2px_rgba(255,255,255,0.2),inset_0_-4px_30px_rgba(47,44,48,0.9),0_4px_16px_rgba(0,0,0,0.4)]",
-                "focus-within:border-ring/45 focus-within:shadow-[0_3px_12px_rgba(0,0,0,0.12),0_2px_6px_rgba(0,0,0,0.08)]",
-                "dark:focus-within:border-ring/45 dark:focus-within:shadow-[inset_0_1px_2px_rgba(255,255,255,0.22),inset_0_-4px_30px_rgba(47,44,48,0.9),0_4px_20px_rgba(0,0,0,0.5)]",
+                "chat-composer-surface rounded-[20px] border backdrop-blur-md transition-[background-color,border-color,box-shadow] [transition-duration:var(--motion-duration-ui)] [transition-timing-function:var(--motion-ease-in-out)]",
                 isDragOverComposer && "border-primary/70 !bg-accent/30",
                 composerProviderState.composerSurfaceClassName,
               )}
             >
               {activePendingApproval ? (
-                <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                <div className="chat-composer-banner rounded-t-[19px] border-b">
                   <ComposerPendingApprovalPanel
                     approval={activePendingApproval}
                     pendingCount={pendingApprovals.length}
                   />
                 </div>
               ) : pendingUserInputs.length > 0 ? (
-                <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                <div className="chat-composer-banner rounded-t-[19px] border-b">
                   <ComposerPendingUserInputPanel
                     pendingUserInputs={pendingUserInputs}
                     respondingRequestIds={respondingRequestIds}
@@ -1769,7 +1765,7 @@ export const ChatComposer = memo(
                   />
                 </div>
               ) : showPlanFollowUpPrompt && activeProposedPlan ? (
-                <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
+                <div className="chat-composer-banner rounded-t-[19px] border-b">
                   <ComposerPlanFollowUpBanner
                     key={activeProposedPlan.id}
                     planTitle={proposedPlanTitle(activeProposedPlan.planMarkdown) ?? null}
@@ -1912,7 +1908,7 @@ export const ChatComposer = memo(
               <div
                 aria-hidden
                 data-chat-composer-footer-separator
-                className="pointer-events-none h-[2px] w-full shrink-0 bg-foreground/10 border-t border-black"
+                className="[background-color:color-mix(in_srgb,var(--composer-footer-separator-background-color)_var(--composer-footer-separator-background-opacity),transparent)] [border-top-color:color-mix(in_srgb,var(--composer-footer-separator-border-color)_var(--composer-footer-separator-border-opacity),transparent)] pointer-events-none h-[2px] w-full shrink-0 border-t"
               />
 
               {/* Bottom toolbar */}
