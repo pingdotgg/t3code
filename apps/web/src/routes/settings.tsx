@@ -1,4 +1,4 @@
-import { RotateCcwIcon } from "lucide-react";
+import { IconArrowCounterclockwise as RotateCcwIcon } from "symbols-react";
 import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 

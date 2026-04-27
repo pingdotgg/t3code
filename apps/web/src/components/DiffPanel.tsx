@@ -5,12 +5,12 @@ import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { scopeThreadRef } from "@forma/client-runtime";
 import type { TurnId } from "@forma/contracts";
 import {
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  Columns2Icon,
-  Rows3Icon,
-  TextWrapIcon,
-} from "lucide-react";
+  IconChevronLeft as ChevronLeftIcon,
+  IconChevronRight as ChevronRightIcon,
+  IconRectangleSplit2x1 as Columns2Icon,
+  IconRectangleSplit3x1 as Rows3Icon,
+  IconTextWordSpacing as TextWrapIcon,
+} from "symbols-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openInPreferredEditor } from "../editorPreferences";
 import { refreshGitStatus, useGitStatus } from "~/lib/gitStatusState";
@@ -581,7 +581,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <button
           type="button"
           className={cn(
-            "absolute left-0 top-1/2 z-20 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md border bg-background/90 text-muted-foreground transition-colors",
+            "absolute left-0 top-1/2 z-20 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md border bg-background/90 text-muted-foreground transition-colors [&_svg]:fill-current",
             canScrollTurnStripLeft
               ? "border-border/70 hover:border-border hover:text-foreground"
               : "cursor-not-allowed border-border/40 text-muted-foreground/40",
@@ -590,12 +590,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           disabled={!canScrollTurnStripLeft}
           aria-label="Scroll turn list left"
         >
-          <ChevronLeftIcon className="size-3.5" />
+          <ChevronLeftIcon className="size-2.5" />
         </button>
         <button
           type="button"
           className={cn(
-            "absolute right-0 top-1/2 z-20 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md border bg-background/90 text-muted-foreground transition-colors",
+            "absolute right-0 top-1/2 z-20 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md border bg-background/90 text-muted-foreground transition-colors [&_svg]:fill-current",
             canScrollTurnStripRight
               ? "border-border/70 hover:border-border hover:text-foreground"
               : "cursor-not-allowed border-border/40 text-muted-foreground/40",
@@ -604,7 +604,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           disabled={!canScrollTurnStripRight}
           aria-label="Scroll turn list right"
         >
-          <ChevronRightIcon className="size-3.5" />
+          <ChevronRightIcon className="size-2.5" />
         </button>
         <div
           ref={turnStripRef}
@@ -682,10 +682,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           }}
         >
           <Toggle aria-label="Stacked diff view" value="stacked">
-            <Rows3Icon className="size-3" />
+            <Rows3Icon className="size-3 fill-current" />
           </Toggle>
           <Toggle aria-label="Split diff view" value="split">
-            <Columns2Icon className="size-3" />
+            <Columns2Icon className="size-3 fill-current" />
           </Toggle>
         </ToggleGroup>
         <Toggle
@@ -698,7 +698,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             setDiffWordWrap(Boolean(pressed));
           }}
         >
-          <TextWrapIcon className="size-3" />
+          <TextWrapIcon className="size-3 fill-current" />
         </Toggle>
       </div>
     </>

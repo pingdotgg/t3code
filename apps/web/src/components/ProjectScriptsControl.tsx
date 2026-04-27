@@ -1,15 +1,15 @@
 import type { ProjectScript, ProjectScriptIcon, ResolvedKeybindingsConfig } from "@forma/contracts";
 import {
-  BugIcon,
-  ChevronDownIcon,
-  FlaskConicalIcon,
-  HammerIcon,
-  ListChecksIcon,
-  PlayIcon,
-  PlusIcon,
-  SettingsIcon,
-  WrenchIcon,
-} from "lucide-react";
+  IconLadybug as BugIcon,
+  IconChevronDown as ChevronDownIcon,
+  IconFlask as FlaskConicalIcon,
+  IconHammer as HammerIcon,
+  IconListBulletClipboard as ListChecksIcon,
+  IconPlay as PlayIcon,
+  IconPlus as PlusIcon,
+  IconGearshape as SettingsIcon,
+  IconWrenchAndScrewdriver as WrenchIcon,
+} from "symbols-react";
 import React, { type FormEvent, type KeyboardEvent, useCallback, useMemo, useState } from "react";
 
 import {
@@ -285,7 +285,7 @@ export default function ProjectScriptsControl({
             <MenuTrigger
               render={<Button size="icon-xs" variant="outline" aria-label="Script actions" />}
             >
-              <ChevronDownIcon className="size-4" />
+              <ChevronDownIcon className="size-2.5" />
             </MenuTrigger>
             <MenuPopup align="end">
               {scripts.map((script) => {

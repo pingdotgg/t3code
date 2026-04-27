@@ -1,8 +1,8 @@
 import type { ComponentType } from "react";
-import { ArchiveIcon, ArrowLeftIcon, Link2Icon } from "lucide-react";
+import { IconArrowTurnUpLeft as ArrowTurnUpLeftIcon } from "symbols-react";
+import { ArchiveIcon, Link2Icon, Settings2Icon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 
-import { SettingsHexIcon } from "../icons/custom";
 import {
   SidebarContent,
   SidebarFooter,
@@ -23,7 +23,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   to: SettingsSectionPath;
   icon: ComponentType<{ className?: string }>;
 }> = [
-  { label: "General", to: "/settings/general", icon: SettingsHexIcon },
+  { label: "General", to: "/settings/general", icon: Settings2Icon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
 ];
@@ -76,7 +76,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
               className="gap-2 px-2 py-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
               onClick={() => window.history.back()}
             >
-              <ArrowLeftIcon className="size-4" />
+              <ArrowTurnUpLeftIcon className="size-2.5 fill-current" />
               <span>Back</span>
             </SidebarMenuButton>
           </SidebarMenuItem>

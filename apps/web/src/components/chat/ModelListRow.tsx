@@ -1,6 +1,6 @@
 import { type ProviderKind } from "@forma/contracts";
 import { memo } from "react";
-import { StarIcon } from "lucide-react";
+import { IconStar as StarIcon, IconStarFill as StarFillIcon } from "symbols-react";
 import {
   getDisplayModelName,
   getProviderLabel,
@@ -26,6 +26,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
   onToggleFavorite: () => void;
 }) {
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.provider];
+  const FavoriteIcon = props.isFavorite ? StarFillIcon : StarIcon;
 
   return (
     <ComboboxItem
@@ -53,8 +54,11 @@ export const ModelListRow = memo(function ModelListRow(props: {
               type="button"
               aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
             >
-              <StarIcon
-                className={cn("size-4", props.isFavorite && "fill-current text-yellow-500")}
+              <FavoriteIcon
+                className={cn(
+                  "size-4 fill-current",
+                  props.isFavorite ? "text-yellow-500" : "text-muted-foreground/70",
+                )}
               />
             </button>
           }

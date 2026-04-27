@@ -19,7 +19,7 @@ import {
 } from "@forma/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { ChevronDownIcon } from "lucide-react";
+import { IconChevronDown as ChevronDownIcon } from "symbols-react";
 import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,
@@ -593,12 +593,12 @@ export const TraitsPicker = memo(function TraitsPicker({
         {isCodexStyle ? (
           <span className="flex min-w-0 w-full items-center gap-2 overflow-hidden">
             {triggerLabel}
-            <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
+            <ChevronDownIcon aria-hidden="true" className="size-2.5 shrink-0 opacity-60" />
           </span>
         ) : (
           <>
             <span>{triggerLabel}</span>
-            <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
+            <ChevronDownIcon aria-hidden="true" className="size-2.5 opacity-60" />
           </>
         )}
       </MenuTrigger>

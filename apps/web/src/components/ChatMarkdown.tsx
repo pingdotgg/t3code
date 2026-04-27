@@ -1,5 +1,5 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { IconCheckmark as CheckIcon, IconDocumentOnDocument as CopyIcon } from "symbols-react";
 import React, {
   Children,
   Suspense,

@@ -6,13 +6,13 @@ import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import ChatMarkdown from "./ChatMarkdown";
 import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronRightIcon,
-  EllipsisIcon,
-  LoaderIcon,
-  PanelRightCloseIcon,
-} from "lucide-react";
+  IconCheckmark as CheckIcon,
+  IconChevronDown as ChevronDownIcon,
+  IconChevronRight as ChevronRightIcon,
+  IconEllipsis as EllipsisIcon,
+  IconProgressIndicator as LoaderIcon,
+  IconSidebarTrailing as PanelRightCloseIcon,
+} from "symbols-react";
 import { cn } from "~/lib/utils";
 import type { ActivePlanState } from "../session-logic";
 import type { LatestProposedPlanState } from "../session-logic";
@@ -243,9 +243,9 @@ const PlanSidebar = memo(function PlanSidebar({
                 onClick={() => setProposedPlanExpanded((v) => !v)}
               >
                 {proposedPlanExpanded ? (
-                  <ChevronDownIcon className="size-3 shrink-0 text-muted-foreground/40 transition-transform" />
+                  <ChevronDownIcon className="size-2.5 shrink-0 fill-muted-foreground/40 transition-transform" />
                 ) : (
-                  <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground/40 transition-transform" />
+                  <ChevronRightIcon className="size-2.5 shrink-0 fill-muted-foreground/40 transition-transform" />
                 )}
                 <span className="text-[10px] font-semibold tracking-widest text-muted-foreground/40 uppercase group-hover:text-muted-foreground/60">
                   {planTitle ?? "Full Plan"}

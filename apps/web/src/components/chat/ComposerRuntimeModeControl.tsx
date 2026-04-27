@@ -1,5 +1,10 @@
 import type { RuntimeMode } from "@forma/contracts";
-import { LockIcon, LockOpenIcon, PenLineIcon, type LucideIcon } from "lucide-react";
+import {
+  IconLock as LockIcon,
+  IconLockOpen as LockOpenIcon,
+  IconPencilLine as PenLineIcon,
+  type IconComponent as LucideIcon,
+} from "symbols-react";
 import { memo } from "react";
 
 import { cn } from "~/lib/utils";
@@ -70,7 +75,7 @@ export const ComposerRuntimeModeControl = memo(function ComposerRuntimeModeContr
             <SelectItem key={mode} value={mode} className="min-w-64 py-2" disabled={disabled}>
               <div className="grid min-w-0 gap-0.5">
                 <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                  <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                  <OptionIcon className="size-3.5 shrink-0 fill-muted-foreground" />
                   {option.label}
                 </span>
                 <span className="text-muted-foreground text-xs leading-4">

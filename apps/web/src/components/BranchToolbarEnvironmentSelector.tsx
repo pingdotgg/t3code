@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@forma/contracts";
-import { CloudIcon, MonitorIcon } from "lucide-react";
+import { IconCloud as CloudIcon, IconDesktopcomputer as MonitorIcon } from "symbols-react";
 import { memo, useMemo } from "react";
 
 import type { EnvironmentOption } from "./BranchToolbar.logic";

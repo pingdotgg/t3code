@@ -1,18 +1,18 @@
 import {
-  ArchiveIcon,
-  ArrowUpDownIcon,
-  ChevronRightIcon,
-  CloudIcon,
-  GitPullRequestIcon,
-  PlusIcon,
-  SearchIcon,
-  SquarePenIcon,
-  TerminalIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
+  IconArchivebox as ArchiveIcon,
+  IconArrowUpArrowDown as ArrowUpDownIcon,
+  IconChevronRight as ChevronRightIcon,
+  IconPlus as PlusIcon,
+  IconMagnifyingglass as SearchIcon,
+  IconPencilAndOutline as PencilAndOutlineIcon,
+  IconExclamationmarkTriangle as TriangleAlertIcon,
+} from "symbols-react";
+import { CloudIcon, TerminalIcon } from "lucide-react";
 import {
+  getSidebarIndicatorClassName,
   prStatusIndicator,
   resolveThreadPr,
+  SidebarStatusGlyph,
   terminalStatusFromRunningIds,
   ThreadStatusLabel,
 } from "./ThreadStatusIndicators";
@@ -60,7 +60,7 @@ import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
 import { APP_BASE_NAME, APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isMacPlatform, newCommandId } from "../lib/utils";
+import { cn, isMacPlatform, newCommandId } from "../lib/utils";
 import {
   selectProjectByRef,
   selectProjectsAcrossEnvironments,
@@ -570,23 +570,34 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onContextMenu={handleRowContextMenu}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-          {prStatus && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button
-                    type="button"
-                    aria-label={prStatus.tooltip}
-                    className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
-                    onClick={handlePrClick}
-                  >
-                    <GitPullRequestIcon className="size-3" />
-                  </button>
-                }
-              />
-              <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
-            </Tooltip>
-          )}
+          {prStatus
+            ? (() => {
+                const PrIcon = prStatus.icon;
+
+                return (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <button
+                          type="button"
+                          aria-label={prStatus.tooltip}
+                          className={cn(
+                            getSidebarIndicatorClassName({
+                              toneClass: prStatus.toneClass,
+                            }),
+                            "cursor-pointer outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
+                          )}
+                          onClick={handlePrClick}
+                        >
+                          <PrIcon className="size-3" strokeWidth={2.25} />
+                        </button>
+                      }
+                    />
+                    <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+                  </Tooltip>
+                );
+              })()
+            : null}
           {threadStatus && <ThreadStatusLabel status={threadStatus} />}
           {renamingThreadKey === threadKey ? (
             <input
@@ -622,7 +633,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               role="img"
               aria-label={terminalStatus.label}
               title={terminalStatus.label}
-              className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+              className={getSidebarIndicatorClassName({
+                toneClass: terminalStatus.toneClass,
+              })}
             >
               <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
             </span>
@@ -649,7 +662,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     data-thread-selection-safe
                     data-testid={`thread-archive-${thread.id}`}
                     aria-label={`Archive ${thread.title}`}
-                    className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                    className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
                     onPointerDown={stopPropagationOnPointerDown}
                     onClick={handleStartArchiveConfirmation}
                   >
@@ -666,7 +679,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           data-thread-selection-safe
                           data-testid={`thread-archive-${thread.id}`}
                           aria-label={`Archive ${thread.title}`}
-                          className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                          className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
                           onPointerDown={stopPropagationOnPointerDown}
                           onClick={handleArchiveImmediateClick}
                         >
@@ -691,7 +704,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         />
                       }
                     >
-                      <CloudIcon className="size-3 text-muted-foreground/40" />
+                      <CloudIcon className="size-3 text-muted-foreground/40" strokeWidth={2.25} />
                     </TooltipTrigger>
                     <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
                   </Tooltip>
@@ -1986,20 +1999,23 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             <span
               aria-hidden="true"
               title={projectStatus.label}
-              className={`-ml-0.5 relative inline-flex size-3.5 shrink-0 items-center justify-center ${projectStatus.colorClass}`}
+              className={cn(
+                getSidebarIndicatorClassName({
+                  toneClass: projectStatus.toneClass,
+                }),
+                "-ml-0.5 relative",
+              )}
             >
-              <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 group-hover/project-header:opacity-0">
-                <span
-                  className={`size-[9px] rounded-full ${projectStatus.dotClass} ${
-                    projectStatus.pulse ? "animate-pulse" : ""
-                  }`}
-                />
-              </span>
-              <ChevronRightIcon className="absolute inset-0 m-auto size-3.5 text-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/project-header:opacity-100" />
+              <SidebarStatusGlyph
+                compact
+                status={projectStatus}
+                className="absolute inset-0 m-auto transition-opacity duration-150 group-hover/project-header:opacity-0"
+              />
+              <ChevronRightIcon className="absolute inset-0 m-auto size-2.5 fill-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/project-header:opacity-100" />
             </span>
           ) : (
             <ChevronRightIcon
-              className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
+              className={`-ml-0.5 size-2.5 shrink-0 fill-muted-foreground/70 transition-transform duration-150 ${
                 projectExpanded ? "rotate-90" : ""
               }`}
             />
@@ -2029,7 +2045,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                       ? "Remote project"
                       : "Available in multiple environments"
                   }
-                  className="pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/50 transition-opacity duration-150 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0"
+                  className="pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/50 transition-opacity duration-150 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0 [&_svg]:fill-current"
                 />
               }
             >
@@ -2048,10 +2064,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                   type="button"
                   aria-label={`Create new thread in ${project.displayName}`}
                   data-testid="new-thread-button"
-                  className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                  className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
                   onClick={handleCreateThreadClick}
                 >
-                  <SquarePenIcon className="size-3.5" />
+                  <PencilAndOutlineIcon className="size-3.5" />
                 </button>
               </div>
             }
@@ -2264,7 +2280,7 @@ function ProjectSortMenu({
       <Tooltip>
         <TooltipTrigger
           render={
-            <MenuTrigger className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground" />
+            <MenuTrigger className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground [&_svg]:fill-current" />
           }
         >
           <ArrowUpDownIcon className="size-3.5" />
@@ -2544,20 +2560,20 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             <CommandDialogTrigger
               render={
                 <SidebarMenuButton
-                  size="sm"
-                  className="gap-2 border border-border/65 bg-accent/70 px-2 py-1.5 text-muted-foreground/70 shadow-sm/5 transition-colors hover:bg-accent/85 hover:text-foreground focus-visible:ring-0"
+                  size="md"
+                  className="gap-2 border rounded-xl border-border/60 bg-accent/70 px-2 py-1.5 text-muted-foreground/70 shadow-sm/5 transition-colors hover:bg-accent/85 hover:text-foreground focus-visible:ring-0"
                   data-testid="command-palette-trigger"
                 />
               }
             >
-              <SearchIcon className="size-3.5" />
+              <SearchIcon className="size-3.5 fill-current" />
               <span className="flex-1 truncate text-left text-xs">Search</span>
               {commandPaletteShortcutLabel ? (
                 <KbdGroup className="pointer-events-none items-center gap-1">
                   {splitShortcutLabelIntoKeycaps(commandPaletteShortcutLabel).map((keycap) => (
                     <Kbd
                       key={keycap}
-                      className="h-5 min-w-0 rounded-md border border-border/60 bg-background/88 px-1.5 text-[10px] text-muted-foreground/80 shadow-none"
+                      className="h-5 min-w-0 rounded-md border border-border/70 bg-border/50 px-1.5 text-[10px] text-muted-foreground/80 shadow-none"
                     >
                       {keycap}
                     </Kbd>
@@ -2612,7 +2628,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                     type="button"
                     aria-label="Add project"
                     data-testid="sidebar-add-project-trigger"
-                    className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                    className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground [&_svg]:fill-current"
                     onClick={openAddProject}
                   />
                 }

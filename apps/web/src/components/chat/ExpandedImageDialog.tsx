@@ -1,5 +1,9 @@
 import { memo, useCallback, useEffect, useState } from "react";
-import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
+import {
+  IconChevronLeft as ChevronLeftIcon,
+  IconChevronRight as ChevronRightIcon,
+  IconXmark as XIcon,
+} from "symbols-react";
 import { Button } from "../ui/button";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 
@@ -78,7 +82,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           aria-label="Previous image"
           onClick={() => navigateImage(-1)}
         >
-          <ChevronLeftIcon className="size-5" />
+          <ChevronLeftIcon className="size-2.5" />
         </Button>
       )}
       <div className="relative isolate z-10 max-h-[92vh] max-w-[92vw]">
@@ -112,7 +116,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
           aria-label="Next image"
           onClick={() => navigateImage(1)}
         >
-          <ChevronRightIcon className="size-5" />
+          <ChevronRightIcon className="size-2.5" />
         </Button>
       )}
     </div>

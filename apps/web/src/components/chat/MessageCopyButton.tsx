@@ -1,5 +1,5 @@
 import { memo, useRef } from "react";
-import { CopyIcon, CheckIcon } from "lucide-react";
+import { IconDocumentOnDocument as CopyIcon, IconCheckmark as CheckIcon } from "symbols-react";
 import { Button } from "../ui/button";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
@@ -72,7 +72,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
           />
         }
       >
-        {isCopied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
+        {isCopied ? <CheckIcon className="size-3 fill-success" /> : <CopyIcon className="size-3" />}
       </TooltipTrigger>
       <TooltipPopup>
         <p>Copy to clipboard</p>

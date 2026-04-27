@@ -8,6 +8,8 @@ import {
 } from "@forma/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+let serviceModule: Awaited<typeof import("./service")>;
+
 const mockSubscribeThread = vi.fn();
 const mockThreadUnsubscribe = vi.fn();
 const mockCreateEnvironmentConnection = vi.fn();
@@ -142,7 +144,7 @@ function makeThreadShellSnapshot(params: {
 }
 
 describe("retainThreadDetailSubscription", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.useFakeTimers();
     vi.resetModules();
     vi.clearAllMocks();
@@ -166,32 +168,26 @@ describe("retainThreadDetailSubscription", () => {
     mockSavedEnvironmentRegistrySubscribe.mockReturnValue(() => undefined);
     mockWaitForSavedEnvironmentRegistryHydration.mockResolvedValue(undefined);
     mockListSavedEnvironmentRecords.mockReturnValue([]);
-  });
+    serviceModule = await import("./service");
+  }, 30_000);
 
   afterEach(async () => {
-    const { resetEnvironmentServiceForTests } = await import("./service");
-    await resetEnvironmentServiceForTests();
+    await serviceModule.resetEnvironmentServiceForTests();
     vi.useRealTimers();
-  });
+  }, 30_000);
 
   it("keeps thread detail subscriptions warm across releases until idle eviction", async () => {
-    const {
-      retainThreadDetailSubscription,
-      startEnvironmentConnectionService,
-      resetEnvironmentServiceForTests,
-    } = await import("./service");
-
-    const stop = startEnvironmentConnectionService(new QueryClient());
+    const stop = serviceModule.startEnvironmentConnectionService(new QueryClient());
     const environmentId = EnvironmentId.make("env-1");
     const threadId = ThreadId.make("thread-1");
 
-    const releaseFirst = retainThreadDetailSubscription(environmentId, threadId);
+    const releaseFirst = serviceModule.retainThreadDetailSubscription(environmentId, threadId);
     expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
 
     releaseFirst();
     expect(mockThreadUnsubscribe).not.toHaveBeenCalled();
 
-    const releaseSecond = retainThreadDetailSubscription(environmentId, threadId);
+    const releaseSecond = serviceModule.retainThreadDetailSubscription(environmentId, threadId);
     expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
 
     releaseSecond();
@@ -202,17 +198,10 @@ describe("retainThreadDetailSubscription", () => {
     expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
 
     stop();
-    await resetEnvironmentServiceForTests();
   });
 
   it("keeps non-idle thread detail subscriptions attached until the thread becomes idle", async () => {
-    const {
-      retainThreadDetailSubscription,
-      startEnvironmentConnectionService,
-      resetEnvironmentServiceForTests,
-    } = await import("./service");
-
-    const stop = startEnvironmentConnectionService(new QueryClient());
+    const stop = serviceModule.startEnvironmentConnectionService(new QueryClient());
     const environmentId = EnvironmentId.make("env-1");
     const threadId = ThreadId.make("thread-active");
 
@@ -228,7 +217,7 @@ describe("retainThreadDetailSubscription", () => {
       environmentId,
     );
 
-    const release = retainThreadDetailSubscription(environmentId, threadId);
+    const release = serviceModule.retainThreadDetailSubscription(environmentId, threadId);
     expect(mockSubscribeThread).toHaveBeenCalledTimes(1);
 
     release();
@@ -251,21 +240,14 @@ describe("retainThreadDetailSubscription", () => {
     expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
 
     stop();
-    await resetEnvironmentServiceForTests();
   });
 
   it("allows a larger idle cache before capacity eviction starts", async () => {
-    const {
-      retainThreadDetailSubscription,
-      startEnvironmentConnectionService,
-      resetEnvironmentServiceForTests,
-    } = await import("./service");
-
-    const stop = startEnvironmentConnectionService(new QueryClient());
+    const stop = serviceModule.startEnvironmentConnectionService(new QueryClient());
     const environmentId = EnvironmentId.make("env-1");
 
     for (let index = 0; index < 12; index += 1) {
-      const release = retainThreadDetailSubscription(
+      const release = serviceModule.retainThreadDetailSubscription(
         environmentId,
         ThreadId.make(`thread-${index + 1}`),
       );
@@ -275,24 +257,17 @@ describe("retainThreadDetailSubscription", () => {
     expect(mockThreadUnsubscribe).not.toHaveBeenCalled();
 
     stop();
-    await resetEnvironmentServiceForTests();
   });
 
   it("disposes cached thread detail subscriptions when the environment service resets", async () => {
-    const {
-      retainThreadDetailSubscription,
-      startEnvironmentConnectionService,
-      resetEnvironmentServiceForTests,
-    } = await import("./service");
-
-    const stop = startEnvironmentConnectionService(new QueryClient());
+    const stop = serviceModule.startEnvironmentConnectionService(new QueryClient());
     const environmentId = EnvironmentId.make("env-1");
     const threadId = ThreadId.make("thread-2");
 
-    const release = retainThreadDetailSubscription(environmentId, threadId);
+    const release = serviceModule.retainThreadDetailSubscription(environmentId, threadId);
     release();
 
-    await resetEnvironmentServiceForTests();
+    await serviceModule.resetEnvironmentServiceForTests();
     expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
 
     stop();

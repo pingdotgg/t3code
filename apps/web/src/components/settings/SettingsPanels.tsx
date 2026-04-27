@@ -1,13 +1,13 @@
 import {
-  ArchiveIcon,
-  ArchiveX,
-  ChevronDownIcon,
-  InfoIcon,
-  LoaderIcon,
-  PlusIcon,
-  RefreshCwIcon,
-  XIcon,
-} from "lucide-react";
+  IconArchivebox as ArchiveIcon,
+  IconArchivebox as ArchiveX,
+  IconChevronDown as ChevronDownIcon,
+  IconInfoCircle as InfoIcon,
+  IconProgressIndicator as LoaderIcon,
+  IconPlus as PlusIcon,
+  IconArrowClockwise as RefreshCwIcon,
+  IconXmark as XIcon,
+} from "symbols-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
@@ -1235,7 +1235,7 @@ export function GeneralSettingsPanel() {
                     >
                       <ChevronDownIcon
                         className={cn(
-                          "size-3.5 transition-transform",
+                          "size-2.5 transition-transform",
                           openProviderDetails[providerCard.provider] && "rotate-180",
                         )}
                       />

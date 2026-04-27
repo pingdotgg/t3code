@@ -1,4 +1,8 @@
-import { FolderGit2Icon, FolderGitIcon, FolderIcon } from "lucide-react";
+import {
+  IconFolderBadgePlus as FolderGit2Icon,
+  IconFolder as FolderGitIcon,
+  IconFolder as FolderIcon,
+} from "symbols-react";
 import { memo, useMemo } from "react";
 
 import {
@@ -43,12 +47,12 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       <span className="inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs">
         {activeWorktreePath ? (
           <>
-            <FolderGitIcon className="size-3" />
+            <FolderGitIcon className="size-3 fill-current" />
             {resolveLockedWorkspaceLabel(activeWorktreePath)}
           </>
         ) : (
           <>
-            <FolderIcon className="size-3" />
+            <FolderIcon className="size-3 fill-current" />
             {resolveLockedWorkspaceLabel(activeWorktreePath)}
           </>
         )}
@@ -62,13 +66,18 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       onValueChange={(value) => onEnvModeChange(value as EnvMode)}
       items={envModeItems}
     >
-      <SelectTrigger variant="ghost" size="xs" className="font-medium" aria-label="Workspace">
+      <SelectTrigger
+        variant="ghost"
+        size="xs"
+        className="font-medium [&_svg]:fill-current"
+        aria-label="Workspace"
+      >
         {effectiveEnvMode === "worktree" ? (
-          <FolderGit2Icon className="size-3" />
+          <FolderGit2Icon className="size-3 fill-current" />
         ) : activeWorktreePath ? (
-          <FolderGitIcon className="size-3" />
+          <FolderGitIcon className="size-3 fill-current" />
         ) : (
-          <FolderIcon className="size-3" />
+          <FolderIcon className="size-3 fill-current" />
         )}
         <SelectValue />
       </SelectTrigger>
@@ -78,16 +87,16 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
           <SelectItem value="local">
             <span className="inline-flex items-center gap-1.5">
               {activeWorktreePath ? (
-                <FolderGitIcon className="size-3" />
+                <FolderGitIcon className="size-3 fill-current" />
               ) : (
-                <FolderIcon className="size-3" />
+                <FolderIcon className="size-3 fill-current" />
               )}
               {resolveCurrentWorkspaceLabel(activeWorktreePath)}
             </span>
           </SelectItem>
           <SelectItem value="worktree">
             <span className="inline-flex items-center gap-1.5">
-              <FolderGit2Icon className="size-3" />
+              <FolderGit2Icon className="size-3 fill-current" />
               {resolveEnvModeLabel("worktree")}
             </span>
           </SelectItem>

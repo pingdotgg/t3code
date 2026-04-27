@@ -73,6 +73,7 @@ beforeAll(() => {
 });
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
+let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
 
 function buildProps() {
   return {
@@ -99,9 +100,12 @@ function buildProps() {
   };
 }
 
+beforeAll(async () => {
+  ({ MessagesTimeline } = await import("./MessagesTimeline"));
+}, 30_000);
+
 describe("MessagesTimeline", () => {
   it("renders inline terminal labels with the composer chip UI", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -131,12 +135,10 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("Terminal 1 lines 1-5");
-    expect(markup).toContain("lucide-terminal");
     expect(markup).toContain("yoo what&#x27;s ");
   }, 20_000);
 
   it("renders context compaction entries in the normal work log", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -161,7 +163,6 @@ describe("MessagesTimeline", () => {
   });
 
   it("formats changed file paths from the workspace root", async () => {
-    const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
         {...buildProps()}
@@ -185,5 +186,20 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("forma/apps/web/src/session-logic.ts");
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/forma/apps/web/src/session-logic.ts");
+  });
+
+  it("renders the chat pixel grid loader while a turn is working", async () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnStartedAt="2026-03-17T19:12:28.000Z"
+        timelineEntries={[]}
+      />,
+    );
+
+    expect(markup).toContain('data-slot="pixel-grid-loader"');
+    expect(markup).toContain('data-pixel-grid-preset="spiral-cw"');
+    expect(markup).toContain("Working for");
   });
 });

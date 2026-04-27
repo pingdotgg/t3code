@@ -1,6 +1,17 @@
 import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@forma/client-runtime";
 import type { GitStatusResult } from "@forma/contracts";
-import { CloudIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
+import {
+  CheckCheckIcon,
+  CircleAlertIcon,
+  CircleQuestionMarkIcon,
+  CloudIcon,
+  FileTextIcon,
+  GitMergeIcon,
+  GitPullRequestClosedIcon,
+  GitPullRequestIcon,
+  TerminalIcon,
+  type LucideIcon,
+} from "lucide-react";
 import { useMemo } from "react";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import {
@@ -8,27 +19,40 @@ import {
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
 import { useGitStatus } from "../lib/gitStatusState";
+import { cn } from "../lib/utils";
 import { type AppState, selectProjectByRef, useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
+import { PixelGridLoader } from "./ui/pixel-grid-loader";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export interface PrStatusIndicator {
   label: "PR open" | "PR closed" | "PR merged";
-  colorClass: string;
+  icon: LucideIcon;
+  toneClass: string;
   tooltip: string;
   url: string;
 }
 
 export interface TerminalStatusIndicator {
   label: "Terminal process running";
-  colorClass: string;
+  toneClass: string;
   pulse: boolean;
 }
 
 export type ThreadPr = GitStatusResult["pr"];
+
+const THREAD_STATUS_ICON_BY_GLYPH: Record<
+  Exclude<ThreadStatusPill["glyph"], "grid">,
+  LucideIcon
+> = {
+  "circle-alert": CircleAlertIcon,
+  "circle-question-mark": CircleQuestionMarkIcon,
+  "file-text": FileTextIcon,
+  "check-check": CheckCheckIcon,
+};
 
 export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   if (!pr) return null;
@@ -36,7 +60,8 @@ export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   if (pr.state === "open") {
     return {
       label: "PR open",
-      colorClass: "text-emerald-600 dark:text-emerald-300/90",
+      icon: GitPullRequestIcon,
+      toneClass: "text-emerald-600 dark:text-emerald-300/90",
       tooltip: `#${pr.number} PR open: ${pr.title}`,
       url: pr.url,
     };
@@ -44,7 +69,8 @@ export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   if (pr.state === "closed") {
     return {
       label: "PR closed",
-      colorClass: "text-zinc-500 dark:text-zinc-400/80",
+      icon: GitPullRequestClosedIcon,
+      toneClass: "text-zinc-500 dark:text-zinc-400/80",
       tooltip: `#${pr.number} PR closed: ${pr.title}`,
       url: pr.url,
     };
@@ -52,7 +78,8 @@ export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   if (pr.state === "merged") {
     return {
       label: "PR merged",
-      colorClass: "text-violet-600 dark:text-violet-300/90",
+      icon: GitMergeIcon,
+      toneClass: "text-violet-600 dark:text-violet-300/90",
       tooltip: `#${pr.number} PR merged: ${pr.title}`,
       url: pr.url,
     };
@@ -79,45 +106,92 @@ export function terminalStatusFromRunningIds(
   }
   return {
     label: "Terminal process running",
-    colorClass: "text-teal-600 dark:text-teal-300/90",
+    toneClass: "text-teal-600 dark:text-teal-300/90",
     pulse: true,
   };
+}
+
+export function getSidebarIndicatorClassName(input: {
+  toneClass: string;
+  className?: string | undefined;
+}) {
+  return cn(
+    "inline-flex size-4 shrink-0 items-center justify-center",
+    input.toneClass,
+    input.className,
+  );
+}
+
+export function SidebarStatusGlyph({
+  status,
+  compact = false,
+  className,
+}: {
+  status: ThreadStatusPill;
+  compact?: boolean;
+  className?: string;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center",
+        compact ? "size-3.5" : "size-3",
+        className,
+      )}
+      data-slot="sidebar-status-glyph"
+      data-status-glyph={status.glyph}
+    >
+      {status.glyph === "grid" ? (
+        <PixelGridLoader variant="sidebar" className="text-current" />
+      ) : (
+        (() => {
+          const Icon = THREAD_STATUS_ICON_BY_GLYPH[status.glyph];
+          return <Icon className="size-3" strokeWidth={2.25} />;
+        })()
+      )}
+    </span>
+  );
 }
 
 export function ThreadStatusLabel({
   status,
   compact = false,
+  className,
 }: {
   status: ThreadStatusPill;
   compact?: boolean;
+  className?: string;
 }) {
   if (compact) {
     return (
       <span
         title={status.label}
-        className={`inline-flex size-3.5 shrink-0 items-center justify-center ${status.colorClass}`}
+        className={getSidebarIndicatorClassName({
+          toneClass: status.toneClass,
+          className,
+        })}
       >
-        <span
-          className={`size-[9px] rounded-full ${status.dotClass} ${
-            status.pulse ? "animate-pulse" : ""
-          }`}
-        />
+        <SidebarStatusGlyph compact status={status} />
         <span className="sr-only">{status.label}</span>
       </span>
     );
   }
 
   return (
-    <span
-      title={status.label}
-      className={`inline-flex items-center gap-1 text-[10px] ${status.colorClass}`}
-    >
+    <span title={status.label} className={cn("inline-flex items-center gap-1.5", className)}>
       <span
-        className={`h-1.5 w-1.5 rounded-full ${status.dotClass} ${
-          status.pulse ? "animate-pulse" : ""
-        }`}
-      />
-      <span className="hidden md:inline">{status.label}</span>
+        className={getSidebarIndicatorClassName({
+          toneClass: status.toneClass,
+        })}
+      >
+        <SidebarStatusGlyph status={status} />
+      </span>
+      <span
+        className={cn("hidden text-[10px] font-medium tracking-tight md:inline", status.toneClass)}
+      >
+        {status.label}
+      </span>
     </span>
   );
 }
@@ -125,7 +199,7 @@ export function ThreadStatusLabel({
 /**
  * Non-interactive leading status icons for a thread row in compact contexts
  * like the command palette. Shows the PR state icon (if present) and the
- * thread status dot, matching the sidebar's leading indicators.
+ * thread status glyph, matching the sidebar's leading indicators.
  */
 export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
@@ -160,21 +234,29 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
 
   return (
     <span className="inline-flex shrink-0 items-center gap-1.5">
-      {prStatus ? (
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <span
-                aria-label={prStatus.tooltip}
-                className={`inline-flex items-center justify-center ${prStatus.colorClass}`}
-              />
-            }
-          >
-            <GitPullRequestIcon className="size-3" />
-          </TooltipTrigger>
-          <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
-        </Tooltip>
-      ) : null}
+      {prStatus
+        ? (() => {
+            const PrIcon = prStatus.icon;
+
+            return (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      aria-label={prStatus.tooltip}
+                      className={getSidebarIndicatorClassName({
+                        toneClass: prStatus.toneClass,
+                      })}
+                    />
+                  }
+                >
+                  <PrIcon className="size-3" strokeWidth={2.25} />
+                </TooltipTrigger>
+                <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+              </Tooltip>
+            );
+          })()
+        : null}
       {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
     </span>
   );
@@ -216,7 +298,9 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
           role="img"
           aria-label={terminalStatus.label}
           title={terminalStatus.label}
-          className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+          className={getSidebarIndicatorClassName({
+            toneClass: terminalStatus.toneClass,
+          })}
         >
           <TerminalIcon className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`} />
         </span>
@@ -231,7 +315,7 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
               />
             }
           >
-            <CloudIcon className="size-3 text-muted-foreground/60" />
+            <CloudIcon className="size-3 text-muted-foreground/60" strokeWidth={2.25} />
           </TooltipTrigger>
           <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
         </Tooltip>

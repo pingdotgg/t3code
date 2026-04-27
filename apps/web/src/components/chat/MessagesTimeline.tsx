@@ -16,20 +16,21 @@ import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
 import ChatMarkdown from "../ChatMarkdown";
 import {
-  BotIcon,
-  CheckIcon,
-  CircleAlertIcon,
-  EyeIcon,
-  GlobeIcon,
-  HammerIcon,
-  type LucideIcon,
-  SquarePenIcon,
-  TerminalIcon,
-  Undo2Icon,
-  WrenchIcon,
-  ZapIcon,
-} from "lucide-react";
+  IconMessage as BotIcon,
+  IconCheckmark as CheckIcon,
+  IconExclamationmarkCircle as CircleAlertIcon,
+  IconEye as EyeIcon,
+  IconGlobe as GlobeIcon,
+  IconHammer as HammerIcon,
+  type IconComponent as LucideIcon,
+  IconSquareAndPencil as SquarePenIcon,
+  IconAppleTerminal as TerminalIcon,
+  IconArrowshapeTurnUpBackward2 as Undo2Icon,
+  IconWrenchAndScrewdriver as WrenchIcon,
+  IconBolt as ZapIcon,
+} from "symbols-react";
 import { Button } from "../ui/button";
+import { PixelGridLoader } from "../ui/pixel-grid-loader";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
@@ -459,10 +460,8 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
       {row.kind === "working" && (
         <div className="py-0.5 pl-1.5">
           <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
-            <span className="inline-flex items-center gap-[3px]">
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
+            <span className="inline-flex items-center text-foreground/72 dark:text-foreground/78">
+              <PixelGridLoader variant="chat" />
             </span>
             <span>
               {row.createdAt ? (

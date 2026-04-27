@@ -1,5 +1,11 @@
 import { FitAddon } from "@xterm/addon-fit";
-import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
+import {
+  IconPlus as Plus,
+  IconSquareSplit2x1 as SquareSplitHorizontal,
+  IconAppleTerminalOnRectangle as TerminalSquare,
+  IconTrash as Trash2,
+  IconXmark as XIcon,
+} from "symbols-react";
 import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,

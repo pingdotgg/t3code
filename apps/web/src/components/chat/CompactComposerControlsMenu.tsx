@@ -1,6 +1,6 @@
 import { ProviderInteractionMode } from "@forma/contracts";
 import { memo, type ReactNode } from "react";
-import { EllipsisIcon, ListTodoIcon } from "lucide-react";
+import { IconEllipsis as EllipsisIcon, IconChecklist as ListTodoIcon } from "symbols-react";
 import { Button } from "../ui/button";
 import {
   Menu,

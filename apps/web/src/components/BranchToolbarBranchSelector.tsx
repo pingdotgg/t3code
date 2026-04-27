@@ -2,7 +2,7 @@ import { scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
 import type { EnvironmentId, GitBranch, ThreadId } from "@forma/contracts";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { ChevronDownIcon } from "lucide-react";
+import { IconChevronDown as ChevronDownIcon } from "symbols-react";
 import {
   useCallback,
   useDeferredValue,
@@ -577,11 +577,11 @@ export function BranchToolbarBranchSelector({
     >
       <ComboboxTrigger
         render={<Button variant="ghost" size="xs" />}
-        className="text-muted-foreground/70 hover:text-foreground/80"
+        className="text-muted-foreground/70 hover:text-foreground/80 [&_svg]:fill-current"
         disabled={(isBranchesSearchPending && branches.length === 0) || isBranchActionPending}
       >
         <span className="max-w-[240px] truncate">{triggerLabel}</span>
-        <ChevronDownIcon />
+        <ChevronDownIcon className="size-2.5 fill-current" />
       </ComboboxTrigger>
       <ComboboxPopup align="end" side="top" className="w-80">
         <div className="border-b p-1">

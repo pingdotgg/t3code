@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@forma/contracts";
-import { FolderIcon } from "lucide-react";
+import { IconFolder as FolderIcon } from "symbols-react";
 import { useState } from "react";
 import { resolveEnvironmentHttpUrl } from "../environments/runtime";
 

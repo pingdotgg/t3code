@@ -85,7 +85,14 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import { BotIcon, CircleAlertIcon, ListTodoIcon, type LucideIcon, XIcon } from "lucide-react";
+import {
+  IconQuestionmarkBubble as AskIcon,
+  IconHammer as BuildIcon,
+  IconApplescript as PlanIcon,
+  IconChecklist as ListTodoIcon,
+  type IconComponent as LucideIcon,
+  IconXmark as XIcon,
+} from "symbols-react";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { resolveSelectableProvider, getProviderModels } from "../../providerModels";
 import type { UnifiedSettings } from "@forma/contracts/settings";
@@ -112,17 +119,17 @@ const interactionModeConfig: Record<
   default: {
     label: "Build",
     description: "Explore and implement changes.",
-    icon: BotIcon,
+    icon: BuildIcon,
   },
   ask: {
     label: "Ask",
     description: "Read/explain only. No writes.",
-    icon: CircleAlertIcon,
+    icon: AskIcon,
   },
   plan: {
     label: "Plan",
     description: "Research and propose a plan without implementing.",
-    icon: ListTodoIcon,
+    icon: PlanIcon,
   },
 };
 const interactionModeOptions = Object.keys(interactionModeConfig) as ProviderInteractionMode[];
@@ -204,7 +211,7 @@ const ComposerFooterInteractionControls = memo(function ComposerFooterInteractio
                   <SelectItem key={mode} value={mode} className="min-w-64 py-2">
                     <div className="grid min-w-0 gap-0.5">
                       <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                        <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
+                        <OptionIcon className="size-3.5 shrink-0 fill-muted-foreground" />
                         {option.label}
                       </span>
                       <span className="text-muted-foreground text-xs leading-4">
@@ -1835,7 +1842,7 @@ export const ChatComposer = memo(
                                     aria-label="Draft attachment may not persist"
                                     className="absolute left-1 top-1 inline-flex items-center justify-center rounded bg-background/85 p-0.5 text-amber-600"
                                   >
-                                    <CircleAlertIcon className="size-3" />
+                                    <AskIcon className="size-3" />
                                   </span>
                                 }
                               />

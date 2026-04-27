@@ -9,7 +9,7 @@ import {
   stripDisplayedPlanMarkdown,
 } from "../../proposedPlan";
 import ChatMarkdown from "../ChatMarkdown";
-import { EllipsisIcon } from "lucide-react";
+import { IconEllipsis as EllipsisIcon } from "symbols-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";

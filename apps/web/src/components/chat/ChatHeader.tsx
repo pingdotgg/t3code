@@ -9,7 +9,12 @@ import { scopeThreadRef } from "@forma/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { ChevronRightIcon, DiffIcon, TerminalSquareIcon } from "lucide-react";
+import {
+  IconChevronRight as ChevronRightIcon,
+  IconFolder as FolderIcon,
+  IconPlusminus as DiffIcon,
+  IconAppleTerminal as TerminalIcon,
+} from "symbols-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
@@ -78,12 +83,13 @@ export const ChatHeader = memo(function ChatHeader({
             className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
           >
             <span
-              className="min-w-0 shrink truncate text-sm font-medium text-muted-foreground"
+              className="inline-flex min-w-0 shrink items-center gap-1 text-sm font-medium text-muted-foreground"
               title={activeProjectName}
             >
-              {activeProjectName}
+              <FolderIcon className="size-3 shrink-0 fill-muted-foreground/70" aria-hidden />
+              <span className="min-w-0 truncate">{activeProjectName}</span>
             </span>
-            <ChevronRightIcon className="size-3 shrink-0 text-muted-foreground/70" aria-hidden />
+            <ChevronRightIcon className="size-2.5 shrink-0 fill-muted-foreground/70" aria-hidden />
             <h2
               className="min-w-0 shrink truncate text-sm font-medium text-foreground"
               title={activeThreadTitle}
@@ -138,7 +144,7 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipTrigger
             render={
               <Toggle
-                className="shrink-0"
+                className="shrink-0 [&_svg]:fill-current"
                 pressed={terminalOpen}
                 onPressedChange={onToggleTerminal}
                 aria-label="Toggle terminal drawer"
@@ -146,7 +152,7 @@ export const ChatHeader = memo(function ChatHeader({
                 size="xs"
                 disabled={!terminalAvailable}
               >
-                <TerminalSquareIcon className="size-3" />
+                <TerminalIcon className="size-3 fill-current" />
               </Toggle>
             }
           />
@@ -162,7 +168,7 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipTrigger
             render={
               <Toggle
-                className="shrink-0"
+                className="shrink-0 [&_svg]:fill-current"
                 pressed={diffOpen}
                 onPressedChange={onToggleDiff}
                 aria-label="Toggle diff panel"
@@ -170,7 +176,7 @@ export const ChatHeader = memo(function ChatHeader({
                 size="xs"
                 disabled={!isGitRepo}
               >
-                <DiffIcon className="size-3" />
+                <DiffIcon className="size-3 fill-current" />
               </Toggle>
             }
           />

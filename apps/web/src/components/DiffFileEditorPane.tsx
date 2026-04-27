@@ -2,12 +2,12 @@ import Editor, { type OnMount } from "@monaco-editor/react";
 import type { EnvironmentId } from "@forma/contracts";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import {
-  AlertTriangleIcon,
-  ArrowLeftIcon,
-  LoaderIcon,
-  RefreshCwIcon,
-  SaveIcon,
-} from "lucide-react";
+  IconExclamationmarkTriangle as AlertTriangleIcon,
+  IconArrowLeft as ArrowLeftIcon,
+  IconProgressIndicator as LoaderIcon,
+  IconArrowClockwise as RefreshCwIcon,
+  IconSquareAndArrowDown as SaveIcon,
+} from "symbols-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readEnvironmentApi } from "../environmentApi";
 import {

@@ -1,6 +1,6 @@
 import { memo, useMemo, useState } from "react";
 import { getVscodeIconUrlForEntry } from "../../vscode-icons";
-import { FileIcon, FolderIcon } from "lucide-react";
+import { IconDocument as FileIcon, IconFolder as FolderIcon } from "symbols-react";
 import { cn } from "~/lib/utils";
 
 export const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
@@ -18,9 +18,9 @@ export const VscodeEntryIcon = memo(function VscodeEntryIcon(props: {
 
   if (failed) {
     return props.kind === "directory" ? (
-      <FolderIcon className={cn("size-4 text-muted-foreground/80", props.className)} />
+      <FolderIcon className={cn("size-4 fill-muted-foreground/80", props.className)} />
     ) : (
-      <FileIcon className={cn("size-4 text-muted-foreground/80", props.className)} />
+      <FileIcon className={cn("size-4 fill-muted-foreground/80", props.className)} />
     );
   }
 

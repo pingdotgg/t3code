@@ -1,7 +1,7 @@
 import { PROVIDER_DISPLAY_NAMES, type ServerProvider } from "@forma/contracts";
 import { memo } from "react";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
-import { CircleAlertIcon } from "lucide-react";
+import { IconExclamationmarkCircle as CircleAlertIcon } from "symbols-react";
 
 export const ProviderStatusBanner = memo(function ProviderStatusBanner({
   status,

@@ -6,7 +6,7 @@ import {
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@forma/contracts";
-import { BotIcon } from "lucide-react";
+import { IconMessage as BotIcon } from "symbols-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
@@ -268,7 +268,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         />
       ) : null}
       {props.item.type === "slash-command" ? (
-        <BotIcon className="size-4 shrink-0 text-muted-foreground/80" />
+        <BotIcon className="size-4 shrink-0 fill-muted-foreground/80" />
       ) : null}
       {props.item.type === "local-slash-command" || props.item.type === "provider-slash-command" ? (
         <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">

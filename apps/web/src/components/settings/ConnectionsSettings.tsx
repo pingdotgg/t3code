@@ -1,4 +1,4 @@
-import { PlusIcon, QrCodeIcon } from "lucide-react";
+import { IconPlus as PlusIcon, IconQrcode as QrCodeIcon } from "symbols-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   type AuthClientSession,

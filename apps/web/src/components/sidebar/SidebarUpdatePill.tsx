@@ -1,4 +1,9 @@
-import { DownloadIcon, RotateCwIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import {
+  IconArrowDownToLine as DownloadIcon,
+  IconArrowClockwise as RotateCwIcon,
+  IconExclamationmarkTriangle as TriangleAlertIcon,
+  IconXmark as XIcon,
+} from "symbols-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { isElectron } from "../../env";

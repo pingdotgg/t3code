@@ -2,15 +2,15 @@ import { EditorId, type ResolvedKeybindingsConfig } from "@forma/contracts";
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
-import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
+import { IconChevronDown as ChevronDownIcon } from "symbols-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
 import { topBarButtonLabelClassName, topBarGroupSeparatorClassName } from "../topBarActionStyles";
+import { FinderIcon } from "../icons/custom";
 import {
   AntigravityIcon,
   CursorIcon,
-  Icon,
   KiroIcon,
   TraeIcon,
   IntelliJIdeaIcon,
@@ -23,7 +23,11 @@ import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 
 const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
-  const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [
+  const baseOptions: ReadonlyArray<{
+    label: string;
+    Icon: React.ElementType<{ className?: string; "aria-hidden"?: boolean }>;
+    value: EditorId;
+  }> = [
     {
       label: "Cursor",
       Icon: CursorIcon,
@@ -75,7 +79,7 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
         : isWindowsPlatform(platform)
           ? "Explorer"
           : "Files",
-      Icon: FolderClosedIcon,
+      Icon: FinderIcon,
       value: "file-manager",
     },
   ];
@@ -142,19 +146,19 @@ export const OpenInPicker = memo(function OpenInPicker({
         onClick={() => openInEditor(preferredEditor)}
         title={compact && primaryOption ? `Open in ${primaryOption.label}` : undefined}
       >
-        {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
+        {primaryOption?.Icon && <primaryOption.Icon aria-hidden className="size-3.5" />}
         <span className={primaryButtonLabelClassName}>Open</span>
       </Button>
       <GroupSeparator className={groupSeparatorClassName} />
       <Menu>
         <MenuTrigger render={<Button aria-label="Copy options" size="icon-xs" variant="outline" />}>
-          <ChevronDownIcon aria-hidden="true" className="size-4" />
+          <ChevronDownIcon aria-hidden="true" className="size-2.5" />
         </MenuTrigger>
         <MenuPopup align="end">
           {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
           {options.map(({ label, Icon, value }) => (
             <MenuItem key={value} onClick={() => openInEditor(value)}>
-              <Icon aria-hidden="true" className="text-muted-foreground" />
+              <Icon aria-hidden className="text-muted-foreground" />
               {label}
               {value === preferredEditor && openFavoriteEditorShortcutLabel && (
                 <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>

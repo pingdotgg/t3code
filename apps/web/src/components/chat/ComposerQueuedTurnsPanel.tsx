@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { PlayIcon, Trash2Icon } from "lucide-react";
+import { IconPlay as PlayIcon, IconTrash as Trash2Icon } from "symbols-react";
 
 import type { Thread } from "../../types";
 import { cn } from "~/lib/utils";

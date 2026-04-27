@@ -12,17 +12,17 @@ import {
 import { useParams } from "@tanstack/react-router";
 import { type ScopedThreadRef, type ThreadId } from "@forma/contracts";
 import {
-  CheckIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-  CircleAlertIcon,
-  CircleCheckIcon,
-  CopyIcon,
-  InfoIcon,
-  LoaderCircleIcon,
-  TriangleAlertIcon,
-  XIcon,
-} from "lucide-react";
+  IconCheckmark as CheckIcon,
+  IconChevronDown as ChevronDownIcon,
+  IconChevronUp as ChevronUpIcon,
+  IconExclamationmarkCircle as CircleAlertIcon,
+  IconCheckmarkCircle as CircleCheckIcon,
+  IconDocumentOnDocument as CopyIcon,
+  IconInfoCircle as InfoIcon,
+  IconProgressIndicator as LoaderCircleIcon,
+  IconExclamationmarkTriangle as TriangleAlertIcon,
+  IconXmark as XIcon,
+} from "symbols-react";
 
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "~/components/ui/button";
@@ -100,7 +100,7 @@ function CopyErrorButton({ text }: { text: string }) {
       title="Copy error"
       type="button"
     >
-      {isCopied ? <CheckIcon className="size-3 text-success" /> : <CopyIcon className="size-3" />}
+      {isCopied ? <CheckIcon className="size-3 fill-success" /> : <CopyIcon className="size-3" />}
     </button>
   );
 }
@@ -129,9 +129,9 @@ function ToastExpandableSection({
         type="button"
       >
         {open ? (
-          <ChevronUpIcon className="size-3.5 shrink-0 opacity-80" strokeWidth={2.25} />
+          <ChevronUpIcon className="size-2.5 shrink-0 opacity-80" strokeWidth={2.25} />
         ) : (
-          <ChevronDownIcon className="size-3.5 shrink-0 opacity-80" strokeWidth={2.25} />
+          <ChevronDownIcon className="size-2.5 shrink-0 opacity-80" strokeWidth={2.25} />
         )}
         {open ? collapseLabel : expandLabel}
       </button>
@@ -210,13 +210,13 @@ function ToastDescriptionAndExpandable({
         {open ? (
           <ChevronUpIcon
             aria-hidden
-            className="mt-0.5 size-3.5 shrink-0 text-muted-foreground opacity-80"
+            className="mt-0.5 size-2.5 shrink-0 text-muted-foreground opacity-80"
             strokeWidth={2.25}
           />
         ) : (
           <ChevronDownIcon
             aria-hidden
-            className="mt-0.5 size-3.5 shrink-0 text-muted-foreground opacity-80"
+            className="mt-0.5 size-2.5 shrink-0 text-muted-foreground opacity-80"
             strokeWidth={2.25}
           />
         )}
@@ -290,7 +290,7 @@ function ToastBodyContent({
             className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
             data-slot="toast-icon"
           >
-            <Icon className="in-data-[type=loading]:animate-spin in-data-[type=error]:text-destructive in-data-[type=info]:text-info in-data-[type=success]:text-success in-data-[type=warning]:text-warning in-data-[type=loading]:opacity-80" />
+            <Icon className="in-data-[type=loading]:animate-spin in-data-[type=error]:fill-destructive in-data-[type=info]:fill-info in-data-[type=success]:fill-success in-data-[type=warning]:fill-warning in-data-[type=loading]:opacity-80" />
           </div>
         )}
         <div

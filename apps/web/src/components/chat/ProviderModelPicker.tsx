@@ -5,7 +5,7 @@ import {
 } from "@forma/contracts";
 import { memo, useEffect, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { ChevronDownIcon } from "lucide-react";
+import { IconChevronDown as ChevronDownIcon } from "symbols-react";
 import { Button, buttonVariants } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -134,7 +134,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </TooltipTrigger>
             <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
           </Tooltip>
-          <ChevronDownIcon aria-hidden="true" className="size-3 shrink-0 opacity-60" />
+          <ChevronDownIcon aria-hidden="true" className="size-2.5 shrink-0 opacity-60" />
         </span>
       </PopoverTrigger>
       <PopoverPopup

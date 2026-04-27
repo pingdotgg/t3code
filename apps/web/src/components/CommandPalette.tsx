@@ -10,16 +10,15 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
-  ArrowDownIcon,
-  ArrowLeftIcon,
-  ArrowUpIcon,
-  CornerLeftUpIcon,
-  FolderIcon,
-  FolderPlusIcon,
-  MessageSquareIcon,
-  SettingsIcon,
-  SquarePenIcon,
-} from "lucide-react";
+  IconArrowDown as ArrowDownIcon,
+  IconArrowLeft as ArrowLeftIcon,
+  IconArrowUp as ArrowUpIcon,
+  IconArrowshapeTurnUpBackward as CornerLeftUpIcon,
+  IconFolder as FolderIcon,
+  IconFolderBadgePlus as FolderPlusIcon,
+  IconMessage as MessageSquareIcon,
+  IconPencilAndOutline as PencilAndOutlineIcon,
+} from "symbols-react";
 import {
   useCallback,
   useDeferredValue,
@@ -90,6 +89,7 @@ import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
+import { SettingsHexIcon } from "./icons/custom";
 import { useServerKeybindings } from "../rpc/serverState";
 import { resolveShortcutCommand } from "../keybindings";
 import {
@@ -648,7 +648,7 @@ function OpenCommandPaletteDialog() {
             New thread in <span className="font-semibold">{activeProjectTitle}</span>
           </>
         ),
-        icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
+        icon: <PencilAndOutlineIcon className={ITEM_ICON_CLASS} />,
         shortcutCommand: "chat.new",
         run: async () => {
           await startNewThreadFromContext({
@@ -667,8 +667,8 @@ function OpenCommandPaletteDialog() {
       value: "action:new-thread-in",
       searchTerms: ["new thread", "project", "pick", "choose", "select"],
       title: "New thread in...",
-      icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
-      addonIcon: <SquarePenIcon className={ADDON_ICON_CLASS} />,
+      icon: <PencilAndOutlineIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <PencilAndOutlineIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
     });
   }
@@ -679,8 +679,8 @@ function OpenCommandPaletteDialog() {
       value: "action:add-project",
       searchTerms: ["add project", "folder", "directory", "browse", "environment"],
       title: "Add project",
-      icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
-      addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
+      icon: <FolderPlusIcon className="size-5 fill-muted-foreground/80" />,
+      addonIcon: <FolderPlusIcon className="size-5 fill-current" />,
       groups: addProjectEnvironmentGroups,
     });
   } else {
@@ -689,7 +689,7 @@ function OpenCommandPaletteDialog() {
       value: "action:add-project",
       searchTerms: ["add project", "folder", "directory", "browse"],
       title: "Add project",
-      icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+      icon: <FolderPlusIcon className="size-5 fill-muted-foreground/80" />,
       keepOpen: true,
       run: async () => {
         openAddProjectFlow();
@@ -702,7 +702,7 @@ function OpenCommandPaletteDialog() {
     value: "action:settings",
     searchTerms: ["settings", "preferences", "configuration", "keybindings"],
     title: "Open settings",
-    icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
+    icon: <SettingsHexIcon className="size-4 text-muted-foreground/80" />,
     run: async () => {
       await navigate({ to: "/settings" });
     },
@@ -1021,13 +1021,13 @@ function OpenCommandPaletteDialog() {
                       aria-label="Back"
                       onClick={popView}
                     >
-                      <ArrowLeftIcon />
+                      <ArrowLeftIcon className="fill-current" />
                     </button>
                   ),
                 }
               : isBrowsing && !isSubmenu
                 ? {
-                    startAddon: <FolderPlusIcon />,
+                    startAddon: <FolderPlusIcon className="fill-current" />,
                   }
                 : {})}
             onKeyDown={handleKeyDown}
@@ -1081,10 +1081,10 @@ function OpenCommandPaletteDialog() {
           <div className="flex items-center gap-3">
             <KbdGroup className="items-center gap-1.5">
               <Kbd>
-                <ArrowUpIcon />
+                <ArrowUpIcon className="fill-current" />
               </Kbd>
               <Kbd>
-                <ArrowDownIcon />
+                <ArrowDownIcon className="fill-current" />
               </Kbd>
               <span className={cn("text-muted-foreground/80")}>Navigate</span>
             </KbdGroup>

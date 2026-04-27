@@ -104,7 +104,7 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 import { ComposerMetaBar } from "./ComposerMetaBar";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon } from "lucide-react";
+import { IconChevronDown as ChevronDownIcon } from "symbols-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -3608,7 +3608,7 @@ export default function ChatView(props: ChatViewProps) {
                   onClick={() => scrollToEnd(true)}
                   className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
                 >
-                  <ChevronDownIcon className="size-3.5" />
+                  <ChevronDownIcon className="size-2.5 fill-current" />
                   Scroll to bottom
                 </button>
               </div>

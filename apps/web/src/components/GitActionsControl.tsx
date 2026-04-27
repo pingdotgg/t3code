@@ -8,12 +8,12 @@ import type {
 import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
-  ChevronDownIcon,
-  CloudUploadIcon,
-  FolderGit2Icon,
-  GitCommitIcon,
-  InfoIcon,
-} from "lucide-react";
+  IconChevronDown as ChevronDownIcon,
+  IconFolderBadgePlus as FolderGit2Icon,
+  IconInfoCircle as InfoIcon,
+  IconPointToprightArrowTriangleBackwardToPointBottomleftFilledScurvepath as GitCommitIcon,
+  IconIcloudAndArrowUpFill as CloudUploadIcon,
+} from "symbols-react";
 import { GitHubIcon } from "./Icons";
 import {
   buildGitActionProgressStages,
@@ -198,13 +198,13 @@ const COMMIT_DIALOG_DESCRIPTION =
   "Review and confirm your commit. Leave the message blank to auto-generate one.";
 
 function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
-  if (icon === "commit") return <GitCommitIcon />;
-  if (icon === "push") return <CloudUploadIcon />;
-  return <GitHubIcon />;
+  if (icon === "commit") return <GitCommitIcon className="text-current" />;
+  if (icon === "push") return <CloudUploadIcon className="text-current" />;
+  return <GitHubIcon className="text-current" />;
 }
 
 function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
-  const iconClassName = "size-3.5";
+  const iconClassName = "size-3.5 text-current";
   if (quickAction.kind === "open_pr") return <GitHubIcon className={iconClassName} />;
   if (quickAction.kind === "run_pull") return <InfoIcon className={iconClassName} />;
   if (quickAction.kind === "run_action") {
@@ -947,7 +947,7 @@ export default function GitActionsControl({
               render={<Button aria-label="Git action options" size="icon-xs" variant="outline" />}
               disabled={isGitActionRunning}
             >
-              <ChevronDownIcon aria-hidden="true" className="size-4" />
+              <ChevronDownIcon aria-hidden="true" className="size-2.5" />
             </MenuTrigger>
             <MenuPopup align="end" className="w-full">
               {gitActionMenuItems.map((item) => {

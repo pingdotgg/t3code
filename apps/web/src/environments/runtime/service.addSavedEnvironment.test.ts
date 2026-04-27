@@ -1,6 +1,8 @@
 import { EnvironmentId } from "@forma/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+let serviceModule: Awaited<typeof import("./service")>;
+
 const mockResolveRemotePairingTarget = vi.fn();
 const mockFetchRemoteEnvironmentDescriptor = vi.fn();
 const mockBootstrapRemoteBearerSession = vi.fn();
@@ -59,7 +61,7 @@ vi.mock("./connection", () => ({
 }));
 
 describe("addSavedEnvironment", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
     mockResolveRemotePairingTarget.mockReturnValue({
@@ -79,13 +81,12 @@ describe("addSavedEnvironment", () => {
     mockWriteSavedEnvironmentBearerToken.mockResolvedValue(false);
     mockSetSavedEnvironmentRegistry.mockResolvedValue(undefined);
     mockListSavedEnvironmentRecords.mockReturnValue([]);
-  });
+    serviceModule = await import("./service");
+  }, 30_000);
 
   it("rolls back persisted metadata when bearer token persistence fails", async () => {
-    const { addSavedEnvironment, resetEnvironmentServiceForTests } = await import("./service");
-
     await expect(
-      addSavedEnvironment({
+      serviceModule.addSavedEnvironment({
         label: "Remote environment",
         host: "remote.example.com",
         pairingCode: "123456",
@@ -100,6 +101,6 @@ describe("addSavedEnvironment", () => {
     expect(mockSetSavedEnvironmentRegistry).toHaveBeenCalledWith([]);
     expect(mockUpsert).not.toHaveBeenCalled();
 
-    await resetEnvironmentServiceForTests();
+    await serviceModule.resetEnvironmentServiceForTests();
   });
 });

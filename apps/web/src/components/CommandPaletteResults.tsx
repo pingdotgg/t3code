@@ -1,5 +1,5 @@
 import { type ResolvedKeybindingsConfig } from "@forma/contracts";
-import { ChevronRightIcon } from "lucide-react";
+import { IconChevronRight as ChevronRightIcon } from "symbols-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import {
   type CommandPaletteActionItem,
@@ -109,7 +109,7 @@ function CommandPaletteResultRow(props: {
       ) : null}
       {shortcutLabel ? <CommandShortcut>{shortcutLabel}</CommandShortcut> : null}
       {props.item.kind === "submenu" ? (
-        <ChevronRightIcon className="ml-auto size-4 shrink-0 text-muted-foreground/50" />
+        <ChevronRightIcon className="ml-auto size-2.5 shrink-0 fill-muted-foreground/50" />
       ) : null}
     </CommandItem>
   );
