@@ -1236,6 +1236,9 @@ export function ConnectionsSettings() {
     () => desktopPairingLinks.filter((pairingLink) => pairingLink.role === "client"),
     [desktopPairingLinks],
   );
+  const visibleDesktopAdvertisedEndpoints = isLocalBackendNetworkAccessible
+    ? desktopAdvertisedEndpoints
+    : [];
   return (
     <SettingsPageContainer>
       {canManageLocalBackend ? (
@@ -1327,7 +1330,7 @@ export function ConnectionsSettings() {
                     </AlertDialog>
                   }
                 />
-                {desktopAdvertisedEndpoints.map((endpoint) => (
+                {visibleDesktopAdvertisedEndpoints.map((endpoint) => (
                   <AdvertisedEndpointListRow key={endpoint.id} endpoint={endpoint} />
                 ))}
               </>
@@ -1380,7 +1383,7 @@ export function ConnectionsSettings() {
               ) : null}
               <PairingClientsList
                 endpointUrl={desktopServerExposureState?.endpointUrl}
-                endpoints={desktopAdvertisedEndpoints}
+                endpoints={visibleDesktopAdvertisedEndpoints}
                 isLoading={isLoadingDesktopAccessManagement}
                 pairingLinks={visibleDesktopPairingLinks}
                 clientSessions={desktopClientSessions}
