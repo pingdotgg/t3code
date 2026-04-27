@@ -905,6 +905,10 @@ function createPrimaryEnvironmentConnection(): EnvironmentConnection {
   );
 }
 
+function maybeCreatePrimaryEnvironmentConnection(): EnvironmentConnection | null {
+  return getPrimaryKnownEnvironment() ? createPrimaryEnvironmentConnection() : null;
+}
+
 async function ensureSavedEnvironmentConnection(
   record: SavedEnvironmentRecord,
   options?: {
@@ -1170,7 +1174,7 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
     },
   );
 
-  createPrimaryEnvironmentConnection();
+  maybeCreatePrimaryEnvironmentConnection();
 
   const unsubscribeSavedEnvironments = useSavedEnvironmentRegistryStore.subscribe(() => {
     if (!hasSavedEnvironmentRegistryHydrated()) {

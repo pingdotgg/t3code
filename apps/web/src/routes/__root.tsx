@@ -46,26 +46,52 @@ import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import {
   ensureEnvironmentConnectionBootstrapped,
   getPrimaryEnvironmentConnection,
+  listSavedEnvironmentRecords,
+  waitForSavedEnvironmentRegistryHydration,
   startEnvironmentConnectionService,
+  useSavedEnvironmentRegistryStore,
 } from "../environments/runtime";
 import { configureClientTracing } from "../observability/clientTracing";
 import {
   ensurePrimaryEnvironmentReady,
+  getPrimaryKnownEnvironment,
   resolveInitialServerAuthGateState,
   updatePrimaryEnvironmentDescriptor,
 } from "../environments/primary";
+import { hasHostedPairingRequest } from "../hostedPairing";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
-  beforeLoad: async () => {
-    const [, authGateState] = await Promise.all([
-      ensurePrimaryEnvironmentReady(),
-      resolveInitialServerAuthGateState(),
-    ]);
-    return {
-      authGateState,
-    };
+  beforeLoad: async ({ location }) => {
+    if (location.pathname === "/pair" && hasHostedPairingRequest(new URL(window.location.href))) {
+      return {
+        authGateState: {
+          status: "hosted-pairing",
+        } as const,
+      };
+    }
+
+    try {
+      const [, authGateState] = await Promise.all([
+        ensurePrimaryEnvironmentReady(),
+        resolveInitialServerAuthGateState(),
+      ]);
+      return {
+        authGateState,
+      };
+    } catch (error) {
+      if (location.pathname === "/pair") {
+        throw error;
+      }
+
+      await waitForSavedEnvironmentRegistryHydration();
+      return {
+        authGateState: {
+          status: "hosted-static",
+        } as const,
+      };
+    }
   },
   component: RootRouteView,
   errorComponent: RootRouteErrorView,
@@ -91,7 +117,7 @@ function RootRouteView() {
     return <Outlet />;
   }
 
-  if (authGateState.status !== "authenticated") {
+  if (authGateState.status !== "authenticated" && authGateState.status !== "hosted-static") {
     return <Outlet />;
   }
   return (
@@ -100,6 +126,7 @@ function RootRouteView() {
         <AuthenticatedTracingBootstrap />
         <ServerStateBootstrap />
         <EnvironmentConnectionManagerBootstrap />
+        <HostedStaticEnvironmentBootstrap />
         <EventRouter />
         <WebSocketConnectionCoordinator />
         <SlowRpcAckToastCoordinator />
@@ -113,6 +140,32 @@ function RootRouteView() {
       </AnchoredToastProvider>
     </ToastProvider>
   );
+}
+
+function HostedStaticEnvironmentBootstrap() {
+  const savedEnvironmentCount = useSavedEnvironmentRegistryStore(
+    (state) => Object.keys(state.byId).length,
+  );
+
+  useEffect(() => {
+    if (getPrimaryKnownEnvironment()) {
+      return;
+    }
+
+    const currentActiveEnvironmentId = useStore.getState().activeEnvironmentId;
+    if (currentActiveEnvironmentId) {
+      return;
+    }
+
+    const firstSavedEnvironment = listSavedEnvironmentRecords()[0];
+    if (!firstSavedEnvironment) {
+      return;
+    }
+
+    useStore.getState().setActiveEnvironmentId(firstSavedEnvironment.environmentId);
+  }, [savedEnvironmentCount]);
+
+  return null;
 }
 
 function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
@@ -187,7 +240,13 @@ function errorDetails(error: unknown): string {
 }
 
 function ServerStateBootstrap() {
-  useEffect(() => startServerStateSync(getPrimaryEnvironmentConnection().client.server), []);
+  useEffect(() => {
+    if (!getPrimaryKnownEnvironment()) {
+      return;
+    }
+
+    return startServerStateSync(getPrimaryEnvironmentConnection().client.server);
+  }, []);
 
   return null;
 }

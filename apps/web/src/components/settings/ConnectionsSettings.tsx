@@ -9,6 +9,7 @@ import {
 import { DateTime } from "effect";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { buildHostedPairingUrl } from "../../hostedPairing";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
 import {
@@ -249,6 +250,13 @@ function resolveDesktopPairingUrl(endpointUrl: string, credential: string): stri
   return setPairingTokenOnUrl(url, credential).toString();
 }
 
+function resolveHostedPairingUrl(endpointUrl: string, credential: string): string {
+  return buildHostedPairingUrl({
+    host: endpointUrl,
+    token: credential,
+  });
+}
+
 function resolveCurrentOriginPairingUrl(credential: string): string {
   const url = new URL("/pair", window.location.href);
   return setPairingTokenOnUrl(url, credential).toString();
@@ -278,9 +286,16 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
     () => resolveCurrentOriginPairingUrl(pairingLink.credential),
     [pairingLink.credential],
   );
+  const hostedPairingUrl = useMemo(
+    () =>
+      endpointUrl != null && endpointUrl !== ""
+        ? resolveHostedPairingUrl(endpointUrl, pairingLink.credential)
+        : null,
+    [endpointUrl, pairingLink.credential],
+  );
   const shareablePairingUrl =
     endpointUrl != null && endpointUrl !== ""
-      ? resolveDesktopPairingUrl(endpointUrl, pairingLink.credential)
+      ? (hostedPairingUrl ?? resolveDesktopPairingUrl(endpointUrl, pairingLink.credential))
       : isLoopbackHostname(window.location.hostname)
         ? null
         : currentOriginPairingUrl;
