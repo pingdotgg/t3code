@@ -39,7 +39,6 @@ import {
   type ScopedThreadRef,
   type SidebarProjectGroupingMode,
   type ThreadEnvMode,
-  ThreadId,
 } from "@forma/contracts";
 import {
   parseScopedThreadKey,
@@ -90,6 +89,7 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 
 import { useThreadActions } from "../hooks/useThreadActions";
+import { useThreadRowActions } from "../hooks/useThreadRowActions";
 import {
   buildThreadRouteParams,
   resolveThreadRouteRef,
@@ -933,7 +933,6 @@ interface SidebarProjectItemProps {
   activeRouteThreadKey: string | null;
   newThreadShortcutLabel: string | null;
   handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
-  archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   threadJumpLabelByKey: ReadonlyMap<string, string>;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
@@ -953,7 +952,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     activeRouteThreadKey,
     newThreadShortcutLabel,
     handleNewThread,
-    archiveThread,
     deleteThread,
     threadJumpLabelByKey,
     attachThreadListAutoAnimateRef,
@@ -982,8 +980,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
   }));
   const { updateSettings } = useUpdateSettings();
-  const router = useRouter();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
+  const router = useRouter();
+  const { archiveNow, copyThreadId, copyWorkspacePath, deleteWithConfirmation, markUnread } =
+    useThreadRowActions();
   const toggleProject = useUiStateStore((state) => state.toggleProject);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((state) => state.rangeSelectTo);
@@ -991,27 +991,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const removeFromSelection = useThreadSelectionStore((state) => state.removeFromSelection);
   const setSelectionAnchor = useThreadSelectionStore((state) => state.setAnchor);
   const selectedThreadCount = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
-  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
-    threadId: ThreadId;
-  }>({
-    onCopy: (ctx) => {
-      toastManager.add({
-        type: "success",
-        title: "Thread ID copied",
-        description: ctx.threadId,
-      });
-    },
-    onError: (error) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to copy thread ID",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    },
-  });
-  const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{
+  const { copyToClipboard: copyProjectPathToClipboard } = useCopyToClipboard<{
     path: string;
   }>({
     onCopy: (ctx) => {
@@ -1486,7 +1466,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 openProjectGroupingDialog(member);
                 return;
               case "copy-path":
-                copyPathToClipboard(member.cwd, { path: member.cwd });
+                copyProjectPathToClipboard(member.cwd, { path: member.cwd });
                 return;
               case "delete":
                 return handleRemoveProject(member);
@@ -1555,7 +1535,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       })();
     },
     [
-      copyPathToClipboard,
+      copyProjectPathToClipboard,
       handleRemoveProject,
       openProjectGroupingDialog,
       openProjectRenameDialog,
@@ -1763,19 +1743,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
   const attemptArchiveThread = useCallback(
     async (threadRef: ScopedThreadRef) => {
-      try {
-        await archiveThread(threadRef);
-      } catch (error) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to archive thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
+      await archiveNow(threadRef);
     },
-    [archiveThread],
+    [archiveNow],
   );
 
   const cancelRename = useCallback(() => {
@@ -1933,8 +1903,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
-          { id: "mark-unread", label: "Mark unread" },
-          { id: "copy-path", label: "Copy Path" },
+          {
+            id: "mark-unread",
+            label: "Mark unread",
+            ...(thread.latestTurn?.completedAt ? {} : { disabled: true }),
+          },
+          {
+            id: "copy-path",
+            label: "Copy Path",
+            ...(threadWorkspacePath ? {} : { disabled: true }),
+          },
           { id: "copy-thread-id", label: "Copy Thread ID" },
           { id: "delete", label: "Delete", destructive: true },
         ],
@@ -1949,47 +1927,28 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
 
       if (clicked === "mark-unread") {
-        markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+        markUnread({
+          threadRef,
+          latestTurnCompletedAt: thread.latestTurn?.completedAt,
+        });
         return;
       }
       if (clicked === "copy-path") {
-        if (!threadWorkspacePath) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Path unavailable",
-              description: "This thread does not have a workspace path to copy.",
-            }),
-          );
-          return;
-        }
-        copyPathToClipboard(threadWorkspacePath, { path: threadWorkspacePath });
+        copyWorkspacePath(threadWorkspacePath);
         return;
       }
       if (clicked === "copy-thread-id") {
-        copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+        copyThreadId(thread.id);
         return;
       }
       if (clicked !== "delete") return;
-      if (appSettingsConfirmThreadDelete) {
-        const confirmed = await api.dialogs.confirm(
-          [
-            `Delete thread "${thread.title}"?`,
-            "This permanently clears conversation history for this thread.",
-          ].join("\n"),
-        );
-        if (!confirmed) {
-          return;
-        }
-      }
-      await deleteThread(threadRef);
+      await deleteWithConfirmation(threadRef);
     },
     [
-      appSettingsConfirmThreadDelete,
-      copyPathToClipboard,
-      copyThreadIdToClipboard,
-      deleteThread,
-      markThreadUnread,
+      copyThreadId,
+      copyWorkspacePath,
+      deleteWithConfirmation,
+      markUnread,
       memberProjectByScopedKey,
       project.cwd,
     ],
@@ -2525,7 +2484,6 @@ interface SidebarProjectsContentProps {
   handleProjectDragEnd: (event: DragEndEvent) => void;
   handleProjectDragCancel: (event: DragCancelEvent) => void;
   handleNewThread: ReturnType<typeof useNewThreadHandler>["handleNewThread"];
-  archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   sortedProjects: readonly SidebarProjectSnapshot[];
   expandedThreadListsByProject: ReadonlySet<string>;
@@ -2565,7 +2523,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleProjectDragEnd,
     handleProjectDragCancel,
     handleNewThread,
-    archiveThread,
     deleteThread,
     sortedProjects,
     expandedThreadListsByProject,
@@ -2715,7 +2672,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         }
                         newThreadShortcutLabel={newThreadShortcutLabel}
                         handleNewThread={handleNewThread}
-                        archiveThread={archiveThread}
                         deleteThread={deleteThread}
                         threadJumpLabelByKey={threadJumpLabelByKey}
                         attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
@@ -2747,7 +2703,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 }
                 newThreadShortcutLabel={newThreadShortcutLabel}
                 handleNewThread={handleNewThread}
-                archiveThread={archiveThread}
                 deleteThread={deleteThread}
                 threadJumpLabelByKey={threadJumpLabelByKey}
                 attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
@@ -2791,7 +2746,7 @@ export default function Sidebar() {
   }));
   const { updateSettings } = useUpdateSettings();
   const { handleNewThread } = useNewThreadHandler();
-  const { archiveThread, deleteThread } = useThreadActions();
+  const { deleteThread } = useThreadActions();
   const routeThreadRef = useParams({
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
@@ -3423,7 +3378,6 @@ export default function Sidebar() {
             handleProjectDragEnd={handleProjectDragEnd}
             handleProjectDragCancel={handleProjectDragCancel}
             handleNewThread={handleNewThread}
-            archiveThread={archiveThread}
             deleteThread={deleteThread}
             sortedProjects={sortedProjects}
             expandedThreadListsByProject={expandedThreadListsByProject}

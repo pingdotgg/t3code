@@ -45,6 +45,7 @@ interface ChatHeaderProps {
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
+  onOpenProjectSwitcher: () => void;
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
 }
@@ -71,6 +72,7 @@ export const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
+  onOpenProjectSwitcher,
   onToggleTerminal,
   onToggleDiff,
 }: ChatHeaderProps) {
@@ -84,14 +86,18 @@ export const ChatHeader = memo(function ChatHeader({
             aria-label="Thread breadcrumb"
             className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
           >
-            <span
-              className="inline-flex min-w-0 shrink items-center gap-1.5 rounded-md border border-border/80 bg-muted/30 px-2 py-0.5 text-sm font-medium text-muted-foreground shadow-sm"
+            <button
+              type="button"
+              aria-label="Switch project"
+              aria-haspopup="dialog"
+              onClick={onOpenProjectSwitcher}
+              className="inline-flex min-w-0 shrink cursor-pointer items-center gap-1.5 rounded-md border border-border/80 bg-muted/30 px-2 py-0.5 text-sm font-medium text-muted-foreground shadow-sm transition-colors hover:border-border hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
               title={activeProjectName}
             >
               <FolderIcon className="size-3 shrink-0 fill-current opacity-70" aria-hidden />
               <span className="-my-0.5 w-px self-stretch bg-border/80" aria-hidden />
-              <span className="min-w-0 truncate text-white">{activeProjectName}</span>
-            </span>
+              <span className="min-w-0 truncate">{activeProjectName}</span>
+            </button>
             <ChevronRightIcon className="size-2.5 shrink-0 fill-muted-foreground/70" aria-hidden />
             <h2
               className="min-w-0 shrink truncate text-sm font-medium text-foreground"

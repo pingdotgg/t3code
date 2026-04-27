@@ -1,13 +1,25 @@
 import { scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
+import type { ScopedThreadRef } from "@forma/contracts";
 import { useNavigate } from "@tanstack/react-router";
-import { IconMagnifyingglass as SearchIcon } from "symbols-react";
-import { useCallback, useMemo, type ReactNode } from "react";
+import { IconEllipsis as EllipsisIcon, IconMagnifyingglass as SearchIcon } from "symbols-react";
+import {
+  useCallback,
+  useMemo,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { isElectron } from "../env";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
+import { useThreadRowActions } from "../hooks/useThreadRowActions";
 import { openProjectOrCreateThread } from "../lib/chatThreadActions";
+import { MICRO_FADE_MOTION_CLASS_NAME } from "../lib/motion";
 import { cn } from "../lib/utils";
 import {
   selectProjectsAcrossEnvironments,
@@ -16,6 +28,7 @@ import {
 } from "../store";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { formatRelativeTimeLabel } from "../timestampFormat";
+import type { Project, SidebarThreadSummary } from "../types";
 import { useUiStateStore } from "../uiStateStore";
 import {
   getNoActiveThreadProjectItems,
@@ -26,11 +39,11 @@ import { LogomarkForma } from "./LogomarkForma";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { DesktopSidebarReopenButton } from "./sidebar/DesktopSidebarReopenButton";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
-import { AddProjectIcon, NewThreadIcon, SettingsHexIcon } from "./icons/custom";
+import { AddProjectIcon, NewThreadIcon, SettingsHexIcon, SidebarArchiveIcon } from "./icons/custom";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./ui/menu";
 import { SidebarInset, SidebarTrigger } from "./ui/sidebar";
-import type { Project, SidebarThreadSummary } from "../types";
 
 const ACTION_CARD_CLASS_NAME =
   "relative isolate h-auto min-h-[11.5rem] w-full overflow-hidden rounded-[20px] border-border/55 bg-card/34 px-5 py-5 text-left whitespace-normal shadow-md shadow-black/5 transition-all duration-150 ease-out before:rounded-[19px] hover:-translate-y-0.5 hover:border-border/80 hover:bg-accent/24 hover:shadow-lg hover:ring-4 hover:ring-foreground/6 hover:ring-offset-4 hover:ring-offset-background active:translate-y-0 active:scale-[0.985] active:shadow-md";
@@ -82,49 +95,269 @@ function getThreadTimestamp(
   return thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt;
 }
 
-function renderThreadSubtitle(projectName: string | null, branch: string | null): string {
-  const parts: string[] = [];
-  if (projectName) {
-    parts.push(projectName);
-  }
-  if (branch) {
-    parts.push(`#${branch}`);
-  }
-  return parts.join(" · ");
+function resolveThreadProjectLabel(
+  item: ReturnType<typeof getNoActiveThreadRecentThreadItems>[number],
+) {
+  return item.project?.name ?? item.thread.worktreePath ?? "Unknown project";
+}
+
+function resolveThreadWorkspacePath(
+  item: ReturnType<typeof getNoActiveThreadRecentThreadItems>[number],
+): string | null {
+  return item.thread.worktreePath ?? item.project?.cwd ?? null;
+}
+
+function stopPointerEventPropagation(event: PointerEvent<HTMLElement>) {
+  event.stopPropagation();
+}
+
+function stopMouseEventPropagation(event: MouseEvent<HTMLElement>) {
+  event.stopPropagation();
 }
 
 function ThreadListRow({
   item,
-  onClick,
+  confirmThreadArchive,
+  onOpen,
+  archiveNow,
+  copyThreadId,
+  copyWorkspacePath,
+  deleteWithConfirmation,
+  markUnread,
 }: {
   item: ReturnType<typeof getNoActiveThreadRecentThreadItems>[number];
-  onClick: () => void;
+  confirmThreadArchive: boolean;
+  onOpen: () => void;
+  archiveNow: (threadRef: ScopedThreadRef) => Promise<void>;
+  copyThreadId: ReturnType<typeof useThreadRowActions>["copyThreadId"];
+  copyWorkspacePath: ReturnType<typeof useThreadRowActions>["copyWorkspacePath"];
+  deleteWithConfirmation: ReturnType<typeof useThreadRowActions>["deleteWithConfirmation"];
+  markUnread: ReturnType<typeof useThreadRowActions>["markUnread"];
 }) {
-  const subtitle = renderThreadSubtitle(item.projectName, item.thread.branch);
+  const [isConfirmingArchive, setIsConfirmingArchive] = useState(false);
+  const threadRef = scopeThreadRef(item.thread.environmentId, item.thread.id);
+  const isThreadRunning =
+    item.thread.session?.status === "running" && item.thread.session.activeTurnId != null;
+  const canArchive = !isThreadRunning;
+  const workspacePath = resolveThreadWorkspacePath(item);
+  const defaultMetaClassName = cn(
+    "transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] group-hover/recent-thread:opacity-0 group-focus-within/recent-thread:opacity-0 pointer-coarse:opacity-100",
+    isConfirmingArchive && "opacity-0",
+  );
+  const actionRailClassName = cn(
+    "pointer-events-none absolute top-1/2 right-0 flex -translate-y-1/2 items-center gap-1 opacity-0 group-hover/recent-thread:pointer-events-auto group-hover/recent-thread:opacity-100 group-focus-within/recent-thread:pointer-events-auto group-focus-within/recent-thread:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100",
+    MICRO_FADE_MOTION_CLASS_NAME,
+    isConfirmingArchive && "pointer-events-auto opacity-100",
+  );
+
+  const clearArchiveConfirmation = useCallback(() => {
+    setIsConfirmingArchive(false);
+  }, []);
+
+  const handleBlurCapture = useCallback(
+    (event: FocusEvent<HTMLDivElement>) => {
+      const currentTarget = event.currentTarget;
+      requestAnimationFrame(() => {
+        if (currentTarget.contains(document.activeElement)) {
+          return;
+        }
+        clearArchiveConfirmation();
+      });
+    },
+    [clearArchiveConfirmation],
+  );
+
+  const handleRowKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (event.target !== event.currentTarget) {
+        return;
+      }
+      if (event.key !== "Enter" && event.key !== " ") {
+        return;
+      }
+      event.preventDefault();
+      onOpen();
+    },
+    [onOpen],
+  );
+
+  const handleArchiveConfirmation = useCallback(
+    (event: MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      clearArchiveConfirmation();
+      void archiveNow(threadRef);
+    },
+    [archiveNow, clearArchiveConfirmation, threadRef],
+  );
+
+  const handleStartArchiveConfirmation = useCallback((event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsConfirmingArchive(true);
+  }, []);
+
+  const handleArchiveImmediately = useCallback(
+    (event: MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      void archiveNow(threadRef);
+    },
+    [archiveNow, threadRef],
+  );
+
+  const handleArchiveFromMenu = useCallback(() => {
+    clearArchiveConfirmation();
+    void archiveNow(threadRef);
+  }, [archiveNow, clearArchiveConfirmation, threadRef]);
+
+  const handleDelete = useCallback(() => {
+    clearArchiveConfirmation();
+    void deleteWithConfirmation(threadRef);
+  }, [clearArchiveConfirmation, deleteWithConfirmation, threadRef]);
+
+  const handleMarkUnread = useCallback(() => {
+    markUnread({
+      threadRef,
+      latestTurnCompletedAt: item.thread.latestTurn?.completedAt,
+    });
+  }, [item.thread.latestTurn?.completedAt, markUnread, threadRef]);
+
+  const handleCopyPath = useCallback(() => {
+    copyWorkspacePath(workspacePath);
+  }, [copyWorkspacePath, workspacePath]);
+
+  const handleCopyThreadId = useCallback(() => {
+    copyThreadId(item.thread.id);
+  }, [copyThreadId, item.thread.id]);
 
   return (
-    <button
-      type="button"
-      data-testid={`no-active-thread-thread-row-${item.thread.id}`}
-      className="flex w-full items-start gap-4 px-5 py-4 text-left transition-colors hover:bg-accent/24 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
-      onClick={onClick}
+    <div
+      className="group/recent-thread"
+      onBlurCapture={handleBlurCapture}
+      onMouseLeave={clearArchiveConfirmation}
     >
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <ThreadRowLeadingStatus thread={item.thread} />
-          <span className="truncate text-sm font-medium text-foreground">{item.thread.title}</span>
+      <div
+        role="button"
+        tabIndex={0}
+        data-testid={`no-active-thread-thread-row-${item.thread.id}`}
+        className="flex w-full items-start gap-4 rounded-[1.35rem] px-5 py-4 text-left transition-colors hover:bg-accent/18 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:bg-accent/18"
+        onClick={onOpen}
+        onKeyDown={handleRowKeyDown}
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-2">
+            <ThreadRowLeadingStatus thread={item.thread} compact />
+            <span className="truncate text-sm font-medium leading-5 text-foreground">
+              {item.thread.title}
+            </span>
+          </div>
+          <div className="mt-2 flex min-w-0 items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground/72">
+              <span className="truncate" title={workspacePath ?? undefined}>
+                {resolveThreadProjectLabel(item)}
+              </span>
+              {item.thread.branch ? (
+                <span className="inline-flex shrink-0 items-center rounded-full border border-border/65 bg-background/72 px-2 py-0.5 text-[10px] font-medium tracking-tight text-muted-foreground/80">
+                  #{item.thread.branch}
+                </span>
+              ) : null}
+            </div>
+
+            <div className="relative flex min-w-[5.75rem] shrink-0 flex-col items-end gap-2 pr-9">
+              <span className={cn("text-[11px] text-muted-foreground/68", defaultMetaClassName)}>
+                {formatRelativeTimeLabel(getThreadTimestamp(item.thread))}
+              </span>
+              <div className={cn("text-muted-foreground/62", defaultMetaClassName)}>
+                <ThreadRowTrailingStatus thread={item.thread} />
+              </div>
+
+              <div
+                data-testid={`no-active-thread-thread-actions-${item.thread.id}`}
+                className={actionRailClassName}
+              >
+                {isConfirmingArchive ? (
+                  <button
+                    type="button"
+                    data-testid={`no-active-thread-thread-archive-confirm-${item.thread.id}`}
+                    aria-label={`Confirm archive ${item.thread.title}`}
+                    className="pointer-coarse:hidden inline-flex h-7 cursor-pointer items-center rounded-full bg-destructive/12 px-2.5 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
+                    onPointerDown={stopPointerEventPropagation}
+                    onClick={handleArchiveConfirmation}
+                  >
+                    Confirm
+                  </button>
+                ) : canArchive ? (
+                  confirmThreadArchive ? (
+                    <button
+                      type="button"
+                      data-testid={`no-active-thread-thread-archive-${item.thread.id}`}
+                      aria-label={`Archive ${item.thread.title}`}
+                      className="pointer-coarse:hidden inline-flex size-7 cursor-pointer items-center justify-center rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
+                      onPointerDown={stopPointerEventPropagation}
+                      onClick={handleStartArchiveConfirmation}
+                    >
+                      <SidebarArchiveIcon className="size-3.5" />
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      data-testid={`no-active-thread-thread-archive-${item.thread.id}`}
+                      aria-label={`Archive ${item.thread.title}`}
+                      className="pointer-coarse:hidden inline-flex size-7 cursor-pointer items-center justify-center rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
+                      onPointerDown={stopPointerEventPropagation}
+                      onClick={handleArchiveImmediately}
+                    >
+                      <SidebarArchiveIcon className="size-3.5" />
+                    </button>
+                  )
+                ) : null}
+
+                <div
+                  onClick={stopMouseEventPropagation}
+                  onPointerDown={stopPointerEventPropagation}
+                >
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <Button
+                          aria-label="Recent thread actions"
+                          size="icon-xs"
+                          variant="ghost"
+                          data-testid={`no-active-thread-thread-menu-trigger-${item.thread.id}`}
+                          className="size-7 rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground data-[popup-open]:bg-accent/80 data-[popup-open]:text-foreground"
+                        />
+                      }
+                    >
+                      <EllipsisIcon aria-hidden="true" className="size-3.5" />
+                    </MenuTrigger>
+                    <MenuPopup align="end" side="bottom" className="min-w-40">
+                      <MenuItem
+                        disabled={!item.thread.latestTurn?.completedAt}
+                        onClick={handleMarkUnread}
+                      >
+                        Mark unread
+                      </MenuItem>
+                      <MenuItem disabled={!workspacePath} onClick={handleCopyPath}>
+                        Copy path
+                      </MenuItem>
+                      <MenuItem onClick={handleCopyThreadId}>Copy thread ID</MenuItem>
+                      {canArchive ? (
+                        <MenuItem onClick={handleArchiveFromMenu}>Archive</MenuItem>
+                      ) : null}
+                      <MenuSeparator />
+                      <MenuItem variant="destructive" onClick={handleDelete}>
+                        Delete
+                      </MenuItem>
+                    </MenuPopup>
+                  </Menu>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        {subtitle.length > 0 ? (
-          <p className="mt-1 truncate text-xs text-muted-foreground">{subtitle}</p>
-        ) : null}
       </div>
-      <div className="flex shrink-0 items-center gap-3 pl-2">
-        <span className="text-xs text-muted-foreground">
-          {formatRelativeTimeLabel(getThreadTimestamp(item.thread))}
-        </span>
-        <ThreadRowTrailingStatus thread={item.thread} />
-      </div>
-    </button>
+    </div>
   );
 }
 
@@ -168,11 +401,14 @@ export function NoActiveThreadState() {
   const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const settings = useSettings((state) => ({
+    confirmThreadArchive: state.confirmThreadArchive,
     defaultThreadEnvMode: state.defaultThreadEnvMode,
     sidebarProjectSortOrder: state.sidebarProjectSortOrder,
     sidebarThreadSortOrder: state.sidebarThreadSortOrder,
   }));
   const { handleNewThread } = useHandleNewThread();
+  const { archiveNow, copyThreadId, copyWorkspacePath, deleteWithConfirmation, markUnread } =
+    useThreadRowActions();
   const setCommandPaletteOpen = useCommandPaletteStore((store) => store.setOpen);
   const openAddProject = useCommandPaletteStore((store) => store.openAddProject);
   const openNewThreadIn = useCommandPaletteStore((store) => store.openNewThreadIn);
@@ -185,18 +421,14 @@ export function NoActiveThreadState() {
       }),
     [projects, threads],
   );
-  const projectNameById = useMemo(
-    () => new Map(projects.map((project) => [project.id, project.name] as const)),
-    [projects],
-  );
   const recentThreadItems = useMemo(
     () =>
       getNoActiveThreadRecentThreadItems({
+        projects,
         threads,
-        projectNameById,
         sortOrder: settings.sidebarThreadSortOrder,
       }),
-    [projectNameById, settings.sidebarThreadSortOrder, threads],
+    [projects, settings.sidebarThreadSortOrder, threads],
   );
   const projectItems = useMemo(
     () =>
@@ -370,13 +602,20 @@ export function NoActiveThreadState() {
             {variant === "recent-threads" ? (
               <section className="space-y-3">
                 <div className={SECTION_HEADING_CLASS_NAME}>Recent threads</div>
-                <Card className="overflow-hidden rounded-[1.75rem] border-border/55 bg-card/24 shadow-none">
+                <Card className="overflow-hidden rounded-[1.75rem] border-border/45 bg-card/20 shadow-none">
                   {recentThreadItems.map((item, index) => (
-                    <div
-                      key={item.thread.id}
-                      className={cn(index > 0 && "border-t border-border/60")}
-                    >
-                      <ThreadListRow item={item} onClick={() => void openThread(item.thread)} />
+                    <div key={`${item.thread.environmentId}:${item.thread.id}`}>
+                      {index > 0 ? <div className="mx-5 h-px bg-border/45" /> : null}
+                      <ThreadListRow
+                        item={item}
+                        confirmThreadArchive={settings.confirmThreadArchive}
+                        onOpen={() => void openThread(item.thread)}
+                        archiveNow={archiveNow}
+                        copyThreadId={copyThreadId}
+                        copyWorkspacePath={copyWorkspacePath}
+                        deleteWithConfirmation={deleteWithConfirmation}
+                        markUnread={markUnread}
+                      />
                     </div>
                   ))}
                 </Card>
@@ -388,10 +627,8 @@ export function NoActiveThreadState() {
                 <div className={SECTION_HEADING_CLASS_NAME}>Projects</div>
                 <Card className="overflow-hidden rounded-[1.75rem] border-border/55 bg-card/24 shadow-none">
                   {projectItems.map((item, index) => (
-                    <div
-                      key={`${item.project.environmentId}:${item.project.id}`}
-                      className={cn(index > 0 && "border-t border-border/60")}
-                    >
+                    <div key={`${item.project.environmentId}:${item.project.id}`}>
+                      {index > 0 ? <div className="mx-5 h-px bg-border/60" /> : null}
                       <ProjectListRow
                         item={item}
                         onClick={() => void handleProjectRowClick(item.project)}

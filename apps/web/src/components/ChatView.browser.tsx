@@ -2032,6 +2032,107 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("reveals no-active-thread recent-thread quick actions on hover and does not navigate when showing archive confirmation", async () => {
+    localStorage.setItem(
+      "forma:client-settings:v1",
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        confirmThreadArchive: true,
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-no-active-thread-hover-actions" as MessageId,
+        targetText: "no active thread hover actions",
+      }),
+      initialPath: "/",
+      configureFixture: clearWelcomeBootstrapTargets,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const threadRow = page.getByTestId(`no-active-thread-thread-row-${THREAD_ID}`);
+      const actionRail = `[data-testid="no-active-thread-thread-actions-${THREAD_ID}"]`;
+      await threadRow.hover();
+      await vi.waitFor(
+        () => {
+          const rail = document.querySelector<HTMLElement>(actionRail);
+          expect(rail).not.toBeNull();
+          expect(window.getComputedStyle(rail!).opacity).toBe("1");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByTestId(`no-active-thread-thread-archive-${THREAD_ID}`).click();
+      await expect
+        .element(page.getByTestId(`no-active-thread-thread-archive-confirm-${THREAD_ID}`))
+        .toBeVisible();
+      expect(mounted.router.state.location.pathname).toBe("/");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the no-active-thread recent-thread ellipsis menu without navigating and runs mark unread", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-no-active-thread-menu-actions" as MessageId,
+      targetText: "no active thread menu actions",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...snapshot,
+        threads: snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? {
+                ...thread,
+                latestTurn: {
+                  turnId: "turn-no-active-thread-menu" as TurnId,
+                  state: "completed",
+                  requestedAt: isoAt(1_000),
+                  startedAt: isoAt(1_001),
+                  completedAt: isoAt(1_010),
+                  assistantMessageId: null,
+                },
+                updatedAt: isoAt(1_010),
+              }
+            : thread,
+        ),
+      },
+      initialPath: "/",
+      configureFixture: clearWelcomeBootstrapTargets,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const threadRow = page.getByTestId(`no-active-thread-thread-row-${THREAD_ID}`);
+      await threadRow.hover();
+      await page.getByTestId(`no-active-thread-thread-menu-trigger-${THREAD_ID}`).click();
+
+      await expect.element(page.getByRole("menuitem", { name: "Mark unread" })).toBeVisible();
+      await expect.element(page.getByRole("menuitem", { name: "Copy path" })).toBeVisible();
+      await expect.element(page.getByRole("menuitem", { name: "Copy thread ID" })).toBeVisible();
+      await expect.element(page.getByRole("menuitem", { name: "Archive" })).toBeVisible();
+      await expect.element(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
+      await expect
+        .element(page.getByText("Rename thread", { exact: true }))
+        .not.toBeInTheDocument();
+
+      await page.getByRole("menuitem", { name: "Mark unread" }).click();
+      await vi.waitFor(
+        () => {
+          expect(useUiStateStore.getState().threadLastVisitedAtById[THREAD_KEY]).toBeDefined();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(mounted.router.state.location.pathname).toBe("/");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("opens the new-thread-in command palette submenu from the no-active-thread home surface", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

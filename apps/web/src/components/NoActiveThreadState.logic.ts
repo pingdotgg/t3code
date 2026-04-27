@@ -10,7 +10,7 @@ export type NoActiveThreadStateVariant = "no-projects" | "projects-no-threads" |
 
 export interface NoActiveThreadRecentThreadItem {
   thread: SidebarThreadSummary;
-  projectName: string | null;
+  project: Project | null;
 }
 
 export interface NoActiveThreadProjectItem {
@@ -41,18 +41,27 @@ export function resolveNoActiveThreadStateVariant(input: {
 }
 
 export function getNoActiveThreadRecentThreadItems(input: {
+  projects: readonly Project[];
   threads: readonly SidebarThreadSummary[];
-  projectNameById: ReadonlyMap<Project["id"], string>;
   sortOrder: SidebarThreadSortOrder;
   limit?: number;
 }): NoActiveThreadRecentThreadItem[] {
   const limit = input.limit ?? NO_ACTIVE_THREAD_LIST_LIMIT;
+  const projectByKey = new Map(
+    input.projects.map((project) => [
+      projectThreadKey({ environmentId: project.environmentId, projectId: project.id }),
+      project,
+    ]),
+  );
 
   return sortThreads(getVisibleThreads(input.threads), input.sortOrder)
     .slice(0, limit)
     .map((thread) => ({
       thread,
-      projectName: input.projectNameById.get(thread.projectId) ?? null,
+      project:
+        projectByKey.get(
+          projectThreadKey({ environmentId: thread.environmentId, projectId: thread.projectId }),
+        ) ?? null,
     }));
 }
 

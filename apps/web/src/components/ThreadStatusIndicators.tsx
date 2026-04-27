@@ -201,7 +201,13 @@ export function ThreadStatusLabel({
  * like the command palette. Shows the PR state icon (if present) and the
  * thread status glyph, matching the sidebar's leading indicators.
  */
-export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
+export function ThreadRowLeadingStatus({
+  thread,
+  compact = false,
+}: {
+  thread: SidebarThreadSummary;
+  compact?: boolean;
+}) {
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const lastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
@@ -233,7 +239,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   }
 
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5">
+    <span className={cn("inline-flex shrink-0 items-center", compact ? "gap-1" : "gap-1.5")}>
       {prStatus
         ? (() => {
             const PrIcon = prStatus.icon;
@@ -257,7 +263,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
             );
           })()
         : null}
-      {threadStatus ? <ThreadStatusLabel status={threadStatus} /> : null}
+      {threadStatus ? <ThreadStatusLabel status={threadStatus} compact={compact} /> : null}
     </span>
   );
 }

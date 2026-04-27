@@ -457,6 +457,13 @@ function OpenCommandPaletteDialog() {
       }),
     [openProjectFromSearch, projects],
   );
+  const projectSwitcherView = useMemo<CommandPaletteView>(
+    () => ({
+      addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+      groups: [{ value: "projects", label: "Projects", items: projectSearchItems }],
+    }),
+    [projectSearchItems],
+  );
 
   const projectThreadItems = useMemo(
     () =>
@@ -633,12 +640,18 @@ function OpenCommandPaletteDialog() {
       return;
     }
 
+    if (openIntent?.kind === "switch-project") {
+      clearOpenIntent();
+      pushPaletteView(projectSwitcherView);
+      return;
+    }
+
     if (openIntent?.kind !== "new-thread-in") {
       return;
     }
     clearOpenIntent();
     pushPaletteView(newThreadInView);
-  }, [clearOpenIntent, newThreadInView, openAddProjectFlow, openIntent]);
+  }, [clearOpenIntent, newThreadInView, openAddProjectFlow, openIntent, projectSwitcherView]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
