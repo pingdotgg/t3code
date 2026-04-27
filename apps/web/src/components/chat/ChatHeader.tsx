@@ -11,7 +11,7 @@ import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
 import {
   IconChevronRight as ChevronRightIcon,
-  IconFolder as FolderIcon,
+  IconCube as CubeIcon,
   IconPlusminus as DiffIcon,
 } from "symbols-react";
 import { TerminalToggleIcon } from "../icons/custom";
@@ -94,7 +94,7 @@ export const ChatHeader = memo(function ChatHeader({
               className="inline-flex min-w-0 shrink cursor-pointer items-center gap-1.5 rounded-md border border-border/80 bg-muted/30 px-2 py-0.5 text-sm font-medium text-muted-foreground shadow-sm transition-colors hover:border-border hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
               title={activeProjectName}
             >
-              <FolderIcon className="size-3 shrink-0 fill-current opacity-70" aria-hidden />
+              <CubeIcon className="size-4 shrink-0 fill-current opacity-70" aria-hidden />
               <span className="-my-0.5 w-px self-stretch bg-border/80" aria-hidden />
               <span className="min-w-0 truncate">{activeProjectName}</span>
             </button>

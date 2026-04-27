@@ -15,6 +15,7 @@ import {
   IconArrowUp as ArrowUpIcon,
   IconArrowshapeTurnUpBackward as CornerLeftUpIcon,
   IconBubbleLeftAndTextBubbleRight as ThreadIcon,
+  IconCube as CubeIcon,
   IconFolder as FolderIcon,
   IconFolderBadgePlus as FolderPlusIcon,
 } from "symbols-react";
@@ -459,7 +460,7 @@ function OpenCommandPaletteDialog() {
   );
   const projectSwitcherView = useMemo<CommandPaletteView>(
     () => ({
-      addonIcon: <FolderIcon className={ADDON_ICON_CLASS} />,
+      addonIcon: <CubeIcon className={ADDON_ICON_CLASS} />,
       groups: [{ value: "projects", label: "Projects", items: projectSearchItems }],
     }),
     [projectSearchItems],
