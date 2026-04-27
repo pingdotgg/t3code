@@ -277,7 +277,9 @@ function AuthenticatedTracingBootstrap() {
   return null;
 }
 
-function selectNotificationSettings(settings: NotificationSettingsSlice): NotificationSettingsSlice {
+function selectNotificationSettings(
+  settings: NotificationSettingsSlice,
+): NotificationSettingsSlice {
   return {
     notificationSoundEnabled: settings.notificationSoundEnabled,
     notificationSoundOnTurnEnd: settings.notificationSoundOnTurnEnd,
