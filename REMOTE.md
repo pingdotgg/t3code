@@ -47,6 +47,7 @@ From there, connect from another device in either of these ways:
 - scan the QR code on your phone
 - in the desktop app, enter the full pairing URL
 - in the desktop app, enter the host and token separately
+- in the hosted web app, open a hosted pairing URL when the backend is reachable over HTTPS
 
 Use `t3 serve --help` for the full flag reference. It supports the same general startup options as the normal server command, including an optional `cwd` argument.
 
@@ -67,6 +68,20 @@ Instead:
 
 After pairing, future access is session-based. You do not need to keep reusing the original token unless you are pairing a new device.
 
+## Hosted Web App Pairing
+
+The hosted web app at `https://app.t3.codes` can save a remote backend in browser local storage from a URL like:
+
+```text
+https://app.t3.codes/pair?host=https://backend.example.com:3773#token=PAIRCODE
+```
+
+Use hosted pairing when the backend is reachable from the browser over HTTPS/WSS. This includes a backend behind a trusted HTTPS tunnel or another HTTPS endpoint you operate.
+
+Do not use hosted pairing for plain HTTP LAN URLs such as `http://192.168.x.y:3773`. Browsers block an HTTPS page from connecting to an insecure HTTP or WS backend. For those endpoints, use the direct pairing URL shown by the desktop app or CLI from a client that can open that HTTP URL directly.
+
+Hosted pairing does not proxy traffic through T3 Code. The browser still connects directly to the backend URL in the pairing link.
+
 ## Managing Access Later
 
 Use `t3 auth` to manage access after the initial pairing flow.
@@ -84,4 +99,5 @@ Use `t3 auth --help` and the nested subcommand help pages for the full reference
 - Treat pairing URLs and pairing tokens like passwords.
 - Prefer binding `--host` to a trusted private address, such as a Tailnet IP, instead of exposing the server broadly.
 - Anyone with a valid pairing credential can create a session until that credential expires or is revoked.
+- Hosted pairing links keep the credential in the URL hash so it is not sent to the hosted app server, but it can still be exposed through browser history, screenshots, logs, or copy/paste.
 - Use `t3 auth` to revoke credentials or sessions you no longer trust.

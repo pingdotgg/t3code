@@ -93,6 +93,8 @@ Examples:
 
 A known environment may or may not know the target `environmentId` before first successful connect.
 
+In the hosted web app, known environments are browser-local. A hosted pairing URL can create the saved entry, but it does not give the hosted app a server-side control plane or a copy of the session state.
+
 ### AccessEndpoint
 
 An `AccessEndpoint` is one concrete way to reach a known environment.
@@ -107,6 +109,26 @@ A single environment may have many endpoints:
 - a desktop-managed SSH tunnel that resolves to a local forwarded WebSocket URL
 
 The environment stays the same. Only the access path changes.
+
+### Hosted pairing request
+
+A hosted pairing request is a bootstrap URL for the static web app, not a transport.
+
+Example:
+
+```text
+https://app.t3.codes/pair?host=https://backend.example.com:3773#token=PAIRCODE
+```
+
+The hosted app reads the `host` parameter and pairing token, exchanges the token directly with that backend, then saves the resulting environment record in browser local storage.
+
+Important constraints:
+
+- the hosted app does not proxy HTTP or WebSocket traffic
+- the backend must still be reachable directly from the browser
+- HTTPS pages can only connect to HTTPS/WSS backends
+- HTTP LAN endpoints should keep using direct desktop or CLI pairing URLs
+- the token belongs in the URL hash so it is not sent to the hosted app origin
 
 ### RepositoryIdentity
 
@@ -150,6 +172,8 @@ Benefits:
 - works for desktop, mobile, and web
 - no client-specific process management required
 - best fit for hosted or self-managed remote T3 deployments
+
+Browser security rules are part of this access method. A hosted HTTPS web client can connect to `wss://` backends, but it cannot connect to plain `ws://` or `http://` LAN backends because that would be mixed content.
 
 ### 2. Tunneled WebSocket access
 
@@ -266,6 +290,8 @@ That means:
 T3 already supports a WebSocket auth token on the server. That should become a first-class part of environment access rather than remaining an incidental query parameter convention.
 
 For publicly reachable environments, authenticated access should be treated as required.
+
+Hosted pairing should be treated as a client-side convenience only. The hosted app must not receive pairing tokens through query parameters, must not store pairing state server-side, and must not imply that an HTTP backend is safe or reachable from an HTTPS browser context.
 
 ## Relationship to Zed
 
