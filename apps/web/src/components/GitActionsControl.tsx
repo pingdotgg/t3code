@@ -9,10 +9,10 @@ import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-quer
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
   IconChevronDown as ChevronDownIcon,
+  IconIcloudAndArrowUp as CloudUploadIcon,
   IconFolderBadgePlus as FolderGit2Icon,
   IconInfoCircle as InfoIcon,
   IconPointToprightArrowTriangleBackwardToPointBottomleftFilledScurvepath as GitCommitIcon,
-  IconIcloudAndArrowUpFill as CloudUploadIcon,
 } from "symbols-react";
 import { GitHubIcon } from "./Icons";
 import {
@@ -198,9 +198,9 @@ const COMMIT_DIALOG_DESCRIPTION =
   "Review and confirm your commit. Leave the message blank to auto-generate one.";
 
 function GitActionItemIcon({ icon }: { icon: GitActionIconName }) {
-  if (icon === "commit") return <GitCommitIcon className="text-current" />;
+  if (icon === "commit") return <GitCommitIcon className="text-current size-3" />;
   if (icon === "push") return <CloudUploadIcon className="text-current" />;
-  return <GitHubIcon className="text-current" />;
+  return <GitHubIcon className="text-current size-3" />;
 }
 
 function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {

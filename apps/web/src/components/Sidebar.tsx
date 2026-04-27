@@ -2279,9 +2279,9 @@ function HarnessWordmark() {
   return (
     <span
       aria-label={APP_BASE_NAME}
-      className="inline-flex shrink-0 items-center gap-1.5 text-md font-semibold tracking-tight text-foreground lowercase"
+      className="inline-flex shrink-0 items-center gap-2 text-lg font-semibold tracking-tight text-foreground lowercase"
     >
-      <LogomarkForma aria-hidden="true" className="h-4 w-auto shrink-0" />
+      <LogomarkForma aria-hidden="true" className="h-5 w-auto shrink-0" />
       <span>{APP_BASE_NAME}</span>
     </span>
   );
@@ -2437,7 +2437,7 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
           render={
             <Link
               aria-label="Go to threads"
-              className="ml-1 flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-md outline-hidden ring-ring transition-colors hover:text-foreground focus-visible:ring-2"
+              className="flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-md outline-hidden ring-ring transition-colors hover:text-foreground focus-visible:ring-2"
               to="/"
             >
               <HarnessWordmark />
