@@ -431,6 +431,76 @@ describe("GeneralSettingsPanel observability", () => {
       .toBeInTheDocument();
   });
 
+  it("hides advertised endpoint rows when desktop network access is disabled", async () => {
+    window.desktopBridge = createDesktopBridgeStub({
+      serverExposureState: {
+        mode: "local-only",
+        endpointUrl: null,
+        advertisedHost: null,
+      },
+      advertisedEndpoints: [
+        {
+          id: "loopback",
+          label: "This machine",
+          provider: {
+            id: "desktop-core",
+            label: "Desktop",
+            kind: "manual",
+            isAddon: false,
+          },
+          httpBaseUrl: "http://127.0.0.1:3773/",
+          wsBaseUrl: "ws://127.0.0.1:3773/",
+          reachability: "loopback",
+          compatibility: {
+            hostedHttpsApp: "mixed-content-blocked",
+            desktopApp: "compatible",
+          },
+          source: "desktop-core",
+          status: "available",
+          isDefault: true,
+        },
+        {
+          id: "tailscale-ip",
+          label: "Tailscale IP",
+          provider: {
+            id: "tailscale",
+            label: "Tailscale",
+            kind: "private-network",
+            isAddon: true,
+          },
+          httpBaseUrl: "http://100.105.39.17:3773/",
+          wsBaseUrl: "ws://100.105.39.17:3773/",
+          reachability: "private-network",
+          compatibility: {
+            hostedHttpsApp: "mixed-content-blocked",
+            desktopApp: "compatible",
+          },
+          source: "desktop-addon",
+          status: "available",
+        },
+      ],
+    });
+    authAccessHarness.setSnapshot({
+      pairingLinks: [],
+      clientSessions: [],
+    });
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("Limited to this machine.")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "This machine", exact: true }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Tailscale IP", exact: true }))
+      .not.toBeInTheDocument();
+  });
+
   it("shows diagnostics inside About with a single logs-folder action", async () => {
     setServerConfigSnapshot(createBaseServerConfig());
 
