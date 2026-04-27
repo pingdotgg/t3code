@@ -142,11 +142,7 @@ export const ChatMinimap = memo(function ChatMinimap({
               activeButtonRef={activeButtonRef}
             />
           ) : (
-            <DashesStrip
-              entries={entries}
-              activeIndex={activeIndex}
-              navHeight={navHeight}
-            />
+            <DashesStrip entries={entries} activeIndex={activeIndex} navHeight={navHeight} />
           )}
         </PreviewCardTrigger>
       </nav>
