@@ -1281,7 +1281,7 @@ describe("ProviderCommandReactor", () => {
           providerName: "codex",
           runtimeMode: "approval-required",
           activeTurnId: asTurnId("turn-1"),
-          lastError: null,
+          lastError: "old provider error",
           updatedAt: now,
         },
         createdAt: now,
@@ -1302,6 +1302,12 @@ describe("ProviderCommandReactor", () => {
     expect(harness.interruptTurn.mock.calls[0]?.[0]).toEqual({
       threadId: "thread-1",
     });
+
+    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session?.status).toBe("ready");
+    expect(thread?.session?.activeTurnId).toBeNull();
+    expect(thread?.session?.lastError).toBeNull();
   });
 
   it("starts a fresh session when only projected session state exists", async () => {
