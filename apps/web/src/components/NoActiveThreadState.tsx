@@ -56,11 +56,10 @@ import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./ui/menu
 import { SidebarInset, SidebarTrigger, useSidebar } from "./ui/sidebar";
 
 const ACTION_CARD_CLASS_NAME =
-  "relative isolate h-auto min-h-[11.5rem] w-full overflow-hidden rounded-[20px] border-border/55 bg-card/34 px-5 py-5 text-left whitespace-normal shadow-md shadow-black/5 transition-all duration-150 ease-out before:rounded-[19px] hover:-translate-y-0.5 hover:border-border/80 hover:bg-accent/24 hover:shadow-lg hover:ring-4 hover:ring-foreground/6 hover:ring-offset-4 hover:ring-offset-background active:translate-y-0 active:scale-[0.985] active:shadow-md";
+  "relative isolate h-auto min-h-[11.5rem] w-full overflow-hidden rounded-[20px] border-border/60 bg-background px-5 py-5 text-left whitespace-normal shadow-sm shadow-black/5 transition-all duration-150 ease-out before:rounded-[19px] hover:-translate-y-0.5 hover:border-border/85 hover:bg-accent/16 hover:shadow-md hover:ring-4 hover:ring-foreground/5 hover:ring-offset-4 hover:ring-offset-background active:translate-y-0 active:scale-[0.985] active:shadow-sm";
 const SECTION_HEADING_CLASS_NAME =
   "text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground/64";
-const LIST_TABLE_SHELL_CLASS_NAME =
-  "rounded-[1.5rem] bg-foreground/5 p-0.5";
+const LIST_TABLE_SHELL_CLASS_NAME = "rounded-[1.5rem] bg-foreground/5 p-0.5";
 const LIST_TABLE_INNER_CLASS_NAME =
   "overflow-hidden rounded-[1.15rem] border border-border/55 bg-white dark:bg-white/5 shadow-sm";
 const LIST_TABLE_HEADER_CLASS_NAME =
@@ -295,7 +294,7 @@ function ThreadListRow({
               {item.thread.title}
             </span>
           </div>
-          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 overflow-hidden text-xs text-muted-foreground/72">
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground/72">
             <span
               className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} text-[11px] leading-none`}
               title={workspacePath ?? resolveThreadProjectLabel(item)}
@@ -657,8 +656,8 @@ export function NoActiveThreadState() {
   ]);
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-muted/[0.18] text-foreground">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-muted/[0.18]">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         <header
           className={cn(
             "px-3 sm:px-5",
