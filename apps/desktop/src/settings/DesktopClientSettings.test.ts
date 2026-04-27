@@ -34,6 +34,11 @@ const clientSettings: ClientSettings = {
   sidebarV2ConfiguredByUser: false,
   timestampFormat: "24-hour",
   wordWrap: true,
+  notificationSoundEnabled: false,
+  notificationSoundOnTurnEnd: false,
+  notificationSoundOnApproval: false,
+  notificationSoundOnQuestion: false,
+  notificationSoundFocusRule: "unfocused-or-different-thread",
 };
 
 const decodeClientSettingsJson = Schema.decodeEffect(Schema.fromJsonString(ClientSettingsSchema));
