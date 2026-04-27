@@ -2560,7 +2560,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             <CommandDialogTrigger
               render={
                 <SidebarMenuButton
-                  size="md"
                   className="gap-2 border rounded-xl border-border/60 bg-accent/70 px-2 py-1.5 text-muted-foreground/70 shadow-sm/5 transition-colors hover:bg-accent/85 hover:text-foreground focus-visible:ring-0"
                   data-testid="command-palette-trigger"
                 />

@@ -83,10 +83,11 @@ export const ChatHeader = memo(function ChatHeader({
             className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden"
           >
             <span
-              className="inline-flex min-w-0 shrink items-center gap-1 text-sm font-medium text-muted-foreground"
+              className="inline-flex min-w-0 shrink items-center gap-1.5 rounded-md border border-border/80 bg-muted/30 px-2 py-0.5 text-sm font-medium text-muted-foreground shadow-sm"
               title={activeProjectName}
             >
-              <FolderIcon className="size-3 shrink-0 fill-muted-foreground/70" aria-hidden />
+              <FolderIcon className="size-3 shrink-0 fill-current opacity-70" aria-hidden />
+              <span className="-my-0.5 w-px self-stretch bg-border/80" aria-hidden />
               <span className="min-w-0 truncate">{activeProjectName}</span>
             </span>
             <ChevronRightIcon className="size-2.5 shrink-0 fill-muted-foreground/70" aria-hidden />
