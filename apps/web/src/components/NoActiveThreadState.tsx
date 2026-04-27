@@ -59,6 +59,14 @@ const ACTION_CARD_CLASS_NAME =
   "relative isolate h-auto min-h-[11.5rem] w-full overflow-hidden rounded-[20px] border-border/55 bg-card/34 px-5 py-5 text-left whitespace-normal shadow-md shadow-black/5 transition-all duration-150 ease-out before:rounded-[19px] hover:-translate-y-0.5 hover:border-border/80 hover:bg-accent/24 hover:shadow-lg hover:ring-4 hover:ring-foreground/6 hover:ring-offset-4 hover:ring-offset-background active:translate-y-0 active:scale-[0.985] active:shadow-md";
 const SECTION_HEADING_CLASS_NAME =
   "text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground/64";
+const LIST_TABLE_SHELL_CLASS_NAME =
+  "rounded-[1.5rem] bg-foreground/5 p-0.5";
+const LIST_TABLE_INNER_CLASS_NAME =
+  "overflow-hidden rounded-[1.15rem] border border-border/55 bg-white dark:bg-white/5 shadow-sm";
+const LIST_TABLE_HEADER_CLASS_NAME =
+  "hidden items-center gap-4 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/68 md:grid";
+const RECENT_THREAD_TABLE_GRID_CLASS_NAME = "md:grid-cols-[minmax(0,1fr)_3rem]";
+const PROJECT_TABLE_GRID_CLASS_NAME = "md:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)_auto]";
 
 interface ActionCardProps {
   title: string;
@@ -176,7 +184,7 @@ function ThreadListRow({
     isConfirmingArchive && "opacity-0",
   );
   const actionRailClassName = cn(
-    "pointer-events-none absolute top-1/2 right-5 flex -translate-y-1/2 items-center gap-1 opacity-0 group-hover/recent-thread:pointer-events-auto group-hover/recent-thread:opacity-100 group-focus-within/recent-thread:pointer-events-auto group-focus-within/recent-thread:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100",
+    "pointer-events-none absolute top-1/2 right-0 flex -translate-y-1/2 items-center gap-1 opacity-0 group-hover/recent-thread:pointer-events-auto group-hover/recent-thread:opacity-100 group-focus-within/recent-thread:pointer-events-auto group-focus-within/recent-thread:opacity-100 pointer-coarse:pointer-events-auto pointer-coarse:opacity-100",
     MICRO_FADE_MOTION_CLASS_NAME,
     isConfirmingArchive && "pointer-events-auto opacity-100",
   );
@@ -272,18 +280,22 @@ function ThreadListRow({
         role="button"
         tabIndex={0}
         data-testid={`no-active-thread-thread-row-${item.thread.id}`}
-        className="relative flex w-full items-start gap-4 rounded-[1.35rem] px-5 py-4 text-left transition-colors hover:bg-accent/18 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:bg-accent/18"
+        className={cn(
+          "group/recent-thread-row relative flex w-full flex-col gap-3 rounded-[1rem] px-4 py-3 text-left transition-colors hover:bg-accent/12 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:bg-accent/12",
+          RECENT_THREAD_TABLE_GRID_CLASS_NAME,
+          "md:grid md:items-center md:gap-4",
+        )}
         onClick={onOpen}
         onKeyDown={handleRowKeyDown}
       >
-        <div className="min-w-0 flex-1 pr-16">
+        <div className="min-w-0 md:min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <ThreadRowLeadingStatus thread={item.thread} compact />
             <span className="truncate text-sm font-medium leading-5 text-foreground">
               {item.thread.title}
             </span>
           </div>
-          <div className="mt-2 flex min-w-0 items-center gap-1.5 overflow-hidden text-xs text-muted-foreground/72">
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 overflow-hidden text-xs text-muted-foreground/72">
             <span
               className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} text-[11px] leading-none`}
               title={workspacePath ?? resolveThreadProjectLabel(item)}
@@ -310,57 +322,90 @@ function ThreadListRow({
           </div>
         </div>
 
-        <span
-          className={cn(
-            "pointer-events-none absolute top-1/2 right-6 -translate-y-1/2 text-muted-foreground/46",
-            defaultChevronClassName,
-          )}
-          aria-hidden
-        >
-          <ChevronRightIcon className="size-3 fill-current" />
-        </span>
+        <div className="relative hidden h-7 w-12 shrink-0 items-center justify-center md:flex md:justify-self-end">
+          <span className={cn("text-muted-foreground/46", defaultChevronClassName)} aria-hidden>
+            <ChevronRightIcon className="size-3 fill-current" />
+          </span>
 
-        <div
-          data-testid={`no-active-thread-thread-actions-${item.thread.id}`}
-          className={actionRailClassName}
-        >
-          {isConfirmingArchive ? (
-            <button
-              type="button"
-              data-testid={`no-active-thread-thread-archive-confirm-${item.thread.id}`}
-              aria-label={`Confirm archive ${item.thread.title}`}
-              className="pointer-coarse:hidden inline-flex h-7 cursor-pointer items-center rounded-full bg-destructive/12 px-2.5 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
-              onPointerDown={stopPointerEventPropagation}
-              onClick={handleArchiveConfirmation}
-            >
-              Confirm
-            </button>
-          ) : canArchive ? (
-            confirmThreadArchive ? (
+          <div
+            data-testid={`no-active-thread-thread-actions-${item.thread.id}`}
+            className={actionRailClassName}
+          >
+            {isConfirmingArchive ? (
               <button
                 type="button"
-                data-testid={`no-active-thread-thread-archive-${item.thread.id}`}
-                aria-label={`Archive ${item.thread.title}`}
-                className="pointer-coarse:hidden inline-flex size-7 cursor-pointer items-center justify-center rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
+                data-testid={`no-active-thread-thread-archive-confirm-${item.thread.id}`}
+                aria-label={`Confirm archive ${item.thread.title}`}
+                className="pointer-coarse:hidden inline-flex h-7 cursor-pointer items-center rounded-full bg-destructive/12 px-2.5 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
                 onPointerDown={stopPointerEventPropagation}
-                onClick={handleStartArchiveConfirmation}
+                onClick={handleArchiveConfirmation}
               >
-                <SidebarArchiveIcon className="size-3.5" />
+                Confirm
               </button>
-            ) : (
-              <button
-                type="button"
-                data-testid={`no-active-thread-thread-archive-${item.thread.id}`}
-                aria-label={`Archive ${item.thread.title}`}
-                className="pointer-coarse:hidden inline-flex size-7 cursor-pointer items-center justify-center rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
-                onPointerDown={stopPointerEventPropagation}
-                onClick={handleArchiveImmediately}
-              >
-                <SidebarArchiveIcon className="size-3.5" />
-              </button>
-            )
-          ) : null}
+            ) : canArchive ? (
+              confirmThreadArchive ? (
+                <button
+                  type="button"
+                  data-testid={`no-active-thread-thread-archive-${item.thread.id}`}
+                  aria-label={`Archive ${item.thread.title}`}
+                  className="pointer-coarse:hidden inline-flex size-7 cursor-pointer items-center justify-center rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
+                  onPointerDown={stopPointerEventPropagation}
+                  onClick={handleStartArchiveConfirmation}
+                >
+                  <SidebarArchiveIcon className="size-3.5" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  data-testid={`no-active-thread-thread-archive-${item.thread.id}`}
+                  aria-label={`Archive ${item.thread.title}`}
+                  className="pointer-coarse:hidden inline-flex size-7 cursor-pointer items-center justify-center rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
+                  onPointerDown={stopPointerEventPropagation}
+                  onClick={handleArchiveImmediately}
+                >
+                  <SidebarArchiveIcon className="size-3.5" />
+                </button>
+              )
+            ) : null}
 
+            <div onClick={stopMouseEventPropagation} onPointerDown={stopPointerEventPropagation}>
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button
+                      aria-label="Recent thread actions"
+                      size="icon-xs"
+                      variant="ghost"
+                      data-testid={`no-active-thread-thread-menu-trigger-${item.thread.id}`}
+                      className="size-7 rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground data-[popup-open]:bg-accent/80 data-[popup-open]:text-foreground"
+                    />
+                  }
+                >
+                  <EllipsisIcon aria-hidden="true" className="size-3.5" />
+                </MenuTrigger>
+                <MenuPopup align="end" side="bottom" className="min-w-40">
+                  <MenuItem
+                    disabled={!item.thread.latestTurn?.completedAt}
+                    onClick={handleMarkUnread}
+                  >
+                    Mark unread
+                  </MenuItem>
+                  <MenuItem disabled={!workspacePath} onClick={handleCopyPath}>
+                    Copy path
+                  </MenuItem>
+                  <MenuItem onClick={handleCopyThreadId}>Copy thread ID</MenuItem>
+                  {canArchive ? <MenuItem onClick={handleArchiveFromMenu}>Archive</MenuItem> : null}
+                  <MenuSeparator />
+                  <MenuItem variant="destructive" onClick={handleDelete}>
+                    Delete
+                  </MenuItem>
+                </MenuPopup>
+              </Menu>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-1 md:hidden">
           <div onClick={stopMouseEventPropagation} onPointerDown={stopPointerEventPropagation}>
             <Menu>
               <MenuTrigger
@@ -369,7 +414,6 @@ function ThreadListRow({
                     aria-label="Recent thread actions"
                     size="icon-xs"
                     variant="ghost"
-                    data-testid={`no-active-thread-thread-menu-trigger-${item.thread.id}`}
                     className="size-7 rounded-lg text-muted-foreground/58 transition-colors hover:bg-accent/80 hover:text-foreground data-[popup-open]:bg-accent/80 data-[popup-open]:text-foreground"
                   />
                 }
@@ -412,25 +456,37 @@ function ProjectListRow({
     <button
       type="button"
       data-testid={`no-active-thread-project-row-${item.project.id}`}
-      className="flex w-full items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-accent/24 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+      className={cn(
+        "group/project-row flex w-full flex-col gap-3 rounded-[1rem] px-4 py-3 text-left transition-colors hover:bg-accent/12 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+        PROJECT_TABLE_GRID_CLASS_NAME,
+        "md:grid md:items-center md:gap-4",
+      )}
       onClick={onClick}
     >
-      <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-2xl bg-accent/35">
-        <ProjectFavicon
-          environmentId={item.project.environmentId}
-          cwd={item.project.cwd}
-          className="size-4 rounded-sm"
-        />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground">{item.project.name}</p>
-        <p className="truncate text-xs text-muted-foreground">{item.project.cwd}</p>
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-2xl bg-accent/35">
+          <ProjectFavicon
+            environmentId={item.project.environmentId}
+            cwd={item.project.cwd}
+            className="size-4 rounded-sm"
+          />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-foreground">{item.project.name}</p>
+          <p className="truncate text-xs text-muted-foreground md:hidden">{item.project.cwd}</p>
+        </div>
       </div>
-      <span className="shrink-0 text-xs text-muted-foreground">
-        {item.latestThread
-          ? formatRelativeTimeLabel(getThreadTimestamp(item.latestThread))
-          : "No threads yet"}
-      </span>
+      <p className="hidden min-w-0 truncate text-sm text-muted-foreground md:block">
+        {item.project.cwd}
+      </p>
+      <div className="flex shrink-0 items-center justify-between gap-3 md:justify-end">
+        <span className="text-[11px] text-muted-foreground/68">
+          {item.latestThread
+            ? formatRelativeTimeLabel(getThreadTimestamp(item.latestThread))
+            : "No threads yet"}
+        </span>
+        <ChevronRightIcon className="size-3 shrink-0 fill-current text-muted-foreground/46" />
+      </div>
     </button>
   );
 }
@@ -601,8 +657,8 @@ export function NoActiveThreadState() {
   ]);
 
   return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-muted/[0.18] text-foreground">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-muted/[0.18]">
         <header
           className={cn(
             "px-3 sm:px-5",
@@ -649,40 +705,58 @@ export function NoActiveThreadState() {
             {variant === "recent-threads" ? (
               <section className="space-y-3">
                 <div className={SECTION_HEADING_CLASS_NAME}>Recent threads</div>
-                <Card className="overflow-hidden rounded-[1.75rem] border-border/45 bg-card/20 shadow-none">
-                  {recentThreadItems.map((item, index) => (
-                    <div key={`${item.thread.environmentId}:${item.thread.id}`}>
-                      {index > 0 ? <div className="mx-5 h-px bg-border/45" /> : null}
-                      <ThreadListRow
-                        item={item}
-                        confirmThreadArchive={settings.confirmThreadArchive}
-                        onOpen={() => void openThread(item.thread)}
-                        archiveNow={archiveNow}
-                        copyThreadId={copyThreadId}
-                        copyWorkspacePath={copyWorkspacePath}
-                        deleteWithConfirmation={deleteWithConfirmation}
-                        markUnread={markUnread}
-                      />
-                    </div>
-                  ))}
-                </Card>
+                <div className={LIST_TABLE_SHELL_CLASS_NAME}>
+                  <div
+                    className={cn(
+                      LIST_TABLE_HEADER_CLASS_NAME,
+                      RECENT_THREAD_TABLE_GRID_CLASS_NAME,
+                    )}
+                  >
+                    <div>Thread</div>
+                    <div className="text-center">Actions</div>
+                  </div>
+                  <Card className={LIST_TABLE_INNER_CLASS_NAME}>
+                    {recentThreadItems.map((item, index) => (
+                      <div key={`${item.thread.environmentId}:${item.thread.id}`}>
+                        {index > 0 ? <div className="mx-4 h-px bg-border/45" /> : null}
+                        <ThreadListRow
+                          item={item}
+                          confirmThreadArchive={settings.confirmThreadArchive}
+                          onOpen={() => void openThread(item.thread)}
+                          archiveNow={archiveNow}
+                          copyThreadId={copyThreadId}
+                          copyWorkspacePath={copyWorkspacePath}
+                          deleteWithConfirmation={deleteWithConfirmation}
+                          markUnread={markUnread}
+                        />
+                      </div>
+                    ))}
+                  </Card>
+                </div>
               </section>
             ) : null}
 
             {variant === "projects-no-threads" ? (
               <section className="space-y-3">
                 <div className={SECTION_HEADING_CLASS_NAME}>Projects</div>
-                <Card className="overflow-hidden rounded-[1.75rem] border-border/55 bg-card/24 shadow-none">
-                  {projectItems.map((item, index) => (
-                    <div key={`${item.project.environmentId}:${item.project.id}`}>
-                      {index > 0 ? <div className="mx-5 h-px bg-border/60" /> : null}
-                      <ProjectListRow
-                        item={item}
-                        onClick={() => void handleProjectRowClick(item.project)}
-                      />
-                    </div>
-                  ))}
-                </Card>
+                <div className={LIST_TABLE_SHELL_CLASS_NAME}>
+                  <div className={cn(LIST_TABLE_HEADER_CLASS_NAME, PROJECT_TABLE_GRID_CLASS_NAME)}>
+                    <div>Project</div>
+                    <div>Path</div>
+                    <div className="text-right">Recent</div>
+                  </div>
+                  <Card className={LIST_TABLE_INNER_CLASS_NAME}>
+                    {projectItems.map((item, index) => (
+                      <div key={`${item.project.environmentId}:${item.project.id}`}>
+                        {index > 0 ? <div className="mx-4 h-px bg-border/45" /> : null}
+                        <ProjectListRow
+                          item={item}
+                          onClick={() => void handleProjectRowClick(item.project)}
+                        />
+                      </div>
+                    ))}
+                  </Card>
+                </div>
               </section>
             ) : null}
           </div>
