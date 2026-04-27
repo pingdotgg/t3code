@@ -105,15 +105,17 @@ export function parseTailscaleMagicDnsName(rawStatusJson: string): string | null
 
 export function resolveTailscaleMagicDnsAdvertisedEndpoint(input: {
   readonly dnsName: string | null;
+  readonly port: number;
 }): AdvertisedEndpoint | null {
   if (!input.dnsName) {
     return null;
   }
 
+  const httpBaseUrl = `https://${input.dnsName}:${input.port}`;
   return createTailscaleEndpoint({
-    id: `tailscale-magicdns:https://${input.dnsName}`,
+    id: `tailscale-magicdns:${httpBaseUrl}`,
     label: "Tailscale HTTPS",
-    httpBaseUrl: `https://${input.dnsName}`,
+    httpBaseUrl,
     reachability: "private-network",
     hostedHttpsCompatibility: "requires-configuration",
     status: "unknown",
@@ -149,6 +151,7 @@ export async function resolveTailscaleAdvertisedEndpoints(input: {
     input.statusJson === undefined ? await readTailscaleStatusJson() : input.statusJson;
   const magicDnsEndpoint = resolveTailscaleMagicDnsAdvertisedEndpoint({
     dnsName: statusJson ? parseTailscaleMagicDnsName(statusJson) : null,
+    port: input.port,
   });
 
   return magicDnsEndpoint ? [...ipEndpoints, magicDnsEndpoint] : ipEndpoints;

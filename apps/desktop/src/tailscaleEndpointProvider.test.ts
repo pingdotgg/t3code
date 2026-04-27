@@ -62,7 +62,7 @@ describe("tailscale endpoint provider", () => {
         description: "Reachable from devices on the same Tailnet.",
       },
       {
-        id: "tailscale-magicdns:https://desktop.tail.ts.net",
+        id: "tailscale-magicdns:https://desktop.tail.ts.net:3773",
         label: "Tailscale HTTPS",
         provider: {
           id: "tailscale",
@@ -70,8 +70,8 @@ describe("tailscale endpoint provider", () => {
           kind: "private-network",
           isAddon: true,
         },
-        httpBaseUrl: "https://desktop.tail.ts.net/",
-        wsBaseUrl: "wss://desktop.tail.ts.net/",
+        httpBaseUrl: "https://desktop.tail.ts.net:3773/",
+        wsBaseUrl: "wss://desktop.tail.ts.net:3773/",
         reachability: "private-network",
         compatibility: {
           hostedHttpsApp: "requires-configuration",
