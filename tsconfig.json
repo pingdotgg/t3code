@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./apps/desktop" },
+    { "path": "./apps/marketing" },
+    { "path": "./apps/server" },
+    { "path": "./apps/web" },
+    { "path": "./packages/client-runtime" },
+    { "path": "./packages/contracts" },
+    { "path": "./packages/effect-acp" },
+    { "path": "./packages/effect-codex-app-server" },
+    { "path": "./packages/shared" },
+    { "path": "./scripts" }
+  ]
+}

@@ -64,6 +64,16 @@ describe("theme", () => {
     expect(storage.setItem).toHaveBeenCalledWith("forma:theme", "noir");
   });
 
+  it("migrates legacy stored slate to blueberry", () => {
+    const storage = {
+      getItem: vi.fn(() => "slate"),
+      setItem: vi.fn(),
+    };
+
+    expect(readStoredThemePreference(storage)).toBe("blueberry");
+    expect(storage.setItem).toHaveBeenCalledWith("forma:theme", "blueberry");
+  });
+
   it("falls back to system for unknown stored values", () => {
     const storage = {
       getItem: vi.fn(() => "sepia"),
@@ -83,9 +93,11 @@ describe("theme", () => {
     expect(resolveThemeMode("light")).toBe("light");
     expect(resolveThemeMode("dawn")).toBe("light");
     expect(resolveThemeMode("dusk")).toBe("light");
+    expect(resolveThemeMode("blueberry")).toBe("light");
     expect(resolveThemeMode("noir")).toBe("dark");
     expect(resolveThemeMode("midnight")).toBe("dark");
     expect(resolveThemeMode("stone")).toBe("dark");
+    expect(resolveThemeMode("cosmic")).toBe("dark");
   });
 
   it("maps concrete presets back to desktop-supported themes", () => {
@@ -93,9 +105,11 @@ describe("theme", () => {
     expect(resolveDesktopTheme("light")).toBe("light");
     expect(resolveDesktopTheme("dawn")).toBe("light");
     expect(resolveDesktopTheme("dusk")).toBe("light");
+    expect(resolveDesktopTheme("blueberry")).toBe("light");
     expect(resolveDesktopTheme("noir")).toBe("dark");
     expect(resolveDesktopTheme("midnight")).toBe("dark");
     expect(resolveDesktopTheme("stone")).toBe("dark");
+    expect(resolveDesktopTheme("cosmic")).toBe("dark");
   });
 
   it("applies the resolved preset, dark class, and chrome color to the document", () => {

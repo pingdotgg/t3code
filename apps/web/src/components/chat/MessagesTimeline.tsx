@@ -1,6 +1,7 @@
 import { type EnvironmentId, type MessageId, type TurnId } from "@forma/contracts";
 import {
   createContext,
+  type ElementType,
   memo,
   use,
   useCallback,
@@ -14,28 +15,25 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
-import ChatMarkdown from "../ChatMarkdown";
+import ChatMarkdown, { type OpenChatMarkdownFileInApp } from "../ChatMarkdown";
 import {
   IconMessage as BotIcon,
   IconCheckmark as CheckIcon,
   IconExclamationmarkCircle as CircleAlertIcon,
   IconEye as EyeIcon,
   IconGlobe as GlobeIcon,
-  IconHammer as HammerIcon,
-  type IconComponent as LucideIcon,
   IconSquareAndPencil as SquarePenIcon,
-  IconAppleTerminal as TerminalIcon,
   IconArrowshapeTurnUpBackward2 as Undo2Icon,
-  IconWrenchAndScrewdriver as WrenchIcon,
   IconBolt as ZapIcon,
 } from "symbols-react";
+import { TerminalToggleIcon as ToolCallIcon } from "../icons/custom";
 import { Button } from "../ui/button";
 import { PixelGridLoader } from "../ui/pixel-grid-loader";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
-import { MessageCopyButton } from "./MessageCopyButton";
+import { MessageCopyButton, SUBTLE_MESSAGE_COPY_BUTTON_CLASS_NAME } from "./MessageCopyButton";
 import { MICRO_FADE_MOTION_CLASS_NAME } from "~/lib/motion";
 import {
   computeStableMessagesTimelineRows,
@@ -86,6 +84,10 @@ interface TimelineRowSharedState {
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenFileInApp?: (
+    meta: Parameters<OpenChatMarkdownFileInApp>[0],
+    turnId: TurnId | null | undefined,
+  ) => boolean | Promise<boolean>;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
@@ -106,6 +108,10 @@ interface MessagesTimelineProps {
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onOpenFileInApp?: (
+    meta: Parameters<OpenChatMarkdownFileInApp>[0],
+    turnId: TurnId | null | undefined,
+  ) => boolean | Promise<boolean>;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
@@ -117,6 +123,8 @@ interface MessagesTimelineProps {
   workspaceRoot: string | undefined;
   onIsAtEndChange: (isAtEnd: boolean) => void;
 }
+
+type TimelineIcon = ElementType<{ className?: string }>;
 
 // ---------------------------------------------------------------------------
 // MessagesTimeline — list owner
@@ -134,6 +142,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   turnDiffSummaryByAssistantMessageId,
   routeThreadKey,
   onOpenTurnDiff,
+  onOpenFileInApp,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   isRevertingCheckpoint,
@@ -209,6 +218,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      ...(onOpenFileInApp ? { onOpenFileInApp } : {}),
     }),
     [
       activeTurnInProgress,
@@ -225,6 +235,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onRevertUserMessage,
       onImageExpand,
       onOpenTurnDiff,
+      onOpenFileInApp,
     ],
   );
 
@@ -397,6 +408,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
             showCopyButton: row.showAssistantCopyButton,
             streaming: row.message.streaming || assistantTurnStillInProgress,
           });
+          const onOpenFileInApp = ctx.onOpenFileInApp;
           return (
             <>
               {row.showCompletionDivider && (
@@ -413,6 +425,11 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                   text={messageText}
                   cwd={ctx.markdownCwd}
                   isStreaming={Boolean(row.message.streaming)}
+                  onOpenFileInApp={
+                    onOpenFileInApp
+                      ? (meta) => onOpenFileInApp(meta, row.message.turnId)
+                      : undefined
+                  }
                 />
                 <AssistantChangedFilesSection
                   turnSummary={row.assistantTurnDiffSummary}
@@ -447,7 +464,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                         text={assistantCopyState.text ?? ""}
                         size="icon-xs"
                         variant="outline"
-                        className="border-border/50 bg-background/35 text-muted-foreground/45 shadow-none hover:border-border/70 hover:bg-background/55 hover:text-muted-foreground/70"
+                        className={SUBTLE_MESSAGE_COPY_BUTTON_CLASS_NAME}
                       />
                     </div>
                   ) : null}
@@ -459,12 +476,22 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
 
       {row.kind === "proposed-plan" && (
         <div className="min-w-0 px-1 py-0.5">
-          <ProposedPlanCard
-            planMarkdown={row.proposedPlan.planMarkdown}
-            environmentId={ctx.activeThreadEnvironmentId}
-            cwd={ctx.markdownCwd}
-            workspaceRoot={ctx.workspaceRoot}
-          />
+          {(() => {
+            const onOpenFileInApp = ctx.onOpenFileInApp;
+            return (
+              <ProposedPlanCard
+                planMarkdown={row.proposedPlan.planMarkdown}
+                environmentId={ctx.activeThreadEnvironmentId}
+                cwd={ctx.markdownCwd}
+                workspaceRoot={ctx.workspaceRoot}
+                onOpenFileInApp={
+                  onOpenFileInApp
+                    ? (meta) => onOpenFileInApp(meta, row.proposedPlan.turnId)
+                    : undefined
+                }
+              />
+            );
+          })()}
         </div>
       )}
 
@@ -841,7 +868,7 @@ function formatMessageMeta(
 }
 
 function workToneIcon(tone: TimelineWorkEntry["tone"]): {
-  icon: LucideIcon;
+  icon: TimelineIcon;
   className: string;
 } {
   if (tone === "error") {
@@ -900,13 +927,13 @@ function workEntryRawCommand(
   return rawCommand === workEntry.command.trim() ? null : rawCommand;
 }
 
-function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
-  if (workEntry.requestKind === "command") return TerminalIcon;
+function workEntryIcon(workEntry: TimelineWorkEntry): TimelineIcon {
+  if (workEntry.requestKind === "command") return ToolCallIcon;
   if (workEntry.requestKind === "file-read") return EyeIcon;
   if (workEntry.requestKind === "file-change") return SquarePenIcon;
 
   if (workEntry.itemType === "command_execution" || workEntry.command) {
-    return TerminalIcon;
+    return ToolCallIcon;
   }
   if (workEntry.itemType === "file_change" || (workEntry.changedFiles?.length ?? 0) > 0) {
     return SquarePenIcon;
@@ -916,10 +943,9 @@ function workEntryIcon(workEntry: TimelineWorkEntry): LucideIcon {
 
   switch (workEntry.itemType) {
     case "mcp_tool_call":
-      return WrenchIcon;
     case "dynamic_tool_call":
     case "collab_agent_tool_call":
-      return HammerIcon;
+      return ToolCallIcon;
   }
 
   return workToneIcon(workEntry.tone).icon;

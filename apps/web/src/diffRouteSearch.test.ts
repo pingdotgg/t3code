@@ -1,6 +1,13 @@
+import { TurnId } from "@forma/contracts";
 import { describe, expect, it } from "vitest";
 
-import { parseDiffRouteSearch } from "./diffRouteSearch";
+import {
+  buildDiffClosedSearch,
+  buildDiffEditorSearch,
+  buildDiffOpenSearch,
+  buildDiffTurnSearch,
+  parseDiffRouteSearch,
+} from "./diffRouteSearch";
 
 describe("parseDiffRouteSearch", () => {
   it("parses valid diff search values", () => {
@@ -69,6 +76,127 @@ describe("parseDiffRouteSearch", () => {
 
     expect(parsed).toEqual({
       diff: "1",
+    });
+  });
+
+  it("parses valid editor search values", () => {
+    expect(
+      parseDiffRouteSearch({
+        diff: "1",
+        diffTurnId: "turn-1",
+        diffFilePath: "src/app.ts",
+        diffView: "editor",
+        editorFilePath: "src/app.ts",
+        editorLine: "12",
+        editorColumn: 4,
+        editorBackToDiff: true,
+      }),
+    ).toEqual({
+      diff: "1",
+      diffTurnId: "turn-1",
+      diffFilePath: "src/app.ts",
+      diffView: "editor",
+      editorFilePath: "src/app.ts",
+      editorLine: 12,
+      editorColumn: 4,
+      editorBackToDiff: "1",
+    });
+  });
+
+  it("drops invalid editor combinations", () => {
+    expect(
+      parseDiffRouteSearch({
+        diff: "1",
+        diffView: "editor",
+      }),
+    ).toEqual({
+      diff: "1",
+    });
+
+    expect(
+      parseDiffRouteSearch({
+        diff: "1",
+        diffView: "editor",
+        editorFilePath: "src/app.ts",
+        editorLine: "0",
+      }),
+    ).toEqual({
+      diff: "1",
+      diffView: "editor",
+      editorFilePath: "src/app.ts",
+    });
+  });
+
+  it("drops editor line and column when file path is missing", () => {
+    expect(
+      parseDiffRouteSearch({
+        diff: "1",
+        editorLine: "12",
+        editorColumn: "3",
+      }),
+    ).toEqual({
+      diff: "1",
+    });
+  });
+});
+
+describe("diff route builders", () => {
+  it("builds diff open, turn, editor, and close search objects", () => {
+    const previous = {
+      tab: "activity",
+      diff: "1",
+      diffTurnId: "turn-old",
+      diffFilePath: "old.ts",
+      diffView: "editor",
+      editorFilePath: "old.ts",
+      editorLine: 2,
+    };
+
+    expect(buildDiffOpenSearch(previous)).toEqual({
+      tab: "activity",
+      diff: "1",
+    });
+    expect(
+      buildDiffTurnSearch(previous, {
+        turnId: TurnId.make("turn-1"),
+        filePath: "src/app.ts",
+      }),
+    ).toEqual({
+      tab: "activity",
+      diff: "1",
+      diffTurnId: "turn-1",
+      diffFilePath: "src/app.ts",
+    });
+    expect(
+      buildDiffEditorSearch(previous, {
+        filePath: "src/app.ts",
+        line: 4,
+        column: 8,
+        turnId: TurnId.make("turn-1"),
+        diffFilePath: "src/app.ts",
+        backToDiff: true,
+      }),
+    ).toEqual({
+      tab: "activity",
+      diff: "1",
+      diffTurnId: "turn-1",
+      diffFilePath: "src/app.ts",
+      diffView: "editor",
+      editorFilePath: "src/app.ts",
+      editorLine: 4,
+      editorColumn: 8,
+      editorBackToDiff: "1",
+    });
+    expect(buildDiffClosedSearch(previous)).toEqual({
+      tab: "activity",
+      diff: undefined,
+      diffTurnId: undefined,
+      diffFilePath: undefined,
+      diffView: undefined,
+      editorFilePath: undefined,
+      editorLine: undefined,
+      editorColumn: undefined,
+      editorBackToDiff: undefined,
     });
   });
 });

@@ -12,9 +12,10 @@ import {
 } from "../components/DiffPanelShell";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import {
+  buildDiffClosedSearch,
+  buildDiffOpenSearch,
   type DiffRouteSearch,
   parseDiffRouteSearch,
-  stripDiffSearchParams,
 } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
@@ -194,7 +195,7 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
-      search: { diff: undefined },
+      search: (previous) => buildDiffClosedSearch(previous),
     });
   }, [navigate, threadRef]);
   const openDiff = useCallback(() => {
@@ -205,10 +206,7 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1" };
-      },
+      search: (previous) => buildDiffOpenSearch(previous),
     });
   }, [markDiffOpened, navigate, threadRef]);
 

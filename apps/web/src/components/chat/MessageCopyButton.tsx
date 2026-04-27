@@ -8,6 +8,9 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { MessageCopyIcon } from "../icons/custom";
 
 const ANCHORED_TOAST_TIMEOUT_MS = 1000;
+export const SUBTLE_MESSAGE_COPY_BUTTON_CLASS_NAME =
+  "border-border/50 bg-background/35 text-muted-foreground/45 shadow-none hover:border-border/70 hover:bg-background/55 hover:text-muted-foreground/70";
+
 const onCopy = (ref: React.RefObject<HTMLButtonElement | null>) => {
   if (ref.current) {
     anchoredToastManager.add({

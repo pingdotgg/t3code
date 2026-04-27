@@ -83,7 +83,7 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleDiff,
 }: ChatHeaderProps) {
   return (
-    <div className="@container/header-actions flex min-h-7 min-w-0 flex-1 items-center gap-2 sm:min-h-6">
+    <div className="@container/header-actions flex min-h-4 min-w-0 flex-1 items-center gap-2 sm:min-h-4 h-4">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden md:overflow-visible sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
         <DesktopSidebarReopenButton />

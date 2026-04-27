@@ -41,7 +41,13 @@ import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import {
+  buildDiffClosedSearch,
+  buildDiffEditorSearch,
+  buildDiffOpenSearch,
+  buildDiffTurnSearch,
+  parseDiffRouteSearch,
+} from "../diffRouteSearch";
 import {
   collapseExpandedComposerCursor,
   parseStandaloneComposerSlashCommand,
@@ -118,6 +124,8 @@ import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelection } from "../modelSelection";
+import { type MarkdownFileLinkMeta } from "../markdown-links";
+import { resolveWorkspaceEditorTarget } from "../workspaceEditorTarget";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import {
@@ -1574,10 +1582,8 @@ export default function ChatView(props: ChatViewProps) {
         threadId,
       },
       replace: true,
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
-      },
+      search: (previous) =>
+        diffOpen ? buildDiffClosedSearch(previous) : buildDiffOpenSearch(previous),
     });
   }, [diffOpen, environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
 
@@ -3478,6 +3484,54 @@ export default function ChatView(props: ChatViewProps) {
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
   }, []);
+  const onOpenFileInPanel = useCallback(
+    (meta: MarkdownFileLinkMeta, turnId: TurnId | null | undefined) => {
+      if (!isServerThread || !activeWorkspaceRoot) {
+        return false;
+      }
+
+      const editorTarget = resolveWorkspaceEditorTarget(meta.targetPath, activeWorkspaceRoot);
+      if (!editorTarget) {
+        return false;
+      }
+
+      const effectiveTurnId = turnId ?? rawSearch.diffTurnId ?? undefined;
+      const backToDiff =
+        rawSearch.diffView === "editor"
+          ? rawSearch.editorBackToDiff === "1"
+          : rawSearch.diff === "1";
+      onDiffPanelOpen?.();
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: {
+          environmentId,
+          threadId,
+        },
+        search: (previous) =>
+          buildDiffEditorSearch(previous, {
+            filePath: editorTarget.relativePath,
+            line: editorTarget.line,
+            column: editorTarget.column,
+            turnId: effectiveTurnId,
+            diffFilePath: effectiveTurnId ? editorTarget.relativePath : undefined,
+            backToDiff,
+          }),
+      });
+      return true;
+    },
+    [
+      activeWorkspaceRoot,
+      environmentId,
+      isServerThread,
+      navigate,
+      onDiffPanelOpen,
+      rawSearch.diff,
+      rawSearch.diffView,
+      rawSearch.diffTurnId,
+      rawSearch.editorBackToDiff,
+      threadId,
+    ],
+  );
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
       if (!isServerThread) {
@@ -3490,12 +3544,7 @@ export default function ChatView(props: ChatViewProps) {
           environmentId,
           threadId,
         },
-        search: (previous) => {
-          const rest = stripDiffSearchParams(previous);
-          return filePath
-            ? { ...rest, diff: "1", diffTurnId: turnId, diffFilePath: filePath }
-            : { ...rest, diff: "1", diffTurnId: turnId };
-        },
+        search: (previous) => buildDiffTurnSearch(previous, { turnId, filePath }),
       });
     },
     [environmentId, isServerThread, navigate, onDiffPanelOpen, threadId],
@@ -3591,6 +3640,7 @@ export default function ChatView(props: ChatViewProps) {
               activeThreadEnvironmentId={activeThread.environmentId}
               routeThreadKey={routeThreadKey}
               onOpenTurnDiff={onOpenTurnDiff}
+              onOpenFileInApp={onOpenFileInPanel}
               revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
               onRevertUserMessage={onRevertUserMessage}
               isRevertingCheckpoint={isRevertingCheckpoint}
@@ -3753,6 +3803,7 @@ export default function ChatView(props: ChatViewProps) {
             timestampFormat={timestampFormat}
             mode="sidebar"
             onClose={closePlanSidebar}
+            onOpenFileInApp={(meta) => onOpenFileInPanel(meta, sidebarProposedPlan?.turnId ?? null)}
           />
         ) : null}
       </div>
@@ -3788,6 +3839,9 @@ export default function ChatView(props: ChatViewProps) {
               timestampFormat={timestampFormat}
               mode="sheet"
               onClose={closePlanSidebar}
+              onOpenFileInApp={(meta) =>
+                onOpenFileInPanel(meta, sidebarProposedPlan?.turnId ?? null)
+              }
             />
           ) : null}
         </RightPanelSheet>

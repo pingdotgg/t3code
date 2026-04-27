@@ -1,5 +1,4 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
-import { IconCheckmark as CheckIcon, IconDocumentOnDocument as CopyIcon } from "symbols-react";
 import React, {
   Children,
   Suspense,
@@ -10,14 +9,13 @@ import React, {
   memo,
   useEffect,
   useMemo,
-  useRef,
-  useState,
   type ReactNode,
 } from "react";
 import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { MessageCopyButton, SUBTLE_MESSAGE_COPY_BUTTON_CLASS_NAME } from "./chat/MessageCopyButton";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -26,9 +24,15 @@ import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { useTheme } from "../hooks/useTheme";
-import { resolveMarkdownFileLinkMeta, rewriteMarkdownFileUriHref } from "../markdown-links";
+import {
+  resolveMarkdownFileLinkMeta,
+  rewriteMarkdownFileUriHref,
+  type MarkdownFileLinkMeta,
+} from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
+
+export type OpenChatMarkdownFileInApp = (meta: MarkdownFileLinkMeta) => boolean | Promise<boolean>;
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -55,6 +59,7 @@ interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
   isStreaming?: boolean;
+  onOpenFileInApp?: OpenChatMarkdownFileInApp | undefined;
 }
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
@@ -138,48 +143,14 @@ function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
 }
 
 function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNode }) {
-  const [copied, setCopied] = useState(false);
-  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleCopy = useCallback(() => {
-    if (typeof navigator === "undefined" || navigator.clipboard == null) {
-      return;
-    }
-    void navigator.clipboard
-      .writeText(code)
-      .then(() => {
-        if (copiedTimerRef.current != null) {
-          clearTimeout(copiedTimerRef.current);
-        }
-        setCopied(true);
-        copiedTimerRef.current = setTimeout(() => {
-          setCopied(false);
-          copiedTimerRef.current = null;
-        }, 1200);
-      })
-      .catch(() => undefined);
-  }, [code]);
-
-  useEffect(
-    () => () => {
-      if (copiedTimerRef.current != null) {
-        clearTimeout(copiedTimerRef.current);
-        copiedTimerRef.current = null;
-      }
-    },
-    [],
-  );
-
   return (
     <div className="chat-markdown-codeblock leading-snug">
-      <button
-        type="button"
-        className="chat-markdown-copy-button"
-        onClick={handleCopy}
-        title={copied ? "Copied" : "Copy code"}
-        aria-label={copied ? "Copied" : "Copy code"}
-      >
-        {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
-      </button>
+      <MessageCopyButton
+        text={code}
+        size="icon-xs"
+        variant="outline"
+        className={cn("chat-markdown-copy-button", SUBTLE_MESSAGE_COPY_BUTTON_CLASS_NAME)}
+      />
       {children}
     </div>
   );
@@ -243,11 +214,13 @@ function SuspenseShikiCodeBlock({
 
 interface MarkdownFileLinkProps {
   href: string;
+  fileLinkMeta: MarkdownFileLinkMeta;
   targetPath: string;
   displayPath: string;
   filePath: string;
   label: string;
   theme: "light" | "dark";
+  onOpenFileInApp?: OpenChatMarkdownFileInApp | undefined;
   className?: string | undefined;
 }
 
@@ -333,19 +306,21 @@ function normalizeMarkdownLinkHrefKey(href: string): string {
 
 const MarkdownFileLink = memo(function MarkdownFileLink({
   href,
+  fileLinkMeta,
   targetPath,
   displayPath,
   filePath,
   label,
   theme,
+  onOpenFileInApp,
   className,
 }: MarkdownFileLinkProps) {
-  const handleOpen = useCallback(() => {
+  const handleOpenInIde = useCallback(() => {
     const api = readLocalApi();
     if (!api) {
       toastManager.add({
         type: "error",
-        title: "Open in editor is unavailable",
+        title: "Open in IDE is unavailable",
       });
       return;
     }
@@ -360,6 +335,32 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       );
     });
   }, [targetPath]);
+
+  const handleOpenInApp = useCallback(async () => {
+    if (!onOpenFileInApp) {
+      return false;
+    }
+    try {
+      return (await onOpenFileInApp(fileLinkMeta)) === true;
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to open file",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+      return false;
+    }
+  }, [fileLinkMeta, onOpenFileInApp]);
+
+  const handlePrimaryOpen = useCallback(() => {
+    void handleOpenInApp().then((openedInApp) => {
+      if (!openedInApp) {
+        handleOpenInIde();
+      }
+    });
+  }, [handleOpenInApp, handleOpenInIde]);
 
   const handleCopy = useCallback((value: string, title: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
@@ -403,15 +404,23 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
 
       const clicked = await api.contextMenu.show(
         [
-          { id: "open", label: "Open in editor" },
+          { id: "open-in-app", label: "Open in app editor" },
+          { id: "open-in-ide", label: "Open in IDE" },
           { id: "copy-relative", label: "Copy relative path" },
           { id: "copy-full", label: "Copy full path" },
         ] as const,
         { x: event.clientX, y: event.clientY },
       );
 
-      if (clicked === "open") {
-        handleOpen();
+      if (clicked === "open-in-app") {
+        const openedInApp = await handleOpenInApp();
+        if (!openedInApp) {
+          handleOpenInIde();
+        }
+        return;
+      }
+      if (clicked === "open-in-ide") {
+        handleOpenInIde();
         return;
       }
       if (clicked === "copy-relative") {
@@ -422,7 +431,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         handleCopy(targetPath, "Full path");
       }
     },
-    [displayPath, handleCopy, handleOpen, targetPath],
+    [displayPath, handleCopy, handleOpenInApp, handleOpenInIde, targetPath],
   );
 
   return (
@@ -435,7 +444,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              handleOpen();
+              handlePrimaryOpen();
             }}
             onContextMenu={handleContextMenu}
           >
@@ -467,16 +476,18 @@ function areMarkdownFileLinkPropsEqual(
 ): boolean {
   return (
     previous.href === next.href &&
+    previous.fileLinkMeta === next.fileLinkMeta &&
     previous.targetPath === next.targetPath &&
     previous.displayPath === next.displayPath &&
     previous.filePath === next.filePath &&
     previous.label === next.label &&
     previous.theme === next.theme &&
+    previous.onOpenFileInApp === next.onOpenFileInApp &&
     previous.className === next.className
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
+function ChatMarkdown({ text, cwd, isStreaming = false, onOpenFileInApp }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
@@ -529,6 +540,8 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
             filePath={fileLinkMeta.filePath}
             label={labelParts.join(" · ")}
             theme={resolvedTheme}
+            fileLinkMeta={fileLinkMeta}
+            onOpenFileInApp={onOpenFileInApp}
             className={props.className}
           />
         );
@@ -560,6 +573,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
       fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,
+      onOpenFileInApp,
       resolvedTheme,
     ],
   );

@@ -4,6 +4,12 @@
   "editor.codeActionsOnSave": {
     "source.fixAll.oxc": "always"
   },
+  "files.associations": {
+    "*.tsx": "typescriptreact",
+    "*.ts": "typescript"
+  },
   "oxc.unusedDisableDirectives": "warn",
-  "js/ts.tsdk.path": "node_modules/typescript/lib"
+  "js/ts.tsdk.path": "node_modules/typescript/lib",
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true
 }

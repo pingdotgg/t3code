@@ -13,13 +13,13 @@ function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
     "flex items-center justify-between gap-2 px-4",
     shouldUseDragRegion
       ? "drag-region h-[52px] border-b border-border wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
-      : "h-12 wco:max-h-[env(titlebar-area-height)]",
+      : "h-10 wco:max-h-[env(titlebar-area-height)]",
   );
 }
 
 export function DiffPanelShell(props: {
   mode: DiffPanelMode;
-  header: ReactNode;
+  header?: ReactNode;
   children: ReactNode;
 }) {
   const shouldUseDragRegion = isElectron && props.mode !== "sheet";
@@ -33,13 +33,15 @@ export function DiffPanelShell(props: {
           : "w-full",
       )}
     >
-      {shouldUseDragRegion ? (
-        <div className={getDiffPanelHeaderRowClassName(props.mode)}>{props.header}</div>
-      ) : (
-        <div className="border-b border-border">
+      {props.header ? (
+        shouldUseDragRegion ? (
           <div className={getDiffPanelHeaderRowClassName(props.mode)}>{props.header}</div>
-        </div>
-      )}
+        ) : (
+          <div className="border-b border-border">
+            <div className={getDiffPanelHeaderRowClassName(props.mode)}>{props.header}</div>
+          </div>
+        )
+      ) : null}
       {props.children}
     </div>
   );

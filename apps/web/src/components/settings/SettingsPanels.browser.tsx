@@ -20,6 +20,7 @@ import { render } from "vitest-browser-react";
 import { __resetLocalApiForTests } from "../../localApi";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
+import { THEME_STORAGE_KEY } from "../../theme";
 import { ConnectionsSettings } from "./ConnectionsSettings";
 import { GeneralSettingsPanel } from "./SettingsPanels";
 
@@ -332,12 +333,44 @@ const createDesktopBridgeStub = (overrides?: {
 };
 
 describe("GeneralSettingsPanel observability", () => {
+  const originalMatchMedia = window.matchMedia.bind(window);
   let mounted:
     | (Awaited<ReturnType<typeof render>> & {
         cleanup?: () => Promise<void>;
         unmount?: () => Promise<void>;
       })
     | null = null;
+
+  function stubMatchMedia(matches: boolean) {
+    const matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: query === "(prefers-color-scheme: dark)" ? matches : false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }));
+
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: matchMedia,
+      writable: true,
+    });
+
+    return matchMedia;
+  }
+
+  async function renderGeneralSettingsPanel() {
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <GeneralSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+  }
 
   beforeEach(async () => {
     resetServerStateForTests();
@@ -355,6 +388,11 @@ describe("GeneralSettingsPanel observability", () => {
     vi.unstubAllGlobals();
     Reflect.deleteProperty(window, "desktopBridge");
     Reflect.deleteProperty(window, "nativeApi");
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: originalMatchMedia,
+      writable: true,
+    });
     document.body.innerHTML = "";
     resetServerStateForTests();
     await __resetLocalApiForTests();
@@ -430,13 +468,7 @@ describe("GeneralSettingsPanel observability", () => {
   });
 
   it("shows diagnostics inside About with a single logs-folder action", async () => {
-    setServerConfigSnapshot(createBaseServerConfig());
-
-    mounted = await render(
-      <AppAtomRegistryProvider>
-        <GeneralSettingsPanel />
-      </AppAtomRegistryProvider>,
-    );
+    await renderGeneralSettingsPanel();
 
     await expect.element(page.getByText("About")).toBeInTheDocument();
     await expect.element(page.getByText("Diagnostics")).toBeInTheDocument();
@@ -451,6 +483,117 @@ describe("GeneralSettingsPanel observability", () => {
         ),
       )
       .toBeInTheDocument();
+  });
+
+  it("renders theme selection as an inline preview grid instead of a combobox", async () => {
+    await renderGeneralSettingsPanel();
+
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll("[data-theme-option]")).toHaveLength(9);
+    });
+
+    expect(document.querySelector('[role="combobox"][aria-label="Theme preference"]')).toBeNull();
+    expect(
+      document.querySelectorAll('[data-theme-preset-grid="true"] [data-theme-option]'),
+    ).toHaveLength(8);
+    expect(document.querySelector('[data-theme-option="system"]')).not.toBeNull();
+    expect(document.querySelector('[data-theme-option="blueberry"]')).not.toBeNull();
+    expect(document.querySelector('[data-theme-option="stone"]')).not.toBeNull();
+    expect(document.querySelector('[data-theme-option="cosmic"]')).not.toBeNull();
+    expect(document.querySelector('[data-theme-option="slate"]')).toBeNull();
+    expect(
+      Array.from(
+        document.querySelectorAll('[data-theme-preset-grid="true"] [data-theme-option]'),
+      ).map((element) => element.getAttribute("data-theme-option")),
+    ).toEqual(["light", "dawn", "dusk", "blueberry", "noir", "midnight", "stone", "cosmic"]);
+  });
+
+  it("updates stored and document theme state when selecting a preview card", async () => {
+    await renderGeneralSettingsPanel();
+
+    const stoneOption = document.querySelector('[data-theme-option="stone"]');
+    expect(stoneOption).not.toBeNull();
+    stoneOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("stone");
+      expect(document.documentElement.dataset.themePreference).toBe("stone");
+      expect(document.documentElement.dataset.theme).toBe("stone");
+      expect(document.querySelector('[data-theme-selected-label="true"]')?.textContent).toBe(
+        "Stone",
+      );
+      expect(
+        document
+          .querySelector('[data-theme-selected-swatch="true"]')
+          ?.getAttribute("data-theme-preview"),
+      ).toBe("stone");
+    });
+  });
+
+  it("shows the system preview using noir while keeping system selected in dark OS mode", async () => {
+    localStorage.setItem(THEME_STORAGE_KEY, "system");
+    stubMatchMedia(true);
+
+    await renderGeneralSettingsPanel();
+
+    await vi.waitFor(() => {
+      const systemPreview = document.querySelector(
+        '[data-theme-option="system"] [data-theme-preview]',
+      );
+      const systemOption = document.querySelector('[data-theme-option="system"]');
+      expect(systemPreview?.getAttribute("data-theme-preview")).toBe("noir");
+      expect(systemOption?.hasAttribute("data-checked")).toBe(true);
+      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("system");
+      expect(document.querySelector('[data-theme-selected-label="true"]')?.textContent).toBe(
+        "Noir",
+      );
+      expect(document.querySelector('[data-theme-selected-detail="true"]')?.textContent).toBe(
+        "System",
+      );
+      expect(
+        document
+          .querySelector('[data-theme-selected-swatch="true"]')
+          ?.getAttribute("data-theme-preview"),
+      ).toBe("noir");
+    });
+  });
+
+  it("resets theme selection back to system", async () => {
+    await renderGeneralSettingsPanel();
+
+    const stoneOption = document.querySelector('[data-theme-option="stone"]');
+    expect(stoneOption).not.toBeNull();
+    stoneOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("stone");
+    });
+
+    await page.getByRole("button", { name: "Reset theme to default" }).click();
+
+    await vi.waitFor(() => {
+      const systemOption = document.querySelector('[data-theme-option="system"]');
+      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("system");
+      expect(document.documentElement.dataset.themePreference).toBe("system");
+      expect(systemOption?.hasAttribute("data-checked")).toBe(true);
+    });
+  });
+
+  it("supports keyboard navigation across theme radios", async () => {
+    await renderGeneralSettingsPanel();
+
+    const systemOption = document.querySelector(
+      '[data-theme-option="system"]',
+    ) as HTMLElement | null;
+    expect(systemOption).not.toBeNull();
+    systemOption?.focus();
+    systemOption?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" }));
+
+    await vi.waitFor(() => {
+      const lightOption = document.querySelector('[data-theme-option="light"]');
+      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
+      expect(lightOption?.hasAttribute("data-checked")).toBe(true);
+    });
   });
 
   it("creates and shows a pairing link when network access is enabled", async () => {
@@ -688,13 +831,7 @@ describe("GeneralSettingsPanel observability", () => {
       },
     } as unknown as LocalApi;
 
-    setServerConfigSnapshot(createBaseServerConfig());
-
-    mounted = await render(
-      <AppAtomRegistryProvider>
-        <GeneralSettingsPanel />
-      </AppAtomRegistryProvider>,
-    );
+    await renderGeneralSettingsPanel();
 
     const openLogsButton = page.getByText("Open logs folder");
     await openLogsButton.click();
@@ -703,13 +840,7 @@ describe("GeneralSettingsPanel observability", () => {
   });
 
   it("shows an OpenCode server URL field in provider settings", async () => {
-    setServerConfigSnapshot(createBaseServerConfig());
-
-    mounted = await render(
-      <AppAtomRegistryProvider>
-        <GeneralSettingsPanel />
-      </AppAtomRegistryProvider>,
-    );
+    await renderGeneralSettingsPanel();
 
     await page.getByLabelText("Toggle OpenCode details").click();
 

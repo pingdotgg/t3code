@@ -22,6 +22,8 @@ import {
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 
+const EDITOR_TRIGGER_ICON_CLASS_NAME = "size-3.5 shrink-0";
+
 const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
   const baseOptions: ReadonlyArray<{
     label: string;
@@ -146,7 +148,9 @@ export const OpenInPicker = memo(function OpenInPicker({
         onClick={() => openInEditor(preferredEditor)}
         title={compact && primaryOption ? `Open in ${primaryOption.label}` : undefined}
       >
-        {primaryOption?.Icon && <primaryOption.Icon aria-hidden className="size-3.5" />}
+        {primaryOption?.Icon && (
+          <primaryOption.Icon aria-hidden className={EDITOR_TRIGGER_ICON_CLASS_NAME} />
+        )}
         <span className={primaryButtonLabelClassName}>Open</span>
       </Button>
       <GroupSeparator className={groupSeparatorClassName} />
@@ -158,7 +162,10 @@ export const OpenInPicker = memo(function OpenInPicker({
           {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
           {options.map(({ label, Icon, value }) => (
             <MenuItem key={value} onClick={() => openInEditor(value)}>
-              <Icon aria-hidden className="text-muted-foreground" />
+              <Icon
+                aria-hidden
+                className={`${EDITOR_TRIGGER_ICON_CLASS_NAME} text-muted-foreground`}
+              />
               {label}
               {value === preferredEditor && openFavoriteEditorShortcutLabel && (
                 <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>

@@ -4,7 +4,15 @@ export const THEME_STORAGE_KEY = "forma:theme";
 export const THEME_MEDIA_QUERY = "(prefers-color-scheme: dark)";
 
 export type ResolvedThemeMode = "light" | "dark";
-export type ResolvedThemePreset = "light" | "noir" | "dawn" | "dusk" | "midnight" | "stone";
+export type ResolvedThemePreset =
+  | "light"
+  | "noir"
+  | "dawn"
+  | "dusk"
+  | "midnight"
+  | "stone"
+  | "blueberry"
+  | "cosmic";
 export type ThemePreference = "system" | ResolvedThemePreset;
 
 export type ThemeOption = {
@@ -53,7 +61,7 @@ type DocumentLike = Pick<Document, "querySelector" | "createElement" | "head" | 
   documentElement: HTMLElement;
 };
 
-const LIGHT_THEME_PRESETS = new Set<ResolvedThemePreset>(["light", "dawn", "dusk"]);
+const LIGHT_THEME_PRESETS = new Set<ResolvedThemePreset>(["light", "dawn", "dusk", "blueberry"]);
 const RESOLVED_THEME_PRESETS = new Set<ResolvedThemePreset>([
   "light",
   "noir",
@@ -61,6 +69,8 @@ const RESOLVED_THEME_PRESETS = new Set<ResolvedThemePreset>([
   "dusk",
   "midnight",
   "stone",
+  "blueberry",
+  "cosmic",
 ]);
 const THEME_PREFERENCES = new Set<ThemePreference>(["system", ...RESOLVED_THEME_PRESETS]);
 
@@ -70,11 +80,13 @@ const DYNAMIC_THEME_COLOR_SELECTOR = `meta[name="${THEME_COLOR_META_NAME}"][data
 export const THEME_OPTIONS: readonly ThemeOption[] = [
   { value: "system", label: "System" },
   { value: "light", label: "Light" },
-  { value: "noir", label: "Noir" },
   { value: "dawn", label: "Dawn" },
   { value: "dusk", label: "Dusk" },
+  { value: "blueberry", label: "Blueberry" },
+  { value: "noir", label: "Noir" },
   { value: "midnight", label: "Midnight" },
   { value: "stone", label: "Stone" },
+  { value: "cosmic", label: "Cosmic" },
 ] as const;
 
 export const THEME_TERMINAL_PALETTES: Record<ResolvedThemePreset, ThemeTerminalPalette> = {
@@ -194,27 +206,73 @@ export const THEME_TERMINAL_PALETTES: Record<ResolvedThemePreset, ThemeTerminalP
     brightWhite: "rgb(242, 246, 252)",
   },
   stone: {
-    cursor: "rgb(234, 196, 177)",
-    selectionBackground: "rgba(181, 113, 88, 0.24)",
+    cursor: "rgb(221, 206, 196)",
+    selectionBackground: "rgba(151, 115, 103, 0.22)",
     scrollbarSliderBackground: "rgba(255, 255, 255, 0.1)",
     scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.18)",
     scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.22)",
-    black: "rgb(39, 29, 27)",
-    red: "rgb(219, 116, 102)",
-    green: "rgb(144, 171, 122)",
-    yellow: "rgb(203, 160, 94)",
-    blue: "rgb(132, 157, 197)",
-    magenta: "rgb(183, 135, 171)",
-    cyan: "rgb(118, 168, 161)",
-    white: "rgb(222, 214, 206)",
-    brightBlack: "rgb(113, 98, 92)",
-    brightRed: "rgb(234, 143, 129)",
-    brightGreen: "rgb(168, 194, 146)",
-    brightYellow: "rgb(222, 182, 118)",
-    brightBlue: "rgb(155, 179, 220)",
-    brightMagenta: "rgb(203, 157, 190)",
-    brightCyan: "rgb(143, 190, 184)",
-    brightWhite: "rgb(245, 239, 233)",
+    black: "rgb(29, 24, 23)",
+    red: "rgb(196, 112, 101)",
+    green: "rgb(130, 157, 117)",
+    yellow: "rgb(185, 149, 95)",
+    blue: "rgb(123, 145, 182)",
+    magenta: "rgb(165, 135, 168)",
+    cyan: "rgb(108, 150, 147)",
+    white: "rgb(214, 207, 201)",
+    brightBlack: "rgb(100, 90, 87)",
+    brightRed: "rgb(216, 135, 123)",
+    brightGreen: "rgb(151, 178, 138)",
+    brightYellow: "rgb(205, 170, 117)",
+    brightBlue: "rgb(145, 168, 204)",
+    brightMagenta: "rgb(186, 156, 189)",
+    brightCyan: "rgb(132, 173, 170)",
+    brightWhite: "rgb(240, 235, 231)",
+  },
+  blueberry: {
+    cursor: "rgb(69, 101, 152)",
+    selectionBackground: "rgba(95, 130, 196, 0.2)",
+    scrollbarSliderBackground: "rgba(41, 71, 116, 0.14)",
+    scrollbarSliderHoverBackground: "rgba(41, 71, 116, 0.22)",
+    scrollbarSliderActiveBackground: "rgba(41, 71, 116, 0.28)",
+    black: "rgb(56, 76, 108)",
+    red: "rgb(194, 102, 119)",
+    green: "rgb(89, 138, 121)",
+    yellow: "rgb(180, 146, 79)",
+    blue: "rgb(86, 118, 189)",
+    magenta: "rgb(142, 112, 189)",
+    cyan: "rgb(81, 146, 171)",
+    white: "rgb(226, 236, 248)",
+    brightBlack: "rgb(111, 132, 166)",
+    brightRed: "rgb(214, 124, 140)",
+    brightGreen: "rgb(111, 159, 142)",
+    brightYellow: "rgb(201, 166, 96)",
+    brightBlue: "rgb(109, 140, 208)",
+    brightMagenta: "rgb(163, 132, 208)",
+    brightCyan: "rgb(102, 167, 191)",
+    brightWhite: "rgb(246, 250, 255)",
+  },
+  cosmic: {
+    cursor: "rgb(212, 203, 235)",
+    selectionBackground: "rgba(124, 102, 176, 0.24)",
+    scrollbarSliderBackground: "rgba(255, 255, 255, 0.1)",
+    scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.18)",
+    scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.22)",
+    black: "rgb(22, 19, 31)",
+    red: "rgb(206, 118, 149)",
+    green: "rgb(127, 172, 156)",
+    yellow: "rgb(196, 163, 111)",
+    blue: "rgb(121, 145, 210)",
+    magenta: "rgb(165, 136, 214)",
+    cyan: "rgb(113, 175, 196)",
+    white: "rgb(216, 211, 228)",
+    brightBlack: "rgb(94, 88, 114)",
+    brightRed: "rgb(226, 141, 170)",
+    brightGreen: "rgb(150, 192, 177)",
+    brightYellow: "rgb(216, 184, 135)",
+    brightBlue: "rgb(145, 167, 228)",
+    brightMagenta: "rgb(187, 161, 230)",
+    brightCyan: "rgb(137, 194, 214)",
+    brightWhite: "rgb(241, 238, 248)",
   },
 };
 
@@ -277,13 +335,35 @@ export const THEME_METADATA_BY_PRESET: Record<ResolvedThemePreset, ThemeMetadata
   stone: {
     label: "Stone",
     mode: "dark",
-    chromeColor: "#211917",
-    foregroundColor: "#f1ece6",
+    chromeColor: "#171413",
+    foregroundColor: "#ece7e2",
     desktopTheme: "dark",
     monacoTheme: "vs-dark",
     diffThemeFamily: "dark",
     iconTheme: "dark",
     terminalPalette: "stone",
+  },
+  blueberry: {
+    label: "Blueberry",
+    mode: "light",
+    chromeColor: "#eaf3ff",
+    foregroundColor: "#24364b",
+    desktopTheme: "light",
+    monacoTheme: "vs",
+    diffThemeFamily: "light",
+    iconTheme: "light",
+    terminalPalette: "blueberry",
+  },
+  cosmic: {
+    label: "Cosmic",
+    mode: "dark",
+    chromeColor: "#121018",
+    foregroundColor: "#efeaf7",
+    desktopTheme: "dark",
+    monacoTheme: "vs-dark",
+    diffThemeFamily: "dark",
+    iconTheme: "dark",
+    terminalPalette: "cosmic",
   },
 };
 
@@ -299,6 +379,9 @@ export function normalizeThemePreference(value: unknown): ThemePreference {
   if (value === "dark") {
     return "noir";
   }
+  if (value === "slate") {
+    return "blueberry";
+  }
   return isThemePreference(value) ? value : "system";
 }
 
@@ -311,7 +394,7 @@ export function readStoredThemePreference(storage?: ThemeStorageLike | null): Th
 
   const raw = targetStorage.getItem(THEME_STORAGE_KEY);
   const theme = normalizeThemePreference(raw);
-  if (raw === "dark") {
+  if (raw === "dark" || raw === "slate") {
     targetStorage.setItem(THEME_STORAGE_KEY, theme);
   }
   return theme;

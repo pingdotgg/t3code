@@ -19,6 +19,7 @@ import {
   OrchestrationSessionStatus,
   DEFAULT_SERVER_SETTINGS,
   type DesktopBridge,
+  CheckpointRef,
 } from "@forma/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@forma/client-runtime";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
@@ -77,6 +78,8 @@ const THREAD_REF = scopeThreadRef(LOCAL_ENVIRONMENT_ID, THREAD_ID);
 const THREAD_KEY = scopedThreadKey(THREAD_REF);
 const UUID_ROUTE_RE = /^\/draft\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_DRAFT_KEY = `${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`;
+const FILE_VERSION_A = "a".repeat(64);
+const FILE_VERSION_B = "b".repeat(64);
 const PROJECT_LOGICAL_KEY = deriveLogicalProjectKeyFromSettings(
   {
     environmentId: LOCAL_ENVIRONMENT_ID,
@@ -198,22 +201,55 @@ function createBaseServerConfig(): ServerConfig {
 function createMockEnvironmentApi(input: {
   browse: EnvironmentApi["filesystem"]["browse"];
   dispatchCommand: EnvironmentApi["orchestration"]["dispatchCommand"];
+  getFullThreadDiff?: EnvironmentApi["orchestration"]["getFullThreadDiff"];
+  getLocalAgentInventory?: EnvironmentApi["projects"]["getLocalAgentInventory"];
+  getTurnDiff?: EnvironmentApi["orchestration"]["getTurnDiff"];
+  readFile?: EnvironmentApi["projects"]["readFile"];
+  searchEntries?: EnvironmentApi["projects"]["searchEntries"];
+  writeFile?: EnvironmentApi["projects"]["writeFile"];
 }): EnvironmentApi {
   return {
     terminal: {} as EnvironmentApi["terminal"],
-    projects: {} as EnvironmentApi["projects"],
+    projects: {
+      getLocalAgentInventory:
+        input.getLocalAgentInventory ??
+        ((async () => ({
+          skills: [],
+          commands: [],
+        })) as EnvironmentApi["projects"]["getLocalAgentInventory"]),
+      readFile:
+        input.readFile ??
+        ((() => {
+          throw new Error("Not implemented in browser test.");
+        }) as EnvironmentApi["projects"]["readFile"]),
+      searchEntries:
+        input.searchEntries ??
+        ((async () => ({
+          entries: [],
+          truncated: false,
+        })) as EnvironmentApi["projects"]["searchEntries"]),
+      writeFile:
+        input.writeFile ??
+        ((() => {
+          throw new Error("Not implemented in browser test.");
+        }) as EnvironmentApi["projects"]["writeFile"]),
+    },
     filesystem: {
       browse: input.browse,
     },
     git: {} as EnvironmentApi["git"],
     orchestration: {
       dispatchCommand: input.dispatchCommand,
-      getTurnDiff: (() => {
-        throw new Error("Not implemented in browser test.");
-      }) as EnvironmentApi["orchestration"]["getTurnDiff"],
-      getFullThreadDiff: (() => {
-        throw new Error("Not implemented in browser test.");
-      }) as EnvironmentApi["orchestration"]["getFullThreadDiff"],
+      getTurnDiff:
+        input.getTurnDiff ??
+        ((() => {
+          throw new Error("Not implemented in browser test.");
+        }) as EnvironmentApi["orchestration"]["getTurnDiff"]),
+      getFullThreadDiff:
+        input.getFullThreadDiff ??
+        ((() => {
+          throw new Error("Not implemented in browser test.");
+        }) as EnvironmentApi["orchestration"]["getFullThreadDiff"]),
       subscribeShell: (() => () => undefined) as EnvironmentApi["orchestration"]["subscribeShell"],
       subscribeThread: (() => () =>
         undefined) as EnvironmentApi["orchestration"]["subscribeThread"],
@@ -969,6 +1005,118 @@ function createSnapshotWithPlanFollowUpPrompt(options?: {
         : thread,
     ),
   };
+}
+
+function createSnapshotWithAssistantFileLink(options?: {
+  turnLinked?: boolean;
+  workspaceFilePath?: string;
+}): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-file-link-target" as MessageId,
+    targetText: "chat file link thread",
+  });
+  const turnLinked = options?.turnLinked ?? true;
+  const workspaceFilePath = options?.workspaceFilePath ?? "/repo/project/src/linked.ts";
+  const assistantMessageId = "msg-assistant-21" as MessageId;
+  const turnId = "turn-linked-editor" as TurnId;
+
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? {
+            ...thread,
+            messages: thread.messages.map((message) =>
+              message.id === assistantMessageId
+                ? {
+                    ...message,
+                    turnId: turnLinked ? turnId : null,
+                    text: `Open [linked.ts](file://${workspaceFilePath}#L4C2)`,
+                  }
+                : message,
+            ),
+            latestTurn: turnLinked
+              ? {
+                  turnId,
+                  state: "completed",
+                  requestedAt: isoAt(1_000),
+                  startedAt: isoAt(1_001),
+                  completedAt: isoAt(1_010),
+                  assistantMessageId,
+                }
+              : null,
+            checkpoints: turnLinked
+              ? [
+                  {
+                    turnId,
+                    completedAt: isoAt(1_010),
+                    status: "ready",
+                    checkpointTurnCount: 1,
+                    checkpointRef: CheckpointRef.make("checkpoint-linked-editor"),
+                    assistantMessageId,
+                    files: [
+                      {
+                        path: "src/linked.ts",
+                        kind: "modified",
+                        additions: 1,
+                        deletions: 0,
+                      },
+                    ],
+                  },
+                ]
+              : [],
+            session: thread.session
+              ? {
+                  ...thread.session,
+                  status: "ready",
+                  updatedAt: isoAt(1_010),
+                }
+              : null,
+            updatedAt: isoAt(1_010),
+          }
+        : thread,
+    ),
+  };
+}
+
+function mockLocalWorkspaceEditorEnvironmentApi(options?: {
+  diff?: string;
+  relativePath?: string;
+  contents?: string;
+}) {
+  const readFile = vi.fn(async () => ({
+    relativePath: options?.relativePath ?? "src/linked.ts",
+    contents: options?.contents ?? "export const linked = true;\n",
+    version: FILE_VERSION_A,
+  }));
+  const writeFile = vi.fn(async () => ({
+    relativePath: options?.relativePath ?? "src/linked.ts",
+    version: FILE_VERSION_B,
+  }));
+
+  __setEnvironmentApiOverrideForTests(
+    LOCAL_ENVIRONMENT_ID,
+    createMockEnvironmentApi({
+      browse: vi.fn(async () => ({ parentPath: "~/", entries: [] })),
+      dispatchCommand: vi.fn(async () => ({ sequence: fixture.snapshot.snapshotSequence + 1 })),
+      getFullThreadDiff: vi.fn(async () => ({
+        threadId: THREAD_ID,
+        fromTurnCount: 0,
+        toTurnCount: 1,
+        diff: options?.diff ?? "",
+      })),
+      getTurnDiff: vi.fn(async () => ({
+        threadId: THREAD_ID,
+        fromTurnCount: 0,
+        toTurnCount: 1,
+        diff: options?.diff ?? "",
+      })),
+      readFile,
+      writeFile,
+    }),
+  );
+
+  return { readFile, writeFile };
 }
 
 function createSnapshotWithQueuedTurns(options?: {
@@ -6242,6 +6390,192 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the in-app editor from an assistant markdown file link and preserves turn context", async () => {
+    mockLocalWorkspaceEditorEnvironmentApi();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithAssistantFileLink(),
+    });
+
+    try {
+      await page.getByRole("link", { name: "linked.ts · L4:C2" }).click();
+
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.search).toMatchObject({
+          diff: "1",
+          diffTurnId: "turn-linked-editor",
+          diffFilePath: "src/linked.ts",
+          diffView: "editor",
+          editorFilePath: "src/linked.ts",
+          editorLine: 4,
+          editorColumn: 2,
+        });
+        expect(mounted.router.state.location.search.editorBackToDiff).toBeUndefined();
+      });
+      await expect.element(page.getByRole("button", { name: "Exit edit" })).toBeVisible();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("returns to the selected diff after closing an editor session opened from diff", async () => {
+    mockLocalWorkspaceEditorEnvironmentApi();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithAssistantFileLink(),
+      initialPath: `/${LOCAL_ENVIRONMENT_ID}/${THREAD_ID}?diff=1&diffTurnId=turn-linked-editor&diffFilePath=src%2Flinked.ts&diffView=editor&editorFilePath=src%2Flinked.ts&editorLine=4&editorColumn=2&editorBackToDiff=1`,
+    });
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Exit edit" })).toBeVisible();
+
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.search).toMatchObject({
+          diff: "1",
+          diffTurnId: "turn-linked-editor",
+          diffFilePath: "src/linked.ts",
+          diffView: "editor",
+          editorFilePath: "src/linked.ts",
+          editorBackToDiff: "1",
+        });
+      });
+
+      await page.getByRole("button", { name: "Exit edit" }).click();
+
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.search).toMatchObject({
+          diff: "1",
+          diffTurnId: "turn-linked-editor",
+          diffFilePath: "src/linked.ts",
+        });
+        expect(mounted.router.state.location.search.diffView).toBeUndefined();
+        expect(mounted.router.state.location.search.editorFilePath).toBeUndefined();
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("closes the diff panel after exiting a turn-linked editor session opened directly from chat", async () => {
+    mockLocalWorkspaceEditorEnvironmentApi();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithAssistantFileLink(),
+    });
+
+    try {
+      await page.getByRole("link", { name: "linked.ts · L4:C2" }).click();
+      await expect.element(page.getByRole("button", { name: "Exit edit" })).toBeVisible();
+
+      await page.getByRole("button", { name: "Exit edit" }).click();
+
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.search.diff).toBeUndefined();
+        expect(mounted.router.state.location.search.diffView).toBeUndefined();
+        expect(mounted.router.state.location.search.editorFilePath).toBeUndefined();
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens and closes a standalone editor session from a chat file link", async () => {
+    mockLocalWorkspaceEditorEnvironmentApi();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithAssistantFileLink({ turnLinked: false }),
+    });
+
+    try {
+      await page.getByRole("link", { name: "linked.ts · L4:C2" }).click();
+
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.search).toMatchObject({
+          diff: "1",
+          diffView: "editor",
+          editorFilePath: "src/linked.ts",
+          editorLine: 4,
+          editorColumn: 2,
+        });
+        expect(mounted.router.state.location.search.diffTurnId).toBeUndefined();
+        expect(mounted.router.state.location.search.editorBackToDiff).toBeUndefined();
+      });
+      await expect.element(page.getByRole("button", { name: "Exit edit" })).toBeVisible();
+
+      await page.getByRole("button", { name: "Exit edit" }).click();
+
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.search.diff).toBeUndefined();
+        expect(mounted.router.state.location.search.diffView).toBeUndefined();
+        expect(mounted.router.state.location.search.editorFilePath).toBeUndefined();
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("falls back to opening the IDE when a chat file link is outside the active workspace", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithAssistantFileLink({
+        turnLinked: false,
+        workspaceFilePath: "/tmp/outside-linked.ts",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          availableEditors: ["vscode"],
+        };
+      },
+    });
+
+    try {
+      await page.getByRole("link", { name: "linked.ts · L4:C2" }).click();
+
+      await vi.waitFor(() => {
+        expect(
+          wsRequests.some(
+            (request) =>
+              request._tag === WS_METHODS.shellOpenInEditor &&
+              request.cwd === "/tmp/outside-linked.ts:4:2" &&
+              request.editor === "vscode",
+          ),
+        ).toBe(true);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("restores the routed editor view from the URL on initial load", async () => {
+    mockLocalWorkspaceEditorEnvironmentApi();
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithAssistantFileLink({ turnLinked: false }),
+      initialPath: `/${LOCAL_ENVIRONMENT_ID}/${THREAD_ID}?diff=1&diffView=editor&editorFilePath=src%2Flinked.ts&editorLine=4&editorColumn=2`,
+    });
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Exit edit" })).toBeVisible();
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.search).toMatchObject({
+          diff: "1",
+          diffView: "editor",
+          editorFilePath: "src/linked.ts",
+          editorLine: 4,
+          editorColumn: 2,
+        });
+      });
     } finally {
       await mounted.cleanup();
     }

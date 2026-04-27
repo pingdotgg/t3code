@@ -4,7 +4,7 @@ import { type TimestampFormat } from "@forma/contracts/settings";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
-import ChatMarkdown from "./ChatMarkdown";
+import ChatMarkdown, { type OpenChatMarkdownFileInApp } from "./ChatMarkdown";
 import {
   IconCheckmark as CheckIcon,
   IconChevronDown as ChevronDownIcon,
@@ -33,14 +33,14 @@ function stepStatusIcon(status: string): React.ReactNode {
   if (status === "completed") {
     return (
       <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-500">
-        <CheckIcon className="size-3" />
+        <CheckIcon className="size-3 fill-current" />
       </span>
     );
   }
   if (status === "inProgress") {
     return (
       <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-blue-500/15 text-blue-400">
-        <LoaderIcon className="size-3 animate-spin" />
+        <LoaderIcon className="size-3 animate-spin fill-current" />
       </span>
     );
   }
@@ -61,6 +61,7 @@ interface PlanSidebarProps {
   timestampFormat: TimestampFormat;
   mode?: "sheet" | "sidebar";
   onClose: () => void;
+  onOpenFileInApp?: OpenChatMarkdownFileInApp | undefined;
 }
 
 const PlanSidebar = memo(function PlanSidebar({
@@ -73,6 +74,7 @@ const PlanSidebar = memo(function PlanSidebar({
   timestampFormat,
   mode = "sidebar",
   onClose,
+  onOpenFileInApp,
 }: PlanSidebarProps) {
   const [proposedPlanExpanded, setProposedPlanExpanded] = useState(false);
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
@@ -257,6 +259,7 @@ const PlanSidebar = memo(function PlanSidebar({
                     text={displayedPlanMarkdown ?? ""}
                     cwd={markdownCwd}
                     isStreaming={false}
+                    onOpenFileInApp={onOpenFileInApp}
                   />
                 </div>
               ) : null}

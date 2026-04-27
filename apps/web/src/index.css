@@ -78,7 +78,8 @@
 }
 
 :root,
-:root[data-theme="light"] {
+:root[data-theme="light"],
+.theme-preview[data-theme-preview="light"] {
   color-scheme: light;
   --background: var(--color-white);
   --app-chrome-background: var(--background);
@@ -124,7 +125,8 @@
   --composer-footer-separator-border-opacity: 100%;
 }
 
-:root[data-theme="noir"] {
+:root[data-theme="noir"],
+.theme-preview[data-theme-preview="noir"] {
   color-scheme: dark;
   --background: color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white));
   --app-chrome-background: var(--background);
@@ -174,27 +176,28 @@
   --composer-footer-separator-border-opacity: 90%;
 }
 
-:root[data-theme="dawn"] {
+:root[data-theme="dawn"],
+.theme-preview[data-theme-preview="dawn"] {
   color-scheme: light;
   --background: #f6ebe2;
   --app-chrome-background: var(--background);
   --foreground: #42352e;
-  --card: color-mix(in srgb, #ffffff 82%, var(--background));
+  --card: color-mix(in srgb, #ffffff 86%, var(--background));
   --card-foreground: var(--foreground);
-  --popover: color-mix(in srgb, #ffffff 86%, var(--background));
+  --popover: color-mix(in srgb, #ffffff 90%, var(--background));
   --popover-foreground: var(--foreground);
-  --primary: #b98038;
+  --primary: #d28b26;
   --primary-foreground: var(--color-white);
   --secondary: rgba(112, 78, 58, 0.055);
   --secondary-foreground: var(--foreground);
   --muted: rgba(112, 78, 58, 0.06);
   --muted-foreground: color-mix(in srgb, var(--foreground) 72%, white);
-  --accent: rgba(212, 170, 124, 0.12);
+  --accent: rgba(210, 139, 38, 0.14);
   --accent-foreground: var(--foreground);
   --destructive: var(--color-red-500);
   --border: rgba(72, 42, 28, 0.1);
   --input: rgba(72, 42, 28, 0.12);
-  --ring: #c6924c;
+  --ring: #e39e3d;
   --destructive-foreground: var(--color-red-700);
   --info: var(--color-blue-500);
   --info-foreground: var(--color-blue-700);
@@ -228,27 +231,28 @@
   --composer-footer-separator-border-opacity: 100%;
 }
 
-:root[data-theme="dusk"] {
+:root[data-theme="dusk"],
+.theme-preview[data-theme-preview="dusk"] {
   color-scheme: light;
   --background: #f5e8e3;
   --app-chrome-background: var(--background);
   --foreground: #47312d;
-  --card: color-mix(in srgb, #ffffff 80%, var(--background));
+  --card: color-mix(in srgb, #ffffff 84%, var(--background));
   --card-foreground: var(--foreground);
-  --popover: color-mix(in srgb, #ffffff 84%, var(--background));
+  --popover: color-mix(in srgb, #ffffff 88%, var(--background));
   --popover-foreground: var(--foreground);
-  --primary: #b3634d;
+  --primary: #d16c4e;
   --primary-foreground: var(--color-white);
   --secondary: rgba(103, 63, 56, 0.055);
   --secondary-foreground: var(--foreground);
   --muted: rgba(103, 63, 56, 0.06);
   --muted-foreground: color-mix(in srgb, var(--foreground) 74%, white);
-  --accent: rgba(199, 118, 96, 0.11);
+  --accent: rgba(209, 108, 78, 0.14);
   --accent-foreground: var(--foreground);
   --destructive: var(--color-red-500);
   --border: rgba(73, 36, 34, 0.1);
   --input: rgba(73, 36, 34, 0.12);
-  --ring: #c47458;
+  --ring: #e08163;
   --destructive-foreground: var(--color-red-700);
   --info: var(--color-blue-500);
   --info-foreground: var(--color-blue-700);
@@ -282,27 +286,28 @@
   --composer-footer-separator-border-opacity: 100%;
 }
 
-:root[data-theme="midnight"] {
+:root[data-theme="midnight"],
+.theme-preview[data-theme-preview="midnight"] {
   color-scheme: dark;
   --background: #171b22;
   --app-chrome-background: var(--background);
   --foreground: #edf2fb;
-  --card: color-mix(in srgb, #10151c 86%, var(--background));
+  --card: color-mix(in srgb, var(--background) 97%, white);
   --card-foreground: var(--foreground);
-  --popover: color-mix(in srgb, #0f141b 90%, var(--background));
+  --popover: color-mix(in srgb, var(--background) 96%, white);
   --popover-foreground: var(--foreground);
-  --primary: #8fa8cd;
+  --primary: #79a7ee;
   --primary-foreground: #10151c;
   --secondary: rgba(255, 255, 255, 0.045);
   --secondary-foreground: var(--foreground);
   --muted: rgba(255, 255, 255, 0.05);
   --muted-foreground: color-mix(in srgb, var(--foreground) 72%, black);
-  --accent: rgba(143, 168, 205, 0.13);
+  --accent: rgba(121, 167, 238, 0.16);
   --accent-foreground: var(--foreground);
   --destructive: color-mix(in srgb, var(--color-red-500) 88%, var(--color-white));
   --border: rgba(255, 255, 255, 0.075);
   --input: rgba(255, 255, 255, 0.09);
-  --ring: #9bb0d2;
+  --ring: #96bcfa;
   --destructive-foreground: var(--color-red-300);
   --info: var(--color-blue-400);
   --info-foreground: var(--color-blue-300);
@@ -336,28 +341,29 @@
   --composer-footer-separator-border-opacity: 90%;
 }
 
-:root[data-theme="stone"] {
+:root[data-theme="stone"],
+.theme-preview[data-theme-preview="stone"] {
   color-scheme: dark;
-  --composer-surface-overlay-shadow: inset 0 0 0 1px rgba(158, 89, 71, 0.1);
-  --background: #211917;
+  --composer-surface-overlay-shadow: inset 0 0 0 1px rgba(122, 101, 95, 0.1);
+  --background: #171413;
   --app-chrome-background: var(--background);
-  --foreground: #f1ece6;
-  --card: color-mix(in srgb, #191211 88%, var(--background));
+  --foreground: #ece7e2;
+  --card: color-mix(in srgb, var(--background) 97%, #f4eee8);
   --card-foreground: var(--foreground);
-  --popover: color-mix(in srgb, #171110 90%, var(--background));
+  --popover: color-mix(in srgb, var(--background) 96%, #f4eee8);
   --popover-foreground: var(--foreground);
-  --primary: #b47b60;
-  --primary-foreground: #180f0d;
+  --primary: #df5e5a;
+  --primary-foreground: #120f0e;
   --secondary: rgba(255, 255, 255, 0.045);
   --secondary-foreground: var(--foreground);
   --muted: rgba(255, 255, 255, 0.05);
   --muted-foreground: color-mix(in srgb, var(--foreground) 72%, black);
-  --accent: rgba(180, 123, 96, 0.13);
+  --accent: rgba(223, 94, 90, 0.18);
   --accent-foreground: var(--foreground);
   --destructive: color-mix(in srgb, var(--color-red-500) 88%, var(--color-white));
   --border: rgba(255, 255, 255, 0.075);
   --input: rgba(255, 255, 255, 0.09);
-  --ring: #bf8567;
+  --ring: #f07c77;
   --destructive-foreground: var(--color-red-300);
   --info: var(--color-blue-400);
   --info-foreground: var(--color-blue-300);
@@ -367,26 +373,140 @@
   --warning-foreground: var(--color-amber-300);
   --composer-surface-fill: linear-gradient(
     180deg,
-    rgba(44, 31, 29, 0.92) 0%,
-    rgba(30, 20, 19, 0.9) 100%
+    rgba(28, 24, 23, 0.92) 0%,
+    rgba(19, 16, 15, 0.9) 100%
   );
   --composer-surface-border: --alpha(var(--color-white) / 10%);
   --composer-surface-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -16px 34px rgba(82, 37, 30, 0.42),
-    inset 0 -4px 12px rgba(144, 72, 56, 0.16), 0 8px 22px rgba(10, 5, 4, 0.42),
-    0 3px 10px rgba(98, 42, 34, 0.14);
+    inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -16px 34px rgba(70, 32, 27, 0.38),
+    inset 0 -4px 12px rgba(130, 66, 53, 0.14), 0 8px 22px rgba(6, 5, 5, 0.44),
+    0 3px 10px rgba(86, 40, 33, 0.14);
   --composer-surface-focus-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.11), inset 0 -18px 38px rgba(92, 40, 32, 0.46),
-    inset 0 -4px 14px rgba(161, 79, 61, 0.19), 0 10px 26px rgba(10, 5, 4, 0.48),
-    0 4px 12px rgba(112, 47, 38, 0.16);
+    inset 0 1px 0 rgba(255, 255, 255, 0.11), inset 0 -18px 38px rgba(79, 36, 30, 0.42),
+    inset 0 -4px 14px rgba(145, 74, 59, 0.17), 0 10px 26px rgba(7, 6, 5, 0.5),
+    0 4px 12px rgba(98, 45, 37, 0.16);
   --composer-banner-background: linear-gradient(
     180deg,
-    rgba(60, 42, 38, 0.82) 0%,
-    rgba(35, 24, 22, 0.74) 100%
+    rgba(40, 33, 31, 0.82) 0%,
+    rgba(22, 18, 17, 0.74) 100%
   );
   --composer-banner-border: --alpha(var(--color-white) / 10%);
   --composer-banner-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 0 -1px 0 rgba(126, 55, 45, 0.18);
+    inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 0 -1px 0 rgba(117, 60, 50, 0.18);
+  --composer-footer-separator-background-color: var(--composer-surface-border);
+  --composer-footer-separator-background-opacity: 100%;
+  --composer-footer-separator-border-color: var(--color-black);
+  --composer-footer-separator-border-opacity: 90%;
+}
+
+:root[data-theme="blueberry"],
+.theme-preview[data-theme-preview="blueberry"] {
+  color-scheme: light;
+  --composer-surface-overlay-shadow: inset 0 0 0 1px rgba(108, 140, 204, 0.08);
+  --background: #eaf3ff;
+  --app-chrome-background: var(--background);
+  --foreground: #24364b;
+  --card: color-mix(in srgb, #ffffff 88%, var(--background));
+  --card-foreground: var(--foreground);
+  --popover: color-mix(in srgb, #ffffff 91%, var(--background));
+  --popover-foreground: var(--foreground);
+  --primary: #4c78ea;
+  --primary-foreground: var(--color-white);
+  --secondary: rgba(76, 108, 164, 0.055);
+  --secondary-foreground: var(--foreground);
+  --muted: rgba(76, 108, 164, 0.06);
+  --muted-foreground: color-mix(in srgb, var(--foreground) 72%, white);
+  --accent: rgba(76, 120, 234, 0.15);
+  --accent-foreground: var(--foreground);
+  --destructive: var(--color-red-500);
+  --border: rgba(51, 81, 126, 0.1);
+  --input: rgba(51, 81, 126, 0.12);
+  --ring: #6a92f4;
+  --destructive-foreground: var(--color-red-700);
+  --info: #4a79d1;
+  --info-foreground: #2d57a5;
+  --success: var(--color-emerald-500);
+  --success-foreground: var(--color-emerald-700);
+  --warning: var(--color-amber-500);
+  --warning-foreground: var(--color-amber-700);
+  --composer-surface-fill: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.95) 0%,
+    rgba(234, 243, 255, 0.92) 100%
+  );
+  --composer-surface-border: --alpha(var(--color-black) / 10%);
+  --composer-surface-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.82), 0 8px 20px rgba(69, 100, 152, 0.09),
+    0 3px 8px rgba(46, 69, 108, 0.07);
+  --composer-surface-focus-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 10px 24px rgba(69, 100, 152, 0.11),
+    0 4px 10px rgba(46, 69, 108, 0.08);
+  --composer-banner-background: linear-gradient(
+    180deg,
+    rgba(252, 253, 255, 0.9) 0%,
+    rgba(226, 236, 252, 0.88) 100%
+  );
+  --composer-banner-border: --alpha(var(--color-black) / 10%);
+  --composer-banner-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.88), inset 0 -1px 0 rgba(94, 126, 182, 0.05);
+  --composer-footer-separator-background-color: var(--color-white);
+  --composer-footer-separator-background-opacity: 100%;
+  --composer-footer-separator-border-color: var(--composer-surface-border);
+  --composer-footer-separator-border-opacity: 100%;
+}
+
+:root[data-theme="cosmic"],
+.theme-preview[data-theme-preview="cosmic"] {
+  color-scheme: dark;
+  --composer-surface-overlay-shadow: inset 0 0 0 1px rgba(120, 100, 168, 0.1);
+  --background: #121018;
+  --app-chrome-background: var(--background);
+  --foreground: #efeaf7;
+  --card: color-mix(in srgb, var(--background) 97%, #fbf7ff);
+  --card-foreground: var(--foreground);
+  --popover: color-mix(in srgb, var(--background) 96%, #fbf7ff);
+  --popover-foreground: var(--foreground);
+  --primary: #a55dff;
+  --primary-foreground: #110f18;
+  --secondary: rgba(255, 255, 255, 0.045);
+  --secondary-foreground: var(--foreground);
+  --muted: rgba(255, 255, 255, 0.05);
+  --muted-foreground: color-mix(in srgb, var(--foreground) 72%, black);
+  --accent: rgba(165, 93, 255, 0.18);
+  --accent-foreground: var(--foreground);
+  --destructive: color-mix(in srgb, var(--color-red-500) 88%, var(--color-white));
+  --border: rgba(255, 255, 255, 0.078);
+  --input: rgba(255, 255, 255, 0.094);
+  --ring: #bc7bff;
+  --destructive-foreground: var(--color-red-300);
+  --info: var(--color-blue-400);
+  --info-foreground: var(--color-blue-300);
+  --success: var(--color-emerald-400);
+  --success-foreground: var(--color-emerald-300);
+  --warning: var(--color-amber-400);
+  --warning-foreground: var(--color-amber-300);
+  --composer-surface-fill: linear-gradient(
+    180deg,
+    rgba(24, 20, 33, 0.92) 0%,
+    rgba(16, 13, 23, 0.9) 100%
+  );
+  --composer-surface-border: --alpha(var(--color-white) / 10%);
+  --composer-surface-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 0 -18px 38px rgba(22, 16, 37, 0.42),
+    inset 0 -4px 14px rgba(92, 74, 134, 0.14), 0 8px 22px rgba(7, 5, 12, 0.48),
+    0 3px 10px rgba(47, 34, 74, 0.14);
+  --composer-surface-focus-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.11), inset 0 -20px 40px rgba(26, 19, 43, 0.46),
+    inset 0 -4px 16px rgba(104, 84, 150, 0.17), 0 10px 26px rgba(8, 6, 14, 0.52),
+    0 4px 12px rgba(54, 39, 87, 0.16);
+  --composer-banner-background: linear-gradient(
+    180deg,
+    rgba(35, 29, 52, 0.82) 0%,
+    rgba(19, 16, 29, 0.74) 100%
+  );
+  --composer-banner-border: --alpha(var(--color-white) / 10%);
+  --composer-banner-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 0 -1px 0 rgba(96, 76, 142, 0.18);
   --composer-footer-separator-background-color: var(--composer-surface-border);
   --composer-footer-separator-background-opacity: 100%;
   --composer-footer-separator-border-color: var(--color-black);
@@ -942,33 +1062,15 @@ label:has(> select#reasoning-effort) select {
   top: 0.5rem;
   right: 0.5rem;
   z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 1.5rem;
-  width: 1.5rem;
-  border-radius: 0.375rem;
-  border: 1px solid var(--border);
-  background: color-mix(in srgb, var(--background) 82%, transparent);
-  color: var(--muted-foreground);
-  cursor: pointer;
   opacity: 0;
   pointer-events: none;
-  transition:
-    opacity 120ms ease,
-    color 120ms ease,
-    border-color 120ms ease;
+  transition: opacity 120ms ease;
 }
 
 .chat-markdown .chat-markdown-codeblock:hover .chat-markdown-copy-button,
 .chat-markdown .chat-markdown-codeblock:focus-within .chat-markdown-copy-button {
   opacity: 1;
   pointer-events: auto;
-}
-
-.chat-markdown .chat-markdown-copy-button:hover {
-  color: var(--foreground);
-  border-color: color-mix(in srgb, var(--border) 70%, var(--foreground));
 }
 
 .chat-markdown .chat-markdown-shiki .shiki {

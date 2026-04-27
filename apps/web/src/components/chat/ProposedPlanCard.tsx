@@ -8,7 +8,7 @@ import {
   proposedPlanTitle,
   stripDisplayedPlanMarkdown,
 } from "../../proposedPlan";
-import ChatMarkdown from "../ChatMarkdown";
+import ChatMarkdown, { type OpenChatMarkdownFileInApp } from "../ChatMarkdown";
 import { IconEllipsis as EllipsisIcon } from "symbols-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -33,11 +33,13 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   environmentId,
   cwd,
   workspaceRoot,
+  onOpenFileInApp,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
+  onOpenFileInApp?: OpenChatMarkdownFileInApp | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -163,9 +165,19 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       <div className="mt-4">
         <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
           {canCollapse && !expanded ? (
-            <ChatMarkdown text={collapsedPreview ?? ""} cwd={cwd} isStreaming={false} />
+            <ChatMarkdown
+              text={collapsedPreview ?? ""}
+              cwd={cwd}
+              isStreaming={false}
+              onOpenFileInApp={onOpenFileInApp}
+            />
           ) : (
-            <ChatMarkdown text={displayedPlanMarkdown} cwd={cwd} isStreaming={false} />
+            <ChatMarkdown
+              text={displayedPlanMarkdown}
+              cwd={cwd}
+              isStreaming={false}
+              onOpenFileInApp={onOpenFileInApp}
+            />
           )}
           {canCollapse && !expanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />

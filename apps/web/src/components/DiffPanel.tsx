@@ -19,7 +19,13 @@ import { invalidateProjectQueries } from "~/lib/projectReactQuery";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { resolvePathLinkTarget } from "../terminal-links";
-import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
+import {
+  buildDiffClosedSearch,
+  buildDiffEditorSearch,
+  buildDiffOpenSearch,
+  buildDiffTurnSearch,
+  parseDiffRouteSearch,
+} from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey, resolveDiffThemeName } from "../lib/diffRendering";
 import {
@@ -173,7 +179,7 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { resolvedTheme } = useTheme();
+  const { resolvedPreset, resolvedTheme } = useTheme();
   const settings = useSettings();
   const routeThreadRef = useParams({
     strict: false,
@@ -185,8 +191,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   );
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
-  const [viewMode, setViewMode] = useState<DiffViewMode>("diff");
-  const [editorFilePath, setEditorFilePath] = useState<string | null>(null);
   const [savedOverridesByKey, setSavedOverridesByKey] = useState<
     Record<string, PersistedDiffFileEditOverride | undefined>
   >(() => readPersistedDiffFileEditOverrides(activeThreadStorageKey));
@@ -235,6 +239,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
   const selectedTurnId = diffSearch.diffTurnId ?? null;
   const selectedFilePath = selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null;
+  const editorFilePath = diffSearch.editorFilePath ?? null;
+  const editorLine = diffSearch.editorLine;
+  const editorColumn = diffSearch.editorColumn;
+  const editorBackToDiff = diffSearch.editorBackToDiff === "1";
+  const viewMode: DiffViewMode =
+    diffSearch.diffView === "editor" && editorFilePath !== null ? "editor" : "diff";
   const selectedTurn =
     selectedTurnId === null
       ? undefined
@@ -350,11 +360,21 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     () => new Set(selectedTurnFilePaths),
     [selectedTurnFilePaths],
   );
-  const canEditFiles = Boolean(selectedTurn && activeThread && activeCwd);
+  const canEditFiles = Boolean(activeThread && activeCwd);
+  const isSelectedTurnEditorFile =
+    editorFilePath !== null &&
+    selectedTurn !== undefined &&
+    selectedTurnFilePathSet.has(editorFilePath);
+  const editorFilePaths = useMemo(() => {
+    if (!editorFilePath) {
+      return [];
+    }
+    return isSelectedTurnEditorFile ? selectedTurnFilePaths : [editorFilePath];
+  }, [editorFilePath, isSelectedTurnEditorFile, selectedTurnFilePaths]);
   const editorFileDiff =
     editorFilePath !== null ? (renderableFileDiffsByPath.get(editorFilePath) ?? null) : null;
   const editorOverrideKey =
-    selectedTurn && editorFilePath
+    selectedTurn && editorFilePath && isSelectedTurnEditorFile
       ? buildDiffFileEditOverrideKey(selectedTurn.turnId, editorFilePath)
       : null;
   const editorOverride =
@@ -398,34 +418,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     target?.scrollIntoView({ block: "nearest" });
   }, [selectedFilePath, renderableFiles, viewMode]);
 
-  useEffect(() => {
-    setViewMode("diff");
-    setEditorFilePath(null);
-  }, [activeThreadId]);
-
-  useEffect(() => {
-    if (!diffOpen) {
-      setViewMode("diff");
-      setEditorFilePath(null);
-    }
-  }, [diffOpen]);
-
-  useEffect(() => {
-    if (
-      viewMode === "editor" &&
-      (!selectedTurn || !activeThread || !activeCwd || !editorFilePath)
-    ) {
-      setViewMode("diff");
-      setEditorFilePath(null);
-      return;
-    }
-
-    if (viewMode === "editor" && editorFilePath && !selectedTurnFilePathSet.has(editorFilePath)) {
-      setViewMode("diff");
-      setEditorFilePath(null);
-    }
-  }, [activeCwd, activeThread, editorFilePath, selectedTurn, selectedTurnFilePathSet, viewMode]);
-
   const openDiffFileInEditor = useCallback(
     (filePath: string) => {
       const api = readLocalApi();
@@ -440,23 +432,27 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
   const persistSavedDiffOverride = useCallback(
     async (input: { filePath: string; savedContents: string; preTurnContents: string | null }) => {
-      if (!selectedTurn || !activeThread || !activeCwd) {
+      if (!activeThread || !activeCwd) {
         return;
       }
 
-      const overrideKey = buildDiffFileEditOverrideKey(selectedTurn.turnId, input.filePath);
-      updateSavedOverrides((current) => {
-        const next = { ...current };
-        if (input.preTurnContents === null) {
-          delete next[overrideKey];
-        } else {
-          next[overrideKey] = {
-            preTurnContents: input.preTurnContents,
-            savedContents: input.savedContents,
-          };
-        }
-        return next;
-      });
+      const affectsSelectedTurnDiff =
+        selectedTurn !== undefined && selectedTurnFilePathSet.has(input.filePath);
+      if (affectsSelectedTurnDiff) {
+        const overrideKey = buildDiffFileEditOverrideKey(selectedTurn.turnId, input.filePath);
+        updateSavedOverrides((current) => {
+          const next = { ...current };
+          if (input.preTurnContents === null) {
+            delete next[overrideKey];
+          } else {
+            next[overrideKey] = {
+              preTurnContents: input.preTurnContents,
+              savedContents: input.savedContents,
+            };
+          }
+          return next;
+        });
+      }
 
       await refreshGitStatus({
         environmentId: activeThread.environmentId,
@@ -466,7 +462,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         environmentId: activeThread.environmentId,
         cwd: activeCwd,
       });
-      await activeCheckpointDiffQuery.refetch().catch(() => undefined);
+      if (affectsSelectedTurnDiff) {
+        await activeCheckpointDiffQuery.refetch().catch(() => undefined);
+      }
     },
     [
       activeCheckpointDiffQuery,
@@ -474,19 +472,31 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       activeThread,
       queryClient,
       selectedTurn,
+      selectedTurnFilePathSet,
       updateSavedOverrides,
     ],
   );
 
   const openEditorForFile = useCallback(
     (filePath: string) => {
-      if (!canEditFiles || !selectedTurnFilePathSet.has(filePath)) {
+      if (!canEditFiles || !selectedTurn || !selectedTurnFilePathSet.has(filePath)) {
         return;
       }
-      setEditorFilePath(filePath);
-      setViewMode("editor");
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(
+          scopeThreadRef(activeThread!.environmentId, activeThread!.id),
+        ),
+        search: (previous) =>
+          buildDiffEditorSearch(previous, {
+            filePath,
+            turnId: selectedTurn.turnId,
+            diffFilePath: filePath,
+            backToDiff: true,
+          }),
+      });
     },
-    [canEditFiles, selectedTurnFilePathSet],
+    [activeThread, canEditFiles, navigate, selectedTurn, selectedTurnFilePathSet],
   );
 
   const selectTurn = (turnId: TurnId) => {
@@ -494,10 +504,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1", diffTurnId: turnId };
-      },
+      search: (previous) => buildDiffTurnSearch(previous, { turnId }),
     });
   };
 
@@ -506,10 +513,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1" };
-      },
+      search: (previous) => buildDiffOpenSearch(previous),
     });
   };
 
@@ -704,29 +708,80 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     </>
   );
 
-  const editorHeaderRow = (
-    <>
-      <div className="min-w-0 flex-1">
-        <p className="truncate font-mono text-[11px] text-foreground">
-          {editorFilePath ?? "Editing file"}
-        </p>
-        <p className="text-[10px] text-muted-foreground">
-          {selectedTurn
-            ? `Editing selected turn file${typeof selectedCheckpointTurnCount === "number" ? ` • Turn ${selectedCheckpointTurnCount}` : ""}`
-            : "Editing file"}
-        </p>
-      </div>
-      <div className="text-[10px] text-muted-foreground">Use Back to diff to return</div>
-    </>
-  );
-
-  const headerRow = viewMode === "editor" ? editorHeaderRow : diffHeaderRow;
+  const headerRow = viewMode === "editor" ? undefined : diffHeaderRow;
 
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
       {!activeThread ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
+        </div>
+      ) : viewMode === "editor" && activeCwd && editorFilePath ? (
+        <DiffFileEditorPane
+          cwd={activeCwd}
+          environmentId={activeThread.environmentId}
+          fileDiff={isSelectedTurnEditorFile ? editorFileDiff : null}
+          filePath={editorFilePath}
+          filePaths={editorFilePaths}
+          initialColumn={editorColumn}
+          initialLine={editorLine}
+          initialOverride={editorOverride}
+          navigationLabel="Exit edit"
+          resolvedPreset={resolvedPreset}
+          onOpenInEditor={openDiffFileInEditor}
+          onPersisted={persistSavedDiffOverride}
+          onRequestBack={() => {
+            if (editorBackToDiff && selectedTurn) {
+              void navigate({
+                to: "/$environmentId/$threadId",
+                params: buildThreadRouteParams(
+                  scopeThreadRef(activeThread.environmentId, activeThread.id),
+                ),
+                search: (previous) =>
+                  buildDiffTurnSearch(previous, {
+                    turnId: selectedTurn.turnId,
+                    filePath: selectedFilePath ?? undefined,
+                  }),
+              });
+              return;
+            }
+            if (editorBackToDiff) {
+              void navigate({
+                to: "/$environmentId/$threadId",
+                params: buildThreadRouteParams(
+                  scopeThreadRef(activeThread.environmentId, activeThread.id),
+                ),
+                search: (previous) => buildDiffOpenSearch(previous),
+              });
+              return;
+            }
+            void navigate({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(
+                scopeThreadRef(activeThread.environmentId, activeThread.id),
+              ),
+              search: (previous) => buildDiffClosedSearch(previous),
+            });
+          }}
+          onRequestFilePathChange={(filePath) => {
+            void navigate({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(
+                scopeThreadRef(activeThread.environmentId, activeThread.id),
+              ),
+              search: (previous) =>
+                buildDiffEditorSearch(previous, {
+                  filePath,
+                  turnId: selectedTurn?.turnId,
+                  diffFilePath: selectedTurn ? filePath : undefined,
+                  backToDiff: editorBackToDiff,
+                }),
+            });
+          }}
+        />
+      ) : viewMode === "editor" ? (
+        <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
+          Workspace editor is unavailable for this thread.
         </div>
       ) : !isGitRepo ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
@@ -736,25 +791,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           No completed turns yet.
         </div>
-      ) : viewMode === "editor" && activeCwd && selectedTurn && editorFilePath ? (
-        <DiffFileEditorPane
-          cwd={activeCwd}
-          environmentId={activeThread.environmentId}
-          fileDiff={editorFileDiff}
-          filePath={editorFilePath}
-          filePaths={selectedTurnFilePaths}
-          initialOverride={editorOverride}
-          resolvedTheme={resolvedTheme}
-          onOpenInEditor={openDiffFileInEditor}
-          onPersisted={persistSavedDiffOverride}
-          onRequestBack={() => {
-            setViewMode("diff");
-            setEditorFilePath(null);
-          }}
-          onRequestFilePathChange={(filePath) => {
-            setEditorFilePath(filePath);
-          }}
-        />
       ) : (
         <div
           ref={patchViewportRef}

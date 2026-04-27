@@ -11,17 +11,51 @@ import {
 } from "../environmentApi";
 import { DiffFileEditorPane } from "./DiffFileEditorPane";
 
+const { focusMock, revealPositionInCenterMock, setPositionMock } = vi.hoisted(() => ({
+  focusMock: vi.fn(),
+  revealPositionInCenterMock: vi.fn(),
+  setPositionMock: vi.fn(),
+}));
+
 vi.mock("@monaco-editor/react", async () => {
   const React = await import("react");
 
   const MockEditor = (props: {
+    language?: string;
     value?: string;
     onChange?: (value: string | undefined) => void;
-    onMount?: (editor: { addCommand: () => void }, monaco: unknown) => void;
+    onMount?: (
+      editor: {
+        addCommand: () => void;
+        focus: () => void;
+        getModel: () => {
+          getLineCount: () => number;
+          getLineMaxColumn: (lineNumber: number) => number;
+        };
+        revealPositionInCenter: (position: { lineNumber: number; column: number }) => void;
+        setPosition: (position: { lineNumber: number; column: number }) => void;
+      },
+      monaco: unknown,
+    ) => void;
   }) => {
+    const valueRef = React.useRef(props.value ?? "");
+    React.useEffect(() => {
+      valueRef.current = props.value ?? "";
+    }, [props.value]);
+
     React.useEffect(() => {
       props.onMount?.(
-        { addCommand: () => undefined },
+        {
+          addCommand: () => undefined,
+          focus: focusMock,
+          getModel: () => ({
+            getLineCount: () => Math.max(1, valueRef.current.split("\n").length),
+            getLineMaxColumn: (lineNumber: number) =>
+              (valueRef.current.split("\n")[lineNumber - 1]?.length ?? 0) + 1,
+          }),
+          revealPositionInCenter: revealPositionInCenterMock,
+          setPosition: setPositionMock,
+        },
         {
           KeyMod: { CtrlCmd: 2048 },
           KeyCode: { KeyS: 49 },
@@ -32,6 +66,7 @@ vi.mock("@monaco-editor/react", async () => {
     return (
       <textarea
         aria-label="Monaco editor"
+        data-language={props.language ?? ""}
         className="h-full w-full"
         value={props.value ?? ""}
         onChange={(event) => props.onChange?.(event.currentTarget.value)}
@@ -78,6 +113,9 @@ describe("DiffFileEditorPane", () => {
   afterEach(() => {
     __resetEnvironmentApiOverridesForTests();
     vi.restoreAllMocks();
+    focusMock.mockReset();
+    revealPositionInCenterMock.mockReset();
+    setPositionMock.mockReset();
     document.body.innerHTML = "";
   });
 
@@ -112,8 +150,9 @@ index 1111111..2222222 100644
           fileDiff={fileDiff}
           filePath="src/example.ts"
           filePaths={["src/example.ts", "src/other.ts"]}
+          navigationLabel="Back to diff"
           initialOverride={undefined}
-          resolvedTheme="dark"
+          resolvedPreset="stone"
           onOpenInEditor={vi.fn()}
           onPersisted={onPersisted}
           onRequestBack={vi.fn()}
@@ -164,8 +203,9 @@ index 1111111..2222222 100644
           fileDiff={null}
           filePath="src/example.ts"
           filePaths={["src/example.ts", "src/other.ts"]}
+          navigationLabel="Back to diff"
           initialOverride={undefined}
-          resolvedTheme="light"
+          resolvedPreset="light"
           onOpenInEditor={vi.fn()}
           onPersisted={vi.fn()}
           onRequestBack={vi.fn()}
@@ -185,6 +225,95 @@ index 1111111..2222222 100644
       await page.getByRole("button", { name: "Discard" }).click();
 
       expect(onRequestFilePathChange).toHaveBeenCalledWith("src/other.ts");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("uses the TypeScript Monaco language for TSX files", async () => {
+    const readFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.tsx",
+      contents: "export function Example() { return <div />; }\n",
+      version: versionA,
+    });
+    const writeFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.tsx",
+      version: versionB,
+    });
+    setEnvironmentApiOverride({ readFile, writeFile });
+
+    const screen = await render(
+      <div className="h-[640px] w-[960px]">
+        <DiffFileEditorPane
+          cwd="/repo"
+          environmentId={environmentId}
+          fileDiff={null}
+          filePath="src/example.tsx"
+          filePaths={["src/example.tsx"]}
+          navigationLabel="Back to diff"
+          initialOverride={undefined}
+          resolvedPreset="stone"
+          onOpenInEditor={vi.fn()}
+          onPersisted={vi.fn()}
+          onRequestBack={vi.fn()}
+          onRequestFilePathChange={vi.fn()}
+        />
+      </div>,
+    );
+
+    try {
+      await expect
+        .element(page.getByLabelText("Monaco editor"))
+        .toHaveAttribute("data-language", "typescript");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("positions the editor cursor from the initial line and column and renders the navigation label", async () => {
+    const readFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.ts",
+      contents: "const first = 1;\nconst second = 2;\n",
+      version: versionA,
+    });
+    const writeFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.ts",
+      version: versionB,
+    });
+    setEnvironmentApiOverride({ readFile, writeFile });
+
+    const screen = await render(
+      <div className="h-[640px] w-[960px]">
+        <DiffFileEditorPane
+          cwd="/repo"
+          environmentId={environmentId}
+          fileDiff={null}
+          filePath="src/example.ts"
+          filePaths={["src/example.ts"]}
+          initialColumn={7}
+          initialLine={2}
+          navigationLabel="Exit edit"
+          initialOverride={undefined}
+          resolvedPreset="stone"
+          onOpenInEditor={vi.fn()}
+          onPersisted={vi.fn()}
+          onRequestBack={vi.fn()}
+          onRequestFilePathChange={vi.fn()}
+        />
+      </div>,
+    );
+
+    try {
+      await expect.element(page.getByRole("button", { name: "Exit edit" })).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "Open in IDE" })).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "Save" })).toBeVisible();
+      await expect.element(page.getByText("⌘", { exact: true })).toBeVisible();
+      await expect.element(page.getByText("src/example.ts")).not.toBeInTheDocument();
+      await vi.waitFor(() => {
+        expect(revealPositionInCenterMock).toHaveBeenCalledWith({ lineNumber: 2, column: 7 });
+        expect(setPositionMock).toHaveBeenCalledWith({ lineNumber: 2, column: 7 });
+        expect(focusMock).toHaveBeenCalled();
+      });
     } finally {
       await screen.unmount();
     }

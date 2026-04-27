@@ -7,6 +7,7 @@ import {
   IconProgressIndicator as LoaderIcon,
   IconArrowClockwise as RefreshCwIcon,
   IconSquareAndArrowDown as SaveIcon,
+  IconSquareAndArrowUp as OpenInIDEIcon,
 } from "symbols-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readEnvironmentApi } from "../environmentApi";
@@ -14,13 +15,15 @@ import {
   reconstructPreTurnFileContents,
   type PersistedDiffFileEditOverride,
 } from "../lib/diffFileEditOverrides";
-import { ensureMonacoConfigured } from "../lib/monaco";
+import { resolveMonacoLanguage } from "../lib/monacoLanguage";
+import { ensureAppMonacoTheme, ensureMonacoConfigured } from "../lib/monaco";
 import {
   normalizeProjectFileEditError,
   resolveProjectFileEditorError,
   type ProjectFileEditorStatus,
 } from "../lib/projectFileEditing";
 import { cn } from "../lib/utils";
+import type { ResolvedThemePreset } from "../theme";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -30,6 +33,7 @@ import {
   DialogPopup,
   DialogTitle,
 } from "./ui/dialog";
+import { Kbd, KbdGroup } from "./ui/kbd";
 import { toastManager } from "./ui/toast";
 
 ensureMonacoConfigured();
@@ -50,7 +54,10 @@ interface DiffFileEditorPaneProps {
   filePaths: readonly string[];
   fileDiff: FileDiffMetadata | null;
   initialOverride: PersistedDiffFileEditOverride | undefined;
-  resolvedTheme: "light" | "dark";
+  initialLine?: number | undefined;
+  initialColumn?: number | undefined;
+  navigationLabel: string;
+  resolvedPreset: ResolvedThemePreset;
   onRequestBack: () => void;
   onRequestFilePathChange: (filePath: string) => void;
   onOpenInEditor: (filePath: string) => void;
@@ -82,6 +89,7 @@ function StatePanel(props: {
   filePath: string;
   message: string;
   status: Extract<ProjectFileEditorStatus, "missing" | "unsupported" | "error">;
+  navigationLabel: string;
   onBack: () => void;
   onOpenInEditor: () => void;
   onReload: () => void;
@@ -112,7 +120,7 @@ function StatePanel(props: {
                 Open in IDE
               </Button>
               <Button size="xs" variant="ghost" onClick={props.onBack}>
-                Back to diff
+                {props.navigationLabel}
               </Button>
             </div>
           </div>
@@ -129,12 +137,15 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     fileDiff,
     filePath,
     filePaths,
+    initialColumn,
+    initialLine,
     initialOverride,
+    navigationLabel,
     onOpenInEditor,
     onPersisted,
     onRequestBack,
     onRequestFilePathChange,
-    resolvedTheme,
+    resolvedPreset,
   } = props;
   const [status, setStatus] = useState<ProjectFileEditorStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
@@ -146,6 +157,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   const pendingNavigationRef = useRef<PendingNavigation | null>(null);
   const preTurnContentsRef = useRef<string | null>(initialOverride?.preTurnContents ?? null);
   const saveHandlerRef = useRef<() => Promise<boolean>>(async () => false);
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
 
   const isDirty = draftContents !== baseContents;
   const canSave =
@@ -313,10 +325,38 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   }, [handleSave]);
 
   const handleEditorMount = useCallback<OnMount>((editor, monaco) => {
+    editorRef.current = editor;
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       void saveHandlerRef.current();
     });
   }, []);
+
+  useEffect(() => {
+    if (status !== "ready" || !initialLine || initialLine < 1) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const editor = editorRef.current;
+      const model = editor?.getModel?.();
+      if (!editor || !model) {
+        return;
+      }
+
+      const lineNumber = Math.min(Math.max(1, initialLine), model.getLineCount());
+      const requestedColumn = initialColumn ?? 1;
+      const column = Math.min(Math.max(1, requestedColumn), model.getLineMaxColumn(lineNumber));
+      const position = { lineNumber, column };
+
+      editor.revealPositionInCenter?.(position);
+      editor.setPosition?.(position);
+      editor.focus?.();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+    };
+  }, [filePath, initialColumn, initialLine, status]);
 
   const editorOptions = useMemo(
     () => ({
@@ -329,47 +369,61 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     }),
     [status],
   );
+  const monacoTheme = useMemo(() => ensureAppMonacoTheme(resolvedPreset), [resolvedPreset]);
+  const monacoLanguage = useMemo(() => resolveMonacoLanguage(filePath), [filePath]);
 
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex shrink-0 flex-col gap-3 border-b border-border/70 px-4 py-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="min-w-0">
-              <p className="truncate font-mono text-[11px] text-muted-foreground">{filePath}</p>
-              <p className="text-sm text-foreground">
-                {isDirty ? "Unsaved changes" : "Saved to workspace"}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button size="xs" variant="ghost" onClick={() => requestNavigation({ type: "back" })}>
-                <ArrowLeftIcon className="size-3.5" />
-                Back to diff
-              </Button>
-              <Button size="xs" variant="outline" onClick={() => onOpenInEditor(filePath)}>
-                Open in IDE
-              </Button>
-              <Button size="xs" onClick={() => void handleSave()} disabled={!canSave || !isDirty}>
-                {status === "saving" ? (
-                  <LoaderIcon className="size-3.5 animate-spin" />
-                ) : (
-                  <SaveIcon className="size-3.5" />
-                )}
-                Save
-              </Button>
-            </div>
+        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/70 px-3 py-2">
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            onClick={() => requestNavigation({ type: "back" })}
+            aria-label={navigationLabel}
+            title={navigationLabel}
+          >
+            <ArrowLeftIcon className="size-3.5" />
+            <span className="sr-only">{navigationLabel}</span>
+          </Button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              size="xs"
+              className="px-2"
+              onClick={() => void handleSave()}
+              disabled={!canSave || !isDirty}
+            >
+              {status === "saving" ? "Saving..." : "Save"}
+              <KbdGroup aria-hidden className="pointer-events-none inline-flex items-center gap-1">
+                <Kbd className="h-4 min-w-0 rounded-sm bg-primary-foreground/12 px-1 text-[10px] text-primary-foreground/80">
+                  ⌘
+                </Kbd>
+                <Kbd className="h-4 min-w-4 rounded-sm bg-primary-foreground/12 px-1 text-[10px] text-primary-foreground/80">
+                  S
+                </Kbd>
+              </KbdGroup>
+            </Button>
+            <Button
+              size="icon-xs"
+              variant="outline"
+              onClick={() => onOpenInEditor(filePath)}
+              aria-label="Open in IDE"
+              title="Open in IDE"
+            >
+              <OpenInIDEIcon className="size-3.5" />
+            </Button>
           </div>
         </div>
-        <div className="min-h-0 flex-1 overflow-hidden p-4 pt-3">
-          <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-xl border border-border/70 bg-card/70">
-            <div className="shrink-0 border-b border-border/70 bg-background/50">
-              <div className="flex gap-1 overflow-x-auto px-2 py-2">
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+            <div className="shrink-0 border-b border-border/70 bg-background">
+              <div className="flex gap-1 overflow-x-auto px-2 py-1.5">
                 {filePaths.map((candidatePath) => (
                   <button
                     key={candidatePath}
                     type="button"
                     className={cn(
-                      "min-w-0 shrink-0 rounded-md border px-2.5 py-1.5 text-left font-mono text-[11px] transition-colors",
+                      "min-w-0 shrink-0 rounded-md border px-2 py-1 text-left font-mono text-[11px] transition-colors",
                       candidatePath === filePath
                         ? "border-border bg-accent text-accent-foreground"
                         : "border-transparent text-muted-foreground hover:border-border/60 hover:bg-accent/40 hover:text-foreground",
@@ -414,6 +468,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                 <StatePanel
                   filePath={filePath}
                   message={message ?? "Unable to load this file."}
+                  navigationLabel={navigationLabel}
                   status={status}
                   onBack={() => requestNavigation({ type: "back" })}
                   onOpenInEditor={() => onOpenInEditor(filePath)}
@@ -438,8 +493,9 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                     onMount={handleEditorMount}
                     options={editorOptions}
                     path={filePath}
-                    theme={resolvedTheme === "dark" ? "vs-dark" : "vs"}
+                    theme={monacoTheme}
                     value={draftContents}
+                    {...(monacoLanguage ? { language: monacoLanguage } : {})}
                   />
                 </div>
               )}

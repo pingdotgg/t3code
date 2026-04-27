@@ -24,7 +24,6 @@ import { normalizeModelSlug } from "@forma/shared/model";
 import { createModelSelection } from "@forma/shared/model";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
-import { isThemePreference, THEME_OPTIONS } from "../../theme";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -80,6 +79,7 @@ import {
   useServerObservability,
   useServerProviders,
 } from "../../rpc/serverState";
+import { ThemePreferenceSelector } from "./ThemePreferenceSelector";
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -513,7 +513,7 @@ export function useSettingsRestore(onRestored?: () => void) {
 }
 
 export function GeneralSettingsPanel() {
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, resolvedPreset } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const [openingPathByTarget, setOpeningPathByTarget] = useState({
@@ -814,30 +814,15 @@ export function GeneralSettingsPanel() {
               <SettingResetButton label="theme" onClick={() => setTheme("system")} />
             ) : null
           }
-          control={
-            <Select
-              value={theme}
-              onValueChange={(value) => {
-                if (isThemePreference(value)) {
-                  setTheme(value);
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
-                <SelectValue>
-                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {THEME_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
+        >
+          <div className="pt-3 pb-3">
+            <ThemePreferenceSelector
+              onChange={setTheme}
+              resolvedPreset={resolvedPreset}
+              theme={theme}
+            />
+          </div>
+        </SettingsRow>
 
         <SettingsRow
           title="Time format"

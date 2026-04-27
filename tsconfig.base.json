@@ -3,6 +3,7 @@
     "target": "ESNext",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
+    "jsx": "react-jsx",
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
