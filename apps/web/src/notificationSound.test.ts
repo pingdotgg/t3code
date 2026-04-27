@@ -20,7 +20,7 @@ function makeShell(
 ): NotificationThreadShellLike {
   return {
     archivedAt: null,
-    latestTurn: null,
+    session: null,
     hasPendingApprovals: false,
     hasActionableProposedPlan: false,
     hasPendingUserInput: false,
@@ -55,39 +55,79 @@ function makeFocus(overrides: Partial<NotificationFocusContext> = {}): Notificat
 }
 
 describe("deriveNotificationTriggers", () => {
-  it("fires turn-end on running -> completed", () => {
-    const prev = shellMap([[THREAD_A, makeShell({ latestTurn: { state: "running" } })]]);
-    const next = shellMap([[THREAD_A, makeShell({ latestTurn: { state: "completed" } })]]);
+  it("fires turn-end on session running -> idle", () => {
+    const prev = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "running" } })]]);
+    const next = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "idle" } })]]);
     expect(deriveNotificationTriggers(prev, next, [])).toEqual<NotificationTrigger[]>([
       { threadId: THREAD_A, kind: "turn-end" },
     ]);
   });
 
-  it("fires turn-end on running -> error", () => {
-    const prev = shellMap([[THREAD_A, makeShell({ latestTurn: { state: "running" } })]]);
-    const next = shellMap([[THREAD_A, makeShell({ latestTurn: { state: "error" } })]]);
+  it("fires turn-end on session running -> error", () => {
+    const prev = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "running" } })]]);
+    const next = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "error" } })]]);
     expect(deriveNotificationTriggers(prev, next, [])).toEqual<NotificationTrigger[]>([
       { threadId: THREAD_A, kind: "turn-end" },
     ]);
   });
 
-  it("fires turn-end on running -> interrupted", () => {
-    const prev = shellMap([[THREAD_A, makeShell({ latestTurn: { state: "running" } })]]);
-    const next = shellMap([[THREAD_A, makeShell({ latestTurn: { state: "interrupted" } })]]);
+  it("fires turn-end on session running -> interrupted", () => {
+    const prev = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "running" } })]]);
+    const next = shellMap([
+      [THREAD_A, makeShell({ session: { orchestrationStatus: "interrupted" } })],
+    ]);
     expect(deriveNotificationTriggers(prev, next, [])).toEqual<NotificationTrigger[]>([
       { threadId: THREAD_A, kind: "turn-end" },
     ]);
   });
 
-  it("does not fire turn-end on completed -> completed", () => {
-    const prev = shellMap([[THREAD_A, makeShell({ latestTurn: { state: "completed" } })]]);
-    const next = shellMap([[THREAD_A, makeShell({ latestTurn: { state: "completed" } })]]);
+  it("fires turn-end on session running -> stopped", () => {
+    const prev = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "running" } })]]);
+    const next = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "stopped" } })]]);
+    expect(deriveNotificationTriggers(prev, next, [])).toEqual<NotificationTrigger[]>([
+      { threadId: THREAD_A, kind: "turn-end" },
+    ]);
+  });
+
+  it("fires turn-end on session running -> ready", () => {
+    const prev = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "running" } })]]);
+    const next = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "ready" } })]]);
+    expect(deriveNotificationTriggers(prev, next, [])).toEqual<NotificationTrigger[]>([
+      { threadId: THREAD_A, kind: "turn-end" },
+    ]);
+  });
+
+  it("fires turn-end on session running -> null session", () => {
+    const prev = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "running" } })]]);
+    const next = shellMap([[THREAD_A, makeShell({ session: null })]]);
+    expect(deriveNotificationTriggers(prev, next, [])).toEqual<NotificationTrigger[]>([
+      { threadId: THREAD_A, kind: "turn-end" },
+    ]);
+  });
+
+  it("does not fire turn-end on running -> running (no transition)", () => {
+    const prev = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "running" } })]]);
+    const next = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "running" } })]]);
+    expect(deriveNotificationTriggers(prev, next, [])).toEqual([]);
+  });
+
+  it("does not fire turn-end on running -> starting (still active, e.g. session restart)", () => {
+    const prev = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "running" } })]]);
+    const next = shellMap([
+      [THREAD_A, makeShell({ session: { orchestrationStatus: "starting" } })],
+    ]);
+    expect(deriveNotificationTriggers(prev, next, [])).toEqual([]);
+  });
+
+  it("does not fire turn-end on idle -> idle", () => {
+    const prev = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "idle" } })]]);
+    const next = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "idle" } })]]);
     expect(deriveNotificationTriggers(prev, next, [])).toEqual([]);
   });
 
   it("does not fire turn-end when prev is undefined (bootstrap)", () => {
     const prev = shellMap([]);
-    const next = shellMap([[THREAD_A, makeShell({ latestTurn: { state: "completed" } })]]);
+    const next = shellMap([[THREAD_A, makeShell({ session: { orchestrationStatus: "idle" } })]]);
     expect(deriveNotificationTriggers(prev, next, [])).toEqual([]);
   });
 
@@ -149,7 +189,7 @@ describe("deriveNotificationTriggers", () => {
         THREAD_A,
         makeShell({
           archivedAt: "2026-04-27T00:00:00.000Z",
-          latestTurn: { state: "running" },
+          session: { orchestrationStatus: "running" },
         }),
       ],
     ]);
@@ -158,7 +198,7 @@ describe("deriveNotificationTriggers", () => {
         THREAD_A,
         makeShell({
           archivedAt: "2026-04-27T00:00:00.000Z",
-          latestTurn: { state: "completed" },
+          session: { orchestrationStatus: "idle" },
           hasPendingApprovals: true,
           hasPendingUserInput: true,
         }),
@@ -169,11 +209,11 @@ describe("deriveNotificationTriggers", () => {
 
   it("emits multiple triggers across threads in one batch", () => {
     const prev = shellMap([
-      [THREAD_A, makeShell({ latestTurn: { state: "running" } })],
+      [THREAD_A, makeShell({ session: { orchestrationStatus: "running" } })],
       [THREAD_B, makeShell({ hasPendingUserInput: false })],
     ]);
     const next = shellMap([
-      [THREAD_A, makeShell({ latestTurn: { state: "completed" } })],
+      [THREAD_A, makeShell({ session: { orchestrationStatus: "idle" } })],
       [THREAD_B, makeShell({ hasPendingUserInput: true })],
     ]);
     expect(deriveNotificationTriggers(prev, next, [])).toEqual<NotificationTrigger[]>([

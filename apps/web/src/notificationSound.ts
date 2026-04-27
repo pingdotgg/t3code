@@ -9,7 +9,7 @@
  *   3. `notificationSoundManager` — singleton: lazy-loads the audio element,
  *      reads runtime focus context, and plays the sound when allowed.
  */
-import type { OrchestrationEvent, ThreadId } from "@t3tools/contracts";
+import type { OrchestrationEvent, OrchestrationSessionStatus, ThreadId } from "@t3tools/contracts";
 import type { NotificationSoundFocusRule, UnifiedSettings } from "@t3tools/contracts/settings";
 
 export const NOTIFICATION_THROTTLE_MS = 5000;
@@ -19,10 +19,21 @@ export const NOTIFICATION_SOUND_URL = "/sounds/notification.mp3";
  * Minimal shell shape used by the notification triggers. Matches the relevant
  * subset of `OrchestrationThreadShell` so callers can pass the real shells
  * directly without remapping.
+ *
+ * Turn-end uses `session.orchestrationStatus` (the provider's authoritative
+ * runtime state) rather than `latestTurn.state`. The latter flips to
+ * `"completed"` mid-turn when checkpoints are captured (see
+ * `apps/server/src/orchestration/projector.ts` handling of
+ * `thread.turn-diff-completed`), producing spurious rising edges on every
+ * mid-turn diff capture. `orchestrationStatus` stays `"running"` continuously
+ * through tool calls and only transitions out at actual turn end.
  */
 export interface NotificationThreadShellLike {
   readonly archivedAt: string | null;
-  readonly latestTurn: { readonly state: "running" | "completed" | "interrupted" | "error" } | null;
+  readonly session:
+    | { readonly orchestrationStatus: OrchestrationSessionStatus }
+    | { readonly status: OrchestrationSessionStatus }
+    | null;
   readonly hasPendingApprovals: boolean;
   readonly hasActionableProposedPlan: boolean;
   readonly hasPendingUserInput: boolean;
@@ -52,13 +63,12 @@ export type NotificationSettingsSlice = Pick<
 
 export type ThreadShellMap = ReadonlyMap<ThreadId, NotificationThreadShellLike>;
 
-const TERMINAL_TURN_STATES = new Set<
-  NotificationThreadShellLike["latestTurn"] extends infer T
-    ? T extends { state: infer S }
-      ? S
-      : never
-    : never
->(["completed", "error", "interrupted"]);
+function getSessionStatus(
+  session: NotificationThreadShellLike["session"],
+): OrchestrationSessionStatus | null {
+  if (session === null) return null;
+  return "orchestrationStatus" in session ? session.orchestrationStatus : session.status;
+}
 
 /**
  * Detects rising-edge transitions across a snapshot of thread shells.
@@ -85,12 +95,14 @@ export function deriveNotificationTriggers(
       continue;
     }
 
-    // turn-end: prev was running, next is in a terminal state.
-    if (
-      previousShell.latestTurn?.state === "running" &&
-      nextShell.latestTurn !== null &&
-      TERMINAL_TURN_STATES.has(nextShell.latestTurn.state)
-    ) {
+    // turn-end: prev session was running, next session has stopped running.
+    // `starting` is treated as still-active to ignore session restarts/resumes
+    // mid-turn. Any other status (idle/ready/interrupted/stopped/error) or a
+    // null session indicates the agent stopped working.
+    const prevRunning = getSessionStatus(previousShell.session) === "running";
+    const nextStatus = getSessionStatus(nextShell.session);
+    const nextRunning = nextStatus === "running" || nextStatus === "starting";
+    if (prevRunning && !nextRunning) {
       triggers.push({ threadId, kind: "turn-end" });
     }
 
