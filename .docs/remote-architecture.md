@@ -252,6 +252,8 @@ After that, the renderer should still connect using an ordinary WebSocket URL ag
 
 This keeps the renderer transport model consistent with every other access method.
 
+The desktop main process owns the SSH bridge because it can spawn local SSH processes, manage askpass prompts, write temporary launch scripts, and clean up forwards. The renderer receives a saved environment record and connects through the forwarded URL; it should not need SSH-specific RPC paths for normal environment traffic.
+
 ## Launch methods
 
 Launch methods answer a different question:
@@ -293,6 +295,15 @@ The recommended T3 flow is:
 3. Desktop launches or reuses a remote T3 server.
 4. Desktop establishes local port forwarding.
 5. Renderer connects to the forwarded WebSocket endpoint as a normal environment.
+
+The saved environment should remember that it was created by desktop SSH launch only for reconnect and lifecycle UX. That metadata should not change the server protocol or the environment identity model.
+
+Failure handling should be explicit:
+
+- SSH authentication failure should surface before any environment is saved
+- remote launch failure should include remote logs or the launcher command output when available
+- forwarded-port failure should leave the saved environment disconnected rather than falling back to an unrelated endpoint
+- reconnect should attempt to restore the SSH bridge before reconnecting the normal WebSocket client
 
 ### 3. Client-managed local publish
 
