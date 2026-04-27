@@ -1,6 +1,9 @@
 import { scopeProjectRef } from "@forma/client-runtime";
 import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@forma/contracts";
+import type { SidebarThreadSortOrder } from "@forma/contracts/settings";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
+import { getLatestThreadForProject, type ThreadSortInput } from "./threadSort";
+import type { Project, SidebarThreadSummary } from "../types";
 
 interface ThreadContextLike {
   environmentId: EnvironmentId;
@@ -33,6 +36,11 @@ export interface ChatThreadActionContext {
   readonly defaultThreadEnvMode: DraftThreadEnvMode;
   readonly handleNewThread: NewThreadHandler;
 }
+
+type OpenProjectThreadContext = Pick<
+  ChatThreadActionContext,
+  "defaultThreadEnvMode" | "handleNewThread"
+>;
 
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
@@ -95,4 +103,29 @@ export async function startNewLocalThreadFromContext(
 
   await context.handleNewThread(projectRef, buildDefaultThreadOptions(context));
   return true;
+}
+
+export async function openProjectOrCreateThread<
+  TProject extends Pick<Project, "environmentId" | "id">,
+  TThread extends Pick<SidebarThreadSummary, "environmentId" | "id" | "projectId" | "archivedAt"> &
+    ThreadSortInput,
+>(input: {
+  project: TProject;
+  threads: readonly TThread[];
+  sortOrder: SidebarThreadSortOrder;
+  context: OpenProjectThreadContext;
+  openThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => Promise<void>;
+}): Promise<void> {
+  const latestThread = getLatestThreadForProject(input.threads, input.project.id, input.sortOrder);
+  if (latestThread) {
+    await input.openThread(latestThread);
+    return;
+  }
+
+  await input.context.handleNewThread(
+    scopeProjectRef(input.project.environmentId, input.project.id),
+    {
+      envMode: input.context.defaultThreadEnvMode,
+    },
+  );
 }

@@ -581,6 +581,14 @@ function serverThreadPath(threadId: ThreadId): string {
   return `/${LOCAL_ENVIRONMENT_ID}/${threadId}`;
 }
 
+function clearWelcomeBootstrapTargets(nextFixture: TestFixture): void {
+  nextFixture.welcome = {
+    environment: nextFixture.welcome.environment,
+    cwd: nextFixture.welcome.cwd,
+    projectName: nextFixture.welcome.projectName,
+  };
+}
+
 async function waitForAppBootstrap(): Promise<void> {
   await vi.waitFor(
     () => {
@@ -1926,6 +1934,121 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       await expect.element(page.getByText("No threads yet")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows the no-active-thread home surface for projectless workspaces and opens add project browse mode", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createProjectlessSnapshot(),
+      initialPath: "/",
+      configureFixture: clearWelcomeBootstrapTargets,
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.filesystemBrowse) {
+          return {
+            parentPath: "~/",
+            entries: [{ name: "Development", fullPath: "~/Development" }],
+          };
+        }
+
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await expect
+        .element(page.getByTestId("no-active-thread-action-add-project"))
+        .toBeInTheDocument();
+
+      await page.getByTestId("no-active-thread-action-add-project").click();
+
+      const palette = page.getByTestId("command-palette");
+      await expect.element(palette).toBeInTheDocument();
+
+      const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
+      await expect.element(browseInput).toHaveValue("~/");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("lists projects on the no-active-thread home surface and creates a thread from a project row", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialPath: "/",
+      configureFixture: clearWelcomeBootstrapTargets,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await expect
+        .element(page.getByTestId("no-active-thread-action-new-thread"))
+        .toBeInTheDocument();
+      await page.getByTestId(`no-active-thread-project-row-${PROJECT_ID}`).click();
+
+      const nextPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID from the project row.",
+      );
+      const nextDraftId = draftIdFromPath(nextPath);
+      const draftThread = useComposerDraftStore.getState().getDraftSession(nextDraftId);
+
+      expect(draftThread?.projectId).toBe(PROJECT_ID);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("lists recent threads on the no-active-thread home surface and opens a selected thread", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-no-active-thread-recent" as MessageId,
+        targetText: "no active thread recent",
+      }),
+      initialPath: "/",
+      configureFixture: clearWelcomeBootstrapTargets,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await expect.element(page.getByText("Recent threads", { exact: true })).toBeInTheDocument();
+      await page.getByTestId(`no-active-thread-thread-row-${THREAD_ID}`).click();
+
+      const nextPath = await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath(THREAD_ID),
+        "Route should have changed to the selected recent thread.",
+      );
+
+      expect(nextPath).toBe(serverThreadPath(THREAD_ID));
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the new-thread-in command palette submenu from the no-active-thread home surface", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject(),
+      initialPath: "/",
+      configureFixture: clearWelcomeBootstrapTargets,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await page.getByTestId("no-active-thread-action-new-thread").click();
+
+      const palette = page.getByTestId("command-palette");
+      await expect.element(palette).toBeInTheDocument();
+      await waitForCommandPaletteInput("Search...");
+      await expect.element(palette.getByText("Projects", { exact: true })).toBeInTheDocument();
+      await expect.element(palette.getByText("Docs Portal", { exact: true })).toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }

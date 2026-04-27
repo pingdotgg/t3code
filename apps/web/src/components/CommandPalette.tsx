@@ -17,7 +17,6 @@ import {
   IconBubbleLeftAndTextBubbleRight as ThreadIcon,
   IconFolder as FolderIcon,
   IconFolderBadgePlus as FolderPlusIcon,
-  IconPencilAndOutline as PencilAndOutlineIcon,
 } from "symbols-react";
 import {
   useCallback,
@@ -41,6 +40,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
 import { readLocalApi } from "../localApi";
 import {
+  openProjectOrCreateThread,
   startNewThreadInProjectFromContext,
   startNewThreadFromContext,
 } from "../lib/chatThreadActions";
@@ -60,7 +60,6 @@ import {
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { getLatestThreadForProject } from "../lib/threadSort";
 import { cn, isMacPlatform, isWindowsPlatform, newCommandId, newProjectId } from "../lib/utils";
 import {
   selectProjectsAcrossEnvironments,
@@ -89,7 +88,7 @@ import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
-import { SettingsHexIcon } from "./icons/custom";
+import { AddProjectIcon, NewThreadIcon, SettingsHexIcon } from "./icons/custom";
 import { useServerKeybindings } from "../rpc/serverState";
 import { resolveShortcutCommand } from "../keybindings";
 import {
@@ -417,23 +416,20 @@ function OpenCommandPaletteDialog() {
 
   const openProjectFromSearch = useMemo(
     () => async (project: (typeof projects)[number]) => {
-      const latestThread = getLatestThreadForProject(
-        threads.filter((thread) => thread.environmentId === project.environmentId),
-        project.id,
-        settings.sidebarThreadSortOrder,
-      );
-      if (latestThread) {
-        await navigate({
-          to: "/$environmentId/$threadId",
-          params: buildThreadRouteParams(
-            scopeThreadRef(latestThread.environmentId, latestThread.id),
-          ),
-        });
-        return;
-      }
-
-      await handleNewThread(scopeProjectRef(project.environmentId, project.id), {
-        envMode: settings.defaultThreadEnvMode,
+      await openProjectOrCreateThread({
+        project,
+        threads: threads.filter((thread) => thread.environmentId === project.environmentId),
+        sortOrder: settings.sidebarThreadSortOrder,
+        context: {
+          defaultThreadEnvMode: settings.defaultThreadEnvMode,
+          handleNewThread,
+        },
+        openThread: async (thread) => {
+          await navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
+          });
+        },
       });
     },
     [
@@ -495,6 +491,13 @@ function OpenCommandPaletteDialog() {
       projects,
       settings.defaultThreadEnvMode,
     ],
+  );
+  const newThreadInView = useMemo<CommandPaletteView>(
+    () => ({
+      addonIcon: <NewThreadIcon className={ADDON_ICON_CLASS} />,
+      groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+    }),
+    [projectThreadItems],
   );
 
   const allThreadItems = useMemo(
@@ -624,12 +627,18 @@ function OpenCommandPaletteDialog() {
   ]);
 
   useEffect(() => {
-    if (openIntent?.kind !== "add-project") {
+    if (openIntent?.kind === "add-project") {
+      clearOpenIntent();
+      openAddProjectFlow();
+      return;
+    }
+
+    if (openIntent?.kind !== "new-thread-in") {
       return;
     }
     clearOpenIntent();
-    openAddProjectFlow();
-  }, [clearOpenIntent, openAddProjectFlow, openIntent]);
+    pushPaletteView(newThreadInView);
+  }, [clearOpenIntent, newThreadInView, openAddProjectFlow, openIntent]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
@@ -648,7 +657,7 @@ function OpenCommandPaletteDialog() {
             New thread in <span className="font-semibold">{activeProjectTitle}</span>
           </>
         ),
-        icon: <PencilAndOutlineIcon className={ITEM_ICON_CLASS} />,
+        icon: <NewThreadIcon className={ITEM_ICON_CLASS} />,
         shortcutCommand: "chat.new",
         run: async () => {
           await startNewThreadFromContext({
@@ -667,9 +676,9 @@ function OpenCommandPaletteDialog() {
       value: "action:new-thread-in",
       searchTerms: ["new thread", "project", "pick", "choose", "select"],
       title: "New thread in...",
-      icon: <PencilAndOutlineIcon className={ITEM_ICON_CLASS} />,
-      addonIcon: <PencilAndOutlineIcon className={ADDON_ICON_CLASS} />,
-      groups: [{ value: "projects", label: "Projects", items: projectThreadItems }],
+      icon: <NewThreadIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: newThreadInView.addonIcon,
+      groups: newThreadInView.groups,
     });
   }
 
@@ -679,8 +688,8 @@ function OpenCommandPaletteDialog() {
       value: "action:add-project",
       searchTerms: ["add project", "folder", "directory", "browse", "environment"],
       title: "Add project",
-      icon: <FolderPlusIcon className="size-5 fill-muted-foreground/80" />,
-      addonIcon: <FolderPlusIcon className="size-5 fill-current" />,
+      icon: <AddProjectIcon className="size-4 fill-muted-foreground/80" />,
+      addonIcon: <AddProjectIcon className="size-5 fill-current" />,
       groups: addProjectEnvironmentGroups,
     });
   } else {
@@ -689,7 +698,7 @@ function OpenCommandPaletteDialog() {
       value: "action:add-project",
       searchTerms: ["add project", "folder", "directory", "browse"],
       title: "Add project",
-      icon: <FolderPlusIcon className="size-5 fill-muted-foreground/80" />,
+      icon: <AddProjectIcon className="size-4 fill-muted-foreground/80" />,
       keepOpen: true,
       run: async () => {
         openAddProjectFlow();
@@ -755,23 +764,21 @@ function OpenCommandPaletteDialog() {
         cwd,
       );
       if (existing) {
-        const latestThread = getLatestThreadForProject(
-          threads.filter((thread) => thread.environmentId === existing.environmentId),
-          existing.id,
-          settings.sidebarThreadSortOrder,
-        );
-        if (latestThread) {
-          await navigate({
-            to: "/$environmentId/$threadId",
-            params: buildThreadRouteParams(
-              scopeThreadRef(latestThread.environmentId, latestThread.id),
-            ),
-          });
-        } else {
-          await handleNewThread(scopeProjectRef(existing.environmentId, existing.id), {
-            envMode: settings.defaultThreadEnvMode,
-          }).catch(() => undefined);
-        }
+        await openProjectOrCreateThread({
+          project: existing,
+          threads: threads.filter((thread) => thread.environmentId === existing.environmentId),
+          sortOrder: settings.sidebarThreadSortOrder,
+          context: {
+            defaultThreadEnvMode: settings.defaultThreadEnvMode,
+            handleNewThread,
+          },
+          openThread: async (thread) => {
+            await navigate({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
+            });
+          },
+        }).catch(() => undefined);
         setOpen(false);
         return;
       }

@@ -13,8 +13,8 @@ import {
   IconChevronRight as ChevronRightIcon,
   IconFolder as FolderIcon,
   IconPlusminus as DiffIcon,
-  IconAppleTerminal as TerminalIcon,
 } from "symbols-react";
+import { TerminalToggleIcon } from "../icons/custom";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
@@ -155,7 +155,7 @@ export const ChatHeader = memo(function ChatHeader({
                 size="xs"
                 disabled={!terminalAvailable}
               >
-                <TerminalIcon className="size-3 fill-current" />
+                <TerminalToggleIcon className="size-3" />
               </Toggle>
             }
           />

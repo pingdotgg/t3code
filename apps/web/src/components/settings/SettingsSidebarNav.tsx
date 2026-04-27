@@ -1,6 +1,9 @@
 import type { ComponentType } from "react";
-import { IconArrowTurnUpLeft as ArrowTurnUpLeftIcon } from "symbols-react";
-import { ArchiveIcon, Link2Icon, Settings2Icon } from "lucide-react";
+import {
+  IconArrowTurnUpLeft as ArrowTurnUpLeftIcon,
+  IconTray2Fill as ArchiveIcon,
+} from "symbols-react";
+import { Link2Icon, Settings2Icon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 
 import {
@@ -39,6 +42,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
             {SETTINGS_NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = pathname === item.to;
+              const iconColorClassName =
+                item.to === "/settings/archived"
+                  ? isActive
+                    ? "size-4 shrink-0 fill-current text-foreground"
+                    : "size-4 shrink-0 fill-current text-muted-foreground/60"
+                  : isActive
+                    ? "size-4 shrink-0 text-foreground"
+                    : "size-4 shrink-0 text-muted-foreground/60";
               return (
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton
@@ -51,13 +62,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                     }
                     onClick={() => void navigate({ to: item.to, replace: true })}
                   >
-                    <Icon
-                      className={
-                        isActive
-                          ? "size-4 shrink-0 text-foreground"
-                          : "size-4 shrink-0 text-muted-foreground/60"
-                      }
-                    />
+                    <Icon className={iconColorClassName} />
                     <span className="truncate">{item.label}</span>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

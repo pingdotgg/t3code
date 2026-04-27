@@ -1,10 +1,7 @@
 import {
-  IconArchivebox as ArchiveIcon,
-  IconArrowUpArrowDown as ArrowUpDownIcon,
   IconChevronRight as ChevronRightIcon,
   IconPlus as PlusIcon,
   IconMagnifyingglass as SearchIcon,
-  IconPencilAndOutline as PencilAndOutlineIcon,
   IconExclamationmarkTriangle as TriangleAlertIcon,
 } from "symbols-react";
 import { CloudIcon, TerminalIcon } from "lucide-react";
@@ -173,7 +170,12 @@ import { CommandDialogTrigger } from "./ui/command";
 import { readEnvironmentApi } from "../environmentApi";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
-import { SettingsHexIcon } from "./icons/custom";
+import {
+  NewThreadIcon,
+  SettingsHexIcon,
+  SidebarArchiveIcon,
+  SidebarFilterIcon,
+} from "./icons/custom";
 import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
@@ -675,7 +677,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     onPointerDown={stopPropagationOnPointerDown}
                     onClick={handleStartArchiveConfirmation}
                   >
-                    <ArchiveIcon className="size-3.5" />
+                    <SidebarArchiveIcon className="size-3.5" />
                   </button>
                 </div>
               ) : (
@@ -697,7 +699,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                           onPointerDown={stopPropagationOnPointerDown}
                           onClick={handleArchiveImmediateClick}
                         >
-                          <ArchiveIcon className="size-3.5" />
+                          <SidebarArchiveIcon className="size-3.5" />
                         </button>
                       </div>
                     }
@@ -2099,7 +2101,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                   className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
                   onClick={handleCreateThreadClick}
                 >
-                  <PencilAndOutlineIcon className="size-3.5" />
+                  <NewThreadIcon className="size-3.5" />
                 </button>
               </div>
             }
@@ -2315,7 +2317,7 @@ function ProjectSortMenu({
             <MenuTrigger className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground [&_svg]:fill-current" />
           }
         >
-          <ArrowUpDownIcon className="size-3.5" />
+          <SidebarFilterIcon className="size-3.5" />
         </TooltipTrigger>
         <TooltipPopup side="right">Sort projects</TooltipPopup>
       </Tooltip>

@@ -1140,7 +1140,7 @@ export default function ThreadTerminalDrawer({
               onClick={onSplitTerminalAction}
               label={splitTerminalActionLabel}
             >
-              <SquareSplitHorizontal className="size-3.25" />
+              <SquareSplitHorizontal className="size-3.25 fill-current" />
             </TerminalActionButton>
             <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
@@ -1148,7 +1148,7 @@ export default function ThreadTerminalDrawer({
               onClick={onNewTerminalAction}
               label={newTerminalActionLabel}
             >
-              <Plus className="size-3.25" />
+              <Plus className="size-3.25 fill-current" />
             </TerminalActionButton>
             <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
@@ -1156,7 +1156,7 @@ export default function ThreadTerminalDrawer({
               onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
               label={closeTerminalActionLabel}
             >
-              <Trash2 className="size-3.25" />
+              <Trash2 className="size-3.25 fill-current" />
             </TerminalActionButton>
           </div>
         </div>
@@ -1241,21 +1241,21 @@ export default function ThreadTerminalDrawer({
                     onClick={onSplitTerminalAction}
                     label={splitTerminalActionLabel}
                   >
-                    <SquareSplitHorizontal className="size-3.25" />
+                    <SquareSplitHorizontal className="size-3.25 fill-current" />
                   </TerminalActionButton>
                   <TerminalActionButton
                     className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
                     onClick={onNewTerminalAction}
                     label={newTerminalActionLabel}
                   >
-                    <Plus className="size-3.25" />
+                    <Plus className="size-3.25 fill-current" />
                   </TerminalActionButton>
                   <TerminalActionButton
                     className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
                     onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
                     label={closeTerminalActionLabel}
                   >
-                    <Trash2 className="size-3.25" />
+                    <Trash2 className="size-3.25 fill-current" />
                   </TerminalActionButton>
                 </div>
               </div>
@@ -1311,7 +1311,7 @@ export default function ThreadTerminalDrawer({
                                 className="flex min-w-0 flex-1 items-center gap-1 text-left"
                                 onClick={() => onActiveTerminalChange(terminalId)}
                               >
-                                <TerminalSquare className="size-3 shrink-0" />
+                                <TerminalSquare className="size-3 shrink-0 fill-current" />
                                 <span className="truncate">
                                   {terminalLabelById.get(terminalId) ?? "Terminal"}
                                 </span>
@@ -1329,7 +1329,7 @@ export default function ThreadTerminalDrawer({
                                       />
                                     }
                                   >
-                                    <XIcon className="size-2.5" />
+                                    <XIcon className="size-2.5 fill-current" />
                                   </PopoverTrigger>
                                   <PopoverPopup
                                     tooltipStyle

@@ -1,10 +1,11 @@
 import { memo, useRef } from "react";
-import { IconDocumentOnDocument as CopyIcon, IconCheckmark as CheckIcon } from "symbols-react";
+import { IconCheckmark as CheckIcon } from "symbols-react";
 import { Button } from "../ui/button";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
 import { anchoredToastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { MessageCopyIcon } from "../icons/custom";
 
 const ANCHORED_TOAST_TIMEOUT_MS = 1000;
 const onCopy = (ref: React.RefObject<HTMLButtonElement | null>) => {
@@ -72,7 +73,11 @@ export const MessageCopyButton = memo(function MessageCopyButton({
           />
         }
       >
-        {isCopied ? <CheckIcon className="size-3 fill-success" /> : <CopyIcon className="size-3" />}
+        {isCopied ? (
+          <CheckIcon className="size-3 fill-success text-success" />
+        ) : (
+          <MessageCopyIcon className="size-3 fill-current" />
+        )}
       </TooltipTrigger>
       <TooltipPopup>
         <p>Copy to clipboard</p>

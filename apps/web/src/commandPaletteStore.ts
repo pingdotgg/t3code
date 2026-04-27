@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 interface CommandPaletteOpenIntent {
-  kind: "add-project";
+  kind: "add-project" | "new-thread-in";
   requestId: number;
 }
 
@@ -11,7 +11,18 @@ interface CommandPaletteStore {
   setOpen: (open: boolean) => void;
   toggleOpen: () => void;
   openAddProject: () => void;
+  openNewThreadIn: () => void;
   clearOpenIntent: () => void;
+}
+
+function nextOpenIntent(
+  kind: CommandPaletteOpenIntent["kind"],
+  requestId: number,
+): CommandPaletteOpenIntent {
+  return {
+    kind,
+    requestId,
+  };
 }
 
 export const useCommandPaletteStore = create<CommandPaletteStore>((set) => ({
@@ -23,10 +34,12 @@ export const useCommandPaletteStore = create<CommandPaletteStore>((set) => ({
   openAddProject: () =>
     set((state) => ({
       open: true,
-      openIntent: {
-        kind: "add-project",
-        requestId: (state.openIntent?.requestId ?? 0) + 1,
-      },
+      openIntent: nextOpenIntent("add-project", (state.openIntent?.requestId ?? 0) + 1),
+    })),
+  openNewThreadIn: () =>
+    set((state) => ({
+      open: true,
+      openIntent: nextOpenIntent("new-thread-in", (state.openIntent?.requestId ?? 0) + 1),
     })),
   clearOpenIntent: () => set({ openIntent: null }),
 }));
