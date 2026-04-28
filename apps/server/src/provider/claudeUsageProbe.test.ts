@@ -127,6 +127,46 @@ describe("claudeUsageProbe", () => {
     });
   });
 
+  it("returns unavailable for API key accounts when no windows found", () => {
+    expect(
+      parseClaudeUsageLimitsOutput({
+        checkedAt: "2026-04-17T10:00:00.000Z",
+        output: "Using API key for authentication",
+      }),
+    ).toEqual({
+      source: "claudeStatusProbe",
+      available: false,
+      checkedAt: "2026-04-17T10:00:00.000Z",
+      reason: "Usage limits unavailable for Claude API key accounts.",
+      windows: [],
+    });
+  });
+
+  it("parses windows even when output contains api key wording", () => {
+    expect(
+      parseClaudeUsageLimitsOutput({
+        checkedAt: "2026-04-17T10:00:00.000Z",
+        output: `
+          Session usage 42% resets at 2026-04-17T14:00:00Z
+          To set an API key, use: env ANTHROPIC_API_KEY=sk-...
+        `,
+      }),
+    ).toEqual({
+      source: "claudeStatusProbe",
+      available: true,
+      checkedAt: "2026-04-17T10:00:00.000Z",
+      windows: [
+        {
+          kind: "session",
+          label: "Session",
+          usedPercent: 42,
+          windowDurationMins: 300,
+          resetsAt: "2026-04-17T14:00:00.000Z",
+        },
+      ],
+    });
+  });
+
   it("requests the /usage fallback for short unavailable status output", () => {
     expect(
       shouldRequestClaudeUsageFallback({

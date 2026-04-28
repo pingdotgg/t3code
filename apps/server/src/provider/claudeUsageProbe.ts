@@ -150,8 +150,18 @@ export function parseClaudeUsageLimitsOutput(input: {
 }): ServerProviderUsageLimits {
   const cleanedOutput = stripAnsi(input.output);
   const lowerOutput = cleanedOutput.toLowerCase();
+  const windows = extractWindowSegments(cleanedOutput);
 
-  if (/\bapi key\b|\bapi-key\b/.test(lowerOutput)) {
+  if (windows.length > 0) {
+    return makeUsageLimitsSnapshot({
+      source: "claudeStatusProbe",
+      checkedAt: input.checkedAt,
+      windows,
+      unavailableReason: "Usage limits unavailable for this Claude account.",
+    });
+  }
+
+  if (/\busing api key\b|\busing.an api.key\b/.test(lowerOutput)) {
     return makeUnavailableUsageLimits({
       source: "claudeStatusProbe",
       checkedAt: input.checkedAt,
@@ -159,20 +169,10 @@ export function parseClaudeUsageLimitsOutput(input: {
     });
   }
 
-  const windows = extractWindowSegments(cleanedOutput);
-  if (windows.length === 0) {
-    return makeUnavailableUsageLimits({
-      source: "claudeStatusProbe",
-      checkedAt: input.checkedAt,
-      reason: "Usage limits unavailable for this Claude account.",
-    });
-  }
-
-  return makeUsageLimitsSnapshot({
+  return makeUnavailableUsageLimits({
     source: "claudeStatusProbe",
     checkedAt: input.checkedAt,
-    windows,
-    unavailableReason: "Usage limits unavailable for this Claude account.",
+    reason: "Usage limits unavailable for this Claude account.",
   });
 }
 

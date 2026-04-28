@@ -2,6 +2,7 @@ import type {
   ProviderKind,
   ProviderRuntimeEvent,
   ServerProviderUsageLimits,
+  ThreadId,
 } from "@t3tools/contracts";
 import { Effect, Layer, Ref, Stream } from "effect";
 
@@ -32,17 +33,38 @@ export const ProviderUsageStateLive = Layer.effect(
   ProviderUsageState,
   Effect.gen(function* () {
     const providerService = yield* ProviderService;
-    const stateRef = yield* Ref.make(new Map<ProviderKind, ServerProviderUsageLimits>());
+    const stateRef = yield* Ref.make(
+      new Map<ProviderKind, Map<ThreadId, ServerProviderUsageLimits>>(),
+    );
 
     const service: ProviderUsageStateShape = {
-      get: (provider) => Ref.get(stateRef).pipe(Effect.map((state) => state.get(provider))),
+      get: (provider) =>
+        Ref.get(stateRef).pipe(
+          Effect.map((state) => {
+            const threadMap = state.get(provider);
+            if (!threadMap || threadMap.size === 0) {
+              return undefined;
+            }
+            const global = threadMap.get("global" as ThreadId);
+            if (global) {
+              return global;
+            }
+            const latest = Array.from(threadMap.values()).at(-1);
+            return latest;
+          }),
+        ),
       set: (provider, usage) =>
         Ref.update(stateRef, (state) => {
           const next = new Map(state);
           if (usage === undefined) {
             next.delete(provider);
           } else {
-            next.set(provider, usage);
+            let threadMap = next.get(provider);
+            if (!threadMap) {
+              threadMap = new Map();
+              next.set(provider, threadMap);
+            }
+            threadMap.set("global" as ThreadId, usage);
           }
           return next;
         }),
@@ -64,7 +86,17 @@ export const ProviderUsageStateLive = Layer.effect(
         }
 
         if (event.type === "session.started" || event.type === "session.exited") {
-          yield* service.clear("cursor");
+          yield* Ref.update(stateRef, (state) => {
+            const next = new Map(state);
+            const threadMap = next.get("cursor");
+            if (threadMap) {
+              threadMap.delete(event.threadId);
+              if (threadMap.size === 0) {
+                next.delete("cursor");
+              }
+            }
+            return next;
+          });
           return;
         }
 
@@ -77,7 +109,16 @@ export const ProviderUsageStateLive = Layer.effect(
           return;
         }
 
-        yield* service.set("cursor", usage);
+        yield* Ref.update(stateRef, (state) => {
+          const next = new Map(state);
+          let threadMap = next.get("cursor");
+          if (!threadMap) {
+            threadMap = new Map();
+            next.set("cursor", threadMap);
+          }
+          threadMap.set(event.threadId, usage);
+          return next;
+        });
       }),
     ).pipe(Effect.forkScoped);
 
