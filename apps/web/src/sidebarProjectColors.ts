@@ -105,35 +105,6 @@ function hashStringToUint32(value: string): number {
 }
 
 /**
- * Picks the deterministic auto-color for a project that has no override. The
- * same input always yields the same palette entry, so projects keep their
- * color across reloads even before the user customizes anything.
- */
-export function autoSidebarProjectColor(seed: string): SidebarProjectColorClasses {
-  const palette = SIDEBAR_PROJECT_COLOR_PALETTE;
-  const index = hashStringToUint32(seed) % palette.length;
-  return palette[index]!;
-}
-
-/**
- * Resolves the effective color for a project: the user's override if set,
- * otherwise the deterministic default derived from `seed` (typically the
- * project's physical override key).
- */
-export function resolveSidebarProjectColor(
-  seed: string,
-  override: SidebarProjectColor | undefined,
-): SidebarProjectColorClasses {
-  if (override) {
-    const palette = PALETTE_BY_KEY.get(override);
-    if (palette) {
-      return palette;
-    }
-  }
-  return autoSidebarProjectColor(seed);
-}
-
-/**
  * Per-project color identity passed through the sidebar render tree. Carries
  * everything the row needs to paint the tint + dot and update overrides.
  */

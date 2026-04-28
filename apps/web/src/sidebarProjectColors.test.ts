@@ -1,45 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { SidebarProjectColor } from "@t3tools/contracts/settings";
-import {
-  autoSidebarProjectColor,
-  buildSidebarProjectColorMap,
-  resolveSidebarProjectColor,
-  SIDEBAR_PROJECT_COLOR_PALETTE,
-} from "./sidebarProjectColors";
+import { buildSidebarProjectColorMap, SIDEBAR_PROJECT_COLOR_PALETTE } from "./sidebarProjectColors";
 
-describe("sidebarProjectColors", () => {
-  it("returns a palette entry for any seed", () => {
-    const result = autoSidebarProjectColor("environment-local:/tmp/example");
-    expect(SIDEBAR_PROJECT_COLOR_PALETTE).toContain(result);
+/**
+ * Helper: returns the auto color the builder would pick for `seed` if it were
+ * the only project in the visible set. Lets tests construct collision
+ * scenarios without depending on the builder's internal hash directly.
+ */
+function autoColorForSeed(seed: string): SidebarProjectColor {
+  const map = buildSidebarProjectColorMap({
+    projects: [{ projectKey: seed, overrideKey: seed }],
+    overrides: {},
   });
-
-  it("is deterministic for the same seed", () => {
-    const seed = "environment-local:/tmp/example";
-    expect(autoSidebarProjectColor(seed).key).toBe(autoSidebarProjectColor(seed).key);
-  });
-
-  it("spreads similar seeds across multiple palette entries", () => {
-    const seeds = Array.from({ length: 24 }, (_, index) => `env:/tmp/project-${index}`);
-    const usedKeys = new Set(seeds.map((seed) => autoSidebarProjectColor(seed).key));
-    // Not strictly guaranteed by the palette length, but the FNV-1a spread
-    // should easily hit at least half the palette across 24 distinct seeds.
-    expect(usedKeys.size).toBeGreaterThanOrEqual(SIDEBAR_PROJECT_COLOR_PALETTE.length / 2);
-  });
-
-  it("prefers the explicit override over the auto color", () => {
-    const seed = "environment-local:/tmp/example";
-    const auto = autoSidebarProjectColor(seed);
-    // Pick an override that doesn't match the auto choice for the seed.
-    const override =
-      SIDEBAR_PROJECT_COLOR_PALETTE.find((entry) => entry.key !== auto.key)?.key ?? "rose";
-    expect(resolveSidebarProjectColor(seed, override).key).toBe(override);
-  });
-
-  it("falls back to the auto color when override is undefined", () => {
-    const seed = "environment-local:/tmp/example";
-    expect(resolveSidebarProjectColor(seed, undefined).key).toBe(autoSidebarProjectColor(seed).key);
-  });
-});
+  return map.get(seed)!.palette.key;
+}
 
 describe("buildSidebarProjectColorMap", () => {
   it("returns an empty map when no projects are passed", () => {
@@ -56,14 +30,26 @@ describe("buildSidebarProjectColorMap", () => {
     expect(new Set(keys).size).toBe(SIDEBAR_PROJECT_COLOR_PALETTE.length);
   });
 
+  it("spreads similar seeds across multiple palette entries", () => {
+    const projects = Array.from({ length: 24 }, (_, index) => ({
+      projectKey: `key-${index}`,
+      overrideKey: `env:/tmp/project-${index}`,
+    }));
+    const map = buildSidebarProjectColorMap({ projects, overrides: {} });
+    const usedKeys = new Set(Array.from(map.values()).map((identity) => identity.palette.key));
+    // Beyond the first 10 projects the palette is full, but every slot should
+    // be in use — that's the strongest spread guarantee the builder makes.
+    expect(usedKeys.size).toBe(SIDEBAR_PROJECT_COLOR_PALETTE.length);
+  });
+
   it("walks past colors already claimed by overrides", () => {
-    // Find an override-key whose hash lands on the same palette entry as the
-    // override below — that's the case where naive resolution would collide.
+    // Find an override-key whose auto color collides with the override below —
+    // that's the case where naive resolution would assign the same hue twice.
     const targetColor: SidebarProjectColor = "rose";
     const collidingSeed = (() => {
       for (let i = 0; i < 1000; i++) {
         const seed = `seed-${i}`;
-        if (autoSidebarProjectColor(seed).key === targetColor) {
+        if (autoColorForSeed(seed) === targetColor) {
           return seed;
         }
       }
