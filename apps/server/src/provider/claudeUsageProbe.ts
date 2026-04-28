@@ -71,11 +71,21 @@ function detectClaudeUsageWindowKind(value: string): "session" | "weekly" | unde
 }
 
 function extractResetTimestamp(value: string): string | undefined {
-  const resetMatch = value.match(
-    /\breset(?:s|ting)?(?:\s+(?:at|on|in))?[:\s-]*([A-Za-z]{3,9}[^,\n]*\d{1,2}[^,\n]*\d{2,4}[^,\n]*|\d{4}-\d{2}-\d{2}T[^\s,]+|\d{4}-\d{2}-\d{2} \d{1,2}:\d{2}(?::\d{2})?(?:\s*[A-Z]{2,5})?)/i,
-  );
-  const candidate = resetMatch?.[1]?.trim();
+  const resetMatch = value.match(/\breset(?:s|ting)?(?:\s+(?:at|on|in))?[:\s-]*([^\n.;]+)/i);
+  const candidate = resetMatch?.[1]
+    ?.trim()
+    .replace(/\s+/g, " ")
+    .replace(/\b(?:local time|your time|time)\b.*$/i, "")
+    .trim();
   if (!candidate) return undefined;
+  if (/\b(?:today|tomorrow|tonight|next)\b/i.test(candidate)) {
+    return undefined;
+  }
+  const hasExplicitTimezone =
+    /(?:z|[+-]\d{2}:?\d{2}|\b(?:utc|gmt|p[sd]t|m[sd]t|c[sd]t|e[sd]t)\b)/i.test(candidate);
+  if (!hasExplicitTimezone) {
+    return undefined;
+  }
   const parsed = Date.parse(candidate);
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
 }

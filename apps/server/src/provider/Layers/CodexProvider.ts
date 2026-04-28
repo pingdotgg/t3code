@@ -303,15 +303,8 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       }),
       requestAllCodexModels(client),
       client.request("account/rateLimits/read", undefined).pipe(
-        Effect.catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          const isExpected =
-            message.includes("not found") ||
-            message.includes("not available") ||
-            message.includes("no rate limit") ||
-            message.includes("unavailable");
-          return isExpected ? Effect.void : Effect.fail(error as CodexErrors.CodexAppServerError);
-        }),
+        // Rate limits are optional metadata and should not fail the whole provider probe.
+        Effect.catchAll(() => Effect.void),
       ),
     ],
     { concurrency: "unbounded" },
@@ -346,6 +339,7 @@ function resolveCodexManagedUsageLimits(
   const addWindow = (
     window?: CodexSchema.V2GetAccountRateLimitsResponse__RateLimitWindow | null,
     fallbackDurationMins?: number,
+    label?: string,
   ) => {
     if (!window) return;
     const durationMins =
@@ -353,7 +347,7 @@ function resolveCodexManagedUsageLimits(
         ? window.windowDurationMins
         : fallbackDurationMins;
     windows.push({
-      label: "Codex quota window",
+      ...(label ? { label } : {}),
       usedPercent: window.usedPercent,
       ...(typeof window.resetsAt === "number"
         ? { resetsAt: new Date(window.resetsAt * 1000).toISOString() }
@@ -362,8 +356,8 @@ function resolveCodexManagedUsageLimits(
     });
   };
 
-  addWindow(rateLimitsSnapshot.primary, CODEX_PRIMARY_WINDOW_DURATION_MINS);
-  addWindow(rateLimitsSnapshot.secondary, CODEX_SECONDARY_WINDOW_DURATION_MINS);
+  addWindow(rateLimitsSnapshot.primary, CODEX_PRIMARY_WINDOW_DURATION_MINS, "Session");
+  addWindow(rateLimitsSnapshot.secondary, CODEX_SECONDARY_WINDOW_DURATION_MINS, "Weekly");
 
   return makeUsageLimitsSnapshot({
     source: "codexAppServer",

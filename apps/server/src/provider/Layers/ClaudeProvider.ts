@@ -759,14 +759,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         )
       : undefined) ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
-  const resolvedUsageLimits =
-    (resolveUsageLimits
-      ? yield* resolveUsageLimits({
-          binaryPath: claudeSettings.binaryPath,
-          launchArgs: claudeSettings.launchArgs,
-          checkedAt,
-        }).pipe(Effect.orElseSucceed(() => undefined))
-      : undefined) ?? undefined;
 
   // ── Auth check + subscription detection ────────────────────────────
 
@@ -793,19 +785,27 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     subscriptionType = yield* resolveSubscriptionType(claudeSettings.binaryPath);
   }
 
-  const usageLimits =
-    normalizeClaudeAuthMethod(authMethod) === "apiKey"
-      ? makeUnavailableUsageLimits({
-          source: "claudeStatusProbe",
+  const isApiKeyAuth = normalizeClaudeAuthMethod(authMethod) === "apiKey";
+  const resolvedUsageLimits =
+    !isApiKeyAuth && resolveUsageLimits
+      ? ((yield* resolveUsageLimits({
+          binaryPath: claudeSettings.binaryPath,
+          launchArgs: claudeSettings.launchArgs,
           checkedAt,
-          reason: "Usage limits unavailable for Claude API key accounts.",
-        })
-      : (resolvedUsageLimits ??
-        makeUnavailableUsageLimits({
-          source: "claudeStatusProbe",
-          checkedAt,
-          reason: "Usage limits unavailable for this Claude account.",
-        }));
+        }).pipe(Effect.orElseSucceed(() => undefined))) ?? undefined)
+      : undefined;
+  const usageLimits = isApiKeyAuth
+    ? makeUnavailableUsageLimits({
+        source: "claudeStatusProbe",
+        checkedAt,
+        reason: "Usage limits unavailable for Claude API key accounts.",
+      })
+    : (resolvedUsageLimits ??
+      makeUnavailableUsageLimits({
+        source: "claudeStatusProbe",
+        checkedAt,
+        reason: "Usage limits unavailable for this Claude account.",
+      }));
 
   // ── Handle auth results (same logic as before, adjusted models) ──
 

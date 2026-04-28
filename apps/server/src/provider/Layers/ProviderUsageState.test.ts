@@ -84,4 +84,59 @@ describe("ProviderUsageStateLive", () => {
     expect(state.cursor?.windows).toEqual([{ kind: "session", label: "Session", usedPercent: 50 }]);
     expect(state.opencode).toBeUndefined();
   });
+
+  it("returns the most recently updated thread usage", async () => {
+    const stub = makeProviderServiceStub();
+    const state = await Effect.runPromise(
+      Effect.gen(function* () {
+        const usageState = yield* ProviderUsageState;
+
+        yield* Effect.sleep("10 millis");
+        yield* PubSub.publish(stub.pubsub, {
+          type: "thread.token-usage.updated",
+          eventId: "evt-1" as never,
+          provider: "cursor",
+          threadId: "thread-a" as never,
+          createdAt: "2026-04-18T00:00:00.000Z",
+          payload: {
+            usage: {
+              usedTokens: 10,
+              maxTokens: 100,
+            },
+          },
+        });
+        yield* PubSub.publish(stub.pubsub, {
+          type: "thread.token-usage.updated",
+          eventId: "evt-2" as never,
+          provider: "cursor",
+          threadId: "thread-b" as never,
+          createdAt: "2026-04-18T00:01:00.000Z",
+          payload: {
+            usage: {
+              usedTokens: 20,
+              maxTokens: 100,
+            },
+          },
+        });
+        yield* PubSub.publish(stub.pubsub, {
+          type: "thread.token-usage.updated",
+          eventId: "evt-3" as never,
+          provider: "cursor",
+          threadId: "thread-a" as never,
+          createdAt: "2026-04-18T00:02:00.000Z",
+          payload: {
+            usage: {
+              usedTokens: 60,
+              maxTokens: 100,
+            },
+          },
+        });
+
+        yield* Effect.sleep("10 millis");
+        return yield* usageState.get("cursor");
+      }).pipe(Effect.provide(ProviderUsageStateLive.pipe(Layer.provide(stub.layer)))),
+    );
+
+    expect(state?.windows).toEqual([{ kind: "session", label: "Session", usedPercent: 60 }]);
+  });
 });

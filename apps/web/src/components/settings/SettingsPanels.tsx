@@ -272,6 +272,13 @@ function getUsageResetLabel(resetsAt: string | undefined): string | null {
   if (!Number.isFinite(diffMs) || diffMs <= 0) {
     return null;
   }
+  const relativeLabel = formatRelativeTimeUntilLabel(resetsAt);
+  if (relativeLabel === "Soon") {
+    return "Resets soon";
+  }
+  if (diffMs < 6 * 60 * 60 * 1000) {
+    return `Resets in ${relativeLabel.replace(/ left$/, "")}`;
+  }
   const now = new Date();
   const resetDate = new Date(resetsAt);
   const tomorrow = new Date(now);
@@ -281,10 +288,6 @@ function getUsageResetLabel(resetsAt: string | undefined): string | null {
     resetDate.toDateString() === tomorrow.toDateString();
   if (isResetTomorrow) {
     return "Resets tomorrow";
-  }
-  const relativeLabel = formatRelativeTimeUntilLabel(resetsAt);
-  if (relativeLabel === "Soon") {
-    return "Resets soon";
   }
   return `Resets in ${relativeLabel.replace(/ left$/, "")}`;
 }

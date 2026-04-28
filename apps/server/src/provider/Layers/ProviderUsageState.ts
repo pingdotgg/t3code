@@ -34,7 +34,10 @@ export const ProviderUsageStateLive = Layer.effect(
   Effect.gen(function* () {
     const providerService = yield* ProviderService;
     const stateRef = yield* Ref.make(
-      new Map<ProviderKind, Map<ThreadId, ServerProviderUsageLimits>>(),
+      new Map<
+        ProviderKind,
+        Map<ThreadId, { readonly usage: ServerProviderUsageLimits; readonly updatedAtMs: number }>
+      >(),
     );
 
     const service: ProviderUsageStateShape = {
@@ -47,10 +50,17 @@ export const ProviderUsageStateLive = Layer.effect(
             }
             const global = threadMap.get("global" as ThreadId);
             if (global) {
-              return global;
+              return global.usage;
             }
-            const latest = Array.from(threadMap.values()).at(-1);
-            return latest;
+            let latest:
+              | { readonly usage: ServerProviderUsageLimits; readonly updatedAtMs: number }
+              | undefined;
+            for (const entry of threadMap.values()) {
+              if (!latest || entry.updatedAtMs > latest.updatedAtMs) {
+                latest = entry;
+              }
+            }
+            return latest?.usage;
           }),
         ),
       set: (provider, usage) =>
@@ -62,9 +72,11 @@ export const ProviderUsageStateLive = Layer.effect(
             let threadMap = next.get(provider);
             if (!threadMap) {
               threadMap = new Map();
-              next.set(provider, threadMap);
+            } else {
+              threadMap = new Map(threadMap);
             }
-            threadMap.set("global" as ThreadId, usage);
+            next.set(provider, threadMap);
+            threadMap.set("global" as ThreadId, { usage, updatedAtMs: Date.now() });
           }
           return next;
         }),
@@ -88,8 +100,10 @@ export const ProviderUsageStateLive = Layer.effect(
         if (event.type === "session.started" || event.type === "session.exited") {
           yield* Ref.update(stateRef, (state) => {
             const next = new Map(state);
-            const threadMap = next.get("cursor");
-            if (threadMap) {
+            const existingThreadMap = next.get("cursor");
+            if (existingThreadMap) {
+              const threadMap = new Map(existingThreadMap);
+              next.set("cursor", threadMap);
               threadMap.delete(event.threadId);
               if (threadMap.size === 0) {
                 next.delete("cursor");
@@ -114,9 +128,14 @@ export const ProviderUsageStateLive = Layer.effect(
           let threadMap = next.get("cursor");
           if (!threadMap) {
             threadMap = new Map();
-            next.set("cursor", threadMap);
+          } else {
+            threadMap = new Map(threadMap);
           }
-          threadMap.set(event.threadId, usage);
+          next.set("cursor", threadMap);
+          threadMap.set(event.threadId, {
+            usage,
+            updatedAtMs: Date.parse(event.createdAt) || Date.now(),
+          });
           return next;
         });
       }),
