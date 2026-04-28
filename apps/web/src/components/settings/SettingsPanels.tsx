@@ -778,7 +778,11 @@ export function GeneralSettingsPanel() {
     const statusKey = liveProvider?.status ?? (providerConfig.enabled ? "warning" : "disabled");
     const summary = getProviderSummary(liveProvider);
     const models: ReadonlyArray<ServerProviderModel> =
-      liveProvider?.models ??
+      liveProvider?.models.filter(
+        // remove any custom models not in providerConfig.customModels, this is because on remove, liveProvider can
+        // become stale (but providerConfig.customModels) is always up to date.
+        (m) => !m.isCustom || providerConfig.customModels.includes(m.slug)
+      ) ??
       providerConfig.customModels.map((slug) => ({
         slug,
         name: slug,
