@@ -73,6 +73,7 @@ export const ChatHeader = memo(function ChatHeader({
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
         <h2
+          dir="auto"
           className="min-w-0 shrink truncate text-sm font-medium text-foreground"
           title={activeThreadTitle}
         >

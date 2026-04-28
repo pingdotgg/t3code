@@ -10,7 +10,9 @@ export const ComposerPlanFollowUpBanner = memo(function ComposerPlanFollowUpBann
       <div className="flex flex-wrap items-center gap-2">
         <span className="uppercase text-sm tracking-[0.2em]">Plan ready</span>
         {planTitle ? (
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{planTitle}</span>
+          <span dir="auto" className="min-w-0 flex-1 truncate text-sm font-medium">
+            {planTitle}
+          </span>
         ) : null}
       </div>
       {/* <div className="mt-2 text-xs text-muted-foreground">
