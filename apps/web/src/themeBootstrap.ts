@@ -1,3 +1,5 @@
+import { readBrowserClientSettings } from "./clientPersistenceStorage";
+import { applyInterfaceSettingsToDocument } from "./interfaceAppearance";
 import {
   THEME_MEDIA_QUERY,
   applyThemePreferenceToDocument,
@@ -13,3 +15,8 @@ applyThemePreferenceToDocument(readStoredThemePreference(), {
   document,
   systemDark,
 });
+
+const clientSettings = readBrowserClientSettings();
+if (clientSettings) {
+  applyInterfaceSettingsToDocument(clientSettings, document);
+}

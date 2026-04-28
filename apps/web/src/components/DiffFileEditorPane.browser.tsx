@@ -5,10 +5,12 @@ import { parsePatchFiles } from "@pierre/diffs";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
+import { useEffect } from "react";
 import {
   __resetEnvironmentApiOverridesForTests,
   __setEnvironmentApiOverrideForTests,
 } from "../environmentApi";
+import { __resetClientSettingsPersistenceForTests, useUpdateSettings } from "../hooks/useSettings";
 import { DiffFileEditorPane } from "./DiffFileEditorPane";
 
 const { focusMock, revealPositionInCenterMock, setPositionMock } = vi.hoisted(() => ({
@@ -39,6 +41,7 @@ vi.mock("@monaco-editor/react", async () => {
 
   const MockEditor = (props: {
     language?: string;
+    options?: { fontSize?: number };
     value?: string;
     onChange?: (value: string | undefined) => void;
     onMount?: (
@@ -55,7 +58,7 @@ vi.mock("@monaco-editor/react", async () => {
       monaco: unknown,
     ) => void;
   }) => {
-    const { language, onChange, onMount, value } = props;
+    const { language, onChange, onMount, options, value } = props;
     const valueRef = React.useRef(props.value ?? "");
     const selectionRef = React.useRef({
       startLineNumber: 1,
@@ -140,6 +143,7 @@ vi.mock("@monaco-editor/react", async () => {
     return (
       <textarea
         aria-label="Monaco editor"
+        data-font-size={String(options?.fontSize ?? "")}
         data-language={language ?? ""}
         className="h-full w-full"
         value={value ?? ""}
@@ -197,9 +201,20 @@ function selectEditorText(start: number, end: number) {
   textarea.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
 }
 
+function TypographySettingsBootstrap(props: { codeFontScale: number }) {
+  const { updateSettings } = useUpdateSettings();
+
+  useEffect(() => {
+    updateSettings({ codeFontScale: props.codeFontScale });
+  }, [props.codeFontScale, updateSettings]);
+
+  return null;
+}
+
 describe("DiffFileEditorPane", () => {
   afterEach(() => {
     __resetEnvironmentApiOverridesForTests();
+    __resetClientSettingsPersistenceForTests();
     vi.restoreAllMocks();
     focusMock.mockReset();
     revealPositionInCenterMock.mockReset();
@@ -356,6 +371,48 @@ index 1111111..2222222 100644
       await expect
         .element(page.getByLabelText("Monaco editor"))
         .toHaveAttribute("data-language", "typescript");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("applies the configured Monaco editor font size", async () => {
+    const readFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.ts",
+      contents: "const value = 2;\n",
+      version: versionA,
+    });
+    const writeFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.ts",
+      version: versionB,
+    });
+    setEnvironmentApiOverride({ readFile, writeFile });
+
+    const screen = await render(
+      <div className="h-[640px] w-[960px]">
+        <TypographySettingsBootstrap codeFontScale={15} />
+        <DiffFileEditorPane
+          cwd="/repo"
+          environmentId={environmentId}
+          fileDiff={null}
+          filePath="src/example.ts"
+          filePaths={["src/example.ts"]}
+          navigationLabel="Back to diff"
+          initialOverride={undefined}
+          resolvedPreset="stone"
+          onAddCodeContext={vi.fn()}
+          onOpenInEditor={vi.fn()}
+          onPersisted={vi.fn()}
+          onRequestBack={vi.fn()}
+          onRequestFilePathChange={vi.fn()}
+        />
+      </div>,
+    );
+
+    try {
+      await expect
+        .element(page.getByLabelText("Monaco editor"))
+        .toHaveAttribute("data-font-size", "15");
     } finally {
       await screen.unmount();
     }

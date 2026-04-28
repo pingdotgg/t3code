@@ -369,7 +369,7 @@ const PairingLinkListRow = memo(function PairingLinkListRow({
             {[roleLabel, formatExpiresInLabel(pairingLink.expiresAt, nowMs)].join(" · ")}
           </p>
           {shareablePairingUrl === null ? (
-            <p className="text-[11px] text-muted-foreground/70">
+            <p className="text-ui-xs text-muted-foreground/70">
               Copy the token and pair from another client using this backend&apos;s reachable host.
             </p>
           ) : null}
@@ -488,7 +488,7 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
             />
             <h3 className="text-sm font-medium text-foreground">{primaryLabel}</h3>
             {clientSession.current ? (
-              <span className="text-[10px] text-muted-foreground/80 rounded-md border border-border/50 bg-muted/50 px-1 py-0.5">
+              <span className="text-ui-2xs rounded-md border border-border/50 bg-muted/50 px-1 py-0.5 text-muted-foreground/80">
                 This device
               </span>
             ) : null}
@@ -1374,7 +1374,7 @@ export function ConnectionsSettings() {
                           disabled={isAddingSavedBackend}
                           spellCheck={false}
                         />
-                        <span className="mt-1 block text-[11px] text-muted-foreground">
+                        <span className="text-ui-xs mt-1 block text-muted-foreground">
                           The full URL including the pairing token.
                         </span>
                       </label>

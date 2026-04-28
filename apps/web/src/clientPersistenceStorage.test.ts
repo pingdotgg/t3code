@@ -1,4 +1,8 @@
-import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@forma/contracts";
+import {
+  EnvironmentId,
+  type PersistedSavedEnvironmentRecord,
+  type ClientSettings,
+} from "@forma/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const testEnvironmentId = EnvironmentId.make("environment-1");
@@ -49,6 +53,47 @@ afterEach(() => {
 });
 
 describe("clientPersistenceStorage", () => {
+  it("decodes missing typography fields to defaults", async () => {
+    const testWindow = getTestWindow();
+    const { CLIENT_SETTINGS_STORAGE_KEY, readBrowserClientSettings } =
+      await import("./clientPersistenceStorage");
+
+    testWindow.localStorage.setItem(
+      CLIENT_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        timestampFormat: "24-hour",
+      } satisfies Partial<ClientSettings>),
+    );
+
+    expect(readBrowserClientSettings()).toMatchObject({
+      timestampFormat: "24-hour",
+      uiFontScale: 16,
+      codeFontScale: 14,
+      macOsFontSmoothing: "auto",
+    });
+  });
+
+  it("decodes legacy typography presets from browser storage", async () => {
+    const testWindow = getTestWindow();
+    const { CLIENT_SETTINGS_STORAGE_KEY, readBrowserClientSettings } =
+      await import("./clientPersistenceStorage");
+
+    testWindow.localStorage.setItem(
+      CLIENT_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        uiFontScale: "large",
+        codeFontScale: "small",
+        macOsFontSmoothing: "subpixel",
+      }),
+    );
+
+    expect(readBrowserClientSettings()).toMatchObject({
+      uiFontScale: 17,
+      codeFontScale: 13,
+      macOsFontSmoothing: "auto",
+    });
+  });
+
   it("stores browser secrets inline with the saved environment record", async () => {
     const testWindow = getTestWindow();
     const {

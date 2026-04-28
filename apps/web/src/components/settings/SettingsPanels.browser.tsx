@@ -20,6 +20,7 @@ import { render } from "vitest-browser-react";
 
 import { __resetLocalApiForTests } from "../../localApi";
 import { CLIENT_SETTINGS_STORAGE_KEY } from "../../clientPersistenceStorage";
+import { __resetClientSettingsPersistenceForTests } from "../../hooks/useSettings";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
 import { THEME_STORAGE_KEY } from "../../theme";
@@ -30,6 +31,13 @@ import {
   ProvidersSettingsPanel,
   ThreadsSettingsPanel,
 } from "./SettingsPanels";
+
+vi.mock("../../hooks/useThreadActions", () => ({
+  useThreadActions: () => ({
+    confirmAndDeleteThread: vi.fn(async () => undefined),
+    unarchiveThread: vi.fn(async () => undefined),
+  }),
+}));
 
 const authAccessHarness = vi.hoisted(() => {
   type Snapshot = AuthAccessSnapshot;
@@ -378,6 +386,7 @@ describe("Settings panels", () => {
   beforeEach(async () => {
     resetServerStateForTests();
     await __resetLocalApiForTests();
+    __resetClientSettingsPersistenceForTests();
     localStorage.clear();
     authAccessHarness.reset();
   });
@@ -399,6 +408,7 @@ describe("Settings panels", () => {
     document.body.innerHTML = "";
     resetServerStateForTests();
     await __resetLocalApiForTests();
+    __resetClientSettingsPersistenceForTests();
     authAccessHarness.reset();
   });
 
@@ -597,6 +607,59 @@ describe("Settings panels", () => {
       expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
       expect(lightOption?.hasAttribute("data-checked")).toBe(true);
     });
+  });
+
+  it("persists interface typography settings and shows the macOS smoothing control", async () => {
+    await renderSettingsPanel(<InterfaceSettingsPanel />);
+
+    const uiSize = document.querySelector('[aria-label="UI font size"]');
+    if (!(uiSize instanceof HTMLInputElement)) {
+      throw new Error("Expected the UI font size input.");
+    }
+    uiSize.value = "11";
+    uiSize.dispatchEvent(new Event("input", { bubbles: true }));
+    uiSize.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+
+    const codeSize = document.querySelector('[aria-label="Code font size"]');
+    if (!(codeSize instanceof HTMLInputElement)) {
+      throw new Error("Expected the code font size input.");
+    }
+    codeSize.value = "15";
+    codeSize.dispatchEvent(new Event("input", { bubbles: true }));
+    codeSize.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+
+    await page.getByLabelText("Font smoothing").click();
+
+    await vi.waitFor(() => {
+      const persisted = JSON.parse(localStorage.getItem(CLIENT_SETTINGS_STORAGE_KEY) ?? "{}") as {
+        uiFontScale?: number;
+        codeFontScale?: number;
+        macOsFontSmoothing?: string;
+      };
+      expect(persisted.uiFontScale).toBe(11);
+      expect(persisted.codeFontScale).toBe(15);
+      expect(persisted.macOsFontSmoothing).toBe("grayscale");
+    });
+  });
+
+  it("hides font smoothing outside macOS", async () => {
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      environment: {
+        ...createBaseServerConfig().environment,
+        platform: { os: "linux", arch: "x64" },
+      },
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <InterfaceSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByLabelText("UI font size")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Code font size")).toBeInTheDocument();
+    expect(document.querySelector('[aria-label="Font smoothing"]')).toBeNull();
   });
 
   it("persists and resets the thread cleanup window", async () => {

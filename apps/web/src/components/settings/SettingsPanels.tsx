@@ -9,7 +9,7 @@ import {
   IconXmark as XIcon,
 } from "symbols-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   PROVIDER_DISPLAY_NAMES,
   type DesktopUpdateChannel,
@@ -20,8 +20,16 @@ import {
 } from "@forma/contracts";
 import { scopeThreadRef } from "@forma/client-runtime";
 import {
+  DEFAULT_CODE_FONT_SIZE_PX,
+  DEFAULT_MAC_OS_FONT_SMOOTHING,
+  DEFAULT_UI_FONT_SIZE_PX,
   DEFAULT_UNIFIED_SETTINGS,
+  MAX_INTERFACE_FONT_SIZE_PX,
+  MIN_INTERFACE_FONT_SIZE_PX,
+  type MacOsFontSmoothing,
   type ThreadCleanupInactiveDays,
+  type CodeFontSizePx,
+  type UiFontSizePx,
 } from "@forma/contracts/settings";
 import { normalizeModelSlug } from "@forma/shared/model";
 import { createModelSelection } from "@forma/shared/model";
@@ -80,6 +88,7 @@ import type { SettingsRestoreScope } from "./settingsNavigation";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   useServerAvailableEditors,
+  useServerConfig,
   useServerKeybindingsConfigPath,
   useServerObservability,
   useServerProviders,
@@ -93,6 +102,10 @@ const TIMESTAMP_FORMAT_LABELS = {
 } as const;
 
 const THREAD_CLEANUP_DAY_OPTIONS: readonly ThreadCleanupInactiveDays[] = [1, 3, 7, 14, 30];
+const FONT_SMOOTHING_LABELS: Record<MacOsFontSmoothing, string> = {
+  auto: "Automatic",
+  grayscale: "Grayscale",
+};
 
 type InstallProviderSettings = {
   provider: ProviderKind;
@@ -160,6 +173,68 @@ const PROVIDER_STATUS_STYLES = {
   },
 } as const;
 
+function parseFontSizeInput(value: string): number | null {
+  if (value.trim() === "") {
+    return null;
+  }
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) {
+    return null;
+  }
+  return Math.max(MIN_INTERFACE_FONT_SIZE_PX, Math.min(MAX_INTERFACE_FONT_SIZE_PX, parsed));
+}
+
+function PixelSettingInput({
+  ariaLabel,
+  value,
+  onCommit,
+}: {
+  ariaLabel: string;
+  value: number;
+  onCommit: (value: UiFontSizePx | CodeFontSizePx) => void;
+}) {
+  const [draftValue, setDraftValue] = useState(String(value));
+
+  useEffect(() => {
+    setDraftValue(String(value));
+  }, [value]);
+
+  const commitDraft = useCallback(() => {
+    const parsed = parseFontSizeInput(draftValue);
+    if (parsed === null) {
+      setDraftValue(String(value));
+      return;
+    }
+    setDraftValue(String(parsed));
+    if (parsed !== value) {
+      onCommit(parsed as UiFontSizePx | CodeFontSizePx);
+    }
+  }, [draftValue, onCommit, value]);
+
+  return (
+    <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
+      <Input
+        aria-label={ariaLabel}
+        className="w-full sm:w-24"
+        max={MAX_INTERFACE_FONT_SIZE_PX}
+        min={MIN_INTERFACE_FONT_SIZE_PX}
+        nativeInput
+        onBlur={commitDraft}
+        onChange={(event) => setDraftValue(event.currentTarget.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.currentTarget.blur();
+          }
+        }}
+        step={1}
+        type="number"
+        value={draftValue}
+      />
+      <span className="text-ui-xs text-muted-foreground">px</span>
+    </div>
+  );
+}
+
 function getProviderSummary(provider: ServerProvider | undefined) {
   if (!provider) {
     return {
@@ -226,7 +301,7 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
   }
 
   return (
-    <span className="text-[11px] text-muted-foreground/60">
+    <span className="text-ui-xs text-muted-foreground/60">
       {lastCheckedRelative.suffix ? (
         <>
           Checked <span className="font-mono tabular-nums">{lastCheckedRelative.value}</span>{" "}
@@ -243,7 +318,7 @@ function AboutVersionTitle() {
   return (
     <span className="inline-flex items-center gap-2">
       <span>Version</span>
-      <code className="text-[11px] font-medium text-muted-foreground">{APP_VERSION}</code>
+      <code className="text-ui-xs font-medium text-muted-foreground">{APP_VERSION}</code>
     </span>
   );
 }
@@ -470,6 +545,11 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
       case "interface":
         return [
           ...(theme !== "system" ? ["Theme"] : []),
+          ...(settings.uiFontScale !== DEFAULT_UI_FONT_SIZE_PX ? ["UI font size"] : []),
+          ...(settings.codeFontScale !== DEFAULT_CODE_FONT_SIZE_PX ? ["Code font size"] : []),
+          ...(settings.macOsFontSmoothing !== DEFAULT_MAC_OS_FONT_SMOOTHING
+            ? ["Font smoothing"]
+            : []),
           ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
             ? ["Time format"]
             : []),
@@ -511,13 +591,16 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
     isGitWritingModelDirty,
     scope,
     settings.addProjectBaseDirectory,
+    settings.codeFontScale,
     settings.confirmThreadArchive,
     settings.confirmThreadDelete,
     settings.defaultThreadEnvMode,
     settings.diffWordWrap,
     settings.enableAssistantStreaming,
+    settings.macOsFontSmoothing,
     settings.threadCleanupInactiveDays,
     settings.timestampFormat,
+    settings.uiFontScale,
     theme,
   ]);
 
@@ -536,6 +619,9 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
       case "interface":
         setTheme("system");
         updateSettings({
+          uiFontScale: DEFAULT_UI_FONT_SIZE_PX,
+          codeFontScale: DEFAULT_CODE_FONT_SIZE_PX,
+          macOsFontSmoothing: DEFAULT_MAC_OS_FONT_SMOOTHING,
           timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
           diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
           enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
@@ -571,6 +657,8 @@ export function InterfaceSettingsPanel() {
   const { theme, setTheme, resolvedPreset } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
+  const serverConfig = useServerConfig();
+  const isMacOs = serverConfig?.environment.platform.os === "darwin";
 
   return (
     <SettingsPageContainer>
@@ -592,6 +680,89 @@ export function InterfaceSettingsPanel() {
             />
           </div>
         </SettingsRow>
+      </SettingsSection>
+
+      <SettingsSection title="Typography">
+        <SettingsRow
+          title="UI font size"
+          description="Applies directly to the app interface root size."
+          resetAction={
+            settings.uiFontScale !== DEFAULT_UI_FONT_SIZE_PX ? (
+              <SettingResetButton
+                label="UI font size"
+                onClick={() =>
+                  updateSettings({
+                    uiFontScale: DEFAULT_UI_FONT_SIZE_PX,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <PixelSettingInput
+              ariaLabel="UI font size"
+              onCommit={(value) => updateSettings({ uiFontScale: value as UiFontSizePx })}
+              value={settings.uiFontScale}
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Code font size"
+          description="Applies to the diff editor, terminal, and read-only code surfaces."
+          resetAction={
+            settings.codeFontScale !== DEFAULT_CODE_FONT_SIZE_PX ? (
+              <SettingResetButton
+                label="code font size"
+                onClick={() =>
+                  updateSettings({
+                    codeFontScale: DEFAULT_CODE_FONT_SIZE_PX,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <PixelSettingInput
+              ariaLabel="Code font size"
+              onCommit={(value) => updateSettings({ codeFontScale: value as CodeFontSizePx })}
+              value={settings.codeFontScale}
+            />
+          }
+        />
+
+        {isMacOs ? (
+          <SettingsRow
+            title="Font smoothing"
+            description="macOS only. Toggle grayscale text smoothing."
+            resetAction={
+              settings.macOsFontSmoothing !== DEFAULT_MAC_OS_FONT_SMOOTHING ? (
+                <SettingResetButton
+                  label="font smoothing"
+                  onClick={() =>
+                    updateSettings({
+                      macOsFontSmoothing: DEFAULT_MAC_OS_FONT_SMOOTHING,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <div className="flex items-center gap-2">
+                <Switch
+                  aria-label="Font smoothing"
+                  checked={settings.macOsFontSmoothing === "grayscale"}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ macOsFontSmoothing: checked ? "grayscale" : "auto" })
+                  }
+                />
+                <span className="text-ui-xs text-muted-foreground">
+                  {FONT_SMOOTHING_LABELS[settings.macOsFontSmoothing]}
+                </span>
+              </div>
+            }
+          />
+        ) : null}
       </SettingsSection>
 
       <SettingsSection title="Display">
@@ -1663,7 +1834,7 @@ export function ProvidersSettingsPanel() {
                                   </TooltipTrigger>
                                   <TooltipPopup side="top" className="max-w-56">
                                     <div className="space-y-1">
-                                      <code className="block text-[11px] text-foreground">
+                                      <code className="text-ui-xs block text-foreground">
                                         {model.slug}
                                       </code>
                                       {capLabels.length > 0 ? (
@@ -1671,7 +1842,7 @@ export function ProvidersSettingsPanel() {
                                           {capLabels.map((label) => (
                                             <span
                                               key={label}
-                                              className="text-[10px] text-muted-foreground"
+                                              className="text-ui-2xs text-muted-foreground"
                                             >
                                               {label}
                                             </span>
@@ -1684,7 +1855,7 @@ export function ProvidersSettingsPanel() {
                               ) : null}
                               {model.isCustom ? (
                                 <div className="ml-auto flex shrink-0 items-center gap-1.5">
-                                  <span className="text-[10px] text-muted-foreground">custom</span>
+                                  <span className="text-ui-2xs text-muted-foreground">custom</span>
                                   <button
                                     type="button"
                                     className="text-muted-foreground transition-colors hover:text-foreground"
@@ -1856,7 +2027,7 @@ export function AdvancedSettingsPanel() {
           description="Open the persisted `keybindings.json` file to edit advanced bindings directly."
           status={
             <>
-              <span className="block break-all font-mono text-[11px] text-foreground">
+              <span className="text-code-compact block break-all font-mono text-foreground">
                 {keybindingsConfigPath ?? "Resolving keybindings path..."}
               </span>
               {openKeybindingsError ? (
@@ -1885,7 +2056,7 @@ export function AdvancedSettingsPanel() {
           description={diagnosticsDescription}
           status={
             <>
-              <span className="block break-all font-mono text-[11px] text-foreground">
+              <span className="text-code-compact block break-all font-mono text-foreground">
                 {logsDirectoryPath ?? "Resolving logs directory..."}
               </span>
               {openDiagnosticsError ? (

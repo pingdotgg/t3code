@@ -70,7 +70,7 @@ export function ThemePreferenceSelector({
       value={theme}
     >
       <div className="flex items-center justify-between gap-3 px-0.5">
-        <span className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground/64">
+        <span className="text-ui-xs font-medium uppercase tracking-[0.18em] text-muted-foreground/64">
           Selected
         </span>
         <span className="flex min-w-0 items-center justify-end gap-2 text-right">

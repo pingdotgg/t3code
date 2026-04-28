@@ -18,17 +18,26 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   UnifiedSettings,
 } from "@forma/contracts/settings";
-import { ensureLocalApi } from "~/localApi";
+import { ensureLocalApi, readLocalApi } from "~/localApi";
 import { Struct } from "effect";
 import { applyServerSettingsPatch } from "@forma/shared/serverSettings";
 import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/serverState";
+import { readBrowserClientSettings, writeBrowserClientSettings } from "~/clientPersistenceStorage";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
 const clientSettingsListeners = new Set<() => void>();
-let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+let clientSettingsSnapshot = readBrowserClientSettings() ?? DEFAULT_CLIENT_SETTINGS;
 let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
+
+function readLocalApiSafely() {
+  try {
+    return readLocalApi();
+  } catch {
+    return undefined;
+  }
+}
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -63,7 +72,10 @@ async function hydrateClientSettings(): Promise<void> {
 
   const nextHydration = (async () => {
     try {
-      const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
+      const api = readLocalApiSafely();
+      const persistedSettings = api?.persistence?.getClientSettings
+        ? await api.persistence.getClientSettings()
+        : readBrowserClientSettings();
       if (persistedSettings) {
         replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
       }
@@ -86,11 +98,15 @@ async function hydrateClientSettings(): Promise<void> {
 
 function persistClientSettings(settings: ClientSettings): void {
   replaceClientSettingsSnapshot(settings);
-  void ensureLocalApi()
-    .persistence.setClientSettings(settings)
-    .catch((error) => {
-      console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, error);
-    });
+  const api = readLocalApiSafely();
+  if (!api?.persistence?.setClientSettings) {
+    writeBrowserClientSettings(settings);
+    return;
+  }
+
+  void api.persistence.setClientSettings(settings).catch((error) => {
+    console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, error);
+  });
 }
 
 // ── Key sets for routing patches ─────────────────────────────────────

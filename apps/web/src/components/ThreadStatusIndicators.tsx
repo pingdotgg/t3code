@@ -188,7 +188,7 @@ export function ThreadStatusLabel({
         <SidebarStatusGlyph status={status} />
       </span>
       <span
-        className={cn("hidden text-[10px] font-medium tracking-tight md:inline", status.toneClass)}
+        className={cn("text-ui-2xs hidden font-medium tracking-tight md:inline", status.toneClass)}
       >
         {status.label}
       </span>

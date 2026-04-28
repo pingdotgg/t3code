@@ -122,7 +122,7 @@ export const ChatHeader = memo(function ChatHeader({
           </h2>
         )}
         {activeProjectName && !isGitRepo && (
-          <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
+          <Badge variant="outline" className="text-ui-2xs shrink-0 text-amber-700">
             No Git
           </Badge>
         )}

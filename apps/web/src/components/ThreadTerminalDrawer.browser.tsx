@@ -4,6 +4,7 @@ import { scopeThreadRef } from "@forma/client-runtime";
 import { ThreadId } from "@forma/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
+import { useEffect } from "react";
 
 const {
   terminalConstructorSpy,
@@ -18,7 +19,7 @@ const {
 } = vi.hoisted(() => ({
   terminalConstructorSpy: vi.fn(),
   terminalDisposeSpy: vi.fn(),
-  terminalInstances: [] as Array<{ options: { theme?: unknown } }>,
+  terminalInstances: [] as Array<{ options: { theme?: unknown; fontSize?: number } }>,
   terminalRefreshSpy: vi.fn(),
   fitAddonFitSpy: vi.fn(),
   fitAddonLoadSpy: vi.fn(),
@@ -47,7 +48,7 @@ vi.mock("@xterm/xterm", () => ({
   Terminal: class MockTerminal {
     cols = 80;
     rows = 24;
-    options: { theme?: unknown } = {};
+    options: { theme?: unknown; fontSize?: number } = {};
     buffer = {
       active: {
         viewportY: 0,
@@ -128,6 +129,7 @@ vi.mock("~/localApi", () => ({
 }));
 
 import { TerminalViewport } from "./ThreadTerminalDrawer";
+import { __resetClientSettingsPersistenceForTests, useUpdateSettings } from "../hooks/useSettings";
 
 const THREAD_ID = ThreadId.make("thread-terminal-browser");
 
@@ -156,6 +158,7 @@ async function mountTerminalViewport(props: {
   threadRef: ReturnType<typeof scopeThreadRef>;
   drawerBackgroundColor?: string;
   drawerTextColor?: string;
+  codeFontScale?: number;
 }) {
   const drawer = document.createElement("div");
   drawer.className = "thread-terminal-drawer";
@@ -173,20 +176,25 @@ async function mountTerminalViewport(props: {
   document.body.append(drawer);
 
   const screen = await render(
-    <TerminalViewport
-      threadRef={props.threadRef}
-      threadId={THREAD_ID}
-      terminalId="default"
-      terminalLabel="Terminal"
-      cwd="/repo/project"
-      onSessionExited={() => undefined}
-      onAddTerminalContext={() => undefined}
-      focusRequestId={0}
-      autoFocus={false}
-      resizeEpoch={0}
-      drawerHeight={320}
-      keybindings={[]}
-    />,
+    <>
+      {props.codeFontScale ? (
+        <TypographySettingsBootstrap codeFontScale={props.codeFontScale} />
+      ) : null}
+      <TerminalViewport
+        threadRef={props.threadRef}
+        threadId={THREAD_ID}
+        terminalId="default"
+        terminalLabel="Terminal"
+        cwd="/repo/project"
+        onSessionExited={() => undefined}
+        onAddTerminalContext={() => undefined}
+        focusRequestId={0}
+        autoFocus={false}
+        resizeEpoch={0}
+        drawerHeight={320}
+        keybindings={[]}
+      />
+    </>,
     { container: host },
   );
 
@@ -216,8 +224,19 @@ async function mountTerminalViewport(props: {
   };
 }
 
+function TypographySettingsBootstrap(props: { codeFontScale: number }) {
+  const { updateSettings } = useUpdateSettings();
+
+  useEffect(() => {
+    updateSettings({ codeFontScale: props.codeFontScale });
+  }, [props.codeFontScale, updateSettings]);
+
+  return null;
+}
+
 describe("TerminalViewport", () => {
   afterEach(() => {
+    __resetClientSettingsPersistenceForTests();
     delete document.documentElement.dataset.theme;
     environmentApiById.clear();
     readEnvironmentApiMock.mockClear();
@@ -346,8 +365,8 @@ describe("TerminalViewport", () => {
       expect(terminalConstructorSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           theme: expect.objectContaining({
-            cursor: "rgb(234, 196, 177)",
-            selectionBackground: "rgba(181, 113, 88, 0.24)",
+            cursor: "rgb(221, 206, 196)",
+            selectionBackground: "rgba(151, 115, 103, 0.22)",
           }),
         }),
       );
@@ -380,6 +399,29 @@ describe("TerminalViewport", () => {
         );
       });
       expect(terminalRefreshSpy).toHaveBeenCalled();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("applies the configured terminal font size without recreating the terminal", async () => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+
+    const mounted = await mountTerminalViewport({
+      threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+      codeFontScale: 15,
+    });
+
+    try {
+      await vi.waitFor(() => {
+        expect(terminalConstructorSpy).toHaveBeenCalledTimes(1);
+      });
+
+      await vi.waitFor(() => {
+        expect(terminalInstances[0]?.options.fontSize).toBe(13);
+      });
+      expect(terminalConstructorSpy).toHaveBeenCalledTimes(1);
     } finally {
       await mounted.cleanup();
     }

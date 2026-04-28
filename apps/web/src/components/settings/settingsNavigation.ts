@@ -2,7 +2,7 @@ import type { ComponentType } from "react";
 import {
   IconBubbleLeftAndTextBubbleRight as ThreadsIcon,
   IconMessage as ProvidersIcon,
-  IconPaintbrushFill as InterfaceIcon,
+  IconTheatermaskAndPaintbrushFill as InterfaceIcon,
   IconWrenchAndScrewdriver as AdvancedIcon,
 } from "symbols-react";
 import { Link2Icon } from "lucide-react";

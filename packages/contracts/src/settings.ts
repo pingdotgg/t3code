@@ -37,9 +37,88 @@ export const ThreadCleanupInactiveDays = Schema.Literals([1, 3, 7, 14, 30]);
 export type ThreadCleanupInactiveDays = typeof ThreadCleanupInactiveDays.Type;
 export const DEFAULT_THREAD_CLEANUP_INACTIVE_DAYS: ThreadCleanupInactiveDays = 1;
 
+const LegacyUiFontScale = Schema.Literals(["small", "default", "large"]);
+type LegacyUiFontScale = typeof LegacyUiFontScale.Type;
+const LEGACY_UI_FONT_SIZE_BY_SCALE: Record<LegacyUiFontScale, number> = {
+  small: 15,
+  default: 16,
+  large: 17,
+};
+export const MIN_INTERFACE_FONT_SIZE_PX = 8;
+export const MAX_INTERFACE_FONT_SIZE_PX = 32;
+const InterfaceFontSizePxSchema = Schema.Int.check(
+  Schema.isGreaterThanOrEqualTo(MIN_INTERFACE_FONT_SIZE_PX),
+).check(Schema.isLessThanOrEqualTo(MAX_INTERFACE_FONT_SIZE_PX));
+export const UiFontSizePx = Schema.Union([InterfaceFontSizePxSchema, LegacyUiFontScale]).pipe(
+  Schema.decodeTo(
+    InterfaceFontSizePxSchema,
+    SchemaTransformation.transformOrFail({
+      decode: (value) =>
+        Effect.succeed(
+          typeof value === "number"
+            ? value
+            : LEGACY_UI_FONT_SIZE_BY_SCALE[value as LegacyUiFontScale],
+        ),
+      encode: (value) => Effect.succeed(value),
+    }),
+  ),
+);
+export type UiFontSizePx = typeof UiFontSizePx.Type;
+export const DEFAULT_UI_FONT_SIZE_PX: UiFontSizePx = 16;
+
+const LegacyCodeFontScale = Schema.Literals(["small", "default", "large"]);
+type LegacyCodeFontScale = typeof LegacyCodeFontScale.Type;
+const LEGACY_CODE_FONT_SIZE_BY_SCALE: Record<LegacyCodeFontScale, number> = {
+  small: 13,
+  default: 14,
+  large: 15,
+};
+export const CodeFontSizePx = Schema.Union([InterfaceFontSizePxSchema, LegacyCodeFontScale]).pipe(
+  Schema.decodeTo(
+    InterfaceFontSizePxSchema,
+    SchemaTransformation.transformOrFail({
+      decode: (value) =>
+        Effect.succeed(
+          typeof value === "number"
+            ? value
+            : LEGACY_CODE_FONT_SIZE_BY_SCALE[value as LegacyCodeFontScale],
+        ),
+      encode: (value) => Effect.succeed(value),
+    }),
+  ),
+);
+export type CodeFontSizePx = typeof CodeFontSizePx.Type;
+export const DEFAULT_CODE_FONT_SIZE_PX: CodeFontSizePx = 14;
+
+const MacOsFontSmoothingSchema = Schema.Literals(["auto", "grayscale"]);
+export const MacOsFontSmoothing = Schema.Union([
+  MacOsFontSmoothingSchema,
+  Schema.Literal("subpixel"),
+]).pipe(
+  Schema.decodeTo(
+    MacOsFontSmoothingSchema,
+    SchemaTransformation.transformOrFail({
+      decode: (value) =>
+        Effect.succeed(value === "subpixel" ? "auto" : (value as "auto" | "grayscale")),
+      encode: (value) => Effect.succeed(value),
+    }),
+  ),
+);
+export type MacOsFontSmoothing = typeof MacOsFontSmoothing.Type;
+export const DEFAULT_MAC_OS_FONT_SMOOTHING: MacOsFontSmoothing = "auto";
+
 export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  uiFontScale: UiFontSizePx.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_UI_FONT_SIZE_PX)),
+  ),
+  codeFontScale: CodeFontSizePx.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODE_FONT_SIZE_PX)),
+  ),
+  macOsFontSmoothing: MacOsFontSmoothing.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_MAC_OS_FONT_SMOOTHING)),
+  ),
   threadCleanupInactiveDays: ThreadCleanupInactiveDays.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_CLEANUP_INACTIVE_DAYS)),
   ),
@@ -279,6 +358,9 @@ export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 export const ClientSettingsPatch = Schema.Struct({
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
+  uiFontScale: Schema.optionalKey(UiFontSizePx),
+  codeFontScale: Schema.optionalKey(CodeFontSizePx),
+  macOsFontSmoothing: Schema.optionalKey(MacOsFontSmoothing),
   threadCleanupInactiveDays: Schema.optionalKey(ThreadCleanupInactiveDays),
   diffWordWrap: Schema.optionalKey(Schema.Boolean),
   favorites: Schema.optionalKey(

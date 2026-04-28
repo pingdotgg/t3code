@@ -91,10 +91,10 @@ function SlowRpcAckRequestDetails({ requests }: { requests: ReadonlyArray<SlowRp
           key={req.requestId}
         >
           <div className="wrap-break-word font-medium text-foreground">{req.tag}</div>
-          <div className="mt-0.5 font-mono text-[10px] leading-snug opacity-90">
+          <div className="text-code-compact mt-0.5 font-mono leading-snug opacity-90">
             {req.requestId}
           </div>
-          <div className="mt-0.5 text-[10px] opacity-75">
+          <div className="text-ui-2xs mt-0.5 opacity-75">
             Started {formatConnectionMoment(req.startedAt) ?? req.startedAt}
           </div>
         </li>

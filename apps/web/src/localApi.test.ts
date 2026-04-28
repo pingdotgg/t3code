@@ -1,6 +1,7 @@
 import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  type ClientSettings,
   type DesktopBridge,
   EnvironmentId,
   type GitStatusResult,
@@ -552,9 +553,12 @@ describe("wsApi", () => {
   });
 
   it("reads and writes persistence through the desktop bridge when available", async () => {
-    const clientSettings = {
+    const clientSettings: ClientSettings = {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
+      uiFontScale: 17,
+      codeFontScale: 13,
+      macOsFontSmoothing: "grayscale" as const,
       threadCleanupInactiveDays: 7 as const,
       diffWordWrap: true,
       favorites: [],
@@ -611,9 +615,12 @@ describe("wsApi", () => {
   it("falls back to browser storage for persistence when the desktop bridge is missing", async () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi(rpcClientMock as never);
-    const clientSettings = {
+    const clientSettings: ClientSettings = {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
+      uiFontScale: 16,
+      codeFontScale: 14,
+      macOsFontSmoothing: "auto",
       threadCleanupInactiveDays: 7 as const,
       diffWordWrap: true,
       favorites: [],

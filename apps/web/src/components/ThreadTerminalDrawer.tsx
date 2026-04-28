@@ -45,6 +45,8 @@ import {
   terminalDeleteShortcutData,
   terminalNavigationShortcutData,
 } from "../keybindings";
+import { useSettings } from "../hooks/useSettings";
+import { getCodeTerminalFontSize } from "../interfaceAppearance";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
@@ -257,6 +259,8 @@ export function TerminalViewport({
   const keybindingsRef = useRef(keybindings);
   const lastAppliedTerminalEventIdRef = useRef(0);
   const terminalHydratedRef = useRef(false);
+  const codeFontScale = useSettings((settings) => settings.codeFontScale);
+  const terminalFontSize = getCodeTerminalFontSize(codeFontScale);
   const handleSessionExited = useEffectEvent(() => {
     onSessionExited();
   });
@@ -282,7 +286,7 @@ export function TerminalViewport({
     const terminal = new Terminal({
       cursorBlink: true,
       lineHeight: 1.2,
-      fontSize: 12,
+      fontSize: terminalFontSize,
       scrollback: 5_000,
       fontFamily: '"SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace',
       theme: terminalThemeFromApp(mount),
@@ -717,6 +721,17 @@ export function TerminalViewport({
     // it is only read at mount time and must not trigger terminal teardown/recreation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd, environmentId, runtimeEnv, terminalId, threadId]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+
+    terminal.options.fontSize = terminalFontSize;
+    fitAddonRef.current?.fit();
+    terminal.refresh(0, terminal.rows - 1);
+  }, [terminalFontSize]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -1231,7 +1246,7 @@ export default function ThreadTerminalDrawer({
                       {showGroupHeaders && (
                         <button
                           type="button"
-                          className={`flex w-full items-center rounded px-1 py-0.5 text-[10px] uppercase tracking-[0.08em] ${
+                          className={`text-ui-2xs flex w-full items-center rounded px-1 py-0.5 uppercase tracking-[0.08em] ${
                             isGroupActive
                               ? "bg-accent/70 text-foreground"
                               : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
@@ -1255,14 +1270,14 @@ export default function ThreadTerminalDrawer({
                           return (
                             <div
                               key={terminalId}
-                              className={`group flex items-center gap-1 rounded px-1 py-0.5 text-[11px] ${
+                              className={`text-code-compact group flex items-center gap-1 rounded px-1 py-0.5 ${
                                 isActive
                                   ? "bg-accent text-foreground"
                                   : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                               }`}
                             >
                               {showGroupHeaders && (
-                                <span className="text-[10px] text-muted-foreground/80">└</span>
+                                <span className="text-ui-2xs text-muted-foreground/80">└</span>
                               )}
                               <button
                                 type="button"

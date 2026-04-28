@@ -51,6 +51,7 @@
   }
   html {
     background-color: var(--app-chrome-background);
+    font-size: var(--app-ui-root-font-size);
   }
   body {
     @apply text-foreground relative;
@@ -69,12 +70,38 @@
 
 :root {
   --radius: 0.625rem;
+  --app-ui-root-font-size: 16px;
+  --app-ui-text-2xs: 10.5px;
+  --app-ui-text-xs: 11.5px;
+  --app-ui-text-sm: 13.5px;
+  --app-code-font-size: 12px;
+  --app-code-font-size-compact: 11px;
   --motion-duration-micro: 120ms;
   --motion-duration-ui: 200ms;
   --motion-duration-modal: 260ms;
   --motion-ease-out: cubic-bezier(0.215, 0.61, 0.355, 1);
   --motion-ease-in-out: cubic-bezier(0.645, 0.045, 0.355, 1);
   --composer-surface-overlay-shadow: inset 0 0 0 0 transparent;
+}
+
+.text-ui-2xs {
+  font-size: var(--app-ui-text-2xs);
+}
+
+.text-ui-xs {
+  font-size: var(--app-ui-text-xs);
+}
+
+.text-ui-sm {
+  font-size: var(--app-ui-text-sm);
+}
+
+.text-code-body {
+  font-size: var(--app-code-font-size);
+}
+
+.text-code-compact {
+  font-size: var(--app-code-font-size-compact);
 }
 
 :root,
@@ -968,7 +995,7 @@ label:has(> select#reasoning-effort) select {
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--foreground);
-  font-size: 0.75rem;
+  font-size: var(--app-code-font-size);
 }
 
 .chat-markdown-file-link {
@@ -981,7 +1008,7 @@ label:has(> select#reasoning-effort) select {
   padding: 0.08rem 0.34rem;
   color: var(--foreground);
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: 0.75rem;
+  font-size: var(--app-code-font-size);
   line-height: 1.15;
   vertical-align: text-bottom;
   transition:
@@ -1025,7 +1052,7 @@ label:has(> select#reasoning-effort) select {
   border: none;
   background: transparent;
   padding: 0;
-  font-size: 0.75rem;
+  font-size: var(--app-code-font-size);
 }
 
 .markdown-file-link-tooltip-scroll {

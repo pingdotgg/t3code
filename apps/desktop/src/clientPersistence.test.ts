@@ -51,6 +51,9 @@ function makeSecretStorage(available: boolean): DesktopSecretStorage {
 const clientSettings: ClientSettings = {
   confirmThreadArchive: true,
   confirmThreadDelete: false,
+  uiFontScale: 17,
+  codeFontScale: 13,
+  macOsFontSmoothing: "grayscale",
   threadCleanupInactiveDays: 7,
   diffWordWrap: true,
   favorites: [],

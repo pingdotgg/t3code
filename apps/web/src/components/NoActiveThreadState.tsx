@@ -58,12 +58,12 @@ import { SidebarInset, SidebarTrigger, useSidebar } from "./ui/sidebar";
 const ACTION_CARD_CLASS_NAME =
   "relative isolate h-auto min-h-[11.5rem] w-full overflow-hidden rounded-[20px] border-border/60 bg-background px-5 py-5 text-left whitespace-normal shadow-sm shadow-black/5 transition-all duration-150 ease-out before:rounded-[19px] hover:-translate-y-0.5 hover:border-border/85 hover:bg-accent/16 hover:shadow-md hover:ring-4 hover:ring-foreground/5 hover:ring-offset-4 hover:ring-offset-background active:translate-y-0 active:scale-[0.985] active:shadow-sm";
 const SECTION_HEADING_CLASS_NAME =
-  "text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground/64";
+  "text-ui-xs font-medium uppercase tracking-[0.18em] text-muted-foreground/64";
 const LIST_TABLE_SHELL_CLASS_NAME = "rounded-[1.5rem] bg-foreground/5 p-0.5";
 const LIST_TABLE_INNER_CLASS_NAME =
   "overflow-hidden rounded-[1.15rem] border border-border/55 bg-white dark:bg-white/5 shadow-sm";
 const LIST_TABLE_HEADER_CLASS_NAME =
-  "hidden items-center gap-4 px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/68 md:grid";
+  "text-ui-2xs hidden items-center gap-4 px-4 py-2 font-semibold uppercase tracking-[0.14em] text-muted-foreground/68 md:grid";
 const RECENT_THREAD_TABLE_GRID_CLASS_NAME = "md:grid-cols-[minmax(0,1fr)_3rem]";
 const PROJECT_TABLE_GRID_CLASS_NAME = "md:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)_auto]";
 
@@ -296,7 +296,7 @@ function ThreadListRow({
           </div>
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground/72">
             <span
-              className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} text-[11px] leading-none`}
+              className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} text-ui-xs leading-none`}
               title={workspacePath ?? resolveThreadProjectLabel(item)}
             >
               <ThreadBreadcrumbProjectChipContent
@@ -306,7 +306,7 @@ function ThreadListRow({
             </span>
             {item.thread.branch ? (
               <span
-                className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} text-[11px] leading-none`}
+                className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} text-ui-xs leading-none`}
                 title={item.thread.branch}
               >
                 <ThreadBreadcrumbChipContent
@@ -315,7 +315,7 @@ function ThreadListRow({
                 />
               </span>
             ) : null}
-            <span className="shrink-0 text-[11px] text-muted-foreground/68">
+            <span className="text-ui-xs shrink-0 text-muted-foreground/68">
               {formatRelativeTimeLabel(getThreadTimestamp(item.thread))}
             </span>
           </div>
@@ -335,7 +335,7 @@ function ThreadListRow({
                 type="button"
                 data-testid={`no-active-thread-thread-archive-confirm-${item.thread.id}`}
                 aria-label={`Confirm archive ${item.thread.title}`}
-                className="pointer-coarse:hidden inline-flex h-7 cursor-pointer items-center rounded-full bg-destructive/12 px-2.5 text-[10px] font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
+                className="text-ui-2xs pointer-coarse:hidden inline-flex h-7 cursor-pointer items-center rounded-full bg-destructive/12 px-2.5 font-medium text-destructive transition-colors hover:bg-destructive/18 focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-destructive/40"
                 onPointerDown={stopPointerEventPropagation}
                 onClick={handleArchiveConfirmation}
               >
@@ -479,7 +479,7 @@ function ProjectListRow({
         {item.project.cwd}
       </p>
       <div className="flex shrink-0 items-center justify-between gap-3 md:justify-end">
-        <span className="text-[11px] text-muted-foreground/68">
+        <span className="text-ui-xs text-muted-foreground/68">
           {item.latestThread
             ? formatRelativeTimeLabel(getThreadTimestamp(item.latestThread))
             : "No threads yet"}

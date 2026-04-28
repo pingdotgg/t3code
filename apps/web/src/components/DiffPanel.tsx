@@ -88,6 +88,14 @@ const DIFF_PANEL_UNSAFE_CSS = `
   background-color: var(--diffs-bg) !important;
 }
 
+[data-diff],
+[data-diff] *,
+[data-file],
+[data-file] * {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace) !important;
+  font-size: var(--app-code-font-size) !important;
+}
+
 [data-file-info] {
   background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
   border-block-color: var(--border) !important;
@@ -662,7 +670,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   : "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80",
               )}
             >
-              <div className="text-[10px] leading-tight font-medium">All turns</div>
+              <div className="text-ui-2xs leading-tight font-medium">All turns</div>
             </div>
           </button>
           {orderedTurnDiffSummaries.map((summary) => (
@@ -683,7 +691,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                 )}
               >
                 <div className="flex items-center gap-1">
-                  <span className="text-[10px] leading-tight font-medium">
+                  <span className="text-ui-2xs leading-tight font-medium">
                     Turn{" "}
                     {summary.checkpointTurnCount ??
                       inferredCheckpointTurnCountByTurnId[summary.turnId] ??
@@ -825,7 +833,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         >
           {checkpointDiffError && !renderablePatch && (
             <div className="px-3">
-              <p className="mb-2 text-[11px] text-red-500/80">{checkpointDiffError}</p>
+              <p className="text-ui-xs mb-2 text-red-500/80">{checkpointDiffError}</p>
             </div>
           )}
           {!renderablePatch ? (
@@ -877,14 +885,14 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                       <div className="min-w-0">
                         <button
                           type="button"
-                          className="truncate font-mono text-[11px] text-foreground underline decoration-transparent underline-offset-2 transition-colors hover:text-primary hover:decoration-current"
+                          className="text-code-compact truncate font-mono text-foreground underline decoration-transparent underline-offset-2 transition-colors hover:text-primary hover:decoration-current"
                           onClick={() => openDiffFileInEditor(filePath)}
                           title={filePath}
                         >
                           {filePath}
                         </button>
                         {override ? (
-                          <p className="text-[10px] text-muted-foreground/65">
+                          <p className="text-ui-2xs text-muted-foreground/65">
                             Showing saved manual edits
                           </p>
                         ) : null}
@@ -920,10 +928,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           ) : (
             <div className="h-full overflow-auto p-2">
               <div className="space-y-2">
-                <p className="text-[11px] text-muted-foreground/75">{renderablePatch.reason}</p>
+                <p className="text-ui-xs text-muted-foreground/75">{renderablePatch.reason}</p>
                 <pre
                   className={cn(
-                    "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90",
+                    "text-code-body max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono leading-relaxed text-muted-foreground/90",
                     diffWordWrap
                       ? "overflow-auto whitespace-pre-wrap wrap-break-word"
                       : "overflow-auto",

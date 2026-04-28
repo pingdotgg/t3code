@@ -43,6 +43,7 @@ import {
 import { useStore } from "../store";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
+import { applyInterfaceSettingsToDocument } from "../interfaceAppearance";
 import {
   ensureEnvironmentConnectionBootstrapped,
   getPrimaryEnvironmentConnection,
@@ -77,6 +78,11 @@ export const Route = createRootRouteWithContext<{
 function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
+  const interfaceAppearanceSettings = useSettings((settings) => ({
+    uiFontScale: settings.uiFontScale,
+    codeFontScale: settings.codeFontScale,
+    macOsFontSmoothing: settings.macOsFontSmoothing,
+  }));
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -86,6 +92,10 @@ function RootRouteView() {
       window.cancelAnimationFrame(frame);
     };
   }, [pathname]);
+
+  useEffect(() => {
+    applyInterfaceSettingsToDocument(interfaceAppearanceSettings);
+  }, [interfaceAppearanceSettings]);
 
   if (pathname === "/pair") {
     return <Outlet />;
@@ -127,7 +137,7 @@ function RootRouteErrorView({ error, reset }: ErrorComponentProps) {
       </div>
 
       <section className="relative w-full max-w-xl rounded-2xl border border-border/80 bg-card/90 p-6 shadow-2xl shadow-black/20 backdrop-blur-md sm:p-8">
-        <p className="text-[11px] font-semibold tracking-[0.18em] text-muted-foreground uppercase">
+        <p className="text-ui-xs font-semibold tracking-[0.18em] text-muted-foreground uppercase">
           {APP_DISPLAY_NAME}
         </p>
         <h1 className="mt-3 text-2xl font-semibold tracking-tight sm:text-3xl">

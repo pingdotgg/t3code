@@ -74,10 +74,10 @@ export function showContextMenuFallback<T extends string>(
         const isDisabled = item.disabled === true;
         button.disabled = isDisabled;
         button.className = isDisabled
-          ? "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-muted-foreground/60 cursor-not-allowed"
+          ? "text-ui-xs flex w-full items-center gap-2 px-3 py-1.5 text-left text-muted-foreground/60 cursor-not-allowed"
           : isLeafDestructive
-            ? "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-destructive hover:bg-accent cursor-default"
-            : "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-popover-foreground hover:bg-accent cursor-default";
+            ? "text-ui-xs flex w-full items-center gap-2 px-3 py-1.5 text-left text-destructive hover:bg-accent cursor-default"
+            : "text-ui-xs flex w-full items-center gap-2 px-3 py-1.5 text-left text-popover-foreground hover:bg-accent cursor-default";
 
         const label = document.createElement("span");
         label.className = "min-w-0 flex-1 truncate";

@@ -27,6 +27,8 @@ import {
   resolveProjectFileEditorError,
   type ProjectFileEditorStatus,
 } from "../lib/projectFileEditing";
+import { useSettings } from "../hooks/useSettings";
+import { getCodeEditorFontSize } from "../interfaceAppearance";
 import { cn } from "../lib/utils";
 import type { ResolvedThemePreset } from "../theme";
 import { Button } from "./ui/button";
@@ -116,7 +118,7 @@ function StatePanel(props: {
               <p className="font-medium text-sm text-foreground">
                 {buildUnavailableMessage(props.status)}
               </p>
-              <p className="mt-1 break-words font-mono text-[11px] text-muted-foreground">
+              <p className="text-code-compact mt-1 break-words font-mono text-muted-foreground">
                 {props.filePath}
               </p>
             </div>
@@ -178,6 +180,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     top: number;
     left: number;
   } | null>(null);
+  const codeFontScale = useSettings((settings) => settings.codeFontScale);
 
   const isDirty = draftContents !== baseContents;
   const canSave =
@@ -495,13 +498,14 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   const editorOptions = useMemo(
     () => ({
       automaticLayout: true,
+      fontSize: getCodeEditorFontSize(codeFontScale),
       minimap: { enabled: false },
       readOnly: status === "loading" || status === "saving",
       scrollBeyondLastLine: false,
       tabSize: 2,
       wordWrap: "off" as const,
     }),
-    [status],
+    [codeFontScale, status],
   );
   const monacoTheme = useMemo(() => ensureAppMonacoTheme(resolvedPreset), [resolvedPreset]);
   const monacoLanguage = useMemo(() => resolveMonacoLanguage(filePath), [filePath]);
@@ -529,10 +533,10 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
             >
               {status === "saving" ? "Saving..." : "Save"}
               <KbdGroup aria-hidden className="pointer-events-none inline-flex items-center gap-1">
-                <Kbd className="h-4 min-w-0 rounded-sm bg-primary-foreground/12 px-1 text-[10px] text-primary-foreground/80">
+                <Kbd className="text-ui-2xs h-4 min-w-0 rounded-sm bg-primary-foreground/12 px-1 text-primary-foreground/80">
                   ⌘
                 </Kbd>
-                <Kbd className="h-4 min-w-4 rounded-sm bg-primary-foreground/12 px-1 text-[10px] text-primary-foreground/80">
+                <Kbd className="text-ui-2xs h-4 min-w-4 rounded-sm bg-primary-foreground/12 px-1 text-primary-foreground/80">
                   S
                 </Kbd>
               </KbdGroup>
@@ -557,7 +561,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                     key={candidatePath}
                     type="button"
                     className={cn(
-                      "min-w-0 shrink-0 rounded-md border px-2 py-1 text-left font-mono text-[11px] transition-colors",
+                      "text-code-compact min-w-0 shrink-0 rounded-md border px-2 py-1 text-left font-mono transition-colors",
                       candidatePath === filePath
                         ? "border-border bg-accent text-accent-foreground"
                         : "border-transparent text-muted-foreground hover:border-border/60 hover:bg-accent/40 hover:text-foreground",

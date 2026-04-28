@@ -1936,7 +1936,7 @@ export const ChatComposer = memo(
                               />
                             </button>
                           ) : (
-                            <div className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-muted-foreground/70">
+                            <div className="text-ui-2xs flex h-full w-full items-center justify-center px-1 text-center text-muted-foreground/70">
                               {image.name}
                             </div>
                           )}
