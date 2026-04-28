@@ -102,7 +102,7 @@ describe("ServerProvider", () => {
         source: "cursorAcp",
         available: true,
         checkedAt: "2026-04-10T00:00:00.000Z",
-        windows: [{ kind: "session", label: "Session", usedPercent: 12 }],
+        windows: [{ kind: "session", label: "Context window", usedPercent: 12 }],
       },
     });
     const openCodeParsed = decodeServerProvider({

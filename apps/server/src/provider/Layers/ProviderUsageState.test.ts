@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Effect, Layer, PubSub, Stream } from "effect";
-import type { ProviderRuntimeEvent } from "@t3tools/contracts";
+import type { ProviderRuntimeEvent, ThreadId } from "@t3tools/contracts";
 
 import { ProviderUsageState } from "../Services/ProviderUsageState.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
@@ -33,11 +33,11 @@ describe("ProviderUsageStateLive", () => {
       Effect.gen(function* () {
         const usageState = yield* ProviderUsageState;
 
-        yield* usageState.set("cursor", {
+        yield* usageState.set("cursor", "thread-probe" as ThreadId, {
           source: "cursorAcp",
           available: true,
           checkedAt: "2026-04-18T00:00:00.000Z",
-          windows: [{ kind: "session", label: "Session", usedPercent: 25 }],
+          windows: [{ kind: "session", label: "Context window", usedPercent: 25 }],
         });
         const first = yield* usageState.get("cursor");
         yield* usageState.clear("cursor");
@@ -47,7 +47,7 @@ describe("ProviderUsageStateLive", () => {
       }).pipe(Effect.provide(ProviderUsageStateLive.pipe(Layer.provide(stub.layer)))),
     );
 
-    expect(result.first?.windows).toEqual([{ kind: "session", label: "Session", usedPercent: 25 }]);
+    expect(result.first?.windows).toEqual([{ kind: "session", label: "Context window", usedPercent: 25 }]);
     expect(result.second).toBeUndefined();
   });
 
@@ -81,7 +81,7 @@ describe("ProviderUsageStateLive", () => {
       }).pipe(Effect.provide(ProviderUsageStateLive.pipe(Layer.provide(stub.layer)))),
     );
 
-    expect(state.cursor?.windows).toEqual([{ kind: "session", label: "Session", usedPercent: 50 }]);
+    expect(state.cursor?.windows).toEqual([{ kind: "session", label: "Context window", usedPercent: 50 }]);
     expect(state.opencode).toBeUndefined();
   });
 
@@ -137,6 +137,6 @@ describe("ProviderUsageStateLive", () => {
       }).pipe(Effect.provide(ProviderUsageStateLive.pipe(Layer.provide(stub.layer)))),
     );
 
-    expect(state?.windows).toEqual([{ kind: "session", label: "Session", usedPercent: 60 }]);
+    expect(state?.windows).toEqual([{ kind: "session", label: "Context window", usedPercent: 60 }]);
   });
 });

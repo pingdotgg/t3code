@@ -15,7 +15,7 @@ describe("runtimeUsageToProviderUsageLimits", () => {
       source: "cursorAcp",
       available: true,
       checkedAt: "2026-04-18T00:00:00.000Z",
-      windows: [{ kind: "session", label: "Session", usedPercent: 75 }],
+      windows: [{ kind: "session", label: "Context window", usedPercent: 75 }],
     });
   });
 

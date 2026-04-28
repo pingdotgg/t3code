@@ -30,7 +30,7 @@ export function runtimeUsageToProviderUsageLimits(input: {
     windows: [
       {
         kind: "session",
-        label: input.label?.trim() || "Session",
+        label: input.label?.trim() || "Context window",
         usedPercent: clampPercent(rawPercent),
       },
     ],

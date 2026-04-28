@@ -48,10 +48,6 @@ export const ProviderUsageStateLive = Layer.effect(
             if (!threadMap || threadMap.size === 0) {
               return undefined;
             }
-            const global = threadMap.get("global" as ThreadId);
-            if (global) {
-              return global.usage;
-            }
             let latest:
               | { readonly usage: ServerProviderUsageLimits; readonly updatedAtMs: number }
               | undefined;
@@ -63,11 +59,20 @@ export const ProviderUsageStateLive = Layer.effect(
             return latest?.usage;
           }),
         ),
-      set: (provider, usage) =>
+      set: (provider, threadId, usage) =>
         Ref.update(stateRef, (state) => {
           const next = new Map(state);
           if (usage === undefined) {
-            next.delete(provider);
+            const existingThreadMap = next.get(provider);
+            if (existingThreadMap) {
+              const newThreadMap = new Map(existingThreadMap);
+              newThreadMap.delete(threadId);
+              if (newThreadMap.size === 0) {
+                next.delete(provider);
+              } else {
+                next.set(provider, newThreadMap);
+              }
+            }
           } else {
             let threadMap = next.get(provider);
             if (!threadMap) {
@@ -76,7 +81,7 @@ export const ProviderUsageStateLive = Layer.effect(
               threadMap = new Map(threadMap);
             }
             next.set(provider, threadMap);
-            threadMap.set("global" as ThreadId, { usage, updatedAtMs: Date.now() });
+            threadMap.set(threadId, { usage, updatedAtMs: Date.now() });
           }
           return next;
         }),
