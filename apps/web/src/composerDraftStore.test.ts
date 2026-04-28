@@ -27,6 +27,11 @@ import {
 } from "./composerDraftStore";
 import { removeLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 import {
+  INLINE_CODE_CONTEXT_PLACEHOLDER,
+  insertInlineCodeContextPlaceholder,
+  type CodeContextDraft,
+} from "./lib/codeContext";
+import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   insertInlineTerminalContextPlaceholder,
   type TerminalContextDraft,
@@ -76,6 +81,24 @@ function makeTerminalContext(input: {
     lineStart: input.lineStart ?? 4,
     lineEnd: input.lineEnd ?? 5,
     text: input.text ?? "git status\nOn branch main",
+    createdAt: "2026-03-13T12:00:00.000Z",
+  };
+}
+
+function makeCodeContext(input: {
+  id: string;
+  text?: string;
+  filePath?: string;
+  lineStart?: number;
+  lineEnd?: number;
+}): CodeContextDraft {
+  return {
+    id: input.id,
+    threadId: ThreadId.make("thread-dedupe"),
+    filePath: input.filePath ?? "src/example.ts",
+    lineStart: input.lineStart ?? 7,
+    lineEnd: input.lineEnd ?? 8,
+    text: input.text ?? "const a = 1;\nconst b = 2;",
     createdAt: "2026-03-13T12:00:00.000Z",
   };
 }
@@ -478,6 +501,129 @@ describe("composerDraftStore terminal contexts", () => {
     expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]).toBeUndefined();
     expect(mergedState.draftThreadsByThreadKey).toEqual({});
     expect(mergedState.logicalProjectDraftThreadKeyByLogicalProjectKey).toEqual({});
+  });
+});
+
+describe("composerDraftStore code contexts", () => {
+  const threadId = ThreadId.make("thread-code-context");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+  beforeEach(() => {
+    useComposerDraftStore.setState({
+      draftsByThreadKey: {},
+      draftThreadsByThreadKey: {},
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {},
+      stickyModelSelectionByProvider: {},
+      stickyActiveProvider: null,
+    });
+  });
+
+  it("deduplicates identical code contexts by selection signature", () => {
+    const first = makeCodeContext({ id: "code-1" });
+    const duplicate = makeCodeContext({ id: "code-2" });
+
+    useComposerDraftStore.getState().addCodeContexts(threadRef, [first, duplicate]);
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.codeContexts.map((context) => context.id)).toEqual(["code-1"]);
+  });
+
+  it("inserts code contexts at the requested inline prompt position", () => {
+    const firstInsertion = insertInlineCodeContextPlaceholder("alpha beta", 6);
+    const secondInsertion = insertInlineCodeContextPlaceholder(firstInsertion.prompt, 0);
+
+    expect(
+      useComposerDraftStore
+        .getState()
+        .insertCodeContext(
+          threadRef,
+          firstInsertion.prompt,
+          makeCodeContext({ id: "code-1" }),
+          firstInsertion.contextIndex,
+        ),
+    ).toBe(true);
+    expect(
+      useComposerDraftStore.getState().insertCodeContext(
+        threadRef,
+        secondInsertion.prompt,
+        makeCodeContext({
+          id: "code-2",
+          filePath: "src/second.ts",
+          lineStart: 20,
+          lineEnd: 21,
+        }),
+        secondInsertion.contextIndex,
+      ),
+    ).toBe(true);
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.prompt).toBe(
+      `${INLINE_CODE_CONTEXT_PLACEHOLDER} alpha ${INLINE_CODE_CONTEXT_PLACEHOLDER} beta`,
+    );
+    expect(draft?.codeContexts.map((context) => context.id)).toEqual(["code-2", "code-1"]);
+  });
+
+  it("persists and hydrates code context snapshot text", () => {
+    useComposerDraftStore.getState().addCodeContext(threadRef, makeCodeContext({ id: "code-1" }));
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persistedState = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadKey?: Record<string, { codeContexts?: Array<Record<string, unknown>> }>;
+    };
+
+    expect(
+      persistedState.draftsByThreadKey?.[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]
+        ?.codeContexts?.[0],
+    ).toMatchObject({
+      id: "code-1",
+      filePath: "src/example.ts",
+      lineStart: 7,
+      lineEnd: 8,
+      text: "const a = 1;\nconst b = 2;",
+    });
+
+    const mergedState = persistApi.getOptions().merge(
+      {
+        draftsByThreadId: {
+          [threadId]: {
+            prompt: INLINE_CODE_CONTEXT_PLACEHOLDER,
+            attachments: [],
+            codeContexts: [
+              {
+                id: "code-rehydrated",
+                threadId,
+                createdAt: "2026-03-13T12:00:00.000Z",
+                filePath: "src/example.ts",
+                lineStart: 7,
+                lineEnd: 99,
+                text: "const a = 1;\nconst b = 2;",
+              },
+            ],
+          },
+        },
+        draftThreadsByThreadId: {},
+        projectDraftThreadIdByProjectKey: {},
+      },
+      useComposerDraftStore.getInitialState(),
+    );
+
+    expect(mergedState.draftsByThreadKey[threadKeyFor(threadId)]?.codeContexts).toMatchObject([
+      {
+        id: "code-rehydrated",
+        filePath: "src/example.ts",
+        lineStart: 7,
+        lineEnd: 8,
+        text: "const a = 1;\nconst b = 2;",
+      },
+    ]);
   });
 });
 

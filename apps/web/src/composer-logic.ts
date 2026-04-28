@@ -1,4 +1,5 @@
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
+import { INLINE_CODE_CONTEXT_PLACEHOLDER } from "./lib/codeContext";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "skill";
@@ -16,7 +17,8 @@ const isInlineTokenSegment = (
     | { type: "text"; text: string }
     | { type: "mention" }
     | { type: "skill" }
-    | { type: "terminal-context" },
+    | { type: "terminal-context" }
+    | { type: "code-context" },
 ): boolean => segment.type !== "text";
 
 function clampCursor(text: string, cursor: number): number {
@@ -30,7 +32,8 @@ function isWhitespace(char: string): boolean {
     char === "\n" ||
     char === "\t" ||
     char === "\r" ||
-    char === INLINE_TERMINAL_CONTEXT_PLACEHOLDER
+    char === INLINE_TERMINAL_CONTEXT_PLACEHOLDER ||
+    char === INLINE_CODE_CONTEXT_PLACEHOLDER
   );
 }
 
@@ -79,6 +82,14 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
       expandedCursor += 1;
       continue;
     }
+    if (segment.type === "code-context") {
+      if (remaining <= 1) {
+        return expandedCursor + remaining;
+      }
+      remaining -= 1;
+      expandedCursor += 1;
+      continue;
+    }
 
     const segmentLength = segment.text.length;
     if (remaining <= segmentLength) {
@@ -96,7 +107,8 @@ function collapsedSegmentLength(
     | { type: "text"; text: string }
     | { type: "mention" }
     | { type: "skill" }
-    | { type: "terminal-context" },
+    | { type: "terminal-context" }
+    | { type: "code-context" },
 ): number {
   if (segment.type === "text") {
     return segment.text.length;
@@ -110,6 +122,7 @@ function clampCollapsedComposerCursorForSegments(
     | { type: "mention" }
     | { type: "skill" }
     | { type: "terminal-context" }
+    | { type: "code-context" }
   >,
   cursorInput: number,
 ): number {
@@ -166,6 +179,14 @@ export function collapseExpandedComposerCursor(text: string, cursorInput: number
       continue;
     }
     if (segment.type === "terminal-context") {
+      if (remaining <= 1) {
+        return collapsedCursor + remaining;
+      }
+      remaining -= 1;
+      collapsedCursor += 1;
+      continue;
+    }
+    if (segment.type === "code-context") {
       if (remaining <= 1) {
         return collapsedCursor + remaining;
       }

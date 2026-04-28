@@ -4,6 +4,7 @@ import {
   selectionTouchesMentionBoundary,
   splitPromptIntoComposerSegments,
 } from "./composer-editor-mentions";
+import { INLINE_CODE_CONTEXT_PLACEHOLDER } from "./lib/codeContext";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 describe("splitPromptIntoComposerSegments", () => {
@@ -80,6 +81,19 @@ describe("splitPromptIntoComposerSegments", () => {
       { type: "text", text: " after " },
       { type: "mention", path: "AGENTS.md" },
       { type: "text", text: " " },
+    ]);
+  });
+
+  it("keeps code context placeholders at their prompt positions alongside terminal placeholders", () => {
+    expect(
+      splitPromptIntoComposerSegments(
+        `Inspect ${INLINE_CODE_CONTEXT_PLACEHOLDER}${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} after`,
+      ),
+    ).toEqual([
+      { type: "text", text: "Inspect " },
+      { type: "code-context", context: null },
+      { type: "terminal-context", context: null },
+      { type: "text", text: " after" },
     ]);
   });
 });

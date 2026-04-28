@@ -36,6 +36,7 @@ async function mountMenu(props?: {
         nonPersistedImageIds: [],
         persistedAttachments: [],
         terminalContexts: [],
+        codeContexts: [],
         modelSelectionByProvider: {
           [provider]: {
             provider,

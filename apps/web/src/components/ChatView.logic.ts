@@ -12,6 +12,11 @@ import { type ComposerImageAttachment, type DraftThreadState } from "../composer
 import { Schema } from "effect";
 import { selectThreadByRef, useStore } from "../store";
 import {
+  filterCodeContextsWithText,
+  stripInlineCodeContextPlaceholders,
+  type CodeContextDraft,
+} from "../lib/codeContext";
+import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
   type TerminalContextDraft,
@@ -188,22 +193,31 @@ export function deriveComposerSendState(options: {
   prompt: string;
   imageCount: number;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
+  codeContexts: ReadonlyArray<CodeContextDraft>;
 }): {
   trimmedPrompt: string;
   sendableTerminalContexts: TerminalContextDraft[];
+  sendableCodeContexts: CodeContextDraft[];
   expiredTerminalContextCount: number;
   hasSendableContent: boolean;
 } {
-  const trimmedPrompt = stripInlineTerminalContextPlaceholders(options.prompt).trim();
+  const trimmedPrompt = stripInlineCodeContextPlaceholders(
+    stripInlineTerminalContextPlaceholders(options.prompt),
+  ).trim();
   const sendableTerminalContexts = filterTerminalContextsWithText(options.terminalContexts);
+  const sendableCodeContexts = filterCodeContextsWithText(options.codeContexts);
   const expiredTerminalContextCount =
     options.terminalContexts.length - sendableTerminalContexts.length;
   return {
     trimmedPrompt,
     sendableTerminalContexts,
+    sendableCodeContexts,
     expiredTerminalContextCount,
     hasSendableContent:
-      trimmedPrompt.length > 0 || options.imageCount > 0 || sendableTerminalContexts.length > 0,
+      trimmedPrompt.length > 0 ||
+      options.imageCount > 0 ||
+      sendableTerminalContexts.length > 0 ||
+      sendableCodeContexts.length > 0,
   };
 }
 

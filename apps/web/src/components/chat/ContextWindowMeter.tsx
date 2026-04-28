@@ -25,6 +25,12 @@ export function ContextWindowMeter(props: {
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference - (normalizedPercentage / 100) * circumference;
   const visibleLabel = usedPercentage ?? formatContextWindowTokens(usage.usedTokens);
+  const isLabeledVariant = variant === "labeled";
+  const meterSizeClassName = isLabeledVariant ? "h-5 w-5" : "h-6 w-6";
+  const trackStroke = isLabeledVariant
+    ? "color-mix(in oklab, var(--color-accent) 24%, transparent)"
+    : "color-mix(in oklab, var(--color-muted) 70%, transparent)";
+  const progressStroke = isLabeledVariant ? "var(--color-accent)" : "var(--color-muted-foreground)";
 
   return (
     <Popover>
@@ -38,7 +44,7 @@ export function ContextWindowMeter(props: {
             className={cn(
               "group inline-flex items-center justify-center hover:opacity-85",
               MICRO_FADE_MOTION_CLASS_NAME,
-              variant === "labeled" ? "gap-1.5 rounded-md px-1 py-0.5" : "rounded-full",
+              isLabeledVariant ? "gap-1 rounded-md px-1 py-0.5" : "rounded-full",
             )}
             aria-label={
               usage.maxTokens !== null && usedPercentage
@@ -46,7 +52,7 @@ export function ContextWindowMeter(props: {
                 : `Context window ${formatContextWindowTokens(usage.usedTokens)} tokens used`
             }
           >
-            <span className="relative flex h-6 w-6 items-center justify-center">
+            <span className={cn("relative flex items-center justify-center", meterSizeClassName)}>
               <svg
                 viewBox="0 0 24 24"
                 className="-rotate-90 absolute inset-0 h-full w-full transform-gpu"
@@ -57,7 +63,7 @@ export function ContextWindowMeter(props: {
                   cy="12"
                   r={radius}
                   fill="none"
-                  stroke="color-mix(in oklab, var(--color-muted) 70%, transparent)"
+                  stroke={trackStroke}
                   strokeWidth="3"
                 />
                 <circle
@@ -65,7 +71,7 @@ export function ContextWindowMeter(props: {
                   cy="12"
                   r={radius}
                   fill="none"
-                  stroke="var(--color-muted-foreground)"
+                  stroke={progressStroke}
                   strokeWidth="3"
                   strokeLinecap="round"
                   strokeDasharray={circumference}
@@ -73,22 +79,20 @@ export function ContextWindowMeter(props: {
                   className="transition-[stroke-dashoffset] [transition-duration:var(--motion-duration-ui)] [transition-timing-function:var(--motion-ease-out)] motion-reduce:transition-none"
                 />
               </svg>
-              <span
-                className={cn(
-                  "relative flex h-[15px] w-[15px] items-center justify-center rounded-full bg-background text-[8px] font-medium",
-                  "text-muted-foreground",
-                )}
-              >
-                {variant === "labeled" ? (
-                  <span className="block size-1.5 rounded-full bg-current" />
-                ) : usage.usedPercentage !== null ? (
-                  Math.round(usage.usedPercentage)
-                ) : (
-                  formatContextWindowTokens(usage.usedTokens)
-                )}
-              </span>
+              {!isLabeledVariant ? (
+                <span
+                  className={cn(
+                    "relative flex h-[15px] w-[15px] items-center justify-center rounded-full bg-background text-[8px] font-medium",
+                    "text-muted-foreground",
+                  )}
+                >
+                  {usage.usedPercentage !== null
+                    ? Math.round(usage.usedPercentage)
+                    : formatContextWindowTokens(usage.usedTokens)}
+                </span>
+              ) : null}
             </span>
-            {variant === "labeled" ? (
+            {isLabeledVariant ? (
               <span className="text-muted-foreground text-xs">{visibleLabel}</span>
             ) : null}
           </button>

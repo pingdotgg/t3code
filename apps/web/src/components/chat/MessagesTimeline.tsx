@@ -44,12 +44,12 @@ import {
   type StableMessagesTimelineRowsState,
   type MessagesTimelineRow,
 } from "./MessagesTimeline.logic";
+import { CodeContextInlineChip } from "./CodeContextInlineChip";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  deriveDisplayedUserMessageState,
-  type ParsedTerminalContextEntry,
-} from "~/lib/terminalContext";
+import { deriveDisplayedUserMessageState } from "~/lib/composerAttachedContexts";
+import { type ParsedCodeContextEntry } from "~/lib/codeContext";
+import { type ParsedTerminalContextEntry } from "~/lib/terminalContext";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@forma/contracts/settings";
@@ -60,6 +60,11 @@ import {
   formatInlineTerminalContextLabel,
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
+import {
+  buildInlineCodeContextText,
+  formatInlineCodeContextLabel,
+  textContainsInlineCodeContextLabels,
+} from "./userMessageCodeContexts";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 
 // ---------------------------------------------------------------------------
@@ -315,7 +320,8 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
         (() => {
           const userImages = row.message.attachments ?? [];
           const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
-          const terminalContexts = displayedUserMessage.contexts;
+          const terminalContexts = displayedUserMessage.terminalContexts;
+          const codeContexts = displayedUserMessage.codeContexts;
           const canRevertAgentWork = typeof row.revertTurnCount === "number";
           return (
             <div className="flex justify-end">
@@ -356,10 +362,12 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                   </div>
                 )}
                 {(displayedUserMessage.visibleText.trim().length > 0 ||
-                  terminalContexts.length > 0) && (
+                  terminalContexts.length > 0 ||
+                  codeContexts.length > 0) && (
                   <UserMessageBody
                     text={displayedUserMessage.visibleText}
                     terminalContexts={terminalContexts}
+                    codeContexts={codeContexts}
                   />
                 )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
@@ -718,48 +726,98 @@ const UserMessageTerminalContextInlineLabel = memo(
   },
 );
 
+const UserMessageCodeContextInlineLabel = memo(function UserMessageCodeContextInlineLabel(props: {
+  context: ParsedCodeContextEntry;
+}) {
+  const tooltipText =
+    props.context.body.length > 0
+      ? `${props.context.header}\n${props.context.body}`
+      : props.context.header;
+
+  return <CodeContextInlineChip selection={props.context} tooltipText={tooltipText} />;
+});
+
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
+  codeContexts: ParsedCodeContextEntry[];
 }) {
-  if (props.terminalContexts.length > 0) {
-    const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
-      props.text,
-      props.terminalContexts,
-    );
-    const inlinePrefix = buildInlineTerminalContextText(props.terminalContexts);
+  if (props.terminalContexts.length > 0 || props.codeContexts.length > 0) {
+    const hasEmbeddedInlineLabels =
+      textContainsInlineTerminalContextLabels(props.text, props.terminalContexts) &&
+      textContainsInlineCodeContextLabels(props.text, props.codeContexts);
+    const inlinePrefix = [
+      buildInlineTerminalContextText(props.terminalContexts),
+      buildInlineCodeContextText(props.codeContexts),
+    ]
+      .filter((value) => value.length > 0)
+      .join(" ");
     const inlineNodes: ReactNode[] = [];
 
     if (hasEmbeddedInlineLabels) {
       let cursor = 0;
+      const remainingTerminalContexts = [...props.terminalContexts];
+      const remainingCodeContexts = [...props.codeContexts];
 
-      for (const context of props.terminalContexts) {
-        const label = formatInlineTerminalContextLabel(context.header);
-        const matchIndex = props.text.indexOf(label, cursor);
-        if (matchIndex === -1) {
+      while (remainingTerminalContexts.length > 0 || remainingCodeContexts.length > 0) {
+        const nextTerminalContext = remainingTerminalContexts[0];
+        const nextCodeContext = remainingCodeContexts[0];
+        const nextTerminalLabel = nextTerminalContext
+          ? formatInlineTerminalContextLabel(nextTerminalContext.header)
+          : null;
+        const nextCodeLabel = nextCodeContext
+          ? formatInlineCodeContextLabel(nextCodeContext)
+          : null;
+        const nextTerminalIndex =
+          nextTerminalLabel === null ? -1 : props.text.indexOf(nextTerminalLabel, cursor);
+        const nextCodeIndex =
+          nextCodeLabel === null ? -1 : props.text.indexOf(nextCodeLabel, cursor);
+
+        if (nextTerminalIndex === -1 && nextCodeIndex === -1) {
           inlineNodes.length = 0;
           break;
         }
+
+        const useTerminal =
+          nextTerminalIndex !== -1 && (nextCodeIndex === -1 || nextTerminalIndex <= nextCodeIndex);
+        const matchIndex = useTerminal ? nextTerminalIndex : nextCodeIndex;
+        const matchLabel = useTerminal ? nextTerminalLabel : nextCodeLabel;
+        const key = useTerminal
+          ? (nextTerminalContext?.header ?? `terminal:${cursor}`)
+          : `${nextCodeContext?.filePath ?? "code"}:${nextCodeContext?.lineStart ?? 0}:${nextCodeContext?.lineEnd ?? 0}`;
+
         if (matchIndex > cursor) {
           inlineNodes.push(
-            <span key={`user-terminal-context-inline-before:${context.header}:${cursor}`}>
+            <span key={`user-inline-context-before:${key}:${cursor}`}>
               {props.text.slice(cursor, matchIndex)}
             </span>,
           );
         }
         inlineNodes.push(
-          <UserMessageTerminalContextInlineLabel
-            key={`user-terminal-context-inline:${context.header}`}
-            context={context}
-          />,
+          useTerminal && nextTerminalContext ? (
+            <UserMessageTerminalContextInlineLabel
+              key={`user-terminal-context-inline:${key}`}
+              context={nextTerminalContext}
+            />
+          ) : nextCodeContext ? (
+            <UserMessageCodeContextInlineLabel
+              key={`user-code-context-inline:${key}`}
+              context={nextCodeContext}
+            />
+          ) : null,
         );
-        cursor = matchIndex + label.length;
+        cursor = matchIndex + (matchLabel?.length ?? 0);
+        if (useTerminal) {
+          remainingTerminalContexts.shift();
+        } else {
+          remainingCodeContexts.shift();
+        }
       }
 
       if (inlineNodes.length > 0) {
         if (cursor < props.text.length) {
           inlineNodes.push(
-            <span key={`user-message-terminal-context-inline-rest:${cursor}`}>
+            <span key={`user-message-inline-context-rest:${cursor}`}>
               {props.text.slice(cursor)}
             </span>,
           );
@@ -786,9 +844,23 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         </span>,
       );
     }
+    for (const context of props.codeContexts) {
+      const key = `${context.filePath}:${context.lineStart}:${context.lineEnd}`;
+      inlineNodes.push(
+        <UserMessageCodeContextInlineLabel
+          key={`user-code-context-inline:${key}`}
+          context={context}
+        />,
+      );
+      inlineNodes.push(
+        <span key={`user-code-context-inline-space:${key}`} aria-hidden="true">
+          {" "}
+        </span>,
+      );
+    }
 
     if (props.text.length > 0) {
-      inlineNodes.push(<span key="user-message-terminal-context-inline-text">{props.text}</span>);
+      inlineNodes.push(<span key="user-message-inline-context-text">{props.text}</span>);
     } else if (inlinePrefix.length === 0) {
       return null;
     }

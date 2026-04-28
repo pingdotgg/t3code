@@ -6,6 +6,8 @@ import type { LegendListRef } from "@legendapp/list/react";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
+import { appendCodeContextsToPrompt } from "../../lib/codeContext";
+import { appendTerminalContextsToPrompt } from "../../lib/terminalContext";
 
 const scrollToEndSpy = vi.fn();
 const getStateSpy = vi.fn(() => ({ isAtEnd: true }));
@@ -246,6 +248,57 @@ describe("MessagesTimeline", () => {
         .element(page.getByRole("button", { name: "Manual tweak" }))
         .not.toBeInTheDocument();
       await expect.element(page.getByRole("button", { name: "View diff" })).toBeVisible();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("renders mixed terminal and code context chips for user messages without showing raw blocks", async () => {
+    const userMessageText = appendCodeContextsToPrompt(
+      appendTerminalContextsToPrompt("Inspect @terminal-1:4 and #src/example.ts:7-8", [
+        {
+          terminalId: "default",
+          terminalLabel: "Terminal 1",
+          lineStart: 4,
+          lineEnd: 4,
+          text: "git status",
+        },
+      ]),
+      [
+        {
+          filePath: "src/example.ts",
+          lineStart: 7,
+          lineEnd: 8,
+          text: "const a = 1;\nconst b = 2;",
+        },
+      ],
+    );
+
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-user-mixed-contexts",
+            kind: "message",
+            createdAt: "2026-04-27T12:00:00.000Z",
+            message: {
+              id: "message-user-mixed-contexts" as MessageId,
+              role: "user",
+              text: userMessageText,
+              createdAt: "2026-04-27T12:00:00.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      await expect.element(page.getByText("Terminal 1 line 4")).toBeVisible();
+      await expect.element(page.getByText("example.ts lines 7-8")).toBeVisible();
+      await expect.element(page.getByText("<terminal_context>")).not.toBeInTheDocument();
+      await expect.element(page.getByText("<code_context>")).not.toBeInTheDocument();
     } finally {
       await screen.unmount();
     }

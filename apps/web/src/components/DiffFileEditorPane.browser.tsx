@@ -17,6 +17,23 @@ const { focusMock, revealPositionInCenterMock, setPositionMock } = vi.hoisted(()
   setPositionMock: vi.fn(),
 }));
 
+function offsetToPosition(text: string, offset: number) {
+  const safeOffset = Math.max(0, Math.min(text.length, offset));
+  const lines = text.slice(0, safeOffset).split("\n");
+  const lineNumber = lines.length;
+  const column = (lines.at(-1)?.length ?? 0) + 1;
+  return { lineNumber, column };
+}
+
+function positionToOffset(text: string, lineNumber: number, column: number) {
+  const lines = text.split("\n");
+  let offset = 0;
+  for (let index = 0; index < Math.max(0, lineNumber - 1); index += 1) {
+    offset += (lines[index]?.length ?? 0) + 1;
+  }
+  return offset + Math.max(0, column - 1);
+}
+
 vi.mock("@monaco-editor/react", async () => {
   const React = await import("react");
 
@@ -38,38 +55,98 @@ vi.mock("@monaco-editor/react", async () => {
       monaco: unknown,
     ) => void;
   }) => {
+    const { language, onChange, onMount, value } = props;
     const valueRef = React.useRef(props.value ?? "");
-    React.useEffect(() => {
-      valueRef.current = props.value ?? "";
-    }, [props.value]);
+    const selectionRef = React.useRef({
+      startLineNumber: 1,
+      startColumn: 1,
+      endLineNumber: 1,
+      endColumn: 1,
+    });
+    const selectionListenersRef = React.useRef<Array<() => void>>([]);
+
+    function syncSelection(target: HTMLTextAreaElement) {
+      const start = target.selectionStart ?? 0;
+      const end = target.selectionEnd ?? start;
+      const startPosition = offsetToPosition(target.value, start);
+      const endPosition = offsetToPosition(target.value, end);
+      selectionRef.current = {
+        startLineNumber: startPosition.lineNumber,
+        startColumn: startPosition.column,
+        endLineNumber: endPosition.lineNumber,
+        endColumn: endPosition.column,
+      };
+      for (const listener of selectionListenersRef.current) {
+        listener();
+      }
+    }
 
     React.useEffect(() => {
-      props.onMount?.(
-        {
-          addCommand: () => undefined,
-          focus: focusMock,
-          getModel: () => ({
-            getLineCount: () => Math.max(1, valueRef.current.split("\n").length),
-            getLineMaxColumn: (lineNumber: number) =>
-              (valueRef.current.split("\n")[lineNumber - 1]?.length ?? 0) + 1,
-          }),
-          revealPositionInCenter: revealPositionInCenterMock,
-          setPosition: setPositionMock,
+      valueRef.current = value ?? "";
+    }, [value]);
+
+    React.useEffect(() => {
+      const editor = {
+        addCommand: () => undefined,
+        focus: focusMock,
+        getModel: () => ({
+          getLineCount: () => Math.max(1, valueRef.current.split("\n").length),
+          getLineMaxColumn: (lineNumber: number) =>
+            (valueRef.current.split("\n")[lineNumber - 1]?.length ?? 0) + 1,
+          getValueInRange: (range: {
+            startLineNumber: number;
+            startColumn: number;
+            endLineNumber: number;
+            endColumn: number;
+          }) =>
+            valueRef.current.slice(
+              positionToOffset(valueRef.current, range.startLineNumber, range.startColumn),
+              positionToOffset(valueRef.current, range.endLineNumber, range.endColumn),
+            ),
+        }),
+        getSelection: () => selectionRef.current,
+        onDidChangeCursorSelection: (listener: () => void) => {
+          selectionListenersRef.current.push(listener);
+          return {
+            dispose: () => {
+              selectionListenersRef.current = selectionListenersRef.current.filter(
+                (entry) => entry !== listener,
+              );
+            },
+          };
         },
-        {
-          KeyMod: { CtrlCmd: 2048 },
-          KeyCode: { KeyS: 49 },
-        },
-      );
-    }, [props]);
+        onDidScrollChange: () => ({
+          dispose: () => undefined,
+        }),
+        onDidLayoutChange: () => ({
+          dispose: () => undefined,
+        }),
+        getScrolledVisiblePosition: (position: { lineNumber: number; column: number }) => ({
+          top: (position.lineNumber - 1) * 20,
+          left: Math.max(0, (position.column - 1) * 8),
+          height: 20,
+        }),
+        getTopForLineNumber: (lineNumber: number) => (lineNumber - 1) * 20,
+        getScrollTop: () => 0,
+        revealPositionInCenter: revealPositionInCenterMock,
+        setPosition: setPositionMock,
+      };
+      onMount?.(editor, {
+        KeyMod: { CtrlCmd: 2048 },
+        KeyCode: { KeyS: 49 },
+      });
+    }, [onMount]);
 
     return (
       <textarea
         aria-label="Monaco editor"
-        data-language={props.language ?? ""}
+        data-language={language ?? ""}
         className="h-full w-full"
-        value={props.value ?? ""}
-        onChange={(event) => props.onChange?.(event.currentTarget.value)}
+        value={value ?? ""}
+        onSelect={(event) => syncSelection(event.currentTarget)}
+        onMouseUp={(event) => syncSelection(event.currentTarget)}
+        onKeyUp={(event) => syncSelection(event.currentTarget)}
+        onChange={(event) => onChange?.(event.currentTarget.value)}
       />
     );
   };
@@ -107,6 +184,17 @@ function setEnvironmentApiOverride(input: {
       writeFile: input.writeFile,
     },
   } as unknown as EnvironmentApi);
+}
+
+function selectEditorText(start: number, end: number) {
+  const textarea = document.querySelector('textarea[aria-label="Monaco editor"]');
+  if (!(textarea instanceof HTMLTextAreaElement)) {
+    throw new Error("Expected the Monaco editor textarea to exist.");
+  }
+  textarea.focus();
+  textarea.setSelectionRange(start, end);
+  textarea.dispatchEvent(new Event("select", { bubbles: true }));
+  textarea.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
 }
 
 describe("DiffFileEditorPane", () => {
@@ -153,6 +241,7 @@ index 1111111..2222222 100644
           navigationLabel="Back to diff"
           initialOverride={undefined}
           resolvedPreset="stone"
+          onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
           onPersisted={onPersisted}
           onRequestBack={vi.fn()}
@@ -206,6 +295,7 @@ index 1111111..2222222 100644
           navigationLabel="Back to diff"
           initialOverride={undefined}
           resolvedPreset="light"
+          onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
           onPersisted={vi.fn()}
           onRequestBack={vi.fn()}
@@ -253,6 +343,7 @@ index 1111111..2222222 100644
           navigationLabel="Back to diff"
           initialOverride={undefined}
           resolvedPreset="stone"
+          onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
           onPersisted={vi.fn()}
           onRequestBack={vi.fn()}
@@ -295,6 +386,7 @@ index 1111111..2222222 100644
           navigationLabel="Exit edit"
           initialOverride={undefined}
           resolvedPreset="stone"
+          onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
           onPersisted={vi.fn()}
           onRequestBack={vi.fn()}
@@ -314,6 +406,156 @@ index 1111111..2222222 100644
         expect(setPositionMock).toHaveBeenCalledWith({ lineNumber: 2, column: 7 });
         expect(focusMock).toHaveBeenCalled();
       });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("shows Add to chat for a valid code selection and forwards the normalized selection", async () => {
+    const readFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.ts",
+      contents: "const value = 2;\nconst extra = true;\n",
+      version: versionA,
+    });
+    const writeFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.ts",
+      version: versionB,
+    });
+    setEnvironmentApiOverride({ readFile, writeFile });
+
+    const onAddCodeContext = vi.fn();
+    const screen = await render(
+      <div className="h-[640px] w-[960px]">
+        <DiffFileEditorPane
+          cwd="/repo"
+          environmentId={environmentId}
+          fileDiff={null}
+          filePath="src/example.ts"
+          filePaths={["src/example.ts"]}
+          navigationLabel="Back to diff"
+          initialOverride={undefined}
+          resolvedPreset="stone"
+          onAddCodeContext={onAddCodeContext}
+          onOpenInEditor={vi.fn()}
+          onPersisted={vi.fn()}
+          onRequestBack={vi.fn()}
+          onRequestFilePathChange={vi.fn()}
+        />
+      </div>,
+    );
+
+    try {
+      await expect.element(page.getByLabelText("Monaco editor")).toBeVisible();
+      const value = "const value = 2;\nconst extra = true;\n";
+      selectEditorText(0, value.indexOf("\n", value.indexOf("\n") + 1) + 1);
+
+      await expect
+        .element(page.getByRole("button", { name: "Add selected code to chat" }))
+        .toBeVisible();
+      await page.getByRole("button", { name: "Add selected code to chat" }).click();
+
+      expect(onAddCodeContext).toHaveBeenCalledWith({
+        filePath: "src/example.ts",
+        lineStart: 1,
+        lineEnd: 2,
+        text: "const value = 2;\nconst extra = true;",
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("does not show Add to chat for a whitespace-only selection", async () => {
+    const readFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.ts",
+      contents: "const value = 2;\n\nconst extra = true;\n",
+      version: versionA,
+    });
+    const writeFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.ts",
+      version: versionB,
+    });
+    setEnvironmentApiOverride({ readFile, writeFile });
+
+    const screen = await render(
+      <div className="h-[640px] w-[960px]">
+        <DiffFileEditorPane
+          cwd="/repo"
+          environmentId={environmentId}
+          fileDiff={null}
+          filePath="src/example.ts"
+          filePaths={["src/example.ts"]}
+          navigationLabel="Back to diff"
+          initialOverride={undefined}
+          resolvedPreset="stone"
+          onAddCodeContext={vi.fn()}
+          onOpenInEditor={vi.fn()}
+          onPersisted={vi.fn()}
+          onRequestBack={vi.fn()}
+          onRequestFilePathChange={vi.fn()}
+        />
+      </div>,
+    );
+
+    try {
+      await expect.element(page.getByLabelText("Monaco editor")).toBeVisible();
+      const value = "const value = 2;\n\nconst extra = true;\n";
+      const blankLineStart = value.indexOf("\n") + 1;
+      selectEditorText(blankLineStart, blankLineStart + 1);
+
+      await expect
+        .element(page.getByRole("button", { name: "Add selected code to chat" }))
+        .not.toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("disables Add to chat when the selection exceeds the size limit", async () => {
+    const largeContents = Array.from({ length: 201 }, (_, index) => `line ${index + 1};`).join(
+      "\n",
+    );
+    const readFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.ts",
+      contents: largeContents,
+      version: versionA,
+    });
+    const writeFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.ts",
+      version: versionB,
+    });
+    setEnvironmentApiOverride({ readFile, writeFile });
+
+    const screen = await render(
+      <div className="h-[640px] w-[960px]">
+        <DiffFileEditorPane
+          cwd="/repo"
+          environmentId={environmentId}
+          fileDiff={null}
+          filePath="src/example.ts"
+          filePaths={["src/example.ts"]}
+          navigationLabel="Back to diff"
+          initialOverride={undefined}
+          resolvedPreset="stone"
+          onAddCodeContext={vi.fn()}
+          onOpenInEditor={vi.fn()}
+          onPersisted={vi.fn()}
+          onRequestBack={vi.fn()}
+          onRequestFilePathChange={vi.fn()}
+        />
+      </div>,
+    );
+
+    try {
+      await expect.element(page.getByLabelText("Monaco editor")).toBeVisible();
+      selectEditorText(0, largeContents.length);
+
+      await expect
+        .element(page.getByRole("button", { name: "Add selected code to chat" }))
+        .toBeDisabled();
+      await expect
+        .element(page.getByRole("button", { name: "Add selected code to chat" }))
+        .toHaveAttribute("title", "Selections are limited to 200 lines or 12,000 characters.");
     } finally {
       await screen.unmount();
     }

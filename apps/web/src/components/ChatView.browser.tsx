@@ -41,6 +41,7 @@ import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
+import { INLINE_CODE_CONTEXT_PLACEHOLDER, type CodeContextDraft } from "../lib/codeContext";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   removeInlineTerminalContextPlaceholder,
@@ -305,6 +306,24 @@ function createTerminalContext(input: {
     threadId: THREAD_ID,
     terminalId: `terminal-${input.id}`,
     terminalLabel: input.terminalLabel,
+    lineStart: input.lineStart,
+    lineEnd: input.lineEnd,
+    text: input.text,
+    createdAt: NOW_ISO,
+  };
+}
+
+function createCodeContext(input: {
+  id: string;
+  filePath: string;
+  lineStart: number;
+  lineEnd: number;
+  text: string;
+}): CodeContextDraft {
+  return {
+    id: input.id,
+    threadId: THREAD_ID,
+    filePath: input.filePath,
     lineStart: input.lineStart,
     lineEnd: input.lineEnd,
     text: input.text,
@@ -4303,6 +4322,71 @@ describe("ChatView timeline estimator parity (full app)", () => {
           );
           expect(document.body.textContent).not.toContain(expiredLabel);
           expect(document.body.textContent).toContain("yoowaddup");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("sends attached code contexts and hides the raw code_context block in the visible timeline", async () => {
+    useComposerDraftStore.getState().addCodeContext(
+      THREAD_REF,
+      createCodeContext({
+        id: "code-context-send",
+        filePath: "src/example.ts",
+        lineStart: 7,
+        lineEnd: 8,
+        text: "const a = 1;\nconst b = 2;",
+      }),
+    );
+    useComposerDraftStore
+      .getState()
+      .setPrompt(THREAD_REF, `review ${INLINE_CODE_CONTEXT_PLACEHOLDER} please`);
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-code-context-send" as MessageId,
+        targetText: "code context send target",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                message?: {
+                  text?: string;
+                };
+              }
+            | undefined;
+
+          expect(turnStartRequest?.message?.text).toContain("#src/example.ts:7-8");
+          expect(turnStartRequest?.message?.text).toContain("<code_context>");
+          expect(turnStartRequest?.message?.text).toContain("- src/example.ts lines 7-8:");
+          expect(document.body.textContent).toContain("example.ts lines 7-8");
+          expect(document.body.textContent).not.toContain("<code_context>");
         },
         { timeout: 8_000, interval: 16 },
       );

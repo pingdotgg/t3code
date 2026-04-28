@@ -13,9 +13,11 @@ import {
 } from "symbols-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openInPreferredEditor } from "../editorPreferences";
+import { useComposerHandleContext } from "../composerHandleContext";
 import { refreshGitStatus, useGitStatus } from "~/lib/gitStatusState";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { invalidateProjectQueries } from "~/lib/projectReactQuery";
+import { type CodeContextSelection } from "~/lib/codeContext";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "../localApi";
 import { resolvePathLinkTarget } from "../terminal-links";
@@ -46,6 +48,7 @@ import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./Dif
 import { DiffFileEditorPane } from "./DiffFileEditorPane";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Button } from "./ui/button";
+import { toastManager } from "./ui/toast";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffViewMode = "diff" | "editor";
@@ -177,6 +180,7 @@ interface DiffPanelProps {
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
+  const composerRef = useComposerHandleContext();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { resolvedPreset, resolvedTheme } = useTheme();
@@ -477,6 +481,28 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     ],
   );
 
+  const addEditorCodeContext = useCallback(
+    (selection: CodeContextSelection) => {
+      const composerHandle = composerRef?.current;
+      if (!composerHandle) {
+        toastManager.add({
+          type: "error",
+          title: "Composer is unavailable",
+        });
+        return;
+      }
+
+      const added = composerHandle.addCodeContext(selection, {
+        focusComposerAfterInsert: false,
+      });
+      toastManager.add({
+        type: added ? "success" : "info",
+        title: added ? "Code added to composer" : "Code already attached",
+      });
+    },
+    [composerRef],
+  );
+
   const openEditorForFile = useCallback(
     (filePath: string) => {
       if (!canEditFiles || !selectedTurn || !selectedTurnFilePathSet.has(filePath)) {
@@ -728,6 +754,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           initialOverride={editorOverride}
           navigationLabel="Exit edit"
           resolvedPreset={resolvedPreset}
+          onAddCodeContext={addEditorCodeContext}
           onOpenInEditor={openDiffFileInEditor}
           onPersisted={persistSavedDiffOverride}
           onRequestBack={() => {

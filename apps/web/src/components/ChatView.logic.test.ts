@@ -35,6 +35,7 @@ describe("deriveComposerSendState", () => {
           createdAt: "2026-03-17T12:52:29.000Z",
         },
       ],
+      codeContexts: [],
     });
 
     expect(state.trimmedPrompt).toBe("");
@@ -59,6 +60,7 @@ describe("deriveComposerSendState", () => {
           createdAt: "2026-03-17T12:52:29.000Z",
         },
       ],
+      codeContexts: [],
     });
 
     expect(state.trimmedPrompt).toBe("yoo  waddup");

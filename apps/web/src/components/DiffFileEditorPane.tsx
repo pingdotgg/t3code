@@ -15,6 +15,11 @@ import {
   reconstructPreTurnFileContents,
   type PersistedDiffFileEditOverride,
 } from "../lib/diffFileEditOverrides";
+import {
+  getCodeContextSelectionLimitMessage,
+  normalizeCodeContextSelection,
+  type CodeContextSelection,
+} from "../lib/codeContext";
 import { resolveMonacoLanguage } from "../lib/monacoLanguage";
 import { ensureAppMonacoTheme, ensureMonacoConfigured } from "../lib/monaco";
 import {
@@ -66,7 +71,12 @@ interface DiffFileEditorPaneProps {
     savedContents: string;
     preTurnContents: string | null;
   }) => Promise<void> | void;
+  onAddCodeContext: (selection: CodeContextSelection) => void;
 }
+
+const SELECTION_ACTION_OFFSET_PX = 8;
+const SELECTION_ACTION_HEIGHT_PX = 28;
+const SELECTION_ACTION_MIN_EDGE_PX = 8;
 
 function buildUnavailableMessage(status: ProjectFileEditorStatus): string {
   switch (status) {
@@ -143,6 +153,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     navigationLabel,
     onOpenInEditor,
     onPersisted,
+    onAddCodeContext,
     onRequestBack,
     onRequestFilePathChange,
     resolvedPreset,
@@ -158,6 +169,15 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   const preTurnContentsRef = useRef<string | null>(initialOverride?.preTurnContents ?? null);
   const saveHandlerRef = useRef<() => Promise<boolean>>(async () => false);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const editorContainerRef = useRef<HTMLDivElement | null>(null);
+  const editorSubscriptionsRef = useRef<Array<{ dispose: () => void }>>([]);
+  const updateSelectionActionRef = useRef<() => void>(() => undefined);
+  const [selectionAction, setSelectionAction] = useState<{
+    selection: CodeContextSelection;
+    disabledReason: string | null;
+    top: number;
+    left: number;
+  } | null>(null);
 
   const isDirty = draftContents !== baseContents;
   const canSave =
@@ -324,12 +344,126 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     saveHandlerRef.current = handleSave;
   }, [handleSave]);
 
-  const handleEditorMount = useCallback<OnMount>((editor, monaco) => {
-    editorRef.current = editor;
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
-      void saveHandlerRef.current();
-    });
+  const clearEditorSubscriptions = useCallback(() => {
+    for (const subscription of editorSubscriptionsRef.current) {
+      subscription.dispose();
+    }
+    editorSubscriptionsRef.current = [];
   }, []);
+
+  const updateSelectionAction = useCallback(() => {
+    const editor = editorRef.current;
+    const container = editorContainerRef.current;
+    const model = editor?.getModel?.();
+    if (!editor || !container || !model) {
+      setSelectionAction(null);
+      return;
+    }
+
+    const rawSelection = editor.getSelection?.();
+    if (!rawSelection) {
+      setSelectionAction(null);
+      return;
+    }
+
+    const startLineNumber =
+      typeof rawSelection.startLineNumber === "number" ? rawSelection.startLineNumber : 0;
+    const startColumn = typeof rawSelection.startColumn === "number" ? rawSelection.startColumn : 0;
+    const endLineNumber =
+      typeof rawSelection.endLineNumber === "number" ? rawSelection.endLineNumber : 0;
+    const endColumn = typeof rawSelection.endColumn === "number" ? rawSelection.endColumn : 0;
+    const isEmpty = startLineNumber === endLineNumber && startColumn === endColumn;
+    if (isEmpty) {
+      setSelectionAction(null);
+      return;
+    }
+
+    const selectedText = model.getValueInRange?.(rawSelection) ?? "";
+    const normalizedSelection = normalizeCodeContextSelection({
+      filePath,
+      lineStart: startLineNumber,
+      lineEnd: endLineNumber,
+      text: selectedText,
+    });
+    if (!normalizedSelection || normalizedSelection.text.trim().length === 0) {
+      setSelectionAction(null);
+      return;
+    }
+
+    const position =
+      editor.getScrolledVisiblePosition?.({
+        lineNumber: startLineNumber,
+        column: startColumn,
+      }) ?? null;
+    const containerWidth = container.clientWidth;
+    const containerHeight = container.clientHeight;
+    const positionTop =
+      typeof position?.top === "number"
+        ? position.top
+        : (editor.getTopForLineNumber?.(startLineNumber) ?? 0) - (editor.getScrollTop?.() ?? 0);
+    const positionLeft =
+      typeof position?.left === "number" ? position.left : SELECTION_ACTION_MIN_EDGE_PX;
+    const positionHeight =
+      typeof position?.height === "number" ? position.height : SELECTION_ACTION_HEIGHT_PX;
+    const preferredTop = positionTop - SELECTION_ACTION_HEIGHT_PX - SELECTION_ACTION_OFFSET_PX;
+    const fallbackTop = positionTop + positionHeight + SELECTION_ACTION_OFFSET_PX;
+    const nextTop =
+      preferredTop >= SELECTION_ACTION_MIN_EDGE_PX
+        ? preferredTop
+        : Math.min(
+            Math.max(SELECTION_ACTION_MIN_EDGE_PX, fallbackTop),
+            Math.max(
+              SELECTION_ACTION_MIN_EDGE_PX,
+              containerHeight - SELECTION_ACTION_HEIGHT_PX - SELECTION_ACTION_MIN_EDGE_PX,
+            ),
+          );
+    const nextLeft = Math.max(
+      SELECTION_ACTION_MIN_EDGE_PX,
+      Math.min(positionLeft, Math.max(SELECTION_ACTION_MIN_EDGE_PX, containerWidth - 120)),
+    );
+
+    setSelectionAction({
+      selection: normalizedSelection,
+      disabledReason: getCodeContextSelectionLimitMessage(normalizedSelection),
+      top: nextTop,
+      left: nextLeft,
+    });
+  }, [filePath]);
+
+  updateSelectionActionRef.current = updateSelectionAction;
+
+  const handleEditorMount = useCallback<OnMount>(
+    (editor, monaco) => {
+      editorRef.current = editor;
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+        void saveHandlerRef.current();
+      });
+      clearEditorSubscriptions();
+      editorSubscriptionsRef.current = [
+        editor.onDidChangeCursorSelection?.(() => {
+          updateSelectionActionRef.current();
+        }),
+        editor.onDidScrollChange?.(() => {
+          updateSelectionActionRef.current();
+        }),
+        editor.onDidLayoutChange?.(() => {
+          updateSelectionActionRef.current();
+        }),
+      ].filter((value): value is { dispose: () => void } => value !== undefined && value !== null);
+      updateSelectionActionRef.current();
+    },
+    [clearEditorSubscriptions],
+  );
+
+  useEffect(() => {
+    setSelectionAction(null);
+  }, [filePath, status]);
+
+  useEffect(() => {
+    return () => {
+      clearEditorSubscriptions();
+    };
+  }, [clearEditorSubscriptions]);
 
   useEffect(() => {
     if (status !== "ready" || !initialLine || initialLine < 1) {
@@ -480,7 +614,30 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                   Loading file…
                 </div>
               ) : (
-                <div className="min-h-0 flex-1 overflow-hidden">
+                <div ref={editorContainerRef} className="relative min-h-0 flex-1 overflow-hidden">
+                  {selectionAction ? (
+                    <Button
+                      type="button"
+                      size="xs"
+                      className="absolute z-10 h-7 px-2 shadow-sm"
+                      style={{
+                        top: `${selectionAction.top}px`,
+                        left: `${selectionAction.left}px`,
+                      }}
+                      aria-label="Add selected code to chat"
+                      title={selectionAction.disabledReason ?? "Add selected code to chat"}
+                      disabled={selectionAction.disabledReason !== null}
+                      onClick={() => {
+                        if (selectionAction.disabledReason) {
+                          return;
+                        }
+                        onAddCodeContext(selectionAction.selection);
+                        editorRef.current?.focus?.();
+                      }}
+                    >
+                      Add to chat
+                    </Button>
+                  ) : null}
                   <Editor
                     height="100%"
                     keepCurrentModel={false}

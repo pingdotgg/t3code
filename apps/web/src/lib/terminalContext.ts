@@ -1,4 +1,11 @@
 import { type ThreadId } from "@forma/contracts";
+import {
+  countInlineComposerContextPlaceholders,
+  ensureInlineComposerContextPlaceholders,
+  insertInlineComposerContextPlaceholder,
+  removeInlineComposerContextPlaceholder,
+  stripInlineComposerContextPlaceholders,
+} from "./inlineComposerContextPlaceholders";
 
 export interface TerminalContextSelection {
   terminalId: string;
@@ -287,70 +294,42 @@ function parseTerminalContextEntries(block: string): ParsedTerminalContextEntry[
 }
 
 export function countInlineTerminalContextPlaceholders(prompt: string): number {
-  let count = 0;
-  for (const char of prompt) {
-    if (char === INLINE_TERMINAL_CONTEXT_PLACEHOLDER) {
-      count += 1;
-    }
-  }
-  return count;
+  return countInlineComposerContextPlaceholders(prompt, INLINE_TERMINAL_CONTEXT_PLACEHOLDER);
 }
 
 export function ensureInlineTerminalContextPlaceholders(
   prompt: string,
   terminalContextCount: number,
 ): string {
-  const missingCount = terminalContextCount - countInlineTerminalContextPlaceholders(prompt);
-  if (missingCount <= 0) {
-    return prompt;
-  }
-  return `${INLINE_TERMINAL_CONTEXT_PLACEHOLDER.repeat(missingCount)}${prompt}`;
-}
-
-function isInlineTerminalContextBoundaryWhitespace(char: string | undefined): boolean {
-  return char === undefined || char === " " || char === "\n" || char === "\t" || char === "\r";
+  return ensureInlineComposerContextPlaceholders(
+    prompt,
+    terminalContextCount,
+    INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
+  );
 }
 
 export function insertInlineTerminalContextPlaceholder(
   prompt: string,
   cursorInput: number,
 ): { prompt: string; cursor: number; contextIndex: number } {
-  const cursor = Math.max(0, Math.min(prompt.length, Math.floor(cursorInput)));
-  const needsLeadingSpace = !isInlineTerminalContextBoundaryWhitespace(prompt[cursor - 1]);
-  const replacement = `${needsLeadingSpace ? " " : ""}${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} `;
-  const rangeEnd = prompt[cursor] === " " ? cursor + 1 : cursor;
-  return {
-    prompt: `${prompt.slice(0, cursor)}${replacement}${prompt.slice(rangeEnd)}`,
-    cursor: cursor + replacement.length,
-    contextIndex: countInlineTerminalContextPlaceholders(prompt.slice(0, cursor)),
-  };
+  return insertInlineComposerContextPlaceholder(
+    prompt,
+    cursorInput,
+    INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
+  );
 }
 
 export function stripInlineTerminalContextPlaceholders(prompt: string): string {
-  return prompt.replaceAll(INLINE_TERMINAL_CONTEXT_PLACEHOLDER, "");
+  return stripInlineComposerContextPlaceholders(prompt, [INLINE_TERMINAL_CONTEXT_PLACEHOLDER]);
 }
 
 export function removeInlineTerminalContextPlaceholder(
   prompt: string,
   contextIndex: number,
 ): { prompt: string; cursor: number } {
-  if (contextIndex < 0) {
-    return { prompt, cursor: prompt.length };
-  }
-
-  let placeholderIndex = 0;
-  for (let index = 0; index < prompt.length; index += 1) {
-    if (prompt[index] !== INLINE_TERMINAL_CONTEXT_PLACEHOLDER) {
-      continue;
-    }
-    if (placeholderIndex === contextIndex) {
-      return {
-        prompt: prompt.slice(0, index) + prompt.slice(index + 1),
-        cursor: index,
-      };
-    }
-    placeholderIndex += 1;
-  }
-
-  return { prompt, cursor: prompt.length };
+  return removeInlineComposerContextPlaceholder(
+    prompt,
+    INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
+    contextIndex,
+  );
 }

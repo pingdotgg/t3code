@@ -9,6 +9,7 @@ import {
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
+import { INLINE_CODE_CONTEXT_PLACEHOLDER } from "./lib/codeContext";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 describe("detectComposerTrigger", () => {
@@ -278,6 +279,15 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
 
   it("treats terminal pills as inline tokens for adjacency checks", () => {
     const text = `open ${INLINE_TERMINAL_CONTEXT_PLACEHOLDER} next`;
+    const tokenStart = "open ".length;
+    const tokenEnd = tokenStart + 1;
+
+    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
+    expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
+  });
+
+  it("treats code pills as inline tokens for adjacency checks", () => {
+    const text = `open ${INLINE_CODE_CONTEXT_PLACEHOLDER} next`;
     const tokenStart = "open ".length;
     const tokenEnd = tokenStart + 1;
 
