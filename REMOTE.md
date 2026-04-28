@@ -27,10 +27,12 @@ If you are already running the desktop app and want to make it reachable from ot
 
 The default endpoint controls the QR code and primary copy action for pairing links. You can change it from the expanded endpoint list. The preference is stored by endpoint type, so choosing the local LAN endpoint survives normal IP address changes when you move between networks.
 
-When no user default is saved, the app chooses the best reachable endpoint for pairing links:
+When no user default is saved, the app uses the built-in LAN endpoint for pairing links when
+available. You can set another endpoint as the default from the expanded endpoint list.
 
-- HTTPS/WSS-compatible endpoints are preferred because they work from `https://app.t3.codes`.
-- Non-loopback HTTP endpoints are used for direct LAN pairing when HTTPS is not available.
+- HTTPS/WSS-compatible endpoints work from `https://app.t3.codes`, but are not made the default
+  automatically.
+- Non-loopback HTTP endpoints are useful for direct LAN pairing.
 - Loopback-only endpoints are not useful for another device unless that device is the same machine.
 
 If the copied link points directly at `http://192.168.x.y:3773`, open it from a client that can reach that LAN address. If it points at `https://app.t3.codes/pair?...`, the hosted web app will save the environment and connect directly to the backend URL in the link.
@@ -43,7 +45,13 @@ Depending on your Tailscale setup, this may include:
 
 - the machine's `100.x.y.z` Tailnet IP
 - a MagicDNS name
-- an HTTPS MagicDNS endpoint when Tailscale HTTPS is available for the machine
+- an HTTPS MagicDNS endpoint when Tailscale Serve is configured for this backend
+
+The Tailscale HTTPS endpoint uses the clean MagicDNS URL, such as
+`https://machine.tailnet.ts.net/`, and is disabled until the app verifies that the URL reaches this
+backend. Use **Setup** on the Tailscale HTTPS row to opt in. The desktop app restarts the backend
+with the same server-side behavior as `t3 serve --tailscale-serve`, then the server asks Tailscale
+Serve to proxy HTTPS traffic to the local backend.
 
 The Tailscale support is an endpoint provider add-on. The core remote model still works without Tailscale: LAN HTTP endpoints, custom HTTPS endpoints, future tunnels, and SSH-launched environments all use the same saved environment and pairing flow.
 
@@ -74,6 +82,19 @@ From there, connect from another device in either of these ways:
 - in the hosted web app, open a hosted pairing URL when the backend is reachable over HTTPS
 
 Use `t3 serve --help` for the full flag reference. It supports the same general startup options as the normal server command, including an optional `cwd` argument.
+
+For hosted web pairing over Tailscale HTTPS, opt in to Tailscale Serve:
+
+```bash
+npx t3 serve --tailscale-serve
+```
+
+By default this configures Tailscale Serve on HTTPS port 443 and advertises
+`https://machine.tailnet.ts.net/`. Advanced users can choose a different HTTPS port:
+
+```bash
+npx t3 serve --tailscale-serve --tailscale-serve-port 8443
+```
 
 > Note
 > The GUIs do not currently support adding projects on remote environments.

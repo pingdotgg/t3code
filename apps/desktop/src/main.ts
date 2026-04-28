@@ -41,6 +41,7 @@ import {
   DEFAULT_DESKTOP_SETTINGS,
   readDesktopSettings,
   setDesktopServerExposurePreference,
+  setDesktopTailscaleServePreference,
   setDesktopUpdateChannelPreference,
   writeDesktopSettings,
 } from "./desktopSettings.ts";
@@ -107,6 +108,7 @@ const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secr
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
+const SET_TAILSCALE_SERVE_ENABLED_CHANNEL = "desktop:set-tailscale-serve-enabled";
 const GET_ADVERTISED_ENDPOINTS_CHANNEL = "desktop:get-advertised-endpoints";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
@@ -304,6 +306,8 @@ function backendChildEnv(): NodeJS.ProcessEnv {
   delete env.T3CODE_DESKTOP_LAN_ACCESS;
   delete env.T3CODE_DESKTOP_LAN_HOST;
   delete env.T3CODE_DESKTOP_HTTPS_ENDPOINTS;
+  delete env.T3CODE_TAILSCALE_SERVE;
+  delete env.T3CODE_TAILSCALE_SERVE_PORT;
   return env;
 }
 
@@ -312,6 +316,8 @@ function getDesktopServerExposureState(): DesktopServerExposureState {
     mode: desktopServerExposureMode,
     endpointUrl: backendEndpointUrl,
     advertisedHost: backendAdvertisedHost,
+    tailscaleServeEnabled: desktopSettings.tailscaleServeEnabled,
+    tailscaleServePort: desktopSettings.tailscaleServePort,
   };
 }
 
@@ -329,6 +335,8 @@ async function getDesktopAdvertisedEndpoints() {
   });
   const tailscaleEndpoints = await resolveTailscaleAdvertisedEndpoints({
     port: backendPort,
+    serveEnabled: desktopSettings.tailscaleServeEnabled,
+    servePort: desktopSettings.tailscaleServePort,
     networkInterfaces: OS.networkInterfaces(),
   });
   return [...coreEndpoints, ...tailscaleEndpoints];
@@ -391,6 +399,16 @@ async function applyDesktopServerExposureMode(
     writeDesktopSettings(DESKTOP_SETTINGS_PATH, desktopSettings);
   }
 
+  return getDesktopServerExposureState();
+}
+
+async function applyDesktopTailscaleServeEnabled(input: {
+  readonly enabled: boolean;
+  readonly port?: number;
+}): Promise<DesktopServerExposureState> {
+  desktopSettings = setDesktopTailscaleServePreference(desktopSettings, input);
+  writeDesktopSettings(DESKTOP_SETTINGS_PATH, desktopSettings);
+  relaunchDesktopApp(input.enabled ? "tailscale-serve-enabled" : "tailscale-serve-disabled");
   return getDesktopServerExposureState();
 }
 
@@ -1446,6 +1464,8 @@ function startBackend(): void {
         t3Home: BASE_DIR,
         host: backendBindHost,
         desktopBootstrapToken: backendBootstrapToken,
+        tailscaleServeEnabled: desktopSettings.tailscaleServeEnabled,
+        tailscaleServePort: desktopSettings.tailscaleServePort,
         ...(backendObservabilitySettings.otlpTracesUrl
           ? { otlpTracesUrl: backendObservabilitySettings.otlpTracesUrl }
           : {}),
@@ -1713,6 +1733,28 @@ function registerIpcHandlers(): void {
     });
     relaunchDesktopApp(`serverExposureMode=${nextMode}`);
     return nextState;
+  });
+
+  ipcMain.removeHandler(SET_TAILSCALE_SERVE_ENABLED_CHANNEL);
+  ipcMain.handle(SET_TAILSCALE_SERVE_ENABLED_CHANNEL, async (_event, rawInput: unknown) => {
+    if (typeof rawInput !== "object" || rawInput === null) {
+      throw new Error("Invalid Tailscale Serve input.");
+    }
+    const input = rawInput as { readonly enabled?: unknown; readonly port?: unknown };
+    if (typeof input.enabled !== "boolean") {
+      throw new Error("Invalid Tailscale Serve input.");
+    }
+    const nextSettings = setDesktopTailscaleServePreference(desktopSettings, {
+      enabled: input.enabled,
+      ...(typeof input.port === "number" ? { port: input.port } : {}),
+    });
+    if (nextSettings === desktopSettings) {
+      return getDesktopServerExposureState();
+    }
+    return applyDesktopTailscaleServeEnabled({
+      enabled: input.enabled,
+      port: nextSettings.tailscaleServePort,
+    });
   });
 
   ipcMain.removeHandler(GET_ADVERTISED_ENDPOINTS_CHANNEL);

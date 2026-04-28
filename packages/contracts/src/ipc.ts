@@ -178,6 +178,8 @@ export interface DesktopServerExposureState {
   mode: DesktopServerExposureMode;
   endpointUrl: string | null;
   advertisedHost: string | null;
+  tailscaleServeEnabled: boolean;
+  tailscaleServePort: number;
 }
 
 export interface PickFolderOptions {
@@ -215,6 +217,10 @@ export interface DesktopBridge {
   resolveSshPasswordPrompt: (requestId: string, password: string | null) => Promise<void>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;
   setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;
+  setTailscaleServeEnabled: (input: {
+    readonly enabled: boolean;
+    readonly port?: number;
+  }) => Promise<DesktopServerExposureState>;
   getAdvertisedEndpoints: () => Promise<readonly AdvertisedEndpoint[]>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;

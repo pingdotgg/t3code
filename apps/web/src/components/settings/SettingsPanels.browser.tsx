@@ -350,6 +350,8 @@ const createDesktopBridgeStub = (overrides?: {
         mode: "local-only",
         endpointUrl: null,
         advertisedHost: null,
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       },
     ),
     setServerExposureMode:
@@ -358,7 +360,16 @@ const createDesktopBridgeStub = (overrides?: {
         mode,
         endpointUrl: mode === "network-accessible" ? "http://192.168.1.44:3773" : null,
         advertisedHost: mode === "network-accessible" ? "192.168.1.44" : null,
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       })),
+    setTailscaleServeEnabled: vi.fn().mockImplementation(async (input) => ({
+      mode: overrides?.serverExposureState?.mode ?? "network-accessible",
+      endpointUrl: overrides?.serverExposureState?.endpointUrl ?? "http://192.168.1.44:3773",
+      advertisedHost: overrides?.serverExposureState?.advertisedHost ?? "192.168.1.44",
+      tailscaleServeEnabled: input.enabled,
+      tailscaleServePort: input.port ?? 443,
+    })),
     getAdvertisedEndpoints: vi.fn().mockResolvedValue(overrides?.advertisedEndpoints ?? []),
     pickFolder: vi.fn().mockResolvedValue(null),
     confirm: vi.fn().mockResolvedValue(false),
@@ -490,6 +501,8 @@ describe("GeneralSettingsPanel observability", () => {
         mode: "local-only",
         endpointUrl: null,
         advertisedHost: null,
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       },
       advertisedEndpoints: [
         {
@@ -560,6 +573,8 @@ describe("GeneralSettingsPanel observability", () => {
         mode: "network-accessible",
         endpointUrl: "http://192.168.86.39:3773",
         advertisedHost: "192.168.86.39",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       },
       advertisedEndpoints: [
         {
@@ -682,6 +697,8 @@ describe("GeneralSettingsPanel observability", () => {
         mode: "network-accessible",
         endpointUrl: "http://192.168.1.44:3773",
         advertisedHost: "192.168.1.44",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       },
     });
     let pairingLinks: Array<AuthAccessSnapshot["pairingLinks"][number]> = [];
@@ -798,6 +815,8 @@ describe("GeneralSettingsPanel observability", () => {
         mode: "network-accessible",
         endpointUrl: "http://192.168.1.44:3773",
         advertisedHost: "192.168.1.44",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       },
     });
     let clientSessions: Array<AuthAccessSnapshot["clientSessions"][number]> = [

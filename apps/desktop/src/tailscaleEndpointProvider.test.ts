@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Effect } from "effect";
 
 import {
   isTailscaleIpv4Address,
@@ -14,12 +15,14 @@ describe("tailscale endpoint provider", () => {
     expect(isTailscaleIpv4Address("192.168.1.44")).toBe(false);
   });
 
-  it("parses MagicDNS names from tailscale status", () => {
+  it("parses MagicDNS names from tailscale status", async () => {
     expect(
-      parseTailscaleMagicDnsName(JSON.stringify({ Self: { DNSName: "desktop.tail.ts.net." } })),
+      Effect.runSync(
+        parseTailscaleMagicDnsName(JSON.stringify({ Self: { DNSName: "desktop.tail.ts.net." } })),
+      ),
     ).toBe("desktop.tail.ts.net");
-    expect(parseTailscaleMagicDnsName("{}")).toBeNull();
-    expect(parseTailscaleMagicDnsName("not-json")).toBeNull();
+    expect(Effect.runSync(parseTailscaleMagicDnsName("{}"))).toBeNull();
+    await expect(Effect.runPromise(parseTailscaleMagicDnsName("not-json"))).rejects.toBeDefined();
   });
 
   it("resolves Tailscale endpoints as add-on advertised endpoints", async () => {
@@ -62,7 +65,7 @@ describe("tailscale endpoint provider", () => {
         description: "Reachable from devices on the same Tailnet.",
       },
       {
-        id: "tailscale-magicdns:https://desktop.tail.ts.net:3773",
+        id: "tailscale-magicdns:https://desktop.tail.ts.net/",
         label: "Tailscale HTTPS",
         provider: {
           id: "tailscale",
@@ -70,16 +73,49 @@ describe("tailscale endpoint provider", () => {
           kind: "private-network",
           isAddon: true,
         },
-        httpBaseUrl: "https://desktop.tail.ts.net:3773/",
-        wsBaseUrl: "wss://desktop.tail.ts.net:3773/",
+        httpBaseUrl: "https://desktop.tail.ts.net/",
+        wsBaseUrl: "wss://desktop.tail.ts.net/",
         reachability: "private-network",
         compatibility: {
           hostedHttpsApp: "requires-configuration",
           desktopApp: "compatible",
         },
         source: "desktop-addon",
-        status: "unknown",
+        status: "unavailable",
         description: "MagicDNS hostname. Configure Tailscale Serve for HTTPS access.",
+      },
+    ]);
+  });
+
+  it("marks the Tailscale HTTPS endpoint available after Serve is enabled and reachable", async () => {
+    await expect(
+      resolveTailscaleAdvertisedEndpoints({
+        port: 3773,
+        networkInterfaces: {},
+        statusJson: JSON.stringify({ Self: { DNSName: "desktop.tail.ts.net." } }),
+        serveEnabled: true,
+        probe: async () => true,
+      }),
+    ).resolves.toEqual([
+      {
+        id: "tailscale-magicdns:https://desktop.tail.ts.net/",
+        label: "Tailscale HTTPS",
+        provider: {
+          id: "tailscale",
+          label: "Tailscale",
+          kind: "private-network",
+          isAddon: true,
+        },
+        httpBaseUrl: "https://desktop.tail.ts.net/",
+        wsBaseUrl: "wss://desktop.tail.ts.net/",
+        reachability: "private-network",
+        compatibility: {
+          hostedHttpsApp: "compatible",
+          desktopApp: "compatible",
+        },
+        source: "desktop-addon",
+        status: "available",
+        description: "HTTPS endpoint served by Tailscale Serve.",
       },
     ]);
   });

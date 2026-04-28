@@ -16,6 +16,7 @@
       "name": "@t3tools/desktop",
       "version": "0.0.21",
       "dependencies": {
+        "@effect/platform-node": "catalog:",
         "effect": "catalog:",
         "electron": "40.9.3",
         "electron-updater": "^6.6.2",
@@ -24,6 +25,7 @@
         "@t3tools/client-runtime": "workspace:*",
         "@t3tools/contracts": "workspace:*",
         "@t3tools/shared": "workspace:*",
+        "@t3tools/tailscale": "workspace:*",
         "@types/node": "catalog:",
         "effect-acp": "workspace:*",
         "tsdown": "catalog:",
@@ -64,6 +66,7 @@
         "@effect/vitest": "catalog:",
         "@t3tools/contracts": "workspace:*",
         "@t3tools/shared": "workspace:*",
+        "@t3tools/tailscale": "workspace:*",
         "@t3tools/web": "workspace:*",
         "@types/bun": "catalog:",
         "@types/node": "catalog:",
@@ -189,6 +192,21 @@
       "version": "0.0.0-alpha.1",
       "dependencies": {
         "@t3tools/contracts": "workspace:*",
+        "effect": "catalog:",
+      },
+      "devDependencies": {
+        "@effect/language-service": "catalog:",
+        "@effect/vitest": "catalog:",
+        "@types/node": "catalog:",
+        "typescript": "catalog:",
+        "vitest": "catalog:",
+      },
+    },
+    "packages/tailscale": {
+      "name": "@t3tools/tailscale",
+      "version": "0.0.0-alpha.1",
+      "dependencies": {
+        "@effect/platform-node": "catalog:",
         "effect": "catalog:",
       },
       "devDependencies": {
@@ -741,6 +759,8 @@
     "@t3tools/scripts": ["@t3tools/scripts@workspace:scripts"],
 
     "@t3tools/shared": ["@t3tools/shared@workspace:packages/shared"],
+
+    "@t3tools/tailscale": ["@t3tools/tailscale@workspace:packages/tailscale"],
 
     "@t3tools/web": ["@t3tools/web@workspace:apps/web"],
 
