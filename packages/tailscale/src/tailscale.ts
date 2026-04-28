@@ -195,15 +195,17 @@ export function buildTailscaleHttpsBaseUrl(input: {
   return url.toString();
 }
 
-export const ensureTailscaleServe = (input: {
-  readonly localPort: number;
-  readonly servePort?: number;
-  readonly localHost?: string;
-}): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> => {
-  const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
-  const localHost = input.localHost ?? "127.0.0.1";
-  const args = ["serve", "--bg", `--https=${servePort}`, `http://${localHost}:${input.localPort}`];
-  return Effect.gen(function* () {
+const runTailscaleCommand = (
+  args: readonly string[],
+  input: {
+    readonly spawnMessage: string;
+    readonly runMessage: string;
+    readonly exitMessage: (exitCode: number) => string;
+    readonly timeoutMessage: string;
+    readonly timeoutMs: number;
+  },
+): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner
       .spawn(
@@ -215,7 +217,7 @@ export const ensureTailscaleServe = (input: {
         Effect.mapError((cause) =>
           tailscaleCommandError(
             args,
-            cause instanceof Error ? cause.message : "Failed to spawn tailscale serve.",
+            cause instanceof Error ? cause.message : input.spawnMessage,
             null,
           ),
         ),
@@ -227,30 +229,53 @@ export const ensureTailscaleServe = (input: {
       Effect.mapError((cause) =>
         tailscaleCommandError(
           args,
-          cause instanceof Error ? cause.message : "Failed to run tailscale serve.",
+          cause instanceof Error ? cause.message : input.runMessage,
           null,
         ),
       ),
     );
     if (exitCode !== 0) {
-      return yield* tailscaleCommandError(
-        args,
-        `Tailscale serve exited with code ${exitCode}.`,
-        exitCode,
-        stderr,
-      );
+      return yield* tailscaleCommandError(args, input.exitMessage(exitCode), exitCode, stderr);
     }
   }).pipe(
     Effect.scoped,
-    Effect.timeoutOption(TAILSCALE_SERVE_TIMEOUT_MS),
+    Effect.timeoutOption(input.timeoutMs),
     Effect.flatMap((result) =>
       Option.match(result, {
-        onNone: () => Effect.fail(tailscaleCommandError(args, "Tailscale serve timed out.", null)),
+        onNone: () => Effect.fail(tailscaleCommandError(args, input.timeoutMessage, null)),
         onSome: Effect.succeed,
       }),
     ),
   );
+
+export const ensureTailscaleServe = (input: {
+  readonly localPort: number;
+  readonly servePort?: number;
+  readonly localHost?: string;
+}): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> => {
+  const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
+  const localHost = input.localHost ?? "127.0.0.1";
+  const args = ["serve", "--bg", `--https=${servePort}`, `http://${localHost}:${input.localPort}`];
+  return runTailscaleCommand(args, {
+    spawnMessage: "Failed to spawn tailscale serve.",
+    runMessage: "Failed to run tailscale serve.",
+    exitMessage: (exitCode) => `Tailscale serve exited with code ${exitCode}.`,
+    timeoutMessage: "Tailscale serve timed out.",
+    timeoutMs: TAILSCALE_SERVE_TIMEOUT_MS,
+  });
 };
+
+export const disableTailscaleServe: Effect.Effect<
+  void,
+  TailscaleCommandError,
+  ChildProcessSpawner.ChildProcessSpawner
+> = runTailscaleCommand(["serve", "off"], {
+  spawnMessage: "Failed to spawn tailscale serve off.",
+  runMessage: "Failed to run tailscale serve off.",
+  exitMessage: (exitCode) => `Tailscale serve off exited with code ${exitCode}.`,
+  timeoutMessage: "Tailscale serve off timed out.",
+  timeoutMs: TAILSCALE_SERVE_TIMEOUT_MS,
+});
 
 export const probeTailscaleHttpsEndpoint = (input: {
   readonly baseUrl: string;

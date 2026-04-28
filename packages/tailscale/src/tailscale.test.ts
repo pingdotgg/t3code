@@ -4,6 +4,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   buildTailscaleHttpsBaseUrl,
+  disableTailscaleServe,
   ensureTailscaleServe,
   isTailscaleIpv4Address,
   parseTailscaleMagicDnsName,
@@ -116,5 +117,15 @@ describe("tailscale", () => {
     });
 
     return ensureTailscaleServe({ localPort: 13773, servePort: 8443 }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("disables tailscale serve through the process spawner service", () => {
+    const layer = mockSpawnerLayer((command, args) => {
+      assert.equal(command, "tailscale");
+      assert.deepEqual(args, ["serve", "off"]);
+      return {};
+    });
+
+    return disableTailscaleServe.pipe(Effect.provide(layer));
   });
 });

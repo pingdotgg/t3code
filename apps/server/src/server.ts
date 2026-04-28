@@ -81,7 +81,7 @@ import {
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http.ts";
 import { NetService } from "@t3tools/shared/Net";
-import { ensureTailscaleServe } from "@t3tools/tailscale";
+import { disableTailscaleServe, ensureTailscaleServe } from "@t3tools/tailscale";
 
 const PtyAdapterLive = Layer.unwrap(
   Effect.gen(function* () {
@@ -329,24 +329,43 @@ export const makeServerLayer = Layer.unwrap(
     );
     const tailscaleServeLayer = config.tailscaleServeEnabled
       ? Layer.effectDiscard(
-          ensureTailscaleServe({
-            localPort: config.port,
-            servePort: config.tailscaleServePort,
-            localHost: "127.0.0.1",
-          }).pipe(
-            Effect.tap(() =>
-              Effect.logInfo("Tailscale Serve configured", {
-                localPort: config.port,
-                servePort: config.tailscaleServePort,
-              }),
+          Effect.acquireRelease(
+            ensureTailscaleServe({
+              localPort: config.port,
+              servePort: config.tailscaleServePort,
+              localHost: "127.0.0.1",
+            }).pipe(
+              Effect.as(true),
+              Effect.tap(() =>
+                Effect.logInfo("Tailscale Serve configured", {
+                  localPort: config.port,
+                  servePort: config.tailscaleServePort,
+                }),
+              ),
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to configure Tailscale Serve", {
+                  cause,
+                  localPort: config.port,
+                  servePort: config.tailscaleServePort,
+                }).pipe(Effect.as(false)),
+              ),
             ),
-            Effect.catch((cause) =>
-              Effect.logWarning("Failed to configure Tailscale Serve", {
-                cause,
-                localPort: config.port,
-                servePort: config.tailscaleServePort,
-              }),
-            ),
+            (configured) =>
+              configured
+                ? disableTailscaleServe.pipe(
+                    Effect.tap(() =>
+                      Effect.logInfo("Tailscale Serve disabled", {
+                        servePort: config.tailscaleServePort,
+                      }),
+                    ),
+                    Effect.catch((cause) =>
+                      Effect.logWarning("Failed to disable Tailscale Serve", {
+                        cause,
+                        servePort: config.tailscaleServePort,
+                      }),
+                    ),
+                  )
+                : Effect.void,
           ),
         )
       : Layer.empty;
