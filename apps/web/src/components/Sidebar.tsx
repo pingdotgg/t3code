@@ -56,6 +56,7 @@ import { Link, useLocation, useNavigate, useParams, useRouter } from "@tanstack/
 import {
   MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
   MIN_SIDEBAR_THREAD_PREVIEW_COUNT,
+  type SidebarProjectColor,
   type SidebarProjectSortOrder,
   type SidebarThreadPreviewCount,
   type SidebarThreadSortOrder,
@@ -64,7 +65,7 @@ import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isTerminalFocused } from "../lib/terminalFocus";
-import { isMacPlatform, newCommandId } from "../lib/utils";
+import { cn, isMacPlatform, newCommandId } from "../lib/utils";
 import {
   selectProjectByRef,
   selectProjectsAcrossEnvironments,
@@ -126,6 +127,7 @@ import { Input } from "./ui/input";
 import {
   Menu,
   MenuGroup,
+  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -198,6 +200,12 @@ import {
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
 import { SidebarProviderUpdatePill } from "./sidebar/SidebarProviderUpdatePill";
+import {
+  buildSidebarProjectColorMap,
+  EMPTY_SIDEBAR_PROJECT_COLOR_MAP,
+  SIDEBAR_PROJECT_COLOR_PALETTE,
+  type SidebarProjectColorIdentity,
+} from "../sidebarProjectColors";
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
   created_at: "Created at",
@@ -246,6 +254,109 @@ function projectGroupingModeDescription(mode: SidebarProjectGroupingMode): strin
       return "Every project path gets its own sidebar row.";
   }
 }
+
+interface ProjectColorDotProps {
+  identity: SidebarProjectColorIdentity;
+  projectName: string;
+  onSelect: (color: SidebarProjectColor | null) => void;
+  /**
+   * Extra classes for the trigger itself — typically the absolute positioning
+   * applied by the parent. Putting positioning on the trigger directly (rather
+   * than a wrapping div) keeps this dot's box dimensions identical to the
+   * sibling new-thread button so they line up vertically.
+   */
+  className?: string;
+}
+
+/**
+ * Always-visible color dot rendered to the left of the per-project new-thread
+ * button when "Sidebar project colors" is enabled. Clicking opens a palette
+ * menu; selecting a swatch persists the override; selecting "Auto" clears it.
+ */
+const ProjectColorDot = memo(function ProjectColorDot({
+  identity,
+  projectName,
+  onSelect,
+  className,
+}: ProjectColorDotProps) {
+  return (
+    <Menu>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <MenuTrigger
+              type="button"
+              aria-label={`Project color for ${projectName}`}
+              className={cn(
+                "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
+                className,
+              )}
+              onPointerDown={(event) => {
+                // The wrapping project header treats unhandled pointerdown as
+                // the start of a row drag. Stop the event so opening the
+                // picker doesn't also begin a sortable drag.
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+              }}
+            />
+          }
+        >
+          <span
+            aria-hidden="true"
+            className={cn("block size-2.5 rounded-full", identity.palette.dotClass)}
+          />
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          {identity.override
+            ? `Color: ${identity.palette.label}`
+            : `Color: ${identity.palette.label} (auto)`}
+        </TooltipPopup>
+      </Tooltip>
+      <MenuPopup align="end" side="bottom" className="min-w-44">
+        <MenuGroup>
+          <div className="px-2 py-1 sm:text-xs font-medium text-muted-foreground">
+            Project color
+          </div>
+          <MenuItem
+            onClick={() => onSelect(null)}
+            className={cn(
+              "min-h-7 py-1 sm:text-xs",
+              identity.override === undefined && "font-medium",
+            )}
+          >
+            <span
+              aria-hidden="true"
+              className="inline-flex size-3 items-center justify-center rounded-full border border-dashed border-muted-foreground/40"
+            />
+            <span className="flex-1">Auto</span>
+            {identity.override === undefined ? (
+              <span className="text-muted-foreground/60">{identity.palette.label}</span>
+            ) : null}
+          </MenuItem>
+          <MenuSeparator />
+          {SIDEBAR_PROJECT_COLOR_PALETTE.map((entry) => {
+            const isSelected = identity.override === entry.key;
+            return (
+              <MenuItem
+                key={entry.key}
+                onClick={() => onSelect(entry.key)}
+                className={cn("min-h-7 py-1 sm:text-xs", isSelected && "font-medium")}
+              >
+                <span
+                  aria-hidden="true"
+                  className={cn("inline-block size-3 rounded-full", entry.dotClass)}
+                />
+                <span className="flex-1">{entry.label}</span>
+              </MenuItem>
+            );
+          })}
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
+  );
+});
 
 function buildThreadJumpLabelMap(input: {
   keybindings: ReturnType<typeof useServerKeybindings>;
@@ -764,6 +875,12 @@ interface SidebarProjectThreadListProps {
   openPrLink: (event: React.MouseEvent<HTMLElement>, prUrl: string) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
+  /**
+   * When true, hides the vertical guide line on the left of the thread list.
+   * Used to declutter the sidebar when project tints provide their own
+   * grouping cue.
+   */
+  hideThreadListBorder: boolean;
 }
 
 const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
@@ -803,6 +920,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     openPrLink,
     expandThreadListForProject,
     collapseThreadListForProject,
+    hideThreadListBorder,
   } = props;
   const showMoreButtonRender = useMemo(() => <button type="button" />, []);
   const showLessButtonRender = useMemo(() => <button type="button" />, []);
@@ -810,7 +928,10 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   return (
     <SidebarMenuSub
       ref={attachThreadListAutoAnimateRef}
-      className="mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:mx-1 sm:px-1.5"
+      className={cn(
+        "mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:mx-1 sm:px-1.5",
+        hideThreadListBorder && "border-l-0",
+      )}
     >
       {shouldShowThreadPanel && showEmptyThreadState ? (
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
@@ -909,6 +1030,13 @@ interface SidebarProjectItemProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   isManualProjectSorting: boolean;
   dragHandleProps: SortableProjectHandleProps | null;
+  /** Resolved color for this group, or null when colorizing is disabled. */
+  colorIdentity: SidebarProjectColorIdentity | null;
+  /**
+   * Called when the user picks a color from this project's swatch menu.
+   * `color` is `null` for "Auto" (clears the override).
+   */
+  onColorSelect: (overrideKey: string, color: SidebarProjectColor | null) => void;
 }
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
@@ -929,6 +1057,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     suppressProjectClickForContextMenuRef,
     isManualProjectSorting,
     dragHandleProps,
+    colorIdentity,
+    onColorSelect,
   } = props;
   const threadSortOrder = useSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
@@ -1901,6 +2031,19 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     updateSettings,
   ]);
 
+  // Per-row wrapper around the parent's stable `onColorSelect`. Depending on
+  // `overrideKey` (a string) instead of `colorIdentity` (an object reference
+  // that changes every parent render) keeps this callback stable across
+  // unrelated re-renders, so the memoized ProjectColorDot doesn't churn.
+  const colorOverrideKey = colorIdentity?.overrideKey;
+  const handleColorSelect = useCallback(
+    (color: SidebarProjectColor | null) => {
+      if (!colorOverrideKey) return;
+      onColorSelect(colorOverrideKey, color);
+    },
+    [colorOverrideKey, onColorSelect],
+  );
+
   const handleThreadContextMenu = useCallback(
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -2051,6 +2194,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             </TooltipPopup>
           </Tooltip>
         )}
+        {colorIdentity ? (
+          <ProjectColorDot
+            className="absolute top-1 right-7"
+            identity={colorIdentity}
+            projectName={project.displayName}
+            onSelect={handleColorSelect}
+          />
+        ) : null}
         <Tooltip>
           <TooltipTrigger
             render={
@@ -2107,6 +2258,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         openPrLink={openPrLink}
         expandThreadListForProject={expandThreadListForProject}
         collapseThreadListForProject={collapseThreadListForProject}
+        hideThreadListBorder={colorIdentity !== null}
       />
 
       <Dialog
@@ -2231,8 +2383,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 });
 
 const SidebarProjectListRow = memo(function SidebarProjectListRow(props: SidebarProjectItemProps) {
+  // The `p-1` is intentionally only applied alongside the tint: it gives the
+  // colored block uniform breathing room around the project header. Without a
+  // tint there's nothing to "pad", so the layout stays compact.
+  const tintClass = props.colorIdentity?.palette.tintClass;
   return (
-    <SidebarMenuItem className="rounded-md">
+    <SidebarMenuItem className={cn("rounded-md", tintClass, tintClass && "p-1")}>
       <SidebarProjectItem {...props} />
     </SidebarMenuItem>
   );
@@ -2411,10 +2567,12 @@ function ProjectSortMenu({
 function SortableProjectItem({
   projectId,
   disabled = false,
+  colorIdentity,
   children,
 }: {
   projectId: string;
   disabled?: boolean;
+  colorIdentity: SidebarProjectColorIdentity | null;
   children: (handleProps: SortableProjectHandleProps) => React.ReactNode;
 }) {
   const {
@@ -2427,6 +2585,7 @@ function SortableProjectItem({
     isDragging,
     isOver,
   } = useSortable({ id: projectId, disabled });
+  const tintClass = colorIdentity?.palette.tintClass;
   return (
     <li
       ref={setNodeRef}
@@ -2434,9 +2593,13 @@ function SortableProjectItem({
         transform: CSS.Translate.toString(transform),
         transition,
       }}
-      className={`group/menu-item relative rounded-md ${
-        isDragging ? "z-20 opacity-80" : ""
-      } ${isOver && !isDragging ? "ring-1 ring-primary/40" : ""}`}
+      className={cn(
+        "group/menu-item relative rounded-md",
+        tintClass,
+        tintClass && "p-1",
+        isDragging && "z-20 opacity-80",
+        isOver && !isDragging && "ring-1 ring-primary/40",
+      )}
       data-sidebar="menu-item"
       data-slot="sidebar-menu-item"
     >
@@ -2553,6 +2716,18 @@ interface SidebarProjectsContentProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   attachProjectListAutoAnimateRef: (node: HTMLElement | null) => void;
   projectsLength: number;
+  /**
+   * Per-project color identity, indexed by the snapshot's `projectKey`. The
+   * map is empty when the colorizing setting is off, in which case neither
+   * the tint nor the color dot are rendered.
+   */
+  projectColorByKey: ReadonlyMap<string, SidebarProjectColorIdentity>;
+  /**
+   * Persists (or clears) a per-project color override. Stable callback —
+   * defined once at the Sidebar root so individual rows don't have to
+   * subscribe to the override map themselves.
+   */
+  onProjectColorSelect: (overrideKey: string, color: SidebarProjectColor | null) => void;
 }
 
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
@@ -2594,6 +2769,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     suppressProjectClickForContextMenuRef,
     attachProjectListAutoAnimateRef,
     projectsLength,
+    projectColorByKey,
+    onProjectColorSelect,
   } = props;
 
   const handleProjectSortOrderChange = useCallback(
@@ -2718,34 +2895,45 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 items={sortedProjects.map((project) => project.projectKey)}
                 strategy={verticalListSortingStrategy}
               >
-                {sortedProjects.map((project) => (
-                  <SortableProjectItem key={project.projectKey} projectId={project.projectKey}>
-                    {(dragHandleProps) => (
-                      <SidebarProjectItem
-                        project={project}
-                        isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
-                        activeRouteThreadKey={
-                          activeRouteProjectKey === project.projectKey ? routeThreadKey : null
-                        }
-                        newThreadShortcutLabel={newThreadShortcutLabel}
-                        handleNewThread={handleNewThread}
-                        archiveThread={archiveThread}
-                        deleteThread={deleteThread}
-                        threadJumpLabelByKey={threadJumpLabelByKey}
-                        attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-                        expandThreadListForProject={expandThreadListForProject}
-                        collapseThreadListForProject={collapseThreadListForProject}
-                        dragInProgressRef={dragInProgressRef}
-                        suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
-                        suppressProjectClickForContextMenuRef={
-                          suppressProjectClickForContextMenuRef
-                        }
-                        isManualProjectSorting={isManualProjectSorting}
-                        dragHandleProps={dragHandleProps}
-                      />
-                    )}
-                  </SortableProjectItem>
-                ))}
+                {sortedProjects.map((project) => {
+                  const colorIdentity = projectColorByKey.get(project.projectKey) ?? null;
+                  return (
+                    <SortableProjectItem
+                      key={project.projectKey}
+                      projectId={project.projectKey}
+                      colorIdentity={colorIdentity}
+                    >
+                      {(dragHandleProps) => (
+                        <SidebarProjectItem
+                          project={project}
+                          isThreadListExpanded={expandedThreadListsByProject.has(
+                            project.projectKey,
+                          )}
+                          activeRouteThreadKey={
+                            activeRouteProjectKey === project.projectKey ? routeThreadKey : null
+                          }
+                          newThreadShortcutLabel={newThreadShortcutLabel}
+                          handleNewThread={handleNewThread}
+                          archiveThread={archiveThread}
+                          deleteThread={deleteThread}
+                          threadJumpLabelByKey={threadJumpLabelByKey}
+                          attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+                          expandThreadListForProject={expandThreadListForProject}
+                          collapseThreadListForProject={collapseThreadListForProject}
+                          dragInProgressRef={dragInProgressRef}
+                          suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
+                          suppressProjectClickForContextMenuRef={
+                            suppressProjectClickForContextMenuRef
+                          }
+                          isManualProjectSorting={isManualProjectSorting}
+                          dragHandleProps={dragHandleProps}
+                          colorIdentity={colorIdentity}
+                          onColorSelect={onProjectColorSelect}
+                        />
+                      )}
+                    </SortableProjectItem>
+                  );
+                })}
               </SortableContext>
             </SidebarMenu>
           </DndContext>
@@ -2772,6 +2960,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
                 isManualProjectSorting={isManualProjectSorting}
                 dragHandleProps={null}
+                colorIdentity={projectColorByKey.get(project.projectKey) ?? null}
+                onColorSelect={onProjectColorSelect}
               />
             ))}
           </SidebarMenu>
@@ -2801,6 +2991,8 @@ export default function Sidebar() {
   const sidebarProjectGroupingMode = useSettings((s) => s.sidebarProjectGroupingMode);
   const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
   const sidebarThreadPreviewCount = useSettings((s) => s.sidebarThreadPreviewCount);
+  const sidebarProjectColorizing = useSettings((s) => s.sidebarProjectColorizing);
+  const sidebarProjectColorOverrides = useSettings((s) => s.sidebarProjectColorOverrides);
   const { updateSettings } = useUpdateSettings();
   const { handleNewThread } = useNewThreadHandler();
   const { archiveThread, deleteThread } = useThreadActions();
@@ -3071,6 +3263,42 @@ export default function Sidebar() {
     visibleThreads,
   ]);
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
+  // Resolve each visible project group's color identity once per render. Stays
+  // empty when colorizing is disabled so consumers can use map size as the
+  // toggle and avoid touching identity logic at all. The builder spreads auto
+  // colors across the palette so adjacent projects don't end up sharing a hue
+  // until the palette is exhausted.
+  const projectColorByKey = useMemo<ReadonlyMap<string, SidebarProjectColorIdentity>>(() => {
+    if (!sidebarProjectColorizing) {
+      // Reuse the module-level empty map so the prop reference stays stable
+      // across renders for users who never enable colorizing.
+      return EMPTY_SIDEBAR_PROJECT_COLOR_MAP;
+    }
+    return buildSidebarProjectColorMap({
+      projects: sortedProjects.map((project) => ({
+        projectKey: project.projectKey,
+        overrideKey: deriveProjectGroupingOverrideKey(project),
+      })),
+      overrides: sidebarProjectColorOverrides,
+    });
+  }, [sidebarProjectColorizing, sidebarProjectColorOverrides, sortedProjects]);
+  // Stable color-select handler shared across all rows. Reading the latest
+  // override map through a ref keeps the callback identity fixed, so flipping
+  // one project's color doesn't re-render every other row's color picker.
+  const sidebarProjectColorOverridesRef = useRef(sidebarProjectColorOverrides);
+  sidebarProjectColorOverridesRef.current = sidebarProjectColorOverrides;
+  const handleProjectColorSelect = useCallback(
+    (overrideKey: string, color: SidebarProjectColor | null) => {
+      const next = { ...sidebarProjectColorOverridesRef.current };
+      if (color === null) {
+        delete next[overrideKey];
+      } else {
+        next[overrideKey] = color;
+      }
+      updateSettings({ sidebarProjectColorOverrides: next });
+    },
+    [updateSettings],
+  );
   const visibleSidebarThreadKeys = useMemo(
     () =>
       sortedProjects.flatMap((project) => {
@@ -3457,6 +3685,8 @@ export default function Sidebar() {
             suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
             attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
             projectsLength={projects.length}
+            projectColorByKey={projectColorByKey}
+            onProjectColorSelect={handleProjectColorSelect}
           />
 
           <SidebarSeparator />
