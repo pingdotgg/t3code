@@ -63,7 +63,7 @@ export function normalizeUsageWindows(
       return [
         {
           kind,
-          label: kind === "session" ? "Session" : "Weekly",
+          label: window.label || (kind === "session" ? "Session" : "Weekly"),
           usedPercent: clampPercent(window.usedPercent),
           ...(window.resetsAt ? { resetsAt: window.resetsAt } : {}),
           ...(typeof window.windowDurationMins === "number" &&
