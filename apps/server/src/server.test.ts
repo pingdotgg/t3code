@@ -479,7 +479,7 @@ const buildAppUnderTest = (options?: {
       Layer.provide(WorkspacePathsLive),
       Layer.provideMerge(vcsDriverRegistryLayer),
     );
-    const workspaceAndProjectServicesLayer = Layer.mergeAll(
+    const _workspaceAndProjectServicesLayer = Layer.mergeAll(
       WorkspacePathsLive,
       workspaceEntriesLayer,
       WorkspaceFileSystemLive.pipe(
