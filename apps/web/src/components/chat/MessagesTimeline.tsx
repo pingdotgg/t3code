@@ -946,24 +946,24 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   if (tone === "error") {
     return {
       icon: CircleAlertIcon,
-      className: "text-foreground/92",
+      className: "fill-foreground/92",
     };
   }
   if (tone === "thinking") {
     return {
       icon: BotIcon,
-      className: "text-foreground/92",
+      className: "fill-foreground/92",
     };
   }
   if (tone === "info") {
     return {
       icon: CheckIcon,
-      className: "text-foreground/92",
+      className: "fill-foreground/92",
     };
   }
   return {
     icon: ZapIcon,
-    className: "text-foreground/92",
+    className: "fill-foreground/92",
   };
 }
 

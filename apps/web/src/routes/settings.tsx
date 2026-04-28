@@ -3,13 +3,23 @@ import { Outlet, createFileRoute, redirect, useLocation } from "@tanstack/react-
 import { useEffect, useState } from "react";
 
 import { useSettingsRestore } from "../components/settings/SettingsPanels";
+import {
+  SETTINGS_DEFAULT_PATH,
+  getSettingsRestoreScope,
+} from "../components/settings/settingsNavigation";
 import { DesktopSidebarReopenButton } from "../components/sidebar/DesktopSidebarReopenButton";
 import { Button } from "../components/ui/button";
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
 import { isElectron } from "../env";
 
-function RestoreDefaultsButton({ onRestored }: { onRestored: () => void }) {
-  const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
+function RestoreDefaultsButton({
+  onRestored,
+  scope,
+}: {
+  onRestored: () => void;
+  scope: "interface" | "threads" | "providers";
+}) {
+  const { changedSettingLabels, restoreDefaults } = useSettingsRestore(scope, onRestored);
 
   return (
     <Button
@@ -27,7 +37,7 @@ function RestoreDefaultsButton({ onRestored }: { onRestored: () => void }) {
 function SettingsContentLayout() {
   const location = useLocation();
   const [restoreSignal, setRestoreSignal] = useState(0);
-  const showRestoreDefaults = location.pathname === "/settings/general";
+  const restoreScope = getSettingsRestoreScope(location.pathname);
   const handleRestored = () => setRestoreSignal((value) => value + 1);
 
   useEffect(() => {
@@ -54,9 +64,9 @@ function SettingsContentLayout() {
               <SidebarTrigger className="size-7 shrink-0 md:hidden" />
               <DesktopSidebarReopenButton />
               <span className="text-sm font-medium text-foreground">Settings</span>
-              {showRestoreDefaults ? (
+              {restoreScope ? (
                 <div className="ms-auto flex items-center gap-2">
-                  <RestoreDefaultsButton onRestored={handleRestored} />
+                  <RestoreDefaultsButton onRestored={handleRestored} scope={restoreScope} />
                 </div>
               ) : null}
             </div>
@@ -71,9 +81,9 @@ function SettingsContentLayout() {
                 Settings
               </span>
             </div>
-            {showRestoreDefaults ? (
+            {restoreScope ? (
               <div className="ms-auto flex items-center gap-2">
-                <RestoreDefaultsButton onRestored={handleRestored} />
+                <RestoreDefaultsButton onRestored={handleRestored} scope={restoreScope} />
               </div>
             ) : null}
           </div>
@@ -98,7 +108,7 @@ export const Route = createFileRoute("/settings")({
     }
 
     if (location.pathname === "/settings") {
-      throw redirect({ to: "/settings/general", replace: true });
+      throw redirect({ to: SETTINGS_DEFAULT_PATH, replace: true });
     }
   },
   component: SettingsRouteLayout,

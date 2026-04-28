@@ -13,6 +13,7 @@ import {
   type ServerConfig,
 } from "@forma/contracts";
 import { DateTime } from "effect";
+import type { ReactNode } from "react";
 import { page } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -23,7 +24,12 @@ import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
 import { THEME_STORAGE_KEY } from "../../theme";
 import { ConnectionsSettings } from "./ConnectionsSettings";
-import { GeneralSettingsPanel } from "./SettingsPanels";
+import {
+  AdvancedSettingsPanel,
+  InterfaceSettingsPanel,
+  ProvidersSettingsPanel,
+  ThreadsSettingsPanel,
+} from "./SettingsPanels";
 
 const authAccessHarness = vi.hoisted(() => {
   type Snapshot = AuthAccessSnapshot;
@@ -333,7 +339,7 @@ const createDesktopBridgeStub = (overrides?: {
   };
 };
 
-describe("GeneralSettingsPanel observability", () => {
+describe("Settings panels", () => {
   const originalMatchMedia = window.matchMedia.bind(window);
   let mounted:
     | (Awaited<ReturnType<typeof render>> & {
@@ -363,14 +369,10 @@ describe("GeneralSettingsPanel observability", () => {
     return matchMedia;
   }
 
-  async function renderGeneralSettingsPanel() {
+  async function renderSettingsPanel(panel: ReactNode) {
     setServerConfigSnapshot(createBaseServerConfig());
 
-    mounted = await render(
-      <AppAtomRegistryProvider>
-        <GeneralSettingsPanel />
-      </AppAtomRegistryProvider>,
-    );
+    mounted = await render(<AppAtomRegistryProvider>{panel}</AppAtomRegistryProvider>);
   }
 
   beforeEach(async () => {
@@ -468,11 +470,11 @@ describe("GeneralSettingsPanel observability", () => {
       .toBeInTheDocument();
   });
 
-  it("shows diagnostics inside About with a single logs-folder action", async () => {
-    await renderGeneralSettingsPanel();
+  it("shows diagnostics and logs access on the Advanced page", async () => {
+    await renderSettingsPanel(<AdvancedSettingsPanel />);
 
-    await expect.element(page.getByText("About")).toBeInTheDocument();
     await expect.element(page.getByText("Diagnostics")).toBeInTheDocument();
+    await expect.element(page.getByText("Updates")).toBeInTheDocument();
     await expect.element(page.getByText("Open logs folder")).toBeInTheDocument();
     await expect
       .element(page.getByText("/repo/project/.forma/logs", { exact: true }))
@@ -487,7 +489,7 @@ describe("GeneralSettingsPanel observability", () => {
   });
 
   it("renders theme selection as an inline preview grid instead of a combobox", async () => {
-    await renderGeneralSettingsPanel();
+    await renderSettingsPanel(<InterfaceSettingsPanel />);
 
     await vi.waitFor(() => {
       expect(document.querySelectorAll("[data-theme-option]")).toHaveLength(9);
@@ -510,7 +512,7 @@ describe("GeneralSettingsPanel observability", () => {
   });
 
   it("updates stored and document theme state when selecting a preview card", async () => {
-    await renderGeneralSettingsPanel();
+    await renderSettingsPanel(<InterfaceSettingsPanel />);
 
     const stoneOption = document.querySelector('[data-theme-option="stone"]');
     expect(stoneOption).not.toBeNull();
@@ -535,7 +537,7 @@ describe("GeneralSettingsPanel observability", () => {
     localStorage.setItem(THEME_STORAGE_KEY, "system");
     stubMatchMedia(true);
 
-    await renderGeneralSettingsPanel();
+    await renderSettingsPanel(<InterfaceSettingsPanel />);
 
     await vi.waitFor(() => {
       const systemPreview = document.querySelector(
@@ -560,7 +562,7 @@ describe("GeneralSettingsPanel observability", () => {
   });
 
   it("resets theme selection back to system", async () => {
-    await renderGeneralSettingsPanel();
+    await renderSettingsPanel(<InterfaceSettingsPanel />);
 
     const stoneOption = document.querySelector('[data-theme-option="stone"]');
     expect(stoneOption).not.toBeNull();
@@ -581,7 +583,7 @@ describe("GeneralSettingsPanel observability", () => {
   });
 
   it("supports keyboard navigation across theme radios", async () => {
-    await renderGeneralSettingsPanel();
+    await renderSettingsPanel(<InterfaceSettingsPanel />);
 
     const systemOption = document.querySelector(
       '[data-theme-option="system"]',
@@ -598,7 +600,7 @@ describe("GeneralSettingsPanel observability", () => {
   });
 
   it("persists and resets the thread cleanup window", async () => {
-    await renderGeneralSettingsPanel();
+    await renderSettingsPanel(<ThreadsSettingsPanel />);
 
     const cleanupWindowTrigger = page.getByLabelText("Thread cleanup window");
     await expect.element(cleanupWindowTrigger).toBeInTheDocument();
@@ -863,7 +865,7 @@ describe("GeneralSettingsPanel observability", () => {
       },
     } as unknown as LocalApi;
 
-    await renderGeneralSettingsPanel();
+    await renderSettingsPanel(<AdvancedSettingsPanel />);
 
     const openLogsButton = page.getByText("Open logs folder");
     await openLogsButton.click();
@@ -872,7 +874,7 @@ describe("GeneralSettingsPanel observability", () => {
   });
 
   it("shows an OpenCode server URL field in provider settings", async () => {
-    await renderGeneralSettingsPanel();
+    await renderSettingsPanel(<ProvidersSettingsPanel />);
 
     await page.getByLabelText("Toggle OpenCode details").click();
 

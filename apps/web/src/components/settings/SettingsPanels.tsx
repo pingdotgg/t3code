@@ -76,6 +76,7 @@ import {
   SettingsSection,
   useRelativeTimeTick,
 } from "./settingsLayout";
+import type { SettingsRestoreScope } from "./settingsNavigation";
 import { ProjectFavicon } from "../ProjectFavicon";
 import {
   useServerAvailableEditors,
@@ -441,68 +442,88 @@ function AboutVersionSection() {
   );
 }
 
-export function useSettingsRestore(onRestored?: () => void) {
-  const { theme, setTheme } = useTheme();
-  const settings = useSettings();
-  const { resetSettings } = useUpdateSettings();
-
-  const isGitWritingModelDirty = !Equal.equals(
+function isTextGenerationModelDirty(settings: typeof DEFAULT_UNIFIED_SETTINGS) {
+  return !Equal.equals(
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
-  const areProviderSettingsDirty = PROVIDER_SETTINGS.some((providerSettings) => {
+}
+
+function hasProviderSettingsChanges(settings: typeof DEFAULT_UNIFIED_SETTINGS) {
+  return PROVIDER_SETTINGS.some((providerSettings) => {
     const currentSettings = settings.providers[providerSettings.provider];
     const defaultSettings = DEFAULT_UNIFIED_SETTINGS.providers[providerSettings.provider];
     return !Equal.equals(currentSettings, defaultSettings);
   });
+}
 
-  const changedSettingLabels = useMemo(
-    () => [
-      ...(theme !== "system" ? ["Theme"] : []),
-      ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
-        ? ["Time format"]
-        : []),
-      ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
-        ? ["Diff line wrapping"]
-        : []),
-      ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
-        ? ["Assistant output"]
-        : []),
-      ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
-        ? ["New thread mode"]
-        : []),
-      ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
-        ? ["Add project base directory"]
-        : []),
-      ...(settings.threadCleanupInactiveDays !== DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays
-        ? ["Thread cleanup window"]
-        : []),
-      ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
-        ? ["Archive confirmation"]
-        : []),
-      ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
-        ? ["Delete confirmation"]
-        : []),
-      ...(isGitWritingModelDirty ? ["Git writing model"] : []),
-      ...(areProviderSettingsDirty ? ["Providers"] : []),
-    ],
-    [
-      areProviderSettingsDirty,
-      isGitWritingModelDirty,
-      settings.confirmThreadArchive,
-      settings.confirmThreadDelete,
-      settings.addProjectBaseDirectory,
-      settings.defaultThreadEnvMode,
-      settings.diffWordWrap,
-      settings.enableAssistantStreaming,
-      settings.threadCleanupInactiveDays,
-      settings.timestampFormat,
-      theme,
-    ],
-  );
+export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () => void) {
+  const { theme, setTheme } = useTheme();
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
+
+  const isGitWritingModelDirty = isTextGenerationModelDirty(settings);
+  const areProviderSettingsDirty = hasProviderSettingsChanges(settings);
+
+  const changedSettingLabels = useMemo(() => {
+    switch (scope) {
+      case "interface":
+        return [
+          ...(theme !== "system" ? ["Theme"] : []),
+          ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
+            ? ["Time format"]
+            : []),
+          ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
+            ? ["Diff line wrapping"]
+            : []),
+          ...(settings.enableAssistantStreaming !==
+          DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
+            ? ["Assistant output"]
+            : []),
+        ];
+      case "threads":
+        return [
+          ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
+            ? ["New thread mode"]
+            : []),
+          ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
+            ? ["Add project base directory"]
+            : []),
+          ...(settings.threadCleanupInactiveDays !==
+          DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays
+            ? ["Thread cleanup window"]
+            : []),
+          ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
+            ? ["Archive confirmation"]
+            : []),
+          ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
+            ? ["Delete confirmation"]
+            : []),
+        ];
+      case "providers":
+        return [
+          ...(isGitWritingModelDirty ? ["Text generation model"] : []),
+          ...(areProviderSettingsDirty ? ["Providers"] : []),
+        ];
+    }
+  }, [
+    areProviderSettingsDirty,
+    isGitWritingModelDirty,
+    scope,
+    settings.addProjectBaseDirectory,
+    settings.confirmThreadArchive,
+    settings.confirmThreadDelete,
+    settings.defaultThreadEnvMode,
+    settings.diffWordWrap,
+    settings.enableAssistantStreaming,
+    settings.threadCleanupInactiveDays,
+    settings.timestampFormat,
+    theme,
+  ]);
 
   const restoreDefaults = useCallback(async () => {
     if (changedSettingLabels.length === 0) return;
+
     const api = readLocalApi();
     const confirmed = await (api ?? ensureLocalApi()).dialogs.confirm(
       ["Restore default settings?", `This will reset: ${changedSettingLabels.join(", ")}.`].join(
@@ -511,10 +532,34 @@ export function useSettingsRestore(onRestored?: () => void) {
     );
     if (!confirmed) return;
 
-    setTheme("system");
-    resetSettings();
+    switch (scope) {
+      case "interface":
+        setTheme("system");
+        updateSettings({
+          timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+          diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
+          enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+        });
+        break;
+      case "threads":
+        updateSettings({
+          defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
+          addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+          threadCleanupInactiveDays: DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays,
+          confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
+          confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+        });
+        break;
+      case "providers":
+        updateSettings({
+          textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+          providers: DEFAULT_UNIFIED_SETTINGS.providers,
+        });
+        break;
+    }
+
     onRestored?.();
-  }, [changedSettingLabels, onRestored, resetSettings, setTheme]);
+  }, [changedSettingLabels, onRestored, scope, setTheme, updateSettings]);
 
   return {
     changedSettingLabels,
@@ -522,17 +567,445 @@ export function useSettingsRestore(onRestored?: () => void) {
   };
 }
 
-export function GeneralSettingsPanel() {
+export function InterfaceSettingsPanel() {
   const { theme, setTheme, resolvedPreset } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  const [openingPathByTarget, setOpeningPathByTarget] = useState({
-    keybindings: false,
-    logsDirectory: false,
-  });
-  const [openPathErrorByTarget, setOpenPathErrorByTarget] = useState<
-    Partial<Record<"keybindings" | "logsDirectory", string | null>>
-  >({});
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection title="Appearance">
+        <SettingsRow
+          title="Theme"
+          description="Choose how Forma looks across the app."
+          resetAction={
+            theme !== "system" ? (
+              <SettingResetButton label="theme" onClick={() => setTheme("system")} />
+            ) : null
+          }
+        >
+          <div className="pt-3 pb-3">
+            <ThemePreferenceSelector
+              onChange={setTheme}
+              resolvedPreset={resolvedPreset}
+              theme={theme}
+            />
+          </div>
+        </SettingsRow>
+      </SettingsSection>
+
+      <SettingsSection title="Display">
+        <SettingsRow
+          title="Time format"
+          description="System default follows your browser or OS clock preference."
+          resetAction={
+            settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
+              <SettingResetButton
+                label="time format"
+                onClick={() =>
+                  updateSettings({
+                    timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.timestampFormat}
+              onValueChange={(value) => {
+                if (value === "locale" || value === "12-hour" || value === "24-hour") {
+                  updateSettings({ timestampFormat: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Timestamp format">
+                <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="locale">
+                  {TIMESTAMP_FORMAT_LABELS.locale}
+                </SelectItem>
+                <SelectItem hideIndicator value="12-hour">
+                  {TIMESTAMP_FORMAT_LABELS["12-hour"]}
+                </SelectItem>
+                <SelectItem hideIndicator value="24-hour">
+                  {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Diff line wrapping"
+          description="Set the default wrap state when the diff panel opens."
+          resetAction={
+            settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap ? (
+              <SettingResetButton
+                label="diff line wrapping"
+                onClick={() =>
+                  updateSettings({
+                    diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.diffWordWrap}
+              onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
+              aria-label="Wrap diff lines by default"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Assistant output"
+          description="Show token-by-token output while a response is in progress."
+          resetAction={
+            settings.enableAssistantStreaming !==
+            DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming ? (
+              <SettingResetButton
+                label="assistant output"
+                onClick={() =>
+                  updateSettings({
+                    enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.enableAssistantStreaming}
+              onCheckedChange={(checked) =>
+                updateSettings({ enableAssistantStreaming: Boolean(checked) })
+              }
+              aria-label="Stream assistant messages"
+            />
+          }
+        />
+      </SettingsSection>
+    </SettingsPageContainer>
+  );
+}
+
+function ArchivedThreadsSections() {
+  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const threads = useStore(useShallow(selectThreadShellsAcrossEnvironments));
+  const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
+  const archivedGroups = useMemo(() => {
+    return projects
+      .map((project) => ({
+        project,
+        threads: threads
+          .filter((thread) => thread.projectId === project.id && thread.archivedAt !== null)
+          .toSorted((left, right) => {
+            const leftKey = left.archivedAt ?? left.createdAt;
+            const rightKey = right.archivedAt ?? right.createdAt;
+            return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
+          }),
+      }))
+      .filter((group) => group.threads.length > 0);
+  }, [projects, threads]);
+
+  const handleArchivedThreadContextMenu = useCallback(
+    async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+      const api = readLocalApi();
+      if (!api) return;
+      const clicked = await api.contextMenu.show(
+        [
+          { id: "unarchive", label: "Unarchive" },
+          { id: "delete", label: "Delete", destructive: true },
+        ],
+        position,
+      );
+
+      if (clicked === "unarchive") {
+        try {
+          await unarchiveThread(threadRef);
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to unarchive thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        }
+        return;
+      }
+
+      if (clicked === "delete") {
+        await confirmAndDeleteThread(threadRef);
+      }
+    },
+    [confirmAndDeleteThread, unarchiveThread],
+  );
+
+  if (archivedGroups.length === 0) {
+    return (
+      <SettingsSection title="Archived threads">
+        <Empty className="min-h-88">
+          <EmptyMedia variant="icon">
+            <ArchiveIcon />
+          </EmptyMedia>
+          <EmptyHeader>
+            <EmptyTitle>No archived threads</EmptyTitle>
+            <EmptyDescription>Archived threads will appear here.</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      </SettingsSection>
+    );
+  }
+
+  return (
+    <>
+      {archivedGroups.map(({ project, threads: projectThreads }) => (
+        <SettingsSection
+          key={project.id}
+          title={project.name}
+          icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
+        >
+          {projectThreads.map((thread) => (
+            <div
+              key={thread.id}
+              className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5"
+              onContextMenu={(event) => {
+                event.preventDefault();
+                void handleArchivedThreadContextMenu(
+                  scopeThreadRef(thread.environmentId, thread.id),
+                  {
+                    x: event.clientX,
+                    y: event.clientY,
+                  },
+                );
+              }}
+            >
+              <div className="min-w-0 flex-1">
+                <h3 className="truncate text-sm font-medium text-foreground">{thread.title}</h3>
+                <p className="text-xs text-muted-foreground">
+                  Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
+                  {" \u00b7 Created "}
+                  {formatRelativeTimeLabel(thread.createdAt)}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
+                onClick={() =>
+                  void unarchiveThread(scopeThreadRef(thread.environmentId, thread.id)).catch(
+                    (error) => {
+                      toastManager.add(
+                        stackedThreadToast({
+                          type: "error",
+                          title: "Failed to unarchive thread",
+                          description:
+                            error instanceof Error ? error.message : "An error occurred.",
+                        }),
+                      );
+                    },
+                  )
+                }
+              >
+                <ArchiveX className="size-3.5" />
+                <span>Unarchive</span>
+              </Button>
+            </div>
+          ))}
+        </SettingsSection>
+      ))}
+    </>
+  );
+}
+
+export function ThreadsSettingsPanel() {
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection title="Defaults">
+        <SettingsRow
+          title="New threads"
+          description="Pick the default workspace mode for newly created draft threads."
+          resetAction={
+            settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode ? (
+              <SettingResetButton
+                label="new threads"
+                onClick={() =>
+                  updateSettings({
+                    defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.defaultThreadEnvMode}
+              onValueChange={(value) => {
+                if (value === "local" || value === "worktree") {
+                  updateSettings({ defaultThreadEnvMode: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Default thread mode">
+                <SelectValue>
+                  {settings.defaultThreadEnvMode === "worktree" ? "New worktree" : "Local"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="local">
+                  Local
+                </SelectItem>
+                <SelectItem hideIndicator value="worktree">
+                  New worktree
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Add project starts in"
+          description='Leave empty to use "~/" when the Add Project browser opens.'
+          resetAction={
+            settings.addProjectBaseDirectory !==
+            DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
+              <SettingResetButton
+                label="add project base directory"
+                onClick={() =>
+                  updateSettings({
+                    addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Input
+              className="w-full sm:w-72"
+              value={settings.addProjectBaseDirectory}
+              onChange={(event) => updateSettings({ addProjectBaseDirectory: event.target.value })}
+              placeholder="~/"
+              spellCheck={false}
+              aria-label="Add project base directory"
+            />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Safety & cleanup">
+        <SettingsRow
+          title="Thread cleanup window"
+          description="Sidebar cleanup archives threads with no user message in this many days."
+          resetAction={
+            settings.threadCleanupInactiveDays !==
+            DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays ? (
+              <SettingResetButton
+                label="thread cleanup window"
+                onClick={() =>
+                  updateSettings({
+                    threadCleanupInactiveDays: DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.threadCleanupInactiveDays)}
+              onValueChange={(value) => {
+                const nextValue = Number(value);
+                if (THREAD_CLEANUP_DAY_OPTIONS.includes(nextValue as ThreadCleanupInactiveDays)) {
+                  updateSettings({
+                    threadCleanupInactiveDays: nextValue as ThreadCleanupInactiveDays,
+                  });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Thread cleanup window">
+                <SelectValue>
+                  {formatThreadCleanupWindowLabel(settings.threadCleanupInactiveDays)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {THREAD_CLEANUP_DAY_OPTIONS.map((days) => (
+                  <SelectItem key={days} hideIndicator value={String(days)}>
+                    {formatThreadCleanupWindowLabel(days)}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Archive confirmation"
+          description="Require a second click on the inline archive action before a thread is archived."
+          resetAction={
+            settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
+              <SettingResetButton
+                label="archive confirmation"
+                onClick={() =>
+                  updateSettings({
+                    confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.confirmThreadArchive}
+              onCheckedChange={(checked) =>
+                updateSettings({ confirmThreadArchive: Boolean(checked) })
+              }
+              aria-label="Confirm thread archiving"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Delete confirmation"
+          description="Ask before deleting a thread and its chat history."
+          resetAction={
+            settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
+              <SettingResetButton
+                label="delete confirmation"
+                onClick={() =>
+                  updateSettings({
+                    confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.confirmThreadDelete}
+              onCheckedChange={(checked) =>
+                updateSettings({ confirmThreadDelete: Boolean(checked) })
+              }
+              aria-label="Confirm thread deletion"
+            />
+          }
+        />
+      </SettingsSection>
+
+      <ArchivedThreadsSections />
+    </SettingsPageContainer>
+  );
+}
+
+export function ProvidersSettingsPanel() {
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
   const [openProviderDetails, setOpenProviderDetails] = useState<Record<ProviderKind, boolean>>({
     codex: Boolean(
       settings.providers.codex.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.binaryPath ||
@@ -574,6 +1047,13 @@ export function GeneralSettingsPanel() {
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const refreshingRef = useRef(false);
   const modelListRefs = useRef<Partial<Record<ProviderKind, HTMLDivElement | null>>>({});
+  const serverProviders = useServerProviders();
+  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
+    (providerSettings) =>
+      providerSettings.provider !== "cursor" ||
+      serverProviders.some((provider) => provider.provider === "cursor"),
+  );
+  const codexHomePath = settings.providers.codex.homePath;
   const refreshProviders = useCallback(() => {
     if (refreshingRef.current) return;
     refreshingRef.current = true;
@@ -589,29 +1069,6 @@ export function GeneralSettingsPanel() {
       });
   }, []);
 
-  const keybindingsConfigPath = useServerKeybindingsConfigPath();
-  const availableEditors = useServerAvailableEditors();
-  const observability = useServerObservability();
-  const serverProviders = useServerProviders();
-  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
-    (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some((provider) => provider.provider === "cursor"),
-  );
-  const codexHomePath = settings.providers.codex.homePath;
-  const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
-  const diagnosticsDescription = (() => {
-    const exports: string[] = [];
-    if (observability?.otlpTracesEnabled && observability.otlpTracesUrl) {
-      exports.push(`traces to ${observability.otlpTracesUrl}`);
-    }
-    if (observability?.otlpMetricsEnabled && observability.otlpMetricsUrl) {
-      exports.push(`metrics to ${observability.otlpMetricsUrl}`);
-    }
-    const mode = observability?.localTracingEnabled ? "Local trace file" : "Terminal logs only";
-    return exports.length > 0 ? `${mode}. OTLP exporting ${exports.join(" and ")}.` : `${mode}.`;
-  })();
-
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenProvider = textGenerationModelSelection.provider;
   const textGenModel = textGenerationModelSelection.model;
@@ -622,54 +1079,7 @@ export function GeneralSettingsPanel() {
     textGenProvider,
     textGenModel,
   );
-  const isGitWritingModelDirty = !Equal.equals(
-    settings.textGenerationModelSelection ?? null,
-    DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
-  );
-
-  const openInPreferredEditor = useCallback(
-    (target: "keybindings" | "logsDirectory", path: string | null, failureMessage: string) => {
-      if (!path) return;
-      setOpenPathErrorByTarget((existing) => ({ ...existing, [target]: null }));
-      setOpeningPathByTarget((existing) => ({ ...existing, [target]: true }));
-
-      const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
-      if (!editor) {
-        setOpenPathErrorByTarget((existing) => ({
-          ...existing,
-          [target]: "No available editors found.",
-        }));
-        setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
-        return;
-      }
-
-      void ensureLocalApi()
-        .shell.openInEditor(path, editor)
-        .catch((error) => {
-          setOpenPathErrorByTarget((existing) => ({
-            ...existing,
-            [target]: error instanceof Error ? error.message : failureMessage,
-          }));
-        })
-        .finally(() => {
-          setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
-        });
-    },
-    [availableEditors],
-  );
-
-  const openKeybindingsFile = useCallback(() => {
-    openInPreferredEditor("keybindings", keybindingsConfigPath, "Unable to open keybindings file.");
-  }, [keybindingsConfigPath, openInPreferredEditor]);
-
-  const openLogsDirectory = useCallback(() => {
-    openInPreferredEditor("logsDirectory", logsDirectoryPath, "Unable to open logs folder.");
-  }, [logsDirectoryPath, openInPreferredEditor]);
-
-  const openKeybindingsError = openPathErrorByTarget.keybindings ?? null;
-  const openDiagnosticsError = openPathErrorByTarget.logsDirectory ?? null;
-  const isOpeningKeybindings = openingPathByTarget.keybindings;
-  const isOpeningLogsDirectory = openingPathByTarget.logsDirectory;
+  const isGitWritingModelDirty = isTextGenerationModelDirty(settings);
 
   const addCustomModel = useCallback(
     (provider: ProviderKind) => {
@@ -815,283 +1225,7 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="General">
-        <SettingsRow
-          title="Theme"
-          description="Choose how Forma looks across the app."
-          resetAction={
-            theme !== "system" ? (
-              <SettingResetButton label="theme" onClick={() => setTheme("system")} />
-            ) : null
-          }
-        >
-          <div className="pt-3 pb-3">
-            <ThemePreferenceSelector
-              onChange={setTheme}
-              resolvedPreset={resolvedPreset}
-              theme={theme}
-            />
-          </div>
-        </SettingsRow>
-
-        <SettingsRow
-          title="Time format"
-          description="System default follows your browser or OS clock preference."
-          resetAction={
-            settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat ? (
-              <SettingResetButton
-                label="time format"
-                onClick={() =>
-                  updateSettings({
-                    timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.timestampFormat}
-              onValueChange={(value) => {
-                if (value === "locale" || value === "12-hour" || value === "24-hour") {
-                  updateSettings({ timestampFormat: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Timestamp format">
-                <SelectValue>{TIMESTAMP_FORMAT_LABELS[settings.timestampFormat]}</SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="locale">
-                  {TIMESTAMP_FORMAT_LABELS.locale}
-                </SelectItem>
-                <SelectItem hideIndicator value="12-hour">
-                  {TIMESTAMP_FORMAT_LABELS["12-hour"]}
-                </SelectItem>
-                <SelectItem hideIndicator value="24-hour">
-                  {TIMESTAMP_FORMAT_LABELS["24-hour"]}
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Diff line wrapping"
-          description="Set the default wrap state when the diff panel opens."
-          resetAction={
-            settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap ? (
-              <SettingResetButton
-                label="diff line wrapping"
-                onClick={() =>
-                  updateSettings({
-                    diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.diffWordWrap}
-              onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
-              aria-label="Wrap diff lines by default"
-            />
-          }
-        />
-
-        <SettingsRow
-          title="Assistant output"
-          description="Show token-by-token output while a response is in progress."
-          resetAction={
-            settings.enableAssistantStreaming !==
-            DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming ? (
-              <SettingResetButton
-                label="assistant output"
-                onClick={() =>
-                  updateSettings({
-                    enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.enableAssistantStreaming}
-              onCheckedChange={(checked) =>
-                updateSettings({ enableAssistantStreaming: Boolean(checked) })
-              }
-              aria-label="Stream assistant messages"
-            />
-          }
-        />
-
-        <SettingsRow
-          title="New threads"
-          description="Pick the default workspace mode for newly created draft threads."
-          resetAction={
-            settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode ? (
-              <SettingResetButton
-                label="new threads"
-                onClick={() =>
-                  updateSettings({
-                    defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={settings.defaultThreadEnvMode}
-              onValueChange={(value) => {
-                if (value === "local" || value === "worktree") {
-                  updateSettings({ defaultThreadEnvMode: value });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-44" aria-label="Default thread mode">
-                <SelectValue>
-                  {settings.defaultThreadEnvMode === "worktree" ? "New worktree" : "Local"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                <SelectItem hideIndicator value="local">
-                  Local
-                </SelectItem>
-                <SelectItem hideIndicator value="worktree">
-                  New worktree
-                </SelectItem>
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Add project starts in"
-          description='Leave empty to use "~/" when the Add Project browser opens.'
-          resetAction={
-            settings.addProjectBaseDirectory !==
-            DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory ? (
-              <SettingResetButton
-                label="add project base directory"
-                onClick={() =>
-                  updateSettings({
-                    addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Input
-              className="w-full sm:w-72"
-              value={settings.addProjectBaseDirectory}
-              onChange={(event) => updateSettings({ addProjectBaseDirectory: event.target.value })}
-              placeholder="~/"
-              spellCheck={false}
-              aria-label="Add project base directory"
-            />
-          }
-        />
-
-        <SettingsRow
-          title="Thread cleanup window"
-          description="Sidebar cleanup archives threads with no user message in this many days."
-          resetAction={
-            settings.threadCleanupInactiveDays !==
-            DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays ? (
-              <SettingResetButton
-                label="thread cleanup window"
-                onClick={() =>
-                  updateSettings({
-                    threadCleanupInactiveDays: DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Select
-              value={String(settings.threadCleanupInactiveDays)}
-              onValueChange={(value) => {
-                const nextValue = Number(value);
-                if (THREAD_CLEANUP_DAY_OPTIONS.includes(nextValue as ThreadCleanupInactiveDays)) {
-                  updateSettings({
-                    threadCleanupInactiveDays: nextValue as ThreadCleanupInactiveDays,
-                  });
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Thread cleanup window">
-                <SelectValue>
-                  {formatThreadCleanupWindowLabel(settings.threadCleanupInactiveDays)}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {THREAD_CLEANUP_DAY_OPTIONS.map((days) => (
-                  <SelectItem key={days} hideIndicator value={String(days)}>
-                    {formatThreadCleanupWindowLabel(days)}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Archive confirmation"
-          description="Require a second click on the inline archive action before a thread is archived."
-          resetAction={
-            settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
-              <SettingResetButton
-                label="archive confirmation"
-                onClick={() =>
-                  updateSettings({
-                    confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.confirmThreadArchive}
-              onCheckedChange={(checked) =>
-                updateSettings({ confirmThreadArchive: Boolean(checked) })
-              }
-              aria-label="Confirm thread archiving"
-            />
-          }
-        />
-
-        <SettingsRow
-          title="Delete confirmation"
-          description="Ask before deleting a thread and its chat history."
-          resetAction={
-            settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
-              <SettingResetButton
-                label="delete confirmation"
-                onClick={() =>
-                  updateSettings({
-                    confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.confirmThreadDelete}
-              onCheckedChange={(checked) =>
-                updateSettings({ confirmThreadDelete: Boolean(checked) })
-              }
-              aria-label="Confirm thread deletion"
-            />
-          }
-        />
-
+      <SettingsSection title="Text generation">
         <SettingsRow
           title="Text generation model"
           description="Configure the model used for generated commit messages, PR titles, and similar Git text."
@@ -1620,8 +1754,103 @@ export function GeneralSettingsPanel() {
           );
         })}
       </SettingsSection>
+    </SettingsPageContainer>
+  );
+}
 
-      <SettingsSection title="Advanced">
+function useAdvancedSettingsPanelState() {
+  const [openingPathByTarget, setOpeningPathByTarget] = useState({
+    keybindings: false,
+    logsDirectory: false,
+  });
+  const [openPathErrorByTarget, setOpenPathErrorByTarget] = useState<
+    Partial<Record<"keybindings" | "logsDirectory", string | null>>
+  >({});
+
+  const keybindingsConfigPath = useServerKeybindingsConfigPath();
+  const availableEditors = useServerAvailableEditors();
+  const observability = useServerObservability();
+  const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
+  const diagnosticsDescription = (() => {
+    const exports: string[] = [];
+    if (observability?.otlpTracesEnabled && observability.otlpTracesUrl) {
+      exports.push(`traces to ${observability.otlpTracesUrl}`);
+    }
+    if (observability?.otlpMetricsEnabled && observability.otlpMetricsUrl) {
+      exports.push(`metrics to ${observability.otlpMetricsUrl}`);
+    }
+    const mode = observability?.localTracingEnabled ? "Local trace file" : "Terminal logs only";
+    return exports.length > 0 ? `${mode}. OTLP exporting ${exports.join(" and ")}.` : `${mode}.`;
+  })();
+
+  const openInPreferredEditor = useCallback(
+    (target: "keybindings" | "logsDirectory", path: string | null, failureMessage: string) => {
+      if (!path) return;
+      setOpenPathErrorByTarget((existing) => ({ ...existing, [target]: null }));
+      setOpeningPathByTarget((existing) => ({ ...existing, [target]: true }));
+
+      const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
+      if (!editor) {
+        setOpenPathErrorByTarget((existing) => ({
+          ...existing,
+          [target]: "No available editors found.",
+        }));
+        setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
+        return;
+      }
+
+      void ensureLocalApi()
+        .shell.openInEditor(path, editor)
+        .catch((error) => {
+          setOpenPathErrorByTarget((existing) => ({
+            ...existing,
+            [target]: error instanceof Error ? error.message : failureMessage,
+          }));
+        })
+        .finally(() => {
+          setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
+        });
+    },
+    [availableEditors],
+  );
+
+  const openKeybindingsFile = useCallback(() => {
+    openInPreferredEditor("keybindings", keybindingsConfigPath, "Unable to open keybindings file.");
+  }, [keybindingsConfigPath, openInPreferredEditor]);
+
+  const openLogsDirectory = useCallback(() => {
+    openInPreferredEditor("logsDirectory", logsDirectoryPath, "Unable to open logs folder.");
+  }, [logsDirectoryPath, openInPreferredEditor]);
+
+  return {
+    diagnosticsDescription,
+    isOpeningKeybindings: openingPathByTarget.keybindings,
+    isOpeningLogsDirectory: openingPathByTarget.logsDirectory,
+    keybindingsConfigPath,
+    logsDirectoryPath,
+    openDiagnosticsError: openPathErrorByTarget.logsDirectory ?? null,
+    openKeybindingsError: openPathErrorByTarget.keybindings ?? null,
+    openKeybindingsFile,
+    openLogsDirectory,
+  };
+}
+
+export function AdvancedSettingsPanel() {
+  const {
+    diagnosticsDescription,
+    isOpeningKeybindings,
+    isOpeningLogsDirectory,
+    keybindingsConfigPath,
+    logsDirectoryPath,
+    openDiagnosticsError,
+    openKeybindingsError,
+    openKeybindingsFile,
+    openLogsDirectory,
+  } = useAdvancedSettingsPanelState();
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection title="Files">
         <SettingsRow
           title="Keybindings"
           description="Open the persisted `keybindings.json` file to edit advanced bindings directly."
@@ -1650,17 +1879,9 @@ export function GeneralSettingsPanel() {
         />
       </SettingsSection>
 
-      <SettingsSection title="About">
-        {isElectron ? (
-          <AboutVersionSection />
-        ) : (
-          <SettingsRow
-            title={<AboutVersionTitle />}
-            description="Current version of the application."
-          />
-        )}
+      <SettingsSection title="Diagnostics">
         <SettingsRow
-          title="Diagnostics"
+          title="Logs"
           description={diagnosticsDescription}
           status={
             <>
@@ -1684,135 +1905,29 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      <SettingsSection title="Updates">
+        {isElectron ? (
+          <AboutVersionSection />
+        ) : (
+          <SettingsRow
+            title={<AboutVersionTitle />}
+            description="Current version of the application."
+          />
+        )}
+      </SettingsSection>
     </SettingsPageContainer>
   );
 }
 
 export function ArchivedThreadsPanel() {
-  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
-  const threads = useStore(useShallow(selectThreadShellsAcrossEnvironments));
-  const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
-  const archivedGroups = useMemo(() => {
-    return projects
-      .map((project) => ({
-        project,
-        threads: threads
-          .filter((thread) => thread.projectId === project.id && thread.archivedAt !== null)
-          .toSorted((left, right) => {
-            const leftKey = left.archivedAt ?? left.createdAt;
-            const rightKey = right.archivedAt ?? right.createdAt;
-            return rightKey.localeCompare(leftKey) || right.id.localeCompare(left.id);
-          }),
-      }))
-      .filter((group) => group.threads.length > 0);
-  }, [projects, threads]);
-
-  const handleArchivedThreadContextMenu = useCallback(
-    async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
-      const api = readLocalApi();
-      if (!api) return;
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "unarchive", label: "Unarchive" },
-          { id: "delete", label: "Delete", destructive: true },
-        ],
-        position,
-      );
-
-      if (clicked === "unarchive") {
-        try {
-          await unarchiveThread(threadRef);
-        } catch (error) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Failed to unarchive thread",
-              description: error instanceof Error ? error.message : "An error occurred.",
-            }),
-          );
-        }
-        return;
-      }
-
-      if (clicked === "delete") {
-        await confirmAndDeleteThread(threadRef);
-      }
-    },
-    [confirmAndDeleteThread, unarchiveThread],
-  );
-
   return (
     <SettingsPageContainer>
-      {archivedGroups.length === 0 ? (
-        <SettingsSection title="Archived threads">
-          <Empty className="min-h-88">
-            <EmptyMedia variant="icon">
-              <ArchiveIcon />
-            </EmptyMedia>
-            <EmptyHeader>
-              <EmptyTitle>No archived threads</EmptyTitle>
-              <EmptyDescription>Archived threads will appear here.</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        </SettingsSection>
-      ) : (
-        archivedGroups.map(({ project, threads: projectThreads }) => (
-          <SettingsSection
-            key={project.id}
-            title={project.name}
-            icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
-          >
-            {projectThreads.map((thread) => (
-              <div
-                key={thread.id}
-                className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5"
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  void handleArchivedThreadContextMenu(
-                    scopeThreadRef(thread.environmentId, thread.id),
-                    {
-                      x: event.clientX,
-                      y: event.clientY,
-                    },
-                  );
-                }}
-              >
-                <div className="min-w-0 flex-1">
-                  <h3 className="truncate text-sm font-medium text-foreground">{thread.title}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
-                    {" \u00b7 Created "}
-                    {formatRelativeTimeLabel(thread.createdAt)}
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
-                  onClick={() =>
-                    void unarchiveThread(scopeThreadRef(thread.environmentId, thread.id)).catch(
-                      (error) => {
-                        toastManager.add(
-                          stackedThreadToast({
-                            type: "error",
-                            title: "Failed to unarchive thread",
-                            description:
-                              error instanceof Error ? error.message : "An error occurred.",
-                          }),
-                        );
-                      },
-                    )
-                  }
-                >
-                  <ArchiveX className="size-3.5" />
-                  <span>Unarchive</span>
-                </Button>
-              </div>
-            ))}
-          </SettingsSection>
-        ))
-      )}
+      <ArchivedThreadsSections />
     </SettingsPageContainer>
   );
+}
+
+export function GeneralSettingsPanel() {
+  return <InterfaceSettingsPanel />;
 }

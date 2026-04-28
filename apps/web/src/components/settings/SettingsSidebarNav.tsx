@@ -1,9 +1,4 @@
-import type { ComponentType } from "react";
-import {
-  IconArrowTurnUpLeft as ArrowTurnUpLeftIcon,
-  IconTray2Fill as ArchiveIcon,
-} from "symbols-react";
-import { Link2Icon, Settings2Icon } from "lucide-react";
+import { IconArrowTurnUpLeft as ArrowTurnUpLeftIcon } from "symbols-react";
 import { useNavigate } from "@tanstack/react-router";
 
 import {
@@ -15,24 +10,11 @@ import {
   SidebarMenuItem,
   SidebarSeparator,
 } from "../ui/sidebar";
-
-export type SettingsSectionPath =
-  | "/settings/general"
-  | "/settings/connections"
-  | "/settings/archived";
-
-export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
-  label: string;
-  to: SettingsSectionPath;
-  icon: ComponentType<{ className?: string }>;
-}> = [
-  { label: "General", to: "/settings/general", icon: Settings2Icon },
-  { label: "Connections", to: "/settings/connections", icon: Link2Icon },
-  { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },
-];
+import { SETTINGS_NAV_ITEMS, resolveSettingsPathname } from "./settingsNavigation";
 
 export function SettingsSidebarNav({ pathname }: { pathname: string }) {
   const navigate = useNavigate();
+  const currentPath = resolveSettingsPathname(pathname);
 
   return (
     <>
@@ -41,15 +23,14 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
           <SidebarMenu>
             {SETTINGS_NAV_ITEMS.map((item) => {
               const Icon = item.icon;
-              const isActive = pathname === item.to;
-              const iconColorClassName =
-                item.to === "/settings/archived"
-                  ? isActive
-                    ? "size-4 shrink-0 fill-current text-foreground"
-                    : "size-4 shrink-0 fill-current text-muted-foreground/60"
-                  : isActive
-                    ? "size-4 shrink-0 text-foreground"
-                    : "size-4 shrink-0 text-muted-foreground/60";
+              const isActive = currentPath === item.to;
+              const iconColorClassName = item.iconUsesFill
+                ? isActive
+                  ? "size-4 shrink-0 fill-current text-foreground"
+                  : "size-4 shrink-0 fill-current text-muted-foreground/60"
+                : isActive
+                  ? "size-4 shrink-0 text-foreground"
+                  : "size-4 shrink-0 text-muted-foreground/60";
               return (
                 <SidebarMenuItem key={item.to}>
                   <SidebarMenuButton
