@@ -275,9 +275,7 @@ describe("ChatMinimap", () => {
     // 15 user prompts → strip caps at 10 dashes and surfaces a "+5" label
     // beneath. We only assert the label here; the dash count + sampling math
     // are covered by `selectVisibleMinimapEntries` unit tests.
-    const entries = Array.from({ length: 15 }, (_, i) =>
-      makeEntry(i + 1, `Message ${i + 1}`),
-    );
+    const entries = Array.from({ length: 15 }, (_, i) => makeEntry(i + 1, `Message ${i + 1}`));
     const positionsByKey = Object.fromEntries(
       entries.map((entry, i) => [entry.rowKey, 100 + i * 200]),
     );
@@ -309,9 +307,7 @@ describe("ChatMinimap", () => {
     );
 
     try {
-      await expect
-        .element(page.getByTestId("chat-minimap-overflow"))
-        .not.toBeInTheDocument();
+      await expect.element(page.getByTestId("chat-minimap-overflow")).not.toBeInTheDocument();
     } finally {
       await screen.unmount();
     }
