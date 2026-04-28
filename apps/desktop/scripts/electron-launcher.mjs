@@ -128,6 +128,43 @@ function readJson(path) {
   }
 }
 
+function isMissingElectronBinaryError(error) {
+  return error instanceof Error && error.message.includes("Electron failed to install correctly");
+}
+
+function ensureElectronInstalled(require) {
+  const electronPackageJsonPath = require.resolve("electron/package.json");
+  const electronPackageDir = dirname(electronPackageJsonPath);
+  const installScriptPath = join(electronPackageDir, "install.js");
+  const installResult = spawnSync(process.execPath, [installScriptPath], {
+    cwd: electronPackageDir,
+    env: process.env,
+    stdio: "inherit",
+  });
+
+  if (installResult.status === 0) {
+    return;
+  }
+
+  throw new Error(
+    `Failed to install Electron runtime via ${installScriptPath} (exit ${installResult.status ?? "unknown"}).`,
+  );
+}
+
+function loadElectronBinaryPath(require) {
+  try {
+    return require("electron");
+  } catch (error) {
+    if (!isMissingElectronBinaryError(error)) {
+      throw error;
+    }
+
+    ensureElectronInstalled(require);
+    delete require.cache[require.resolve("electron")];
+    return require("electron");
+  }
+}
+
 function buildMacLauncher(electronBinaryPath) {
   const sourceAppBundlePath = resolve(electronBinaryPath, "../../..");
   const runtimeDir = join(desktopDir, ".electron-runtime");
@@ -164,7 +201,7 @@ function buildMacLauncher(electronBinaryPath) {
 
 export function resolveElectronPath() {
   const require = createRequire(import.meta.url);
-  const electronBinaryPath = require("electron");
+  const electronBinaryPath = loadElectronBinaryPath(require);
 
   if (process.platform !== "darwin") {
     return electronBinaryPath;
