@@ -2,6 +2,7 @@ import {
   IconChevronRight as ChevronRightIcon,
   IconPlus as PlusIcon,
   IconMagnifyingglass as SearchIcon,
+  IconPaintbrushFill as PaintbrushIcon,
   IconExclamationmarkTriangle as TriangleAlertIcon,
 } from "symbols-react";
 import { CloudIcon, TerminalIcon } from "lucide-react";
@@ -51,6 +52,7 @@ import { Link, useLocation, useNavigate, useParams, useRouter } from "@tanstack/
 import {
   type SidebarProjectSortOrder,
   type SidebarThreadSortOrder,
+  type ThreadCleanupInactiveDays,
 } from "@forma/contracts/settings";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { isElectron } from "../env";
@@ -164,6 +166,7 @@ import {
   ThreadStatusPill,
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
+import { bucketThreadsForCleanup, formatThreadCleanupWindowLabel } from "../lib/threadCleanup";
 import { SidebarUpdatePill } from "./sidebar/SidebarUpdatePill";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { CommandDialogTrigger } from "./ui/command";
@@ -240,6 +243,10 @@ function formatProjectMemberActionLabel(
   }
 
   return member.environmentLabel ? `${member.environmentLabel} — ${member.cwd}` : member.cwd;
+}
+
+function formatThreadCountLabel(count: number): string {
+  return `${count} thread${count === 1 ? "" : "s"}`;
 }
 
 function projectGroupingModeDescription(mode: SidebarProjectGroupingMode): string {
@@ -975,6 +982,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const defaultThreadEnvMode = useSettings<ThreadEnvMode>(
     (settings) => settings.defaultThreadEnvMode,
   );
+  const threadCleanupInactiveDays = useSettings<ThreadCleanupInactiveDays>(
+    (settings) => settings.threadCleanupInactiveDays,
+  );
   const projectGroupingSettings = useSettings((settings) => ({
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
     sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
@@ -982,6 +992,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const { updateSettings } = useUpdateSettings();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
   const router = useRouter();
+  const { cleanupInactiveThreads } = useThreadActions();
   const { archiveNow, copyThreadId, copyWorkspacePath, deleteWithConfirmation, markUnread } =
     useThreadRowActions();
   const toggleProject = useUiStateStore((state) => state.toggleProject);
@@ -1059,6 +1070,18 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const sidebarThreadByKeyRef = useRef(sidebarThreadByKey);
   sidebarThreadByKeyRef.current = sidebarThreadByKey;
   const projectThreads = sidebarThreads;
+  const cleanupBuckets = useMemo(
+    () =>
+      bucketThreadsForCleanup({
+        threads: projectThreads,
+        inactiveDays: threadCleanupInactiveDays,
+      }),
+    [projectThreads, threadCleanupInactiveDays],
+  );
+  const cleanupEligibleCount = cleanupBuckets.eligible.length;
+  const cleanupSkippedRunningCount = cleanupBuckets.skippedRunning.length;
+  const cleanupSkippedQueuedCount = cleanupBuckets.skippedQueued.length;
+  const cleanupWindowLabel = formatThreadCleanupWindowLabel(threadCleanupInactiveDays);
   const projectExpanded = useUiStateStore(
     (state) => state.projectExpandedById[project.projectKey] ?? true,
   );
@@ -1084,6 +1107,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const [projectGroupingSelection, setProjectGroupingSelection] = useState<
     SidebarProjectGroupingMode | "inherit"
   >("inherit");
+  const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
+  const [cleanupInFlight, setCleanupInFlight] = useState(false);
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const confirmArchiveButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -1741,6 +1766,45 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [createThreadForProjectMember, project.groupedProjectCount, project.memberProjects],
   );
 
+  const handleCleanupThreadsClick = useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setCleanupDialogOpen(true);
+  }, []);
+
+  const handleConfirmCleanupThreads = useCallback(async () => {
+    if (cleanupInFlight || cleanupBuckets.eligible.length === 0) {
+      return;
+    }
+
+    setCleanupInFlight(true);
+    try {
+      await cleanupInactiveThreads({
+        inactiveDays: threadCleanupInactiveDays,
+        projectDisplayName: project.displayName,
+        projectRefs: project.memberProjectRefs,
+      });
+      setCleanupDialogOpen(false);
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to clean up threads",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    } finally {
+      setCleanupInFlight(false);
+    }
+  }, [
+    cleanupBuckets.eligible.length,
+    cleanupInFlight,
+    cleanupInactiveThreads,
+    project.displayName,
+    project.memberProjectRefs,
+    threadCleanupInactiveDays,
+  ]);
+
   const attemptArchiveThread = useCallback(
     async (threadRef: ScopedThreadRef) => {
       await archiveNow(threadRef);
@@ -2018,7 +2082,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           </span>
         </SidebarMenuButton>
         {/* Environment badge – visible by default, crossfades with the
-            "new thread" button on hover using the same pointer-events +
+            project action cluster on hover using the same pointer-events +
             opacity pattern as the thread row archive/timestamp swap. */}
         {project.environmentPresence === "remote-only" && (
           <Tooltip>
@@ -2044,31 +2108,51 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             </TooltipPopup>
           </Tooltip>
         )}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <div
-                className={cn(
-                  "pointer-events-none absolute top-1 right-1.5 opacity-0 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100",
-                  MICRO_FADE_MOTION_CLASS_NAME,
-                )}
-              >
+        <div
+          className={cn(
+            "pointer-events-none absolute top-1 right-1.5 flex items-center gap-1 opacity-0 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100",
+            MICRO_FADE_MOTION_CLASS_NAME,
+          )}
+        >
+          {cleanupEligibleCount > 0 ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={`Clean up inactive threads in ${project.displayName}`}
+                    data-testid={`project-thread-cleanup-button-${project.id}`}
+                    className="pointer-events-auto inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
+                    onClick={handleCleanupThreadsClick}
+                  >
+                    <PaintbrushIcon className="size-3.5 rotate-180" />
+                  </button>
+                }
+              />
+              <TooltipPopup side="top">
+                {`Clean up ${formatThreadCountLabel(cleanupEligibleCount)} inactive for ${cleanupWindowLabel}`}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
+          <Tooltip>
+            <TooltipTrigger
+              render={
                 <button
                   type="button"
                   aria-label={`Create new thread in ${project.displayName}`}
                   data-testid="new-thread-button"
-                  className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
+                  className="pointer-events-auto inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring [&_svg]:fill-current"
                   onClick={handleCreateThreadClick}
                 >
                   <NewThreadIcon className="size-3.5" />
                 </button>
-              </div>
-            }
-          />
-          <TooltipPopup side="top">
-            {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
-          </TooltipPopup>
-        </Tooltip>
+              }
+            />
+            <TooltipPopup side="top">
+              {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
+            </TooltipPopup>
+          </Tooltip>
+        </div>
       </div>
 
       <SidebarProjectThreadList
@@ -2106,6 +2190,77 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         expandThreadListForProject={expandThreadListForProject}
         collapseThreadListForProject={collapseThreadListForProject}
       />
+
+      <Dialog
+        open={cleanupDialogOpen}
+        onOpenChange={(open) => {
+          if (!cleanupInFlight) {
+            setCleanupDialogOpen(open);
+          }
+        }}
+      >
+        <DialogPopup className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Clean up threads</DialogTitle>
+            <DialogDescription>
+              {`Archive threads in this project row with no user message in the last ${cleanupWindowLabel}.`}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-4">
+            <div className="grid gap-2 rounded-lg border border-border/60 bg-muted/20 p-3">
+              <div className="flex items-center justify-between gap-4 text-sm">
+                <span className="text-foreground">Ready to archive</span>
+                <span
+                  className="font-mono tabular-nums text-foreground"
+                  data-testid={`cleanup-eligible-count-${project.id}`}
+                >
+                  {cleanupEligibleCount}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
+                <span>Skipped while running</span>
+                <span
+                  className="font-mono tabular-nums"
+                  data-testid={`cleanup-skipped-running-count-${project.id}`}
+                >
+                  {cleanupSkippedRunningCount}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-4 text-sm text-muted-foreground">
+                <span>Skipped with queued turns</span>
+                <span
+                  className="font-mono tabular-nums"
+                  data-testid={`cleanup-skipped-queued-count-${project.id}`}
+                >
+                  {cleanupSkippedQueuedCount}
+                </span>
+              </div>
+            </div>
+            {project.groupedProjectCount > 1 ? (
+              <p className="text-xs text-muted-foreground">
+                {`This cleanup spans all ${project.groupedProjectCount} projects represented in this sidebar row.`}
+              </p>
+            ) : null}
+          </DialogPanel>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={cleanupInFlight}
+              onClick={() => setCleanupDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={cleanupInFlight || cleanupEligibleCount === 0}
+              onClick={() => void handleConfirmCleanupThreads()}
+            >
+              {cleanupInFlight
+                ? "Archiving..."
+                : `Archive ${formatThreadCountLabel(cleanupEligibleCount)}`}
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
 
       <Dialog
         open={projectRenameTarget !== null}

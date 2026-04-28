@@ -51,6 +51,7 @@ function makeSecretStorage(available: boolean): DesktopSecretStorage {
 const clientSettings: ClientSettings = {
   confirmThreadArchive: true,
   confirmThreadDelete: false,
+  threadCleanupInactiveDays: 7,
   diffWordWrap: true,
   favorites: [],
   sidebarProjectGroupingMode: "repository_path",

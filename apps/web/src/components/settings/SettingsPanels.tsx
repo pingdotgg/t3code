@@ -19,7 +19,10 @@ import {
   type ServerProviderModel,
 } from "@forma/contracts";
 import { scopeThreadRef } from "@forma/client-runtime";
-import { DEFAULT_UNIFIED_SETTINGS } from "@forma/contracts/settings";
+import {
+  DEFAULT_UNIFIED_SETTINGS,
+  type ThreadCleanupInactiveDays,
+} from "@forma/contracts/settings";
 import { normalizeModelSlug } from "@forma/shared/model";
 import { createModelSelection } from "@forma/shared/model";
 import { Equal } from "effect";
@@ -56,6 +59,7 @@ import {
 } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
+import { formatThreadCleanupWindowLabel } from "../../lib/threadCleanup";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
@@ -86,6 +90,8 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const THREAD_CLEANUP_DAY_OPTIONS: readonly ThreadCleanupInactiveDays[] = [1, 3, 7, 14, 30];
 
 type InstallProviderSettings = {
   provider: ProviderKind;
@@ -468,6 +474,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
+      ...(settings.threadCleanupInactiveDays !== DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays
+        ? ["Thread cleanup window"]
+        : []),
       ...(settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive
         ? ["Archive confirmation"]
         : []),
@@ -486,6 +495,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.threadCleanupInactiveDays,
       settings.timestampFormat,
       theme,
     ],
@@ -983,6 +993,50 @@ export function GeneralSettingsPanel() {
               spellCheck={false}
               aria-label="Add project base directory"
             />
+          }
+        />
+
+        <SettingsRow
+          title="Thread cleanup window"
+          description="Sidebar cleanup archives threads with no user message in this many days."
+          resetAction={
+            settings.threadCleanupInactiveDays !==
+            DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays ? (
+              <SettingResetButton
+                label="thread cleanup window"
+                onClick={() =>
+                  updateSettings({
+                    threadCleanupInactiveDays: DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.threadCleanupInactiveDays)}
+              onValueChange={(value) => {
+                const nextValue = Number(value);
+                if (THREAD_CLEANUP_DAY_OPTIONS.includes(nextValue as ThreadCleanupInactiveDays)) {
+                  updateSettings({
+                    threadCleanupInactiveDays: nextValue as ThreadCleanupInactiveDays,
+                  });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Thread cleanup window">
+                <SelectValue>
+                  {formatThreadCleanupWindowLabel(settings.threadCleanupInactiveDays)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {THREAD_CLEANUP_DAY_OPTIONS.map((days) => (
+                  <SelectItem key={days} hideIndicator value={String(days)}>
+                    {formatThreadCleanupWindowLabel(days)}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
 

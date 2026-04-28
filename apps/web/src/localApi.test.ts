@@ -555,6 +555,7 @@ describe("wsApi", () => {
     const clientSettings = {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
+      threadCleanupInactiveDays: 7 as const,
       diffWordWrap: true,
       favorites: [],
       sidebarProjectGroupingMode: "repository_path" as const,
@@ -613,6 +614,7 @@ describe("wsApi", () => {
     const clientSettings = {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
+      threadCleanupInactiveDays: 7 as const,
       diffWordWrap: true,
       favorites: [],
       sidebarProjectGroupingMode: "repository_path" as const,

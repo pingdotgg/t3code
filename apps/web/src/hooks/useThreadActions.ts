@@ -1,5 +1,6 @@
 import { parseScopedThreadKey, scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
-import { type ScopedThreadRef, ThreadId } from "@forma/contracts";
+import { type ScopedProjectRef, type ScopedThreadRef, ThreadId } from "@forma/contracts";
+import type { ThreadCleanupInactiveDays } from "@forma/contracts/settings";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useRef } from "react";
@@ -13,6 +14,7 @@ import { newCommandId } from "../lib/utils";
 import { readLocalApi } from "../localApi";
 import {
   selectProjectByRef,
+  selectSidebarThreadsForProjectRefs,
   selectThreadByRef,
   selectThreadsForEnvironment,
   useStore,
@@ -21,7 +23,32 @@ import { useTerminalStateStore } from "../terminalStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
+import { bucketThreadsForCleanup } from "../lib/threadCleanup";
 import { useSettings } from "./useSettings";
+
+type ArchiveDispatchResult =
+  | { status: "archived"; projectRef: ScopedProjectRef; threadRef: ScopedThreadRef }
+  | { status: "not-found" | "skipped-queued" | "skipped-running"; threadRef: ScopedThreadRef };
+
+function formatThreadCount(count: number): string {
+  return `${count} thread${count === 1 ? "" : "s"}`;
+}
+
+function formatCleanupSummaryParts(input: {
+  skippedRunningCount: number;
+  skippedQueuedCount: number;
+  failedCount: number;
+}): string[] {
+  return [
+    ...(input.skippedRunningCount > 0
+      ? [`${formatThreadCount(input.skippedRunningCount)} running`]
+      : []),
+    ...(input.skippedQueuedCount > 0
+      ? [`${formatThreadCount(input.skippedQueuedCount)} queued`]
+      : []),
+    ...(input.failedCount > 0 ? [`${formatThreadCount(input.failedCount)} failed`] : []),
+  ];
+}
 
 export function useThreadActions() {
   const sidebarThreadSortOrder = useSettings((settings) => settings.sidebarThreadSortOrder);
@@ -57,15 +84,40 @@ export function useThreadActions() {
     return resolveThreadRouteRef(currentRouteParams);
   }, [router]);
 
-  const archiveThread = useCallback(
-    async (target: ScopedThreadRef) => {
-      const api = readEnvironmentApi(target.environmentId);
-      if (!api) return;
-      const resolved = resolveThreadTarget(target);
-      if (!resolved) return;
+  const dispatchArchiveThread = useCallback(
+    async (input: {
+      target: ScopedThreadRef;
+      mode: "best-effort" | "strict";
+    }): Promise<ArchiveDispatchResult> => {
+      const api = readEnvironmentApi(input.target.environmentId);
+      if (!api) {
+        return {
+          status: "not-found",
+          threadRef: input.target,
+        };
+      }
+      const resolved = resolveThreadTarget(input.target);
+      if (!resolved) {
+        return {
+          status: "not-found",
+          threadRef: input.target,
+        };
+      }
       const { thread, threadRef } = resolved;
       if (thread.session?.status === "running" && thread.session.activeTurnId != null) {
-        throw new Error("Cannot archive a running thread.");
+        if (input.mode === "strict") {
+          throw new Error("Cannot archive a running thread.");
+        }
+        return {
+          status: "skipped-running",
+          threadRef,
+        };
+      }
+      if (input.mode === "best-effort" && thread.turnQueue.items.length > 0) {
+        return {
+          status: "skipped-queued",
+          threadRef,
+        };
       }
 
       await api.orchestration.dispatchCommand({
@@ -73,16 +125,135 @@ export function useThreadActions() {
         commandId: newCommandId(),
         threadId: threadRef.threadId,
       });
+      return {
+        status: "archived",
+        projectRef: scopeProjectRef(thread.environmentId, thread.projectId),
+        threadRef,
+      };
+    },
+    [resolveThreadTarget],
+  );
+
+  const archiveThread = useCallback(
+    async (target: ScopedThreadRef) => {
       const currentRouteThreadRef = getCurrentRouteThreadRef();
+      const result = await dispatchArchiveThread({
+        target,
+        mode: "strict",
+      });
 
       if (
-        currentRouteThreadRef?.threadId === threadRef.threadId &&
-        currentRouteThreadRef.environmentId === threadRef.environmentId
+        result.status === "archived" &&
+        currentRouteThreadRef?.threadId === result.threadRef.threadId &&
+        currentRouteThreadRef.environmentId === result.threadRef.environmentId
       ) {
-        await handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId));
+        await handleNewThreadRef.current(result.projectRef);
       }
     },
-    [getCurrentRouteThreadRef, resolveThreadTarget],
+    [dispatchArchiveThread, getCurrentRouteThreadRef],
+  );
+
+  const cleanupInactiveThreads = useCallback(
+    async (input: {
+      inactiveDays: ThreadCleanupInactiveDays;
+      projectDisplayName: string;
+      projectRefs: readonly ScopedProjectRef[];
+    }) => {
+      const buckets = bucketThreadsForCleanup({
+        threads: selectSidebarThreadsForProjectRefs(useStore.getState(), input.projectRefs),
+        inactiveDays: input.inactiveDays,
+      });
+      let archivedCount = 0;
+      let skippedRunningCount = buckets.skippedRunning.length;
+      let skippedQueuedCount = buckets.skippedQueued.length;
+      let failedCount = 0;
+      const currentRouteThreadRef = getCurrentRouteThreadRef();
+      const currentRouteProjectRef = currentRouteThreadRef
+        ? (() => {
+            const resolvedCurrentRoute = resolveThreadTarget(currentRouteThreadRef);
+            return resolvedCurrentRoute
+              ? scopeProjectRef(
+                  resolvedCurrentRoute.thread.environmentId,
+                  resolvedCurrentRoute.thread.projectId,
+                )
+              : null;
+          })()
+        : null;
+      let archivedCurrentRouteThread = false;
+
+      for (const thread of buckets.eligible) {
+        const isCurrentRouteThread =
+          currentRouteThreadRef?.threadId === thread.id &&
+          currentRouteThreadRef.environmentId === thread.environmentId;
+        try {
+          const result = await dispatchArchiveThread({
+            target: scopeThreadRef(thread.environmentId, thread.id),
+            mode: "best-effort",
+          });
+          switch (result.status) {
+            case "archived":
+              archivedCount += 1;
+              if (isCurrentRouteThread) {
+                archivedCurrentRouteThread = true;
+              }
+              break;
+            case "skipped-running":
+              skippedRunningCount += 1;
+              break;
+            case "skipped-queued":
+              skippedQueuedCount += 1;
+              break;
+            case "not-found":
+              failedCount += 1;
+              break;
+          }
+        } catch {
+          failedCount += 1;
+        }
+      }
+
+      if (archivedCurrentRouteThread && currentRouteProjectRef) {
+        await handleNewThreadRef.current(currentRouteProjectRef);
+      }
+
+      const detailParts = formatCleanupSummaryParts({
+        skippedRunningCount,
+        skippedQueuedCount,
+        failedCount,
+      });
+      const detail =
+        detailParts.length > 0
+          ? `Skipped ${detailParts.join(", ")} in ${input.projectDisplayName}.`
+          : archivedCount > 0
+            ? `Cleaned up ${input.projectDisplayName}.`
+            : `No eligible inactive threads remained in ${input.projectDisplayName}.`;
+      if (archivedCount > 0) {
+        toastManager.add(
+          stackedThreadToast({
+            type: failedCount > 0 ? "warning" : "success",
+            title: `Archived ${formatThreadCount(archivedCount)}`,
+            description: detail,
+          }),
+        );
+      } else {
+        toastManager.add(
+          stackedThreadToast({
+            type: failedCount > 0 || detailParts.length > 0 ? "warning" : "info",
+            title: "No inactive threads archived",
+            description: detail,
+          }),
+        );
+      }
+
+      return {
+        archivedCount,
+        eligibleCount: buckets.eligible.length,
+        failedCount,
+        skippedQueuedCount,
+        skippedRunningCount,
+      };
+    },
+    [dispatchArchiveThread, getCurrentRouteThreadRef, resolveThreadTarget],
   );
 
   const unarchiveThread = useCallback(async (target: ScopedThreadRef) => {
@@ -274,6 +445,7 @@ export function useThreadActions() {
 
   return {
     archiveThread,
+    cleanupInactiveThreads,
     unarchiveThread,
     deleteThread,
     confirmAndDeleteThread,

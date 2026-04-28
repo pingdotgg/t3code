@@ -905,6 +905,139 @@ function createSnapshotWithSecondaryProject(options?: {
   };
 }
 
+function isoDaysAgo(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function setThreadLatestUserMessageAt(
+  snapshot: OrchestrationReadModel,
+  threadId: ThreadId,
+  createdAt: string,
+): OrchestrationReadModel {
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) => {
+      if (thread.id !== threadId) {
+        return thread;
+      }
+
+      const lastUserMessageIndex = thread.messages.findLastIndex(
+        (message) => message.role === "user",
+      );
+      if (lastUserMessageIndex < 0) {
+        return {
+          ...thread,
+          updatedAt: createdAt,
+        };
+      }
+
+      return {
+        ...thread,
+        updatedAt: createdAt,
+        messages: thread.messages.map((message, index) =>
+          index === lastUserMessageIndex
+            ? { ...message, createdAt, updatedAt: createdAt }
+            : message,
+        ),
+      };
+    }),
+  };
+}
+
+function createSnapshotWithGroupedCleanupThreads(): OrchestrationReadModel {
+  const staleAt = isoDaysAgo(5);
+  const repositoryIdentity = {
+    canonicalKey: "github.com/acme/project",
+    locator: {
+      source: "git-remote" as const,
+      remoteName: "origin",
+      remoteUrl: "https://github.com/acme/project.git",
+    },
+    rootPath: "/repo/project",
+    displayName: "Acme Project",
+    provider: "github",
+    owner: "acme",
+    name: "project",
+  };
+  const baseSnapshot = setThreadLatestUserMessageAt(
+    createSnapshotForTargetUser({
+      targetMessageId: "msg-user-grouped-cleanup-target" as MessageId,
+      targetText: "grouped cleanup target",
+    }),
+    THREAD_ID,
+    staleAt,
+  );
+
+  return {
+    ...baseSnapshot,
+    projects: [
+      {
+        ...baseSnapshot.projects[0]!,
+        title: "App",
+        workspaceRoot: "/repo/project/app",
+        repositoryIdentity,
+      },
+      {
+        id: SECOND_PROJECT_ID,
+        title: "Docs",
+        workspaceRoot: "/repo/project/docs",
+        repositoryIdentity,
+        defaultModelSelection: { provider: "codex", model: "gpt-5" },
+        scripts: [],
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+      },
+    ],
+    threads: [
+      ...baseSnapshot.threads,
+      {
+        id: "thread-grouped-cleanup" as ThreadId,
+        projectId: SECOND_PROJECT_ID,
+        title: "Docs stale thread",
+        modelSelection: { provider: "codex", model: "gpt-5" },
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        branch: "docs/cleanup",
+        worktreePath: null,
+        latestTurn: null,
+        createdAt: staleAt,
+        updatedAt: staleAt,
+        archivedAt: null,
+        deletedAt: null,
+        messages: [
+          {
+            id: "msg-user-grouped-cleanup-secondary" as MessageId,
+            role: "user",
+            text: "grouped stale thread",
+            turnId: null,
+            streaming: false,
+            createdAt: staleAt,
+            updatedAt: staleAt,
+          },
+        ],
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        turnQueue: {
+          items: [],
+          status: "idle",
+          pauseReason: null,
+        },
+        session: {
+          threadId: "thread-grouped-cleanup" as ThreadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: staleAt,
+        },
+      },
+    ],
+  };
+}
+
 function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
     targetMessageId: "msg-user-pending-input-target" as MessageId,
@@ -1260,6 +1393,11 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
       exitCode: null,
       exitSignal: null,
       updatedAt: NOW_ISO,
+    };
+  }
+  if (tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+    return {
+      sequence: fixture.snapshot.snapshotSequence + 1,
     };
   }
   return {};
@@ -4742,6 +4880,236 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await expect.element(confirmButton).toBeVisible();
     } finally {
       localStorage.removeItem("forma:client-settings:v1");
+      await mounted.cleanup();
+    }
+  });
+
+  it("hides the project cleanup action when no inactive threads are eligible", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: setThreadLatestUserMessageAt(
+        createSnapshotForTargetUser({
+          targetMessageId: "msg-user-cleanup-hidden-test" as MessageId,
+          targetText: "cleanup hidden target",
+        }),
+        THREAD_ID,
+        new Date().toISOString(),
+      ),
+    });
+
+    try {
+      await expect.element(page.getByTestId("new-thread-button")).toBeInTheDocument();
+      expect(
+        document.querySelector(`[data-testid="project-thread-cleanup-button-${PROJECT_ID}"]`),
+      ).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("archives only eligible inactive threads during sidebar cleanup and creates one draft replacement", async () => {
+    const staleAt = isoDaysAgo(5);
+    const baseSnapshot = setThreadLatestUserMessageAt(
+      createSnapshotForTargetUser({
+        targetMessageId: "msg-user-cleanup-target" as MessageId,
+        targetText: "cleanup target",
+      }),
+      THREAD_ID,
+      staleAt,
+    );
+    const snapshot: OrchestrationReadModel = {
+      ...baseSnapshot,
+      threads: [
+        ...baseSnapshot.threads,
+        {
+          id: "thread-cleanup-running" as ThreadId,
+          projectId: PROJECT_ID,
+          title: "Cleanup running thread",
+          modelSelection: { provider: "codex", model: "gpt-5" },
+          interactionMode: "default",
+          runtimeMode: "full-access",
+          branch: "cleanup/running",
+          worktreePath: null,
+          latestTurn: null,
+          createdAt: staleAt,
+          updatedAt: staleAt,
+          archivedAt: null,
+          deletedAt: null,
+          messages: [
+            {
+              id: "msg-user-cleanup-running" as MessageId,
+              role: "user",
+              text: "running cleanup thread",
+              turnId: null,
+              streaming: false,
+              createdAt: staleAt,
+              updatedAt: staleAt,
+            },
+          ],
+          activities: [],
+          proposedPlans: [],
+          checkpoints: [],
+          turnQueue: {
+            items: [],
+            status: "idle",
+            pauseReason: null,
+          },
+          session: {
+            threadId: "thread-cleanup-running" as ThreadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: "turn-cleanup-running" as TurnId,
+            lastError: null,
+            updatedAt: staleAt,
+          },
+        },
+        {
+          id: "thread-cleanup-queued" as ThreadId,
+          projectId: PROJECT_ID,
+          title: "Cleanup queued thread",
+          modelSelection: { provider: "codex", model: "gpt-5" },
+          interactionMode: "default",
+          runtimeMode: "full-access",
+          branch: "cleanup/queued",
+          worktreePath: null,
+          latestTurn: null,
+          createdAt: staleAt,
+          updatedAt: staleAt,
+          archivedAt: null,
+          deletedAt: null,
+          messages: [
+            {
+              id: "msg-user-cleanup-queued" as MessageId,
+              role: "user",
+              text: "queued cleanup thread",
+              turnId: null,
+              streaming: false,
+              createdAt: staleAt,
+              updatedAt: staleAt,
+            },
+          ],
+          activities: [],
+          proposedPlans: [],
+          checkpoints: [],
+          turnQueue: {
+            items: [
+              {
+                messageId: "msg-user-cleanup-queued" as MessageId,
+                text: "queued cleanup thread",
+                attachmentIds: [],
+                modelSelection: { provider: "codex", model: "gpt-5" },
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                titleSeed: null,
+                sourceProposedPlan: null,
+                queuedAt: staleAt,
+              },
+            ],
+            status: "queued",
+            pauseReason: null,
+          },
+          session: {
+            threadId: "thread-cleanup-queued" as ThreadId,
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: staleAt,
+          },
+        },
+      ],
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+    });
+
+    try {
+      const cleanupButton = page.getByTestId(`project-thread-cleanup-button-${PROJECT_ID}`);
+      await expect.element(cleanupButton).toBeInTheDocument();
+      await cleanupButton.click();
+
+      await expect.element(page.getByText("Clean up threads")).toBeInTheDocument();
+      await expect
+        .element(page.getByTestId(`cleanup-eligible-count-${PROJECT_ID}`))
+        .toHaveTextContent("1");
+      await expect
+        .element(page.getByTestId(`cleanup-skipped-running-count-${PROJECT_ID}`))
+        .toHaveTextContent("1");
+      await expect
+        .element(page.getByTestId(`cleanup-skipped-queued-count-${PROJECT_ID}`))
+        .toHaveTextContent("1");
+
+      wsRequests.length = 0;
+      await page.getByRole("button", { name: "Archive 1 thread" }).click();
+
+      await vi.waitFor(
+        () => {
+          const archiveRequests = wsRequests.filter(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.archive",
+          ) as Array<{ threadId?: ThreadId }>;
+          expect(archiveRequests.map((request) => request.threadId)).toEqual([THREAD_ID]);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await vi.waitFor(
+        () => {
+          const draftThreads = Object.values(
+            useComposerDraftStore.getState().draftThreadsByThreadKey,
+          );
+          expect(draftThreads).toHaveLength(1);
+          expect(draftThreads[0]?.projectId).toBe(PROJECT_ID);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("cleans grouped project rows across every represented project", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithGroupedCleanupThreads(),
+    });
+
+    try {
+      const cleanupButton = page.getByTestId(`project-thread-cleanup-button-${PROJECT_ID}`);
+      await expect.element(cleanupButton).toBeInTheDocument();
+      await cleanupButton.click();
+
+      await expect
+        .element(
+          page.getByText("This cleanup spans all 2 projects represented in this sidebar row."),
+        )
+        .toBeInTheDocument();
+      await expect
+        .element(page.getByTestId(`cleanup-eligible-count-${PROJECT_ID}`))
+        .toHaveTextContent("2");
+
+      wsRequests.length = 0;
+      await page.getByRole("button", { name: "Archive 2 threads" }).click();
+
+      await vi.waitFor(
+        () => {
+          const archiveRequests = wsRequests.filter(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.archive",
+          ) as Array<{ threadId?: ThreadId }>;
+          expect(archiveRequests.map((request) => request.threadId).toSorted()).toEqual(
+            [THREAD_ID, "thread-grouped-cleanup" as ThreadId].toSorted(),
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
       await mounted.cleanup();
     }
   });

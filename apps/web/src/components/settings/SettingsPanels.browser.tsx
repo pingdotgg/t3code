@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { __resetLocalApiForTests } from "../../localApi";
+import { CLIENT_SETTINGS_STORAGE_KEY } from "../../clientPersistenceStorage";
 import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
 import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
 import { THEME_STORAGE_KEY } from "../../theme";
@@ -593,6 +594,37 @@ describe("GeneralSettingsPanel observability", () => {
       const lightOption = document.querySelector('[data-theme-option="light"]');
       expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
       expect(lightOption?.hasAttribute("data-checked")).toBe(true);
+    });
+  });
+
+  it("persists and resets the thread cleanup window", async () => {
+    await renderGeneralSettingsPanel();
+
+    const cleanupWindowTrigger = page.getByLabelText("Thread cleanup window");
+    await expect.element(cleanupWindowTrigger).toBeInTheDocument();
+    await cleanupWindowTrigger.click();
+    await page.getByText("7 days").click();
+
+    await vi.waitFor(() => {
+      const persisted = JSON.parse(localStorage.getItem(CLIENT_SETTINGS_STORAGE_KEY) ?? "{}") as {
+        threadCleanupInactiveDays?: number;
+      };
+      expect(persisted.threadCleanupInactiveDays).toBe(7);
+      expect(document.querySelector('[aria-label="Thread cleanup window"]')?.textContent).toContain(
+        "7 days",
+      );
+    });
+
+    await page.getByRole("button", { name: "Reset thread cleanup window to default" }).click();
+
+    await vi.waitFor(() => {
+      const persisted = JSON.parse(localStorage.getItem(CLIENT_SETTINGS_STORAGE_KEY) ?? "{}") as {
+        threadCleanupInactiveDays?: number;
+      };
+      expect(persisted.threadCleanupInactiveDays).toBe(1);
+      expect(document.querySelector('[aria-label="Thread cleanup window"]')?.textContent).toContain(
+        "1 day",
+      );
     });
   });
 
