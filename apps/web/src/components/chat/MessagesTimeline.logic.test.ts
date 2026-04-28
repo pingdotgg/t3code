@@ -630,16 +630,19 @@ describe("computeActiveMinimapIndex", () => {
   const makeState = ({
     scroll,
     scrollLength = 500,
+    isAtEnd = false,
     positionsByKey = {},
     positionsByIndex = {},
   }: {
     scroll: number;
     scrollLength?: number;
+    isAtEnd?: boolean;
     positionsByKey?: Record<string, number>;
     positionsByIndex?: Record<number, number>;
   }): MinimapListStateSnapshot => ({
     scroll,
     scrollLength,
+    isAtEnd,
     positionByKey: (key) => positionsByKey[key],
     positionAtIndex: (index) => positionsByIndex[index],
   });
@@ -758,6 +761,40 @@ describe("computeActiveMinimapIndex", () => {
       positionsByKey: { a: 100, c: 1200 },
     });
     expect(computeActiveMinimapIndex(state, [a, b, c])).toBe(0);
+  });
+
+  it("activates the last entry when the list is scrolled to the end", () => {
+    // Canonical case: a short final prompt (here: c at top=1200) sits at the
+    // bottom of the viewport but its top never reaches the viewport top.
+    // Without the at-end short-circuit, the viewport-top rule would keep an
+    // earlier prompt active while the reader is plainly looking at the last.
+    const a = makeEntry(1, "a");
+    const b = makeEntry(2, "b");
+    const c = makeEntry(3, "c");
+    const state = makeState({
+      scroll: 900,
+      scrollLength: 500,
+      isAtEnd: true,
+      positionsByKey: { a: 100, b: 500, c: 1200 },
+    });
+    expect(computeActiveMinimapIndex(state, [a, b, c])).toBe(2);
+  });
+
+  it("ignores isAtEnd=false and falls through to the viewport-top rule", () => {
+    // Sanity-check: the at-end short-circuit doesn't fire while the reader
+    // is mid-scroll. Same scroll position as the previous test, but `isAtEnd`
+    // is false, so the normal walk picks the entry whose top is at/above the
+    // viewport top + 8 buffer.
+    const a = makeEntry(1, "a");
+    const b = makeEntry(2, "b");
+    const c = makeEntry(3, "c");
+    const state = makeState({
+      scroll: 900,
+      scrollLength: 500,
+      isAtEnd: false,
+      positionsByKey: { a: 100, b: 500, c: 1200 },
+    });
+    expect(computeActiveMinimapIndex(state, [a, b, c])).toBe(1);
   });
 });
 

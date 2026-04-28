@@ -13,6 +13,12 @@ export interface MinimapUserMessageEntry {
 export interface MinimapListStateSnapshot {
   scroll: number;
   scrollLength: number;
+  /** True when the list is scrolled to (or within LegendList's at-end
+   *  threshold of) the bottom. Used by `computeActiveMinimapIndex` to pin
+   *  the last user message as active when the layout never lets its top
+   *  reach the viewport top — a short final prompt with nothing below it
+   *  is the canonical case. */
+  isAtEnd?: boolean;
   positionByKey?: (key: string) => number | undefined;
   positionAtIndex?: (index: number) => number | undefined;
 }
@@ -152,6 +158,15 @@ export function computeActiveMinimapIndex(
 ): number | undefined {
   if (entries.length === 0) return undefined;
   if (state.scrollLength <= 0) return undefined;
+
+  // When the list is scrolled to the very end, the last user message is what
+  // the reader is looking at — even if the layout never lets its top reach
+  // the viewport top (a short final prompt with no content below it is the
+  // canonical case). Without this short-circuit, the viewport-top rule keeps
+  // an earlier prompt lit while the reader is plainly looking at the latest.
+  if (state.isAtEnd === true) {
+    return entries.length - 1;
+  }
 
   const threshold = state.scroll + 8;
   let next: number | undefined;
