@@ -1579,9 +1579,18 @@ export const ChatComposer = memo(
           return true;
         }
       }
-      if (key === "Enter" && !event.shiftKey) {
-        void onSend();
-        return true;
+      if (key === "Enter") {
+        const sendKey = settings.composerSendKey;
+        const wantsSend =
+          sendKey === "enter"
+            ? !event.shiftKey
+            : sendKey === "shift-enter"
+              ? event.shiftKey
+              : false;
+        if (wantsSend) {
+          void onSend();
+          return true;
+        }
       }
       return false;
     };

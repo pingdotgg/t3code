@@ -395,6 +395,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
+      ...(settings.composerSendKey !== DEFAULT_UNIFIED_SETTINGS.composerSendKey
+        ? ["Composer send key"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -414,6 +417,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
+      settings.composerSendKey,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
@@ -977,6 +981,54 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="worktree">
                   New worktree
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Composer send key"
+          description="Choose which keystroke submits the composer. Use 'Send button only' on touch devices to avoid accidental sends from the soft keyboard's Enter."
+          resetAction={
+            settings.composerSendKey !== DEFAULT_UNIFIED_SETTINGS.composerSendKey ? (
+              <SettingResetButton
+                label="composer send key"
+                onClick={() =>
+                  updateSettings({
+                    composerSendKey: DEFAULT_UNIFIED_SETTINGS.composerSendKey,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.composerSendKey}
+              onValueChange={(value) => {
+                if (value === "enter" || value === "shift-enter" || value === "button-only") {
+                  updateSettings({ composerSendKey: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Composer send key">
+                <SelectValue>
+                  {settings.composerSendKey === "shift-enter"
+                    ? "Shift + Enter"
+                    : settings.composerSendKey === "button-only"
+                      ? "Send button only"
+                      : "Enter"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="enter">
+                  Enter
+                </SelectItem>
+                <SelectItem hideIndicator value="shift-enter">
+                  Shift + Enter
+                </SelectItem>
+                <SelectItem hideIndicator value="button-only">
+                  Send button only
                 </SelectItem>
               </SelectPopup>
             </Select>
