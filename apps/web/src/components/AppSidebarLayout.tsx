@@ -1,12 +1,25 @@
 import { useEffect, type ReactNode } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouterState } from "@tanstack/react-router";
 
 import ThreadSidebar from "./Sidebar";
-import { Sidebar, SidebarProvider, SidebarRail } from "./ui/sidebar";
+import { Sidebar, SidebarProvider, SidebarRail, useSidebar } from "./ui/sidebar";
 import {
   clearShortcutModifierState,
   syncShortcutModifierStateFromKeyboardEvent,
 } from "../shortcutModifierState";
+
+function CloseMobileSidebarOnNavigate() {
+  const { isMobile, openMobile, setOpenMobile } = useSidebar();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  useEffect(() => {
+    if (isMobile && openMobile) {
+      setOpenMobile(false);
+    }
+    // Only close on pathname changes — isMobile/openMobile flips alone shouldn't dismiss.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+  return null;
+}
 
 const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
 const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
@@ -55,6 +68,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
 
   return (
     <SidebarProvider className="h-dvh! min-h-0!" defaultOpen>
+      <CloseMobileSidebarOnNavigate />
       <Sidebar
         side="left"
         collapsible="offcanvas"
