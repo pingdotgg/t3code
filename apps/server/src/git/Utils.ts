@@ -7,11 +7,21 @@ import { Schema } from "effect";
 
 import { TextGenerationError } from "@t3tools/contracts";
 
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
 export function isGitRepository(cwd: string): boolean {
-  return existsSync(join(cwd, ".git"));
+  if (existsSync(join(cwd, ".git"))) {
+    return true;
+  }
+
+  const result = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  return result.status === 0 && result.stdout.trim() === "true";
 }
 
 /** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
