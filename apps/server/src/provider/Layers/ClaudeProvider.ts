@@ -811,7 +811,7 @@ export const ClaudeProviderLive = Layer.effect(
         ),
       (input) =>
         Effect.gen(function* () {
-          const key = "claude-usage-probe";
+          const key = input.binaryPath;
           const currentEntry = (yield* Ref.get(usageProbeStateRef)).get(key);
           const isFresh =
             currentEntry !== undefined && Date.now() - currentEntry.fetchedAtMs < usageProbeTtlMs;
