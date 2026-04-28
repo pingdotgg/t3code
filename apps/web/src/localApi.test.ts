@@ -611,6 +611,10 @@ describe("wsApi", () => {
       sidebarProjectGroupingOverrides: {
         "environment-local:/tmp/project": "separate" as const,
       },
+      sidebarProjectColorizing: false,
+      sidebarProjectColorOverrides: {
+        "environment-local:/tmp/project": "indigo" as const,
+      },
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,
       sidebarThreadPreviewCount: 6,
@@ -673,6 +677,10 @@ describe("wsApi", () => {
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {
         "environment-local:/tmp/project": "separate" as const,
+      },
+      sidebarProjectColorizing: false,
+      sidebarProjectColorOverrides: {
+        "environment-local:/tmp/project": "indigo" as const,
       },
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,

@@ -402,6 +402,13 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffIgnoreWhitespace !== DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace
         ? ["Diff whitespace changes"]
         : []),
+      // Either the toggle is non-default, or the user has picked custom colors
+      // for one or more projects — both flow through Restore defaults so the
+      // single label covers both pieces of state.
+      ...(settings.sidebarProjectColorizing !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectColorizing ||
+      Object.keys(settings.sidebarProjectColorOverrides).length > 0
+        ? ["Sidebar project colors"]
+        : []),
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
@@ -438,6 +445,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
       settings.sidebarThreadPreviewCount,
+      settings.sidebarProjectColorizing,
+      settings.sidebarProjectColorOverrides,
       settings.timestampFormat,
       theme,
     ],
@@ -638,6 +647,33 @@ export function GeneralSettingsPanel() {
                 updateSettings({ diffIgnoreWhitespace: Boolean(checked) })
               }
               aria-label="Hide whitespace changes by default"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Sidebar project colors"
+          description="Tint each project with its own muted color and show a color dot you can click to change it."
+          resetAction={
+            settings.sidebarProjectColorizing !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarProjectColorizing ? (
+              <SettingResetButton
+                label="sidebar project colors"
+                onClick={() =>
+                  updateSettings({
+                    sidebarProjectColorizing: DEFAULT_UNIFIED_SETTINGS.sidebarProjectColorizing,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarProjectColorizing}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarProjectColorizing: Boolean(checked) })
+              }
+              aria-label="Color each sidebar project group"
             />
           }
         />
