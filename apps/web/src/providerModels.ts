@@ -1,25 +1,23 @@
 import {
   DEFAULT_MODEL_BY_PROVIDER,
-  type CursorModelOptions,
   type ModelCapabilities,
   type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import {
-  hasEffortLevel,
-  normalizeModelSlug,
-  resolveContextWindow,
-  trimOrNull,
-} from "@t3tools/shared/model";
+import { createModelCapabilities, normalizeModelSlug } from "@t3tools/shared/model";
 
-const EMPTY_CAPABILITIES: ModelCapabilities = {
-  reasoningEffortLevels: [],
-  supportsFastMode: false,
-  supportsThinkingToggle: false,
-  contextWindowOptions: [],
-  promptInjectedEffortLevels: [],
-};
+const EMPTY_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [],
+});
+
+export function formatProviderKindLabel(provider: ProviderKind): string {
+  return provider
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
 
 export function getProviderModels(
   providers: ReadonlyArray<ServerProvider>,
@@ -33,6 +31,21 @@ export function getProviderSnapshot(
   provider: ProviderKind,
 ): ServerProvider | undefined {
   return providers.find((candidate) => candidate.provider === provider);
+}
+
+export function getProviderDisplayName(
+  providers: ReadonlyArray<ServerProvider>,
+  provider: ProviderKind,
+): string {
+  const snapshot = getProviderSnapshot(providers, provider);
+  return snapshot?.displayName?.trim() || formatProviderKindLabel(provider);
+}
+
+export function getProviderInteractionModeToggle(
+  providers: ReadonlyArray<ServerProvider>,
+  provider: ProviderKind,
+): boolean {
+  return getProviderSnapshot(providers, provider)?.showInteractionModeToggle ?? true;
 }
 
 export function isProviderEnabled(
@@ -75,31 +88,4 @@ export function getDefaultServerModel(
     models[0]?.slug ??
     DEFAULT_MODEL_BY_PROVIDER[provider]
   );
-}
-
-export function normalizeCursorModelOptionsWithCapabilities(
-  caps: ModelCapabilities,
-  modelOptions: CursorModelOptions | null | undefined,
-): CursorModelOptions | undefined {
-  const reasoning = trimOrNull(modelOptions?.reasoning);
-  const reasoningValue =
-    reasoning && hasEffortLevel(caps, reasoning)
-      ? (reasoning as CursorModelOptions["reasoning"])
-      : undefined;
-  const fastMode =
-    caps.supportsFastMode && typeof modelOptions?.fastMode === "boolean"
-      ? modelOptions.fastMode
-      : undefined;
-  const thinking =
-    caps.supportsThinkingToggle && typeof modelOptions?.thinking === "boolean"
-      ? modelOptions.thinking
-      : undefined;
-  const contextWindow = resolveContextWindow(caps, modelOptions?.contextWindow);
-  const nextOptions: CursorModelOptions = {
-    ...(reasoningValue ? { reasoning: reasoningValue } : {}),
-    ...(fastMode !== undefined ? { fastMode } : {}),
-    ...(thinking !== undefined ? { thinking } : {}),
-    ...(contextWindow ? { contextWindow } : {}),
-  };
-  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }

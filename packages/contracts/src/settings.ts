@@ -3,11 +3,8 @@ import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import {
-  ClaudeModelOptions,
-  CodexModelOptions,
-  CursorModelOptions,
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
-  OpenCodeModelOptions,
+  ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection, ProviderKind } from "./orchestration.ts";
 
@@ -34,6 +31,7 @@ export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
 
 export const ClientSettingsSchema = Schema.Struct({
+  autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -170,50 +168,26 @@ export const DEFAULT_UNIFIED_SETTINGS: UnifiedSettings = {
 
 // ── Server Settings Patch (replace with a Schema.deepPartial if available) ──────────────────────────────────────────
 
-const CodexModelOptionsPatch = Schema.Struct({
-  reasoningEffort: Schema.optionalKey(CodexModelOptions.fields.reasoningEffort),
-  fastMode: Schema.optionalKey(CodexModelOptions.fields.fastMode),
-});
-
-const ClaudeModelOptionsPatch = Schema.Struct({
-  thinking: Schema.optionalKey(ClaudeModelOptions.fields.thinking),
-  effort: Schema.optionalKey(ClaudeModelOptions.fields.effort),
-  fastMode: Schema.optionalKey(ClaudeModelOptions.fields.fastMode),
-  contextWindow: Schema.optionalKey(ClaudeModelOptions.fields.contextWindow),
-});
-
-const CursorModelOptionsPatch = Schema.Struct({
-  reasoning: Schema.optionalKey(CursorModelOptions.fields.reasoning),
-  fastMode: Schema.optionalKey(CursorModelOptions.fields.fastMode),
-  thinking: Schema.optionalKey(CursorModelOptions.fields.thinking),
-  contextWindow: Schema.optionalKey(CursorModelOptions.fields.contextWindow),
-});
-
-const OpenCodeModelOptionsPatch = Schema.Struct({
-  variant: Schema.optionalKey(OpenCodeModelOptions.fields.variant),
-  agent: Schema.optionalKey(OpenCodeModelOptions.fields.agent),
-});
-
 const ModelSelectionPatch = Schema.Union([
   Schema.Struct({
     provider: Schema.optionalKey(Schema.Literal("codex")),
     model: Schema.optionalKey(TrimmedNonEmptyString),
-    options: Schema.optionalKey(CodexModelOptionsPatch),
+    options: Schema.optionalKey(ProviderOptionSelections),
   }),
   Schema.Struct({
     provider: Schema.optionalKey(Schema.Literal("claudeAgent")),
     model: Schema.optionalKey(TrimmedNonEmptyString),
-    options: Schema.optionalKey(ClaudeModelOptionsPatch),
+    options: Schema.optionalKey(ProviderOptionSelections),
   }),
   Schema.Struct({
     provider: Schema.optionalKey(Schema.Literal("cursor")),
     model: Schema.optionalKey(TrimmedNonEmptyString),
-    options: Schema.optionalKey(CursorModelOptionsPatch),
+    options: Schema.optionalKey(ProviderOptionSelections),
   }),
   Schema.Struct({
     provider: Schema.optionalKey(Schema.Literal("opencode")),
     model: Schema.optionalKey(TrimmedNonEmptyString),
-    options: Schema.optionalKey(OpenCodeModelOptionsPatch),
+    options: Schema.optionalKey(ProviderOptionSelections),
   }),
 ]);
 
@@ -270,6 +244,7 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffWordWrap: Schema.optionalKey(Schema.Boolean),

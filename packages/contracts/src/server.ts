@@ -107,6 +107,9 @@ export type ServerProviderUsageLimits = typeof ServerProviderUsageLimits.Type;
 
 export const ServerProvider = Schema.Struct({
   provider: ProviderKind,
+  displayName: Schema.optional(TrimmedNonEmptyString),
+  badgeLabel: Schema.optional(TrimmedNonEmptyString),
+  showInteractionModeToggle: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
