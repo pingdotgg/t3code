@@ -302,7 +302,17 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
-      client.request("account/rateLimits/read", undefined).pipe(Effect.catch(() => Effect.void))
+      client.request("account/rateLimits/read", undefined).pipe(
+        Effect.catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          const isExpected =
+            message.includes("not found") ||
+            message.includes("not available") ||
+            message.includes("no rate limit") ||
+            message.includes("unavailable");
+          return isExpected ? Effect.void : Effect.fail(error as CodexErrors.CodexAppServerError);
+        }),
+      ),
     ],
     { concurrency: "unbounded" },
   );

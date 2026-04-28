@@ -994,12 +994,22 @@ export const ClaudeProviderLive = Layer.effect(
         ),
       (input) =>
         Effect.gen(function* () {
-          const key = JSON.stringify([input.binaryPath, input.launchArgs]);
+          const key = "claude-usage-probe";
           const currentEntry = (yield* Ref.get(usageProbeStateRef)).get(key);
           const isFresh =
             currentEntry !== undefined && Date.now() - currentEntry.fetchedAtMs < usageProbeTtlMs;
 
           if ((!currentEntry || !isFresh) && !currentEntry?.inFlight) {
+            yield* Ref.update(usageProbeStateRef, (current) => {
+              const next = new Map(current);
+              const existing = next.get(key);
+              next.set(key, {
+                rawOutput: existing?.rawOutput ?? "",
+                fetchedAtMs: existing?.fetchedAtMs ?? 0,
+                inFlight: true,
+              });
+              return next;
+            });
             yield* Effect.sync(() => {
               void Effect.runPromiseExit(
                 refreshUsageProbe(key, input.binaryPath, input.launchArgs),

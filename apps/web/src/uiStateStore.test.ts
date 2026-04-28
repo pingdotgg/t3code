@@ -409,6 +409,7 @@ describe("uiStateStore pure functions", () => {
 });
 
 describe("uiStateStore persistence round-trip", () => {
+  // eslint-disable-next-line unicorn/consistent-function-scoping
   function createLocalStorageStub(): Storage {
     const store = new Map<string, string>();
     return {

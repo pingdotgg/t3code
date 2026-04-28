@@ -272,8 +272,14 @@ function getUsageResetLabel(resetsAt: string | undefined): string | null {
   if (!Number.isFinite(diffMs) || diffMs <= 0) {
     return null;
   }
-  const dayMs = 24 * 60 * 60 * 1000;
-  if (diffMs >= dayMs && diffMs < dayMs * 2) {
+  const now = new Date();
+  const resetDate = new Date(resetsAt);
+  const tomorrow = new Date(now);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const isResetTomorrow =
+    resetDate.toDateString() !== now.toDateString() &&
+    resetDate.toDateString() === tomorrow.toDateString();
+  if (isResetTomorrow) {
     return "Resets tomorrow";
   }
   const relativeLabel = formatRelativeTimeUntilLabel(resetsAt);

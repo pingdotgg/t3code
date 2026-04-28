@@ -18,7 +18,6 @@ import type { OpenCodeInventory } from "../opencodeRuntime.ts";
 
 const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
 
-
 const runtimeMock = {
   state: {
     runVersionError: null as Error | null,

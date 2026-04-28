@@ -61,11 +61,13 @@ import {
 async function latestSpawnedChild(): Promise<MockPtyChild> {
   // Wait for dynamic import to resolve and spawn to be called
   await vi.waitFor(() => {
-    if (!spawnMock.mock.results.at(-1)?.value) {
+    const result = spawnMock.mock.results.at(-1)?.value;
+    if (!result) {
       throw new Error("Expected node-pty spawn to be called.");
     }
+    return result;
   });
-  return spawnMock.mock.results.at(-1)?.value!;
+  return spawnMock.mock.results.at(-1)!.value as MockPtyChild;
 }
 
 describe("claudeUsageProbe", () => {
