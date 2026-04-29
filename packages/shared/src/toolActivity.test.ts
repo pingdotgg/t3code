@@ -58,6 +58,15 @@ describe("toolActivity", () => {
     expect(normalizeCommandActivityPayload({ detail: "Bash: bun test" }).command).toBe("bun test");
   });
 
+  it("does not match executable prefixes inside longer words", () => {
+    expect(normalizeCommandActivityPayload({ detail: "google search" }).command).toBeNull();
+    expect(normalizeCommandActivityPayload({ detail: "shell command" }).command).toBeNull();
+    expect(normalizeCommandActivityPayload({ detail: "go test ./..." }).command).toBe(
+      "go test ./...",
+    );
+    expect(normalizeCommandActivityPayload({ detail: "sh -c 'echo ok'" }).command).toBe("echo ok");
+  });
+
   it("unwraps shell command wrappers and preserves the raw command", () => {
     expect(
       normalizeCommandActivityPayload({

@@ -230,7 +230,9 @@ function unwrapKnownShellCommandWrapper(value: string): string {
   return unwrapCommandRemainder(split.rest, spec.wrapperFlagPattern) ?? value;
 }
 
-function commandCandidate(value: unknown): { command: string; rawCommand: string | null } | null {
+export function normalizeToolCommandCandidate(
+  value: unknown,
+): { command: string; rawCommand: string | null } | null {
   const formatted = formatCommandValue(value);
   if (!formatted) {
     return null;
@@ -246,7 +248,7 @@ function safeCommandCandidate(value: unknown): {
   command: string;
   rawCommand: string | null;
 } | null {
-  const candidate = commandCandidate(value);
+  const candidate = normalizeToolCommandCandidate(value);
   if (!candidate) {
     return null;
   }
@@ -307,7 +309,7 @@ function isSafeCommandFallback(value: string): boolean {
   ) {
     return false;
   }
-  return /(?:^|\s)(?:bun|npm|pnpm|yarn|npx|node|deno|python|python3|ruby|go|cargo|make|cmake|docker|git|bash|sh|zsh|uv|tsx|ts-node|turbo|vite|next|astro|remix|\.\/)[\s\w./:=@-]*/iu.test(
+  return /(?:^|\s)(?:(?:bun|npm|pnpm|yarn|npx|node|deno|python|python3|ruby|go|cargo|make|cmake|docker|git|bash|sh|zsh|uv|tsx|ts-node|turbo|vite|next|astro|remix)\b|\.\/)[\s\w./:=@-]*/iu.test(
     trimmed,
   );
 }
@@ -402,17 +404,17 @@ export function normalizeCommandActivityPayload(input: {
   const state = asRecord(data?.state);
   const stateInput = asRecord(state?.input);
   const candidates = [
-    commandCandidate(item?.command),
-    commandCandidate(itemInput?.command),
-    commandCandidate(itemResult?.command),
-    commandCandidate(data?.command),
-    commandCandidate(rawInput?.command),
+    normalizeToolCommandCandidate(item?.command),
+    normalizeToolCommandCandidate(itemInput?.command),
+    normalizeToolCommandCandidate(itemResult?.command),
+    normalizeToolCommandCandidate(data?.command),
+    normalizeToolCommandCandidate(rawInput?.command),
     executableCommandCandidate(rawInput),
-    commandCandidate(inputData?.command),
-    commandCandidate(inputData?.cmd),
-    commandCandidate(state?.command),
-    commandCandidate(state?.cmd),
-    commandCandidate(stateInput?.command),
+    normalizeToolCommandCandidate(inputData?.command),
+    normalizeToolCommandCandidate(inputData?.cmd),
+    normalizeToolCommandCandidate(state?.command),
+    normalizeToolCommandCandidate(state?.cmd),
+    normalizeToolCommandCandidate(stateInput?.command),
   ].filter((entry): entry is { command: string; rawCommand: string | null } => entry !== null);
 
   const detail = stripTrailingExitCode(asTrimmedString(input.detail));

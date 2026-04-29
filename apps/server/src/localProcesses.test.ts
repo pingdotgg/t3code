@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   parseListeningPidList,
+  probeLocalPorts,
   stopLocalPorts,
   type LocalProcessControls,
 } from "./localProcesses.ts";
@@ -47,5 +48,16 @@ describe("localProcesses", () => {
     expect(result.results[0]?.killedPids).toEqual([]);
     expect(result.results[0]?.errors[0]).toContain("Refusing to stop");
     expect(controls.killPid).not.toHaveBeenCalled();
+  });
+
+  it("reports the current T3 Code process as listening when probing ports", async () => {
+    const controls = makeControls({
+      currentPid: 111,
+      listListeningPids: vi.fn(async () => [111]),
+    });
+
+    await expect(probeLocalPorts({ ports: [5173] }, controls)).resolves.toEqual({
+      results: [{ port: 5173, isListening: true, pids: [111], error: null }],
+    });
   });
 });

@@ -405,6 +405,30 @@ function sidebarThreadSummariesEqual(
   );
 }
 
+function sidebarThreadSummaryShellFieldsEqual(
+  left: SidebarThreadSummary | undefined,
+  right: SidebarThreadSummary,
+): left is SidebarThreadSummary {
+  return (
+    left !== undefined &&
+    left.id === right.id &&
+    left.projectId === right.projectId &&
+    left.title === right.title &&
+    left.interactionMode === right.interactionMode &&
+    threadSessionsEqual(left.session, right.session) &&
+    left.createdAt === right.createdAt &&
+    left.archivedAt === right.archivedAt &&
+    left.updatedAt === right.updatedAt &&
+    latestTurnsEqual(left.latestTurn, right.latestTurn) &&
+    left.branch === right.branch &&
+    left.worktreePath === right.worktreePath &&
+    left.latestUserMessageAt === right.latestUserMessageAt &&
+    left.hasPendingApprovals === right.hasPendingApprovals &&
+    left.hasPendingUserInput === right.hasPendingUserInput &&
+    left.hasActionableProposedPlan === right.hasActionableProposedPlan
+  );
+}
+
 function sidebarAgentCommandStatusesEqual(
   left: SidebarThreadSummary["agentCommandStatus"] | undefined,
   right: SidebarThreadSummary["agentCommandStatus"] | undefined,
@@ -808,19 +832,22 @@ function writeThreadShellState(
     };
   }
 
-  // The shell stream's `nextThread.summary` always carries `agentCommandStatus:
-  // null` because the server doesn't compute it. We rebuild it from activities
-  // BEFORE the equality check; otherwise the check sees the stored
-  // (non-null computed) status vs. null and never returns true for threads
-  // with active URL detections — that previously caused an unbounded loop of
-  // no-op writes on every shell tick.
-  const activityIds = nextState.activityIdsByThreadId[nextThread.shell.id] ?? EMPTY_ACTIVITY_IDS;
-  const activitiesById = nextState.activityByThreadId[nextThread.shell.id] ?? {};
-  const activities = activityIds.flatMap((id) => {
-    const activity = activitiesById[id];
-    return activity ? [activity] : [];
-  });
-  const desiredSummary = withSidebarAgentCommandStatus(nextThread.summary, activities);
+  // The shell stream does not own `agentCommandStatus`; detail activity writes
+  // keep that field current. When the shell-owned fields are unchanged, reuse
+  // the stored summary instead of rebuilding the full activity list on every
+  // shell tick.
+  const existingSummary = state.sidebarThreadSummaryById[nextThread.shell.id];
+  const desiredSummary = sidebarThreadSummaryShellFieldsEqual(existingSummary, nextThread.summary)
+    ? existingSummary
+    : withSidebarAgentCommandStatus(
+        nextThread.summary,
+        (nextState.activityIdsByThreadId[nextThread.shell.id] ?? EMPTY_ACTIVITY_IDS).flatMap(
+          (id) => {
+            const activity = nextState.activityByThreadId[nextThread.shell.id]?.[id];
+            return activity ? [activity] : [];
+          },
+        ),
+      );
   if (
     !sidebarThreadSummariesEqual(
       state.sidebarThreadSummaryById[nextThread.shell.id],

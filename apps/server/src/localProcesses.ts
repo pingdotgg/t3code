@@ -30,24 +30,17 @@ export function parseListeningPidList(text: string): number[] {
   return [...seen];
 }
 
-function normalizePorts(input: LocalProcessStopPortsInput): number[] {
+function normalizePorts(
+  input: LocalProcessStopPortsInput | LocalProcessProbePortsInput,
+  maxCount: number,
+): number[] {
   const seen = new Set<number>();
   for (const port of input.ports) {
     if (Number.isInteger(port) && port >= 1 && port <= 65_535) {
       seen.add(port);
     }
   }
-  return [...seen].slice(0, 16);
-}
-
-function normalizeProbePorts(input: LocalProcessProbePortsInput): number[] {
-  const seen = new Set<number>();
-  for (const port of input.ports) {
-    if (Number.isInteger(port) && port >= 1 && port <= 65_535) {
-      seen.add(port);
-    }
-  }
-  return [...seen].slice(0, 32);
+  return [...seen].slice(0, maxCount);
 }
 
 async function listListeningPidsWithLsof(port: number): Promise<number[]> {
@@ -106,13 +99,13 @@ export async function probeLocalPorts(
   input: LocalProcessProbePortsInput,
   controls: LocalProcessControls = defaultLocalProcessControls,
 ): Promise<LocalProcessProbePortsResult> {
-  const ports = normalizeProbePorts(input);
+  const ports = normalizePorts(input, 32);
   const results = await Promise.all(
     ports.map(async (port) => {
       try {
         const pids = await controls.listListeningPids(port);
         const filteredPids = [...new Set(pids)].filter(
-          (pid) => Number.isSafeInteger(pid) && pid > 0 && pid !== controls.currentPid,
+          (pid) => Number.isSafeInteger(pid) && pid > 0,
         );
         return {
           port,
@@ -139,7 +132,7 @@ export async function stopLocalPorts(
 ): Promise<LocalProcessStopPortsResult> {
   const results: Array<{ port: number; killedPids: number[]; errors: string[] }> = [];
 
-  for (const port of normalizePorts(input)) {
+  for (const port of normalizePorts(input, 16)) {
     const errors: string[] = [];
     let pids: readonly number[] = [];
 
