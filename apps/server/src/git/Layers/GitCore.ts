@@ -56,7 +56,7 @@ const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
 ] as const;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
-const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
+const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.minutes(10);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
@@ -931,7 +931,23 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
         allowNonZeroExit: true,
         timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
       },
-    ).pipe(Effect.asVoid);
+    ).pipe(
+      Effect.flatMap((result) => {
+        if (result.code === 0) {
+          return Effect.void;
+        }
+
+        const stderr = result.stderr.trim();
+        return Effect.fail(
+          createGitCommandError(
+            "GitCore.fetchRemoteForStatus",
+            fetchCwd,
+            ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
+            stderr.length > 0 ? stderr : "git fetch failed",
+          ),
+        );
+      }),
+    );
   };
 
   const resolveGitCommonDir = Effect.fn("resolveGitCommonDir")(function* (cwd: string) {
@@ -951,7 +967,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
 
   const statusRemoteRefreshCache = yield* Cache.makeWith(refreshStatusRemoteCacheEntry, {
     capacity: STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY,
-    // Keep successful refreshes warm and briefly back off failed refreshes to avoid retry storms.
+    // Keep successful refreshes warm and back off failed auto-refreshes to avoid retry storms.
     timeToLive: (exit) =>
       Exit.isSuccess(exit)
         ? STATUS_UPSTREAM_REFRESH_INTERVAL

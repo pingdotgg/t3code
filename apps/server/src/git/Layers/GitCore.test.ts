@@ -3,7 +3,8 @@ import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
+import { Duration, Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
+import { TestClock } from "effect/testing";
 import { describe, expect, vi } from "vitest";
 
 import { GitCoreLive, makeGitCore } from "./GitCore.ts";
@@ -1710,6 +1711,51 @@ it.layer(TestLayer)("git integration", (it) => {
           behindCount: 0,
         });
         expect(localStatus).toEqual(status);
+      }),
+    );
+
+    it.effect("backs off upstream auto-refresh after a failed status fetch", () =>
+      Effect.gen(function* () {
+        const remote = yield* makeTmpDir();
+        const source = yield* makeTmpDir();
+        yield* git(remote, ["init", "--bare"]);
+
+        yield* initRepoWithCommit(source);
+        const initialBranch = (yield* (yield* GitCore).listBranches({
+          cwd: source,
+        })).branches.find((branch) => branch.current)!.name;
+        yield* git(source, ["remote", "add", "origin", remote]);
+        yield* git(source, ["push", "-u", "origin", initialBranch]);
+
+        const realGitCore = yield* GitCore;
+        let refreshFetchAttempts = 0;
+        const core = yield* makeIsolatedGitCore((input) => {
+          if (input.args[0] === "--git-dir" && input.args[2] === "fetch") {
+            refreshFetchAttempts += 1;
+            return Effect.succeed({
+              code: 128,
+              stdout: "",
+              stderr: "simulated fetch timeout",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+          return realGitCore.execute(input);
+        });
+
+        const firstStatus = yield* core.statusDetails(source);
+        expect(firstStatus.branch).toBe(initialBranch);
+        expect(refreshFetchAttempts).toBe(1);
+
+        yield* TestClock.adjust(Duration.seconds(15));
+        const secondStatus = yield* core.statusDetails(source);
+        expect(secondStatus.branch).toBe(initialBranch);
+        expect(refreshFetchAttempts).toBe(1);
+
+        yield* TestClock.adjust(Duration.minutes(10));
+        const thirdStatus = yield* core.statusDetails(source);
+        expect(thirdStatus.branch).toBe(initialBranch);
+        expect(refreshFetchAttempts).toBe(2);
       }),
     );
 
