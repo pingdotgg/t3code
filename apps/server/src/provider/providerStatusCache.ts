@@ -1,24 +1,16 @@
-import * as nodePath from "node:path";
-import { type ServerProvider, ServerProvider as ServerProviderSchema } from "@t3tools/contracts";
-import { Cause, Effect, FileSystem, Schema } from "effect";
+import {
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+  type ServerProvider,
+  ServerProvider as ServerProviderSchema,
+} from "@t3tools/contracts";
+import { Cause, Effect, FileSystem, Path, Schema } from "effect";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
-
-export const PROVIDER_CACHE_IDS = [
-  "codex",
-  "claudeAgent",
-  "opencode",
-  "cursor",
-] as const satisfies ReadonlyArray<ServerProvider["provider"]>;
 
 const decodeProviderStatusCache = Schema.decodeUnknownEffect(
   Schema.fromJsonString(ServerProviderSchema),
 );
-
-const providerOrderRank = (provider: ServerProvider["provider"]): number => {
-  const rank = PROVIDER_CACHE_IDS.indexOf(provider);
-  return rank === -1 ? Number.MAX_SAFE_INTEGER : rank;
-};
 
 const mergeProviderModels = (
   fallbackModels: ReadonlyArray<ServerProvider["models"][number]>,
@@ -32,13 +24,27 @@ export const orderProviderSnapshots = (
   providers: ReadonlyArray<ServerProvider>,
 ): ReadonlyArray<ServerProvider> =>
   [...providers].toSorted(
-    (left, right) => providerOrderRank(left.provider) - providerOrderRank(right.provider),
+    (left, right) =>
+      (left.displayName ?? "").localeCompare(right.displayName ?? "") ||
+      left.driver.localeCompare(right.driver) ||
+      left.instanceId.localeCompare(right.instanceId),
   );
+
+export const isCachedProviderCorrelated = (input: {
+  readonly cachedProvider: ServerProvider;
+  readonly fallbackProvider: ServerProvider;
+}): boolean =>
+  input.cachedProvider.instanceId === input.fallbackProvider.instanceId &&
+  input.cachedProvider.driver === input.fallbackProvider.driver;
 
 export const hydrateCachedProvider = (input: {
   readonly cachedProvider: ServerProvider;
   readonly fallbackProvider: ServerProvider;
 }): ServerProvider => {
+  if (!isCachedProviderCorrelated(input)) {
+    return input.fallbackProvider;
+  }
+
   if (
     !input.fallbackProvider.enabled ||
     input.cachedProvider.enabled !== input.fallbackProvider.enabled
@@ -64,10 +70,46 @@ export const hydrateCachedProvider = (input: {
     : hydratedProvider;
 };
 
-export const resolveProviderStatusCachePath = (input: {
+/**
+ * Resolve the on-disk cache path for a provider instance snapshot.
+ *
+ * File naming: `<cacheDir>/<instanceId>.json`. For the default instance of
+ * a built-in kind this equals the legacy `<kind>.json` path (because
+ * `defaultInstanceIdForDriver(kind).toString() === kind`), so existing
+ * cached snapshots remain readable without any rename step.
+ *
+ * Non-default instances (e.g. `codex_personal`) land in their own files and
+ * never collide with other instances.
+ *
+ * Cache contents must still carry matching `instanceId` + `driver` identity
+ * before hydration. The filename alone is not trusted as a routing key.
+ */
+export const resolveProviderStatusCachePath = Effect.fn("resolveProviderStatusCachePath")(
+  function* (input: {
+    readonly cacheDir: string;
+    readonly instanceId: ProviderInstanceId;
+  }): Effect.fn.Return<string, never, Path.Path> {
+    const path = yield* Path.Path;
+    return path.join(input.cacheDir, `${input.instanceId}.json`);
+  },
+);
+
+/**
+ * Legacy kind-keyed path resolver retained for callers that still think in
+ * terms of `ProviderDriverKind`. Prefer `resolveProviderStatusCachePath` with an
+ * `instanceId`; new code should route through the instance registry.
+ *
+ * @deprecated use `resolveProviderStatusCachePath` with an instance id.
+ */
+export const resolveLegacyProviderStatusCachePath = Effect.fn(
+  "resolveLegacyProviderStatusCachePath",
+)(function* (input: {
   readonly cacheDir: string;
-  readonly provider: ServerProvider["provider"];
-}) => nodePath.join(input.cacheDir, `${input.provider}.json`);
+  readonly provider: ProviderDriverKind;
+}): Effect.fn.Return<string, never, Path.Path> {
+  const path = yield* Path.Path;
+  return path.join(input.cacheDir, `${input.provider}.json`);
+});
 
 export const readProviderStatusCache = (filePath: string) =>
   Effect.gen(function* () {

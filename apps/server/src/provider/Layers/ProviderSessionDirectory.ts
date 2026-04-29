@@ -1,4 +1,4 @@
-import { ProviderKind, type ThreadId } from "@t3tools/contracts";
+import { defaultInstanceIdForDriver, ProviderDriverKind, type ThreadId } from "@t3tools/contracts";
 import { Effect, Layer, Option, Schema } from "effect";
 
 import type { ProviderSessionRuntime } from "../../persistence/Services/ProviderSessionRuntime.ts";
@@ -20,11 +20,11 @@ function toPersistenceError(operation: string) {
     });
 }
 
-function decodeProviderKind(
+function decodeProviderDriverKind(
   providerName: string,
   operation: string,
-): Effect.Effect<ProviderKind, ProviderSessionDirectoryPersistenceError> {
-  return Schema.decodeUnknownEffect(ProviderKind)(providerName).pipe(
+): Effect.Effect<ProviderDriverKind, ProviderSessionDirectoryPersistenceError> {
+  return Schema.decodeUnknownEffect(ProviderDriverKind)(providerName).pipe(
     Effect.mapError(
       (cause) =>
         new ProviderSessionDirectoryPersistenceError({
@@ -57,12 +57,17 @@ function toRuntimeBinding(
   runtime: ProviderSessionRuntime,
   operation: string,
 ): Effect.Effect<ProviderRuntimeBindingWithMetadata, ProviderSessionDirectoryPersistenceError> {
-  return decodeProviderKind(runtime.providerName, operation).pipe(
+  return decodeProviderDriverKind(runtime.providerName, operation).pipe(
     Effect.map(
       (provider) =>
         ({
           threadId: runtime.threadId,
           provider,
+          // Migration boundary only: rows written before the instance split
+          // have a null provider_instance_id. Promote them as they leave
+          // persistence so hot routing code never has to infer an instance
+          // from a driver kind.
+          providerInstanceId: runtime.providerInstanceId ?? defaultInstanceIdForDriver(provider),
           adapterKey: runtime.adapterKey,
           runtimeMode: runtime.runtimeMode,
           status: runtime.status,
@@ -108,10 +113,19 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
     const now = new Date().toISOString();
     const providerChanged =
       existingRuntime !== undefined && existingRuntime.providerName !== binding.provider;
+    const providerInstanceId =
+      binding.providerInstanceId ?? (!providerChanged ? existingRuntime?.providerInstanceId : null);
+    if (providerInstanceId === null || providerInstanceId === undefined) {
+      return yield* new ProviderValidationError({
+        operation: "ProviderSessionDirectory.upsert",
+        issue: "providerInstanceId is required for provider session runtime bindings.",
+      });
+    }
     yield* repository
       .upsert({
         threadId: resolvedThreadId,
         providerName: binding.provider,
+        providerInstanceId,
         adapterKey:
           binding.adapterKey ??
           (providerChanged ? binding.provider : (existingRuntime?.adapterKey ?? binding.provider)),

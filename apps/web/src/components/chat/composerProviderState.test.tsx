@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type {
-  ProviderKind,
-  ProviderOptionDescriptor,
-  ProviderOptionSelection,
-  ServerProviderModel,
+import {
+  ProviderDriverKind,
+  type ProviderOptionDescriptor,
+  type ProviderOptionSelection,
+  type ServerProviderModel,
 } from "@t3tools/contracts";
 import {
   getComposerProviderState,
@@ -15,7 +15,7 @@ import {
 // optionDescriptors, so these tests use a single synthetic provider/model and
 // vary only the descriptor shape per scenario.
 
-const PROVIDER: ProviderKind = "codex";
+const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
 const MODEL = "test-model";
 
 function selectDescriptor(
