@@ -2,6 +2,8 @@ import {
   ArchiveIcon,
   ArchiveX,
   ChevronDownIcon,
+  EyeIcon,
+  EyeOffIcon,
   InfoIcon,
   LoaderIcon,
   PlusIcon,
@@ -544,18 +546,21 @@ export function GeneralSettingsPanel() {
     codex: Boolean(
       settings.providers.codex.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.binaryPath ||
       settings.providers.codex.homePath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.homePath ||
-      settings.providers.codex.customModels.length > 0,
+      settings.providers.codex.customModels.length > 0 ||
+      settings.hiddenModels.some((model) => model.provider === "codex"),
     ),
     claudeAgent: Boolean(
       settings.providers.claudeAgent.binaryPath !==
         DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
       settings.providers.claudeAgent.customModels.length > 0 ||
-      settings.providers.claudeAgent.launchArgs !== "",
+      settings.providers.claudeAgent.launchArgs !== "" ||
+      settings.hiddenModels.some((model) => model.provider === "claudeAgent"),
     ),
     cursor: Boolean(
       settings.providers.cursor.binaryPath !==
         DEFAULT_UNIFIED_SETTINGS.providers.cursor.binaryPath ||
-      settings.providers.cursor.customModels.length > 0,
+      settings.providers.cursor.customModels.length > 0 ||
+      settings.hiddenModels.some((model) => model.provider === "cursor"),
     ),
     opencode: Boolean(
       settings.providers.opencode.binaryPath !==
@@ -564,7 +569,8 @@ export function GeneralSettingsPanel() {
         DEFAULT_UNIFIED_SETTINGS.providers.opencode.serverUrl ||
       settings.providers.opencode.serverPassword !==
         DEFAULT_UNIFIED_SETTINGS.providers.opencode.serverPassword ||
-      settings.providers.opencode.customModels.length > 0,
+      settings.providers.opencode.customModels.length > 0 ||
+      settings.hiddenModels.some((model) => model.provider === "opencode"),
     ),
   });
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
@@ -769,6 +775,22 @@ export function GeneralSettingsPanel() {
     [settings, updateSettings],
   );
 
+  const toggleHiddenModel = useCallback(
+    (provider: ProviderKind, slug: string) => {
+      const isHidden = settings.hiddenModels.some(
+        (hiddenModel) => hiddenModel.provider === provider && hiddenModel.model === slug,
+      );
+      updateSettings({
+        hiddenModels: isHidden
+          ? settings.hiddenModels.filter(
+              (hiddenModel) => hiddenModel.provider !== provider || hiddenModel.model !== slug,
+            )
+          : [...settings.hiddenModels, { provider, model: slug }],
+      });
+    },
+    [settings.hiddenModels, updateSettings],
+  );
+
   const providerCards = visibleProviderSettings.map((providerSettings) => {
     const liveProvider = serverProviders.find(
       (candidate) => candidate.provider === providerSettings.provider,
@@ -785,6 +807,11 @@ export function GeneralSettingsPanel() {
         isCustom: true,
         capabilities: null,
       }));
+    const hiddenModelSlugs = new Set(
+      settings.hiddenModels
+        .filter((hiddenModel) => hiddenModel.provider === providerSettings.provider)
+        .map((hiddenModel) => hiddenModel.model),
+    );
 
     return {
       provider: providerSettings.provider,
@@ -802,9 +829,10 @@ export function GeneralSettingsPanel() {
       binaryPathValue: providerConfig.binaryPath,
       serverUrlValue: "serverUrl" in providerConfig ? providerConfig.serverUrl : "",
       serverPasswordValue: "serverPassword" in providerConfig ? providerConfig.serverPassword : "",
-      isDirty: !Equal.equals(providerConfig, defaultProviderConfig),
+      isDirty: !Equal.equals(providerConfig, defaultProviderConfig) || hiddenModelSlugs.size > 0,
       liveProvider,
       models,
+      hiddenModelSlugs,
       providerConfig,
       statusStyle: PROVIDER_STATUS_STYLES[statusKey],
       summary,
@@ -1236,6 +1264,9 @@ export function GeneralSettingsPanel() {
                                   [providerCard.provider]:
                                     DEFAULT_UNIFIED_SETTINGS.providers[providerCard.provider],
                                 },
+                                hiddenModels: settings.hiddenModels.filter(
+                                  (hiddenModel) => hiddenModel.provider !== providerCard.provider,
+                                ),
                               });
                               setCustomModelErrorByProvider((existing) => ({
                                 ...existing,
@@ -1501,6 +1532,7 @@ export function GeneralSettingsPanel() {
                       >
                         {providerCard.models.map((model) => {
                           const caps = model.capabilities;
+                          const isHidden = providerCard.hiddenModelSlugs.has(model.slug);
                           const capLabels: string[] = [];
                           const descriptors = caps?.optionDescriptors ?? [];
                           if (descriptors.some((descriptor) => descriptor.id === "fastMode")) {
@@ -1565,8 +1597,24 @@ export function GeneralSettingsPanel() {
                                   </TooltipPopup>
                                 </Tooltip>
                               ) : null}
+                              <button
+                                type="button"
+                                className={cn(
+                                  "ml-auto inline-flex shrink-0 items-center gap-1 text-[10px] text-muted-foreground transition-colors hover:text-foreground",
+                                  model.isCustom && "ml-0",
+                                )}
+                                aria-label={`${isHidden ? "Show" : "Hide"} ${model.name} in model picker`}
+                                onClick={() => toggleHiddenModel(providerCard.provider, model.slug)}
+                              >
+                                {isHidden ? (
+                                  <EyeOffIcon className="size-3" />
+                                ) : (
+                                  <EyeIcon className="size-3" />
+                                )}
+                                {isHidden ? "hidden" : "shown"}
+                              </button>
                               {model.isCustom ? (
-                                <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                                <div className="flex shrink-0 items-center gap-1.5">
                                   <span className="text-[10px] text-muted-foreground">custom</span>
                                   <button
                                     type="button"

@@ -50,6 +50,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const listRegionRef = useRef<HTMLDivElement>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
   const favorites = useSettings((s) => s.favorites ?? []);
+  const hiddenModels = useSettings((s) => s.hiddenModels ?? []);
   const [selectedProvider, setSelectedProvider] = useState<ProviderKind | "favorites">(() => {
     if (props.lockedProvider !== null) {
       return props.lockedProvider;
@@ -99,6 +100,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       favorites.map((favorite, index) => [`${favorite.provider}:${favorite.model}`, index]),
     );
   }, [favorites]);
+  const hiddenModelsSet = useMemo(() => {
+    return new Set(
+      hiddenModels.map((hiddenModel) => `${hiddenModel.provider}:${hiddenModel.model}`),
+    );
+  }, [hiddenModels]);
 
   const readyProviderSet = useMemo(() => {
     if (!props.providers || props.providers.length === 0) {
@@ -117,15 +123,23 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (readyProviderSet && !readyProviderSet.has(providerKind as ProviderKind)) {
         return [];
       }
-      return models.map((m) => ({
-        slug: m.slug,
-        name: m.name,
-        ...(m.shortName ? { shortName: m.shortName } : {}),
-        ...(m.subProvider ? { subProvider: m.subProvider } : {}),
-        provider: providerKind as ProviderKind,
-      })) satisfies Array<ModelPickerItem>;
+      return models.flatMap((m) => {
+        const provider = providerKind as ProviderKind;
+        if (hiddenModelsSet.has(`${provider}:${m.slug}`)) {
+          return [];
+        }
+        return [
+          {
+            slug: m.slug,
+            name: m.name,
+            ...(m.shortName ? { shortName: m.shortName } : {}),
+            ...(m.subProvider ? { subProvider: m.subProvider } : {}),
+            provider,
+          },
+        ];
+      }) satisfies Array<ModelPickerItem>;
     });
-  }, [props.modelOptionsByProvider, readyProviderSet]);
+  }, [hiddenModelsSet, props.modelOptionsByProvider, readyProviderSet]);
 
   // Filter models based on search query and selected provider
   const filteredModels = useMemo(() => {
@@ -249,8 +263,30 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [favorites, updateSettings],
   );
 
+  const moveFavorite = useCallback(
+    (provider: ProviderKind, model: string, direction: -1 | 1) => {
+      const index = favorites.findIndex(
+        (favorite) => favorite.provider === provider && favorite.model === model,
+      );
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= favorites.length) {
+        return;
+      }
+
+      const newFavorites = [...favorites];
+      const [movedFavorite] = newFavorites.splice(index, 1);
+      if (!movedFavorite) {
+        return;
+      }
+      newFavorites.splice(nextIndex, 0, movedFavorite);
+      updateSettings({ favorites: newFavorites });
+    },
+    [favorites, updateSettings],
+  );
+
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
+  const canReorderFavorites = selectedProvider === "favorites" && !isSearching;
   const showSidebar = !isLocked && !isSearching;
   const LockedProviderIcon =
     isLocked && props.lockedProvider ? PROVIDER_ICON_BY_PROVIDER[props.lockedProvider] : null;
@@ -503,6 +539,18 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       showNewBadge={isModelPickerNewModel(model.provider, model.slug)}
                       jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
                       onToggleFavorite={() => toggleFavorite(model.provider, model.slug)}
+                      reorderControls={
+                        canReorderFavorites && favoritesSet.has(modelKey)
+                          ? {
+                              canMoveUp: (favoriteOrder.get(modelKey) ?? -1) > 0,
+                              canMoveDown:
+                                (favoriteOrder.get(modelKey) ?? favorites.length) <
+                                favorites.length - 1,
+                              onMoveUp: () => moveFavorite(model.provider, model.slug, -1),
+                              onMoveDown: () => moveFavorite(model.provider, model.slug, 1),
+                            }
+                          : null
+                      }
                     />
                   );
                 })}
