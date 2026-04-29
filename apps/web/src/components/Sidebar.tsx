@@ -221,16 +221,6 @@ function agentCommandStatusUrls(
   return status.urls.length > 0 ? status.urls : status.primaryUrl ? [status.primaryUrl] : [];
 }
 
-function agentCommandStatusPorts(status: SidebarAgentCommandStatus): number[] {
-  const ports = new Set<number>();
-  for (const url of agentCommandStatusUrls(status)) {
-    if (url.port !== null) {
-      ports.add(url.port);
-    }
-  }
-  return [...ports].toSorted((left, right) => left - right);
-}
-
 function agentCommandStopSummary(input: {
   killedCount: number;
   errorCount: number;
@@ -342,6 +332,7 @@ function AgentCommandStatusDialog({
   onOpenChange,
   status,
   isRunning,
+  listeningPorts,
   threadKey,
   environmentId,
 }: {
@@ -349,6 +340,7 @@ function AgentCommandStatusDialog({
   onOpenChange: (open: boolean) => void;
   status: SidebarAgentCommandStatus | null;
   isRunning: boolean;
+  listeningPorts: ReadonlySet<number>;
   threadKey: string;
   environmentId: SidebarThreadSummary["environmentId"];
 }) {
@@ -357,7 +349,6 @@ function AgentCommandStatusDialog({
   const [stopMessage, setStopMessage] = useState<string | null>(null);
   const statusKey = useMemo(() => (status ? sidebarAgentCommandStatusKey(status) : null), [status]);
   const urls = useMemo(() => (status ? agentCommandStatusUrls(status) : []), [status]);
-  const ports = useMemo(() => (status ? agentCommandStatusPorts(status) : []), [status]);
 
   useEffect(() => {
     if (!open) {
@@ -439,15 +430,14 @@ function AgentCommandStatusDialog({
   );
 
   const hasUrls = urls.length > 0;
-  const hasPorts = ports.length > 0;
   const portsWithoutUrl = useMemo(() => {
-    if (!hasPorts) return [] as number[];
+    if (listeningPorts.size === 0) return [] as number[];
     const urlPorts = new Set<number>();
     for (const url of urls) {
       if (url.port != null) urlPorts.add(url.port);
     }
-    return ports.filter((port) => !urlPorts.has(port));
-  }, [hasPorts, ports, urls]);
+    return [...listeningPorts].filter((port) => !urlPorts.has(port)).toSorted((a, b) => a - b);
+  }, [listeningPorts, urls]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -1047,6 +1037,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onOpenChange={setAgentCommandDialogOpen}
         status={agentCommandStatus}
         isRunning={hasRunningSubprocess}
+        listeningPorts={listeningProbedPorts}
         threadKey={threadKey}
         environmentId={thread.environmentId}
       />
