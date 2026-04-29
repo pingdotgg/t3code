@@ -33,6 +33,17 @@ type ModelPickerItem = {
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 
+/**
+ * Parse a composite model key of the form `provider:modelSlug` into its
+ * constituent parts.  We split on the **first** colon only so that model
+ * slugs containing colons (e.g. AWS Bedrock ARN-style IDs like
+ * `us.anthropic.claude-haiku-4-5-20251001-v1:0`) are preserved intact.
+ */
+function parseModelKey(modelKey: string): [ProviderKind, string] {
+  const colonIndex = modelKey.indexOf(":");
+  return [modelKey.slice(0, colonIndex) as ProviderKind, modelKey.slice(colonIndex + 1)];
+}
+
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
   provider: ProviderKind;
   model: string;
@@ -331,7 +342,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!targetModelKey) {
         return;
       }
-      const [provider, slug] = targetModelKey.split(":") as [ProviderKind, string];
+      const [provider, slug] = parseModelKey(targetModelKey);
       event.preventDefault();
       event.stopPropagation();
       handleModelSelect(slug, provider);
@@ -430,7 +441,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             if (typeof modelKey !== "string") {
               return;
             }
-            const [provider, slug] = modelKey.split(":") as [ProviderKind, string];
+            const [provider, slug] = parseModelKey(modelKey);
             handleModelSelect(slug, provider);
           }}
         >
@@ -464,10 +475,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     ).preventBaseUIHandler?.();
                     e.preventDefault();
                     e.stopPropagation();
-                    const [provider, slug] = highlightedModelKeyRef.current.split(":") as [
-                      ProviderKind,
-                      string,
-                    ];
+                    const [provider, slug] = parseModelKey(highlightedModelKeyRef.current);
                     handleModelSelect(slug, provider);
                     return;
                   }
