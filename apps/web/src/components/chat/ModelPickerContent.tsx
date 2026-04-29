@@ -33,6 +33,18 @@ type ModelPickerItem = {
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
 
+// Keys are `${provider}:${slug}`; slugs can contain colons, so split on the first one only.
+function parseModelKey(modelKey: string): { provider: ProviderKind; slug: string } | null {
+  const separatorIndex = modelKey.indexOf(":");
+  if (separatorIndex <= 0 || separatorIndex === modelKey.length - 1) {
+    return null;
+  }
+  return {
+    provider: modelKey.slice(0, separatorIndex) as ProviderKind,
+    slug: modelKey.slice(separatorIndex + 1),
+  };
+}
+
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
   provider: ProviderKind;
   model: string;
@@ -331,10 +343,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (!targetModelKey) {
         return;
       }
-      const [provider, slug] = targetModelKey.split(":") as [ProviderKind, string];
+      const parsed = parseModelKey(targetModelKey);
+      if (!parsed) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
-      handleModelSelect(slug, provider);
+      handleModelSelect(parsed.slug, parsed.provider);
     };
 
     window.addEventListener("keydown", onWindowKeyDown, true);
@@ -430,8 +445,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             if (typeof modelKey !== "string") {
               return;
             }
-            const [provider, slug] = modelKey.split(":") as [ProviderKind, string];
-            handleModelSelect(slug, provider);
+            const parsed = parseModelKey(modelKey);
+            if (!parsed) {
+              return;
+            }
+            handleModelSelect(parsed.slug, parsed.provider);
           }}
         >
           <div
@@ -464,11 +482,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     ).preventBaseUIHandler?.();
                     e.preventDefault();
                     e.stopPropagation();
-                    const [provider, slug] = highlightedModelKeyRef.current.split(":") as [
-                      ProviderKind,
-                      string,
-                    ];
-                    handleModelSelect(slug, provider);
+                    const parsed = parseModelKey(highlightedModelKeyRef.current);
+                    if (!parsed) {
+                      return;
+                    }
+                    handleModelSelect(parsed.slug, parsed.provider);
                     return;
                   }
                   e.stopPropagation();
