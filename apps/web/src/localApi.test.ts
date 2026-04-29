@@ -10,10 +10,12 @@ import {
   type ServerProvider,
   type TerminalEvent,
   ThreadId,
+  ClientSettingsSchema,
 } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ContextMenuItem } from "@t3tools/contracts";
+import type { ClientSettings, ContextMenuItem } from "@t3tools/contracts";
+import { Schema } from "effect";
 
 const showContextMenuFallbackMock =
   vi.fn<
@@ -528,20 +530,7 @@ describe("wsApi", () => {
   });
 
   it("reads and writes persistence through the desktop bridge when available", async () => {
-    const clientSettings = {
-      autoOpenPlanSidebar: false,
-      confirmThreadArchive: true,
-      confirmThreadDelete: false,
-      diffWordWrap: true,
-      favorites: [],
-      sidebarProjectGroupingMode: "repository_path" as const,
-      sidebarProjectGroupingOverrides: {
-        "environment-local:/tmp/project": "separate" as const,
-      },
-      sidebarProjectSortOrder: "manual" as const,
-      sidebarThreadSortOrder: "created_at" as const,
-      timestampFormat: "24-hour" as const,
-    };
+    const clientSettings = Schema.decodeSync(ClientSettingsSchema)({});
     const getClientSettings = vi.fn().mockResolvedValue({
       ...clientSettings,
     });
@@ -587,20 +576,7 @@ describe("wsApi", () => {
   it("falls back to browser storage for persistence when the desktop bridge is missing", async () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi(rpcClientMock as never);
-    const clientSettings = {
-      autoOpenPlanSidebar: false,
-      confirmThreadArchive: true,
-      confirmThreadDelete: false,
-      diffWordWrap: true,
-      favorites: [],
-      sidebarProjectGroupingMode: "repository_path" as const,
-      sidebarProjectGroupingOverrides: {
-        "environment-local:/tmp/project": "separate" as const,
-      },
-      sidebarProjectSortOrder: "manual" as const,
-      sidebarThreadSortOrder: "created_at" as const,
-      timestampFormat: "24-hour" as const,
-    };
+    const clientSettings = Schema.decodeSync(ClientSettingsSchema)({});
 
     await api.persistence.setClientSettings(clientSettings);
     await api.persistence.setSavedEnvironmentRegistry([

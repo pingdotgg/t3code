@@ -472,6 +472,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
+      ...(settings.hideChatMinimap !== DEFAULT_UNIFIED_SETTINGS.hideChatMinimap
+        ? ["Chat minimap"]
+        : []),
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Task sidebar"]
         : []),
@@ -503,6 +506,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.hideChatMinimap,
       settings.timestampFormat,
       theme,
     ],
@@ -918,6 +922,30 @@ export function GeneralSettingsPanel() {
               checked={settings.diffWordWrap}
               onCheckedChange={(checked) => updateSettings({ diffWordWrap: Boolean(checked) })}
               aria-label="Wrap diff lines by default"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Chat minimap"
+          description="Show a vertical minimap of your prompts on the right side of the chat."
+          resetAction={
+            settings.hideChatMinimap !== DEFAULT_UNIFIED_SETTINGS.hideChatMinimap ? (
+              <SettingResetButton
+                label="chat minimap visibility"
+                onClick={() =>
+                  updateSettings({
+                    hideChatMinimap: DEFAULT_UNIFIED_SETTINGS.hideChatMinimap,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={!settings.hideChatMinimap}
+              onCheckedChange={(checked) => updateSettings({ hideChatMinimap: !checked })}
+              aria-label="Show chat minimap"
             />
           }
         />
