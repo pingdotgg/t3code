@@ -345,6 +345,28 @@ describe("ProviderModelPicker", () => {
     }
   });
 
+  it("shows Kiro CLI in the coming-soon sidebar group", async () => {
+    const mounted = await mountPicker({
+      provider: "claudeAgent",
+      model: "claude-opus-4-6",
+      lockedProvider: null,
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        expect(getSidebarProviderOrder().slice(-3)).toEqual([
+          "gemini-coming-soon",
+          "kiro-cli-coming-soon",
+          "github-copilot-coming-soon",
+        ]);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("filters models by selected provider in sidebar", async () => {
     const mounted = await mountPicker({
       provider: "claudeAgent",

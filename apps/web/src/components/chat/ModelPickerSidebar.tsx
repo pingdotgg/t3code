@@ -1,7 +1,7 @@
 import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
 import { memo } from "react";
 import { Clock3Icon, SparklesIcon, StarIcon } from "lucide-react";
-import { Gemini, GithubCopilotIcon } from "../Icons";
+import { Gemini, GithubCopilotIcon, KiroIcon } from "../Icons";
 import { AVAILABLE_PROVIDER_OPTIONS, PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -179,7 +179,35 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
           Gemini — Coming soon
         </TooltipPopup>
       </Tooltip>
-      {/* Github Copilot button (coming soon) */}
+
+      {/* Kiro CLI button (coming soon) */}
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span className="relative block w-full">
+              <button
+                className={cn(
+                  "relative isolate flex w-full aspect-square items-center justify-center rounded opacity-50 cursor-not-allowed transition-colors hover:bg-transparent",
+                )}
+                disabled
+                type="button"
+                data-model-picker-provider="kiro-cli-coming-soon"
+                aria-label="Kiro CLI — coming soon"
+              >
+                <KiroIcon className="size-5 text-muted-foreground/85" aria-hidden />
+                <span className={SOON_BADGE_CLASS} aria-hidden>
+                  <Clock3Icon className="size-2" />
+                </span>
+              </button>
+            </span>
+          }
+        />
+        <TooltipPopup side={PICKER_TOOLTIP_SIDE} align="center" className={PICKER_TOOLTIP_CLASS}>
+          Kiro CLI — Coming soon
+        </TooltipPopup>
+      </Tooltip>
+
+      {/* GitHub Copilot button (coming soon) */}
       <Tooltip>
         <TooltipTrigger
           render={
@@ -191,7 +219,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 disabled
                 type="button"
                 data-model-picker-provider="github-copilot-coming-soon"
-                aria-label="Github Copilot — coming soon"
+                aria-label="GitHub Copilot — coming soon"
               >
                 <GithubCopilotIcon className="size-5 text-muted-foreground/85" aria-hidden />
                 <span className={SOON_BADGE_CLASS} aria-hidden>
@@ -202,7 +230,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
           }
         />
         <TooltipPopup side={PICKER_TOOLTIP_SIDE} align="center" className={PICKER_TOOLTIP_CLASS}>
-          Github Copilot — Coming soon
+          GitHub Copilot — Coming soon
         </TooltipPopup>
       </Tooltip>
     </div>
