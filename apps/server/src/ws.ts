@@ -917,6 +917,64 @@ const makeWsRpcLayer = (
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subscribeThread")(
+        function* (input: { readonly threadId: ThreadId }) {
+          yield* Effect.annotateCurrentSpan({
+            "orchestration_v2.thread_id": input.threadId,
+          });
+
+          const projection = yield* orchestrationV2.getThreadProjection(input.threadId).pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetThreadProjectionError({
+                  threadId: input.threadId,
+                  message: `Failed to load orchestration V2 thread ${input.threadId}`,
+                  cause,
+                }),
+            ),
+          );
+          const snapshotSequence = yield* orchestrationV2
+            .getThreadEventSequence(input.threadId)
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationV2GetThreadProjectionError({
+                    threadId: input.threadId,
+                    message: `Failed to load orchestration V2 sequence for thread ${input.threadId}`,
+                    cause,
+                  }),
+              ),
+            );
+
+          const liveStream = orchestrationV2.streamStoredEvents.pipe(
+            Stream.filter((stored) => stored.event.threadId === input.threadId),
+            Stream.filter((stored) => stored.sequence > snapshotSequence),
+            Stream.map((stored) => ({
+              kind: "event" as const,
+              sequence: stored.sequence,
+              event: stored.event,
+            })),
+            Stream.mapError(
+              (cause) =>
+                new OrchestrationV2GetThreadProjectionError({
+                  threadId: input.threadId,
+                  message: `Failed while streaming orchestration V2 thread ${input.threadId}`,
+                  cause,
+                }),
+            ),
+          );
+
+          return Stream.concat(
+            Stream.make({
+              kind: "snapshot" as const,
+              snapshotSequence,
+              projection,
+            }),
+            liveStream,
+          );
+        },
+      );
+
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -1287,7 +1345,16 @@ const makeWsRpcLayer = (
                   }),
               ),
             ),
-            { "rpc.aggregate": "orchestrationV2" },
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.command_id": command.commandId,
+              "orchestration_v2.command_type": command.type,
+              "orchestration_v2.thread_id":
+                command.type === "thread.fork" ? command.targetThreadId : command.threadId,
+              ...(command.type === "thread.fork"
+                ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
+                : {}),
+            },
           ),
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
           observeRpcEffect(
@@ -1302,63 +1369,19 @@ const makeWsRpcLayer = (
                   }),
               ),
             ),
-            { "rpc.aggregate": "orchestrationV2" },
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.thread_id": input.threadId,
+            },
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_V2_WS_METHODS.subscribeThread,
-            Effect.gen(function* () {
-              const projection = yield* orchestrationV2.getThreadProjection(input.threadId).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationV2GetThreadProjectionError({
-                      threadId: input.threadId,
-                      message: `Failed to load orchestration V2 thread ${input.threadId}`,
-                      cause,
-                    }),
-                ),
-              );
-              const snapshotSequence = yield* orchestrationV2
-                .getThreadEventSequence(input.threadId)
-                .pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationV2GetThreadProjectionError({
-                        threadId: input.threadId,
-                        message: `Failed to load orchestration V2 sequence for thread ${input.threadId}`,
-                        cause,
-                      }),
-                  ),
-                );
-
-              const liveStream = orchestrationV2.streamStoredEvents.pipe(
-                Stream.filter((stored) => stored.event.threadId === input.threadId),
-                Stream.filter((stored) => stored.sequence > snapshotSequence),
-                Stream.map((stored) => ({
-                  kind: "event" as const,
-                  sequence: stored.sequence,
-                  event: stored.event,
-                })),
-                Stream.mapError(
-                  (cause) =>
-                    new OrchestrationV2GetThreadProjectionError({
-                      threadId: input.threadId,
-                      message: `Failed while streaming orchestration V2 thread ${input.threadId}`,
-                      cause,
-                    }),
-                ),
-              );
-
-              return Stream.concat(
-                Stream.make({
-                  kind: "snapshot" as const,
-                  snapshotSequence,
-                  projection,
-                }),
-                liveStream,
-              );
-            }),
-            { "rpc.aggregate": "orchestrationV2" },
+            subscribeOrchestrationV2Thread(input),
+            {
+              "rpc.aggregate": "orchestrationV2",
+              "orchestration_v2.thread_id": input.threadId,
+            },
           ),
         [WS_METHODS.serverGetConfig]: (_input) =>
           observeRpcEffect(WS_METHODS.serverGetConfig, loadServerConfig, {

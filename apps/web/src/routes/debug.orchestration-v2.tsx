@@ -1,9 +1,12 @@
 import type {
   OrchestrationV2DomainEvent,
   ModelSelection,
+  CheckpointId,
+  CheckpointScopeId,
   OrchestrationV2PlanStep,
   OrchestrationV2Run,
   OrchestrationV2RunStatus,
+  OrchestrationV2Checkpoint,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
   OrchestrationV2TurnItem,
@@ -259,6 +262,24 @@ function buildProjectionTimeline(
     });
   });
 
+  projection.contextTransfers.forEach((transfer, index) => {
+    const resolution =
+      transfer.resolution === null
+        ? undefined
+        : `resolved by ${formatLabel(transfer.resolution.strategy)}`;
+    entries.push({
+      key: `context-transfer:${transfer.id}`,
+      eyebrow: "Context Transfer",
+      title: formatLabel(transfer.type),
+      subtitle: compactId(transfer.targetThreadId),
+      status: transfer.status,
+      body: [resolution, transfer.error].filter(Boolean).join("\n") || undefined,
+      timestamp: formatTimestamp(transfer.updatedAt ?? transfer.createdAt),
+      raw: transfer,
+      sort: 650 + index,
+    });
+  });
+
   projection.checkpoints.forEach((checkpoint, index) => {
     entries.push({
       key: `checkpoint:${checkpoint.id}`,
@@ -349,6 +370,12 @@ function applyStreamEventToProjection(
       return {
         ...base,
         contextHandoffs: upsertProjectionEntity(base.contextHandoffs, event.payload),
+      };
+    case "context-transfer.created":
+    case "context-transfer.updated":
+      return {
+        ...base,
+        contextTransfers: upsertProjectionEntity(base.contextTransfers, event.payload),
       };
   }
 
@@ -472,18 +499,42 @@ function turnItemBody(item: OrchestrationV2TurnItem): string | undefined {
   }
 }
 
-interface ItemTimelineRow {
+interface ItemTimelineItemRow {
+  readonly kind: "item";
   readonly item: OrchestrationV2TurnItem;
   readonly entry: TimelineEntry;
+  readonly inheritedFromThreadId?: ThreadId | undefined;
 }
+
+interface ItemTimelineForkMarkerRow {
+  readonly kind: "fork-marker";
+  readonly entry: TimelineEntry;
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+}
+
+type ItemTimelineRow = ItemTimelineItemRow | ItemTimelineForkMarkerRow;
 
 interface QueuedRunRow {
   readonly run: OrchestrationV2Run;
   readonly messageText: string;
 }
 
+interface DebugThreadOption {
+  readonly threadId: ThreadId;
+  readonly label: string;
+  readonly relationship: "source" | "fork";
+}
+
+interface DebugThreadTreeNode {
+  readonly threadId: ThreadId;
+  readonly projection: OrchestrationV2ThreadProjection | null;
+  readonly children: ReadonlyArray<DebugThreadTreeNode>;
+}
+
 function buildItemTimeline(input: {
   readonly projection: OrchestrationV2ThreadProjection | null;
+  readonly projectionsByThread: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
   readonly logEntries: ReadonlyArray<LogEntry>;
 }): ReadonlyArray<ItemTimelineRow> {
   const items = new Map<
@@ -528,30 +579,158 @@ function buildItemTimeline(input: {
     }
   }
 
-  return [...items.values()]
+  const currentRows: ReadonlyArray<ItemTimelineItemRow> = [...items.values()]
     .toSorted((left, right) => left.item.ordinal - right.item.ordinal)
     .map(({ item, sequence }) => ({
+      kind: "item",
       item,
-      entry: {
-        key: `item:${item.id}`,
-        eyebrow: `Item ${item.ordinal}`,
-        title: item.title?.trim() || formatLabel(item.type),
-        subtitle: `${formatLabel(item.type)} · ${compactId(item.id) ?? item.id}`,
-        status: item.status,
-        body: turnItemBody(item),
-        timestamp: formatTimestamp(item.updatedAt ?? item.completedAt ?? item.startedAt),
-        sequence,
-        raw: item,
-      },
+      entry: itemTimelineEntry(item, `item:${item.id}`, sequence),
     }));
+
+  const forkedFrom = input.projection?.thread.forkedFrom;
+  if (input.projection === null || forkedFrom?.type !== "run") {
+    return currentRows;
+  }
+  const targetProjection = input.projection;
+
+  const sourceProjection = input.projectionsByThread.get(forkedFrom.threadId);
+  if (sourceProjection === undefined) {
+    return currentRows;
+  }
+
+  const sourceRun = sourceProjection.runs.find((run) => run.id === forkedFrom.runId);
+  if (sourceRun === undefined) {
+    return currentRows;
+  }
+
+  const runOrdinalById = new Map(sourceProjection.runs.map((run) => [run.id, run.ordinal]));
+  const inheritedRows = sourceProjection.turnItems
+    .filter((item) => {
+      if (item.runId === null) return false;
+      const ordinal = runOrdinalById.get(item.runId);
+      return ordinal !== undefined && ordinal <= sourceRun.ordinal;
+    })
+    .toSorted((left, right) => left.ordinal - right.ordinal)
+    .map(
+      (item): ItemTimelineItemRow => ({
+        kind: "item",
+        item,
+        inheritedFromThreadId: sourceProjection.thread.id,
+        entry: itemTimelineEntry(item, `inherited:${targetProjection.thread.id}:${item.id}`),
+      }),
+    );
+
+  const marker: ItemTimelineForkMarkerRow = {
+    kind: "fork-marker",
+    sourceThreadId: sourceProjection.thread.id,
+    targetThreadId: targetProjection.thread.id,
+    entry: {
+      key: `fork-marker:${targetProjection.thread.id}`,
+      eyebrow: "Fork",
+      title: "Forked from conversation",
+      subtitle: compactId(sourceProjection.thread.id),
+      status: "received",
+      timestamp: formatTimestamp(targetProjection.thread.createdAt),
+      raw: {
+        sourceThreadId: sourceProjection.thread.id,
+        sourceRunId: sourceRun.id,
+        targetThreadId: targetProjection.thread.id,
+      },
+    },
+  };
+
+  return [...inheritedRows, marker, ...currentRows];
 }
 
-const PANEL_KEYS = ["projection", "item", "stream"] as const;
+function itemTimelineEntry(
+  item: OrchestrationV2TurnItem,
+  key = `item:${item.id}`,
+  sequence?: number,
+): TimelineEntry {
+  return {
+    key,
+    eyebrow: `Item ${item.ordinal}`,
+    title: item.title?.trim() || formatLabel(item.type),
+    subtitle: `${formatLabel(item.type)} · ${compactId(item.id) ?? item.id}`,
+    status: item.status,
+    body: turnItemBody(item),
+    timestamp: formatTimestamp(item.updatedAt ?? item.completedAt ?? item.startedAt),
+    sequence,
+    raw: item,
+  };
+}
+
+function forkSourceThreadId(projection: OrchestrationV2ThreadProjection | null): ThreadId | null {
+  const forkedFrom = projection?.thread.forkedFrom;
+  if (forkedFrom?.type === "run") return forkedFrom.threadId;
+  return projection?.thread.lineage.parentThreadId ?? null;
+}
+
+function projectionCreatedMs(projection: OrchestrationV2ThreadProjection | null): number {
+  const iso = formatTimestamp(projection?.thread.createdAt);
+  if (iso === undefined) return 0;
+  const parsed = new Date(iso).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function buildThreadTree(input: {
+  readonly projections: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
+  readonly debugThreads: ReadonlyArray<DebugThreadOption>;
+}): ReadonlyArray<DebugThreadTreeNode> {
+  const entries = new Map<ThreadId, OrchestrationV2ThreadProjection | null>();
+  for (const thread of input.debugThreads) {
+    entries.set(thread.threadId, input.projections.get(thread.threadId) ?? null);
+  }
+  for (const [threadId, projection] of input.projections) {
+    entries.set(threadId, projection);
+    const parentThreadId = forkSourceThreadId(projection);
+    if (parentThreadId !== null && !entries.has(parentThreadId)) {
+      entries.set(parentThreadId, input.projections.get(parentThreadId) ?? null);
+    }
+  }
+
+  const childIds = new Map<ThreadId, Array<ThreadId>>();
+  const rootIds: Array<ThreadId> = [];
+  for (const [threadId, projection] of entries) {
+    const parentThreadId = forkSourceThreadId(projection);
+    if (parentThreadId !== null && entries.has(parentThreadId)) {
+      const children = childIds.get(parentThreadId) ?? [];
+      children.push(threadId);
+      childIds.set(parentThreadId, children);
+    } else {
+      rootIds.push(threadId);
+    }
+  }
+
+  const sortThreadIds = (threadIds: Array<ThreadId>) =>
+    threadIds.toSorted((left, right) => {
+      const leftProjection = entries.get(left) ?? null;
+      const rightProjection = entries.get(right) ?? null;
+      return (
+        projectionCreatedMs(leftProjection) - projectionCreatedMs(rightProjection) ||
+        String(left).localeCompare(String(right))
+      );
+    });
+
+  const buildNode = (threadId: ThreadId): DebugThreadTreeNode => {
+    const children = sortThreadIds(childIds.get(threadId) ?? []).map(buildNode);
+    return {
+      threadId,
+      projection: entries.get(threadId) ?? null,
+      children,
+    };
+  };
+
+  return sortThreadIds(rootIds).map(buildNode);
+}
+
+const PANEL_KEYS = ["tree", "projection", "item", "stream"] as const;
 type PanelKey = (typeof PANEL_KEYS)[number];
 const ALL_PANEL_KEYS: ReadonlyArray<PanelKey> = PANEL_KEYS;
-const DEFAULT_VISIBLE_PANELS: ReadonlyArray<PanelKey> = ["item", "stream"];
+const DEFAULT_VISIBLE_PANELS: ReadonlyArray<PanelKey> = ["tree", "item", "stream"];
 
 const PANEL_TITLES: Record<PanelKey, string> = {
+  tree: "Thread Tree",
   projection: "Projection Timeline",
   item: "Item Timeline",
   stream: "Stream Timeline",
@@ -599,6 +778,43 @@ function CloseIcon(props: { readonly className?: string }) {
       className={props.className ?? "size-3.5"}
     >
       <path d="M4 4l8 8M12 4l-8 8" />
+    </svg>
+  );
+}
+
+function ForkIcon(props: { readonly className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.5"
+      className={props.className ?? "size-3.5"}
+    >
+      <path d="M5 3.5v5a3 3 0 0 0 3 3h5" />
+      <path d="M10.5 9L13 11.5 10.5 14" />
+      <circle cx="5" cy="3.5" r="1.4" />
+    </svg>
+  );
+}
+
+function RollbackIcon(props: { readonly className?: string }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.5"
+      className={props.className ?? "size-3.5"}
+    >
+      <path d="M6.2 4 3.7 6.5 6.2 9" />
+      <path d="M4 6.5h5.25a3.75 3.75 0 1 1 0 7.5H8" />
     </svg>
   );
 }
@@ -771,34 +987,188 @@ function HiddenPanelPill(props: {
   );
 }
 
-function ThreadStatusInline(props: {
-  readonly threadId: ThreadId | null;
-  readonly provider: string;
-  readonly model: string;
-  readonly streamCount: number;
+function countThreadTreeNodes(nodes: ReadonlyArray<DebugThreadTreeNode>): number {
+  return nodes.reduce((count, node) => count + 1 + countThreadTreeNodes(node.children), 0);
+}
+
+function ThreadTreePanel(props: {
+  readonly title: string;
+  readonly nodes: ReadonlyArray<DebugThreadTreeNode>;
+  readonly activeThreadId: ThreadId | null;
+  readonly disabled: boolean;
+  readonly panelKey?: PanelKey;
+  readonly onClose?: () => void;
+  readonly onCreateThread: () => void;
+  readonly onOpenThread: (threadId: ThreadId) => void;
 }) {
+  const count = countThreadTreeNodes(props.nodes);
   return (
-    <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-      <div className="flex items-baseline gap-1.5">
-        <dt className="text-muted-foreground">Thread</dt>
-        <dd className="font-mono">{compactId(props.threadId) ?? "—"}</dd>
+    <section className="flex min-h-0 min-w-0 flex-col rounded-md border border-border bg-card shadow-sm">
+      <PanelHeader
+        title={props.title}
+        panelKey={props.panelKey}
+        onClose={props.onClose}
+        trailing={
+          <>
+            <button
+              type="button"
+              disabled={props.disabled}
+              onClick={props.onCreateThread}
+              className="inline-flex h-7 items-center rounded-md border border-border bg-background px-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50 hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+            >
+              New
+            </button>
+            <span className="rounded-full border border-border px-2 py-0.5 font-mono text-xs tabular-nums text-muted-foreground">
+              {count}
+            </span>
+          </>
+        }
+      />
+      {count === 0 ? (
+        <div className="flex min-h-48 items-center justify-center p-6 text-base text-muted-foreground sm:text-sm">
+          No threads yet.
+        </div>
+      ) : (
+        <div className="min-h-0 min-w-0 flex-1 overflow-auto px-3 py-3">
+          <ol role="tree" className="flex flex-col">
+            {props.nodes.map((node) => (
+              <ThreadTreeRow
+                key={node.threadId}
+                node={node}
+                depth={0}
+                activeThreadId={props.activeThreadId}
+                onOpenThread={props.onOpenThread}
+              />
+            ))}
+          </ol>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ThreadTreeRow(props: {
+  readonly node: DebugThreadTreeNode;
+  readonly depth: number;
+  readonly activeThreadId: ThreadId | null;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+}) {
+  const projection = props.node.projection;
+  const active = props.node.threadId === props.activeThreadId;
+  const relationship = projection?.thread.lineage.relationshipToParent ?? "source";
+  const provider = projection?.thread.modelSelection.provider ?? "unknown";
+  const model = projection?.thread.modelSelection.model ?? "unknown";
+  const itemCount = projection?.turnItems.length ?? 0;
+  const createdAt = formatTimestamp(projection?.thread.createdAt);
+
+  return (
+    <li
+      role="treeitem"
+      aria-expanded={props.node.children.length > 0 ? true : undefined}
+      className="relative"
+    >
+      {props.depth === 0 ? null : (
+        <span aria-hidden="true" className="absolute -left-3 top-4 h-px w-3 bg-border" />
+      )}
+      <button
+        type="button"
+        disabled={active}
+        onClick={() => {
+          props.onOpenThread(props.node.threadId);
+        }}
+        className={`grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2 rounded-md px-2 py-1.5 text-left text-sm disabled:cursor-default focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 ${
+          active ? "bg-foreground text-background" : "hover:bg-muted"
+        }`}
+        title={props.node.threadId}
+      >
+        <span
+          className={`mt-1 size-2 rounded-full ${
+            relationship === "fork" ? "bg-sky-500" : "bg-emerald-500"
+          }`}
+        />
+        <span className="min-w-0">
+          <span className="flex min-w-0 items-baseline gap-1.5">
+            <span className="truncate font-medium">
+              {projection?.thread.title ?? "Unknown thread"}
+            </span>
+            <span
+              className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] font-medium uppercase ${
+                active
+                  ? "border-background/30 text-background/80"
+                  : "border-border text-muted-foreground"
+              }`}
+            >
+              {relationship}
+            </span>
+          </span>
+          <span
+            className={`mt-0.5 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 font-mono text-xs ${
+              active ? "text-background/75" : "text-muted-foreground"
+            }`}
+          >
+            <span>{compactId(props.node.threadId) ?? props.node.threadId}</span>
+            <span>
+              {provider}/{model}
+            </span>
+            <span>{itemCount} items</span>
+            {createdAt === undefined ? null : <span>{createdAt.slice(11, 16)}</span>}
+          </span>
+        </span>
+      </button>
+      {props.node.children.length === 0 ? null : (
+        <ol role="group" className="ml-4 flex flex-col border-l border-border pl-3 pt-1">
+          {props.node.children.map((child) => (
+            <ThreadTreeRow
+              key={child.threadId}
+              node={child}
+              depth={props.depth + 1}
+              activeThreadId={props.activeThreadId}
+              onOpenThread={props.onOpenThread}
+            />
+          ))}
+        </ol>
+      )}
+    </li>
+  );
+}
+
+function ForkControls(props: {
+  readonly projection: OrchestrationV2ThreadProjection | null;
+  readonly disabled: boolean;
+  readonly onForkLatestStable: () => void;
+}) {
+  const latestCompletedRun = latestCompletedRunInProjection(props.projection);
+  const canFork = latestCompletedRun !== null;
+  if (props.projection === null) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-md border border-border bg-card px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold">Fork</h2>
+          <p className="truncate text-xs text-muted-foreground">
+            {canFork
+              ? `Latest completed run: ${compactId(latestCompletedRun.id) ?? latestCompletedRun.id}`
+              : "Run once, then fork from the latest completed run."}
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={props.disabled || !canFork}
+          onClick={props.onForkLatestStable}
+          className="inline-flex h-8 shrink-0 items-center rounded-md border border-border bg-background px-3 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50 hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+          title={
+            canFork
+              ? "Create an idle fork and switch the debugger to it"
+              : "A completed source run is required before forking"
+          }
+        >
+          Fork latest
+        </button>
       </div>
-      <div className="flex items-baseline gap-1.5">
-        <dt className="text-muted-foreground">Model</dt>
-        <dd>
-          <span>{props.provider}</span>
-          <span className="mx-1 text-muted-foreground">/</span>
-          <span className="font-mono">{props.model}</span>
-        </dd>
-      </div>
-      <div className="flex items-baseline gap-1.5">
-        <dt className="text-muted-foreground">Stream</dt>
-        <dd className="tabular-nums">
-          {props.streamCount}
-          <span className="ml-1 text-muted-foreground">items</span>
-        </dd>
-      </div>
-    </dl>
+    </section>
   );
 }
 
@@ -952,6 +1322,10 @@ function OrchestrationV2DebugRoute() {
   const [threadId, setThreadId] = useState<ThreadId | null>(null);
   const [projection, setProjection] = useState<OrchestrationV2ThreadProjection | null>(null);
   const [logEntries, setLogEntries] = useState<ReadonlyArray<LogEntry>>([]);
+  const [debugThreads, setDebugThreads] = useState<ReadonlyArray<DebugThreadOption>>([]);
+  const [projectionByThread, setProjectionByThread] = useState<
+    ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>
+  >(() => new Map());
   const [isBusy, setIsBusy] = useState(false);
   const [visiblePanels, setVisiblePanels] =
     useState<ReadonlyArray<PanelKey>>(DEFAULT_VISIBLE_PANELS);
@@ -984,14 +1358,38 @@ function OrchestrationV2DebugRoute() {
   const projectionTimeline = useMemo(() => buildProjectionTimeline(projection), [projection]);
   const streamTimeline = useMemo(() => buildStreamTimeline(logEntries), [logEntries]);
   const itemTimeline = useMemo(
-    () => buildItemTimeline({ projection, logEntries }),
-    [logEntries, projection],
+    () =>
+      buildItemTimeline({
+        projection,
+        projectionsByThread: projectionByThread,
+        logEntries,
+      }),
+    [logEntries, projection, projectionByThread],
+  );
+  const threadTree = useMemo(
+    () => buildThreadTree({ projections: projectionByThread, debugThreads }),
+    [debugThreads, projectionByThread],
   );
   const activeTurn = useMemo(() => deriveActiveTurn(projection), [projection]);
   const queuedRuns = useMemo(() => buildQueuedRunRows(projection), [projection]);
 
   const appendLog = useCallback((entry: LogEntry) => {
     setLogEntries((entries) => [...entries, entry]);
+  }, []);
+
+  const rememberDebugThread = useCallback((option: DebugThreadOption) => {
+    setDebugThreads((threads) => {
+      const withoutExisting = threads.filter((thread) => thread.threadId !== option.threadId);
+      return [...withoutExisting, option];
+    });
+  }, []);
+
+  const cacheProjection = useCallback((nextProjection: OrchestrationV2ThreadProjection) => {
+    setProjectionByThread((current) => {
+      const next = new Map(current);
+      next.set(nextProjection.thread.id, nextProjection);
+      return next;
+    });
   }, []);
 
   const clearSubscription = useCallback(() => {
@@ -1005,24 +1403,33 @@ function OrchestrationV2DebugRoute() {
     async (nextThreadId: ThreadId) => {
       const nextProjection = await api.getThreadProjection({ threadId: nextThreadId });
       setProjection(nextProjection);
+      cacheProjection(nextProjection);
       return nextProjection;
     },
-    [api],
+    [api, cacheProjection],
   );
 
   const subscribeToThread = useCallback(
     (nextThreadId: ThreadId) => {
       clearSubscription();
+      setLogEntries([]);
       unsubscribeRef.current = api.subscribeThread(
         { threadId: nextThreadId },
         (item) => {
           appendLog({ type: "stream", value: item });
           if (item.kind === "snapshot") {
             setProjection(item.projection);
+            cacheProjection(item.projection);
             return;
           }
           if (item.kind === "event") {
-            setProjection((current) => applyStreamEventToProjection(current, item.event));
+            setProjection((current) => {
+              const nextProjection = applyStreamEventToProjection(current, item.event);
+              if (nextProjection !== null) {
+                cacheProjection(nextProjection);
+              }
+              return nextProjection;
+            });
           }
         },
         {
@@ -1036,14 +1443,25 @@ function OrchestrationV2DebugRoute() {
         },
       );
     },
-    [api, appendLog, clearSubscription],
+    [api, appendLog, cacheProjection, clearSubscription],
   );
 
-  const ensureThread = useCallback(async () => {
-    if (threadId !== null) {
-      return threadId;
-    }
+  const openThread = useCallback(
+    async (nextThreadId: ThreadId) => {
+      setThreadId(nextThreadId);
+      subscribeToThread(nextThreadId);
+      const openedProjection = await refreshProjection(nextThreadId);
+      rememberDebugThread({
+        threadId: nextThreadId,
+        label: openedProjection.thread.lineage.relationshipToParent === "fork" ? "Fork" : "Source",
+        relationship:
+          openedProjection.thread.lineage.relationshipToParent === "fork" ? "fork" : "source",
+      });
+    },
+    [refreshProjection, rememberDebugThread, subscribeToThread],
+  );
 
+  const createDebugThread = useCallback(async () => {
     const nextThreadId = newThreadId();
     const result = await api.dispatchCommand({
       type: "thread.create",
@@ -1059,11 +1477,39 @@ function OrchestrationV2DebugRoute() {
     });
 
     setThreadId(nextThreadId);
-    appendLog({ type: "command", label: "thread.create", value: result });
+    rememberDebugThread({
+      threadId: nextThreadId,
+      label: "Source",
+      relationship: "source",
+    });
     subscribeToThread(nextThreadId);
+    appendLog({ type: "command", label: "thread.create", value: result });
     await refreshProjection(nextThreadId);
     return nextThreadId;
-  }, [api, appendLog, refreshProjection, subscribeToThread, threadId]);
+  }, [api, appendLog, refreshProjection, rememberDebugThread, subscribeToThread]);
+
+  const ensureThread = useCallback(async () => {
+    if (threadId !== null) {
+      return threadId;
+    }
+
+    return createDebugThread();
+  }, [createDebugThread, threadId]);
+
+  const createNewThread = useCallback(async () => {
+    if (isBusy) return;
+    setIsBusy(true);
+    try {
+      await createDebugThread();
+    } catch (error) {
+      appendLog({
+        type: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      setIsBusy(false);
+    }
+  }, [appendLog, createDebugThread, isBusy]);
 
   const sendPrompt = useCallback(
     async (intent: "send" | "steer" = "send") => {
@@ -1179,11 +1625,92 @@ function OrchestrationV2DebugRoute() {
     [api, appendLog, isBusy, refreshProjection, threadId],
   );
 
+  const forkFromRun = useCallback(
+    async (input: { readonly threadId: ThreadId; readonly runId: RunId }) => {
+      const sourceProjection = projectionByThread.get(input.threadId);
+      if (sourceProjection === undefined || isBusy) return;
+
+      setIsBusy(true);
+      try {
+        const targetThreadId = newThreadId();
+        const result = await api.dispatchCommand({
+          type: "thread.fork",
+          commandId: newCommandId(),
+          sourceThreadId: input.threadId,
+          targetThreadId,
+          sourcePoint: { type: "run", runId: input.runId },
+          title: `${sourceProjection.thread.title} fork`,
+        });
+        rememberDebugThread({
+          threadId: input.threadId,
+          label:
+            sourceProjection.thread.lineage.relationshipToParent === "fork" ? "Fork" : "Source",
+          relationship:
+            sourceProjection.thread.lineage.relationshipToParent === "fork" ? "fork" : "source",
+        });
+        rememberDebugThread({
+          threadId: targetThreadId,
+          label: "Fork",
+          relationship: "fork",
+        });
+        appendLog({ type: "command", label: "thread.fork", value: result });
+        await openThread(targetThreadId);
+      } catch (error) {
+        appendLog({
+          type: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [api, appendLog, isBusy, openThread, projectionByThread, rememberDebugThread],
+  );
+
+  const forkLatestStable = useCallback(async () => {
+    if (threadId === null || projection === null) return;
+    const latestCompletedRun = latestCompletedRunInProjection(projection);
+    if (latestCompletedRun === null) return;
+
+    await forkFromRun({
+      threadId,
+      runId: latestCompletedRun.id,
+    });
+  }, [forkFromRun, projection, threadId]);
+
+  const rollbackToCheckpoint = useCallback(
+    async (input: { readonly checkpointId: CheckpointId; readonly scopeId: CheckpointScopeId }) => {
+      if (threadId === null || isBusy) return;
+      setIsBusy(true);
+      try {
+        const result = await api.dispatchCommand({
+          type: "checkpoint.rollback",
+          commandId: newCommandId(),
+          threadId,
+          scopeId: input.scopeId,
+          checkpointId: input.checkpointId,
+        });
+        appendLog({ type: "command", label: "checkpoint.rollback", value: result });
+        await refreshProjection(threadId);
+      } catch (error) {
+        appendLog({
+          type: "error",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [api, appendLog, isBusy, refreshProjection, threadId],
+  );
+
   const reset = useCallback(() => {
     clearSubscription();
     setThreadId(null);
     setProjection(null);
     setLogEntries([]);
+    setDebugThreads([]);
+    setProjectionByThread(new Map());
   }, [clearSubscription]);
 
   const renderPanel = (panelKey: PanelKey): ReactNode => {
@@ -1191,6 +1718,23 @@ function OrchestrationV2DebugRoute() {
       closePanel(panelKey);
     };
     switch (panelKey) {
+      case "tree":
+        return (
+          <ThreadTreePanel
+            title={PANEL_TITLES.tree}
+            nodes={threadTree}
+            activeThreadId={threadId}
+            disabled={isBusy}
+            panelKey={panelKey}
+            onClose={onClose}
+            onCreateThread={() => {
+              void createNewThread();
+            }}
+            onOpenThread={(nextThreadId) => {
+              void openThread(nextThreadId);
+            }}
+          />
+        );
       case "projection":
         return (
           <TimelinePanel
@@ -1204,10 +1748,21 @@ function OrchestrationV2DebugRoute() {
         return (
           <ItemTimelinePanel
             title={PANEL_TITLES.item}
+            projection={projection}
             rows={itemTimeline}
             activeTurn={activeTurn}
+            disabled={isBusy}
             panelKey={panelKey}
             onClose={onClose}
+            onOpenThread={(nextThreadId) => {
+              void openThread(nextThreadId);
+            }}
+            onForkFromRun={(input) => {
+              void forkFromRun(input);
+            }}
+            onRollbackToCheckpoint={(input) => {
+              void rollbackToCheckpoint(input);
+            }}
           />
         );
       case "stream":
@@ -1226,16 +1781,21 @@ function OrchestrationV2DebugRoute() {
 
   return (
     <main className="grid h-dvh min-h-0 w-full min-w-0 max-w-full flex-1 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)_auto] gap-4 overflow-hidden bg-background p-4 text-foreground">
-      <header className="flex shrink-0 flex-wrap items-start justify-between gap-x-5 gap-y-3 ">
-        <div className="min-w-0"></div>
-        <div className="flex flex-wrap items-center gap-3">
+      <header className="flex shrink-0 flex-wrap items-center justify-between gap-x-5 gap-y-3">
+        <div className="min-w-0">
           <HiddenPanelPills hiddenPanels={hiddenPanels} onRestore={restorePanel} />
-          <ThreadStatusInline
-            threadId={threadId}
-            provider={DEFAULT_MODEL_SELECTION.provider}
-            model={DEFAULT_MODEL_SELECTION.model}
-            streamCount={logEntries.length}
-          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={isBusy}
+            className="rounded-md border border-border px-3 py-1.5 text-sm disabled:cursor-not-allowed disabled:opacity-50 hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+            onClick={() => {
+              void createNewThread();
+            }}
+          >
+            New thread
+          </button>
           <button
             type="button"
             className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
@@ -1330,6 +1890,15 @@ function OrchestrationV2DebugRoute() {
             </button>
           </div>
         </form>
+        <div className="mt-3">
+          <ForkControls
+            projection={projection}
+            disabled={isBusy}
+            onForkLatestStable={() => {
+              void forkLatestStable();
+            }}
+          />
+        </div>
         <QueueControls
           rows={queuedRuns}
           activeTurn={activeTurn}
@@ -1349,6 +1918,9 @@ function statusClass(status: string | undefined): string {
     case "completed":
     case "received":
     case "active":
+    case "consumed":
+    case "resolved_native":
+    case "resolved_portable":
       return "border-emerald-200 bg-emerald-50 text-emerald-800";
     case "running":
     case "streaming":
@@ -1356,6 +1928,7 @@ function statusClass(status: string | undefined): string {
       return "border-sky-200 bg-sky-50 text-sky-800";
     case "waiting":
     case "pending":
+    case "superseded":
       return "border-amber-200 bg-amber-50 text-amber-900";
     case "failed":
     case "cancelled":
@@ -1372,6 +1945,9 @@ function statusDotClass(status: string | undefined): string {
     case "completed":
     case "received":
     case "active":
+    case "consumed":
+    case "resolved_native":
+    case "resolved_portable":
       return "bg-emerald-500";
     case "running":
     case "streaming":
@@ -1379,6 +1955,7 @@ function statusDotClass(status: string | undefined): string {
       return "bg-sky-500";
     case "waiting":
     case "pending":
+    case "superseded":
       return "bg-amber-500";
     case "failed":
     case "cancelled":
@@ -1546,10 +2123,18 @@ type ItemViewMode = "chat" | "raw";
 
 function ItemTimelinePanel(props: {
   readonly title: string;
+  readonly projection: OrchestrationV2ThreadProjection | null;
   readonly rows: ReadonlyArray<ItemTimelineRow>;
   readonly activeTurn: ActiveTurn | null;
+  readonly disabled: boolean;
   readonly panelKey?: PanelKey;
   readonly onClose?: () => void;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly onForkFromRun: (input: { readonly threadId: ThreadId; readonly runId: RunId }) => void;
+  readonly onRollbackToCheckpoint: (input: {
+    readonly checkpointId: CheckpointId;
+    readonly scopeId: CheckpointScopeId;
+  }) => void;
 }) {
   const [viewMode, setViewMode] = useState<ItemViewMode>("chat");
   const nowMs = useNow();
@@ -1582,7 +2167,16 @@ function ItemTimelinePanel(props: {
         </div>
       ) : viewMode === "chat" ? (
         <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-auto px-3 py-3 sm:px-4">
-          <ChatScenes rows={props.rows} nowMs={nowMs} activeTurn={props.activeTurn} />
+          <ChatScenes
+            projection={props.projection}
+            rows={props.rows}
+            nowMs={nowMs}
+            activeTurn={props.activeTurn}
+            disabled={props.disabled}
+            onOpenThread={props.onOpenThread}
+            onForkFromRun={props.onForkFromRun}
+            onRollbackToCheckpoint={props.onRollbackToCheckpoint}
+          />
         </div>
       ) : (
         <div ref={scrollRef} className="min-h-0 min-w-0 flex-1 overflow-auto px-3 py-3 sm:px-4">
@@ -1683,16 +2277,30 @@ function StreamingDot() {
 }
 
 type ChatScene =
-  | { readonly kind: "standalone"; readonly item: OrchestrationV2TurnItem }
+  | {
+      readonly kind: "standalone";
+      readonly key: string;
+      readonly item: OrchestrationV2TurnItem;
+      readonly inheritedFromThreadId?: ThreadId | undefined;
+    }
+  | {
+      readonly kind: "fork-marker";
+      readonly key: string;
+      readonly sourceThreadId: ThreadId;
+      readonly targetThreadId: ThreadId;
+      readonly timestamp: string | undefined;
+    }
   | { readonly kind: "response"; readonly duration: string | undefined; readonly anchorId: string }
   | {
       readonly kind: "work-log";
+      readonly key: string;
       readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
     };
 
 const STANDALONE_CHAT_TYPES = new Set<OrchestrationV2TurnItem["type"]>([
   "user_message",
   "assistant_message",
+  "fork",
   "run_interrupt_request",
   "run_interrupt_result",
   "user_input_request",
@@ -1782,28 +2390,76 @@ function buildQueuedRunRows(
     });
 }
 
+function latestCompletedRunInProjection(
+  projection: OrchestrationV2ThreadProjection | null,
+): OrchestrationV2Run | null {
+  if (projection === null) return null;
+  return (
+    projection.runs
+      .filter((run) => run.status === "completed")
+      .toSorted((left, right) => right.ordinal - left.ordinal)[0] ?? null
+  );
+}
+
+function readyCheckpointsInProjection(
+  projection: OrchestrationV2ThreadProjection | null,
+): ReadonlyArray<OrchestrationV2Checkpoint> {
+  if (projection === null) return [];
+  return projection.checkpoints
+    .filter((checkpoint) => checkpoint.status === "ready")
+    .toSorted(
+      (left, right) =>
+        (right.appRunOrdinal ?? 0) - (left.appRunOrdinal ?? 0) ||
+        right.ordinalWithinScope - left.ordinalWithinScope,
+    );
+}
+
 function buildChatScenes(
   rows: ReadonlyArray<ItemTimelineRow>,
   activeRunIds: ReadonlySet<RunId>,
 ): ReadonlyArray<ChatScene> {
   const scenes: Array<ChatScene> = [];
   let currentLog: Array<OrchestrationV2TurnItem> = [];
+  let currentLogKey: string | null = null;
   let workStartMs: number | null = null;
   let pendingResponse = false;
 
   const flushLog = () => {
     if (currentLog.length > 0) {
-      scenes.push({ kind: "work-log", items: currentLog });
+      scenes.push({
+        kind: "work-log",
+        key: currentLogKey ?? `work:${scenes.length}`,
+        items: currentLog,
+      });
       currentLog = [];
+      currentLogKey = null;
     }
   };
 
   for (const row of rows) {
+    if (row.kind === "fork-marker") {
+      flushLog();
+      scenes.push({
+        kind: "fork-marker",
+        key: row.entry.key,
+        sourceThreadId: row.sourceThreadId,
+        targetThreadId: row.targetThreadId,
+        timestamp: row.entry.timestamp,
+      });
+      pendingResponse = false;
+      continue;
+    }
+
     const item = row.item;
 
     if (item.type === "user_message") {
       flushLog();
-      scenes.push({ kind: "standalone", item });
+      scenes.push({
+        kind: "standalone",
+        key: row.entry.key,
+        item,
+        inheritedFromThreadId: row.inheritedFromThreadId,
+      });
       workStartMs = itemEndMs(item);
       pendingResponse = false;
       continue;
@@ -1823,10 +2479,15 @@ function buildChatScenes(
           workStartMs !== null && assistantStart !== null
             ? formatDurationShort(assistantStart - workStartMs)
             : undefined;
-        scenes.push({ kind: "response", duration, anchorId: item.id });
+        scenes.push({ kind: "response", duration, anchorId: row.entry.key });
         pendingResponse = false;
       }
-      scenes.push({ kind: "standalone", item });
+      scenes.push({
+        kind: "standalone",
+        key: row.entry.key,
+        item,
+        inheritedFromThreadId: row.inheritedFromThreadId,
+      });
       if (turnSettled) {
         workStartMs = itemEndMs(item);
       }
@@ -1835,14 +2496,24 @@ function buildChatScenes(
 
     if (item.type === "run_interrupt_request") {
       flushLog();
-      scenes.push({ kind: "standalone", item });
+      scenes.push({
+        kind: "standalone",
+        key: row.entry.key,
+        item,
+        inheritedFromThreadId: row.inheritedFromThreadId,
+      });
       pendingResponse = false;
       continue;
     }
 
     if (item.type === "run_interrupt_result") {
       flushLog();
-      scenes.push({ kind: "standalone", item });
+      scenes.push({
+        kind: "standalone",
+        key: row.entry.key,
+        item,
+        inheritedFromThreadId: row.inheritedFromThreadId,
+      });
       workStartMs = itemEndMs(item);
       pendingResponse = false;
       continue;
@@ -1850,12 +2521,18 @@ function buildChatScenes(
 
     if (STANDALONE_CHAT_TYPES.has(item.type)) {
       flushLog();
-      scenes.push({ kind: "standalone", item });
+      scenes.push({
+        kind: "standalone",
+        key: row.entry.key,
+        item,
+        inheritedFromThreadId: row.inheritedFromThreadId,
+      });
       pendingResponse = true;
       continue;
     }
 
     if (currentLog.length === 0) {
+      currentLogKey = row.entry.key;
       const start = itemStartMs(item);
       if (start !== null) {
         workStartMs = start;
@@ -1872,28 +2549,72 @@ function buildChatScenes(
 const EMPTY_RUN_ID_SET: ReadonlySet<RunId> = new Set();
 
 function ChatScenes(props: {
+  readonly projection: OrchestrationV2ThreadProjection | null;
   readonly rows: ReadonlyArray<ItemTimelineRow>;
   readonly nowMs: number;
   readonly activeTurn: ActiveTurn | null;
+  readonly disabled: boolean;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly onForkFromRun: (input: { readonly threadId: ThreadId; readonly runId: RunId }) => void;
+  readonly onRollbackToCheckpoint: (input: {
+    readonly checkpointId: CheckpointId;
+    readonly scopeId: CheckpointScopeId;
+  }) => void;
 }) {
   const activeRunIds = props.activeTurn?.runIds ?? EMPTY_RUN_ID_SET;
+  const checkpointByRunId = useMemo(() => {
+    const map = new Map<RunId, OrchestrationV2Checkpoint>();
+    for (const checkpoint of readyCheckpointsInProjection(props.projection)) {
+      if (checkpoint.runId !== null && !map.has(checkpoint.runId)) {
+        map.set(checkpoint.runId, checkpoint);
+      }
+    }
+    return map;
+  }, [props.projection]);
   const scenes = useMemo(
     () => buildChatScenes(props.rows, activeRunIds),
     [props.rows, activeRunIds],
   );
   return (
     <div className="flex flex-col gap-2">
-      {scenes.map((scene, index) => {
+      {scenes.map((scene) => {
         if (scene.kind === "standalone") {
-          return <ChatItem key={`item:${scene.item.id}`} item={scene.item} nowMs={props.nowMs} />;
+          return (
+            <ChatItem
+              key={scene.key}
+              item={scene.item}
+              inheritedFromThreadId={scene.inheritedFromThreadId}
+              nowMs={props.nowMs}
+              disabled={props.disabled}
+              rollbackCheckpoint={
+                scene.item.type === "user_message" && scene.item.runId !== null
+                  ? checkpointByRunId.get(scene.item.runId)
+                  : undefined
+              }
+              onOpenThread={props.onOpenThread}
+              onForkFromRun={props.onForkFromRun}
+              onRollbackToCheckpoint={props.onRollbackToCheckpoint}
+            />
+          );
+        }
+        if (scene.kind === "fork-marker") {
+          return (
+            <ChatForkMarker
+              key={scene.key}
+              sourceThreadId={scene.sourceThreadId}
+              targetThreadId={scene.targetThreadId}
+              timestamp={scene.timestamp}
+              nowMs={props.nowMs}
+              onOpenThread={props.onOpenThread}
+            />
+          );
         }
         if (scene.kind === "response") {
           return (
             <ChatResponseDivider key={`response:${scene.anchorId}`} duration={scene.duration} />
           );
         }
-        const firstId = scene.items[0]?.id ?? `idx-${index}`;
-        return <ChatWorkLog key={`work:${firstId}`} items={scene.items} />;
+        return <ChatWorkLog key={`work:${scene.key}`} items={scene.items} />;
       })}
       {props.activeTurn !== null ? <WorkingIndicator startMs={props.activeTurn.startMs} /> : null}
     </div>
@@ -2170,7 +2891,19 @@ function ChatWorkLogRow(props: { readonly item: OrchestrationV2TurnItem }) {
   );
 }
 
-function ChatItem(props: { readonly item: OrchestrationV2TurnItem; readonly nowMs: number }) {
+function ChatItem(props: {
+  readonly item: OrchestrationV2TurnItem;
+  readonly inheritedFromThreadId?: ThreadId | undefined;
+  readonly nowMs: number;
+  readonly disabled: boolean;
+  readonly rollbackCheckpoint?: OrchestrationV2Checkpoint | undefined;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+  readonly onForkFromRun: (input: { readonly threadId: ThreadId; readonly runId: RunId }) => void;
+  readonly onRollbackToCheckpoint: (input: {
+    readonly checkpointId: CheckpointId;
+    readonly scopeId: CheckpointScopeId;
+  }) => void;
+}) {
   const { item, nowMs } = props;
   const timestamp = formatTimestamp(item.updatedAt ?? item.completedAt ?? item.startedAt);
 
@@ -2183,12 +2916,31 @@ function ChatItem(props: { readonly item: OrchestrationV2TurnItem; readonly nowM
           </div>
           <ChatMeta side="right">
             <ChatStatusPill status={item.status} />
+            {props.rollbackCheckpoint === undefined ? null : (
+              <button
+                type="button"
+                disabled={props.disabled}
+                onClick={() => {
+                  if (props.rollbackCheckpoint === undefined) return;
+                  props.onRollbackToCheckpoint({
+                    checkpointId: props.rollbackCheckpoint.id,
+                    scopeId: props.rollbackCheckpoint.scopeId,
+                  });
+                }}
+                className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50 hover:bg-muted hover:text-red-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+                title="Restore filesystem checkpoint and roll back provider conversation to this turn"
+                aria-label="Restore filesystem checkpoint and roll back provider conversation to this turn"
+              >
+                <RollbackIcon />
+              </button>
+            )}
             <ChatClock iso={timestamp} nowMs={nowMs} />
           </ChatMeta>
         </ChatBubbleRow>
       );
 
-    case "assistant_message":
+    case "assistant_message": {
+      const forkRunId = item.runId;
       return (
         <ChatBubbleRow side="left">
           <div className="max-w-[92%] text-base text-foreground sm:text-sm">
@@ -2199,10 +2951,27 @@ function ChatItem(props: { readonly item: OrchestrationV2TurnItem; readonly nowM
           </div>
           <ChatMeta side="left">
             <ChatStatusPill status={item.status} />
+            {forkRunId === null ? null : (
+              <button
+                type="button"
+                onClick={() => {
+                  props.onForkFromRun({
+                    threadId: props.inheritedFromThreadId ?? item.threadId,
+                    runId: forkRunId,
+                  });
+                }}
+                className="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+                title="Fork from this response"
+                aria-label="Fork from this response"
+              >
+                <ForkIcon />
+              </button>
+            )}
             <ChatClock iso={timestamp} nowMs={nowMs} />
           </ChatMeta>
         </ChatBubbleRow>
       );
+    }
 
     case "reasoning":
       return (
@@ -2465,11 +3234,11 @@ function ChatItem(props: { readonly item: OrchestrationV2TurnItem; readonly nowM
 
     case "fork":
       return (
-        <ChatSystemDivider
-          label="Fork"
-          description={`→ ${compactId(item.targetThreadId) ?? item.targetThreadId}`}
+        <ChatForkDivider
+          item={item}
           timestamp={timestamp}
           nowMs={nowMs}
+          onOpenThread={props.onOpenThread}
         />
       );
   }
@@ -2604,6 +3373,85 @@ function ChatSystemDivider(props: {
       ) : null}
       <ChatClock iso={props.timestamp} nowMs={props.nowMs} />
       <span data-divider-line aria-hidden="true" className="h-px flex-1" />
+    </div>
+  );
+}
+
+function ChatForkMarker(props: {
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+  readonly timestamp: string | undefined;
+  readonly nowMs: number;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 py-2 text-xs text-muted-foreground">
+      <span aria-hidden="true" className="h-px flex-1 bg-border" />
+      <button
+        type="button"
+        onClick={() => {
+          props.onOpenThread(props.sourceThreadId);
+        }}
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-border bg-background px-2.5 py-1 font-medium text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+        title={props.sourceThreadId}
+      >
+        <ForkIcon />
+        <span>Forked from conversation</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          props.onOpenThread(props.targetThreadId);
+        }}
+        className="min-w-0 max-w-[10rem] truncate rounded-md border border-border bg-background px-2 py-0.5 font-mono text-xs text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+        title={props.targetThreadId}
+      >
+        {compactId(props.targetThreadId) ?? props.targetThreadId}
+      </button>
+      <ChatClock iso={props.timestamp} nowMs={props.nowMs} />
+      <span aria-hidden="true" className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
+function ChatForkDivider(props: {
+  readonly item: Extract<OrchestrationV2TurnItem, { readonly type: "fork" }>;
+  readonly timestamp: string | undefined;
+  readonly nowMs: number;
+  readonly onOpenThread: (threadId: ThreadId) => void;
+}) {
+  const sourceThreadId = props.item.source.type === "run" ? props.item.source.threadId : null;
+  return (
+    <div className="flex min-w-0 items-center gap-2 py-1 text-xs text-muted-foreground">
+      <span aria-hidden="true" className="h-px flex-1 bg-border" />
+      <span className="shrink-0 rounded-full border border-border bg-background px-2 py-0.5 font-mono font-medium tracking-wide uppercase">
+        Forked from
+      </span>
+      {sourceThreadId === null ? null : (
+        <button
+          type="button"
+          onClick={() => {
+            props.onOpenThread(sourceThreadId);
+          }}
+          className="min-w-0 max-w-[10rem] truncate rounded-md border border-border bg-background px-2 py-0.5 font-mono text-xs text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+          title={sourceThreadId}
+        >
+          {compactId(sourceThreadId) ?? sourceThreadId}
+        </button>
+      )}
+      <span className="font-mono text-muted-foreground/70">→</span>
+      <button
+        type="button"
+        onClick={() => {
+          props.onOpenThread(props.item.targetThreadId);
+        }}
+        className="min-w-0 max-w-[10rem] truncate rounded-md border border-border bg-background px-2 py-0.5 font-mono text-xs text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500"
+        title={props.item.targetThreadId}
+      >
+        {compactId(props.item.targetThreadId) ?? props.item.targetThreadId}
+      </button>
+      <ChatClock iso={props.timestamp} nowMs={props.nowMs} />
+      <span aria-hidden="true" className="h-px flex-1 bg-border" />
     </div>
   );
 }

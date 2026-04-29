@@ -6,6 +6,7 @@ import {
   CheckpointScopeId,
   CommandId,
   ContextHandoffId,
+  ContextTransferId,
   EventId,
   MessageId,
   NodeId,
@@ -46,6 +47,87 @@ export const OrchestrationV2ProviderRef = Schema.Struct({
   ordinal: Schema.optional(NonNegativeInt),
 });
 export type OrchestrationV2ProviderRef = typeof OrchestrationV2ProviderRef.Type;
+
+export const OrchestrationV2AppThreadLineage = Schema.Struct({
+  parentThreadId: Schema.NullOr(ThreadId),
+  relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
+  rootThreadId: ThreadId,
+});
+export type OrchestrationV2AppThreadLineage = typeof OrchestrationV2AppThreadLineage.Type;
+
+export const OrchestrationV2ContextTransferType = Schema.Literals([
+  "fork",
+  "provider_handoff",
+  "merge_back",
+  "subagent_spawn",
+  "subagent_result",
+]);
+export type OrchestrationV2ContextTransferType = typeof OrchestrationV2ContextTransferType.Type;
+
+export const OrchestrationV2ContextSourcePoint = Schema.Struct({
+  threadId: ThreadId,
+  runId: Schema.optional(RunId),
+  checkpointId: Schema.optional(CheckpointId),
+  turnItemId: Schema.optional(TurnItemId),
+  providerThreadRef: Schema.optional(OrchestrationV2ProviderRef),
+  providerTurnRef: Schema.optional(OrchestrationV2ProviderRef),
+});
+export type OrchestrationV2ContextSourcePoint = typeof OrchestrationV2ContextSourcePoint.Type;
+
+export const OrchestrationV2ThreadForkSourcePoint = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("latest_stable") }),
+  Schema.Struct({ type: Schema.Literal("run"), runId: RunId }),
+  Schema.Struct({ type: Schema.Literal("checkpoint"), checkpointId: CheckpointId }),
+]);
+export type OrchestrationV2ThreadForkSourcePoint = typeof OrchestrationV2ThreadForkSourcePoint.Type;
+
+export const OrchestrationV2ContextTransferResolution = Schema.Union([
+  Schema.Struct({
+    strategy: Schema.Literal("native_fork"),
+    providerThreadRef: OrchestrationV2ProviderRef,
+  }),
+  Schema.Struct({
+    strategy: Schema.Literal("portable_context"),
+    contextHandoffId: ContextHandoffId,
+  }),
+  Schema.Struct({
+    strategy: Schema.Literal("delta_context"),
+    contextHandoffId: ContextHandoffId,
+  }),
+  Schema.Struct({
+    strategy: Schema.Literal("checkpoint_context"),
+    contextHandoffId: ContextHandoffId,
+  }),
+]);
+export type OrchestrationV2ContextTransferResolution =
+  typeof OrchestrationV2ContextTransferResolution.Type;
+
+export const OrchestrationV2ContextTransfer = Schema.Struct({
+  id: ContextTransferId,
+  type: OrchestrationV2ContextTransferType,
+  sourceThreadId: ThreadId,
+  targetThreadId: ThreadId,
+  sourcePoint: OrchestrationV2ContextSourcePoint,
+  basePoint: Schema.NullOr(OrchestrationV2ContextSourcePoint),
+  sourceProvider: Schema.NullOr(ProviderKind),
+  targetProvider: Schema.NullOr(ProviderKind),
+  targetRunId: Schema.NullOr(RunId),
+  status: Schema.Literals([
+    "pending",
+    "resolved_native",
+    "resolved_portable",
+    "failed",
+    "consumed",
+    "superseded",
+  ]),
+  resolution: Schema.NullOr(OrchestrationV2ContextTransferResolution),
+  createdBy: Schema.Literals(["user", "agent", "system"]),
+  error: Schema.NullOr(Schema.String),
+  createdAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
+  consumedAt: Schema.NullOr(Schema.DateTimeUtc),
+});
+export type OrchestrationV2ContextTransfer = typeof OrchestrationV2ContextTransfer.Type;
 
 export const OrchestrationV2SessionCapabilities = Schema.Struct({
   supportsMultipleProviderThreadsPerSession: Schema.Boolean,
@@ -184,6 +266,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   activeProviderThreadId: Schema.NullOr(ProviderThreadId),
+  lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
     Schema.Union([
       Schema.Struct({ type: Schema.Literal("run"), threadId: ThreadId, runId: RunId }),
@@ -356,6 +439,7 @@ export type OrchestrationV2ProviderThread = typeof OrchestrationV2ProviderThread
 
 export const OrchestrationV2ContextHandoff = Schema.Struct({
   id: ContextHandoffId,
+  transferId: Schema.optional(Schema.NullOr(ContextTransferId)),
   threadId: ThreadId,
   targetRunId: RunId,
   fromProviderThreadIds: Schema.Array(ProviderThreadId),
@@ -790,6 +874,16 @@ export const OrchestrationV2DomainEvent = Schema.Union([
     type: Schema.Literal("context-handoff.updated"),
     payload: OrchestrationV2ContextHandoff,
   }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("context-transfer.created"),
+    payload: OrchestrationV2ContextTransfer,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2EventBase.fields,
+    type: Schema.Literal("context-transfer.updated"),
+    payload: OrchestrationV2ContextTransfer,
+  }),
 ]);
 export type OrchestrationV2DomainEvent = typeof OrchestrationV2DomainEvent.Type;
 
@@ -808,6 +902,7 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   checkpointScopes: Schema.Array(OrchestrationV2CheckpointScope),
   checkpoints: Schema.Array(OrchestrationV2Checkpoint),
   contextHandoffs: Schema.Array(OrchestrationV2ContextHandoff),
+  contextTransfers: Schema.Array(OrchestrationV2ContextTransfer),
   updatedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
@@ -886,6 +981,16 @@ export const OrchestrationV2ContextHandoffJson = OrchestrationV2ContextHandoff.m
   }),
 );
 export type OrchestrationV2ContextHandoffJson = typeof OrchestrationV2ContextHandoffJson.Type;
+
+export const OrchestrationV2ContextTransferJson = OrchestrationV2ContextTransfer.mapFields(
+  (fields) => ({
+    ...fields,
+    createdAt: Schema.DateTimeUtcFromString,
+    updatedAt: Schema.DateTimeUtcFromString,
+    consumedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+  }),
+);
+export type OrchestrationV2ContextTransferJson = typeof OrchestrationV2ContextTransferJson.Type;
 
 export const OrchestrationV2ProviderTurnJson = OrchestrationV2ProviderTurn.mapFields((fields) => ({
   ...fields,
@@ -1163,6 +1268,16 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
     type: Schema.Literal("context-handoff.updated"),
     payload: OrchestrationV2ContextHandoffJson,
   }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("context-transfer.created"),
+    payload: OrchestrationV2ContextTransferJson,
+  }),
+  Schema.Struct({
+    ...OrchestrationV2JsonEventBaseFields,
+    type: Schema.Literal("context-transfer.updated"),
+    payload: OrchestrationV2ContextTransferJson,
+  }),
 ]);
 export type OrchestrationV2DomainEventJson = typeof OrchestrationV2DomainEventJson.Type;
 
@@ -1239,16 +1354,11 @@ export const OrchestrationV2Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("thread.fork"),
     commandId: CommandId,
-    source: Schema.Union([
-      Schema.Struct({ type: Schema.Literal("run"), threadId: ThreadId, runId: RunId }),
-      Schema.Struct({ type: Schema.Literal("node"), nodeId: NodeId }),
-      Schema.Struct({
-        type: Schema.Literal("provider_thread"),
-        providerThreadId: ProviderThreadId,
-        providerTurnId: Schema.optional(ProviderTurnId),
-      }),
-    ]),
+    sourceThreadId: ThreadId,
     targetThreadId: ThreadId,
+    sourcePoint: OrchestrationV2ThreadForkSourcePoint,
+    title: Schema.optional(TrimmedNonEmptyString),
+    createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
     type: Schema.Literal("provider.switch"),
