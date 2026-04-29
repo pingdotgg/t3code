@@ -748,8 +748,7 @@ describe("addSavedEnvironment", () => {
     await resetEnvironmentServiceForTests();
   });
 
-  it("times out a saved ssh reconnect when desktop bootstrap never settles", async () => {
-    vi.useFakeTimers();
+  it("surfaces desktop ssh bootstrap failures during saved ssh reconnect", async () => {
     mockSavedRecords = [
       {
         environmentId: EnvironmentId.make("environment-1"),
@@ -767,17 +766,14 @@ describe("addSavedEnvironment", () => {
       },
     ];
     mockReadSavedEnvironmentBearerToken.mockResolvedValue(null);
-    mockEnsureSshEnvironment.mockReturnValue(new Promise(() => undefined));
+    mockEnsureSshEnvironment.mockRejectedValue(new Error("SSH command timed out after 60000ms."));
 
     const { reconnectSavedEnvironment, resetEnvironmentServiceForTests } =
       await import("./service");
 
-    const reconnectPromise = reconnectSavedEnvironment(EnvironmentId.make("environment-1"));
-    const reconnectAssertion = expect(reconnectPromise).rejects.toThrow(
-      "Timed out starting SSH environment for devbox.",
+    await expect(reconnectSavedEnvironment(EnvironmentId.make("environment-1"))).rejects.toThrow(
+      "SSH command timed out after 60000ms.",
     );
-    await vi.advanceTimersByTimeAsync(70_000);
-    await reconnectAssertion;
     expect(mockPatchRuntime).toHaveBeenCalledWith(
       EnvironmentId.make("environment-1"),
       expect.objectContaining({
@@ -788,7 +784,7 @@ describe("addSavedEnvironment", () => {
       EnvironmentId.make("environment-1"),
       expect.objectContaining({
         connectionState: "error",
-        lastError: "Timed out starting SSH environment for devbox.",
+        lastError: "SSH command timed out after 60000ms.",
       }),
     );
 

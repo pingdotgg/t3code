@@ -114,7 +114,6 @@ const THREAD_DETAIL_SUBSCRIPTION_IDLE_EVICTION_MS = 15 * 60 * 1000;
 const MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS = 32;
 const NOOP = () => undefined;
 const SSH_HTTP_STATUS_RE = /^\[ssh_http:(\d+)\]\s/u;
-const SAVED_ENVIRONMENT_CONNECT_TIMEOUT_MS = 70_000;
 
 function compareAppliedProjectionVersion(
   left: { readonly sequence: number; readonly updatedAt: string | null },
@@ -597,10 +596,7 @@ async function resolveDesktopSshEnvironmentBootstrap(
     throw new Error("SSH launch is only available in the desktop app.");
   }
 
-  return await withDesktopSshBootstrapTimeout(
-    target,
-    desktopBridge.ensureSshEnvironment(target, options),
-  );
+  return await desktopBridge.ensureSshEnvironment(target, options);
 }
 
 function getDesktopSshBridge() {
@@ -740,36 +736,6 @@ function setRuntimeError(environmentId: EnvironmentId, error: unknown) {
     connectionState: "error",
     ...getRuntimeErrorFields(error),
   });
-}
-
-function getDesktopSshTargetDisplayName(target: DesktopSshEnvironmentTarget): string {
-  return target.alias.trim() || target.hostname.trim() || "SSH host";
-}
-
-function createDesktopSshBootstrapTimeoutError(target: DesktopSshEnvironmentTarget): Error {
-  return new Error(
-    `Timed out starting SSH environment for ${getDesktopSshTargetDisplayName(target)}.`,
-  );
-}
-
-async function withDesktopSshBootstrapTimeout<T>(
-  target: DesktopSshEnvironmentTarget,
-  operation: Promise<T>,
-): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => {
-      reject(createDesktopSshBootstrapTimeoutError(target));
-    }, SAVED_ENVIRONMENT_CONNECT_TIMEOUT_MS);
-  });
-
-  try {
-    return await Promise.race([operation, timeout]);
-  } finally {
-    if (timeoutId !== null) {
-      clearTimeout(timeoutId);
-    }
-  }
 }
 
 function coalesceOrchestrationUiEvents(

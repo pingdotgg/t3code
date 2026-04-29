@@ -12,6 +12,7 @@ import {
   Exit,
   FileSystem,
   Layer,
+  Option,
   Path,
   Schema,
   Scope,
@@ -96,6 +97,25 @@ function makeSshTunnelCancelledError(target: DesktopSshEnvironmentTarget): SshCo
     stderr: "",
     message: `SSH environment connection was cancelled for ${target.alias || target.hostname}.`,
   });
+}
+
+function sshTargetLogFields(target: DesktopSshEnvironmentTarget) {
+  return {
+    alias: target.alias,
+    hostname: target.hostname,
+    username: target.username,
+    port: target.port,
+  };
+}
+
+function sshRunnerLogFields(runner: RemoteT3RunnerOptions | undefined) {
+  if (runner?.nodeScriptPath?.trim()) {
+    return { runner: "node-script", nodeScriptPath: runner.nodeScriptPath.trim() };
+  }
+  if (runner?.packageSpec?.trim()) {
+    return { runner: "package", packageSpec: runner.packageSpec.trim() };
+  }
+  return { runner: "default" };
 }
 
 interface SshAuthOperationInput<T> {
@@ -341,6 +361,11 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
     SshCommandError | SshInvalidTargetError | SshLaunchError,
     ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
   > {
+    yield* Effect.logInfo("ssh.remoteServer.launch.start", {
+      ...sshTargetLogFields(target),
+      ...sshRunnerLogFields(runner),
+      stateKey: remoteStateKey(target),
+    });
     const result = yield* runSshCommand(target, {
       remoteCommandArgs: ["sh", "-s", "--", remoteStateKey(target)],
       stdin: buildRemoteLaunchScript(runner),
@@ -370,6 +395,11 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
         stdout: result.stdout,
       });
     }
+    yield* Effect.logInfo("ssh.remoteServer.launch.ready", {
+      ...sshTargetLogFields(target),
+      remotePort: parsed.remotePort,
+      stateKey: remoteStateKey(target),
+    });
     return parsed.remotePort;
   },
 );
@@ -383,6 +413,10 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
   SshCommandError | SshInvalidTargetError | SshPairingError,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
+  yield* Effect.logInfo("ssh.remoteServer.pairingToken.start", {
+    ...sshTargetLogFields(target),
+    stateKey: remoteStateKey(target),
+  });
   const result = yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
     stdin: buildRemotePairingScript(target, runner),
@@ -412,6 +446,10 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
       stdout: result.stdout,
     });
   }
+  yield* Effect.logInfo("ssh.remoteServer.pairingToken.created", {
+    ...sshTargetLogFields(target),
+    stateKey: remoteStateKey(target),
+  });
   return parsed.credential;
 });
 
@@ -423,12 +461,20 @@ export const stopRemoteServer = Effect.fn("ssh/tunnel.stopRemoteServer")(functio
   SshCommandError | SshInvalidTargetError,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
+  yield* Effect.logInfo("ssh.remoteServer.stop.start", {
+    ...sshTargetLogFields(target),
+    stateKey: remoteStateKey(target),
+  });
   yield* runSshCommand(target, {
     remoteCommandArgs: ["sh", "-s"],
     stdin: buildRemoteStopScript(target),
     ...(input?.authSecret === undefined ? {} : { authSecret: input.authSecret }),
     ...(input?.batchMode === undefined ? {} : { batchMode: input.batchMode }),
     ...(input?.interactiveAuth === undefined ? {} : { interactiveAuth: input.interactiveAuth }),
+  });
+  yield* Effect.logInfo("ssh.remoteServer.stop.succeeded", {
+    ...sshTargetLogFields(target),
+    stateKey: remoteStateKey(target),
   });
 });
 
@@ -442,24 +488,44 @@ export const waitForHttpReady = Effect.fn("ssh/tunnel.waitForHttpReady")(functio
   const intervalMs = input.intervalMs ?? 100;
   const maxRetries = Math.max(0, Math.ceil(timeoutMs / intervalMs));
   const requestUrl = new URL(input.path ?? "/", input.baseUrl).toString();
-  const client = (yield* HttpClient.HttpClient).pipe(
-    HttpClient.filterStatusOk,
-    HttpClient.retry({
-      schedule: Schedule.spaced(Duration.millis(intervalMs)),
-      times: maxRetries,
-    }),
-  );
+  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
 
-  yield* client.execute(HttpClientRequest.get(requestUrl)).pipe(
+  yield* Effect.logInfo("ssh.tunnel.httpReady.start", {
+    baseUrl: input.baseUrl,
+    requestUrl,
+    timeoutMs,
+    intervalMs,
+  });
+
+  const result = yield* client.execute(HttpClientRequest.get(requestUrl)).pipe(
     Effect.asVoid,
     Effect.mapError(
       (cause) =>
         new SshReadinessError({
-          message: `Timed out waiting for backend readiness at ${input.baseUrl}.`,
+          message: `Backend readiness probe failed at ${input.baseUrl}.`,
           cause,
         }),
     ),
+    Effect.retry({
+      schedule: Schedule.spaced(Duration.millis(intervalMs)),
+      times: maxRetries,
+    }),
+    Effect.timeoutOption(Duration.millis(timeoutMs)),
   );
+
+  return yield* Option.match(result, {
+    onSome: () =>
+      Effect.logInfo("ssh.tunnel.httpReady.succeeded", {
+        baseUrl: input.baseUrl,
+        requestUrl,
+      }),
+    onNone: () =>
+      Effect.fail(
+        new SshReadinessError({
+          message: `Timed out waiting ${timeoutMs}ms for backend readiness at ${input.baseUrl}.`,
+        }),
+      ),
+  });
 });
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -616,6 +682,12 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   ];
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const scope = yield* Scope.Scope;
+  yield* Effect.logInfo("ssh.tunnel.spawn.start", {
+    ...sshTargetLogFields(input.resolvedTarget),
+    localPort: input.localPort,
+    remotePort: input.remotePort,
+    httpBaseUrl: input.httpBaseUrl,
+  });
   const child = yield* spawner
     .spawn(
       ChildProcess.make("ssh", args, {
@@ -638,6 +710,12 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
           }),
       ),
     );
+  yield* Effect.logInfo("ssh.tunnel.spawn.succeeded", {
+    ...sshTargetLogFields(input.resolvedTarget),
+    localPort: input.localPort,
+    remotePort: input.remotePort,
+    httpBaseUrl: input.httpBaseUrl,
+  });
   const tunnelEntry: SshTunnelEntry = {
     key: input.key,
     target: input.resolvedTarget,
@@ -686,6 +764,23 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     }),
     exitFailure,
   ).pipe(
+    Effect.tap(() =>
+      Effect.logInfo("ssh.tunnel.ready", {
+        ...sshTargetLogFields(input.resolvedTarget),
+        localPort: input.localPort,
+        remotePort: input.remotePort,
+        httpBaseUrl: input.httpBaseUrl,
+      }),
+    ),
+    Effect.tapError((cause) =>
+      Effect.logWarning("ssh.tunnel.ready.failed", {
+        ...sshTargetLogFields(input.resolvedTarget),
+        localPort: input.localPort,
+        remotePort: input.remotePort,
+        httpBaseUrl: input.httpBaseUrl,
+        cause,
+      }),
+    ),
     Effect.onExit((exit) =>
       Exit.isSuccess(exit)
         ? Effect.void
@@ -714,7 +809,19 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const closeTunnelEntry = Effect.fn("ssh/tunnel.closeTunnelEntry")(function* (
     entry: SshTunnelEntry,
   ) {
+    yield* Effect.logInfo("ssh.tunnel.close.start", {
+      ...sshTargetLogFields(entry.target),
+      key: entry.key,
+      localPort: entry.localPort,
+      remotePort: entry.remotePort,
+    });
     yield* Scope.close(entry.scope, Exit.void).pipe(Effect.ignore);
+    yield* Effect.logInfo("ssh.tunnel.close.succeeded", {
+      ...sshTargetLogFields(entry.target),
+      key: entry.key,
+      localPort: entry.localPort,
+      remotePort: entry.remotePort,
+    });
   });
 
   yield* Scope.addFinalizer(
@@ -734,11 +841,19 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     const promptService = yield* SshPasswordPrompt;
     const hostSpec = yield* buildSshHostSpecEffect(target);
     if (!promptService.isAvailable) {
+      yield* Effect.logWarning("ssh.auth.passwordPrompt.unavailable", {
+        ...sshTargetLogFields(target),
+        attempt,
+      });
       return yield* new SshPasswordPromptError({
         message: `SSH authentication failed for ${hostSpec}.`,
       });
     }
 
+    yield* Effect.logInfo("ssh.auth.passwordPrompt.request", {
+      ...sshTargetLogFields(target),
+      attempt,
+    });
     const password = yield* promptService.request({
       attempt,
       destination: target.alias.trim() || target.hostname.trim(),
@@ -746,10 +861,18 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       prompt: `Enter the SSH password for ${hostSpec}.`,
     });
     if (password === null) {
+      yield* Effect.logWarning("ssh.auth.passwordPrompt.cancelled", {
+        ...sshTargetLogFields(target),
+        attempt,
+      });
       return yield* new SshPasswordPromptError({
         message: `SSH authentication cancelled for ${hostSpec}.`,
       });
     }
+    yield* Effect.logInfo("ssh.auth.passwordPrompt.received", {
+      ...sshTargetLogFields(target),
+      attempt,
+    });
     return password;
   });
 
@@ -763,6 +886,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         return yield* input.error;
       }
 
+      yield* Effect.logWarning("ssh.auth.failed", {
+        ...sshTargetLogFields(input.target),
+        key: input.key,
+        promptCount: input.promptCount,
+        cause: input.error,
+      });
       const promptService = yield* SshPasswordPrompt;
       if (!promptService.isAvailable) {
         return yield* input.error;
@@ -821,15 +950,31 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     readonly resolvedTarget: DesktopSshEnvironmentTarget;
     readonly runner?: RemoteT3RunnerOptions;
   }): Effect.fn.Return<SshTunnelEntry, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
+    yield* Effect.logInfo("ssh.environment.tunnel.create.start", {
+      ...sshTargetLogFields(input.resolvedTarget),
+      ...sshRunnerLogFields(input.runner),
+      key: input.key,
+    });
     const remotePort = yield* runWithSshAuth({
       key: input.key,
       target: input.resolvedTarget,
       operation: (authOptions) =>
         launchOrReuseRemoteServer(input.resolvedTarget, authOptions, input.runner),
     });
+    yield* Effect.logInfo("ssh.environment.remotePort.ready", {
+      ...sshTargetLogFields(input.resolvedTarget),
+      key: input.key,
+      remotePort,
+    });
     const localPort = yield* reserveLocalTunnelPort();
     const httpBaseUrl = `http://127.0.0.1:${localPort}/`;
     const wsBaseUrl = `ws://127.0.0.1:${localPort}/`;
+    yield* Effect.logInfo("ssh.environment.localPort.reserved", {
+      ...sshTargetLogFields(input.resolvedTarget),
+      key: input.key,
+      localPort,
+      remotePort,
+    });
     const entryScope = yield* Scope.make("sequential");
     const tunnelEntry = yield* runWithSshAuth({
       key: input.key,
@@ -859,6 +1004,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         if (tunnels.get(tunnelEntry.key) !== tunnelEntry) {
           return;
         }
+        yield* Effect.logInfo("ssh.environment.tunnel.finalizer.start", {
+          ...sshTargetLogFields(tunnelEntry.target),
+          key: tunnelEntry.key,
+          localPort: tunnelEntry.localPort,
+          remotePort: tunnelEntry.remotePort,
+        });
         tunnels.delete(tunnelEntry.key);
         const authSecret = authSecrets.get(tunnelEntry.key) ?? null;
         yield* Effect.all(
@@ -887,8 +1038,20 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
           ],
           { concurrency: "unbounded" },
         ).pipe(Effect.ignore);
+        yield* Effect.logInfo("ssh.environment.tunnel.finalizer.succeeded", {
+          ...sshTargetLogFields(tunnelEntry.target),
+          key: tunnelEntry.key,
+          localPort: tunnelEntry.localPort,
+          remotePort: tunnelEntry.remotePort,
+        });
       }).pipe(Effect.ignore),
     );
+    yield* Effect.logInfo("ssh.environment.tunnel.create.succeeded", {
+      ...sshTargetLogFields(input.resolvedTarget),
+      key: input.key,
+      localPort,
+      remotePort,
+    });
     return tunnelEntry;
   });
 
@@ -900,18 +1063,41 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     let entry = tunnels.get(key) ?? null;
 
     if (entry !== null) {
+      yield* Effect.logDebug("ssh.environment.tunnel.existing.check", {
+        ...sshTargetLogFields(resolvedTarget),
+        key,
+        localPort: entry.localPort,
+        remotePort: entry.remotePort,
+      });
       const readinessExit = yield* Effect.exit(
         waitForHttpReady({ baseUrl: entry.httpBaseUrl, timeoutMs: 2_000 }),
       );
       if (Exit.isSuccess(readinessExit)) {
+        yield* Effect.logInfo("ssh.environment.tunnel.reused", {
+          ...sshTargetLogFields(resolvedTarget),
+          key,
+          localPort: entry.localPort,
+          remotePort: entry.remotePort,
+        });
         return entry;
       }
+      yield* Effect.logWarning("ssh.environment.tunnel.existing.stale", {
+        ...sshTargetLogFields(resolvedTarget),
+        key,
+        localPort: entry.localPort,
+        remotePort: entry.remotePort,
+        cause: readinessExit.cause,
+      });
       yield* closeTunnelEntry(entry);
       entry = null;
     }
 
     const pending = pendingTunnelEntries.get(key);
     if (pending) {
+      yield* Effect.logInfo("ssh.environment.tunnel.pending.await", {
+        ...sshTargetLogFields(resolvedTarget),
+        key,
+      });
       return yield* Deferred.await(pending);
     }
 
@@ -923,6 +1109,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       resolvedTarget,
       ...(runner === undefined ? {} : { runner }),
     }).pipe(
+      Effect.tapError((cause) =>
+        Effect.logWarning("ssh.environment.tunnel.create.failed", {
+          ...sshTargetLogFields(resolvedTarget),
+          key,
+          cause,
+        }),
+      ),
       Effect.onExit((exit) =>
         Effect.sync(() => {
           if (pendingTunnelEntries.get(key) === deferred) {
@@ -941,6 +1134,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     SshEnvironmentEffectError,
     SshEnvironmentEffectContext
   > {
+    yield* Effect.logInfo("ssh.environment.ensure.start", {
+      ...sshTargetLogFields(target),
+      issuePairingToken: requestOptions?.issuePairingToken === true,
+    });
     const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
     const resolvedTarget: DesktopSshEnvironmentTarget = {
       ...baseResolved,
@@ -948,9 +1145,18 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
       ...(target.port !== null ? { port: target.port } : {}),
     };
     const key = targetConnectionKey(resolvedTarget);
+    yield* Effect.logInfo("ssh.environment.target.resolved", {
+      ...sshTargetLogFields(resolvedTarget),
+      key,
+    });
     const packageSpec = options.resolveCliPackageSpec?.();
     const runner =
       options.resolveCliRunner?.() ?? (packageSpec === undefined ? undefined : { packageSpec });
+    yield* Effect.logDebug("ssh.environment.runner.resolved", {
+      ...sshTargetLogFields(resolvedTarget),
+      ...sshRunnerLogFields(runner),
+      key,
+    });
     const entry = yield* ensureTunnelEntry(key, resolvedTarget, runner);
 
     const pairingToken = requestOptions?.issuePairingToken
@@ -961,6 +1167,13 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         })
       : null;
 
+    yield* Effect.logInfo("ssh.environment.ensure.succeeded", {
+      ...sshTargetLogFields(entry.target),
+      key,
+      localPort: entry.localPort,
+      remotePort: entry.remotePort,
+      issuedPairingToken: pairingToken !== null,
+    });
     return {
       target: entry.target,
       httpBaseUrl: entry.httpBaseUrl,
@@ -972,6 +1185,7 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
   const disconnectEnvironment = Effect.fn("ssh/tunnel.disconnectEnvironment")(function* (
     target: DesktopSshEnvironmentTarget,
   ): Effect.fn.Return<void, SshEnvironmentEffectError, SshEnvironmentEffectContext> {
+    yield* Effect.logInfo("ssh.environment.disconnect.start", sshTargetLogFields(target));
     const baseResolved = yield* resolveSshTarget(target.alias || target.hostname);
     const resolvedTarget: DesktopSshEnvironmentTarget = {
       ...baseResolved,
@@ -980,6 +1194,12 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     };
     const key = targetConnectionKey(resolvedTarget);
     const entry = tunnels.get(key) ?? null;
+    yield* Effect.logDebug("ssh.environment.disconnect.targetResolved", {
+      ...sshTargetLogFields(resolvedTarget),
+      key,
+      hasTunnel: entry !== null,
+      hasPendingTunnel: pendingTunnelEntries.has(key),
+    });
     if (entry !== null) {
       yield* closeTunnelEntry(entry);
     }
@@ -997,6 +1217,10 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         operation: (authOptions) => stopRemoteServer(resolvedTarget, authOptions),
       });
     }
+    yield* Effect.logInfo("ssh.environment.disconnect.succeeded", {
+      ...sshTargetLogFields(resolvedTarget),
+      key,
+    });
   });
 
   return SshEnvironmentManager.of({ ensureEnvironment, disconnectEnvironment });
