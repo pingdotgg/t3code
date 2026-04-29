@@ -1,4 +1,8 @@
-import type { EnvironmentId, ProjectSearchEntriesResult } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ExecutionTarget,
+  ProjectSearchEntriesResult,
+} from "@t3tools/contracts";
 import { queryOptions } from "@tanstack/react-query";
 import { ensureEnvironmentApi } from "~/environmentApi";
 
@@ -7,9 +11,19 @@ export const projectQueryKeys = {
   searchEntries: (
     environmentId: EnvironmentId | null,
     cwd: string | null,
+    executionTarget: ExecutionTarget | undefined,
     query: string,
     limit: number,
-  ) => ["projects", "search-entries", environmentId ?? null, cwd, query, limit] as const,
+  ) =>
+    [
+      "projects",
+      "search-entries",
+      environmentId ?? null,
+      cwd,
+      executionTarget ?? null,
+      query,
+      limit,
+    ] as const,
 };
 
 const DEFAULT_SEARCH_ENTRIES_LIMIT = 80;
@@ -22,6 +36,7 @@ const EMPTY_SEARCH_ENTRIES_RESULT: ProjectSearchEntriesResult = {
 export function projectSearchEntriesQueryOptions(input: {
   environmentId: EnvironmentId | null;
   cwd: string | null;
+  executionTarget?: ExecutionTarget | undefined;
   query: string;
   enabled?: boolean;
   limit?: number;
@@ -29,7 +44,13 @@ export function projectSearchEntriesQueryOptions(input: {
 }) {
   const limit = input.limit ?? DEFAULT_SEARCH_ENTRIES_LIMIT;
   return queryOptions({
-    queryKey: projectQueryKeys.searchEntries(input.environmentId, input.cwd, input.query, limit),
+    queryKey: projectQueryKeys.searchEntries(
+      input.environmentId,
+      input.cwd,
+      input.executionTarget,
+      input.query,
+      limit,
+    ),
     queryFn: async () => {
       if (!input.cwd || !input.environmentId) {
         throw new Error("Workspace entry search is unavailable.");
@@ -37,6 +58,7 @@ export function projectSearchEntriesQueryOptions(input: {
       const api = ensureEnvironmentApi(input.environmentId);
       return api.projects.searchEntries({
         cwd: input.cwd,
+        ...(input.executionTarget !== undefined ? { executionTarget: input.executionTarget } : {}),
         query: input.query,
         limit,
       });

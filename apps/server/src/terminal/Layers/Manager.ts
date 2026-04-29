@@ -2,6 +2,7 @@ import path from "node:path";
 
 import {
   DEFAULT_TERMINAL_ID,
+  type ExecutionTarget,
   type TerminalEvent,
   type TerminalSessionSnapshot,
   type TerminalSessionStatus,
@@ -29,6 +30,8 @@ import {
   terminalSessionsTotal,
 } from "../../observability/Metrics.ts";
 import { runProcess } from "../../processRunner.ts";
+import { buildWslExecArgs, runWsl, runWslShell } from "../../wsl/WslCli.ts";
+import { isWslTarget, localExecutionTarget, type WslTarget } from "../../wsl/WslTarget.ts";
 import {
   TerminalCwdError,
   TerminalHistoryError,
@@ -86,6 +89,7 @@ interface TerminalStartInput {
   threadId: string;
   terminalId: string;
   cwd: string;
+  executionTarget: ExecutionTarget;
   worktreePath?: string | null;
   cols: number;
   rows: number;
@@ -96,6 +100,7 @@ interface TerminalSessionState {
   threadId: string;
   terminalId: string;
   cwd: string;
+  executionTarget: ExecutionTarget;
   worktreePath: string | null;
   status: TerminalSessionStatus;
   pid: number | null;
@@ -151,6 +156,7 @@ function snapshot(session: TerminalSessionState): TerminalSessionSnapshot {
     threadId: session.threadId,
     terminalId: session.terminalId,
     cwd: session.cwd,
+    executionTarget: session.executionTarget,
     worktreePath: session.worktreePath,
     status: session.status,
     pid: session.pid,
@@ -252,6 +258,13 @@ function windowsCmdPath(env: NodeJS.ProcessEnv): string {
 function formatShellCandidate(candidate: ShellCandidate): string {
   if (!candidate.args || candidate.args.length === 0) return candidate.shell;
   return `${candidate.shell} ${candidate.args.join(" ")}`;
+}
+
+function wslShellCandidate(target: WslTarget, cwd: string, shell: string): ShellCandidate {
+  return {
+    shell: "wsl.exe",
+    args: buildWslExecArgs(target, cwd, shell),
+  };
 }
 
 function uniqueShellCandidates(candidates: Array<ShellCandidate | null>): ShellCandidate[] {
@@ -1071,7 +1084,33 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       );
     });
 
-    const assertValidCwd = Effect.fn("terminal.assertValidCwd")(function* (cwd: string) {
+    const assertValidCwd = Effect.fn("terminal.assertValidCwd")(function* (
+      cwd: string,
+      executionTarget: ExecutionTarget,
+    ) {
+      if (isWslTarget(executionTarget)) {
+        const result = yield* runWsl(executionTarget, "/", "test", ["-d", cwd], {
+          timeoutMs: 3_000,
+          operation: "terminal.cwd.stat",
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new TerminalCwdError({
+                cwd,
+                reason: "statFailed",
+                cause,
+              }),
+          ),
+        );
+        if (result.code !== 0) {
+          return yield* new TerminalCwdError({
+            cwd,
+            reason: "notFound",
+          });
+        }
+        return;
+      }
+
       const stats = yield* fileSystem.stat(cwd).pipe(
         Effect.mapError(
           (cause) =>
@@ -1326,7 +1365,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         options.ptyAdapter.spawn({
           shell: candidate.shell,
           ...(candidate.args ? { args: candidate.args } : {}),
-          cwd: session.cwd,
+          cwd: isWslTarget(session.executionTarget) ? process.cwd() : session.cwd,
           cols: session.cols,
           rows: session.rows,
           env: spawnEnv,
@@ -1346,6 +1385,22 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
       }
 
       return yield* trySpawn(shellCandidates, spawnEnv, session, index + 1, spawnError);
+    });
+
+    const resolveWslShellCandidates = Effect.fn("terminal.resolveWslShellCandidates")(function* (
+      target: WslTarget,
+      cwd: string,
+    ): Effect.fn.Return<ShellCandidate[]> {
+      const shellResult = yield* runWslShell(target, cwd, 'printf "%s" "${SHELL:-}"', {
+        timeoutMs: 3_000,
+        operation: "terminal.resolveShell",
+      }).pipe(Effect.catch(() => Effect.succeed({ code: 1, stdout: "", stderr: "" })));
+      const requested = normalizeShellCommand(shellResult.stdout, "linux");
+      return uniqueShellCandidates([
+        requested ? wslShellCandidate(target, cwd, requested) : null,
+        wslShellCandidate(target, cwd, "/bin/bash"),
+        wslShellCandidate(target, cwd, "/bin/sh"),
+      ]);
     });
 
     const startSession = Effect.fn("terminal.startSession")(function* (
@@ -1384,7 +1439,9 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
           Effect.andThen(
             Effect.gen(function* () {
-              const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
+              const shellCandidates = isWslTarget(session.executionTarget)
+                ? yield* resolveWslShellCandidates(session.executionTarget, session.cwd)
+                : resolveShellCandidates(shellResolver, platform, baseEnv);
               const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
               const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
               ptyProcess = spawnResult.process;
@@ -1620,7 +1677,8 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         input.threadId,
         Effect.gen(function* () {
           const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
-          yield* assertValidCwd(input.cwd);
+          const executionTarget = input.executionTarget ?? localExecutionTarget();
+          yield* assertValidCwd(input.cwd, executionTarget);
 
           const sessionKey = toSessionKey(input.threadId, terminalId);
           const existing = yield* getSession(input.threadId, terminalId);
@@ -1633,6 +1691,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               threadId: input.threadId,
               terminalId,
               cwd: input.cwd,
+              executionTarget,
               worktreePath: input.worktreePath ?? null,
               status: "starting",
               pid: null,
@@ -1667,6 +1726,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
                 threadId: input.threadId,
                 terminalId,
                 cwd: input.cwd,
+                executionTarget,
                 ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
                 cols,
                 rows,
@@ -1684,9 +1744,15 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           const targetRows = input.rows ?? liveSession.rows;
           const runtimeEnvChanged = !Equal.equals(currentRuntimeEnv, nextRuntimeEnv);
 
-          if (liveSession.cwd !== input.cwd || runtimeEnvChanged) {
+          const executionTargetChanged = !Equal.equals(
+            liveSession.executionTarget,
+            executionTarget,
+          );
+
+          if (liveSession.cwd !== input.cwd || runtimeEnvChanged || executionTargetChanged) {
             yield* stopProcess(liveSession);
             liveSession.cwd = input.cwd;
+            liveSession.executionTarget = executionTarget;
             liveSession.worktreePath = input.worktreePath ?? null;
             liveSession.runtimeEnv = nextRuntimeEnv;
             liveSession.history = "";
@@ -1721,6 +1787,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
                 threadId: input.threadId,
                 terminalId,
                 cwd: input.cwd,
+                executionTarget,
                 worktreePath: liveSession.worktreePath,
                 cols: targetCols,
                 rows: targetRows,
@@ -1800,7 +1867,8 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         Effect.gen(function* () {
           yield* increment(terminalRestartsTotal, { scope: "thread" });
           const terminalId = input.terminalId ?? DEFAULT_TERMINAL_ID;
-          yield* assertValidCwd(input.cwd);
+          const executionTarget = input.executionTarget ?? localExecutionTarget();
+          yield* assertValidCwd(input.cwd, executionTarget);
 
           const sessionKey = toSessionKey(input.threadId, terminalId);
           const existingSession = yield* getSession(input.threadId, terminalId);
@@ -1812,6 +1880,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               threadId: input.threadId,
               terminalId,
               cwd: input.cwd,
+              executionTarget,
               worktreePath: input.worktreePath ?? null,
               status: "starting",
               pid: null,
@@ -1842,6 +1911,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             session = existingSession.value;
             yield* stopProcess(session);
             session.cwd = input.cwd;
+            session.executionTarget = executionTarget;
             session.worktreePath = input.worktreePath ?? null;
             session.runtimeEnv = normalizedRuntimeEnv(input.env);
           }
@@ -1861,6 +1931,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               threadId: input.threadId,
               terminalId,
               cwd: input.cwd,
+              executionTarget,
               ...(input.worktreePath !== undefined ? { worktreePath: input.worktreePath } : {}),
               cols,
               rows,

@@ -183,6 +183,9 @@ export function projectEvent(
             id: payload.projectId,
             title: payload.title,
             workspaceRoot: payload.workspaceRoot,
+            ...(payload.executionTarget !== undefined
+              ? { executionTarget: payload.executionTarget }
+              : {}),
             defaultModelSelection: payload.defaultModelSelection,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
@@ -212,6 +215,9 @@ export function projectEvent(
                   ...(payload.title !== undefined ? { title: payload.title } : {}),
                   ...(payload.workspaceRoot !== undefined
                     ? { workspaceRoot: payload.workspaceRoot }
+                    : {}),
+                  ...(payload.executionTarget !== undefined
+                    ? { executionTarget: payload.executionTarget }
                     : {}),
                   ...(payload.defaultModelSelection !== undefined
                     ? { defaultModelSelection: payload.defaultModelSelection }

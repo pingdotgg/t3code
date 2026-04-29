@@ -1368,8 +1368,13 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           cwd: input.cwd ?? process.cwd(),
-          binaryPath: codexSettings.binaryPath,
-          ...(codexSettings.homePath ? { homePath: codexSettings.homePath } : {}),
+          binaryPath: input.executionTarget?.kind === "wsl" ? "codex" : codexSettings.binaryPath,
+          ...(input.executionTarget !== undefined
+            ? { executionTarget: input.executionTarget }
+            : {}),
+          ...(input.executionTarget?.kind !== "wsl" && codexSettings.homePath
+            ? { homePath: codexSettings.homePath }
+            : {}),
           ...(Schema.is(CodexResumeCursorSchema)(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
             : {}),

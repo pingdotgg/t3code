@@ -139,6 +139,65 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolverLive)),
   );
 
+  it.effect("resolves WSL repository identity by running git with the WSL execution target", () => {
+    const calls: Array<{
+      cwd: string;
+      executionTarget: { kind: "wsl"; distroName: string; user?: string | undefined };
+      args: ReadonlyArray<string>;
+    }> = [];
+    const resolverLayer = Layer.effect(
+      RepositoryIdentityResolver,
+      makeRepositoryIdentityResolver({
+        cacheCapacity: 16,
+        runGit: async (input, args) => {
+          if (input.executionTarget?.kind !== "wsl") {
+            throw new Error("expected WSL execution target");
+          }
+          calls.push({
+            cwd: input.cwd,
+            executionTarget: input.executionTarget,
+            args,
+          });
+
+          if (args[0] === "rev-parse") {
+            return { code: 0, stdout: "/home/utkarsh/t3code\n" };
+          }
+          if (args[0] === "remote") {
+            return {
+              code: 0,
+              stdout: "origin\tgit@github.com:T3Tools/t3code.git (fetch)\n",
+            };
+          }
+          return { code: 1, stdout: "" };
+        },
+      }),
+    );
+
+    return Effect.gen(function* () {
+      const resolver = yield* RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve({
+        cwd: "/home/utkarsh/t3code/packages/web",
+        executionTarget: { kind: "wsl", distroName: "Ubuntu", user: "utkarsh" },
+      });
+
+      expect(identity).not.toBeNull();
+      expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
+      expect(identity?.rootPath).toBe("/home/utkarsh/t3code");
+      expect(calls).toEqual([
+        {
+          cwd: "/home/utkarsh/t3code/packages/web",
+          executionTarget: { kind: "wsl", distroName: "Ubuntu", user: "utkarsh" },
+          args: ["rev-parse", "--show-toplevel"],
+        },
+        {
+          cwd: "/home/utkarsh/t3code",
+          executionTarget: { kind: "wsl", distroName: "Ubuntu", user: "utkarsh" },
+          args: ["remote", "-v"],
+        },
+      ]);
+    }).pipe(Effect.provide(resolverLayer));
+  });
+
   it.effect(
     "keeps null identities cached across repeated resolves until the negative TTL expires",
     () =>

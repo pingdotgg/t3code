@@ -65,6 +65,7 @@ function toRuntimeBinding(
           provider,
           adapterKey: runtime.adapterKey,
           runtimeMode: runtime.runtimeMode,
+          ...(runtime.executionTarget != null ? { executionTarget: runtime.executionTarget } : {}),
           status: runtime.status,
           resumeCursor: runtime.resumeCursor,
           runtimePayload: runtime.runtimePayload,
@@ -116,6 +117,12 @@ const makeProviderSessionDirectory = Effect.gen(function* () {
           binding.adapterKey ??
           (providerChanged ? binding.provider : (existingRuntime?.adapterKey ?? binding.provider)),
         runtimeMode: binding.runtimeMode ?? existingRuntime?.runtimeMode ?? "full-access",
+        ...(binding.executionTarget !== undefined
+          ? { executionTarget: binding.executionTarget }
+          : existingRuntime?.executionTarget !== undefined &&
+              existingRuntime.executionTarget !== null
+            ? { executionTarget: existingRuntime.executionTarget }
+            : {}),
         status: binding.status ?? existingRuntime?.status ?? "running",
         lastSeenAt: now,
         resumeCursor:

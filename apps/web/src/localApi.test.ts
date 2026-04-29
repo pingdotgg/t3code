@@ -54,6 +54,11 @@ const rpcClientMock = {
   filesystem: {
     browse: vi.fn(),
   },
+  wsl: {
+    listDistributions: vi.fn(),
+    browse: vi.fn(),
+    resolvePath: vi.fn(),
+  },
   shell: {
     openInEditor: vi.fn(),
   },
@@ -235,6 +240,7 @@ const baseEnvironment = {
 
 const baseServerConfig: ServerConfig = {
   environment: baseEnvironment,
+  capabilities: { repositoryIdentity: true, wsl: false },
   auth: {
     policy: "loopback-browser",
     bootstrapMethods: ["one-time-token"],

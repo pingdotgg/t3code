@@ -9,6 +9,7 @@
 import { Context } from "effect";
 import type { Effect } from "effect";
 import type {
+  ExecutionTarget,
   GitCheckoutInput,
   GitCheckoutResult,
   GitCreateBranchInput,
@@ -18,6 +19,7 @@ import type {
   GitInitInput,
   GitListBranchesInput,
   GitListBranchesResult,
+  GitPullInput,
   GitPullResult,
   GitRemoveWorktreeInput,
   GitStatusInput,
@@ -29,6 +31,7 @@ import type { GitCommandError } from "@t3tools/contracts";
 export interface ExecuteGitInput {
   readonly operation: string;
   readonly cwd: string;
+  readonly executionTarget?: ExecutionTarget;
   readonly args: ReadonlyArray<string>;
   readonly stdin?: string;
   readonly env?: NodeJS.ProcessEnv;
@@ -235,7 +238,9 @@ export interface GitCoreShape {
   /**
    * Pull current branch from upstream using fast-forward only.
    */
-  readonly pullCurrentBranch: (cwd: string) => Effect.Effect<GitPullResult, GitCommandError>;
+  readonly pullCurrentBranch: (
+    input: string | GitPullInput,
+  ) => Effect.Effect<GitPullResult, GitCommandError>;
 
   /**
    * Create a worktree and branch from a base branch.

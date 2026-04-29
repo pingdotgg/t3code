@@ -1,8 +1,12 @@
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ExecutionTarget } from "./executionTarget.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
+const GitExecutionTargetShape = {
+  executionTarget: Schema.optional(ExecutionTarget),
+} as const;
 
 // Domain Types
 
@@ -107,17 +111,20 @@ export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
 export const GitStatusInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  ...GitExecutionTargetShape,
 });
 export type GitStatusInput = typeof GitStatusInput.Type;
 
 export const GitPullInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  ...GitExecutionTargetShape,
 });
 export type GitPullInput = typeof GitPullInput.Type;
 
 export const GitRunStackedActionInput = Schema.Struct({
   actionId: TrimmedNonEmptyStringSchema,
   cwd: TrimmedNonEmptyStringSchema,
+  ...GitExecutionTargetShape,
   action: GitStackedAction,
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
@@ -129,6 +136,7 @@ export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 
 export const GitListBranchesInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  ...GitExecutionTargetShape,
   query: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(256))),
   cursor: Schema.optional(NonNegativeInt),
   limit: Schema.optional(
@@ -139,6 +147,7 @@ export type GitListBranchesInput = typeof GitListBranchesInput.Type;
 
 export const GitCreateWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  ...GitExecutionTargetShape,
   branch: TrimmedNonEmptyStringSchema,
   newBranch: Schema.optional(TrimmedNonEmptyStringSchema),
   path: Schema.NullOr(TrimmedNonEmptyStringSchema),
@@ -147,12 +156,14 @@ export type GitCreateWorktreeInput = typeof GitCreateWorktreeInput.Type;
 
 export const GitPullRequestRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  ...GitExecutionTargetShape,
   reference: GitPullRequestReference,
 });
 export type GitPullRequestRefInput = typeof GitPullRequestRefInput.Type;
 
 export const GitPreparePullRequestThreadInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  ...GitExecutionTargetShape,
   reference: GitPullRequestReference,
   mode: GitPreparePullRequestThreadMode,
   threadId: Schema.optional(ThreadId),
@@ -161,6 +172,7 @@ export type GitPreparePullRequestThreadInput = typeof GitPreparePullRequestThrea
 
 export const GitRemoveWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  ...GitExecutionTargetShape,
   path: TrimmedNonEmptyStringSchema,
   force: Schema.optional(Schema.Boolean),
 });
@@ -168,6 +180,7 @@ export type GitRemoveWorktreeInput = typeof GitRemoveWorktreeInput.Type;
 
 export const GitCreateBranchInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  ...GitExecutionTargetShape,
   branch: TrimmedNonEmptyStringSchema,
   checkout: Schema.optional(Schema.Boolean),
 });
@@ -180,12 +193,14 @@ export type GitCreateBranchResult = typeof GitCreateBranchResult.Type;
 
 export const GitCheckoutInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  ...GitExecutionTargetShape,
   branch: TrimmedNonEmptyStringSchema,
 });
 export type GitCheckoutInput = typeof GitCheckoutInput.Type;
 
 export const GitInitInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  ...GitExecutionTargetShape,
 });
 export type GitInitInput = typeof GitInitInput.Type;
 

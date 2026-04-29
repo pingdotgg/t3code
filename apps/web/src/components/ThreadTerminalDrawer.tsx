@@ -3,6 +3,7 @@ import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "luci
 import {
   type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
+  type ExecutionTarget,
   type TerminalEvent,
   type TerminalSessionSnapshot,
   type ThreadId,
@@ -253,6 +254,7 @@ interface TerminalViewportProps {
   terminalId: string;
   terminalLabel: string;
   cwd: string;
+  executionTarget?: ExecutionTarget | undefined;
   worktreePath?: string | null;
   runtimeEnv?: Record<string, string>;
   onSessionExited: () => void;
@@ -270,6 +272,7 @@ export function TerminalViewport({
   terminalId,
   terminalLabel,
   cwd,
+  executionTarget,
   worktreePath,
   runtimeEnv,
   onSessionExited,
@@ -674,6 +677,7 @@ export function TerminalViewport({
           threadId,
           terminalId,
           cwd,
+          ...(executionTarget !== undefined ? { executionTarget } : {}),
           ...(worktreePath !== undefined ? { worktreePath } : {}),
           cols: activeTerminal.cols,
           rows: activeTerminal.rows,
@@ -802,6 +806,7 @@ interface ThreadTerminalDrawerProps {
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
   cwd: string;
+  executionTarget?: ExecutionTarget | undefined;
   worktreePath?: string | null;
   runtimeEnv?: Record<string, string>;
   visible?: boolean;
@@ -856,6 +861,7 @@ export default function ThreadTerminalDrawer({
   threadRef,
   threadId,
   cwd,
+  executionTarget,
   worktreePath,
   runtimeEnv,
   visible = true,
@@ -1185,6 +1191,7 @@ export default function ThreadTerminalDrawer({
                         terminalId={terminalId}
                         terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
                         cwd={cwd}
+                        executionTarget={executionTarget}
                         {...(worktreePath !== undefined ? { worktreePath } : {})}
                         {...(runtimeEnv ? { runtimeEnv } : {})}
                         onSessionExited={() => onCloseTerminal(terminalId)}
@@ -1208,6 +1215,7 @@ export default function ThreadTerminalDrawer({
                   terminalId={resolvedActiveTerminalId}
                   terminalLabel={terminalLabelById.get(resolvedActiveTerminalId) ?? "Terminal"}
                   cwd={cwd}
+                  executionTarget={executionTarget}
                   {...(worktreePath !== undefined ? { worktreePath } : {})}
                   {...(runtimeEnv ? { runtimeEnv } : {})}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}

@@ -13,6 +13,7 @@ import type {
   MessageId,
   ProviderKind,
   CheckpointRef,
+  ExecutionTarget,
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
@@ -85,6 +86,7 @@ export interface Project {
   environmentId: EnvironmentId;
   name: string;
   cwd: string;
+  executionTarget?: ExecutionTarget | undefined;
   repositoryIdentity?: RepositoryIdentity | null;
   defaultModelSelection: ModelSelection | null;
   createdAt?: string | undefined;

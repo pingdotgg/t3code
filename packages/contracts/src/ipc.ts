@@ -20,6 +20,12 @@ import type {
 } from "./git.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type {
+  WslBrowseInput,
+  WslListDistributionsResult,
+  WslResolvePathInput,
+  WslResolvePathResult,
+} from "./executionTarget.ts";
+import type {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileInput,
@@ -247,6 +253,11 @@ export interface EnvironmentApi {
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
+  };
+  wsl: {
+    listDistributions: () => Promise<WslListDistributionsResult>;
+    browse: (input: WslBrowseInput) => Promise<FilesystemBrowseResult>;
+    resolvePath: (input: WslResolvePathInput) => Promise<WslResolvePathResult>;
   };
   git: {
     listBranches: (input: GitListBranchesInput) => Promise<GitListBranchesResult>;

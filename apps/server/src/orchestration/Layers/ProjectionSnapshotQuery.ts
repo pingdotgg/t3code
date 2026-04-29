@@ -53,8 +53,19 @@ import {
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
 const decodeThread = Schema.decodeUnknownEffect(OrchestrationThread);
+
+const LaxExecutionTarget = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("local") }),
+  Schema.Struct({
+    kind: Schema.Literal("wsl"),
+    distroName: Schema.String,
+    user: Schema.optional(Schema.String),
+  }),
+]);
+
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
+    executionTarget: Schema.NullOr(Schema.fromJsonString(LaxExecutionTarget)),
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
@@ -210,6 +221,7 @@ function mapProjectShellRow(
     id: row.projectId,
     title: row.title,
     workspaceRoot: row.workspaceRoot,
+    ...(row.executionTarget != null ? { executionTarget: row.executionTarget } : {}),
     repositoryIdentity,
     defaultModelSelection: row.defaultModelSelection,
     scripts: row.scripts,
@@ -239,6 +251,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           workspace_root AS "workspaceRoot",
+          execution_target_json AS "executionTarget",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -435,6 +448,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           workspace_root AS "workspaceRoot",
+          execution_target_json AS "executionTarget",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -457,6 +471,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           workspace_root AS "workspaceRoot",
+          execution_target_json AS "executionTarget",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -891,7 +906,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   projectRows,
                   (row) =>
                     repositoryIdentityResolver
-                      .resolve(row.workspaceRoot)
+                      .resolve({
+                        cwd: row.workspaceRoot,
+                        executionTarget: row.executionTarget ?? undefined,
+                      })
                       .pipe(Effect.map((identity) => [row.projectId, identity] as const)),
                   { concurrency: repositoryIdentityResolutionConcurrency },
                 ),
@@ -901,6 +919,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 id: row.projectId,
                 title: row.title,
                 workspaceRoot: row.workspaceRoot,
+                ...(row.executionTarget != null ? { executionTarget: row.executionTarget } : {}),
                 repositoryIdentity: repositoryIdentities.get(row.projectId) ?? null,
                 defaultModelSelection: row.defaultModelSelection,
                 scripts: row.scripts,
@@ -1029,7 +1048,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 projectRows,
                 (row) =>
                   repositoryIdentityResolver
-                    .resolve(row.workspaceRoot)
+                    .resolve({
+                      cwd: row.workspaceRoot,
+                      executionTarget: row.executionTarget ?? undefined,
+                    })
                     .pipe(Effect.map((identity) => [row.projectId, identity] as const)),
                 { concurrency: repositoryIdentityResolutionConcurrency },
               ),
@@ -1119,21 +1141,29 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         Effect.flatMap((option) =>
           Option.isNone(option)
             ? Effect.succeed(Option.none<OrchestrationProject>())
-            : repositoryIdentityResolver.resolve(option.value.workspaceRoot).pipe(
-                Effect.map((repositoryIdentity) =>
-                  Option.some({
-                    id: option.value.projectId,
-                    title: option.value.title,
-                    workspaceRoot: option.value.workspaceRoot,
-                    repositoryIdentity,
-                    defaultModelSelection: option.value.defaultModelSelection,
-                    scripts: option.value.scripts,
-                    createdAt: option.value.createdAt,
-                    updatedAt: option.value.updatedAt,
-                    deletedAt: option.value.deletedAt,
-                  } satisfies OrchestrationProject),
+            : repositoryIdentityResolver
+                .resolve({
+                  cwd: option.value.workspaceRoot,
+                  executionTarget: option.value.executionTarget ?? undefined,
+                })
+                .pipe(
+                  Effect.map((repositoryIdentity) =>
+                    Option.some({
+                      id: option.value.projectId,
+                      title: option.value.title,
+                      workspaceRoot: option.value.workspaceRoot,
+                      ...(option.value.executionTarget != null
+                        ? { executionTarget: option.value.executionTarget }
+                        : {}),
+                      repositoryIdentity,
+                      defaultModelSelection: option.value.defaultModelSelection,
+                      scripts: option.value.scripts,
+                      createdAt: option.value.createdAt,
+                      updatedAt: option.value.updatedAt,
+                      deletedAt: option.value.deletedAt,
+                    } satisfies OrchestrationProject),
+                  ),
                 ),
-              ),
         ),
       );
 
@@ -1149,7 +1179,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         Option.isNone(option)
           ? Effect.succeed(Option.none<OrchestrationProjectShell>())
           : repositoryIdentityResolver
-              .resolve(option.value.workspaceRoot)
+              .resolve({
+                cwd: option.value.workspaceRoot,
+                executionTarget: option.value.executionTarget ?? undefined,
+              })
               .pipe(
                 Effect.map((repositoryIdentity) =>
                   Option.some(mapProjectShellRow(option.value, repositoryIdentity)),

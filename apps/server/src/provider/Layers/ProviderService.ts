@@ -12,6 +12,7 @@
 import {
   ModelSelection,
   NonNegativeInt,
+  ExecutionTarget,
   ThreadId,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
@@ -108,6 +109,7 @@ function toRuntimePayloadFromSession(
 ): Record<string, unknown> {
   return {
     cwd: session.cwd ?? null,
+    executionTarget: session.executionTarget ?? { kind: "local" },
     model: session.model ?? null,
     activeTurnId: session.activeTurnId ?? null,
     lastError: session.lastError ?? null,
@@ -139,6 +141,16 @@ function readPersistedCwd(
   if (typeof rawCwd !== "string") return undefined;
   const trimmed = rawCwd.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readPersistedExecutionTarget(
+  runtimePayload: ProviderRuntimeBinding["runtimePayload"],
+): ExecutionTarget | undefined {
+  if (!runtimePayload || typeof runtimePayload !== "object" || Array.isArray(runtimePayload)) {
+    return undefined;
+  }
+  const raw = "executionTarget" in runtimePayload ? runtimePayload.executionTarget : undefined;
+  return Schema.is(ExecutionTarget)(raw) ? raw : undefined;
 }
 
 const makeProviderService = Effect.fn("makeProviderService")(function* (
@@ -183,6 +195,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       provider: session.provider,
       runtimeMode: session.runtimeMode,
       status: toRuntimeStatus(session),
+      ...(session.executionTarget !== undefined
+        ? { executionTarget: session.executionTarget }
+        : {}),
       ...(session.resumeCursor !== undefined ? { resumeCursor: session.resumeCursor } : {}),
       runtimePayload: toRuntimePayloadFromSession(session, extra),
     });
@@ -237,12 +252,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       }
 
       const persistedCwd = readPersistedCwd(input.binding.runtimePayload);
+      const persistedExecutionTarget = readPersistedExecutionTarget(input.binding.runtimePayload);
       const persistedModelSelection = readPersistedModelSelection(input.binding.runtimePayload);
 
       const resumed = yield* adapter.startSession({
         threadId: input.binding.threadId,
         provider: input.binding.provider,
         ...(persistedCwd ? { cwd: persistedCwd } : {}),
+        ...(persistedExecutionTarget ? { executionTarget: persistedExecutionTarget } : {}),
         ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
         ...(hasResumeCursor ? { resumeCursor: input.binding.resumeCursor } : {}),
         runtimeMode: input.binding.runtimeMode ?? "full-access",
@@ -351,6 +368,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.kind": input.provider,
         "provider.thread_id": threadId,
         "provider.runtime_mode": input.runtimeMode,
+        "provider.input_execution_target": input.executionTarget?.kind,
       });
       return yield* Effect.gen(function* () {
         const settings = yield* serverSettings.getSettings.pipe(
@@ -379,6 +397,11 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           (persistedBinding?.provider === input.provider
             ? readPersistedCwd(persistedBinding.runtimePayload)
             : undefined);
+        const effectiveExecutionTarget =
+          input.executionTarget ??
+          (persistedBinding?.provider === input.provider
+            ? readPersistedExecutionTarget(persistedBinding.runtimePayload)
+            : undefined);
         yield* Effect.annotateCurrentSpan({
           "provider.resume_cursor.source":
             input.resumeCursor !== undefined
@@ -394,11 +417,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
                 ? "persisted"
                 : "none",
           "provider.cwd.effective": effectiveCwd ?? "",
+          "provider.execution_target.kind": effectiveExecutionTarget?.kind ?? "local",
         });
         const adapter = yield* registry.getByProvider(input.provider);
         const session = yield* adapter.startSession({
           ...input,
           ...(effectiveCwd !== undefined ? { cwd: effectiveCwd } : {}),
+          ...(effectiveExecutionTarget !== undefined
+            ? { executionTarget: effectiveExecutionTarget }
+            : {}),
           ...(effectiveResumeCursor !== undefined ? { resumeCursor: effectiveResumeCursor } : {}),
         });
 

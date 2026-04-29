@@ -560,6 +560,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         threadRef={threadRef}
         threadId={threadId}
         cwd={cwd}
+        executionTarget={project.executionTarget}
         worktreePath={effectiveWorktreePath}
         runtimeEnv={runtimeEnv}
         visible={visible}
@@ -1422,7 +1423,12 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
-  const gitStatusQuery = useGitStatus({ environmentId, cwd: gitCwd });
+  const activeProjectExecutionTarget = activeProject?.executionTarget;
+  const gitStatusQuery = useGitStatus({
+    environmentId,
+    cwd: gitCwd,
+    executionTarget: activeProjectExecutionTarget,
+  });
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
   const activeProviderStatus = useMemo(
@@ -1689,6 +1695,9 @@ export default function ChatView(props: ChatViewProps) {
             threadId: activeThreadId,
             terminalId: targetTerminalId,
             cwd: targetCwd,
+            ...(activeProject.executionTarget !== undefined
+              ? { executionTarget: activeProject.executionTarget }
+              : {}),
             ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
             env: runtimeEnv,
             cols: SCRIPT_TERMINAL_COLS,
@@ -1698,6 +1707,9 @@ export default function ChatView(props: ChatViewProps) {
             threadId: activeThreadId,
             terminalId: targetTerminalId,
             cwd: targetCwd,
+            ...(activeProject.executionTarget !== undefined
+              ? { executionTarget: activeProject.executionTarget }
+              : {}),
             ...(targetWorktreePath !== null ? { worktreePath: targetWorktreePath } : {}),
             env: runtimeEnv,
           };
@@ -3266,6 +3278,7 @@ export default function ChatView(props: ChatViewProps) {
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
+          executionTarget={activeProjectExecutionTarget}
           diffOpen={diffOpen}
           onRunProjectScript={runProjectScript}
           onAddProjectScript={saveProjectScript}
@@ -3311,6 +3324,7 @@ export default function ChatView(props: ChatViewProps) {
               resolvedTheme={resolvedTheme}
               timestampFormat={timestampFormat}
               workspaceRoot={activeWorkspaceRoot}
+              executionTarget={activeProjectExecutionTarget}
               onIsAtEndChange={onIsAtEndChange}
             />
 
@@ -3374,6 +3388,7 @@ export default function ChatView(props: ChatViewProps) {
               keybindings={keybindings}
               terminalOpen={Boolean(terminalState.terminalOpen)}
               gitCwd={gitCwd}
+              executionTarget={activeProjectExecutionTarget}
               promptRef={promptRef}
               composerImagesRef={composerImagesRef}
               composerTerminalContextsRef={composerTerminalContextsRef}
@@ -3455,6 +3470,7 @@ export default function ChatView(props: ChatViewProps) {
             environmentId={environmentId}
             markdownCwd={gitCwd ?? undefined}
             workspaceRoot={activeWorkspaceRoot}
+            executionTarget={activeProjectExecutionTarget}
             timestampFormat={timestampFormat}
             mode="sidebar"
             onClose={closePlanSidebar}
@@ -3489,6 +3505,7 @@ export default function ChatView(props: ChatViewProps) {
             environmentId={environmentId}
             markdownCwd={gitCwd ?? undefined}
             workspaceRoot={activeWorkspaceRoot}
+            executionTarget={activeProjectExecutionTarget}
             timestampFormat={timestampFormat}
             mode="sheet"
             onClose={closePlanSidebar}

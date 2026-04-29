@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   type EnvironmentId,
+  type ExecutionTarget,
   type GitManagerServiceError,
   type GitStatusResult,
 } from "@t3tools/contracts";
@@ -36,6 +37,7 @@ interface WatchedGitStatus {
 interface GitStatusTarget {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
+  readonly executionTarget?: ExecutionTarget | undefined;
 }
 
 const EMPTY_GIT_STATUS_STATE = Object.freeze<GitStatusState>({
@@ -74,7 +76,7 @@ function getGitStatusTargetKey(target: GitStatusTarget): string | null {
     return null;
   }
 
-  return `${target.environmentId}:${target.cwd}`;
+  return `${target.environmentId}:${target.executionTarget?.kind === "wsl" ? `wsl:${target.executionTarget.distroName}:${target.executionTarget.user ?? ""}` : "local"}:${target.cwd}`;
 }
 
 function readResolvedGitStatusClient(target: GitStatusTarget): ResolvedGitStatusClient | null {
@@ -141,9 +143,14 @@ export function refreshGitStatus(
   }
 
   gitStatusLastRefreshAtByKey.set(targetKey, Date.now());
-  const refreshPromise = resolvedClient.refreshStatus({ cwd: target.cwd }).finally(() => {
-    gitStatusRefreshInFlight.delete(targetKey);
-  });
+  const refreshPromise = resolvedClient
+    .refreshStatus({
+      cwd: target.cwd,
+      ...(target.executionTarget !== undefined ? { executionTarget: target.executionTarget } : {}),
+    })
+    .finally(() => {
+      gitStatusRefreshInFlight.delete(targetKey);
+    });
   gitStatusRefreshInFlight.set(targetKey, refreshPromise);
   return refreshPromise;
 }
@@ -165,8 +172,13 @@ export function resetGitStatusStateForTests(): void {
 export function useGitStatus(target: GitStatusTarget): GitStatusState {
   const targetKey = getGitStatusTargetKey(target);
   useEffect(
-    () => watchGitStatus({ environmentId: target.environmentId, cwd: target.cwd }),
-    [target.environmentId, target.cwd],
+    () =>
+      watchGitStatus({
+        environmentId: target.environmentId,
+        cwd: target.cwd,
+        executionTarget: target.executionTarget,
+      }),
+    [target.environmentId, target.cwd, target.executionTarget],
   );
 
   const state = useAtomValue(
@@ -199,7 +211,6 @@ function subscribeToGitStatusTarget(
     return NOOP;
   }
 
-  const cwd = target.cwd;
   let currentClientIdentity: string | null = null;
   let currentUnsubscribe = NOOP;
 
@@ -227,7 +238,7 @@ function subscribeToGitStatusTarget(
 
     currentUnsubscribe();
     currentClientIdentity = resolved.clientIdentity;
-    currentUnsubscribe = subscribeToGitStatus(targetKey, cwd, resolved.client);
+    currentUnsubscribe = subscribeToGitStatus(targetKey, target, resolved.client);
   };
 
   const unsubscribeRegistry = providedClient
@@ -241,10 +252,21 @@ function subscribeToGitStatusTarget(
   };
 }
 
-function subscribeToGitStatus(targetKey: string, cwd: string, client: GitStatusClient): () => void {
+function subscribeToGitStatus(
+  targetKey: string,
+  target: GitStatusTarget,
+  client: GitStatusClient,
+): () => void {
+  if (target.cwd === null) {
+    return NOOP;
+  }
+
   markGitStatusPending(targetKey);
   return client.onStatus(
-    { cwd },
+    {
+      cwd: target.cwd,
+      ...(target.executionTarget !== undefined ? { executionTarget: target.executionTarget } : {}),
+    },
     (status: GitStatusResult) => {
       appAtomRegistry.set(gitStatusStateAtom(targetKey), {
         data: status,

@@ -1,5 +1,5 @@
 import { memo, useState, useCallback } from "react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ExecutionTarget } from "@t3tools/contracts";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -58,6 +58,7 @@ interface PlanSidebarProps {
   environmentId: EnvironmentId;
   markdownCwd: string | undefined;
   workspaceRoot: string | undefined;
+  executionTarget?: ExecutionTarget | undefined;
   timestampFormat: TimestampFormat;
   mode?: "sheet" | "sidebar";
   onClose: () => void;
@@ -70,6 +71,7 @@ const PlanSidebar = memo(function PlanSidebar({
   environmentId,
   markdownCwd,
   workspaceRoot,
+  executionTarget,
   timestampFormat,
   mode = "sidebar",
   onClose,
@@ -101,6 +103,7 @@ const PlanSidebar = memo(function PlanSidebar({
     void api.projects
       .writeFile({
         cwd: workspaceRoot,
+        ...(executionTarget !== undefined ? { executionTarget } : {}),
         relativePath: filename,
         contents: normalizePlanMarkdownForExport(planMarkdown),
       })
@@ -124,7 +127,7 @@ const PlanSidebar = memo(function PlanSidebar({
         () => setIsSavingToWorkspace(false),
         () => setIsSavingToWorkspace(false),
       );
-  }, [environmentId, planMarkdown, workspaceRoot]);
+  }, [environmentId, executionTarget, planMarkdown, workspaceRoot]);
 
   return (
     <div

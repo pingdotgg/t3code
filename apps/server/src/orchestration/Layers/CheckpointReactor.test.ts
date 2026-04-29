@@ -268,8 +268,9 @@ describe("CheckpointReactor", () => {
     });
     const gitStatusBroadcasterLayer = Layer.succeed(GitStatusBroadcaster, {
       getStatus: () => Effect.die("getStatus should not be called in this test"),
-      refreshLocalStatus: (cwd: string) =>
+      refreshLocalStatus: (input) =>
         Effect.sync(() => {
+          const cwd = typeof input === "string" ? input : input.cwd;
           options?.gitStatusRefreshCalls?.push(cwd);
         }).pipe(
           Effect.as({

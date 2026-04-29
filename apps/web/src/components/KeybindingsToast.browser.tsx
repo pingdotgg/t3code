@@ -60,6 +60,7 @@ function createBaseServerConfig(): ServerConfig {
       serverVersion: "0.0.0-test",
       capabilities: { repositoryIdentity: true },
     },
+    capabilities: { repositoryIdentity: true, wsl: false },
     auth: {
       policy: "loopback-browser",
       bootstrapMethods: ["one-time-token"],

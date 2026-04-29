@@ -14,6 +14,8 @@ import {
 } from "@t3tools/shared/searchRanking";
 
 import { GitCore } from "../../git/Services/GitCore.ts";
+import { runWslShell } from "../../wsl/WslCli.ts";
+import { isWslTarget } from "../../wsl/WslTarget.ts";
 import {
   WorkspaceEntries,
   WorkspaceEntriesBrowseError,
@@ -464,6 +466,76 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
 
   const search: WorkspaceEntriesShape["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
+      if (isWslTarget(input.executionTarget)) {
+        const findScript = [
+          "node -e",
+          JSON.stringify(
+            [
+              "const fs=require('fs');const path=require('path');",
+              "const root=process.cwd();const ignored=new Set(['.git','.convex','node_modules','.next','.turbo','dist','build','out','.cache']);",
+              "const out=[];let truncated=false;",
+              "function walk(dir){if(out.length>=25000){truncated=true;return;} for(const d of fs.readdirSync(dir,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){if(!d.name||d.name==='.'||d.name==='..')continue; const full=path.posix.join(dir,d.name); const rel=path.posix.relative(root,full); const first=rel.split('/')[0]; if(ignored.has(first))continue; if(d.isDirectory()){out.push({path:rel,kind:'directory',parentPath:path.posix.dirname(rel)==='.'?undefined:path.posix.dirname(rel)}); walk(full);} else if(d.isFile()){out.push({path:rel,kind:'file',parentPath:path.posix.dirname(rel)==='.'?undefined:path.posix.dirname(rel)});}}}",
+              "walk(root); console.log(JSON.stringify({entries:out,truncated}));",
+            ].join(""),
+          ),
+        ].join(" ");
+        const result = yield* runWslShell(input.executionTarget, input.cwd, findScript, {
+          timeoutMs: 10_000,
+          operation: "workspaceEntries.search",
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new WorkspaceEntriesError({
+                cwd: input.cwd,
+                operation: "workspaceEntries.search",
+                detail: cause.message,
+                cause,
+              }),
+          ),
+        );
+        if (result.code !== 0) {
+          return yield* new WorkspaceEntriesError({
+            cwd: input.cwd,
+            operation: "workspaceEntries.search",
+            detail: result.stderr || "WSL workspace search failed.",
+          });
+        }
+        const parsed = yield* Effect.try({
+          try: () =>
+            JSON.parse(result.stdout) as {
+              entries: ProjectEntry[];
+              truncated: boolean;
+            },
+          catch: (cause) =>
+            new WorkspaceEntriesError({
+              cwd: input.cwd,
+              operation: "workspaceEntries.search.parse",
+              detail: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+        });
+        const normalizedQuery = normalizeSearchQuery(input.query, {
+          trimLeadingPattern: /^[@./]+/,
+        });
+        const limit = Math.max(0, Math.floor(input.limit));
+        const rankedEntries: RankedWorkspaceEntry[] = [];
+        let matchedEntryCount = 0;
+        for (const entry of parsed.entries.map(toSearchableWorkspaceEntry)) {
+          const score = scoreEntry(entry, normalizedQuery);
+          if (score === null) continue;
+          matchedEntryCount += 1;
+          insertRankedSearchResult(
+            rankedEntries,
+            { item: entry, score, tieBreaker: entry.path },
+            limit,
+          );
+        }
+        return {
+          entries: rankedEntries.map((candidate) => candidate.item),
+          truncated: parsed.truncated || matchedEntryCount > limit,
+        };
+      }
+
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
       return yield* Cache.get(workspaceIndexCache, normalizedCwd).pipe(
         Effect.map((index) => {

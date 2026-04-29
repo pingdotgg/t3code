@@ -122,6 +122,81 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
       }
     }));
 
+  it("round-trips WSL execution target metadata", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("thread-wsl-runtime");
+
+      yield* directory.upsert({
+        provider: "codex",
+        threadId,
+        executionTarget: {
+          kind: "wsl",
+          distroName: "Ubuntu",
+        },
+      });
+
+      const runtime = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.equal(Option.isSome(runtime), true);
+      if (Option.isSome(runtime)) {
+        assert.deepEqual(runtime.value.executionTarget, {
+          kind: "wsl",
+          distroName: "Ubuntu",
+        });
+      }
+
+      const binding = yield* directory.getBinding(threadId);
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        assert.deepEqual(binding.value.executionTarget, {
+          kind: "wsl",
+          distroName: "Ubuntu",
+        });
+      }
+    }));
+
+  it("reads legacy double-encoded WSL execution target metadata", () =>
+    Effect.gen(function* () {
+      const directory = yield* ProviderSessionDirectory;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("thread-wsl-double-encoded");
+
+      yield* sql`
+        INSERT INTO provider_session_runtime (
+          thread_id,
+          provider_name,
+          adapter_key,
+          runtime_mode,
+          status,
+          last_seen_at,
+          execution_target_json,
+          resume_cursor_json,
+          runtime_payload_json
+        )
+        VALUES (
+          ${threadId},
+          ${"codex"},
+          ${"codex"},
+          ${"full-access"},
+          ${"running"},
+          ${new Date().toISOString()},
+          ${JSON.stringify(JSON.stringify({ kind: "wsl", distroName: "Ubuntu" }))},
+          ${null},
+          ${null}
+        )
+      `;
+
+      const binding = yield* directory.getBinding(threadId);
+      assert.equal(Option.isSome(binding), true);
+      if (Option.isSome(binding)) {
+        assert.deepEqual(binding.value.executionTarget, {
+          kind: "wsl",
+          distroName: "Ubuntu",
+        });
+      }
+    }));
+
   it("lists persisted bindings with metadata in oldest-first order", () =>
     Effect.gen(function* () {
       const directory = yield* ProviderSessionDirectory;

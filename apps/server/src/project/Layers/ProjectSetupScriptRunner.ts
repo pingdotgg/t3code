@@ -46,6 +46,9 @@ const makeProjectSetupScriptRunner = Effect.gen(function* () {
         threadId: input.threadId,
         terminalId,
         cwd,
+        ...(project.executionTarget !== undefined
+          ? { executionTarget: project.executionTarget }
+          : {}),
         worktreePath: input.worktreePath,
         env,
       });

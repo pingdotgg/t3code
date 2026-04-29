@@ -1,10 +1,13 @@
-import type { RepositoryIdentity } from "@t3tools/contracts";
+import type { ExecutionTarget, RepositoryIdentity } from "@t3tools/contracts";
 import { Cache, Duration, Effect, Exit, Layer } from "effect";
 import { detectGitHostingProviderFromRemoteUrl, normalizeGitRemoteUrl } from "@t3tools/shared/git";
 
 import { runProcess } from "../../processRunner.ts";
+import { buildWslExecArgs } from "../../wsl/WslCli.ts";
+import { isWslTarget } from "../../wsl/WslTarget.ts";
 import {
   RepositoryIdentityResolver,
+  type RepositoryIdentityResolveInput,
   type RepositoryIdentityResolverShape,
 } from "../Services/RepositoryIdentityResolver.ts";
 
@@ -74,43 +77,82 @@ interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
   readonly positiveCacheTtl?: Duration.Input;
   readonly negativeCacheTtl?: Duration.Input;
+  readonly runGit?: (
+    input: RepositoryIdentityResolveInput,
+    args: ReadonlyArray<string>,
+  ) => Promise<{ readonly code: number | null; readonly stdout: string }>;
 }
 
-async function resolveRepositoryIdentityCacheKey(cwd: string): Promise<string> {
-  let cacheKey = cwd;
+function normalizeResolveInput(input: string | RepositoryIdentityResolveInput) {
+  return typeof input === "string" ? { cwd: input } : input;
+}
+
+function cacheKeyFor(input: RepositoryIdentityResolveInput, rootPath: string): string {
+  return JSON.stringify({
+    cwd: rootPath,
+    executionTarget: input.executionTarget ?? { kind: "local" },
+  });
+}
+
+async function runGit(
+  input: RepositoryIdentityResolveInput,
+  args: ReadonlyArray<string>,
+): Promise<{ readonly code: number | null; readonly stdout: string }> {
+  if (isWslTarget(input.executionTarget)) {
+    return runProcess("wsl.exe", buildWslExecArgs(input.executionTarget, input.cwd, "git", args), {
+      allowNonZeroExit: true,
+      shell: false,
+    });
+  }
+
+  return runProcess("git", ["-C", input.cwd, ...args], {
+    allowNonZeroExit: true,
+    shell: false,
+  });
+}
+
+async function resolveRepositoryIdentityCacheKey(
+  input: RepositoryIdentityResolveInput,
+  runGitCommand: NonNullable<RepositoryIdentityResolverOptions["runGit"]>,
+): Promise<string> {
+  let rootPath = input.cwd;
 
   try {
-    const topLevelResult = await runProcess("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
-      allowNonZeroExit: true,
-    });
+    const topLevelResult = await runGitCommand(input, ["rev-parse", "--show-toplevel"]);
     if (topLevelResult.code !== 0) {
-      return cacheKey;
+      return cacheKeyFor(input, rootPath);
     }
 
     const candidate = topLevelResult.stdout.trim();
     if (candidate.length > 0) {
-      cacheKey = candidate;
+      rootPath = candidate;
     }
   } catch {
-    return cacheKey;
+    return cacheKeyFor(input, rootPath);
   }
 
-  return cacheKey;
+  return cacheKeyFor(input, rootPath);
 }
 
 async function resolveRepositoryIdentityFromCacheKey(
   cacheKey: string,
+  runGitCommand: NonNullable<RepositoryIdentityResolverOptions["runGit"]>,
 ): Promise<RepositoryIdentity | null> {
   try {
-    const remoteResult = await runProcess("git", ["-C", cacheKey, "remote", "-v"], {
-      allowNonZeroExit: true,
-    });
+    const parsed = JSON.parse(cacheKey) as {
+      readonly cwd: string;
+      readonly executionTarget?: ExecutionTarget | undefined;
+    };
+    const rootPath = parsed.cwd;
+    const executionTarget =
+      parsed.executionTarget?.kind === "wsl" ? parsed.executionTarget : undefined;
+    const remoteResult = await runGitCommand({ cwd: rootPath, executionTarget }, ["remote", "-v"]);
     if (remoteResult.code !== 0) {
       return null;
     }
 
     const remote = pickPrimaryRemote(parseRemoteFetchUrls(remoteResult.stdout));
-    return remote ? buildRepositoryIdentity({ ...remote, rootPath: cacheKey }) : null;
+    return remote ? buildRepositoryIdentity({ ...remote, rootPath }) : null;
   } catch {
     return null;
   }
@@ -118,8 +160,10 @@ async function resolveRepositoryIdentityFromCacheKey(
 
 export const makeRepositoryIdentityResolver = Effect.fn("makeRepositoryIdentityResolver")(
   function* (options: RepositoryIdentityResolverOptions = {}) {
+    const runGitCommand = options.runGit ?? runGit;
     const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
-      (cacheKey) => Effect.promise(() => resolveRepositoryIdentityFromCacheKey(cacheKey)),
+      (cacheKey) =>
+        Effect.promise(() => resolveRepositoryIdentityFromCacheKey(cacheKey, runGitCommand)),
       {
         capacity: options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY,
         timeToLive: Exit.match({
@@ -134,8 +178,11 @@ export const makeRepositoryIdentityResolver = Effect.fn("makeRepositoryIdentityR
 
     const resolve: RepositoryIdentityResolverShape["resolve"] = Effect.fn(
       "RepositoryIdentityResolver.resolve",
-    )(function* (cwd) {
-      const cacheKey = yield* Effect.promise(() => resolveRepositoryIdentityCacheKey(cwd));
+    )(function* (rawInput) {
+      const input = normalizeResolveInput(rawInput);
+      const cacheKey = yield* Effect.promise(() =>
+        resolveRepositoryIdentityCacheKey(input, runGitCommand),
+      );
       return yield* Cache.get(repositoryIdentityCache, cacheKey);
     });
 

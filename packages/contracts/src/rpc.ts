@@ -10,6 +10,12 @@ import {
   FilesystemBrowseError,
 } from "./filesystem.ts";
 import {
+  WslBrowseInput,
+  WslListDistributionsResult,
+  WslResolvePathInput,
+  WslResolvePathResult,
+} from "./executionTarget.ts";
+import {
   GitActionProgressEvent,
   GitCheckoutInput,
   GitCheckoutResult,
@@ -90,6 +96,9 @@ export const WS_METHODS = {
 
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
+  wslListDistributions: "wsl.listDistributions",
+  wslBrowse: "wsl.browse",
+  wslResolvePath: "wsl.resolvePath",
 
   // Git methods
   gitPull: "git.pull",
@@ -177,6 +186,22 @@ export const WsFilesystemBrowseRpc = Rpc.make(WS_METHODS.filesystemBrowse, {
   payload: FilesystemBrowseInput,
   success: FilesystemBrowseResult,
   error: FilesystemBrowseError,
+});
+
+export const WsWslListDistributionsRpc = Rpc.make(WS_METHODS.wslListDistributions, {
+  payload: Schema.Struct({}),
+  success: WslListDistributionsResult,
+});
+
+export const WsWslBrowseRpc = Rpc.make(WS_METHODS.wslBrowse, {
+  payload: WslBrowseInput,
+  success: FilesystemBrowseResult,
+  error: FilesystemBrowseError,
+});
+
+export const WsWslResolvePathRpc = Rpc.make(WS_METHODS.wslResolvePath, {
+  payload: WslResolvePathInput,
+  success: WslResolvePathResult,
 });
 
 export const WsSubscribeGitStatusRpc = Rpc.make(WS_METHODS.subscribeGitStatus, {
@@ -365,6 +390,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
+  WsWslListDistributionsRpc,
+  WsWslBrowseRpc,
+  WsWslResolvePathRpc,
   WsSubscribeGitStatusRpc,
   WsGitPullRpc,
   WsGitRefreshStatusRpc,

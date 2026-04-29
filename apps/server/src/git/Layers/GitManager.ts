@@ -1299,10 +1299,33 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
   });
 
   const localStatus: GitManagerShape["localStatus"] = Effect.fn("localStatus")(function* (input) {
+    if (input.executionTarget?.kind === "wsl") {
+      const status = yield* gitCore.status(input);
+      return {
+        isRepo: status.isRepo,
+        ...(status.hostingProvider ? { hostingProvider: status.hostingProvider } : {}),
+        hasOriginRemote: status.hasOriginRemote,
+        isDefaultBranch: status.isDefaultBranch,
+        branch: status.branch,
+        hasWorkingTreeChanges: status.hasWorkingTreeChanges,
+        workingTree: status.workingTree,
+      };
+    }
     return yield* Cache.get(localStatusResultCache, normalizeStatusCacheKey(input.cwd));
   });
   const remoteStatus: GitManagerShape["remoteStatus"] = Effect.fn("remoteStatus")(
     function* (input) {
+      if (input.executionTarget?.kind === "wsl") {
+        const status = yield* gitCore.status(input);
+        return status.isRepo
+          ? {
+              hasUpstream: status.hasUpstream,
+              aheadCount: status.aheadCount,
+              behindCount: status.behindCount,
+              pr: null,
+            }
+          : null;
+      }
       return yield* Cache.get(remoteStatusResultCache, normalizeStatusCacheKey(input.cwd));
     },
   );

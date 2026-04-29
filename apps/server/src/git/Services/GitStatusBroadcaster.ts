@@ -13,9 +13,11 @@ export interface GitStatusBroadcasterShape {
     input: GitStatusInput,
   ) => Effect.Effect<GitStatusResult, GitManagerServiceError>;
   readonly refreshLocalStatus: (
-    cwd: string,
+    input: string | GitStatusInput,
   ) => Effect.Effect<GitStatusLocalResult, GitManagerServiceError>;
-  readonly refreshStatus: (cwd: string) => Effect.Effect<GitStatusResult, GitManagerServiceError>;
+  readonly refreshStatus: (
+    input: string | GitStatusInput,
+  ) => Effect.Effect<GitStatusResult, GitManagerServiceError>;
   readonly streamStatus: (
     input: GitStatusInput,
   ) => Stream.Stream<GitStatusStreamEvent, GitManagerServiceError>;

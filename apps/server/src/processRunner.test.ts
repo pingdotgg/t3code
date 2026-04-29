@@ -20,6 +20,17 @@ describe("runProcess", () => {
     expect(result.stdoutTruncated).toBe(true);
     expect(result.stderrTruncated).toBe(false);
   });
+
+  it("can bypass the Windows shell so arguments are passed literally", async () => {
+    const result = await runProcess(
+      "node",
+      ["-e", "process.stdout.write(process.argv[1] ?? '')", "a && b || c"],
+      { shell: false },
+    );
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe("a && b || c");
+  });
 });
 
 describe("isWindowsCommandNotFound", () => {

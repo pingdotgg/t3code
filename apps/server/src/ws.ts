@@ -1,4 +1,5 @@
 import { Cause, Duration, Effect, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
+import { posix as posixPath } from "node:path";
 import {
   type AuthAccessStreamEvent,
   AuthSessionId,
@@ -7,6 +8,7 @@ import {
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
+  type GitStatusInput,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
@@ -63,6 +65,8 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
 import { respondToAuthError } from "./auth/http.ts";
+import { isWslAvailable, listWslDistributions, runWsl } from "./wsl/WslCli.ts";
+import { normalizeWslTarget } from "./wsl/WslTarget.ts";
 
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
@@ -210,28 +214,35 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       ): Effect.Effect<OrchestrationEvent, never, never> => {
         switch (event.type) {
           case "project.created":
-            return repositoryIdentityResolver.resolve(event.payload.workspaceRoot).pipe(
-              Effect.map((repositoryIdentity) => ({
-                ...event,
-                payload: {
-                  ...event.payload,
-                  repositoryIdentity,
-                },
-              })),
-            );
+            return repositoryIdentityResolver
+              .resolve({
+                cwd: event.payload.workspaceRoot,
+                executionTarget: event.payload.executionTarget,
+              })
+              .pipe(
+                Effect.map((repositoryIdentity) => ({
+                  ...event,
+                  payload: {
+                    ...event.payload,
+                    repositoryIdentity,
+                  },
+                })),
+              );
           case "project.meta-updated":
             return Effect.gen(function* () {
-              const workspaceRoot =
-                event.payload.workspaceRoot ??
-                (yield* orchestrationEngine.getReadModel()).projects.find(
-                  (project) => project.id === event.payload.projectId,
-                )?.workspaceRoot ??
-                null;
+              const readModel = yield* orchestrationEngine.getReadModel();
+              const project = readModel.projects.find(
+                (candidate) => candidate.id === event.payload.projectId,
+              );
+              const workspaceRoot = event.payload.workspaceRoot ?? project?.workspaceRoot ?? null;
               if (workspaceRoot === null) {
                 return event;
               }
 
-              const repositoryIdentity = yield* repositoryIdentityResolver.resolve(workspaceRoot);
+              const repositoryIdentity = yield* repositoryIdentityResolver.resolve({
+                cwd: workspaceRoot,
+                executionTarget: event.payload.executionTarget ?? project?.executionTarget,
+              });
               return {
                 ...event,
                 payload: {
@@ -515,9 +526,14 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         const settings = yield* serverSettings.getSettings;
         const environment = yield* serverEnvironment.getDescriptor;
         const auth = yield* serverAuth.getDescriptor();
+        const wsl = yield* isWslAvailable();
 
         return {
           environment,
+          capabilities: {
+            repositoryIdentity: true,
+            wsl,
+          },
           auth,
           cwd: config.cwd,
           keybindingsConfigPath: config.keybindingsConfigPath,
@@ -539,9 +555,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         };
       });
 
-      const refreshGitStatus = (cwd: string) =>
+      const refreshGitStatus = (input: string | GitStatusInput) =>
         gitStatusBroadcaster
-          .refreshStatus(cwd)
+          .refreshStatus(input)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
@@ -820,30 +836,202 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "workspace" },
           ),
-        [WS_METHODS.subscribeGitStatus]: (input) =>
-          observeRpcStream(
+        [WS_METHODS.wslListDistributions]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.wslListDistributions,
+            listWslDistributions().pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("failed to list WSL distributions", { cause }).pipe(
+                  Effect.as([]),
+                ),
+              ),
+              Effect.map((distributions) => ({ distributions })),
+            ),
+            { "rpc.aggregate": "wsl" },
+          ),
+        [WS_METHODS.wslBrowse]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.wslBrowse,
+            Effect.gen(function* () {
+              const target = normalizeWslTarget(input.target);
+              const baseCwd = input.cwd && input.cwd.trim().length > 0 ? input.cwd : "/";
+              const requestedPartial = input.partialPath.trim();
+              const expandedPartial =
+                requestedPartial === "~" || requestedPartial.startsWith("~/")
+                  ? yield* runWsl(target, "/", "printenv", ["HOME"], {
+                      timeoutMs: 3_000,
+                      operation: "wsl.browse-home",
+                    }).pipe(
+                      Effect.flatMap((result) => {
+                        if (result.code !== 0) {
+                          return Effect.fail(
+                            new FilesystemBrowseError({
+                              message: "Unable to resolve WSL home directory.",
+                              cause: result.stderr,
+                            }),
+                          );
+                        }
+                        const home = result.stdout.trim();
+                        if (!home.startsWith("/")) {
+                          return Effect.fail(
+                            new FilesystemBrowseError({
+                              message: "Unable to resolve WSL home directory.",
+                              cause: result.stdout,
+                            }),
+                          );
+                        }
+                        return Effect.succeed(
+                          requestedPartial === "~"
+                            ? home
+                            : posixPath.join(home, requestedPartial.slice(2)),
+                        );
+                      }),
+                    )
+                  : requestedPartial;
+
+              const normalizedTargetPath =
+                expandedPartial.length === 0
+                  ? posixPath.normalize(baseCwd)
+                  : expandedPartial.startsWith("/")
+                    ? posixPath.normalize(expandedPartial)
+                    : posixPath.normalize(posixPath.join(baseCwd, expandedPartial));
+              const selectDirectory = expandedPartial.length === 0 || expandedPartial.endsWith("/");
+              const parentPath = selectDirectory
+                ? normalizedTargetPath
+                : posixPath.dirname(normalizedTargetPath);
+              const prefix = selectDirectory ? "" : posixPath.basename(normalizedTargetPath);
+
+              const listResult = yield* runWsl(
+                target,
+                parentPath,
+                "find",
+                [".", "-mindepth", "1", "-maxdepth", "1", "-type", "d", "-print"],
+                { timeoutMs: 5_000, operation: "wsl.browse" },
+              );
+              if (listResult.code !== 0) {
+                return yield* new FilesystemBrowseError({
+                  message: "Unable to browse WSL path.",
+                  cause: listResult.stderr,
+                });
+              }
+
+              const lowerPrefix = prefix.toLowerCase();
+              const showHidden = prefix.length === 0 || prefix.startsWith(".");
+              const entries = listResult.stdout
+                .split(/\r?\n/u)
+                .filter((line) => line.length > 0)
+                .flatMap((rawLine) => {
+                  const normalizedLine = rawLine === "." ? "" : rawLine.replace(/^\.\//u, "");
+                  if (normalizedLine.length === 0) {
+                    return [];
+                  }
+                  const name = posixPath.basename(normalizedLine);
+                  if (!name.toLowerCase().startsWith(lowerPrefix)) {
+                    return [];
+                  }
+                  if (!showHidden && name.startsWith(".")) {
+                    return [];
+                  }
+                  return [
+                    {
+                      name,
+                      fullPath: posixPath.join(parentPath, normalizedLine),
+                    },
+                  ];
+                })
+                .toSorted((left, right) => left.name.localeCompare(right.name));
+
+              return {
+                parentPath,
+                entries,
+              };
+            }).pipe(
+              Effect.mapError((cause) =>
+                Schema.is(FilesystemBrowseError)(cause)
+                  ? cause
+                  : new FilesystemBrowseError({
+                      message: cause.message,
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "wsl" },
+          ),
+        [WS_METHODS.wslResolvePath]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.wslResolvePath,
+            Effect.gen(function* () {
+              const target = normalizeWslTarget(input.target);
+              const directoryProbe = yield* runWsl(target, "/", "test", ["-d", input.path], {
+                timeoutMs: 3_000,
+                operation: "wsl.resolvePath.directory",
+              }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("failed to resolve WSL directory path", {
+                    distroName: input.target.distroName,
+                    path: input.path,
+                    cause,
+                  }).pipe(
+                    Effect.as({
+                      code: 1,
+                    }),
+                  ),
+                ),
+              );
+              if (directoryProbe.code === 0) {
+                return {
+                  path: input.path,
+                  exists: true,
+                  kind: "directory" as const,
+                };
+              }
+
+              const fileProbe = yield* runWsl(target, "/", "test", ["-f", input.path], {
+                timeoutMs: 3_000,
+                operation: "wsl.resolvePath.file",
+              }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("failed to resolve WSL file path", {
+                    distroName: input.target.distroName,
+                    path: input.path,
+                    cause,
+                  }).pipe(
+                    Effect.as({
+                      code: 1,
+                    }),
+                  ),
+                ),
+              );
+
+              return {
+                path: input.path,
+                exists: fileProbe.code === 0,
+                ...(fileProbe.code === 0 ? { kind: "file" as const } : {}),
+              };
+            }),
+            { "rpc.aggregate": "wsl" },
+          ),
+        [WS_METHODS.subscribeGitStatus]: (input) => {
+          return observeRpcStream(
             WS_METHODS.subscribeGitStatus,
             gitStatusBroadcaster.streamStatus(input),
             {
               "rpc.aggregate": "git",
             },
-          ),
+          );
+        },
         [WS_METHODS.gitRefreshStatus]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.gitRefreshStatus,
-            gitStatusBroadcaster.refreshStatus(input.cwd),
-            {
-              "rpc.aggregate": "git",
-            },
-          ),
+          observeRpcEffect(WS_METHODS.gitRefreshStatus, gitStatusBroadcaster.refreshStatus(input), {
+            "rpc.aggregate": "git",
+          }),
         [WS_METHODS.gitPull]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitPull,
-            git.pullCurrentBranch(input.cwd).pipe(
+            git.pullCurrentBranch(input).pipe(
               Effect.matchCauseEffect({
                 onFailure: (cause) => Effect.failCause(cause),
                 onSuccess: (result) =>
-                  refreshGitStatus(input.cwd).pipe(Effect.ignore({ log: true }), Effect.as(result)),
+                  refreshGitStatus(input).pipe(Effect.ignore({ log: true }), Effect.as(result)),
               }),
             ),
             { "rpc.aggregate": "git" },
@@ -863,7 +1051,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   Effect.matchCauseEffect({
                     onFailure: (cause) => Queue.failCause(queue, cause),
                     onSuccess: () =>
-                      refreshGitStatus(input.cwd).pipe(
+                      refreshGitStatus(input).pipe(
                         Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
                       ),
                   }),
@@ -880,7 +1068,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             WS_METHODS.gitPreparePullRequestThread,
             gitManager
               .preparePullRequestThread(input)
-              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+              .pipe(Effect.tap(() => refreshGitStatus(input))),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitListBranches]: (input) =>
@@ -890,33 +1078,33 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.gitCreateWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitCreateWorktree,
-            git.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input))),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitRemoveWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitRemoveWorktree,
-            git.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input))),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitCreateBranch]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitCreateBranch,
-            git.createBranch(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.createBranch(input).pipe(Effect.tap(() => refreshGitStatus(input))),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitCheckout]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitCheckout,
             Effect.scoped(git.checkoutBranch(input)).pipe(
-              Effect.tap(() => refreshGitStatus(input.cwd)),
+              Effect.tap(() => refreshGitStatus(input)),
             ),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.gitInit]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitInit,
-            git.initRepo(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            git.initRepo(input).pipe(Effect.tap(() => refreshGitStatus(input))),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>

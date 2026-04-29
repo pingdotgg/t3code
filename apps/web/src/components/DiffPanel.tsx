@@ -200,6 +200,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const gitStatusQuery = useGitStatus({
     environmentId: activeThread?.environmentId ?? null,
     cwd: activeCwd ?? null,
+    executionTarget: activeProject?.executionTarget,
   });
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =

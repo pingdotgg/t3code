@@ -13,6 +13,7 @@ import {
   SynchronizedRef,
 } from "effect";
 import type {
+  ExecutionTarget,
   GitStatusInput,
   GitStatusLocalResult,
   GitStatusRemoteResult,
@@ -29,7 +30,7 @@ import { GitManager } from "../Services/GitManager.ts";
 const GIT_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
 
 interface GitStatusChange {
-  readonly cwd: string;
+  readonly key: string;
   readonly event: GitStatusStreamEvent;
 }
 
@@ -56,6 +57,20 @@ function normalizeCwd(cwd: string): string {
   }
 }
 
+function normalizeGitStatusInput(input: string | GitStatusInput): GitStatusInput {
+  return typeof input === "string" ? { cwd: input } : input;
+}
+
+function normalizeStatusCwd(input: GitStatusInput): string {
+  return input.executionTarget?.kind === "wsl" ? input.cwd : normalizeCwd(input.cwd);
+}
+
+function statusCacheKey(cwd: string, executionTarget?: ExecutionTarget): string {
+  return executionTarget?.kind === "wsl"
+    ? `wsl:${executionTarget.distroName}:${executionTarget.user ?? ""}:${cwd}`
+    : `local:${cwd}`;
+}
+
 function fingerprintStatusPart(status: unknown): string {
   return JSON.stringify(status);
 }
@@ -79,7 +94,7 @@ export const GitStatusBroadcasterLive = Layer.effect(
     });
 
     const updateCachedLocalStatus = Effect.fn("updateCachedLocalStatus")(function* (
-      cwd: string,
+      key: string,
       local: GitStatusLocalResult,
       options?: { publish?: boolean },
     ) {
@@ -88,9 +103,9 @@ export const GitStatusBroadcasterLive = Layer.effect(
         value: local,
       } satisfies CachedValue<GitStatusLocalResult>;
       const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
-        const previous = cache.get(cwd) ?? { local: null, remote: null };
+        const previous = cache.get(key) ?? { local: null, remote: null };
         const nextCache = new Map(cache);
-        nextCache.set(cwd, {
+        nextCache.set(key, {
           ...previous,
           local: nextLocal,
         });
@@ -99,7 +114,7 @@ export const GitStatusBroadcasterLive = Layer.effect(
 
       if (options?.publish && shouldPublish) {
         yield* PubSub.publish(changesPubSub, {
-          cwd,
+          key,
           event: {
             _tag: "localUpdated",
             local,
@@ -111,7 +126,7 @@ export const GitStatusBroadcasterLive = Layer.effect(
     });
 
     const updateCachedRemoteStatus = Effect.fn("updateCachedRemoteStatus")(function* (
-      cwd: string,
+      key: string,
       remote: GitStatusRemoteResult | null,
       options?: { publish?: boolean },
     ) {
@@ -120,9 +135,9 @@ export const GitStatusBroadcasterLive = Layer.effect(
         value: remote,
       } satisfies CachedValue<GitStatusRemoteResult | null>;
       const shouldPublish = yield* Ref.modify(cacheRef, (cache) => {
-        const previous = cache.get(cwd) ?? { local: null, remote: null };
+        const previous = cache.get(key) ?? { local: null, remote: null };
         const nextCache = new Map(cache);
-        nextCache.set(cwd, {
+        nextCache.set(key, {
           ...previous,
           remote: nextRemote,
         });
@@ -131,7 +146,7 @@ export const GitStatusBroadcasterLive = Layer.effect(
 
       if (options?.publish && shouldPublish) {
         yield* PubSub.publish(changesPubSub, {
-          cwd,
+          key,
           event: {
             _tag: "remoteUpdated",
             remote,
@@ -142,105 +157,129 @@ export const GitStatusBroadcasterLive = Layer.effect(
       return remote;
     });
 
-    const loadLocalStatus = Effect.fn("loadLocalStatus")(function* (cwd: string) {
-      const local = yield* gitManager.localStatus({ cwd });
-      return yield* updateCachedLocalStatus(cwd, local);
+    const loadLocalStatus = Effect.fn("loadLocalStatus")(function* (input: GitStatusInput) {
+      const cwd = normalizeStatusCwd(input);
+      const key = statusCacheKey(cwd, input.executionTarget);
+      const local = yield* gitManager.localStatus({ ...input, cwd });
+      return yield* updateCachedLocalStatus(key, local);
     });
 
-    const loadRemoteStatus = Effect.fn("loadRemoteStatus")(function* (cwd: string) {
-      const remote = yield* gitManager.remoteStatus({ cwd });
-      return yield* updateCachedRemoteStatus(cwd, remote);
+    const loadRemoteStatus = Effect.fn("loadRemoteStatus")(function* (input: GitStatusInput) {
+      const cwd = normalizeStatusCwd(input);
+      const key = statusCacheKey(cwd, input.executionTarget);
+      const remote = yield* gitManager.remoteStatus({ ...input, cwd });
+      return yield* updateCachedRemoteStatus(key, remote);
     });
 
-    const getOrLoadLocalStatus = Effect.fn("getOrLoadLocalStatus")(function* (cwd: string) {
-      const cached = yield* getCachedStatus(cwd);
+    const getOrLoadLocalStatus = Effect.fn("getOrLoadLocalStatus")(function* (
+      input: GitStatusInput,
+      key: string,
+    ) {
+      const cached = yield* getCachedStatus(key);
       if (cached?.local) {
         return cached.local.value;
       }
-      return yield* loadLocalStatus(cwd);
+      return yield* loadLocalStatus(input);
     });
 
-    const getOrLoadRemoteStatus = Effect.fn("getOrLoadRemoteStatus")(function* (cwd: string) {
-      const cached = yield* getCachedStatus(cwd);
+    const getOrLoadRemoteStatus = Effect.fn("getOrLoadRemoteStatus")(function* (
+      input: GitStatusInput,
+      key: string,
+    ) {
+      const cached = yield* getCachedStatus(key);
       if (cached?.remote) {
         return cached.remote.value;
       }
-      return yield* loadRemoteStatus(cwd);
+      return yield* loadRemoteStatus(input);
     });
 
     const getStatus: GitStatusBroadcasterShape["getStatus"] = Effect.fn("getStatus")(function* (
       input: GitStatusInput,
     ) {
-      const normalizedCwd = normalizeCwd(input.cwd);
+      const normalizedCwd = normalizeStatusCwd(input);
+      const normalizedInput = { ...input, cwd: normalizedCwd };
+      const key = statusCacheKey(normalizedCwd, input.executionTarget);
       const [local, remote] = yield* Effect.all([
-        getOrLoadLocalStatus(normalizedCwd),
-        getOrLoadRemoteStatus(normalizedCwd),
+        getOrLoadLocalStatus(normalizedInput, key),
+        getOrLoadRemoteStatus(normalizedInput, key),
       ]);
       return mergeGitStatusParts(local, remote);
     });
 
     const refreshLocalStatus: GitStatusBroadcasterShape["refreshLocalStatus"] = Effect.fn(
       "refreshLocalStatus",
-    )(function* (cwd) {
-      const normalizedCwd = normalizeCwd(cwd);
+    )(function* (rawInput) {
+      const input = normalizeGitStatusInput(rawInput);
+      const normalizedCwd = normalizeStatusCwd(input);
+      const normalizedInput = { ...input, cwd: normalizedCwd };
+      const key = statusCacheKey(normalizedCwd, input.executionTarget);
       yield* gitManager.invalidateLocalStatus(normalizedCwd);
-      const local = yield* gitManager.localStatus({ cwd: normalizedCwd });
-      return yield* updateCachedLocalStatus(normalizedCwd, local, { publish: true });
+      const local = yield* gitManager.localStatus(normalizedInput);
+      return yield* updateCachedLocalStatus(key, local, { publish: true });
     });
 
-    const refreshRemoteStatus = Effect.fn("refreshRemoteStatus")(function* (cwd: string) {
-      yield* gitManager.invalidateRemoteStatus(cwd);
-      const remote = yield* gitManager.remoteStatus({ cwd });
-      return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
+    const refreshRemoteStatus = Effect.fn("refreshRemoteStatus")(function* (input: GitStatusInput) {
+      const normalizedCwd = normalizeStatusCwd(input);
+      const normalizedInput = { ...input, cwd: normalizedCwd };
+      const key = statusCacheKey(normalizedCwd, input.executionTarget);
+      yield* gitManager.invalidateRemoteStatus(normalizedCwd);
+      const remote = yield* gitManager.remoteStatus(normalizedInput);
+      return yield* updateCachedRemoteStatus(key, remote, { publish: true });
     });
 
     const refreshStatus: GitStatusBroadcasterShape["refreshStatus"] = Effect.fn("refreshStatus")(
-      function* (cwd) {
-        const normalizedCwd = normalizeCwd(cwd);
+      function* (rawInput) {
+        const input = normalizeGitStatusInput(rawInput);
+        const normalizedCwd = normalizeStatusCwd(input);
+        const normalizedInput = { ...input, cwd: normalizedCwd };
         const [local, remote] = yield* Effect.all([
-          refreshLocalStatus(normalizedCwd),
-          refreshRemoteStatus(normalizedCwd),
+          refreshLocalStatus(normalizedInput),
+          refreshRemoteStatus(normalizedInput),
         ]);
         return mergeGitStatusParts(local, remote);
       },
     );
 
-    const makeRemoteRefreshLoop = (cwd: string) => {
+    const makeRemoteRefreshLoop = (input: GitStatusInput) => {
+      const cwd = normalizeStatusCwd(input);
       const logRefreshFailure = (error: Error) =>
         Effect.logWarning("git remote status refresh failed", {
           cwd,
           detail: error.message,
         });
 
-      return refreshRemoteStatus(cwd).pipe(
+      return refreshRemoteStatus(input).pipe(
         Effect.catch(logRefreshFailure),
         Effect.andThen(
           Effect.forever(
             Effect.sleep(GIT_STATUS_REFRESH_INTERVAL).pipe(
-              Effect.andThen(refreshRemoteStatus(cwd).pipe(Effect.catch(logRefreshFailure))),
+              Effect.andThen(refreshRemoteStatus(input).pipe(Effect.catch(logRefreshFailure))),
             ),
           ),
         ),
       );
     };
 
-    const retainRemotePoller = Effect.fn("retainRemotePoller")(function* (cwd: string) {
+    const retainRemotePoller = Effect.fn("retainRemotePoller")(function* (
+      input: GitStatusInput,
+      key: string,
+    ) {
       yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
-        const existing = activePollers.get(cwd);
+        const existing = activePollers.get(key);
         if (existing) {
           const nextPollers = new Map(activePollers);
-          nextPollers.set(cwd, {
+          nextPollers.set(key, {
             ...existing,
             subscriberCount: existing.subscriberCount + 1,
           });
           return Effect.succeed([undefined, nextPollers] as const);
         }
 
-        return makeRemoteRefreshLoop(cwd).pipe(
+        return makeRemoteRefreshLoop(input).pipe(
           Effect.forkIn(broadcasterScope),
           Effect.map((fiber) => {
             const nextPollers = new Map(activePollers);
-            nextPollers.set(cwd, {
+            nextPollers.set(key, {
               fiber,
               subscriberCount: 1,
             });
@@ -279,13 +318,15 @@ export const GitStatusBroadcasterLive = Layer.effect(
     const streamStatus: GitStatusBroadcasterShape["streamStatus"] = (input) =>
       Stream.unwrap(
         Effect.gen(function* () {
-          const normalizedCwd = normalizeCwd(input.cwd);
+          const normalizedCwd = normalizeStatusCwd(input);
+          const normalizedInput = { ...input, cwd: normalizedCwd };
+          const key = statusCacheKey(normalizedCwd, input.executionTarget);
           const subscription = yield* PubSub.subscribe(changesPubSub);
-          const initialLocal = yield* getOrLoadLocalStatus(normalizedCwd);
-          const initialRemote = (yield* getCachedStatus(normalizedCwd))?.remote?.value ?? null;
-          yield* retainRemotePoller(normalizedCwd);
+          const initialLocal = yield* getOrLoadLocalStatus(normalizedInput, key);
+          const initialRemote = (yield* getCachedStatus(key))?.remote?.value ?? null;
+          yield* retainRemotePoller(normalizedInput, key);
 
-          const release = releaseRemotePoller(normalizedCwd).pipe(Effect.ignore, Effect.asVoid);
+          const release = releaseRemotePoller(key).pipe(Effect.ignore, Effect.asVoid);
 
           return Stream.concat(
             Stream.make({
@@ -294,7 +335,7 @@ export const GitStatusBroadcasterLive = Layer.effect(
               remote: initialRemote,
             }),
             Stream.fromSubscription(subscription).pipe(
-              Stream.filter((event) => event.cwd === normalizedCwd),
+              Stream.filter((event) => event.key === key),
               Stream.map((event) => event.event),
             ),
           ).pipe(Stream.ensuring(release));

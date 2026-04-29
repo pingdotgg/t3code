@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   type EditorId,
+  type ExecutionTarget,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
@@ -34,6 +35,7 @@ interface ChatHeaderProps {
   terminalToggleShortcutLabel: string | null;
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
+  executionTarget?: ExecutionTarget | undefined;
   diffOpen: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
@@ -60,6 +62,7 @@ export const ChatHeader = memo(function ChatHeader({
   terminalToggleShortcutLabel,
   diffToggleShortcutLabel,
   gitCwd,
+  executionTarget,
   diffOpen,
   onRunProjectScript,
   onAddProjectScript,
@@ -111,6 +114,7 @@ export const ChatHeader = memo(function ChatHeader({
         {activeProjectName && (
           <GitActionsControl
             gitCwd={gitCwd}
+            executionTarget={executionTarget}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
             {...(draftId ? { draftId } : {})}
           />

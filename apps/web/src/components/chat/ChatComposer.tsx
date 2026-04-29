@@ -1,6 +1,7 @@
 import type {
   ApprovalRequestId,
   EnvironmentId,
+  ExecutionTarget,
   ModelSelection,
   ProjectEntry,
   ProviderApprovalDecision,
@@ -420,6 +421,7 @@ export interface ChatComposerProps {
   keybindings: ResolvedKeybindingsConfig;
   terminalOpen: boolean;
   gitCwd: string | null;
+  executionTarget?: ExecutionTarget | undefined;
 
   // Refs the parent needs kept in sync
   promptRef: React.MutableRefObject<string>;
@@ -509,6 +511,7 @@ export const ChatComposer = memo(
       keybindings,
       terminalOpen,
       gitCwd,
+      executionTarget,
       promptRef,
       composerImagesRef,
       composerTerminalContextsRef,
@@ -706,6 +709,7 @@ export const ChatComposer = memo(
       projectSearchEntriesQueryOptions({
         environmentId,
         cwd: gitCwd,
+        executionTarget,
         query: effectivePathQuery,
         enabled: isPathTrigger,
         limit: 80,

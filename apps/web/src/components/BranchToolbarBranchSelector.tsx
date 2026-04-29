@@ -197,16 +197,22 @@ export function BranchToolbarBranchSelector({
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
-  const branchStatusQuery = useGitStatus({ environmentId, cwd: branchCwd });
+  const executionTarget = activeProject?.executionTarget;
+  const branchStatusQuery = useGitStatus({ environmentId, cwd: branchCwd, executionTarget });
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
 
   useEffect(() => {
     if (!branchCwd) return;
     void queryClient.prefetchInfiniteQuery(
-      gitBranchSearchInfiniteQueryOptions({ environmentId, cwd: branchCwd, query: "" }),
+      gitBranchSearchInfiniteQueryOptions({
+        environmentId,
+        cwd: branchCwd,
+        executionTarget,
+        query: "",
+      }),
     );
-  }, [branchCwd, environmentId, queryClient]);
+  }, [branchCwd, environmentId, executionTarget, queryClient]);
 
   const {
     data: branchesSearchData,
@@ -218,6 +224,7 @@ export function BranchToolbarBranchSelector({
     gitBranchSearchInfiniteQueryOptions({
       environmentId,
       cwd: branchCwd,
+      executionTarget,
       query: deferredTrimmedBranchQuery,
     }),
   );
@@ -342,6 +349,7 @@ export function BranchToolbarBranchSelector({
       try {
         const checkoutResult = await api.git.checkout({
           cwd: selectionTarget.checkoutCwd,
+          ...(executionTarget !== undefined ? { executionTarget } : {}),
           branch: branch.name,
         });
         const nextBranchName = branch.isRemote
@@ -376,6 +384,7 @@ export function BranchToolbarBranchSelector({
       try {
         const createBranchResult = await api.git.createBranch({
           cwd: branchCwd,
+          ...(executionTarget !== undefined ? { executionTarget } : {}),
           branch: name,
           checkout: true,
         });

@@ -214,6 +214,7 @@ function mapProject(
     environmentId,
     name: project.title,
     cwd: project.workspaceRoot,
+    executionTarget: project.executionTarget,
     repositoryIdentity: project.repositoryIdentity ?? null,
     defaultModelSelection: project.defaultModelSelection
       ? normalizeModelSelection(project.defaultModelSelection)

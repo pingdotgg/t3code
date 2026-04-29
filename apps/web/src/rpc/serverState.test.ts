@@ -68,6 +68,7 @@ const baseEnvironment = {
 
 const baseServerConfig: ServerConfig = {
   environment: baseEnvironment,
+  capabilities: { repositoryIdentity: true, wsl: false },
   auth: {
     policy: "loopback-browser",
     bootstrapMethods: ["one-time-token"],

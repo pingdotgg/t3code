@@ -3472,7 +3472,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     () =>
       Effect.gen(function* () {
         const dispatchedCommands: Array<OrchestrationCommand> = [];
-        const refreshStatus = vi.fn((_: string) =>
+        const refreshStatus = vi.fn((_input: string | { readonly cwd: string }) =>
           Effect.succeed({
             isRepo: true,
             hasOriginRemote: true,

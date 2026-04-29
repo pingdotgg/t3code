@@ -2,6 +2,7 @@ import type {
   ProviderKind,
   ProviderSessionRuntimeStatus,
   RuntimeMode,
+  ExecutionTarget,
   ThreadId,
 } from "@t3tools/contracts";
 import { Option, Context } from "effect";
@@ -20,6 +21,7 @@ export interface ProviderRuntimeBinding {
   readonly resumeCursor?: unknown | null;
   readonly runtimePayload?: unknown | null;
   readonly runtimeMode?: RuntimeMode;
+  readonly executionTarget?: ExecutionTarget;
 }
 
 export interface ProviderRuntimeBindingWithMetadata extends ProviderRuntimeBinding {

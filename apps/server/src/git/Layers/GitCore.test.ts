@@ -304,6 +304,214 @@ it.layer(TestLayer)("git integration", (it) => {
     );
   });
 
+  describe("WSL status routing", () => {
+    it.effect("threads the WSL execution target through status helper commands", () =>
+      Effect.gen(function* () {
+        const wslTarget = { kind: "wsl", distroName: "Ubuntu" } as const;
+        const seenTargets: Array<typeof wslTarget | undefined> = [];
+        const core = yield* makeIsolatedGitCore((input) => {
+          seenTargets.push(input.executionTarget as typeof wslTarget | undefined);
+          const command = input.args.join(" ");
+
+          if (command === "rev-parse --abbrev-ref --symbolic-full-name @{upstream}") {
+            return Effect.succeed({
+              code: 0,
+              stdout: "origin/main\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          if (command === "remote") {
+            return Effect.succeed({
+              code: 0,
+              stdout: "origin\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          if (command === "rev-parse --git-common-dir") {
+            return Effect.succeed({
+              code: 0,
+              stdout: ".git\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          if (command === "--git-dir .git fetch --quiet --no-tags origin") {
+            return Effect.succeed({
+              code: 0,
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          if (command === "status --porcelain=2 --branch") {
+            return Effect.succeed({
+              code: 0,
+              stdout: "# branch.head main\n# branch.upstream origin/main\n# branch.ab +0 -0\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          if (command === "diff --numstat" || command === "diff --cached --numstat") {
+            return Effect.succeed({
+              code: 0,
+              stdout: "",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          if (command === "symbolic-ref refs/remotes/origin/HEAD") {
+            return Effect.succeed({
+              code: 0,
+              stdout: "refs/remotes/origin/main\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          if (command === "remote get-url origin") {
+            return Effect.succeed({
+              code: 0,
+              stdout: "git@github.com:acme/repo.git\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          return Effect.fail(
+            new GitCommandError({
+              operation: input.operation,
+              command: `git ${command}`,
+              cwd: input.cwd,
+              detail: `unexpected command in WSL status test: ${command}`,
+            }),
+          );
+        });
+
+        const status = yield* core.status({
+          cwd: "/home/me/project",
+          executionTarget: wslTarget,
+        });
+
+        expect(status.isRepo).toBe(true);
+        expect(status.branch).toBe("main");
+        expect(seenTargets.length).toBeGreaterThan(0);
+        expect(seenTargets.every((target) => target?.kind === "wsl")).toBe(true);
+      }),
+    );
+  });
+
+  describe("WSL branch routing", () => {
+    it.effect("threads the WSL execution target through listBranches helper commands", () =>
+      Effect.gen(function* () {
+        const wslTarget = { kind: "wsl", distroName: "Ubuntu" } as const;
+        const seenTargets: Array<typeof wslTarget | undefined> = [];
+        const core = yield* makeIsolatedGitCore((input) => {
+          seenTargets.push(input.executionTarget as typeof wslTarget | undefined);
+          const command = input.args.join(" ");
+
+          if (command === "branch --no-color --no-column") {
+            return Effect.succeed({
+              code: 0,
+              stdout: "* main\n  feature/demo\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          if (command === "branch --no-color --no-column --remotes") {
+            return Effect.succeed({
+              code: 0,
+              stdout: "  origin/main\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          if (command === "remote") {
+            return Effect.succeed({
+              code: 0,
+              stdout: "origin\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          if (command === "symbolic-ref refs/remotes/origin/HEAD") {
+            return Effect.succeed({
+              code: 0,
+              stdout: "refs/remotes/origin/main\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          if (command === "worktree list --porcelain") {
+            return Effect.succeed({
+              code: 0,
+              stdout: "worktree /home/me/project\nbranch refs/heads/main\n\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          if (
+            command ===
+            "for-each-ref --format=%(refname:short)%09%(committerdate:unix) refs/heads refs/remotes"
+          ) {
+            return Effect.succeed({
+              code: 0,
+              stdout: "main\t100\nfeature/demo\t90\norigin/main\t100\n",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          }
+
+          return Effect.fail(
+            new GitCommandError({
+              operation: input.operation,
+              command: `git ${command}`,
+              cwd: input.cwd,
+              detail: `unexpected command in WSL branch test: ${command}`,
+            }),
+          );
+        });
+
+        const result = yield* core.listBranches({
+          cwd: "/home/me/project",
+          executionTarget: wslTarget,
+        });
+
+        expect(result.isRepo).toBe(true);
+        expect(result.branches.length).toBeGreaterThan(0);
+        expect(result.branches[0]?.name).toBe("main");
+        expect(seenTargets.length).toBeGreaterThan(0);
+        expect(seenTargets.every((target) => target?.kind === "wsl")).toBe(true);
+      }),
+    );
+  });
+
   // ── listGitBranches ──
 
   describe("listGitBranches", () => {

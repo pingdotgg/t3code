@@ -132,18 +132,19 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const lastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
-  const threadProjectCwd = useStore(
+  const threadProject = useStore(
     useMemo(
       () => (state: AppState) =>
-        selectProjectByRef(state, scopeProjectRef(thread.environmentId, thread.projectId))?.cwd ??
-        null,
+        selectProjectByRef(state, scopeProjectRef(thread.environmentId, thread.projectId)) ?? null,
       [thread.environmentId, thread.projectId],
     ),
   );
+  const threadProjectCwd = threadProject?.cwd ?? null;
   const gitCwd = thread.worktreePath ?? threadProjectCwd;
   const gitStatus = useGitStatus({
     environmentId: thread.environmentId,
     cwd: thread.branch != null ? gitCwd : null,
+    executionTarget: threadProject?.executionTarget,
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
   const prStatus = prStatusIndicator(pr);

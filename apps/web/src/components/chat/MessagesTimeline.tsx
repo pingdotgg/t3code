@@ -1,4 +1,9 @@
-import { type EnvironmentId, type MessageId, type TurnId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  type ExecutionTarget,
+  type MessageId,
+  type TurnId,
+} from "@t3tools/contracts";
 import {
   createContext,
   memo,
@@ -80,6 +85,7 @@ interface TimelineRowSharedState {
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
+  executionTarget?: ExecutionTarget | undefined;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -113,6 +119,7 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  executionTarget?: ExecutionTarget | undefined;
   onIsAtEndChange: (isAtEnd: boolean) => void;
 }
 
@@ -141,6 +148,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  executionTarget,
   onIsAtEndChange,
 }: MessagesTimelineProps) {
   const rawRows = useMemo(
@@ -203,6 +211,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       markdownCwd,
       resolvedTheme,
       workspaceRoot,
+      executionTarget,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -219,6 +228,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       markdownCwd,
       resolvedTheme,
       workspaceRoot,
+      executionTarget,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -452,6 +462,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
             environmentId={ctx.activeThreadEnvironmentId}
             cwd={ctx.markdownCwd}
             workspaceRoot={ctx.workspaceRoot}
+            executionTarget={ctx.executionTarget}
           />
         </div>
       )}

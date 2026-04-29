@@ -23,6 +23,11 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     filesystem: {
       browse: rpcClient.filesystem.browse,
     },
+    wsl: {
+      listDistributions: rpcClient.wsl.listDistributions,
+      browse: rpcClient.wsl.browse,
+      resolvePath: rpcClient.wsl.resolvePath,
+    },
     git: {
       pull: rpcClient.git.pull,
       refreshStatus: rpcClient.git.refreshStatus,

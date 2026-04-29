@@ -1,11 +1,13 @@
 import { Schema } from "effect";
 import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ExecutionTarget, ProjectLocation } from "./executionTarget.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 
 export const ProjectSearchEntriesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  executionTarget: Schema.optional(ExecutionTarget),
   query: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
   limit: PositiveInt.check(Schema.isLessThanOrEqualTo(PROJECT_SEARCH_ENTRIES_MAX_LIMIT)),
 });
@@ -36,6 +38,7 @@ export class ProjectSearchEntriesError extends Schema.TaggedErrorClass<ProjectSe
 
 export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  executionTarget: Schema.optional(ExecutionTarget),
   relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
 });
@@ -53,3 +56,8 @@ export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteF
     cause: Schema.optional(Schema.Defect),
   },
 ) {}
+
+export const ProjectAddInput = Schema.Struct({
+  location: ProjectLocation,
+});
+export type ProjectAddInput = typeof ProjectAddInput.Type;

@@ -1,5 +1,5 @@
 import { memo, useState, useId } from "react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentId, ExecutionTarget } from "@t3tools/contracts";
 import {
   buildCollapsedProposedPlanPreviewMarkdown,
   buildProposedPlanMarkdownFilename,
@@ -33,11 +33,13 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   environmentId,
   cwd,
   workspaceRoot,
+  executionTarget,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
+  executionTarget?: ExecutionTarget | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -106,6 +108,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
     void api.projects
       .writeFile({
         cwd: workspaceRoot,
+        ...(executionTarget !== undefined ? { executionTarget } : {}),
         relativePath,
         contents: saveContents,
       })

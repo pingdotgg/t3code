@@ -46,6 +46,12 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
         );
 
     if (command.type === "project.create") {
+      if (command.executionTarget?.kind === "wsl") {
+        return {
+          ...command,
+          createWorkspaceRootIfMissing: command.createWorkspaceRootIfMissing === true,
+        } satisfies OrchestrationCommand;
+      }
       return {
         ...command,
         workspaceRoot: yield* normalizeProjectWorkspaceRootForCreate(
@@ -56,7 +62,11 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       } satisfies OrchestrationCommand;
     }
 
-    if (command.type === "project.meta.update" && command.workspaceRoot !== undefined) {
+    if (
+      command.type === "project.meta.update" &&
+      command.workspaceRoot !== undefined &&
+      command.executionTarget?.kind !== "wsl"
+    ) {
       return {
         ...command,
         workspaceRoot: yield* normalizeProjectWorkspaceRoot(command.workspaceRoot),

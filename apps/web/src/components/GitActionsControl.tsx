@@ -1,5 +1,6 @@
 import { type ScopedThreadRef } from "@t3tools/contracts";
 import type {
+  ExecutionTarget,
   GitActionProgressEvent,
   GitRunStackedActionResult,
   GitStackedAction,
@@ -57,6 +58,7 @@ import { createThreadSelectorByRef } from "~/storeSelectors";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
+  executionTarget?: ExecutionTarget | undefined;
   activeThreadRef: ScopedThreadRef | null;
   draftId?: DraftId;
 }
@@ -212,6 +214,7 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
 
 export default function GitActionsControl({
   gitCwd,
+  executionTarget,
   activeThreadRef,
   draftId,
 }: GitActionsControlProps) {
@@ -321,6 +324,7 @@ export default function GitActionsControl({
   const { data: gitStatus = null, error: gitStatusError } = useGitStatus({
     environmentId: activeEnvironmentId,
     cwd: gitCwd,
+    executionTarget,
   });
   // Default to true while loading so we don't flash init controls.
   const isRepo = gitStatus?.isRepo ?? true;
@@ -333,18 +337,29 @@ export default function GitActionsControl({
   const noneSelected = selectedFiles.length === 0;
 
   const initMutation = useMutation(
-    gitInitMutationOptions({ environmentId: activeEnvironmentId, cwd: gitCwd, queryClient }),
+    gitInitMutationOptions({
+      environmentId: activeEnvironmentId,
+      cwd: gitCwd,
+      executionTarget,
+      queryClient,
+    }),
   );
 
   const runImmediateGitActionMutation = useMutation(
     gitRunStackedActionMutationOptions({
       environmentId: activeEnvironmentId,
       cwd: gitCwd,
+      executionTarget,
       queryClient,
     }),
   );
   const pullMutation = useMutation(
-    gitPullMutationOptions({ environmentId: activeEnvironmentId, cwd: gitCwd, queryClient }),
+    gitPullMutationOptions({
+      environmentId: activeEnvironmentId,
+      cwd: gitCwd,
+      executionTarget,
+      queryClient,
+    }),
   );
 
   const isRunStackedActionRunning =
@@ -431,9 +446,11 @@ export default function GitActionsControl({
       }
       refreshTimeout = window.setTimeout(() => {
         refreshTimeout = null;
-        void refreshGitStatus({ environmentId: activeEnvironmentId, cwd: gitCwd }).catch(
-          () => undefined,
-        );
+        void refreshGitStatus({
+          environmentId: activeEnvironmentId,
+          cwd: gitCwd,
+          executionTarget,
+        }).catch(() => undefined);
       }, GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS);
     };
     const handleVisibilityChange = () => {
@@ -452,7 +469,7 @@ export default function GitActionsControl({
       window.removeEventListener("focus", scheduleRefreshCurrentGitStatus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [activeEnvironmentId, gitCwd]);
+  }, [activeEnvironmentId, executionTarget, gitCwd]);
 
   const openExistingPr = useCallback(async () => {
     const api = readLocalApi();
@@ -918,6 +935,7 @@ export default function GitActionsControl({
                 void refreshGitStatus({
                   environmentId: activeEnvironmentId,
                   cwd: gitCwd,
+                  executionTarget,
                 }).catch(() => undefined);
               }
             }}

@@ -1,5 +1,6 @@
 import { Effect, Schema } from "effect";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ExecutionTarget } from "./executionTarget.ts";
 
 export const DEFAULT_TERMINAL_ID = "default";
 
@@ -37,6 +38,7 @@ export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionIn
 export const TerminalOpenInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: TrimmedNonEmptyStringSchema,
+  executionTarget: Schema.optional(ExecutionTarget),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   cols: Schema.optional(TerminalColsSchema),
   rows: Schema.optional(TerminalRowsSchema),
@@ -63,6 +65,7 @@ export type TerminalClearInput = Schema.Codec.Encoded<typeof TerminalClearInput>
 export const TerminalRestartInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cwd: TrimmedNonEmptyStringSchema,
+  executionTarget: Schema.optional(ExecutionTarget),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
   cols: TerminalColsSchema,
   rows: TerminalRowsSchema,
@@ -84,6 +87,7 @@ export const TerminalSessionSnapshot = Schema.Struct({
   threadId: Schema.String.check(Schema.isNonEmpty()),
   terminalId: Schema.String.check(Schema.isNonEmpty()),
   cwd: Schema.String.check(Schema.isNonEmpty()),
+  executionTarget: Schema.optional(ExecutionTarget),
   worktreePath: Schema.NullOr(TrimmedNonEmptyStringSchema),
   status: TerminalSessionStatus,
   pid: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),

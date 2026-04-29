@@ -118,6 +118,17 @@ export type ServerObservability = typeof ServerObservability.Type;
 
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
+  capabilities: Schema.Struct({
+    repositoryIdentity: Schema.Boolean,
+    wsl: Schema.Boolean,
+  }).pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed({
+        repositoryIdentity: true,
+        wsl: false,
+      }),
+    ),
+  ),
   auth: ServerAuthDescriptor,
   cwd: TrimmedNonEmptyString,
   keybindingsConfigPath: TrimmedNonEmptyString,

@@ -343,18 +343,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   // For grouped projects, the thread may belong to a different environment
   // than the representative project.  Look up the thread's own project cwd
   // so git status (and thus PR detection) queries the correct path.
-  const threadProjectCwd = useStore(
+  const threadProject = useStore(
     useMemo(
       () => (state: import("../store").AppState) =>
-        selectProjectByRef(state, scopeProjectRef(thread.environmentId, thread.projectId))?.cwd ??
-        null,
+        selectProjectByRef(state, scopeProjectRef(thread.environmentId, thread.projectId)) ?? null,
       [thread.environmentId, thread.projectId],
     ),
   );
+  const threadProjectCwd = threadProject?.cwd ?? null;
   const gitCwd = thread.worktreePath ?? threadProjectCwd ?? props.projectCwd;
   const gitStatus = useGitStatus({
     environmentId: thread.environmentId,
     cwd: thread.branch != null ? gitCwd : null,
+    executionTarget: threadProject?.executionTarget,
   });
   const isHighlighted = isActive || isSelected;
   const isThreadRunning =

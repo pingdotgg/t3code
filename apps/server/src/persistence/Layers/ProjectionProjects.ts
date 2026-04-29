@@ -2,7 +2,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer, Schema, Struct } from "effect";
 
-import { ModelSelection, ProjectScript } from "@t3tools/contracts";
+import { ExecutionTarget, ModelSelection, ProjectScript } from "@t3tools/contracts";
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
   DeleteProjectionProjectInput,
@@ -15,6 +15,7 @@ import {
 const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
+    executionTarget: Schema.fromJsonString(ExecutionTarget),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
 );
@@ -31,6 +32,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           project_id,
           title,
           workspace_root,
+          execution_target_json,
           default_model_selection_json,
           scripts_json,
           created_at,
@@ -41,6 +43,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.projectId},
           ${row.title},
           ${row.workspaceRoot},
+          ${JSON.stringify(row.executionTarget ?? { kind: "local" })},
           ${row.defaultModelSelection !== null ? JSON.stringify(row.defaultModelSelection) : null},
           ${JSON.stringify(row.scripts)},
           ${row.createdAt},
@@ -51,6 +54,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
         DO UPDATE SET
           title = excluded.title,
           workspace_root = excluded.workspace_root,
+          execution_target_json = excluded.execution_target_json,
           default_model_selection_json = excluded.default_model_selection_json,
           scripts_json = excluded.scripts_json,
           created_at = excluded.created_at,
@@ -68,6 +72,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           workspace_root AS "workspaceRoot",
+          execution_target_json AS "executionTarget",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
           created_at AS "createdAt",
@@ -87,6 +92,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           project_id AS "projectId",
           title,
           workspace_root AS "workspaceRoot",
+          execution_target_json AS "executionTarget",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
           created_at AS "createdAt",

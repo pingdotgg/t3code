@@ -188,7 +188,7 @@ describe("ProviderCommandReactor", () => {
             : "renamed-branch",
       }),
     );
-    const refreshStatus = vi.fn((_: string) =>
+    const refreshStatus = vi.fn((_input: string | { readonly cwd: string }) =>
       Effect.succeed({
         isRepo: true,
         hasOriginRemote: true,
