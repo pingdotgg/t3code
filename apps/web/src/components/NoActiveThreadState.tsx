@@ -59,7 +59,7 @@ const ACTION_CARD_CLASS_NAME =
   "relative isolate h-auto min-h-[11.5rem] w-full overflow-hidden rounded-[20px] border-border/60 bg-background px-5 py-5 text-left whitespace-normal shadow-sm shadow-black/5 transition-all duration-150 ease-out before:rounded-[19px] hover:-translate-y-0.5 hover:border-border/85 hover:bg-accent/16 hover:shadow-md hover:ring-4 hover:ring-foreground/5 hover:ring-offset-4 hover:ring-offset-background active:translate-y-0 active:scale-[0.985] active:shadow-sm";
 const SECTION_HEADING_CLASS_NAME =
   "text-ui-xs font-medium uppercase tracking-[0.18em] text-muted-foreground/64";
-const LIST_TABLE_SHELL_CLASS_NAME = "rounded-[1.3rem] bg-foreground/5 p-1";
+const LIST_TABLE_SHELL_CLASS_NAME = "rounded-[1.5rem] bg-foreground/5 p-0.5";
 const LIST_TABLE_INNER_CLASS_NAME =
   "overflow-hidden rounded-[1.15rem] border border-border/55 bg-white dark:bg-white/5 shadow-sm";
 const LIST_TABLE_HEADER_ROW_CLASS_NAME = "hidden items-center gap-4 px-4 py-2 md:grid";
