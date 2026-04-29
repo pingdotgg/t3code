@@ -4,23 +4,20 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 export const DEFAULT_TERMINAL_ID = "default";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
-const TerminalColsSchema = Schema.Int.check(
-  Schema.isGreaterThanOrEqualTo(1),
-).check(Schema.isLessThanOrEqualTo(1000));
-const TerminalRowsSchema = Schema.Int.check(
-  Schema.isGreaterThanOrEqualTo(1),
-).check(Schema.isLessThanOrEqualTo(500));
-const TerminalIdSchema = TrimmedNonEmptyStringSchema.check(
-  Schema.isMaxLength(128),
+const TerminalColsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
+  Schema.isLessThanOrEqualTo(1000),
 );
+const TerminalRowsSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).check(
+  Schema.isLessThanOrEqualTo(500),
+);
+const TerminalIdSchema = TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(128));
 const TerminalEnvKeySchema = Schema.String.check(
   Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
 ).check(Schema.isMaxLength(128));
 const TerminalEnvValueSchema = Schema.String.check(Schema.isMaxLength(8_192));
-const TerminalEnvSchema = Schema.Record(
-  TerminalEnvKeySchema,
-  TerminalEnvValueSchema,
-).check(Schema.isMaxProperties(128));
+const TerminalEnvSchema = Schema.Record(TerminalEnvKeySchema, TerminalEnvValueSchema).check(
+  Schema.isMaxProperties(128),
+);
 
 const TerminalIdWithDefaultSchema = TerminalIdSchema.pipe(
   Schema.withDecodingDefault(Effect.succeed(DEFAULT_TERMINAL_ID)),
@@ -35,9 +32,7 @@ const TerminalSessionInput = Schema.Struct({
   ...TerminalThreadInput.fields,
   terminalId: TerminalIdWithDefaultSchema,
 });
-export type TerminalSessionInput = Schema.Codec.Encoded<
-  typeof TerminalSessionInput
->;
+export type TerminalSessionInput = Schema.Codec.Encoded<typeof TerminalSessionInput>;
 
 export const TerminalOpenInput = Schema.Struct({
   ...TerminalSessionInput.fields,
@@ -51,27 +46,19 @@ export type TerminalOpenInput = Schema.Codec.Encoded<typeof TerminalOpenInput>;
 
 export const TerminalWriteInput = Schema.Struct({
   ...TerminalSessionInput.fields,
-  data: Schema.String.check(Schema.isNonEmpty()).check(
-    Schema.isMaxLength(65_536),
-  ),
+  data: Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(65_536)),
 });
-export type TerminalWriteInput = Schema.Codec.Encoded<
-  typeof TerminalWriteInput
->;
+export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
 
 export const TerminalResizeInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cols: TerminalColsSchema,
   rows: TerminalRowsSchema,
 });
-export type TerminalResizeInput = Schema.Codec.Encoded<
-  typeof TerminalResizeInput
->;
+export type TerminalResizeInput = Schema.Codec.Encoded<typeof TerminalResizeInput>;
 
 export const TerminalClearInput = TerminalSessionInput;
-export type TerminalClearInput = Schema.Codec.Encoded<
-  typeof TerminalClearInput
->;
+export type TerminalClearInput = Schema.Codec.Encoded<typeof TerminalClearInput>;
 
 export const TerminalRestartInput = Schema.Struct({
   ...TerminalSessionInput.fields,
@@ -81,9 +68,7 @@ export const TerminalRestartInput = Schema.Struct({
   rows: TerminalRowsSchema,
   env: Schema.optional(TerminalEnvSchema),
 });
-export type TerminalRestartInput = Schema.Codec.Encoded<
-  typeof TerminalRestartInput
->;
+export type TerminalRestartInput = Schema.Codec.Encoded<typeof TerminalRestartInput>;
 
 export const TerminalCloseInput = Schema.Struct({
   ...TerminalThreadInput.fields,
@@ -92,12 +77,7 @@ export const TerminalCloseInput = Schema.Struct({
 });
 export type TerminalCloseInput = typeof TerminalCloseInput.Type;
 
-export const TerminalSessionStatus = Schema.Literals([
-  "starting",
-  "running",
-  "exited",
-  "error",
-]);
+export const TerminalSessionStatus = Schema.Literals(["starting", "running", "exited", "error"]);
 export type TerminalSessionStatus = typeof TerminalSessionStatus.Type;
 
 export const TerminalSessionSnapshot = Schema.Struct({
