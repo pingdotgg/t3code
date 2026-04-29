@@ -7,12 +7,14 @@ import {
   clearShortcutModifierState,
   syncShortcutModifierStateFromKeyboardEvent,
 } from "../shortcutModifierState";
+import { useStore } from "../store";
 
 const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
 const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
 const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const activeEnvironmentId = useStore((state) => state.activeEnvironmentId);
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -35,6 +37,27 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       window.removeEventListener("blur", onWindowBlur);
     };
   }, []);
+
+  useEffect(() => {
+    const onOpenThread = window.desktopBridge?.onOpenThread;
+    if (typeof onOpenThread !== "function") {
+      return;
+    }
+
+    const unsubscribe = onOpenThread((threadId) => {
+      if (!activeEnvironmentId) {
+        return;
+      }
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId: activeEnvironmentId, threadId },
+      });
+    });
+
+    return () => {
+      unsubscribe?.();
+    };
+  }, [navigate, activeEnvironmentId]);
 
   useEffect(() => {
     const onMenuAction = window.desktopBridge?.onMenuAction;
