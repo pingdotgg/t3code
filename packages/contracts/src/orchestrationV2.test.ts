@@ -5,6 +5,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  ContextTransferId,
   CommandId,
   EventId,
   MessageId,
@@ -217,6 +218,11 @@ describe("orchestration V2 contracts", () => {
         branch: null,
         worktreePath: null,
         activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: "thread-1",
+        },
         forkedFrom: null,
         createdAt: now,
         updatedAt: now,
@@ -257,6 +263,7 @@ describe("orchestration V2 contracts", () => {
       checkpointScopes: [],
       checkpoints: [],
       contextHandoffs: [],
+      contextTransfers: [],
       updatedAt: now,
     });
 
@@ -344,5 +351,6 @@ describe("orchestration V2 contracts", () => {
     expect(NodeId.make("node-1")).toBe("node-1");
     expect(ProviderThreadId.make("provider-thread-1")).toBe("provider-thread-1");
     expect(CheckpointRef.make("git-ref-1")).toBe("git-ref-1");
+    expect(ContextTransferId.make("context-transfer-1")).toBe("context-transfer-1");
   });
 });

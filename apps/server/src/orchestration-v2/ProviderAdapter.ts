@@ -393,6 +393,7 @@ export interface ProviderAdapterV2RollbackThreadInput {
 
 export interface ProviderAdapterV2ForkThreadInput {
   readonly sourceProviderThread: OrchestrationV2ProviderThread;
+  readonly sourceProviderTurns?: ReadonlyArray<OrchestrationV2ProviderTurn>;
   readonly providerTurnId?: ProviderTurnId;
   readonly targetThreadId: ThreadId;
   readonly ownerNodeId?: NodeId;
