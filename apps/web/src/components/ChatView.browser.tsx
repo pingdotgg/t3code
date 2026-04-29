@@ -1877,6 +1877,8 @@ function createDesktopBridgeMenuActionStub(): {
       setTheme: vi.fn().mockResolvedValue(undefined),
       showContextMenu: vi.fn().mockResolvedValue(null),
       openExternal: vi.fn().mockResolvedValue(true),
+      notifyThreadAttention: vi.fn().mockResolvedValue(false),
+      onThreadAttentionActivated: () => () => {},
       onMenuAction: (listener) => {
         menuActionListener = listener;
         return () => {

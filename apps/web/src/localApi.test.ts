@@ -3,6 +3,8 @@ import {
   DEFAULT_SERVER_SETTINGS,
   type ClientSettings,
   type DesktopBridge,
+  type DesktopThreadAttentionActivation,
+  type DesktopThreadAttentionNotification,
   EnvironmentId,
   type GitStatusResult,
   ProjectId,
@@ -34,6 +36,9 @@ function registerListener<T>(listeners: Set<(event: T) => void>, listener: (even
 const terminalEventListeners = new Set<(event: TerminalEvent) => void>();
 const shellStreamListeners = new Set<(event: OrchestrationShellStreamItem) => void>();
 const gitStatusListeners = new Set<(event: GitStatusResult) => void>();
+const threadAttentionActivationListeners = new Set<
+  (event: DesktopThreadAttentionActivation) => void
+>();
 
 const rpcClientMock = {
   dispose: vi.fn(),
@@ -186,6 +191,9 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     setTheme: async () => undefined,
     showContextMenu: async () => null,
     openExternal: async () => true,
+    notifyThreadAttention: async () => false,
+    onThreadAttentionActivated: (listener) =>
+      registerListener(threadAttentionActivationListeners, listener),
     onMenuAction: () => () => undefined,
     getUpdateState: async () => {
       throw new Error("getUpdateState not implemented in test");
@@ -278,6 +286,7 @@ beforeEach(() => {
   terminalEventListeners.clear();
   shellStreamListeners.clear();
   gitStatusListeners.clear();
+  threadAttentionActivationListeners.clear();
   const testWindow = getWindowForTest();
   Reflect.deleteProperty(testWindow, "desktopBridge");
   Object.defineProperty(testWindow, "localStorage", {
@@ -556,6 +565,8 @@ describe("wsApi", () => {
     const clientSettings: ClientSettings = {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
+      desktopNotifyOnApprovalRequests: true,
+      desktopNotifyOnUserInputRequests: true,
       uiFontScale: 17,
       codeFontScale: 13,
       macOsFontSmoothing: "grayscale" as const,
@@ -618,6 +629,8 @@ describe("wsApi", () => {
     const clientSettings: ClientSettings = {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
+      desktopNotifyOnApprovalRequests: true,
+      desktopNotifyOnUserInputRequests: true,
       uiFontScale: 16,
       codeFontScale: 14,
       macOsFontSmoothing: "auto",
@@ -669,5 +682,70 @@ describe("wsApi", () => {
     await expect(
       api.persistence.getSavedEnvironmentSecret(EnvironmentId.make("environment-local")),
     ).resolves.toBeNull();
+  });
+
+  it("forwards thread-attention notifications through the desktop bridge", async () => {
+    const notifyThreadAttention = vi.fn().mockResolvedValue(true);
+    getWindowForTest().desktopBridge = makeDesktopBridge({ notifyThreadAttention });
+
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi(rpcClientMock as never);
+    const notification: DesktopThreadAttentionNotification = {
+      environmentId: EnvironmentId.make("environment-local"),
+      threadId: ThreadId.make("thread-1"),
+      threadTitle: "Review config",
+      kind: "approval",
+    };
+
+    await expect(api.notifications.notifyThreadAttention(notification)).resolves.toBe(true);
+    expect(notifyThreadAttention).toHaveBeenCalledWith(notification);
+  });
+
+  it("wires and unsubscribes thread-attention activation listeners through the desktop bridge", async () => {
+    getWindowForTest().desktopBridge = makeDesktopBridge();
+
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi(rpcClientMock as never);
+    const activationListener = vi.fn();
+    const activation: DesktopThreadAttentionActivation = {
+      environmentId: EnvironmentId.make("environment-local"),
+      threadId: ThreadId.make("thread-1"),
+      threadTitle: "Review config",
+      kind: "user-input",
+    };
+
+    const unsubscribe = api.notifications.onThreadAttentionActivated(activationListener);
+    emitEvent(threadAttentionActivationListeners, activation);
+    expect(activationListener).toHaveBeenCalledWith(activation);
+
+    unsubscribe();
+    emitEvent(threadAttentionActivationListeners, activation);
+    expect(activationListener).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to no-op thread-attention notifications when the desktop bridge is missing", async () => {
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi(rpcClientMock as never);
+    const activationListener = vi.fn();
+
+    await expect(
+      api.notifications.notifyThreadAttention({
+        environmentId: EnvironmentId.make("environment-local"),
+        threadId: ThreadId.make("thread-1"),
+        threadTitle: "Review config",
+        kind: "approval",
+      }),
+    ).resolves.toBe(false);
+
+    const unsubscribe = api.notifications.onThreadAttentionActivated(activationListener);
+    emitEvent(threadAttentionActivationListeners, {
+      environmentId: EnvironmentId.make("environment-local"),
+      threadId: ThreadId.make("thread-1"),
+      threadTitle: "Review config",
+      kind: "approval",
+    });
+    unsubscribe();
+
+    expect(activationListener).not.toHaveBeenCalled();
   });
 });

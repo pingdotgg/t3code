@@ -17,6 +17,10 @@ const mockCreateWsRpcClient = vi.fn();
 const mockWaitForSavedEnvironmentRegistryHydration = vi.fn();
 const mockListSavedEnvironmentRecords = vi.fn();
 const mockSavedEnvironmentRegistrySubscribe = vi.fn();
+const mockProcessThreadAttentionShellUpsert = vi.fn();
+const mockReconcileThreadAttentionShellSnapshot = vi.fn();
+const mockClearThreadAttentionTrackingForThread = vi.fn();
+const mockClearThreadAttentionTrackingForEnvironment = vi.fn();
 
 function MockWsTransport() {
   return undefined;
@@ -71,6 +75,13 @@ vi.mock("../../rpc/wsRpcClient", () => ({
 
 vi.mock("../../rpc/wsTransport", () => ({
   WsTransport: MockWsTransport,
+}));
+
+vi.mock("~/threadAttentionNotifications", () => ({
+  processThreadAttentionShellUpsert: mockProcessThreadAttentionShellUpsert,
+  reconcileThreadAttentionShellSnapshot: mockReconcileThreadAttentionShellSnapshot,
+  clearThreadAttentionTrackingForThread: mockClearThreadAttentionTrackingForThread,
+  clearThreadAttentionTrackingForEnvironment: mockClearThreadAttentionTrackingForEnvironment,
 }));
 
 function makeThreadShellSnapshot(params: {
@@ -269,6 +280,44 @@ describe("retainThreadDetailSubscription", () => {
 
     await serviceModule.resetEnvironmentServiceForTests();
     expect(mockThreadUnsubscribe).toHaveBeenCalledTimes(1);
+
+    stop();
+  });
+
+  it("routes thread shell upserts into the thread-attention notification policy", async () => {
+    const stop = serviceModule.startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-needs-approval");
+
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+
+    connectionInput.applyShellEvent(
+      {
+        kind: "thread-upserted",
+        sequence: 2,
+        thread: makeThreadShellSnapshot({
+          threadId,
+          hasPendingApprovals: true,
+        }).threads[0]!,
+      },
+      environmentId,
+    );
+
+    expect(mockProcessThreadAttentionShellUpsert).toHaveBeenCalledTimes(1);
+    expect(mockProcessThreadAttentionShellUpsert).toHaveBeenCalledWith(
+      {
+        environmentId,
+        threadId,
+        threadTitle: "Thread",
+        hasPendingApprovals: true,
+        hasPendingUserInput: false,
+      },
+      expect.objectContaining({
+        desktopNotifyOnApprovalRequests: false,
+        desktopNotifyOnUserInputRequests: false,
+      }),
+    );
 
     stop();
   });

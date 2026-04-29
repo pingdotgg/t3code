@@ -1,5 +1,8 @@
-import { type ServerLifecycleWelcomePayload } from "@forma/contracts";
-import { scopedProjectKey, scopeProjectRef } from "@forma/client-runtime";
+import type {
+  DesktopThreadAttentionActivation,
+  ServerLifecycleWelcomePayload,
+} from "@forma/contracts";
+import { scopedProjectKey, scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
 import {
   Outlet,
   createRootRouteWithContext,
@@ -55,6 +58,7 @@ import {
   resolveInitialServerAuthGateState,
   updatePrimaryEnvironmentDescriptor,
 } from "../environments/primary";
+import { buildThreadRouteParams } from "../threadRoutes";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -105,12 +109,13 @@ function RootRouteView() {
     return <Outlet />;
   }
   return (
-    <ToastProvider>
+    <ToastProvider position="bottom-right">
       <AnchoredToastProvider>
         <AuthenticatedTracingBootstrap />
         <ServerStateBootstrap />
         <EnvironmentConnectionManagerBootstrap />
         <EventRouter />
+        <DesktopThreadAttentionActivationBootstrap />
         <WebSocketConnectionCoordinator />
         <SlowRpcAckToastCoordinator />
         <WebSocketConnectionSurface>
@@ -216,6 +221,25 @@ function EnvironmentConnectionManagerBootstrap() {
   useEffect(() => {
     return startEnvironmentConnectionService(queryClient);
   }, [queryClient]);
+
+  return null;
+}
+
+function DesktopThreadAttentionActivationBootstrap() {
+  const navigate = useNavigate();
+  const setActiveEnvironmentId = useStore((store) => store.setActiveEnvironmentId);
+  const handleActivation = useEffectEvent((activation: DesktopThreadAttentionActivation) => {
+    setActiveEnvironmentId(activation.environmentId);
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(scopeThreadRef(activation.environmentId, activation.threadId)),
+    }).catch(() => undefined);
+  });
+
+  useEffect(() => {
+    const api = readLocalApi();
+    return api?.notifications?.onThreadAttentionActivated?.(handleActivation);
+  }, []);
 
   return null;
 }

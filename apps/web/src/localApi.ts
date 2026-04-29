@@ -65,6 +65,20 @@ export function createLocalApi(rpcClient: WsRpcClient): LocalApi {
         return showContextMenuFallback(items, position);
       },
     },
+    notifications: {
+      notifyThreadAttention: async (input) => {
+        if (!window.desktopBridge?.notifyThreadAttention) {
+          return false;
+        }
+        return window.desktopBridge.notifyThreadAttention(input);
+      },
+      onThreadAttentionActivated: (listener) => {
+        if (!window.desktopBridge?.onThreadAttentionActivated) {
+          return () => undefined;
+        }
+        return window.desktopBridge.onThreadAttentionActivated(listener);
+      },
+    },
     persistence: {
       getClientSettings: async () => {
         if (window.desktopBridge) {

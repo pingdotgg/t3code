@@ -51,6 +51,8 @@ function makeSecretStorage(available: boolean): DesktopSecretStorage {
 const clientSettings: ClientSettings = {
   confirmThreadArchive: true,
   confirmThreadDelete: false,
+  desktopNotifyOnApprovalRequests: true,
+  desktopNotifyOnUserInputRequests: true,
   uiFontScale: 17,
   codeFontScale: 13,
   macOsFontSmoothing: "grayscale",

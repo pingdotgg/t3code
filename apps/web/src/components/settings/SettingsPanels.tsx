@@ -584,6 +584,14 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
           ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
             ? ["Delete confirmation"]
             : []),
+          ...(settings.desktopNotifyOnApprovalRequests !==
+          DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnApprovalRequests
+            ? ["Approval request notifications"]
+            : []),
+          ...(settings.desktopNotifyOnUserInputRequests !==
+          DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnUserInputRequests
+            ? ["Question prompt notifications"]
+            : []),
         ];
       case "providers":
         return [
@@ -599,6 +607,8 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
     settings.codeFontScale,
     settings.confirmThreadArchive,
     settings.confirmThreadDelete,
+    settings.desktopNotifyOnApprovalRequests,
+    settings.desktopNotifyOnUserInputRequests,
     settings.defaultThreadEnvMode,
     settings.diffWordWrap,
     settings.enableAssistantStreaming,
@@ -643,6 +653,9 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
           threadCleanupInactiveDays: DEFAULT_UNIFIED_SETTINGS.threadCleanupInactiveDays,
           confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
           confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+          desktopNotifyOnApprovalRequests: DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnApprovalRequests,
+          desktopNotifyOnUserInputRequests:
+            DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnUserInputRequests,
         });
         break;
       case "providers":
@@ -1038,6 +1051,7 @@ function ArchivedThreadsSections() {
 export function ThreadsSettingsPanel() {
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
+  const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
 
   return (
     <SettingsPageContainer>
@@ -1209,6 +1223,66 @@ export function ThreadsSettingsPanel() {
           }
         />
       </SettingsSection>
+
+      {hasDesktopBridge ? (
+        <SettingsSection title="Attention">
+          <SettingsRow
+            title="Approval requests"
+            description="Notify when an agent needs permission to continue while Forma is not focused."
+            resetAction={
+              settings.desktopNotifyOnApprovalRequests !==
+              DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnApprovalRequests ? (
+                <SettingResetButton
+                  label="approval request notifications"
+                  onClick={() =>
+                    updateSettings({
+                      desktopNotifyOnApprovalRequests:
+                        DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnApprovalRequests,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.desktopNotifyOnApprovalRequests}
+                onCheckedChange={(checked) =>
+                  updateSettings({ desktopNotifyOnApprovalRequests: Boolean(checked) })
+                }
+                aria-label="Approval request notifications"
+              />
+            }
+          />
+
+          <SettingsRow
+            title="Question prompts"
+            description="Notify when an agent asks you for input to continue while Forma is not focused."
+            resetAction={
+              settings.desktopNotifyOnUserInputRequests !==
+              DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnUserInputRequests ? (
+                <SettingResetButton
+                  label="question prompt notifications"
+                  onClick={() =>
+                    updateSettings({
+                      desktopNotifyOnUserInputRequests:
+                        DEFAULT_UNIFIED_SETTINGS.desktopNotifyOnUserInputRequests,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.desktopNotifyOnUserInputRequests}
+                onCheckedChange={(checked) =>
+                  updateSettings({ desktopNotifyOnUserInputRequests: Boolean(checked) })
+                }
+                aria-label="Question prompt notifications"
+              />
+            }
+          />
+        </SettingsSection>
+      ) : null}
 
       <ArchivedThreadsSections />
     </SettingsPageContainer>

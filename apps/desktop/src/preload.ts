@@ -1,11 +1,17 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { DesktopBridge, DesktopMenuAction } from "@forma/contracts";
+import type {
+  DesktopBridge,
+  DesktopMenuAction,
+  DesktopThreadAttentionActivation,
+} from "@forma/contracts";
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
 const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
+const THREAD_ATTENTION_NOTIFY_CHANNEL = "desktop:thread-attention-notify";
+const THREAD_ATTENTION_ACTIVATED_CHANNEL = "desktop:thread-attention-activated";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
@@ -27,6 +33,26 @@ const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
 
 function isDesktopMenuAction(action: unknown): action is DesktopMenuAction {
   return action === "open-settings" || action === "toggle-sidebar";
+}
+
+function isDesktopThreadAttentionActivation(
+  value: unknown,
+): value is DesktopThreadAttentionActivation {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const { environmentId, threadId, threadTitle, kind } =
+    value as Partial<DesktopThreadAttentionActivation>;
+  return (
+    typeof environmentId === "string" &&
+    environmentId.trim().length > 0 &&
+    typeof threadId === "string" &&
+    threadId.trim().length > 0 &&
+    typeof threadTitle === "string" &&
+    threadTitle.trim().length > 0 &&
+    (kind === "approval" || kind === "user-input")
+  );
 }
 
 contextBridge.exposeInMainWorld("desktopBridge", {
@@ -62,6 +88,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setTheme: (theme) => ipcRenderer.invoke(SET_THEME_CHANNEL, theme),
   showContextMenu: (items, position) => ipcRenderer.invoke(CONTEXT_MENU_CHANNEL, items, position),
   openExternal: (url: string) => ipcRenderer.invoke(OPEN_EXTERNAL_CHANNEL, url),
+  notifyThreadAttention: (input) => ipcRenderer.invoke(THREAD_ATTENTION_NOTIFY_CHANNEL, input),
+  onThreadAttentionActivated: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, activation: unknown) => {
+      if (!isDesktopThreadAttentionActivation(activation)) return;
+      listener(activation);
+    };
+
+    ipcRenderer.on(THREAD_ATTENTION_ACTIVATED_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(THREAD_ATTENTION_ACTIVATED_CHANNEL, wrappedListener);
+    };
+  },
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (!isDesktopMenuAction(action)) return;

@@ -2732,14 +2732,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
               <span className="flex-1 truncate text-left text-xs">Search</span>
               {commandPaletteShortcutLabel ? (
                 <KbdGroup className="pointer-events-none items-center gap-1">
-                  {splitShortcutLabelIntoKeycaps(commandPaletteShortcutLabel).map((keycap) => (
-                    <Kbd
-                      key={keycap}
-                      className="text-ui-2xs h-5 min-w-0 rounded-md border border-border/70 bg-border/50 px-1.5 text-muted-foreground/80 shadow-none"
-                    >
-                      {keycap}
-                    </Kbd>
-                  ))}
+                  <Kbd className="text-ui-2xs h-5 min-w-0 rounded-md border border-border/70 bg-border/50 px-1.5 text-muted-foreground/80 shadow-none">
+                    {splitShortcutLabelIntoKeycaps(commandPaletteShortcutLabel).join(" ")}
+                  </Kbd>
                 </KbdGroup>
               ) : null}
             </CommandDialogTrigger>

@@ -14,23 +14,25 @@ import {
   Menu,
   nativeImage,
   nativeTheme,
+  Notification,
   protocol,
   safeStorage,
   shell,
 } from "electron";
 import type { MenuItemConstructorOptions, OpenDialogOptions } from "electron";
-import type {
-  ClientSettings,
-  DesktopTheme,
-  DesktopAppBranding,
-  DesktopMenuAction,
-  DesktopServerExposureMode,
-  DesktopServerExposureState,
-  DesktopUpdateChannel,
-  PersistedSavedEnvironmentRecord,
-  DesktopUpdateActionResult,
-  DesktopUpdateCheckResult,
-  DesktopUpdateState,
+import {
+  type ClientSettings,
+  type DesktopTheme,
+  type DesktopThreadAttentionNotification,
+  type DesktopAppBranding,
+  type DesktopMenuAction,
+  type DesktopServerExposureMode,
+  type DesktopServerExposureState,
+  type DesktopUpdateChannel,
+  type PersistedSavedEnvironmentRecord,
+  type DesktopUpdateActionResult,
+  type DesktopUpdateCheckResult,
+  type DesktopUpdateState,
 } from "@forma/contracts";
 import { autoUpdater } from "electron-updater";
 
@@ -77,6 +79,10 @@ import {
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch.ts";
 import { resolveDesktopAppBranding } from "./appBranding.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
+import {
+  showThreadAttentionNotification,
+  type ThreadAttentionNotificationFactory,
+} from "./threadAttentionNotifications.ts";
 
 syncShellEnvironment();
 
@@ -85,6 +91,8 @@ const CONFIRM_CHANNEL = "desktop:confirm";
 const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
+const THREAD_ATTENTION_NOTIFY_CHANNEL = "desktop:thread-attention-notify";
+const THREAD_ATTENTION_ACTIVATED_CHANNEL = "desktop:thread-attention-activated";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
@@ -162,6 +170,16 @@ const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
 const TITLEBAR_DARK_SYMBOL_COLOR = "#f8fafc";
+const threadAttentionNotificationFactory: ThreadAttentionNotificationFactory = {
+  isSupported: () => Notification.isSupported(),
+  create: (options) => {
+    const notification = new Notification(options);
+    return {
+      on: (event, listener) => notification.on(event, listener),
+      show: () => notification.show(),
+    };
+  },
+};
 
 function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextMenuItem[] {
   const normalizedItems: ContextMenuItem[] = [];
@@ -434,6 +452,50 @@ function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
   }
 
   return null;
+}
+
+function getDesktopThreadAttentionKind(
+  rawKind: unknown,
+): DesktopThreadAttentionNotification["kind"] | null {
+  if (rawKind === "approval" || rawKind === "user-input") {
+    return rawKind;
+  }
+
+  return null;
+}
+
+function getSafeThreadAttentionNotification(
+  rawInput: unknown,
+): DesktopThreadAttentionNotification | null {
+  if (typeof rawInput !== "object" || rawInput === null) {
+    return null;
+  }
+
+  const {
+    environmentId,
+    threadId,
+    threadTitle,
+    kind: rawKind,
+  } = rawInput as Partial<DesktopThreadAttentionNotification>;
+  const kind = getDesktopThreadAttentionKind(rawKind);
+  if (
+    typeof environmentId !== "string" ||
+    environmentId.trim().length === 0 ||
+    typeof threadId !== "string" ||
+    threadId.trim().length === 0 ||
+    typeof threadTitle !== "string" ||
+    threadTitle.trim().length === 0 ||
+    kind === null
+  ) {
+    return null;
+  }
+
+  return {
+    environmentId,
+    threadId,
+    threadTitle: threadTitle.trim(),
+    kind,
+  };
 }
 
 async function waitForBackendHttpReady(
@@ -1789,6 +1851,33 @@ function registerIpcHandlers(): void {
     } catch {
       return false;
     }
+  });
+
+  ipcMain.removeHandler(THREAD_ATTENTION_NOTIFY_CHANNEL);
+  ipcMain.handle(THREAD_ATTENTION_NOTIFY_CHANNEL, async (event, rawInput: unknown) => {
+    const input = getSafeThreadAttentionNotification(rawInput);
+    if (!input) {
+      return false;
+    }
+
+    const targetWindow = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+    if (!targetWindow || targetWindow.isDestroyed() || targetWindow.isFocused()) {
+      return false;
+    }
+
+    return showThreadAttentionNotification({
+      notificationFactory: threadAttentionNotificationFactory,
+      targetWindow,
+      input,
+      revealWindow,
+      onActivated: (activation) => {
+        if (targetWindow.isDestroyed()) {
+          return;
+        }
+
+        targetWindow.webContents.send(THREAD_ATTENTION_ACTIVATED_CHANNEL, activation);
+      },
+    });
   });
 
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);

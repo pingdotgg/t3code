@@ -66,6 +66,12 @@ import {
   derivePhysicalProjectKey,
 } from "../../logicalProject";
 import { getClientSettings } from "~/hooks/useSettings";
+import {
+  clearThreadAttentionTrackingForEnvironment,
+  clearThreadAttentionTrackingForThread,
+  processThreadAttentionShellUpsert,
+  reconcileThreadAttentionShellSnapshot,
+} from "~/threadAttentionNotifications";
 
 type EnvironmentServiceState = {
   readonly queryClient: QueryClient;
@@ -608,6 +614,7 @@ function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: En
         : null;
   const threadRef = threadId ? scopeThreadRef(environmentId, threadId) : null;
   const previousThread = threadRef ? selectThreadByRef(useStore.getState(), threadRef) : undefined;
+  const clientSettings = getClientSettings();
 
   useStore.getState().applyShellEvent(event, environmentId);
 
@@ -621,6 +628,16 @@ function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: En
       if (!previousThread && threadRef) {
         markPromotedDraftThreadByRef(threadRef);
       }
+      processThreadAttentionShellUpsert(
+        {
+          environmentId,
+          threadId: event.thread.id,
+          threadTitle: event.thread.title,
+          hasPendingApprovals: event.thread.hasPendingApprovals,
+          hasPendingUserInput: event.thread.hasPendingUserInput,
+        },
+        clientSettings,
+      );
       if (previousThread?.archivedAt === null && event.thread.archivedAt !== null && threadRef) {
         useTerminalStateStore.getState().removeTerminalState(threadRef);
       }
@@ -633,6 +650,7 @@ function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: En
         useComposerDraftStore.getState().clearDraftThread(threadRef);
         useUiStateStore.getState().clearThreadUi(scopedThreadKey(threadRef));
         useTerminalStateStore.getState().removeTerminalState(threadRef);
+        clearThreadAttentionTrackingForThread(environmentId, event.threadId);
       }
       syncThreadUiFromStore();
       return;
@@ -644,6 +662,17 @@ function createEnvironmentConnectionHandlers() {
     applyShellEvent,
     syncShellSnapshot: (snapshot: OrchestrationShellSnapshot, environmentId: EnvironmentId) => {
       useStore.getState().syncServerShellSnapshot(snapshot, environmentId);
+      reconcileThreadAttentionShellSnapshot(
+        environmentId,
+        snapshot.threads.map((thread) => ({
+          environmentId,
+          threadId: thread.id,
+          threadTitle: thread.title,
+          hasPendingApprovals: thread.hasPendingApprovals,
+          hasPendingUserInput: thread.hasPendingUserInput,
+        })),
+        getClientSettings(),
+      );
       reconcileThreadDetailSubscriptionsForEnvironment(
         environmentId,
         snapshot.threads.map((thread) => thread.id),
@@ -757,6 +786,7 @@ async function removeConnection(environmentId: EnvironmentId): Promise<boolean> 
     return false;
   }
 
+  clearThreadAttentionTrackingForEnvironment(environmentId);
   disposeThreadDetailSubscriptionsForEnvironment(environmentId);
   environmentConnections.delete(environmentId);
   emitEnvironmentConnectionRegistryChange();

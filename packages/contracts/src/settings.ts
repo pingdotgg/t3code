@@ -110,6 +110,12 @@ export const DEFAULT_MAC_OS_FONT_SMOOTHING: MacOsFontSmoothing = "auto";
 export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  desktopNotifyOnApprovalRequests: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  desktopNotifyOnUserInputRequests: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   uiFontScale: UiFontSizePx.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_UI_FONT_SIZE_PX)),
   ),
@@ -358,6 +364,8 @@ export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 export const ClientSettingsPatch = Schema.Struct({
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
+  desktopNotifyOnApprovalRequests: Schema.optionalKey(Schema.Boolean),
+  desktopNotifyOnUserInputRequests: Schema.optionalKey(Schema.Boolean),
   uiFontScale: Schema.optionalKey(UiFontSizePx),
   codeFontScale: Schema.optionalKey(CodeFontSizePx),
   macOsFontSmoothing: Schema.optionalKey(MacOsFontSmoothing),

@@ -30,6 +30,7 @@ import {
   InterfaceSettingsPanel,
   ProvidersSettingsPanel,
   ThreadsSettingsPanel,
+  useSettingsRestore,
 } from "./SettingsPanels";
 
 vi.mock("../../hooks/useThreadActions", () => ({
@@ -328,6 +329,8 @@ const createDesktopBridgeStub = (overrides?: {
     setTheme: vi.fn().mockResolvedValue(undefined),
     showContextMenu: vi.fn().mockResolvedValue(null),
     openExternal: vi.fn().mockResolvedValue(true),
+    notifyThreadAttention: vi.fn().mockResolvedValue(false),
+    onThreadAttentionActivated: () => () => {},
     onMenuAction: () => () => {},
     getUpdateState: vi.fn().mockResolvedValue(idleUpdateState),
     setUpdateChannel:
@@ -346,6 +349,33 @@ const createDesktopBridgeStub = (overrides?: {
     onUpdateState: () => () => {},
   };
 };
+
+function ThreadsRestoreHarness() {
+  const { changedSettingLabels, restoreDefaults } = useSettingsRestore("threads");
+
+  return (
+    <button disabled={changedSettingLabels.length === 0} onClick={() => void restoreDefaults()}>
+      Restore thread defaults
+    </button>
+  );
+}
+
+async function selectOption(label: string, option: string) {
+  await page.getByLabelText(label).click();
+  await page.getByRole("option", { name: option, exact: true }).click();
+}
+
+function setRangeInputValue(label: string, value: number) {
+  const input = document.querySelector(`[aria-label="${label}"]`);
+  if (!(input instanceof HTMLInputElement)) {
+    throw new Error(`Expected the ${label} range input.`);
+  }
+
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setValue?.call(input, String(value));
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
 
 describe("Settings panels", () => {
   const originalMatchMedia = window.matchMedia.bind(window);
@@ -503,11 +533,9 @@ describe("Settings panels", () => {
 
     await expect.element(page.getByLabelText("Theme mode")).toBeInTheDocument();
     await expect.element(page.getByLabelText("Theme hue")).toBeInTheDocument();
-    await expect.element(page.getByLabelText("Theme hue value")).toBeInTheDocument();
-    await expect.element(page.getByText("Hue")).toBeInTheDocument();
-    await expect.element(page.getByText("Saturation")).toBeInTheDocument();
-    await expect.element(page.getByLabelText("Theme saturation value")).toBeInTheDocument();
-    expect(document.querySelectorAll("[data-theme-mode-option]")).toHaveLength(3);
+    await expect.element(page.getByText("Hue", { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByText("Saturation", { exact: true })).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Theme saturation")).toBeInTheDocument();
     expect(document.querySelector('[data-theme-preview-card="true"]')).toBeNull();
     expect(document.querySelector('[aria-label="Theme hue wheel"]')).toBeNull();
   });
@@ -515,14 +543,10 @@ describe("Settings panels", () => {
   it("updates stored and document theme state when editing the custom theme", async () => {
     await renderSettingsPanel(<InterfaceSettingsPanel />);
 
-    const darkMode = document.querySelector('[data-theme-mode-option="dark"]');
-    if (!(darkMode instanceof HTMLButtonElement)) {
-      throw new Error("Expected the dark mode theme button.");
-    }
-    darkMode.click();
+    await selectOption("Theme mode", "Dark");
 
-    await page.getByLabelText("Theme hue value").fill("288");
-    await page.getByLabelText("Theme saturation value").fill("44");
+    setRangeInputValue("Theme hue", 288);
+    setRangeInputValue("Theme saturation", 44);
 
     await vi.waitFor(() => {
       expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY) ?? "{}")).toMatchObject({
@@ -553,8 +577,7 @@ describe("Settings panels", () => {
     await renderSettingsPanel(<InterfaceSettingsPanel />);
 
     await vi.waitFor(() => {
-      const systemOption = document.querySelector('[data-theme-mode-option="system"]');
-      expect(systemOption?.getAttribute("aria-pressed")).toBe("true");
+      expect(document.querySelector('[aria-label="Theme mode"]')?.textContent).toContain("System");
       expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY) ?? "{}")).toMatchObject({
         version: 2,
         mode: "system",
@@ -567,11 +590,7 @@ describe("Settings panels", () => {
   it("resets theme selection back to system", async () => {
     await renderSettingsPanel(<InterfaceSettingsPanel />);
 
-    const darkMode = document.querySelector('[data-theme-mode-option="dark"]');
-    if (!(darkMode instanceof HTMLButtonElement)) {
-      throw new Error("Expected the dark mode theme button.");
-    }
-    darkMode.click();
+    await selectOption("Theme mode", "Dark");
 
     await vi.waitFor(() => {
       expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY) ?? "{}")).toMatchObject({
@@ -582,7 +601,6 @@ describe("Settings panels", () => {
     await page.getByRole("button", { name: "Reset theme to default" }).click();
 
     await vi.waitFor(() => {
-      const systemOption = document.querySelector('[data-theme-mode-option="system"]');
       expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY) ?? "{}")).toMatchObject({
         version: 2,
         mode: "system",
@@ -590,7 +608,7 @@ describe("Settings panels", () => {
         saturation: 68,
       });
       expect(document.documentElement.dataset.themePreferenceMode).toBe("system");
-      expect(systemOption?.getAttribute("aria-pressed")).toBe("true");
+      expect(document.querySelector('[aria-label="Theme mode"]')?.textContent).toContain("System");
     });
   });
 
@@ -670,6 +688,142 @@ describe("Settings panels", () => {
       expect(persisted.threadCleanupInactiveDays).toBe(1);
       expect(document.querySelector('[aria-label="Thread cleanup window"]')?.textContent).toContain(
         "1 day",
+      );
+    });
+  });
+
+  it("hides desktop attention notification controls when the desktop bridge is missing", async () => {
+    await renderSettingsPanel(<ThreadsSettingsPanel />);
+
+    await expect.element(page.getByText("Attention")).not.toBeInTheDocument();
+    await expect
+      .element(page.getByLabelText("Approval request notifications"))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByLabelText("Question prompt notifications"))
+      .not.toBeInTheDocument();
+  });
+
+  it("persists and resets desktop attention notification controls", async () => {
+    const desktopBridge = createDesktopBridgeStub();
+    const setClientSettings = vi.mocked(desktopBridge.setClientSettings);
+    window.desktopBridge = desktopBridge;
+    await renderSettingsPanel(<ThreadsSettingsPanel />);
+
+    await page.getByRole("switch", { name: "Approval request notifications" }).click();
+    await page.getByRole("switch", { name: "Question prompt notifications" }).click();
+
+    await vi.waitFor(() => {
+      expect(
+        document
+          .querySelector('[aria-label="Approval request notifications"]')
+          ?.getAttribute("aria-checked"),
+      ).toBe("true");
+      expect(
+        document
+          .querySelector('[aria-label="Question prompt notifications"]')
+          ?.getAttribute("aria-checked"),
+      ).toBe("true");
+      expect(setClientSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          desktopNotifyOnApprovalRequests: true,
+          desktopNotifyOnUserInputRequests: true,
+        }),
+      );
+    });
+
+    await page
+      .getByRole("button", { name: "Reset approval request notifications to default" })
+      .click();
+    await page
+      .getByRole("button", { name: "Reset question prompt notifications to default" })
+      .click();
+
+    await vi.waitFor(() => {
+      expect(
+        document
+          .querySelector('[aria-label="Approval request notifications"]')
+          ?.getAttribute("aria-checked"),
+      ).toBe("false");
+      expect(
+        document
+          .querySelector('[aria-label="Question prompt notifications"]')
+          ?.getAttribute("aria-checked"),
+      ).toBe("false");
+      expect(setClientSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          desktopNotifyOnApprovalRequests: false,
+          desktopNotifyOnUserInputRequests: false,
+        }),
+      );
+    });
+  });
+
+  it("restores desktop attention notification controls through the threads restore flow", async () => {
+    const desktopBridge = createDesktopBridgeStub();
+    const setClientSettings = vi.mocked(desktopBridge.setClientSettings);
+    desktopBridge.confirm = vi.fn().mockResolvedValue(true);
+    window.desktopBridge = desktopBridge;
+    window.nativeApi = {
+      dialogs: {
+        confirm: desktopBridge.confirm,
+      },
+      persistence: {
+        getClientSettings: desktopBridge.getClientSettings,
+        setClientSettings: desktopBridge.setClientSettings,
+      },
+      server: {
+        updateSettings: vi.fn().mockResolvedValue(undefined),
+      },
+    } as unknown as LocalApi;
+
+    await renderSettingsPanel(
+      <>
+        <ThreadsSettingsPanel />
+        <ThreadsRestoreHarness />
+      </>,
+    );
+
+    await page.getByRole("switch", { name: "Approval request notifications" }).click();
+    await page.getByRole("switch", { name: "Question prompt notifications" }).click();
+
+    await vi.waitFor(() => {
+      expect(
+        document
+          .querySelector('[aria-label="Approval request notifications"]')
+          ?.getAttribute("aria-checked"),
+      ).toBe("true");
+      expect(
+        document
+          .querySelector('[aria-label="Question prompt notifications"]')
+          ?.getAttribute("aria-checked"),
+      ).toBe("true");
+      expect(setClientSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          desktopNotifyOnApprovalRequests: true,
+          desktopNotifyOnUserInputRequests: true,
+        }),
+      );
+    });
+
+    await page.getByRole("button", { name: "Restore thread defaults" }).click();
+
+    await vi.waitFor(() => {
+      expect(
+        document
+          .querySelector('[aria-label="Approval request notifications"]')
+          ?.getAttribute("aria-checked"),
+      ).toBe("false");
+      expect(
+        document
+          .querySelector('[aria-label="Question prompt notifications"]')
+          ?.getAttribute("aria-checked"),
+      ).toBe("false");
+      expect(setClientSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          desktopNotifyOnApprovalRequests: false,
+          desktopNotifyOnUserInputRequests: false,
+        }),
       );
     });
   });

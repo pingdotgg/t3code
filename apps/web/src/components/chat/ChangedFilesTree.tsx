@@ -71,7 +71,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             <ChevronRightIcon
               aria-hidden="true"
               className={cn(
-                "size-3.5 shrink-0 fill-muted-foreground/70 transition-transform group-hover:fill-foreground/80",
+                "size-2.5 shrink-0 fill-muted-foreground/70 transition-transform group-hover:fill-foreground/80",
                 isExpanded && "rotate-90",
               )}
             />

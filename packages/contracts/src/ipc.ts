@@ -55,7 +55,7 @@ import type {
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
-import type { EnvironmentId } from "./baseSchemas.ts";
+import type { EnvironmentId, ThreadId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
 import { ServerSettings, type ClientSettings, type ServerSettingsPatch } from "./settings.ts";
 
@@ -151,6 +151,16 @@ export interface PickFolderOptions {
 }
 
 export type DesktopMenuAction = "open-settings" | "toggle-sidebar";
+export type DesktopThreadAttentionKind = "approval" | "user-input";
+
+export interface DesktopThreadAttentionNotification {
+  environmentId: EnvironmentId;
+  threadId: ThreadId;
+  threadTitle: string;
+  kind: DesktopThreadAttentionKind;
+}
+
+export type DesktopThreadAttentionActivation = DesktopThreadAttentionNotification;
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
@@ -174,6 +184,10 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  notifyThreadAttention: (input: DesktopThreadAttentionNotification) => Promise<boolean>;
+  onThreadAttentionActivated: (
+    listener: (activation: DesktopThreadAttentionActivation) => void,
+  ) => () => void;
   onMenuAction: (listener: (action: DesktopMenuAction) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
@@ -207,6 +221,12 @@ export interface LocalApi {
       items: readonly ContextMenuItem<T>[],
       position?: { x: number; y: number },
     ) => Promise<T | null>;
+  };
+  notifications: {
+    notifyThreadAttention: (input: DesktopThreadAttentionNotification) => Promise<boolean>;
+    onThreadAttentionActivated: (
+      listener: (activation: DesktopThreadAttentionActivation) => void,
+    ) => () => void;
   };
   persistence: {
     getClientSettings: () => Promise<ClientSettings | null>;

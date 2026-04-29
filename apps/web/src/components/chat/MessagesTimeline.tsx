@@ -21,9 +21,9 @@ import {
   IconCheckmark as CheckIcon,
   IconExclamationmarkCircle as CircleAlertIcon,
   IconEye as EyeIcon,
+  IconArrowTurnUpLeft as Undo2Icon,
   IconGlobe as GlobeIcon,
   IconSquareAndPencil as SquarePenIcon,
-  IconArrowshapeTurnUpBackward2 as Undo2Icon,
   IconBolt as ZapIcon,
 } from "symbols-react";
 import { TerminalToggleIcon as ToolCallIcon } from "../icons/custom";

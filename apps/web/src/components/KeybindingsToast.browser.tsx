@@ -425,7 +425,8 @@ async function mountApp(): Promise<{ cleanup: () => Promise<void> }> {
     { container: host },
   );
   await waitForComposerEditor();
-  await waitForToastViewport();
+  const toastViewport = await waitForToastViewport();
+  expect(toastViewport.dataset.position).toBe("bottom-right");
   await waitForInitialWsSubscriptions();
   await waitForWsConnection();
   await waitForServerConfigSnapshot();

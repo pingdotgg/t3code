@@ -1,11 +1,13 @@
 import type { ComponentType } from "react";
 import {
-  IconBubbleLeftAndTextBubbleRight as ThreadsIcon,
-  IconMessage as ProvidersIcon,
-  IconTheatermaskAndPaintbrushFill as InterfaceIcon,
-  IconWrenchAndScrewdriver as AdvancedIcon,
+  IconWifi as ConnectionsIcon,
+  IconSwatchpalette as InterfaceIcon,
+  IconTextBubble as ThreadsIcon,
 } from "symbols-react";
-import { Link2Icon } from "lucide-react";
+import {
+  AdvancedSettingsIcon as AdvancedIcon,
+  ProvidersSettingsIcon as ProvidersIcon,
+} from "../icons/custom";
 
 export type SettingsRestoreScope = "interface" | "threads" | "providers";
 
@@ -54,8 +56,8 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   {
     label: "Connections",
     to: "/settings/connections",
-    icon: Link2Icon,
-    iconUsesFill: false,
+    icon: ConnectionsIcon,
+    iconUsesFill: true,
     restoreScope: null,
   },
   {
