@@ -178,6 +178,49 @@ new ProviderThread
 
 Provider switching should never concatenate hidden summaries into arbitrary prompts without recording the handoff. The handoff text is part of the run input contract and must be auditable.
 
+## Forking Threads
+
+Forking creates a new app thread from a source point. It should not require provider selection and it should not eagerly create provider runtime state.
+
+```text
+thread.fork
+  -> create target AppThread
+  -> record AppThread lineage
+  -> create ContextTransfer(type=fork, status=pending)
+  -> no ProviderSession required
+  -> no ProviderThread required
+  -> no portable context handoff required
+```
+
+The first run on the fork resolves the pending transfer:
+
+```text
+first message on fork selects provider P
+  -> if source provider is P and native fork is available:
+       resolve by provider-native fork
+     else:
+       materialize portable context
+  -> create/resume target ProviderThread
+  -> send resolved context + user message
+```
+
+The preferred first implementation should fork only from stable source points: completed runs, checkpoints, or idle provider threads with known coverage. Forking from an active run should use the latest completed checkpoint or be rejected until active-run semantics are deliberately designed.
+
+## Merge-Back From Forks
+
+Merge-back brings fork exploration into a source thread without copying the entire fork transcript into the main provider context.
+
+```text
+source thread forked at point S
+fork thread explores through point F
+user sends next source-thread message with merge-back intent
+  -> create ContextTransfer(type=merge_back, basePoint=S, sourcePoint=F)
+  -> build delta context lazily
+  -> inject delta with the next source-thread user message
+```
+
+The delta should describe what changed since the fork point: decisions, files changed, commands/tests run, conclusions, and unresolved issues. It should not include provider protocol noise or full transcript content unless needed.
+
 ## Interruption
 
 Interruption targets a run or a node.

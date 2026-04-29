@@ -10,7 +10,7 @@ Project
     Run
       ExecutionNode tree
     ProviderThread handles
-    Context handoffs
+    Context transfers and handoffs
     Checkpoints
 ```
 
@@ -21,7 +21,8 @@ The central separation is:
 - `ExecutionNode`: a unit of provider/runtime work inside a run.
 - `ProviderThread`: a provider-native conversation handle.
 - `ProviderSession`: a live or resumable provider process/runtime.
-- `ContextHandoff`: a provider-switch summary that bridges runs into another provider thread.
+- `ContextTransfer`: a provider-neutral relationship/source-point record used by forks, provider switches, merge-back, and subagents.
+- `ContextHandoff`: a materialized portable context artifact used when native transfer is unavailable or insufficient.
 
 Provider-specific lifecycle is preserved in provider refs and diagnostic raw-provider logs. App behavior is driven by app-owned ids, V2-native orchestration events, and graph relationships.
 
@@ -45,7 +46,7 @@ AppThread
   title
   providerBinding
   activeProviderThreadId?
-  forkSource?
+  lineage?
   status projection
 
 Run
@@ -99,14 +100,24 @@ ProviderThread
   contextHandoffIds[]
   forkSource?
 
+ContextTransfer
+  id: ContextTransferId
+  type
+  sourceThreadId
+  targetThreadId
+  sourcePoint
+  basePoint?
+  sourceProvider?
+  targetProvider?
+  status
+  resolution?
+
 ContextHandoff
   id: ContextHandoffId
-  threadId
-  fromProviderThreadIds[]
-  toProviderThreadId
-  coveredRunRange
-  strategy
-  summaryMessageId?
+  transferId
+  kind
+  payload
+  status
 
 ProviderTurn
   id: ProviderTurnId
@@ -140,7 +151,7 @@ type AppThread = {
   branch: string | null;
   worktreePath: string | null;
   activeProviderThreadId: ProviderThreadId | null;
-  forkedFrom: ForkSource | null;
+  lineage: AppThreadLineage | null;
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
@@ -151,6 +162,16 @@ type AppThread = {
 `activeProviderThreadId` points to the provider-native conversation currently backing the app thread. Forking, provider migration, or recovery may create new provider threads while preserving the same app thread, depending on the operation.
 
 `defaultProvider` is only the currently selected default for future runs. Historical runs retain their own provider and provider thread bindings.
+
+`lineage` is intentionally lightweight browsing metadata. Operational source points, lazy native fork resolution, portable context handoffs, merge-back deltas, and subagent result transfers live in `ContextTransfer` rows because an app thread can participate in more than one transfer over time.
+
+```ts
+type AppThreadLineage = {
+  parentThreadId: ThreadId | null;
+  relationshipToParent: "fork" | "subagent" | null;
+  rootThreadId: ThreadId;
+};
+```
 
 ## Run
 
@@ -191,6 +212,8 @@ type Run = {
 Only a run with `countsForConversation = true` contributes to the user-visible turn count and checkpoint count.
 
 `providerThreadId` is the provider-native conversation used for this run. This makes mixed-provider app threads explicit: run 1 may be Codex, run 2 may be Claude, and run 3 may return to the original Codex provider thread.
+
+`contextHandoffId` points to a materialized handoff artifact consumed by this run. A run may also be associated with a broader `ContextTransfer` through the transfer's target/source fields. The handoff is the payload; the transfer is the durable relationship and policy record.
 
 ## RunAttempt
 
@@ -340,13 +363,63 @@ type ProviderThread = {
 
 A provider thread may have gaps in its native run coverage. Example: runs 1-5 use Codex provider thread A, runs 6-8 use Claude provider thread B, and run 9 returns to Codex thread A with a handoff summary covering runs 6-8. In that case, Codex thread A remains the same provider thread, but it has an explicit `ContextHandoff` before run 9.
 
+## ContextTransfer
+
+A `ContextTransfer` records a source/target relationship and how context should move between them. It is the shared primitive for user forks, provider switching, merge-back, and subagents.
+
+```ts
+type ContextTransfer = {
+  id: ContextTransferId;
+  type: "fork" | "provider_handoff" | "merge_back" | "subagent_spawn" | "subagent_result";
+  sourceThreadId: ThreadId;
+  targetThreadId: ThreadId;
+  sourcePoint: ContextSourcePoint;
+  basePoint: ContextSourcePoint | null;
+  sourceProvider: ProviderKind | null;
+  targetProvider: ProviderKind | null;
+  status:
+    | "pending"
+    | "resolved_native"
+    | "resolved_portable"
+    | "failed"
+    | "consumed"
+    | "superseded";
+  resolution: ContextTransferResolution | null;
+  createdBy: "user" | "agent" | "system";
+  createdAt: string;
+  consumedAt: string | null;
+};
+```
+
+```ts
+type ContextSourcePoint = {
+  threadId: ThreadId;
+  runId: RunId | null;
+  checkpointId: CheckpointId | null;
+  turnItemId: TurnItemId | null;
+  providerThreadRef: NativeThreadRef | null;
+  providerTurnRef: NativeTurnRef | null;
+};
+
+type ContextTransferResolution =
+  | { strategy: "native_fork"; providerThreadRef: NativeThreadRef }
+  | { strategy: "portable_context"; contextHandoffId: ContextHandoffId }
+  | { strategy: "delta_context"; contextHandoffId: ContextHandoffId }
+  | { strategy: "checkpoint_context"; contextHandoffId: ContextHandoffId };
+```
+
+Creating a transfer should be cheap. Expensive context handoffs are materialized lazily when the target run starts and the selected provider is known.
+
 ## ContextHandoff
 
-A `ContextHandoff` is a first-class artifact created when provider context must be bridged. It is most common when changing providers between runs, but it also applies when provider resume fails and a replacement provider thread must be seeded from app history.
+A `ContextHandoff` is a first-class artifact created when portable provider context must be bridged. It is most common when changing providers between runs, but it also applies when provider resume fails and a replacement provider thread must be seeded from app history.
+
+In the broader transfer model, `ContextTransfer` records source, target, and lifecycle. `ContextHandoff` is the materialized payload consumed by a run when native transfer cannot satisfy the relationship.
 
 ```ts
 type ContextHandoff = {
   id: ContextHandoffId;
+  transferId: ContextTransferId;
   threadId: ThreadId;
   targetRunId: RunId;
   fromProviderThreadIds: ProviderThreadId[];
