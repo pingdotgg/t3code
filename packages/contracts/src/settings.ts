@@ -22,6 +22,10 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+export const SubmitKey = Schema.Literals(["enter", "shift-enter"]);
+export type SubmitKey = typeof SubmitKey.Type;
+export const DEFAULT_SUBMIT_KEY: SubmitKey = "enter";
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -35,6 +39,7 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  submitKey: SubmitKey.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_SUBMIT_KEY))),
   favorites: Schema.Array(
     Schema.Struct({
       provider: ProviderKind,
@@ -248,6 +253,7 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffWordWrap: Schema.optionalKey(Schema.Boolean),
+  submitKey: Schema.optionalKey(SubmitKey),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({

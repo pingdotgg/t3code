@@ -1469,10 +1469,17 @@ export const ChatComposer = memo(
           return true;
         }
       }
-      if (key === "Enter" && !event.shiftKey) {
+      const shouldSend =
+        settings.submitKey === "shift-enter"
+          ? key === "Enter" && event.shiftKey
+          : key === "Enter" && !event.shiftKey;
+      if (shouldSend) {
         void onSend();
         return true;
       }
+      // When submitKey is "shift-enter", let plain Enter fall through to
+      // Lexical so it inserts a newline. When submitKey is "enter",
+      // Shift+Enter already falls through (default Lexical behaviour).
       return false;
     };
 

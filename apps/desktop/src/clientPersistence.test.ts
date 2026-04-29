@@ -60,6 +60,7 @@ const clientSettings: ClientSettings = {
   },
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
+  submitKey: "enter",
   timestampFormat: "24-hour",
 };
 

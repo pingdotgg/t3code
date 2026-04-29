@@ -100,6 +100,11 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+const SUBMIT_KEY_LABELS = {
+  enter: "Enter",
+  "shift-enter": "Shift + Enter",
+} as const;
+
 type InstallProviderSettings = {
   provider: ProviderKind;
   title: string;
@@ -490,6 +495,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete
         ? ["Delete confirmation"]
         : []),
+      ...(settings.submitKey !== DEFAULT_UNIFIED_SETTINGS.submitKey ? ["Submit key"] : []),
       ...(isGitWritingModelDirty ? ["Git writing model"] : []),
       ...(areProviderSettingsDirty ? ["Providers"] : []),
     ],
@@ -503,6 +509,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
+      settings.submitKey,
       settings.timestampFormat,
       theme,
     ],
@@ -892,6 +899,45 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Submit key"
+          description="Choose which key sends a message. The other key inserts a new line."
+          resetAction={
+            settings.submitKey !== DEFAULT_UNIFIED_SETTINGS.submitKey ? (
+              <SettingResetButton
+                label="submit key"
+                onClick={() =>
+                  updateSettings({
+                    submitKey: DEFAULT_UNIFIED_SETTINGS.submitKey,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.submitKey}
+              onValueChange={(value) => {
+                if (value === "enter" || value === "shift-enter") {
+                  updateSettings({ submitKey: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Submit key">
+                <SelectValue>{SUBMIT_KEY_LABELS[settings.submitKey]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="enter">
+                  {SUBMIT_KEY_LABELS.enter}
+                </SelectItem>
+                <SelectItem hideIndicator value="shift-enter">
+                  {SUBMIT_KEY_LABELS["shift-enter"]}
                 </SelectItem>
               </SelectPopup>
             </Select>
