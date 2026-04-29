@@ -83,24 +83,34 @@ export const layer: Layer.Layer<
     const projectionStore = yield* ProjectionStoreV2;
     const liveEvents = yield* PubSub.unbounded<OrchestrationV2StoredEvent>();
 
+    const writeEffect = Effect.fn("orchestrationV2.EventSink.write")(function* (
+      input: Parameters<EventSinkV2Shape["write"]>[0],
+    ) {
+      yield* Effect.annotateCurrentSpan({
+        "orchestration_v2.command_id": input.commandId ?? null,
+        "orchestration_v2.event_count": input.events.length,
+        "orchestration_v2.thread_id": input.events[0]?.threadId ?? null,
+      });
+
+      const storedEvents = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const committed = yield* eventStore.append({
+            ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
+            events: input.events,
+          });
+          yield* Effect.forEach(committed, (stored) => projectionStore.apply(stored.event), {
+            concurrency: 1,
+          });
+          return committed;
+        }),
+      );
+      yield* PubSub.publishAll(liveEvents, storedEvents);
+      return storedEvents;
+    });
+
     return EventSinkV2.of({
       write: (input) =>
-        Effect.gen(function* () {
-          const storedEvents = yield* sql.withTransaction(
-            Effect.gen(function* () {
-              const committed = yield* eventStore.append({
-                ...(input.commandId === undefined ? {} : { commandId: input.commandId }),
-                events: input.events,
-              });
-              yield* Effect.forEach(committed, (stored) => projectionStore.apply(stored.event), {
-                concurrency: 1,
-              });
-              return committed;
-            }),
-          );
-          yield* PubSub.publishAll(liveEvents, storedEvents);
-          return storedEvents;
-        }).pipe(
+        writeEffect(input).pipe(
           Effect.mapError(
             (cause) =>
               new EventSinkWriteError({

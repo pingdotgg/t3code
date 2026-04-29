@@ -68,6 +68,11 @@ function threadCreatedEvent(
       branch: null,
       worktreePath: null,
       activeProviderThreadId: providerThreadId,
+      lineage: {
+        parentThreadId: null,
+        relationshipToParent: null,
+        rootThreadId: threadId,
+      },
       forkedFrom: null,
       createdAt: now,
       updatedAt: now,

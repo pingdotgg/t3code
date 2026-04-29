@@ -81,9 +81,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "provider.switch":
       return [command.threadId];
     case "thread.fork":
-      return command.source.type === "run"
-        ? [command.source.threadId, command.targetThreadId]
-        : [command.targetThreadId];
+      return [command.sourceThreadId, command.targetThreadId];
   }
 }
 
