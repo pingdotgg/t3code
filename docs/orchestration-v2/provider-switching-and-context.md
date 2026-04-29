@@ -2,6 +2,8 @@
 
 Provider switching is a first-class V2 feature. An app thread may contain runs from multiple providers while preserving each provider's native conversation handles and the app's canonical conversation history.
 
+This document describes the provider-switching specialization of the broader [Thread Lineage And Context Transfer](./thread-lineage-and-context-transfer.md) model. Provider switching is a context transfer where the source and target app thread are usually the same thread. Forking, merge-back, and subagents use the same source-point/resolution concepts with different product lifecycles.
+
 ## Recommendation
 
 When returning to a provider that was used earlier, default to resuming that provider's previous provider thread and inject a delta summary covering the runs that happened while the provider was inactive.
@@ -76,11 +78,12 @@ The app thread remains the source of truth for full history.
 
 ## Handoff Artifact
 
-A handoff is explicit graph data.
+A handoff is explicit graph data. In the broader model, `ContextTransfer` records source, target, relationship type, and resolution status. `ContextHandoff` is the materialized portable context artifact used when the transfer cannot be satisfied by native provider continuity.
 
 ```ts
 type ContextHandoff = {
   id: ContextHandoffId;
+  transferId: ContextTransferId;
   threadId: ThreadId;
   targetRunId: RunId;
   fromProviderThreadIds: ProviderThreadId[];
@@ -204,14 +207,14 @@ If the active provider supports provider rollback, call it. Otherwise, create a 
 
 ## Forking Interaction
 
-Forking from a mixed-provider app thread should copy the app-thread history and choose provider context by fork source.
+Forking from a mixed-provider app thread should record app-thread lineage and a source point without requiring provider selection at fork time. Provider context is resolved lazily when the first run starts on the fork.
 
 Examples:
 
-- Fork from run 5 on Codex: prefer Codex provider thread at run 5 if available.
-- Fork from run 8 on Claude: prefer Claude provider thread at run 8 if available.
-- Fork from app checkpoint with no provider-native thread: create provider thread with full summary up to that checkpoint.
-- Fork from subagent provider thread: use the subagent's provider thread directly if stable.
+- Fork from run 5 on Codex, first fork run uses Codex: prefer Codex native fork if the source refs are strong.
+- Fork from run 5 on Codex, first fork run uses Claude: build portable context lazily at first dispatch.
+- Fork from app checkpoint with no provider-native thread: create target provider thread with checkpoint/full-thread context.
+- Fork from subagent provider thread: use the subagent's provider thread directly if stable, otherwise fall back to portable context.
 
 ## Data Model Changes
 
@@ -220,6 +223,7 @@ Provider switching requires:
 - `Run.provider`
 - `Run.providerThreadId`
 - `Run.contextHandoffId`
+- `ContextTransfer`
 - `ProviderThread.firstRunOrdinal`
 - `ProviderThread.lastRunOrdinal`
 - `ProviderThread.handoffIds`

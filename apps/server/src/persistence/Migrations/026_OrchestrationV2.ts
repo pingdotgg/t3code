@@ -281,4 +281,22 @@ export default Effect.gen(function* () {
   `;
   yield* sql`CREATE INDEX orchestration_v2_projection_context_handoffs_thread_idx ON orchestration_v2_projection_context_handoffs(thread_id)`;
   yield* sql`CREATE INDEX orchestration_v2_projection_context_handoffs_target_run_idx ON orchestration_v2_projection_context_handoffs(target_run_id)`;
+
+  yield* sql`
+    CREATE TABLE orchestration_v2_projection_context_transfers (
+      context_transfer_id TEXT PRIMARY KEY,
+      source_thread_id TEXT NOT NULL,
+      target_thread_id TEXT NOT NULL,
+      target_run_id TEXT,
+      type TEXT NOT NULL,
+      status TEXT NOT NULL,
+      source_provider TEXT,
+      target_provider TEXT,
+      updated_at TEXT NOT NULL,
+      payload_json TEXT NOT NULL
+    )
+  `;
+  yield* sql`CREATE INDEX orchestration_v2_projection_context_transfers_source_thread_idx ON orchestration_v2_projection_context_transfers(source_thread_id)`;
+  yield* sql`CREATE INDEX orchestration_v2_projection_context_transfers_target_thread_idx ON orchestration_v2_projection_context_transfers(target_thread_id, status)`;
+  yield* sql`CREATE INDEX orchestration_v2_projection_context_transfers_target_run_idx ON orchestration_v2_projection_context_transfers(target_run_id)`;
 });

@@ -9,6 +9,7 @@ import {
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
   OrchestrationV2CheckpointScopeJson as OrchestrationV2CheckpointScopeJsonSchema,
   OrchestrationV2ContextHandoffJson as OrchestrationV2ContextHandoffJsonSchema,
+  OrchestrationV2ContextTransferJson as OrchestrationV2ContextTransferJsonSchema,
   OrchestrationV2ConversationMessageJson as OrchestrationV2ConversationMessageJsonSchema,
   OrchestrationV2ExecutionNodeJson as OrchestrationV2ExecutionNodeJsonSchema,
   OrchestrationV2PlanArtifact as OrchestrationV2PlanArtifactSchema,
@@ -120,6 +121,7 @@ export function emptyProjection(
     checkpointScopes: [],
     checkpoints: [],
     contextHandoffs: [],
+    contextTransfers: [],
     updatedAt: event.occurredAt,
   };
 }
@@ -206,6 +208,12 @@ export function applyToProjection(
         ...base,
         contextHandoffs: upsertById(base.contextHandoffs, event.payload),
       };
+    case "context-transfer.created":
+    case "context-transfer.updated":
+      return {
+        ...base,
+        contextTransfers: upsertById(base.contextTransfers, event.payload),
+      };
   }
 }
 
@@ -253,6 +261,9 @@ const encodeCheckpointPayload = Schema.encodeEffect(
 const encodeContextHandoffPayload = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2ContextHandoffJsonSchema),
 );
+const encodeContextTransferPayload = Schema.encodeEffect(
+  Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema),
+);
 
 const decodeThreadPayload = (json: string) =>
   Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2AppThreadJsonSchema))(json);
@@ -284,6 +295,8 @@ const decodeCheckpointPayload = (json: string) =>
   Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2CheckpointJsonSchema))(json);
 const decodeContextHandoffPayload = (json: string) =>
   Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ContextHandoffJsonSchema))(json);
+const decodeContextTransferPayload = (json: string) =>
+  Schema.decodeUnknownEffect(Schema.fromJsonString(OrchestrationV2ContextTransferJsonSchema))(json);
 
 function parseEncodedPayload(json: string): Record<string, unknown> {
   return JSON.parse(json) as Record<string, unknown>;
@@ -981,6 +994,49 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `;
             break;
           }
+          case "context-transfer.created":
+          case "context-transfer.updated": {
+            const payloadJson = yield* encodeContextTransferPayload(event.payload);
+            const payload = parseEncodedPayload(payloadJson);
+            yield* sql`
+              INSERT INTO orchestration_v2_projection_context_transfers (
+                context_transfer_id,
+                source_thread_id,
+                target_thread_id,
+                target_run_id,
+                type,
+                status,
+                source_provider,
+                target_provider,
+                updated_at,
+                payload_json
+              )
+              VALUES (
+                ${event.payload.id},
+                ${event.payload.sourceThreadId},
+                ${event.payload.targetThreadId},
+                ${event.payload.targetRunId},
+                ${event.payload.type},
+                ${event.payload.status},
+                ${event.payload.sourceProvider},
+                ${event.payload.targetProvider},
+                ${stringField(payload, "updatedAt")},
+                ${payloadJson}
+              )
+              ON CONFLICT(context_transfer_id)
+              DO UPDATE SET
+                source_thread_id = excluded.source_thread_id,
+                target_thread_id = excluded.target_thread_id,
+                target_run_id = excluded.target_run_id,
+                type = excluded.type,
+                status = excluded.status,
+                source_provider = excluded.source_provider,
+                target_provider = excluded.target_provider,
+                updated_at = excluded.updated_at,
+                payload_json = excluded.payload_json
+            `;
+            break;
+          }
         }
       }).pipe(
         Effect.mapError(
@@ -1020,6 +1076,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           checkpointScopeRows,
           checkpointRows,
           contextHandoffRows,
+          contextTransferRows,
         ] = yield* Effect.all([
           decodeThreadPayload(threadRow.payload_json),
           sql<PayloadRow>`
@@ -1100,6 +1157,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             WHERE thread_id = ${threadId}
             ORDER BY updated_at ASC, context_handoff_id ASC
           `,
+          sql<PayloadRow>`
+            SELECT payload_json
+            FROM orchestration_v2_projection_context_transfers
+            WHERE source_thread_id = ${threadId} OR target_thread_id = ${threadId}
+            ORDER BY updated_at ASC, context_transfer_id ASC
+          `,
         ]);
 
         const [
@@ -1116,6 +1179,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           checkpointScopes,
           checkpoints,
           contextHandoffs,
+          contextTransfers,
         ] = yield* Effect.all([
           decodeRows(decodeRunPayload, threadId)(runRows),
           decodeRows(decodeRunAttemptPayload, threadId)(attemptRows),
@@ -1130,6 +1194,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           decodeRows(decodeCheckpointScopePayload, threadId)(checkpointScopeRows),
           decodeRows(decodeCheckpointPayload, threadId)(checkpointRows),
           decodeRows(decodeContextHandoffPayload, threadId)(contextHandoffRows),
+          decodeRows(decodeContextTransferPayload, threadId)(contextTransferRows),
         ]);
         const orderedMessages = sortMessagesByTurnItemOrder(messages, turnItems);
 
@@ -1148,6 +1213,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           checkpointScopes,
           checkpoints,
           contextHandoffs,
+          contextTransfers,
           updatedAt: thread.updatedAt,
         } satisfies OrchestrationV2ThreadProjection;
       }).pipe(
