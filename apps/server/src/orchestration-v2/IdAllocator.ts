@@ -3,6 +3,7 @@ import {
   CheckpointScopeId,
   CommandId,
   ContextHandoffId,
+  ContextTransferId,
   EventId,
   MessageId,
   NodeId,
@@ -39,6 +40,7 @@ export const IdAllocatorV2Kind = Schema.Literals([
   "checkpoint_scope",
   "checkpoint",
   "context_handoff",
+  "context_transfer",
   "plan",
 ]);
 export type IdAllocatorV2Kind = typeof IdAllocatorV2Kind.Type;
@@ -106,6 +108,11 @@ export interface IdAllocatorV2AllocateShape {
     readonly fromProvider: ProviderKind;
     readonly toProvider: ProviderKind;
   }) => Effect.Effect<ContextHandoffId, IdAllocatorV2Error>;
+  readonly contextTransfer: (input: {
+    readonly sourceThreadId: ThreadId;
+    readonly targetThreadId: ThreadId;
+    readonly type: string;
+  }) => Effect.Effect<ContextTransferId, IdAllocatorV2Error>;
   readonly plan: (input: {
     readonly threadId: ThreadId;
     readonly runId?: RunId;
@@ -292,6 +299,20 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
             input.toProvider,
           ],
           make: ContextHandoffId.make,
+        })(input),
+      contextTransfer: (input) =>
+        randomId<typeof ContextTransferId.Type, typeof input>({
+          kind: "context_transfer",
+          prefix: "context-transfer",
+          parts: [
+            "type",
+            input.type,
+            "source-thread",
+            input.sourceThreadId,
+            "target-thread",
+            input.targetThreadId,
+          ],
+          make: ContextTransferId.make,
         })(input),
       plan: (input) =>
         randomId<typeof PlanId.Type, typeof input>({
