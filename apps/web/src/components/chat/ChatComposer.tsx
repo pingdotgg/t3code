@@ -23,6 +23,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -90,6 +91,7 @@ import { basenameOfPath } from "../../vscode-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 import { Button } from "../ui/button";
+import { MenuCreateHandle } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
@@ -558,6 +560,10 @@ export const ChatComposer = memo(
     const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
     const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
     const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+    const [composerAddActionsMenuHandle] = useState(() =>
+      MenuCreateHandle<ProviderInteractionMode>(),
+    );
+    const composerAddActionsTriggerId = useId();
 
     // ------------------------------------------------------------------
     // Refs
@@ -1545,6 +1551,14 @@ export const ChatComposer = memo(
       removeComposerImageFromDraft(imageId);
     };
 
+    const toggleComposerAddActionsMenu = useCallback(() => {
+      if (composerAddActionsMenuHandle.isOpen) {
+        composerAddActionsMenuHandle.close();
+        return;
+      }
+      composerAddActionsMenuHandle.open(composerAddActionsTriggerId);
+    }, [composerAddActionsMenuHandle, composerAddActionsTriggerId]);
+
     const onComposerImageInputChange = useCallback(
       (event: React.ChangeEvent<HTMLInputElement>) => {
         const files = Array.from(event.target.files ?? []);
@@ -2013,6 +2027,8 @@ export const ChatComposer = memo(
                     ) : (
                       <>
                         <ComposerAddActionsMenu
+                          menuHandle={composerAddActionsMenuHandle}
+                          triggerId={composerAddActionsTriggerId}
                           interactionMode={interactionMode}
                           showInteractionModeActions={
                             composerProviderControls.showInteractionModeToggle
@@ -2025,7 +2041,10 @@ export const ChatComposer = memo(
                           onSelectSkill={insertSkillTriggerAtCursor}
                         />
                         {composerProviderControls.showInteractionModeToggle ? (
-                          <ComposerInteractionModePill interactionMode={interactionMode} />
+                          <ComposerInteractionModePill
+                            interactionMode={interactionMode}
+                            onClick={toggleComposerAddActionsMenu}
+                          />
                         ) : null}
                         <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
                         {providerModelPickerControl}

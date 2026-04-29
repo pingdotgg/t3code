@@ -7,7 +7,7 @@ import {
 } from "symbols-react";
 
 import { cn } from "~/lib/utils";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
+import { type MenuHandle, Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../ui/menu";
 import { composerInteractionModeConfig } from "./composerInteractionMode";
 
 const ImageUploadIcon = ({ className }: { className?: string }) => (
@@ -29,6 +29,8 @@ const modeMenuOrder = [
 ] as const satisfies ReadonlyArray<ProviderInteractionMode>;
 
 export const ComposerAddActionsMenu = memo(function ComposerAddActionsMenu(props: {
+  menuHandle: MenuHandle<ProviderInteractionMode>;
+  triggerId: string;
   interactionMode: ProviderInteractionMode;
   showInteractionModeActions: boolean;
   hasEnabledSkills: boolean;
@@ -42,8 +44,10 @@ export const ComposerAddActionsMenu = memo(function ComposerAddActionsMenu(props
   const showSeparatorBeforeActions = props.showInteractionModeActions;
 
   return (
-    <Menu>
+    <Menu handle={props.menuHandle}>
       <MenuTrigger
+        handle={props.menuHandle}
+        id={props.triggerId}
         render={
           <button
             type="button"
