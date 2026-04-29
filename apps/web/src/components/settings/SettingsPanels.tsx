@@ -473,7 +473,7 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Diff line wrapping"]
         : []),
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
-        ? ["Task sidebar"]
+        ? ["Auto-open task panel"]
         : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
@@ -950,12 +950,12 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
-          title="Task sidebar"
-          description="Open the plan and task sidebar automatically when steps appear."
+          title="Auto-open task panel"
+          description="Open the right-side plan and task panel automatically when steps appear."
           resetAction={
             settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar ? (
               <SettingResetButton
-                label="task sidebar"
+                label="auto-open task panel"
                 onClick={() =>
                   updateSettings({
                     autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
@@ -970,7 +970,7 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ autoOpenPlanSidebar: Boolean(checked) })
               }
-              aria-label="Open the task sidebar automatically"
+              aria-label="Open the task panel automatically"
             />
           }
         />
