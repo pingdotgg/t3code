@@ -13,7 +13,6 @@ import { cn } from "~/lib/utils";
 import { ModelPickerContent } from "./ModelPickerContent";
 import {
   ModelEsque,
-  PROVIDER_ICON_BY_PROVIDER,
   getTriggerDisplayModelLabel,
   getTriggerDisplayModelName,
 } from "./providerIconUtils";
@@ -26,7 +25,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   providers?: ReadonlyArray<ServerProvider>;
   keybindings?: ResolvedKeybindingsConfig;
   modelOptionsByProvider: Record<ProviderKind, ReadonlyArray<ModelEsque>>;
-  activeProviderIconClassName?: string;
   compact?: boolean;
   disabled?: boolean;
   terminalOpen?: boolean;
@@ -46,7 +44,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const selectedModel =
     selectedProviderOptions.find((option) => option.slug === props.model) ??
     selectedProviderOptions[0];
-  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[activeProvider];
   const triggerTitle = selectedModel ? getTriggerDisplayModelName(selectedModel) : props.model;
   const triggerSubtitle = selectedModel?.subProvider;
   const triggerLabel = selectedModel ? getTriggerDisplayModelLabel(selectedModel) : props.model;
@@ -103,10 +100,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             props.compact ? "max-w-36 sm:pl-1" : undefined,
           )}
         >
-          <ProviderIcon
-            aria-hidden="true"
-            className={cn("size-4 shrink-0", props.activeProviderIconClassName)}
-          />
           <Tooltip>
             <TooltipTrigger
               render={

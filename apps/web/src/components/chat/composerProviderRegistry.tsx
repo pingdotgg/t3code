@@ -30,7 +30,6 @@ export type ComposerProviderState = {
   modelOptionsForDispatch: ProviderModelOptions[ProviderKind] | undefined;
   composerFrameClassName?: string;
   composerSurfaceClassName?: string;
-  modelPickerIconClassName?: string;
 };
 
 type TraitsRenderInput = {
@@ -131,7 +130,6 @@ function getProviderStateFromCapabilities(
     modelOptionsForDispatch: normalizedOptions,
     ...(ultrathinkActive ? { composerFrameClassName: "ultrathink-frame" } : {}),
     ...(ultrathinkActive ? { composerSurfaceClassName: "ultrathink-composer-surface" } : {}),
-    ...(ultrathinkActive ? { modelPickerIconClassName: "ultrathink-chroma" } : {}),
   };
 }
 

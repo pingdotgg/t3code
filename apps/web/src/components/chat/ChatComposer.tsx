@@ -67,7 +67,9 @@ import {
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { ComposerAddActionsMenu } from "./ComposerAddActionsMenu";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
+import { ComposerInteractionModePill } from "./ComposerInteractionModePill";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
@@ -88,15 +90,11 @@ import { basenameOfPath } from "../../vscode-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 import { Button } from "../ui/button";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
-  IconQuestionmarkBubble as AskIcon,
-  IconHammer as BuildIcon,
-  IconApplescript as PlanIcon,
   IconChecklist as ListTodoIcon,
-  type IconComponent as LucideIcon,
+  IconQuestionmarkBubble as AskIcon,
   IconXmark as XIcon,
 } from "symbols-react";
 import { proposedPlanTitle } from "../../proposedPlan";
@@ -117,28 +115,6 @@ function isLocalAgentSkill(
 }
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
-
-const interactionModeConfig: Record<
-  ProviderInteractionMode,
-  { label: string; description: string; icon: LucideIcon }
-> = {
-  default: {
-    label: "Build",
-    description: "Explore and implement changes.",
-    icon: BuildIcon,
-  },
-  ask: {
-    label: "Ask",
-    description: "Read/explain only. No writes.",
-    icon: AskIcon,
-  },
-  plan: {
-    label: "Plan",
-    description: "Research and propose a plan without implementing.",
-    icon: PlanIcon,
-  },
-};
-const interactionModeOptions = Object.keys(interactionModeConfig) as ProviderInteractionMode[];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 
@@ -169,99 +145,6 @@ const contextIdListsEqual = <T extends { id: string }>(
   ids: ReadonlyArray<string>,
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
-
-const ComposerFooterInteractionControls = memo(function ComposerFooterInteractionControls(props: {
-  showInteractionModeToggle: boolean;
-  interactionMode: ProviderInteractionMode;
-  showPlanToggle: boolean;
-  planSidebarLabel: string;
-  planSidebarOpen: boolean;
-  onInteractionModeChange: (mode: ProviderInteractionMode) => void;
-  onTogglePlanSidebar: () => void;
-}) {
-  if (!props.showInteractionModeToggle && !props.showPlanToggle) {
-    return null;
-  }
-
-  const interactionModeOption = interactionModeConfig[props.interactionMode];
-  const InteractionModeIcon = interactionModeOption.icon;
-
-  return (
-    <>
-      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-
-      {props.showInteractionModeToggle ? (
-        <>
-          <Select
-            value={props.interactionMode}
-            onValueChange={(value) => {
-              if (!value || value === props.interactionMode) return;
-              props.onInteractionModeChange(value as ProviderInteractionMode);
-            }}
-          >
-            <SelectTrigger
-              variant="ghost"
-              size="sm"
-              className="font-medium"
-              aria-label="Interaction mode"
-              title={interactionModeOption.description}
-            >
-              <InteractionModeIcon className="size-4" />
-              <SelectValue>{interactionModeOption.label}</SelectValue>
-            </SelectTrigger>
-            <SelectPopup alignItemWithTrigger={false}>
-              {interactionModeOptions.map((mode) => {
-                const option = interactionModeConfig[mode];
-                const OptionIcon = option.icon;
-                return (
-                  <SelectItem key={mode} value={mode} className="min-w-64 py-2">
-                    <div className="grid min-w-0 gap-0.5">
-                      <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                        <OptionIcon className="size-3.5 shrink-0 fill-muted-foreground" />
-                        {option.label}
-                      </span>
-                      <span className="text-muted-foreground text-xs leading-4">
-                        {option.description}
-                      </span>
-                    </div>
-                  </SelectItem>
-                );
-              })}
-            </SelectPopup>
-          </Select>
-        </>
-      ) : null}
-
-      {props.showPlanToggle ? (
-        <>
-          {props.showInteractionModeToggle ? (
-            <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-          ) : null}
-          <Button
-            variant="ghost"
-            className={cn(
-              "shrink-0 whitespace-nowrap px-2 sm:px-3",
-              props.planSidebarOpen
-                ? "text-blue-400 hover:text-blue-300"
-                : "text-muted-foreground/70 hover:text-foreground/80",
-            )}
-            size="sm"
-            type="button"
-            onClick={props.onTogglePlanSidebar}
-            title={
-              props.planSidebarOpen
-                ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
-                : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`
-            }
-          >
-            <ListTodoIcon />
-            <span className="sr-only sm:not-sr-only">{props.planSidebarLabel}</span>
-          </Button>
-        </>
-      ) : null}
-    </>
-  );
-});
 
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
@@ -606,6 +489,14 @@ export const ChatComposer = memo(
       () => providerStatuses.find((provider) => provider.provider === selectedProvider),
       [providerStatuses, selectedProvider],
     );
+    const allComposerSkills = useMemo(
+      () => [...localAgentInventory.skills, ...(selectedProviderStatus?.skills ?? [])],
+      [localAgentInventory.skills, selectedProviderStatus?.skills],
+    );
+    const hasEnabledComposerSkills = useMemo(
+      () => allComposerSkills.some((skill) => skill.enabled),
+      [allComposerSkills],
+    );
 
     const composerProviderState = useMemo(
       () =>
@@ -673,6 +564,7 @@ export const ChatComposer = memo(
     // ------------------------------------------------------------------
     const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
     const composerFormRef = useRef<HTMLFormElement>(null);
+    const composerImageInputRef = useRef<HTMLInputElement>(null);
     const composerFormHeightRef = useRef(0);
     const composerSelectLockRef = useRef(false);
     const composerMenuOpenRef = useRef(false);
@@ -789,10 +681,7 @@ export const ChatComposer = memo(
         return searchSlashCommandItems(slashCommandItems, query);
       }
       if (composerTrigger.kind === "skill") {
-        return searchProviderSkills(
-          [...localAgentInventory.skills, ...(selectedProviderStatus?.skills ?? [])],
-          composerTrigger.query,
-        ).map((skill) => {
+        return searchProviderSkills(allComposerSkills, composerTrigger.query).map((skill) => {
           const description =
             skill.shortDescription ??
             skill.description ??
@@ -820,9 +709,9 @@ export const ChatComposer = memo(
       }
       return [];
     }, [
+      allComposerSkills,
       composerTrigger,
       localAgentInventory.commands,
-      localAgentInventory.skills,
       selectedProvider,
       selectedProviderStatus,
       workspaceEntries,
@@ -958,6 +847,23 @@ export const ChatComposer = memo(
     );
     const showQueuedTurnsPanel =
       !isComposerApprovalState && pendingUserInputs.length === 0 && turnQueue.items.length > 0;
+    const providerModelPickerControl = (
+      <ProviderModelPicker
+        compact={isComposerFooterCompact}
+        provider={selectedProvider}
+        model={selectedModelForPickerWithCustomFallback}
+        lockedProvider={lockedProvider}
+        providers={providerStatuses}
+        keybindings={keybindings}
+        modelOptionsByProvider={modelOptionsByProvider}
+        terminalOpen={terminalOpen}
+        open={isComposerModelPickerOpen}
+        onOpenChange={(open) => {
+          setIsComposerModelPickerOpen(open);
+        }}
+        onProviderModelChange={onProviderModelSelect}
+      />
+    );
 
     // ------------------------------------------------------------------
     // Prompt helpers
@@ -1399,6 +1305,22 @@ export const ChatComposer = memo(
       };
     }, [composerCodeContexts, composerCursor, composerTerminalContexts, promptRef]);
 
+    const insertTextAtComposerCursor = useCallback(
+      (text: string) => {
+        const snapshot = readComposerSnapshot();
+        const applied = applyPromptReplacement(
+          snapshot.expandedCursor,
+          snapshot.expandedCursor,
+          text,
+          { focusEditorAfterReplace: true },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+      },
+      [applyPromptReplacement, readComposerSnapshot],
+    );
+
     const resolveActiveComposerTrigger = useCallback((): {
       snapshot: { value: string; cursor: number; expandedCursor: number };
       trigger: ComposerTrigger | null;
@@ -1564,54 +1486,82 @@ export const ChatComposer = memo(
     // ------------------------------------------------------------------
     // Callbacks: images
     // ------------------------------------------------------------------
-    const addComposerImages = (files: File[]) => {
-      if (!activeThreadId || files.length === 0) return;
-      if (pendingUserInputs.length > 0) {
-        toastManager.add({
-          type: "error",
-          title: "Attach images after answering plan questions.",
-        });
-        return;
-      }
-      const nextImages: ComposerImageAttachment[] = [];
-      let nextImageCount = composerImagesRef.current.length;
-      let error: string | null = null;
-      for (const file of files) {
-        if (!file.type.startsWith("image/")) {
-          error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
-          continue;
+    const addComposerImages = useCallback(
+      (files: File[]) => {
+        if (!activeThreadId || files.length === 0) return;
+        if (pendingUserInputs.length > 0) {
+          toastManager.add({
+            type: "error",
+            title: "Attach images after answering plan questions.",
+          });
+          return;
         }
-        if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-          error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
-          continue;
+        const nextImages: ComposerImageAttachment[] = [];
+        let nextImageCount = composerImagesRef.current.length;
+        let error: string | null = null;
+        for (const file of files) {
+          if (!file.type.startsWith("image/")) {
+            error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
+            continue;
+          }
+          if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+            error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
+            continue;
+          }
+          if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+            error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
+            break;
+          }
+          const previewUrl = URL.createObjectURL(file);
+          nextImages.push({
+            type: "image",
+            id: randomUUID(),
+            name: file.name || "image",
+            mimeType: file.type,
+            sizeBytes: file.size,
+            previewUrl,
+            file,
+          });
+          nextImageCount += 1;
         }
-        if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-          error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
-          break;
+        if (nextImages.length === 1 && nextImages[0]) {
+          addComposerImage(nextImages[0]);
+        } else if (nextImages.length > 1) {
+          addComposerImagesToDraft(nextImages);
         }
-        const previewUrl = URL.createObjectURL(file);
-        nextImages.push({
-          type: "image",
-          id: randomUUID(),
-          name: file.name || "image",
-          mimeType: file.type,
-          sizeBytes: file.size,
-          previewUrl,
-          file,
-        });
-        nextImageCount += 1;
-      }
-      if (nextImages.length === 1 && nextImages[0]) {
-        addComposerImage(nextImages[0]);
-      } else if (nextImages.length > 1) {
-        addComposerImagesToDraft(nextImages);
-      }
-      setThreadError(activeThreadId, error);
-    };
+        setThreadError(activeThreadId, error);
+      },
+      [
+        activeThreadId,
+        addComposerImage,
+        addComposerImagesToDraft,
+        composerImagesRef,
+        pendingUserInputs.length,
+        setThreadError,
+      ],
+    );
 
     const removeComposerImage = (imageId: string) => {
       removeComposerImageFromDraft(imageId);
     };
+
+    const onComposerImageInputChange = useCallback(
+      (event: React.ChangeEvent<HTMLInputElement>) => {
+        const files = Array.from(event.target.files ?? []);
+        addComposerImages(files);
+        event.target.value = "";
+        focusComposer();
+      },
+      [addComposerImages, focusComposer],
+    );
+
+    const openComposerImagePicker = useCallback(() => {
+      composerImageInputRef.current?.click();
+    }, []);
+
+    const insertSkillTriggerAtCursor = useCallback(() => {
+      insertTextAtComposerCursor("$");
+    }, [insertTextAtComposerCursor]);
 
     // ------------------------------------------------------------------
     // Callbacks: paste / drag
@@ -1996,10 +1946,7 @@ export const ChatComposer = memo(
                       ? composerCodeContexts
                       : []
                   }
-                  skills={[
-                    ...localAgentInventory.skills,
-                    ...(selectedProviderStatus?.skills ?? []),
-                  ]}
+                  skills={allComposerSkills}
                   onRemoveTerminalContext={removeComposerTerminalContextFromDraft}
                   onRemoveCodeContext={removeComposerCodeContextFromDraft}
                   onChange={onPromptChange}
@@ -2047,43 +1994,41 @@ export const ChatComposer = memo(
                   )}
                 >
                   <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                    <ProviderModelPicker
-                      compact={isComposerFooterCompact}
-                      provider={selectedProvider}
-                      model={selectedModelForPickerWithCustomFallback}
-                      lockedProvider={lockedProvider}
-                      providers={providerStatuses}
-                      keybindings={keybindings}
-                      modelOptionsByProvider={modelOptionsByProvider}
-                      terminalOpen={terminalOpen}
-                      open={isComposerModelPickerOpen}
-                      {...(composerProviderState.modelPickerIconClassName
-                        ? {
-                            activeProviderIconClassName:
-                              composerProviderState.modelPickerIconClassName,
-                          }
-                        : {})}
-                      onOpenChange={(open) => {
-                        setIsComposerModelPickerOpen(open);
-                      }}
-                      onProviderModelChange={onProviderModelSelect}
-                    />
-
                     {isComposerFooterCompact ? (
-                      <CompactComposerControlsMenu
-                        activePlan={showPlanSidebarToggle}
-                        interactionMode={interactionMode}
-                        planSidebarLabel={planSidebarLabel}
-                        planSidebarOpen={planSidebarOpen}
-                        showInteractionModeToggle={
-                          composerProviderControls.showInteractionModeToggle
-                        }
-                        traitsMenuContent={providerTraitsMenuContent}
-                        onInteractionModeChange={handleInteractionModeChange}
-                        onTogglePlanSidebar={togglePlanSidebar}
-                      />
+                      <>
+                        {providerModelPickerControl}
+                        <CompactComposerControlsMenu
+                          activePlan={showPlanSidebarToggle}
+                          interactionMode={interactionMode}
+                          planSidebarLabel={planSidebarLabel}
+                          planSidebarOpen={planSidebarOpen}
+                          showInteractionModeToggle={
+                            composerProviderControls.showInteractionModeToggle
+                          }
+                          traitsMenuContent={providerTraitsMenuContent}
+                          onInteractionModeChange={handleInteractionModeChange}
+                          onTogglePlanSidebar={togglePlanSidebar}
+                        />
+                      </>
                     ) : (
                       <>
+                        <ComposerAddActionsMenu
+                          interactionMode={interactionMode}
+                          showInteractionModeActions={
+                            composerProviderControls.showInteractionModeToggle
+                          }
+                          hasEnabledSkills={hasEnabledComposerSkills}
+                          skillsLoading={localAgentInventoryLoading}
+                          imageDisabled={pendingUserInputs.length > 0 || activeThreadId === null}
+                          onSelectMode={handleInteractionModeChange}
+                          onSelectImage={openComposerImagePicker}
+                          onSelectSkill={insertSkillTriggerAtCursor}
+                        />
+                        {composerProviderControls.showInteractionModeToggle ? (
+                          <ComposerInteractionModePill interactionMode={interactionMode} />
+                        ) : null}
+                        <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+                        {providerModelPickerControl}
                         {providerTraitsPicker ? (
                           <>
                             <Separator
@@ -2093,17 +2038,34 @@ export const ChatComposer = memo(
                             {providerTraitsPicker}
                           </>
                         ) : null}
-                        <ComposerFooterInteractionControls
-                          showInteractionModeToggle={
-                            composerProviderControls.showInteractionModeToggle
-                          }
-                          interactionMode={interactionMode}
-                          showPlanToggle={showPlanSidebarToggle}
-                          planSidebarLabel={planSidebarLabel}
-                          planSidebarOpen={planSidebarOpen}
-                          onInteractionModeChange={handleInteractionModeChange}
-                          onTogglePlanSidebar={togglePlanSidebar}
-                        />
+                        {showPlanSidebarToggle ? (
+                          <>
+                            <Separator
+                              orientation="vertical"
+                              className="mx-0.5 hidden h-4 sm:block"
+                            />
+                            <Button
+                              variant="ghost"
+                              className={cn(
+                                "shrink-0 whitespace-nowrap px-2 sm:px-3",
+                                planSidebarOpen
+                                  ? "text-blue-400 hover:text-blue-300"
+                                  : "text-muted-foreground/70 hover:text-foreground/80",
+                              )}
+                              size="sm"
+                              type="button"
+                              onClick={togglePlanSidebar}
+                              title={
+                                planSidebarOpen
+                                  ? `Hide ${planSidebarLabel.toLowerCase()} sidebar`
+                                  : `Show ${planSidebarLabel.toLowerCase()} sidebar`
+                              }
+                            >
+                              <ListTodoIcon />
+                              <span className="sr-only sm:not-sr-only">{planSidebarLabel}</span>
+                            </Button>
+                          </>
+                        ) : null}
                       </>
                     )}
                   </div>
@@ -2137,6 +2099,16 @@ export const ChatComposer = memo(
                 </div>
               )}
             </div>
+            <input
+              ref={composerImageInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              tabIndex={-1}
+              className="sr-only"
+              data-composer-image-upload-input="true"
+              onChange={onComposerImageInputChange}
+            />
           </div>
         </form>
       </div>

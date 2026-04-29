@@ -10,20 +10,21 @@ import {
 } from "@forma/contracts";
 import {
   applyClaudePromptEffortPrefix,
-  isClaudeUltrathinkPrompt,
-  trimOrNull,
   getDefaultEffort,
   getDefaultContextWindow,
   hasContextWindowOption,
+  isClaudeUltrathinkPrompt,
   resolveEffort,
+  trimOrNull,
 } from "@forma/shared/model";
 import { memo, useCallback, useState } from "react";
 import type { VariantProps } from "class-variance-authority";
-import { IconChevronDown as ChevronDownIcon } from "symbols-react";
+import { IconCheckmark as CheckIcon, IconChevronDown as ChevronDownIcon } from "symbols-react";
 import { Button, buttonVariants } from "../ui/button";
 import {
   Menu,
   MenuGroup,
+  MenuItem,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
@@ -53,6 +54,15 @@ type TraitsPersistence =
     };
 
 const ULTRATHINK_PROMPT_PREFIX = "Ultrathink:\n";
+
+function deferTraitMenuAction(action: () => void) {
+  if (typeof window === "undefined") {
+    action();
+    return;
+  }
+  // Let the menu close and paint before we run the heavier draft-store update work.
+  window.setTimeout(action, 0);
+}
 
 function getRawEffort(
   provider: ProviderKind,
@@ -307,6 +317,7 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
   const showsContextWindowSection = showContextWindow;
   const hasSectionsBeforeAgent =
     showsEffortSection || showsThinkingSection || showsFastModeSection || showsContextWindowSection;
+  const selectedEffortValue = ultrathinkPromptControlled ? "ultrathink" : effort;
 
   const handleEffortChange = useCallback(
     (value: string) => {
@@ -365,23 +376,30 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 Your prompt contains &quot;ultrathink&quot; in the text. Remove it to change effort.
               </div>
             ) : null}
-            <MenuRadioGroup
-              value={ultrathinkPromptControlled ? "ultrathink" : effort}
-              onValueChange={handleEffortChange}
-            >
+            <>
               {effortLevels.map((option) => (
-                <MenuRadioItem
+                <MenuItem
                   key={option.value}
-                  value={option.value}
+                  role="menuitemradio"
+                  aria-checked={selectedEffortValue === option.value}
                   disabled={ultrathinkInBodyText}
+                  onClick={() => deferTraitMenuAction(() => handleEffortChange(option.value))}
+                  className="gap-3"
                 >
-                  {option.label}
-                  {(provider === "opencode" ? option.isDefault : option.value === defaultEffort)
-                    ? " (default)"
-                    : ""}
-                </MenuRadioItem>
+                  <span className="font-medium text-foreground">
+                    {option.label}
+                    {(provider === "opencode" ? option.isDefault : option.value === defaultEffort)
+                      ? " (default)"
+                      : ""}
+                  </span>
+                  {selectedEffortValue === option.value ? (
+                    <span className="ml-auto inline-flex items-center text-muted-foreground/72">
+                      <CheckIcon className="size-3 fill-current" />
+                    </span>
+                  ) : null}
+                </MenuItem>
               ))}
-            </MenuRadioGroup>
+            </>
           </MenuGroup>
         </>
       ) : showsThinkingSection ? (

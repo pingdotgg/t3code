@@ -66,7 +66,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
                 props.onInteractionModeChange(value as ProviderInteractionMode);
               }}
             >
-              <MenuRadioItem value="default">Build</MenuRadioItem>
+              <MenuRadioItem value="default">Agent</MenuRadioItem>
               <MenuRadioItem value="ask">Ask</MenuRadioItem>
               <MenuRadioItem value="plan">Plan</MenuRadioItem>
             </MenuRadioGroup>

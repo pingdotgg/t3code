@@ -263,7 +263,6 @@ describe("getComposerProviderState", () => {
       },
       composerFrameClassName: "ultrathink-frame",
       composerSurfaceClassName: "ultrathink-composer-surface",
-      modelPickerIconClassName: "ultrathink-chroma",
     });
   });
 

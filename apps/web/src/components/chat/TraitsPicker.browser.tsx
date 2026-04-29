@@ -396,13 +396,15 @@ describe("TraitsPicker (Claude)", () => {
     await page.getByRole("button").click();
     await page.getByRole("menuitemradio", { name: "Max" }).click();
 
-    expect(
-      useComposerDraftStore.getState().stickyModelSelectionByProvider.claudeAgent,
-    ).toMatchObject({
-      provider: "claudeAgent",
-      options: {
-        effort: "max",
-      },
+    await vi.waitFor(() => {
+      expect(
+        useComposerDraftStore.getState().stickyModelSelectionByProvider.claudeAgent,
+      ).toMatchObject({
+        provider: "claudeAgent",
+        options: {
+          effort: "max",
+        },
+      });
     });
   });
 

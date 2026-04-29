@@ -1773,15 +1773,42 @@ async function expectComposerActionsContained(): Promise<void> {
   );
 }
 
-async function waitForInteractionModeButton(
-  expectedLabel: "Build" | "Ask" | "Plan",
-): Promise<HTMLButtonElement> {
+async function waitForComposerAddActionsButton(): Promise<HTMLButtonElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLButtonElement>('button[aria-label="Add composer action"]'),
+    'Unable to find "Add composer action" button.',
+  );
+}
+
+async function openComposerAddActionsMenu(): Promise<void> {
+  const trigger = await waitForComposerAddActionsButton();
+  trigger.click();
+  await waitForLayout();
+}
+
+async function waitForComposerAddActionsMenuItem(label: string): Promise<HTMLElement> {
   return waitForElement(
     () =>
-      Array.from(document.querySelectorAll("button")).find(
-        (button) => button.textContent?.trim() === expectedLabel,
-      ) as HTMLButtonElement | null,
-    `Unable to find ${expectedLabel} interaction mode button.`,
+      Array.from(document.querySelectorAll<HTMLElement>('[data-slot="menu-item"]')).find((item) =>
+        item.textContent?.includes(label),
+      ) ?? null,
+    `Unable to find composer action menu item "${label}".`,
+  );
+}
+
+async function waitForComposerInteractionModePill(
+  expectedLabel: "Agent" | "Ask" | "Plan",
+): Promise<HTMLElement> {
+  return waitForElement(() => {
+    const pill = document.querySelector<HTMLElement>("[data-composer-interaction-mode-pill]");
+    return pill?.textContent?.includes(expectedLabel) ? pill : null;
+  }, `Unable to find ${expectedLabel} interaction mode pill.`);
+}
+
+async function waitForComposerImageUploadInput(): Promise<HTMLInputElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLInputElement>('[data-composer-image-upload-input="true"]'),
+    "Unable to find composer image upload input.",
   );
 }
 
@@ -3705,7 +3732,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
   it("toggles plan mode with Shift+Tab only while the composer is focused", async () => {
     const mounted = await mountChatView({
-      viewport: DEFAULT_VIEWPORT,
+      viewport: WIDE_FOOTER_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
         targetMessageId: "msg-user-target-hotkey" as MessageId,
         targetText: "hotkey target",
@@ -3713,7 +3740,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      await waitForInteractionModeButton("Build");
+      await waitForComposerAddActionsButton();
+      await waitForComposerInteractionModePill("Agent");
 
       window.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -3725,7 +3753,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       await waitForLayout();
 
-      await waitForInteractionModeButton("Build");
+      await waitForComposerInteractionModePill("Agent");
 
       const composerEditor = await waitForComposerEditor();
       composerEditor.focus();
@@ -3738,12 +3766,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         }),
       );
 
-      await vi.waitFor(
-        async () => {
-          await waitForInteractionModeButton("Plan");
-        },
-        { timeout: 8_000, interval: 16 },
-      );
+      await waitForComposerInteractionModePill("Plan");
 
       composerEditor.dispatchEvent(
         new KeyboardEvent("keydown", {
@@ -3754,20 +3777,58 @@ describe("ChatView timeline estimator parity (full app)", () => {
         }),
       );
 
-      await vi.waitFor(
-        async () => {
-          await waitForInteractionModeButton("Build");
-        },
-        { timeout: 8_000, interval: 16 },
-      );
+      await waitForComposerInteractionModePill("Agent");
     } finally {
       await mounted.cleanup();
     }
   });
 
-  it("keeps ask mode on the active thread until the next send", async () => {
+  it("shows the plus action button with a default Agent pill in wide footer mode", async () => {
     const mounted = await mountChatView({
-      viewport: DEFAULT_VIEWPORT,
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-wide-plus" as MessageId,
+        targetText: "wide plus target",
+      }),
+    });
+
+    try {
+      await waitForComposerAddActionsButton();
+      await waitForComposerInteractionModePill("Agent");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("selects plan mode from the plus menu and switches it back to Agent", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-plan-pill" as MessageId,
+        targetText: "plan pill target",
+      }),
+    });
+
+    try {
+      await openComposerAddActionsMenu();
+      const planItem = await waitForComposerAddActionsMenuItem("Plan");
+      planItem.click();
+
+      await waitForComposerInteractionModePill("Plan");
+
+      await openComposerAddActionsMenu();
+      const buildItem = await waitForComposerAddActionsMenuItem("Agent");
+      buildItem.click();
+
+      await waitForComposerInteractionModePill("Agent");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps ask mode selected from the plus menu on the active thread until the next send", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
         targetMessageId: "msg-user-target-ask-thread" as MessageId,
         targetText: "ask thread target",
@@ -3785,19 +3846,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       wsRequests.length = 0;
 
-      useComposerDraftStore.getState().setPrompt(THREAD_REF, "/ask");
-      await waitForLayout();
+      await openComposerAddActionsMenu();
+      const askItem = await waitForComposerAddActionsMenuItem("Ask");
+      askItem.click();
 
-      const modeSwitchButton = await waitForSendButton();
-      expect(modeSwitchButton.disabled).toBe(false);
-      modeSwitchButton.click();
-
-      await vi.waitFor(
-        async () => {
-          await waitForInteractionModeButton("Ask");
-        },
-        { timeout: 8_000, interval: 16 },
-      );
+      await waitForComposerInteractionModePill("Ask");
 
       expect(
         wsRequests.some((request) => request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand),
@@ -3869,6 +3922,75 @@ describe("ChatView timeline estimator parity (full app)", () => {
             runtimeMode: "approval-required",
             interactionMode: "ask",
           });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("inserts a raw skill trigger from the plus menu and opens skill suggestions", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-plus-skill" as MessageId,
+        targetText: "plus skill target",
+      }),
+      configureFixture: (nextFixture) => {
+        const provider = nextFixture.serverConfig.providers[0];
+        if (!provider) {
+          throw new Error("Expected default provider in test fixture.");
+        }
+        (
+          provider as {
+            skills: ServerConfig["providers"][number]["skills"];
+          }
+        ).skills = [
+          {
+            name: "agent-browser",
+            displayName: "Agent Browser",
+            description: "Open pages, click around, and inspect web apps.",
+            path: "/Users/test/.agents/skills/agent-browser/SKILL.md",
+            enabled: true,
+          },
+        ];
+      },
+    });
+
+    try {
+      await openComposerAddActionsMenu();
+      const skillItem = await waitForComposerAddActionsMenuItem("Skill");
+      skillItem.click();
+
+      await waitForComposerText("$");
+      await waitForComposerMenuItem("skill:codex:agent-browser");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the hidden image upload input from the plus menu", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-plus-image" as MessageId,
+        targetText: "plus image target",
+      }),
+    });
+
+    try {
+      const imageInput = await waitForComposerImageUploadInput();
+      const handleImageInputClick = vi.fn();
+      imageInput.addEventListener("click", handleImageInputClick);
+
+      await openComposerAddActionsMenu();
+      const imageItem = await waitForComposerAddActionsMenuItem("Image");
+      imageItem.click();
+
+      await vi.waitFor(
+        () => {
+          expect(handleImageInputClick).toHaveBeenCalledTimes(1);
         },
         { timeout: 8_000, interval: 16 },
       );

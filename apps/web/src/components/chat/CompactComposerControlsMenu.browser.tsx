@@ -281,7 +281,7 @@ describe("CompactComposerControlsMenu", () => {
 
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
-      expect(text).toContain("Build");
+      expect(text).toContain("Agent");
       expect(text).toContain("Ask");
       expect(text).toContain("Read/explain only. No writes.");
       expect(text).not.toContain("Access");
@@ -309,7 +309,7 @@ describe("CompactComposerControlsMenu", () => {
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
       expect(text).not.toContain("Mode");
-      expect(text).not.toContain("Build");
+      expect(text).not.toContain("Agent");
       expect(text).not.toContain("Plan");
       expect(text).not.toContain("Access");
       expect(text).not.toContain("Supervised");
