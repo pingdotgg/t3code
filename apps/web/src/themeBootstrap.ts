@@ -3,7 +3,7 @@ import { applyInterfaceSettingsToDocument } from "./interfaceAppearance";
 import {
   THEME_MEDIA_QUERY,
   applyThemePreferenceToDocument,
-  readStoredThemePreference,
+  readStoredThemeSettings,
 } from "./theme";
 
 const systemDark =
@@ -11,7 +11,7 @@ const systemDark =
   typeof window.matchMedia === "function" &&
   window.matchMedia(THEME_MEDIA_QUERY).matches;
 
-applyThemePreferenceToDocument(readStoredThemePreference(), {
+applyThemePreferenceToDocument(readStoredThemeSettings(), {
   document,
   systemDark,
 });

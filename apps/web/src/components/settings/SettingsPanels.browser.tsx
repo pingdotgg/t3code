@@ -498,135 +498,116 @@ describe("Settings panels", () => {
       .toBeInTheDocument();
   });
 
-  it("renders theme selection as an inline preview grid instead of a combobox", async () => {
+  it("renders the custom theme builder instead of preset theme cards", async () => {
     await renderSettingsPanel(<InterfaceSettingsPanel />);
 
-    await vi.waitFor(() => {
-      expect(document.querySelectorAll("[data-theme-option]")).toHaveLength(9);
-    });
-
-    expect(document.querySelector('[role="combobox"][aria-label="Theme preference"]')).toBeNull();
-    expect(
-      document.querySelectorAll('[data-theme-preset-grid="true"] [data-theme-option]'),
-    ).toHaveLength(8);
-    expect(document.querySelector('[data-theme-option="system"]')).not.toBeNull();
-    expect(document.querySelector('[data-theme-option="blueberry"]')).not.toBeNull();
-    expect(document.querySelector('[data-theme-option="stone"]')).not.toBeNull();
-    expect(document.querySelector('[data-theme-option="cosmic"]')).not.toBeNull();
-    expect(document.querySelector('[data-theme-option="slate"]')).toBeNull();
-    expect(
-      Array.from(
-        document.querySelectorAll('[data-theme-preset-grid="true"] [data-theme-option]'),
-      ).map((element) => element.getAttribute("data-theme-option")),
-    ).toEqual(["light", "dawn", "dusk", "blueberry", "noir", "midnight", "stone", "cosmic"]);
+    await expect.element(page.getByLabelText("Theme mode")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Theme hue")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Theme hue value")).toBeInTheDocument();
+    await expect.element(page.getByText("Hue")).toBeInTheDocument();
+    await expect.element(page.getByText("Saturation")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Theme saturation value")).toBeInTheDocument();
+    expect(document.querySelectorAll("[data-theme-mode-option]")).toHaveLength(3);
+    expect(document.querySelector('[data-theme-preview-card="true"]')).toBeNull();
+    expect(document.querySelector('[aria-label="Theme hue wheel"]')).toBeNull();
   });
 
-  it("updates stored and document theme state when selecting a preview card", async () => {
+  it("updates stored and document theme state when editing the custom theme", async () => {
     await renderSettingsPanel(<InterfaceSettingsPanel />);
 
-    const stoneOption = document.querySelector('[data-theme-option="stone"]');
-    expect(stoneOption).not.toBeNull();
-    stoneOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const darkMode = document.querySelector('[data-theme-mode-option="dark"]');
+    if (!(darkMode instanceof HTMLButtonElement)) {
+      throw new Error("Expected the dark mode theme button.");
+    }
+    darkMode.click();
+
+    await page.getByLabelText("Theme hue value").fill("288");
+    await page.getByLabelText("Theme saturation value").fill("44");
 
     await vi.waitFor(() => {
-      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("stone");
-      expect(document.documentElement.dataset.themePreference).toBe("stone");
-      expect(document.documentElement.dataset.theme).toBe("stone");
-      expect(document.querySelector('[data-theme-selected-label="true"]')?.textContent).toBe(
-        "Stone",
-      );
-      expect(
-        document
-          .querySelector('[data-theme-selected-swatch="true"]')
-          ?.getAttribute("data-theme-preview"),
-      ).toBe("stone");
+      expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY) ?? "{}")).toMatchObject({
+        version: 2,
+        mode: "dark",
+        hue: 288,
+        saturation: 44,
+      });
+      expect(document.documentElement.dataset.themePreferenceMode).toBe("dark");
+      expect(document.documentElement.dataset.themeMode).toBe("dark");
+      expect(document.documentElement.dataset.themeHue).toBe("288");
+      expect(document.documentElement.dataset.themeSaturation).toBe("44");
     });
   });
 
-  it("shows the system preview using noir while keeping system selected in dark OS mode", async () => {
-    localStorage.setItem(THEME_STORAGE_KEY, "system");
+  it("keeps system mode selected while resolving dark mode from the OS", async () => {
+    localStorage.setItem(
+      THEME_STORAGE_KEY,
+      JSON.stringify({
+        version: 2,
+        mode: "system",
+        hue: 222,
+        saturation: 68,
+      }),
+    );
     stubMatchMedia(true);
 
     await renderSettingsPanel(<InterfaceSettingsPanel />);
 
     await vi.waitFor(() => {
-      const systemPreview = document.querySelector(
-        '[data-theme-option="system"] [data-theme-preview]',
-      );
-      const systemOption = document.querySelector('[data-theme-option="system"]');
-      expect(systemPreview?.getAttribute("data-theme-preview")).toBe("noir");
-      expect(systemOption?.hasAttribute("data-checked")).toBe(true);
-      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("system");
-      expect(document.querySelector('[data-theme-selected-label="true"]')?.textContent).toBe(
-        "Noir",
-      );
-      expect(document.querySelector('[data-theme-selected-detail="true"]')?.textContent).toBe(
-        "System",
-      );
-      expect(
-        document
-          .querySelector('[data-theme-selected-swatch="true"]')
-          ?.getAttribute("data-theme-preview"),
-      ).toBe("noir");
+      const systemOption = document.querySelector('[data-theme-mode-option="system"]');
+      expect(systemOption?.getAttribute("aria-pressed")).toBe("true");
+      expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY) ?? "{}")).toMatchObject({
+        version: 2,
+        mode: "system",
+      });
+      expect(document.documentElement.dataset.themePreferenceMode).toBe("system");
+      expect(document.documentElement.dataset.themeMode).toBe("dark");
     });
   });
 
   it("resets theme selection back to system", async () => {
     await renderSettingsPanel(<InterfaceSettingsPanel />);
 
-    const stoneOption = document.querySelector('[data-theme-option="stone"]');
-    expect(stoneOption).not.toBeNull();
-    stoneOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    const darkMode = document.querySelector('[data-theme-mode-option="dark"]');
+    if (!(darkMode instanceof HTMLButtonElement)) {
+      throw new Error("Expected the dark mode theme button.");
+    }
+    darkMode.click();
 
     await vi.waitFor(() => {
-      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("stone");
+      expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY) ?? "{}")).toMatchObject({
+        mode: "dark",
+      });
     });
 
     await page.getByRole("button", { name: "Reset theme to default" }).click();
 
     await vi.waitFor(() => {
-      const systemOption = document.querySelector('[data-theme-option="system"]');
-      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("system");
-      expect(document.documentElement.dataset.themePreference).toBe("system");
-      expect(systemOption?.hasAttribute("data-checked")).toBe(true);
-    });
-  });
-
-  it("supports keyboard navigation across theme radios", async () => {
-    await renderSettingsPanel(<InterfaceSettingsPanel />);
-
-    const systemOption = document.querySelector(
-      '[data-theme-option="system"]',
-    ) as HTMLElement | null;
-    expect(systemOption).not.toBeNull();
-    systemOption?.focus();
-    systemOption?.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowRight" }));
-
-    await vi.waitFor(() => {
-      const lightOption = document.querySelector('[data-theme-option="light"]');
-      expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
-      expect(lightOption?.hasAttribute("data-checked")).toBe(true);
+      const systemOption = document.querySelector('[data-theme-mode-option="system"]');
+      expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY) ?? "{}")).toMatchObject({
+        version: 2,
+        mode: "system",
+        hue: 222,
+        saturation: 68,
+      });
+      expect(document.documentElement.dataset.themePreferenceMode).toBe("system");
+      expect(systemOption?.getAttribute("aria-pressed")).toBe("true");
     });
   });
 
   it("persists interface typography settings and shows the macOS smoothing control", async () => {
     await renderSettingsPanel(<InterfaceSettingsPanel />);
 
-    const uiSize = document.querySelector('[aria-label="UI font size"]');
-    if (!(uiSize instanceof HTMLInputElement)) {
-      throw new Error("Expected the UI font size input.");
-    }
-    uiSize.value = "11";
-    uiSize.dispatchEvent(new Event("input", { bubbles: true }));
-    uiSize.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+    await page.getByLabelText("UI font size").fill("11");
+    (document.querySelector('[aria-label="UI font size"]') as HTMLInputElement | null)?.blur();
+    document
+      .querySelector('[aria-label="UI font size"]')
+      ?.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
 
-    const codeSize = document.querySelector('[aria-label="Code font size"]');
-    if (!(codeSize instanceof HTMLInputElement)) {
-      throw new Error("Expected the code font size input.");
-    }
-    codeSize.value = "15";
-    codeSize.dispatchEvent(new Event("input", { bubbles: true }));
-    codeSize.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+    await page.getByLabelText("Code font size").fill("15");
+    (document.querySelector('[aria-label="Code font size"]') as HTMLInputElement | null)?.blur();
+    document
+      .querySelector('[aria-label="Code font size"]')
+      ?.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
 
     await page.getByLabelText("Font smoothing").click();
 

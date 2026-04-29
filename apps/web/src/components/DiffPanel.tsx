@@ -60,30 +60,26 @@ const DIFF_PANEL_UNSAFE_CSS = `
 [data-file],
 [data-error-wrapper],
 [data-virtualizer-buffer] {
-  --diffs-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
-  --diffs-light-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
-  --diffs-dark-bg: color-mix(in srgb, var(--card) 90%, var(--background)) !important;
+  --diffs-bg: var(--diff-surface-bg) !important;
+  --diffs-light-bg: var(--diff-surface-bg) !important;
+  --diffs-dark-bg: var(--diff-surface-bg) !important;
   --diffs-token-light-bg: transparent;
   --diffs-token-dark-bg: transparent;
 
-  --diffs-bg-context-override: color-mix(in srgb, var(--background) 97%, var(--foreground));
-  --diffs-bg-hover-override: color-mix(in srgb, var(--background) 94%, var(--foreground));
-  --diffs-bg-separator-override: color-mix(in srgb, var(--background) 95%, var(--foreground));
-  --diffs-bg-buffer-override: color-mix(in srgb, var(--background) 90%, var(--foreground));
+  --diffs-bg-context-override: var(--diff-surface-context-bg);
+  --diffs-bg-hover-override: var(--diff-surface-hover-bg);
+  --diffs-bg-separator-override: var(--diff-surface-separator-bg);
+  --diffs-bg-buffer-override: var(--diff-surface-buffer-bg);
 
-  --diffs-bg-addition-override: color-mix(in srgb, var(--background) 92%, var(--success));
-  --diffs-bg-addition-number-override: color-mix(in srgb, var(--background) 88%, var(--success));
-  --diffs-bg-addition-hover-override: color-mix(in srgb, var(--background) 85%, var(--success));
-  --diffs-bg-addition-emphasis-override: color-mix(in srgb, var(--background) 80%, var(--success));
+  --diffs-bg-addition-override: var(--diff-surface-addition-bg);
+  --diffs-bg-addition-number-override: var(--diff-surface-addition-number-bg);
+  --diffs-bg-addition-hover-override: var(--diff-surface-addition-hover-bg);
+  --diffs-bg-addition-emphasis-override: var(--diff-surface-addition-emphasis-bg);
 
-  --diffs-bg-deletion-override: color-mix(in srgb, var(--background) 92%, var(--destructive));
-  --diffs-bg-deletion-number-override: color-mix(in srgb, var(--background) 88%, var(--destructive));
-  --diffs-bg-deletion-hover-override: color-mix(in srgb, var(--background) 85%, var(--destructive));
-  --diffs-bg-deletion-emphasis-override: color-mix(
-    in srgb,
-    var(--background) 80%,
-    var(--destructive)
-  );
+  --diffs-bg-deletion-override: var(--diff-surface-deletion-bg);
+  --diffs-bg-deletion-number-override: var(--diff-surface-deletion-number-bg);
+  --diffs-bg-deletion-hover-override: var(--diff-surface-deletion-hover-bg);
+  --diffs-bg-deletion-emphasis-override: var(--diff-surface-deletion-emphasis-bg);
 
   background-color: var(--diffs-bg) !important;
 }
@@ -97,17 +93,17 @@ const DIFF_PANEL_UNSAFE_CSS = `
 }
 
 [data-file-info] {
-  background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
-  border-block-color: var(--border) !important;
-  color: var(--foreground) !important;
+  background-color: var(--diff-surface-elevated-bg) !important;
+  border-block-color: var(--diff-surface-border) !important;
+  color: var(--diff-surface-foreground) !important;
 }
 
 [data-diffs-header] {
   position: sticky !important;
   top: 0;
   z-index: 4;
-  background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
-  border-bottom: 1px solid var(--border) !important;
+  background-color: var(--diff-surface-elevated-bg) !important;
+  border-bottom: 1px solid var(--diff-surface-border) !important;
 }
 
 [data-title] {
@@ -121,7 +117,7 @@ const DIFF_PANEL_UNSAFE_CSS = `
 }
 
 [data-title]:hover {
-  color: color-mix(in srgb, var(--foreground) 84%, var(--primary)) !important;
+  color: var(--diff-surface-title-hover) !important;
   text-decoration-color: currentColor;
 }
 `;
@@ -191,7 +187,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const composerRef = useComposerHandleContext();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { resolvedPreset, resolvedTheme } = useTheme();
+  const { resolvedTheme } = useTheme();
   const settings = useSettings();
   const routeThreadRef = useParams({
     strict: false,
@@ -761,7 +757,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           initialLine={editorLine}
           initialOverride={editorOverride}
           navigationLabel="Exit edit"
-          resolvedPreset={resolvedPreset}
+          resolvedTheme={resolvedTheme}
           onAddCodeContext={addEditorCodeContext}
           onOpenInEditor={openDiffFileInEditor}
           onPersisted={persistSavedDiffOverride}

@@ -55,11 +55,7 @@ import {
 } from "../types";
 import { readEnvironmentApi } from "~/environmentApi";
 import { readLocalApi } from "~/localApi";
-import {
-  getThemeMetadata,
-  readResolvedThemePresetFromDocument,
-  resolveTerminalThemePalette,
-} from "../theme";
+import { generateTheme, readThemeSettingsFromDocument } from "../theme";
 import { selectTerminalEventEntries, useTerminalStateStore } from "../terminalStateStore";
 
 const MIN_DRAWER_HEIGHT = 180;
@@ -116,9 +112,9 @@ function normalizeComputedColor(value: string | null | undefined, fallback: stri
 }
 
 function terminalThemeFromApp(mountElement?: HTMLElement | null): ITheme {
-  const resolvedPreset = readResolvedThemePresetFromDocument();
-  const themeMetadata = getThemeMetadata(resolvedPreset);
-  const terminalPalette = resolveTerminalThemePalette(resolvedPreset);
+  const themeMetadata = generateTheme(readThemeSettingsFromDocument(), {
+    systemDark: document.documentElement.classList.contains("dark"),
+  });
   const fallbackBackground = themeMetadata.chromeColor;
   const fallbackForeground = themeMetadata.foregroundColor;
   const drawerSurface =
@@ -138,7 +134,7 @@ function terminalThemeFromApp(mountElement?: HTMLElement | null): ITheme {
   return {
     background,
     foreground,
-    ...terminalPalette,
+    ...themeMetadata.terminalPalette,
   };
 }
 
@@ -532,7 +528,13 @@ export function TerminalViewport({
     });
     themeObserver.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["class", "style", "data-theme"],
+      attributeFilter: [
+        "class",
+        "style",
+        "data-theme",
+        "data-theme-mode",
+        "data-theme-preference-mode",
+      ],
     });
 
     const applyTerminalEvent = (event: TerminalEvent) => {

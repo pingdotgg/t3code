@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   applyThemePreferenceToDocument,
-  getThemeMetadata,
-  readStoredThemePreference,
+  DEFAULT_CUSTOM_THEME_SETTINGS,
+  generateTheme,
+  readStoredThemeSettings,
   resolveDesktopTheme,
   resolveThemeMode,
-  resolveThemePreset,
 } from "./theme";
 
 function createDocumentStub() {
@@ -14,9 +14,11 @@ function createDocumentStub() {
     attributes: Record<string, string>;
     setAttribute: (name: string, value: string) => void;
   }> = [];
+  const styleValues = new Map<string, string>();
 
   return {
     appendedElements,
+    styleValues,
     document: {
       documentElement: {
         classList: {
@@ -26,6 +28,9 @@ function createDocumentStub() {
         dataset: {} as Record<string, string>,
         style: {
           backgroundColor: "",
+          setProperty(name: string, value: string) {
+            styleValues.set(name, value);
+          },
         },
       },
       body: {
@@ -54,80 +59,69 @@ function createDocumentStub() {
 }
 
 describe("theme", () => {
-  it("migrates legacy stored dark to noir", () => {
+  it("preserves legacy system storage", () => {
     const storage = {
-      getItem: vi.fn(() => "dark"),
+      getItem: vi.fn(() => "system"),
       setItem: vi.fn(),
     };
 
-    expect(readStoredThemePreference(storage)).toBe("noir");
-    expect(storage.setItem).toHaveBeenCalledWith("forma:theme", "noir");
+    expect(readStoredThemeSettings(storage)).toEqual(DEFAULT_CUSTOM_THEME_SETTINGS);
   });
 
-  it("migrates legacy stored slate to blueberry", () => {
+  it("falls back to the new default for legacy preset strings", () => {
     const storage = {
-      getItem: vi.fn(() => "slate"),
+      getItem: vi.fn(() => "stone"),
       setItem: vi.fn(),
     };
 
-    expect(readStoredThemePreference(storage)).toBe("blueberry");
-    expect(storage.setItem).toHaveBeenCalledWith("forma:theme", "blueberry");
+    expect(readStoredThemeSettings(storage)).toEqual(DEFAULT_CUSTOM_THEME_SETTINGS);
   });
 
-  it("falls back to system for unknown stored values", () => {
-    const storage = {
-      getItem: vi.fn(() => "sepia"),
-      setItem: vi.fn(),
-    };
-
-    expect(readStoredThemePreference(storage)).toBe("system");
-    expect(storage.setItem).not.toHaveBeenCalled();
+  it("resolves system mode from the OS family", () => {
+    expect(resolveThemeMode({ mode: "system", hue: 222, saturation: 68 }, false)).toBe("light");
+    expect(resolveThemeMode({ mode: "system", hue: 222, saturation: 68 }, true)).toBe("dark");
   });
 
-  it("resolves system to light or noir from the OS family", () => {
-    expect(resolveThemePreset("system", false)).toBe("light");
-    expect(resolveThemePreset("system", true)).toBe("noir");
+  it("maps explicit modes directly", () => {
+    expect(resolveThemeMode({ mode: "light", hue: 222, saturation: 68 })).toBe("light");
+    expect(resolveThemeMode({ mode: "dark", hue: 222, saturation: 68 })).toBe("dark");
   });
 
-  it("maps presets to light and dark families", () => {
-    expect(resolveThemeMode("light")).toBe("light");
-    expect(resolveThemeMode("dawn")).toBe("light");
-    expect(resolveThemeMode("dusk")).toBe("light");
-    expect(resolveThemeMode("blueberry")).toBe("light");
-    expect(resolveThemeMode("noir")).toBe("dark");
-    expect(resolveThemeMode("midnight")).toBe("dark");
-    expect(resolveThemeMode("stone")).toBe("dark");
-    expect(resolveThemeMode("cosmic")).toBe("dark");
+  it("resolves desktop theme from explicit and system modes", () => {
+    expect(resolveDesktopTheme({ mode: "system", hue: 222, saturation: 68 }, true)).toBe("system");
+    expect(resolveDesktopTheme({ mode: "light", hue: 222, saturation: 68 })).toBe("light");
+    expect(resolveDesktopTheme({ mode: "dark", hue: 222, saturation: 68 })).toBe("dark");
   });
 
-  it("maps concrete presets back to desktop-supported themes", () => {
-    expect(resolveDesktopTheme("system")).toBe("system");
-    expect(resolveDesktopTheme("light")).toBe("light");
-    expect(resolveDesktopTheme("dawn")).toBe("light");
-    expect(resolveDesktopTheme("dusk")).toBe("light");
-    expect(resolveDesktopTheme("blueberry")).toBe("light");
-    expect(resolveDesktopTheme("noir")).toBe("dark");
-    expect(resolveDesktopTheme("midnight")).toBe("dark");
-    expect(resolveDesktopTheme("stone")).toBe("dark");
-    expect(resolveDesktopTheme("cosmic")).toBe("dark");
+  it("generates stable tokens and palette data", () => {
+    const generated = generateTheme({ mode: "dark", hue: 280, saturation: 72 });
+
+    expect(generated.resolvedMode).toBe("dark");
+    expect(generated.monacoTheme).toBe("vs-dark");
+    expect(generated.cssVariables["--primary"]).toContain("hsl(");
+    expect(generated.terminalPalette.cursor).toContain("rgb(");
   });
 
-  it("applies the resolved preset, dark class, and chrome color to the document", () => {
-    const { document, appendedElements } = createDocumentStub();
+  it("applies generated settings and css vars to the document", () => {
+    const { appendedElements, document, styleValues } = createDocumentStub();
 
-    const resolvedPreset = applyThemePreferenceToDocument("stone", {
-      document: document as never,
-    });
-
-    expect(resolvedPreset).toBe("stone");
-    expect(document.documentElement.classList.toggle).toHaveBeenCalledWith("dark", true);
-    expect(document.documentElement.dataset.theme).toBe("stone");
-    expect(document.documentElement.dataset.themePreference).toBe("stone");
-    expect(document.documentElement.style.backgroundColor).toBe(
-      getThemeMetadata("stone").chromeColor,
+    const generated = applyThemePreferenceToDocument(
+      { mode: "dark", hue: 280, saturation: 72 },
+      {
+        document: document as never,
+      },
     );
-    expect(document.body.style.backgroundColor).toBe(getThemeMetadata("stone").chromeColor);
-    expect(appendedElements).toHaveLength(1);
-    expect(appendedElements[0]?.attributes.content).toBe(getThemeMetadata("stone").chromeColor);
+
+    expect(generated.resolvedMode).toBe("dark");
+    expect(document.documentElement.classList.toggle).toHaveBeenCalledWith("dark", true);
+    expect(document.documentElement.dataset.theme).toBe("generated");
+    expect(document.documentElement.dataset.themeMode).toBe("dark");
+    expect(document.documentElement.dataset.themePreferenceMode).toBe("dark");
+    expect(document.documentElement.dataset.themeHue).toBe("280");
+    expect(document.documentElement.dataset.themeSaturation).toBe("72");
+    expect(document.documentElement.style.backgroundColor).toBe(generated.chromeColor);
+    expect(document.body.style.backgroundColor).toBe(generated.chromeColor);
+    expect(styleValues.get("--primary")).toBe(generated.cssVariables["--primary"]);
+    expect(appendedElements[0]?.attributes.content).toBe(generated.chromeColor);
   });
 });

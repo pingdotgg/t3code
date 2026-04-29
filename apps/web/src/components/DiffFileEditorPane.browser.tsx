@@ -255,7 +255,7 @@ index 1111111..2222222 100644
           filePaths={["src/example.ts", "src/other.ts"]}
           navigationLabel="Back to diff"
           initialOverride={undefined}
-          resolvedPreset="stone"
+          resolvedTheme="dark"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
           onPersisted={onPersisted}
@@ -309,7 +309,7 @@ index 1111111..2222222 100644
           filePaths={["src/example.ts", "src/other.ts"]}
           navigationLabel="Back to diff"
           initialOverride={undefined}
-          resolvedPreset="light"
+          resolvedTheme="light"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
           onPersisted={vi.fn()}
@@ -357,7 +357,7 @@ index 1111111..2222222 100644
           filePaths={["src/example.tsx"]}
           navigationLabel="Back to diff"
           initialOverride={undefined}
-          resolvedPreset="stone"
+          resolvedTheme="dark"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
           onPersisted={vi.fn()}
@@ -399,7 +399,7 @@ index 1111111..2222222 100644
           filePaths={["src/example.ts"]}
           navigationLabel="Back to diff"
           initialOverride={undefined}
-          resolvedPreset="stone"
+          resolvedTheme="dark"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
           onPersisted={vi.fn()}
@@ -442,7 +442,7 @@ index 1111111..2222222 100644
           initialLine={2}
           navigationLabel="Exit edit"
           initialOverride={undefined}
-          resolvedPreset="stone"
+          resolvedTheme="dark"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
           onPersisted={vi.fn()}
@@ -491,7 +491,7 @@ index 1111111..2222222 100644
           filePaths={["src/example.ts"]}
           navigationLabel="Back to diff"
           initialOverride={undefined}
-          resolvedPreset="stone"
+          resolvedTheme="dark"
           onAddCodeContext={onAddCodeContext}
           onOpenInEditor={vi.fn()}
           onPersisted={vi.fn()}
@@ -544,7 +544,7 @@ index 1111111..2222222 100644
           filePaths={["src/example.ts"]}
           navigationLabel="Back to diff"
           initialOverride={undefined}
-          resolvedPreset="stone"
+          resolvedTheme="dark"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
           onPersisted={vi.fn()}
@@ -593,7 +593,7 @@ index 1111111..2222222 100644
           filePaths={["src/example.ts"]}
           navigationLabel="Back to diff"
           initialOverride={undefined}
-          resolvedPreset="stone"
+          resolvedTheme="dark"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
           onPersisted={vi.fn()}

@@ -26,7 +26,6 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   MAX_INTERFACE_FONT_SIZE_PX,
   MIN_INTERFACE_FONT_SIZE_PX,
-  type MacOsFontSmoothing,
   type ThreadCleanupInactiveDays,
   type CodeFontSizePx,
   type UiFontSizePx,
@@ -94,6 +93,7 @@ import {
   useServerProviders,
 } from "../../rpc/serverState";
 import { ThemePreferenceSelector } from "./ThemePreferenceSelector";
+import { DEFAULT_CUSTOM_THEME_SETTINGS } from "../../theme";
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -102,10 +102,11 @@ const TIMESTAMP_FORMAT_LABELS = {
 } as const;
 
 const THREAD_CLEANUP_DAY_OPTIONS: readonly ThreadCleanupInactiveDays[] = [1, 3, 7, 14, 30];
-const FONT_SMOOTHING_LABELS: Record<MacOsFontSmoothing, string> = {
-  auto: "Automatic",
-  grayscale: "Grayscale",
-};
+const THEME_MODE_LABELS = {
+  system: "System",
+  light: "Light",
+  dark: "Dark",
+} as const;
 
 type InstallProviderSettings = {
   provider: ProviderKind;
@@ -533,7 +534,7 @@ function hasProviderSettingsChanges(settings: typeof DEFAULT_UNIFIED_SETTINGS) {
 }
 
 export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () => void) {
-  const { theme, setTheme } = useTheme();
+  const { theme, setThemeHue, setThemeMode, setThemeSaturation } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
 
@@ -544,7 +545,11 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
     switch (scope) {
       case "interface":
         return [
-          ...(theme !== "system" ? ["Theme"] : []),
+          ...(theme.mode !== DEFAULT_CUSTOM_THEME_SETTINGS.mode ? ["Theme mode"] : []),
+          ...(theme.hue !== DEFAULT_CUSTOM_THEME_SETTINGS.hue ? ["Theme hue"] : []),
+          ...(theme.saturation !== DEFAULT_CUSTOM_THEME_SETTINGS.saturation
+            ? ["Theme saturation"]
+            : []),
           ...(settings.uiFontScale !== DEFAULT_UI_FONT_SIZE_PX ? ["UI font size"] : []),
           ...(settings.codeFontScale !== DEFAULT_CODE_FONT_SIZE_PX ? ["Code font size"] : []),
           ...(settings.macOsFontSmoothing !== DEFAULT_MAC_OS_FONT_SMOOTHING
@@ -601,7 +606,9 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
     settings.threadCleanupInactiveDays,
     settings.timestampFormat,
     settings.uiFontScale,
-    theme,
+    theme.hue,
+    theme.mode,
+    theme.saturation,
   ]);
 
   const restoreDefaults = useCallback(async () => {
@@ -617,7 +624,9 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
 
     switch (scope) {
       case "interface":
-        setTheme("system");
+        setThemeMode(DEFAULT_CUSTOM_THEME_SETTINGS.mode);
+        setThemeHue(DEFAULT_CUSTOM_THEME_SETTINGS.hue);
+        setThemeSaturation(DEFAULT_CUSTOM_THEME_SETTINGS.saturation);
         updateSettings({
           uiFontScale: DEFAULT_UI_FONT_SIZE_PX,
           codeFontScale: DEFAULT_CODE_FONT_SIZE_PX,
@@ -645,7 +654,15 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
     }
 
     onRestored?.();
-  }, [changedSettingLabels, onRestored, scope, setTheme, updateSettings]);
+  }, [
+    changedSettingLabels,
+    onRestored,
+    scope,
+    setThemeHue,
+    setThemeMode,
+    setThemeSaturation,
+    updateSettings,
+  ]);
 
   return {
     changedSettingLabels,
@@ -654,7 +671,7 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
 }
 
 export function InterfaceSettingsPanel() {
-  const { theme, setTheme, resolvedPreset } = useTheme();
+  const { theme, setThemeHue, setThemeMode, setThemeSaturation, resolvedTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const serverConfig = useServerConfig();
@@ -665,20 +682,49 @@ export function InterfaceSettingsPanel() {
       <SettingsSection title="Appearance">
         <SettingsRow
           title="Theme"
-          description="Choose how Forma looks across the app."
+          description="Build a theme from mode, hue, and saturation."
           resetAction={
-            theme !== "system" ? (
-              <SettingResetButton label="theme" onClick={() => setTheme("system")} />
+            theme.mode !== DEFAULT_CUSTOM_THEME_SETTINGS.mode ||
+            theme.hue !== DEFAULT_CUSTOM_THEME_SETTINGS.hue ||
+            theme.saturation !== DEFAULT_CUSTOM_THEME_SETTINGS.saturation ? (
+              <SettingResetButton
+                label="theme"
+                onClick={() => {
+                  setThemeMode(DEFAULT_CUSTOM_THEME_SETTINGS.mode);
+                  setThemeHue(DEFAULT_CUSTOM_THEME_SETTINGS.hue);
+                  setThemeSaturation(DEFAULT_CUSTOM_THEME_SETTINGS.saturation);
+                }}
+              />
             ) : null
           }
+          control={
+            <Select
+              value={theme.mode}
+              onValueChange={(value) => setThemeMode(value as typeof theme.mode)}
+            >
+              <SelectTrigger className="w-full sm:w-44" aria-label="Theme mode">
+                <SelectValue>{THEME_MODE_LABELS[theme.mode]}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="system">
+                  {THEME_MODE_LABELS.system}
+                </SelectItem>
+                <SelectItem hideIndicator value="light">
+                  {THEME_MODE_LABELS.light}
+                </SelectItem>
+                <SelectItem hideIndicator value="dark">
+                  {THEME_MODE_LABELS.dark}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
         >
-          <div className="pt-3 pb-3">
-            <ThemePreferenceSelector
-              onChange={setTheme}
-              resolvedPreset={resolvedPreset}
-              theme={theme}
-            />
-          </div>
+          <ThemePreferenceSelector
+            onHueChange={setThemeHue}
+            onSaturationChange={setThemeSaturation}
+            resolvedTheme={resolvedTheme}
+            theme={theme}
+          />
         </SettingsRow>
       </SettingsSection>
 
@@ -748,18 +794,13 @@ export function InterfaceSettingsPanel() {
               ) : null
             }
             control={
-              <div className="flex items-center gap-2">
-                <Switch
-                  aria-label="Font smoothing"
-                  checked={settings.macOsFontSmoothing === "grayscale"}
-                  onCheckedChange={(checked) =>
-                    updateSettings({ macOsFontSmoothing: checked ? "grayscale" : "auto" })
-                  }
-                />
-                <span className="text-ui-xs text-muted-foreground">
-                  {FONT_SMOOTHING_LABELS[settings.macOsFontSmoothing]}
-                </span>
-              </div>
+              <Switch
+                aria-label="Font smoothing"
+                checked={settings.macOsFontSmoothing === "grayscale"}
+                onCheckedChange={(checked) =>
+                  updateSettings({ macOsFontSmoothing: checked ? "grayscale" : "auto" })
+                }
+              />
             }
           />
         ) : null}

@@ -3,23 +3,23 @@ import type { DesktopTheme } from "@forma/contracts";
 import {
   THEME_MEDIA_QUERY,
   THEME_STORAGE_KEY,
-  type ThemePreference,
+  type CustomThemeSettings,
+  type ThemeMode,
   applyThemePreferenceToDocument,
-  normalizeThemePreference,
-  readStoredThemePreference,
+  readStoredThemeSettings,
   resolveDesktopTheme,
   resolveThemeMode,
-  resolveThemePreset,
   setDynamicThemeColor,
+  writeStoredThemeSettings,
 } from "../theme";
 
 type ThemeSnapshot = {
-  theme: ThemePreference;
+  theme: CustomThemeSettings;
   systemDark: boolean;
 };
 
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
-  theme: "system",
+  theme: readStoredThemeSettings(null),
   systemDark: false,
 };
 
@@ -43,9 +43,9 @@ function getSystemDark() {
   );
 }
 
-function getStored(): ThemePreference {
+function getStored(): CustomThemeSettings {
   if (!hasThemeStorage()) return DEFAULT_THEME_SNAPSHOT.theme;
-  return readStoredThemePreference(localStorage);
+  return readStoredThemeSettings(localStorage);
 }
 
 function normalizeThemeColor(value: string | null | undefined): string | null {
@@ -84,10 +84,10 @@ export function syncBrowserChromeTheme() {
   setDynamicThemeColor(backgroundColor, document);
 }
 
-function syncDesktopTheme(theme: ThemePreference) {
+function syncDesktopTheme(theme: CustomThemeSettings) {
   if (typeof window === "undefined") return;
   const bridge = window.desktopBridge;
-  const desktopTheme = resolveDesktopTheme(theme);
+  const desktopTheme = resolveDesktopTheme(theme, getSystemDark());
   if (!bridge || lastDesktopTheme === desktopTheme) {
     return;
   }
@@ -100,7 +100,7 @@ function syncDesktopTheme(theme: ThemePreference) {
   });
 }
 
-function applyTheme(theme: ThemePreference, suppressTransitions = false) {
+function applyTheme(theme: CustomThemeSettings, suppressTransitions = false) {
   if (typeof document === "undefined" || typeof window === "undefined") return;
   if (suppressTransitions) {
     document.documentElement.classList.add("no-transitions");
@@ -128,9 +128,15 @@ if (typeof document !== "undefined" && hasThemeStorage()) {
 function getSnapshot(): ThemeSnapshot {
   if (!hasThemeStorage()) return DEFAULT_THEME_SNAPSHOT;
   const theme = getStored();
-  const systemDark = theme === "system" ? getSystemDark() : false;
+  const systemDark = theme.mode === "system" ? getSystemDark() : false;
 
-  if (lastSnapshot && lastSnapshot.theme === theme && lastSnapshot.systemDark === systemDark) {
+  if (
+    lastSnapshot &&
+    lastSnapshot.systemDark === systemDark &&
+    lastSnapshot.theme.mode === theme.mode &&
+    lastSnapshot.theme.hue === theme.hue &&
+    lastSnapshot.theme.saturation === theme.saturation
+  ) {
     return lastSnapshot;
   }
 
@@ -148,8 +154,8 @@ function subscribe(listener: () => void): () => void {
 
   const mq = window.matchMedia(THEME_MEDIA_QUERY);
   const handleChange = () => {
-    if (getStored() === "system") {
-      applyTheme("system", true);
+    if (getStored().mode === "system") {
+      applyTheme(getStored(), true);
       emitChange();
     }
   };
@@ -174,21 +180,41 @@ function subscribe(listener: () => void): () => void {
 export function useTheme() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const theme = snapshot.theme;
-  const resolvedPreset = resolveThemePreset(theme, snapshot.systemDark);
-  const resolvedTheme = resolveThemeMode(resolvedPreset);
+  const resolvedTheme = resolveThemeMode(theme, snapshot.systemDark);
   const isDark = resolvedTheme === "dark";
 
-  const setTheme = useCallback((next: ThemePreference) => {
+  const updateTheme = useCallback((next: Partial<CustomThemeSettings>) => {
     if (!hasThemeStorage()) return;
-    const normalizedTheme = normalizeThemePreference(next);
-    localStorage.setItem(THEME_STORAGE_KEY, normalizedTheme);
-    applyTheme(normalizedTheme, true);
+    const updatedTheme = { ...getStored(), ...next };
+    writeStoredThemeSettings(updatedTheme, localStorage);
+    applyTheme(updatedTheme, true);
     emitChange();
   }, []);
+
+  const setThemeMode = useCallback(
+    (mode: ThemeMode) => {
+      updateTheme({ mode });
+    },
+    [updateTheme],
+  );
+
+  const setThemeHue = useCallback(
+    (hue: number) => {
+      updateTheme({ hue });
+    },
+    [updateTheme],
+  );
+
+  const setThemeSaturation = useCallback(
+    (saturation: number) => {
+      updateTheme({ saturation });
+    },
+    [updateTheme],
+  );
 
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
 
-  return { theme, setTheme, resolvedTheme, resolvedPreset, isDark } as const;
+  return { theme, setThemeHue, setThemeMode, setThemeSaturation, resolvedTheme, isDark } as const;
 }

@@ -30,7 +30,7 @@ import {
 import { useSettings } from "../hooks/useSettings";
 import { getCodeEditorFontSize } from "../interfaceAppearance";
 import { cn } from "../lib/utils";
-import type { ResolvedThemePreset } from "../theme";
+import type { ResolvedThemeMode } from "../theme";
 import { Button } from "./ui/button";
 import {
   Dialog,
@@ -64,7 +64,7 @@ interface DiffFileEditorPaneProps {
   initialLine?: number | undefined;
   initialColumn?: number | undefined;
   navigationLabel: string;
-  resolvedPreset: ResolvedThemePreset;
+  resolvedTheme: ResolvedThemeMode;
   onRequestBack: () => void;
   onRequestFilePathChange: (filePath: string) => void;
   onOpenInEditor: (filePath: string) => void;
@@ -158,7 +158,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     onAddCodeContext,
     onRequestBack,
     onRequestFilePathChange,
-    resolvedPreset,
+    resolvedTheme,
   } = props;
   const [status, setStatus] = useState<ProjectFileEditorStatus>("idle");
   const [message, setMessage] = useState<string | null>(null);
@@ -507,7 +507,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     }),
     [codeFontScale, status],
   );
-  const monacoTheme = useMemo(() => ensureAppMonacoTheme(resolvedPreset), [resolvedPreset]);
+  const monacoTheme = useMemo(() => ensureAppMonacoTheme(resolvedTheme), [resolvedTheme]);
   const monacoLanguage = useMemo(() => resolveMonacoLanguage(filePath), [filePath]);
 
   return (

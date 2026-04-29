@@ -5,6 +5,7 @@ import { ThreadId } from "@forma/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 import { useEffect } from "react";
+import { generateTheme } from "../theme";
 
 const {
   terminalConstructorSpy,
@@ -238,6 +239,11 @@ describe("TerminalViewport", () => {
   afterEach(() => {
     __resetClientSettingsPersistenceForTests();
     delete document.documentElement.dataset.theme;
+    delete document.documentElement.dataset.themeMode;
+    delete document.documentElement.dataset.themePreferenceMode;
+    delete document.documentElement.dataset.themeHue;
+    delete document.documentElement.dataset.themeSaturation;
+    document.documentElement.classList.remove("dark");
     environmentApiById.clear();
     readEnvironmentApiMock.mockClear();
     readLocalApiMock.mockClear();
@@ -348,8 +354,15 @@ describe("TerminalViewport", () => {
     }
   });
 
-  it("uses the resolved preset palette for terminal accents", async () => {
-    document.documentElement.dataset.theme = "stone";
+  it("uses the resolved light or dark terminal palette instead of hue-driven accents", async () => {
+    const generated = generateTheme({ mode: "dark", hue: 28, saturation: 42 });
+    const comparison = generateTheme({ mode: "dark", hue: 240, saturation: 90 });
+    document.documentElement.dataset.theme = "generated";
+    document.documentElement.dataset.themeMode = "dark";
+    document.documentElement.dataset.themePreferenceMode = "dark";
+    document.documentElement.dataset.themeHue = "28";
+    document.documentElement.dataset.themeSaturation = "42";
+    document.documentElement.classList.add("dark");
     const environment = createEnvironmentApi();
     environmentApiById.set("environment-a", environment);
 
@@ -365,18 +378,25 @@ describe("TerminalViewport", () => {
       expect(terminalConstructorSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           theme: expect.objectContaining({
-            cursor: "rgb(221, 206, 196)",
-            selectionBackground: "rgba(151, 115, 103, 0.22)",
+            cursor: generated.terminalPalette.cursor,
+            selectionBackground: generated.terminalPalette.selectionBackground,
           }),
         }),
       );
+      expect(generated.terminalPalette.cursor).toBe(comparison.terminalPalette.cursor);
+      expect(generated.terminalPalette.blue).toBe(comparison.terminalPalette.blue);
     } finally {
       await mounted.cleanup();
     }
   });
 
-  it("refreshes the terminal theme when only the preset changes", async () => {
-    document.documentElement.dataset.theme = "stone";
+  it("does not refresh the terminal theme when only hue changes", async () => {
+    document.documentElement.dataset.theme = "generated";
+    document.documentElement.dataset.themeMode = "dark";
+    document.documentElement.dataset.themePreferenceMode = "dark";
+    document.documentElement.dataset.themeHue = "28";
+    document.documentElement.dataset.themeSaturation = "42";
+    document.documentElement.classList.add("dark");
     const environment = createEnvironmentApi();
     environmentApiById.set("environment-a", environment);
 
@@ -389,16 +409,10 @@ describe("TerminalViewport", () => {
         expect(terminalInstances).toHaveLength(1);
       });
 
-      document.documentElement.dataset.theme = "midnight";
-
-      await vi.waitFor(() => {
-        expect(terminalInstances[0]?.options.theme).toEqual(
-          expect.objectContaining({
-            cursor: "rgb(188, 208, 240)",
-          }),
-        );
-      });
-      expect(terminalRefreshSpy).toHaveBeenCalled();
+      terminalRefreshSpy.mockClear();
+      document.documentElement.dataset.themeHue = "240";
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      expect(terminalRefreshSpy).not.toHaveBeenCalled();
     } finally {
       await mounted.cleanup();
     }

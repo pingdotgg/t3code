@@ -5,7 +5,7 @@ import htmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
 import jsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
 import tsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 import editorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
-import { getThemeMetadata, type ResolvedThemePreset } from "../theme";
+import { type ResolvedThemeMode } from "../theme";
 
 type MonacoEnvironmentShape = {
   getWorker(_: string, label: string): Worker;
@@ -174,12 +174,20 @@ function resolveThemeCssColor(
 }
 
 function buildAppMonacoTheme(
-  preset: ResolvedThemePreset,
+  mode: ResolvedThemeMode,
   targetDocument: Document,
 ): monaco.editor.IStandaloneThemeData {
-  const metadata = getThemeMetadata(preset);
-  const background = resolveThemeCssColor(targetDocument, "--background", metadata.chromeColor);
-  const foreground = resolveThemeCssColor(targetDocument, "--foreground", metadata.foregroundColor);
+  const isDark = mode === "dark";
+  const background = resolveThemeCssColor(
+    targetDocument,
+    "--background",
+    isDark ? "#171717" : "#ffffff",
+  );
+  const foreground = resolveThemeCssColor(
+    targetDocument,
+    "--foreground",
+    isDark ? "#f5f5f5" : "#262626",
+  );
   const card = resolveThemeCssColor(targetDocument, "--card", background);
   const border = resolveThemeCssColor(targetDocument, "--border", foreground);
   const primary = resolveThemeCssColor(targetDocument, "--primary", foreground);
@@ -187,7 +195,7 @@ function buildAppMonacoTheme(
   const mutedForeground = resolveThemeCssColor(targetDocument, "--muted-foreground", foreground);
 
   return {
-    base: metadata.mode === "dark" ? "vs-dark" : "vs",
+    base: isDark ? "vs-dark" : "vs",
     inherit: true,
     colors: {
       "editor.background": background,
@@ -195,50 +203,26 @@ function buildAppMonacoTheme(
       "editorLineNumber.foreground": withAlpha(mutedForeground, 0.7),
       "editorLineNumber.activeForeground": foreground,
       "editorCursor.foreground": primary,
-      "editor.selectionBackground": withAlpha(primary, metadata.mode === "dark" ? 0.28 : 0.2),
-      "editor.inactiveSelectionBackground": withAlpha(
-        primary,
-        metadata.mode === "dark" ? 0.16 : 0.12,
-      ),
-      "editor.lineHighlightBackground": withAlpha(card, metadata.mode === "dark" ? 0.45 : 0.65),
-      "editorIndentGuide.background1": withAlpha(
-        mutedForeground,
-        metadata.mode === "dark" ? 0.18 : 0.12,
-      ),
-      "editorIndentGuide.activeBackground1": withAlpha(
-        primary,
-        metadata.mode === "dark" ? 0.32 : 0.22,
-      ),
-      "editorWhitespace.foreground": withAlpha(
-        mutedForeground,
-        metadata.mode === "dark" ? 0.18 : 0.14,
-      ),
+      "editor.selectionBackground": withAlpha(primary, isDark ? 0.28 : 0.2),
+      "editor.inactiveSelectionBackground": withAlpha(primary, isDark ? 0.16 : 0.12),
+      "editor.lineHighlightBackground": withAlpha(card, isDark ? 0.45 : 0.65),
+      "editorIndentGuide.background1": withAlpha(mutedForeground, isDark ? 0.18 : 0.12),
+      "editorIndentGuide.activeBackground1": withAlpha(primary, isDark ? 0.32 : 0.22),
+      "editorWhitespace.foreground": withAlpha(mutedForeground, isDark ? 0.18 : 0.14),
       "editorGutter.background": background,
       "editorGutter.modifiedBackground": primary,
       "editorGutter.addedBackground": withAlpha("#22c55e", 0.9),
       "editorGutter.deletedBackground": withAlpha("#ef4444", 0.9),
       "editorWidget.background": card,
-      "editorWidget.border": withAlpha(border, metadata.mode === "dark" ? 0.6 : 0.8),
+      "editorWidget.border": withAlpha(border, isDark ? 0.6 : 0.8),
       "editorHoverWidget.background": card,
-      "editorHoverWidget.border": withAlpha(border, metadata.mode === "dark" ? 0.6 : 0.8),
+      "editorHoverWidget.border": withAlpha(border, isDark ? 0.6 : 0.8),
       "editorSuggestWidget.background": card,
-      "editorSuggestWidget.border": withAlpha(border, metadata.mode === "dark" ? 0.6 : 0.8),
-      "editorSuggestWidget.selectedBackground": withAlpha(
-        muted,
-        metadata.mode === "dark" ? 0.8 : 0.9,
-      ),
-      "scrollbarSlider.background": withAlpha(
-        mutedForeground,
-        metadata.mode === "dark" ? 0.18 : 0.12,
-      ),
-      "scrollbarSlider.hoverBackground": withAlpha(
-        mutedForeground,
-        metadata.mode === "dark" ? 0.28 : 0.2,
-      ),
-      "scrollbarSlider.activeBackground": withAlpha(
-        mutedForeground,
-        metadata.mode === "dark" ? 0.36 : 0.28,
-      ),
+      "editorSuggestWidget.border": withAlpha(border, isDark ? 0.6 : 0.8),
+      "editorSuggestWidget.selectedBackground": withAlpha(muted, isDark ? 0.8 : 0.9),
+      "scrollbarSlider.background": withAlpha(mutedForeground, isDark ? 0.18 : 0.12),
+      "scrollbarSlider.hoverBackground": withAlpha(mutedForeground, isDark ? 0.28 : 0.2),
+      "scrollbarSlider.activeBackground": withAlpha(mutedForeground, isDark ? 0.36 : 0.28),
     },
     rules: [],
   };
@@ -340,16 +324,16 @@ export function ensureMonacoConfigured(): void {
 }
 
 export function ensureAppMonacoTheme(
-  preset: ResolvedThemePreset,
+  mode: ResolvedThemeMode,
   targetDocument?: Document | null,
 ): string {
   const safeDocument = targetDocument ?? (typeof document !== "undefined" ? document : null);
   if (!safeDocument) {
-    return getThemeMetadata(preset).mode === "dark" ? "vs-dark" : "vs";
+    return mode === "dark" ? "vs-dark" : "vs";
   }
 
-  const themeName = `forma-${preset}`;
-  const themeData = buildAppMonacoTheme(preset, safeDocument);
+  const themeName = `forma-${mode}`;
+  const themeData = buildAppMonacoTheme(mode, safeDocument);
   const signature = JSON.stringify(themeData);
   if (monacoThemeSignatures.get(themeName) !== signature) {
     monaco.editor.defineTheme(themeName, themeData);
