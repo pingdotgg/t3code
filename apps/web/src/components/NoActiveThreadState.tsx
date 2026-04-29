@@ -59,11 +59,12 @@ const ACTION_CARD_CLASS_NAME =
   "relative isolate h-auto min-h-[11.5rem] w-full overflow-hidden rounded-[20px] border-border/60 bg-background px-5 py-5 text-left whitespace-normal shadow-sm shadow-black/5 transition-all duration-150 ease-out before:rounded-[19px] hover:-translate-y-0.5 hover:border-border/85 hover:bg-accent/16 hover:shadow-md hover:ring-4 hover:ring-foreground/5 hover:ring-offset-4 hover:ring-offset-background active:translate-y-0 active:scale-[0.985] active:shadow-sm";
 const SECTION_HEADING_CLASS_NAME =
   "text-ui-xs font-medium uppercase tracking-[0.18em] text-muted-foreground/64";
-const LIST_TABLE_SHELL_CLASS_NAME = "rounded-[1.5rem] bg-foreground/5 p-0.5";
+const LIST_TABLE_SHELL_CLASS_NAME = "rounded-[1.3rem] bg-foreground/5 p-1";
 const LIST_TABLE_INNER_CLASS_NAME =
   "overflow-hidden rounded-[1.15rem] border border-border/55 bg-white dark:bg-white/5 shadow-sm";
-const LIST_TABLE_HEADER_CLASS_NAME =
-  "text-ui-2xs hidden items-center gap-4 px-4 py-2 font-semibold uppercase tracking-[0.14em] text-muted-foreground/68 md:grid";
+const LIST_TABLE_HEADER_ROW_CLASS_NAME = "hidden items-center gap-4 px-4 py-2 md:grid";
+const LIST_TABLE_HEADER_CELL_CLASS_NAME =
+  "text-ui-2xs font-semibold uppercase tracking-[0.14em] text-muted-foreground/68";
 const RECENT_THREAD_TABLE_GRID_CLASS_NAME = "md:grid-cols-[minmax(0,1fr)_3rem]";
 const PROJECT_TABLE_GRID_CLASS_NAME = "md:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)_auto]";
 
@@ -707,12 +708,22 @@ export function NoActiveThreadState() {
                 <div className={LIST_TABLE_SHELL_CLASS_NAME}>
                   <div
                     className={cn(
-                      LIST_TABLE_HEADER_CLASS_NAME,
+                      LIST_TABLE_HEADER_ROW_CLASS_NAME,
                       RECENT_THREAD_TABLE_GRID_CLASS_NAME,
                     )}
                   >
-                    <div>Thread</div>
-                    <div className="text-center">Actions</div>
+                    <div
+                      data-testid="no-active-thread-recent-threads-header-thread"
+                      className={LIST_TABLE_HEADER_CELL_CLASS_NAME}
+                    >
+                      Thread
+                    </div>
+                    <div
+                      data-testid="no-active-thread-recent-threads-header-actions"
+                      className={`${LIST_TABLE_HEADER_CELL_CLASS_NAME} text-center`}
+                    >
+                      Actions
+                    </div>
                   </div>
                   <Card className={LIST_TABLE_INNER_CLASS_NAME}>
                     {recentThreadItems.map((item, index) => (
@@ -739,10 +750,12 @@ export function NoActiveThreadState() {
               <section className="space-y-3">
                 <div className={SECTION_HEADING_CLASS_NAME}>Projects</div>
                 <div className={LIST_TABLE_SHELL_CLASS_NAME}>
-                  <div className={cn(LIST_TABLE_HEADER_CLASS_NAME, PROJECT_TABLE_GRID_CLASS_NAME)}>
-                    <div>Project</div>
-                    <div>Path</div>
-                    <div className="text-right">Recent</div>
+                  <div
+                    className={cn(LIST_TABLE_HEADER_ROW_CLASS_NAME, PROJECT_TABLE_GRID_CLASS_NAME)}
+                  >
+                    <div className={LIST_TABLE_HEADER_CELL_CLASS_NAME}>Project</div>
+                    <div className={LIST_TABLE_HEADER_CELL_CLASS_NAME}>Path</div>
+                    <div className={`${LIST_TABLE_HEADER_CELL_CLASS_NAME} text-right`}>Recent</div>
                   </div>
                   <Card className={LIST_TABLE_INNER_CLASS_NAME}>
                     {projectItems.map((item, index) => (

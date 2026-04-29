@@ -2366,6 +2366,51 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("applies UI font sizing to the recent threads table headers", async () => {
+    localStorage.setItem(
+      "forma:client-settings:v1",
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        uiFontScale: 19,
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-no-active-thread-header-font" as MessageId,
+        targetText: "no active thread header font",
+      }),
+      initialPath: "/",
+      configureFixture: clearWelcomeBootstrapTargets,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await expect
+        .element(page.getByTestId("no-active-thread-recent-threads-header-thread"))
+        .toBeVisible();
+      await vi.waitFor(() => {
+        const threadHeader = document.querySelector<HTMLElement>(
+          '[data-testid="no-active-thread-recent-threads-header-thread"]',
+        );
+        const actionsHeader = document.querySelector<HTMLElement>(
+          '[data-testid="no-active-thread-recent-threads-header-actions"]',
+        );
+        const expectedFontSize = getComputedStyle(document.documentElement)
+          .getPropertyValue("--app-ui-text-2xs")
+          .trim();
+
+        expect(threadHeader).not.toBeNull();
+        expect(actionsHeader).not.toBeNull();
+        expect(getComputedStyle(threadHeader!).fontSize).toBe(expectedFontSize);
+        expect(getComputedStyle(actionsHeader!).fontSize).toBe(expectedFontSize);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("reveals no-active-thread recent-thread quick actions on hover and does not navigate when showing archive confirmation", async () => {
     localStorage.setItem(
       "forma:client-settings:v1",
