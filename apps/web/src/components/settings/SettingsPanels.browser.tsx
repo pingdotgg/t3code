@@ -28,6 +28,7 @@ import { ConnectionsSettings } from "./ConnectionsSettings";
 import {
   AdvancedSettingsPanel,
   InterfaceSettingsPanel,
+  NotificationsSettingsPanel,
   ProvidersSettingsPanel,
   ThreadsSettingsPanel,
   useSettingsRestore,
@@ -350,12 +351,18 @@ const createDesktopBridgeStub = (overrides?: {
   };
 };
 
-function ThreadsRestoreHarness() {
-  const { changedSettingLabels, restoreDefaults } = useSettingsRestore("threads");
+function SettingsRestoreHarness({
+  buttonLabel,
+  scope,
+}: {
+  buttonLabel: string;
+  scope: Parameters<typeof useSettingsRestore>[0];
+}) {
+  const { changedSettingLabels, restoreDefaults } = useSettingsRestore(scope);
 
   return (
     <button disabled={changedSettingLabels.length === 0} onClick={() => void restoreDefaults()}>
-      Restore thread defaults
+      {buttonLabel}
     </button>
   );
 }
@@ -692,10 +699,26 @@ describe("Settings panels", () => {
     });
   });
 
-  it("hides desktop attention notification controls when the desktop bridge is missing", async () => {
+  it("keeps desktop attention notification controls out of the Threads page", async () => {
     await renderSettingsPanel(<ThreadsSettingsPanel />);
 
-    await expect.element(page.getByText("Attention")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Thread attention")).not.toBeInTheDocument();
+    await expect
+      .element(page.getByLabelText("Approval request notifications"))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByLabelText("Question prompt notifications"))
+      .not.toBeInTheDocument();
+  });
+
+  it("shows desktop notification availability state when the desktop bridge is missing", async () => {
+    await renderSettingsPanel(<NotificationsSettingsPanel />);
+
+    await expect.element(page.getByText("Thread attention")).toBeInTheDocument();
+    await expect.element(page.getByText("Desktop notifications unavailable")).toBeInTheDocument();
+    await expect
+      .element(page.getByText(/Open Forma in the desktop app to receive attention notifications/i))
+      .toBeInTheDocument();
     await expect
       .element(page.getByLabelText("Approval request notifications"))
       .not.toBeInTheDocument();
@@ -708,7 +731,7 @@ describe("Settings panels", () => {
     const desktopBridge = createDesktopBridgeStub();
     const setClientSettings = vi.mocked(desktopBridge.setClientSettings);
     window.desktopBridge = desktopBridge;
-    await renderSettingsPanel(<ThreadsSettingsPanel />);
+    await renderSettingsPanel(<NotificationsSettingsPanel />);
 
     await page.getByRole("switch", { name: "Approval request notifications" }).click();
     await page.getByRole("switch", { name: "Question prompt notifications" }).click();
@@ -759,7 +782,7 @@ describe("Settings panels", () => {
     });
   });
 
-  it("restores desktop attention notification controls through the threads restore flow", async () => {
+  it("restores desktop attention notification controls through the notifications restore flow", async () => {
     const desktopBridge = createDesktopBridgeStub();
     const setClientSettings = vi.mocked(desktopBridge.setClientSettings);
     desktopBridge.confirm = vi.fn().mockResolvedValue(true);
@@ -779,8 +802,8 @@ describe("Settings panels", () => {
 
     await renderSettingsPanel(
       <>
-        <ThreadsSettingsPanel />
-        <ThreadsRestoreHarness />
+        <NotificationsSettingsPanel />
+        <SettingsRestoreHarness buttonLabel="Restore notification defaults" scope="notifications" />
       </>,
     );
 
@@ -806,7 +829,7 @@ describe("Settings panels", () => {
       );
     });
 
-    await page.getByRole("button", { name: "Restore thread defaults" }).click();
+    await page.getByRole("button", { name: "Restore notification defaults" }).click();
 
     await vi.waitFor(() => {
       expect(

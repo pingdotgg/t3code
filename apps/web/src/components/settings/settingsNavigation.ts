@@ -6,14 +6,16 @@ import {
 } from "symbols-react";
 import {
   AdvancedSettingsIcon as AdvancedIcon,
+  NotificationsSettingsIcon as NotificationsIcon,
   ProvidersSettingsIcon as ProvidersIcon,
 } from "../icons/custom";
 
-export type SettingsRestoreScope = "interface" | "threads" | "providers";
+export type SettingsRestoreScope = "interface" | "threads" | "notifications" | "providers";
 
 export type SettingsSectionPath =
   | "/settings/interface"
   | "/settings/threads"
+  | "/settings/notifications"
   | "/settings/providers"
   | "/settings/connections"
   | "/settings/advanced";
@@ -45,6 +47,13 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
     icon: ThreadsIcon,
     iconUsesFill: true,
     restoreScope: "threads",
+  },
+  {
+    label: "Notifications",
+    to: "/settings/notifications",
+    icon: NotificationsIcon,
+    iconUsesFill: true,
+    restoreScope: "notifications",
   },
   {
     label: "Providers",

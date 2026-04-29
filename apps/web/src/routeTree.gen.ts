@@ -15,6 +15,7 @@ import { Route as ChatRouteImport } from './routes/_chat'
 import { Route as ChatIndexRouteImport } from './routes/_chat.index'
 import { Route as SettingsThreadsRouteImport } from './routes/settings.threads'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
+import { Route as SettingsNotificationsRouteImport } from './routes/settings.notifications'
 import { Route as SettingsInterfaceRouteImport } from './routes/settings.interface'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
@@ -50,6 +51,11 @@ const SettingsThreadsRoute = SettingsThreadsRouteImport.update({
 const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
   id: '/providers',
   path: '/providers',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsNotificationsRoute = SettingsNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsInterfaceRoute = SettingsInterfaceRouteImport.update({
@@ -98,6 +104,7 @@ export interface FileRoutesByFullPath {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/interface': typeof SettingsInterfaceRoute
+  '/settings/notifications': typeof SettingsNotificationsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/threads': typeof SettingsThreadsRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
@@ -111,6 +118,7 @@ export interface FileRoutesByTo {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/interface': typeof SettingsInterfaceRoute
+  '/settings/notifications': typeof SettingsNotificationsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/threads': typeof SettingsThreadsRoute
   '/': typeof ChatIndexRoute
@@ -127,6 +135,7 @@ export interface FileRoutesById {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/interface': typeof SettingsInterfaceRoute
+  '/settings/notifications': typeof SettingsNotificationsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/settings/threads': typeof SettingsThreadsRoute
   '/_chat/': typeof ChatIndexRoute
@@ -144,6 +153,7 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/general'
     | '/settings/interface'
+    | '/settings/notifications'
     | '/settings/providers'
     | '/settings/threads'
     | '/$environmentId/$threadId'
@@ -157,6 +167,7 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/general'
     | '/settings/interface'
+    | '/settings/notifications'
     | '/settings/providers'
     | '/settings/threads'
     | '/'
@@ -172,6 +183,7 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/general'
     | '/settings/interface'
+    | '/settings/notifications'
     | '/settings/providers'
     | '/settings/threads'
     | '/_chat/'
@@ -227,6 +239,13 @@ declare module '@tanstack/react-router' {
       path: '/providers'
       fullPath: '/settings/providers'
       preLoaderRoute: typeof SettingsProvidersRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/notifications': {
+      id: '/settings/notifications'
+      path: '/notifications'
+      fullPath: '/settings/notifications'
+      preLoaderRoute: typeof SettingsNotificationsRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/interface': {
@@ -301,6 +320,7 @@ interface SettingsRouteChildren {
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsInterfaceRoute: typeof SettingsInterfaceRoute
+  SettingsNotificationsRoute: typeof SettingsNotificationsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
   SettingsThreadsRoute: typeof SettingsThreadsRoute
 }
@@ -311,6 +331,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsConnectionsRoute: SettingsConnectionsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsInterfaceRoute: SettingsInterfaceRoute,
+  SettingsNotificationsRoute: SettingsNotificationsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
   SettingsThreadsRoute: SettingsThreadsRoute,
 }

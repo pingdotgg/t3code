@@ -3,6 +3,7 @@ export * from "./AddProjectIcon";
 export * from "./FinderIcon";
 export * from "./MessageCopyIcon";
 export * from "./NewThreadIcon";
+export * from "./NotificationsSettingsIcon";
 export * from "./ProvidersSettingsIcon";
 export * from "./SettingsHexIcon";
 export * from "./SidebarArchiveIcon";
