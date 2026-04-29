@@ -11,6 +11,7 @@ V2 is designed around the real provider behavior observed in the Codex app-serve
 - [Core Graph And Data Model](./core-graph-and-data-model.md)
 - [Entity IDs And Correlation](./entity-ids-and-correlation.md)
 - [Feature Lifecycles](./feature-lifecycles.md)
+- [Thread Lineage And Context Transfer](./thread-lineage-and-context-transfer.md)
 - [Provider Switching And Context Handoff](./provider-switching-and-context.md)
 - [Provider Capability System](./provider-capability-system.md)
 - [Testing Strategy](./testing-strategy.md)
@@ -22,6 +23,7 @@ V2 is designed around the real provider behavior observed in the Codex app-serve
 - Make root-run completion the only event that completes a user-visible turn.
 - Support forking from normal threads and completed subagent/provider threads.
 - Support changing providers between runs as a first-class context handoff.
+- Model forks, provider handoffs, merge-back, and subagents through shared thread lineage and context transfer primitives.
 - Support providers with weak or missing ids through deterministic app-owned id allocation.
 - Make feature behavior capability-driven, not provider-name-driven.
 
@@ -35,7 +37,8 @@ V2 is designed around the real provider behavior observed in the Codex app-serve
 6. Every command targets app ids; adapters translate to provider refs at the edge.
 7. Missing provider capability is represented explicitly and handled by policy.
 8. Provider switches create explicit context handoff artifacts; they are not hidden prompt hacks.
-9. Tests should prefer replay-backed integration coverage over mocked unit tests. The only normal substitute in orchestration tests is the provider runtime transport.
+9. Forks record app-level lineage first. Provider-native forks and portable context handoffs are lazy resolution strategies chosen when a run starts.
+10. Tests should prefer replay-backed integration coverage over mocked unit tests. The only normal substitute in orchestration tests is the provider runtime transport.
 
 ## Conceptual Layers
 
@@ -73,6 +76,8 @@ AppThread
 An app thread is the user-visible conversation. A run is the counted user-visible turn. Execution nodes are the tree of work inside the run. Provider threads are provider-native conversation handles that can be attached to app threads or nested execution nodes.
 
 Provider switches do not create new app threads. They create or reactivate provider threads and attach context handoff summaries to the next run.
+
+Forks do create new app threads, but they should not force provider selection at fork time. Forking records thread lineage and a pending source point. The first run on the fork resolves that source point through native provider fork when possible or portable context transfer when needed.
 
 ## Probe-Derived Requirements
 

@@ -171,6 +171,12 @@ export const CodexOrchestratorReplayHarness: OrchestratorV2ProviderReplayHarness
       ),
     ),
   makeProviderAdapterRegistryLayer: (transcript) => {
-    return makeCodexProviderAdapterRegistryReplayLayer({ transcript });
+    return Layer.effectContext(
+      CodexReplay.makeReplayDriver(transcript).pipe(
+        Effect.flatMap((driver) =>
+          Layer.build(makeCodexProviderAdapterRegistryReplayLayer({ transcript, driver })),
+        ),
+      ),
+    );
   },
 };
