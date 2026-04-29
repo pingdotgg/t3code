@@ -9,12 +9,14 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { DiffIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
+import { toastManager } from "../ui/toast";
 import { OpenInPicker } from "./OpenInPicker";
 
 interface ChatHeaderProps {
@@ -68,6 +70,24 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleTerminal,
   onToggleDiff,
 }: ChatHeaderProps) {
+  const { copyToClipboard: copyPathToClipboard, isCopied: isProjectPathCopied } =
+    useCopyToClipboard<{ path: string }>({
+      onCopy: (ctx) => {
+        toastManager.add({
+          type: "success",
+          title: "Folder path copied",
+          description: ctx.path,
+        });
+      },
+      onError: (error) => {
+        toastManager.add({
+          type: "error",
+          title: "Failed to copy folder path",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      },
+    });
+
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
@@ -79,9 +99,40 @@ export const ChatHeader = memo(function ChatHeader({
           {activeThreadTitle}
         </h2>
         {activeProjectName && (
-          <Badge variant="outline" className="min-w-0 shrink overflow-hidden">
-            <span className="min-w-0 truncate">{activeProjectName}</span>
-          </Badge>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Badge
+                  variant="outline"
+                  className="min-w-0 shrink overflow-hidden"
+                  render={
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!openInCwd) return;
+                        copyPathToClipboard(openInCwd, { path: openInCwd });
+                      }}
+                      disabled={!openInCwd}
+                      aria-label={
+                        openInCwd
+                          ? `Copy project path for ${activeProjectName}`
+                          : `Project path unavailable for ${activeProjectName}`
+                      }
+                    />
+                  }
+                >
+                  <span className="min-w-0 truncate">{activeProjectName}</span>
+                </Badge>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {!openInCwd
+                ? "Folder path unavailable"
+                : isProjectPathCopied
+                  ? "Folder path copied"
+                  : "Copy folder path"}
+            </TooltipPopup>
+          </Tooltip>
         )}
         {activeProjectName && !isGitRepo && (
           <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
