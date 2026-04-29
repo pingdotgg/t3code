@@ -1,30 +1,19 @@
 /**
- * ClaudeAdapter - Claude Agent implementation of the generic provider adapter contract.
+ * ClaudeAdapter — shape type for the Claude provider adapter.
  *
- * This service owns Claude runtime/session semantics and emits canonical
- * provider runtime events. It does not perform cross-provider routing, shared
- * event fan-out, or checkpoint orchestration.
- *
- * Uses Effect `Context.Service` for dependency injection and returns the
- * shared provider-adapter error channel with `provider: "claudeAgent"` context.
+ * Historically this module exposed a `Context.Service` tag so consumers
+ * could inject the adapter through the Effect layer graph. The driver
+ * model ({@link ../Drivers/ClaudeDriver}) bundles one adapter per
+ * instance as a captured closure instead, so the tag is gone — we only
+ * retain the shape interface as a naming anchor for the driver bundle.
  *
  * @module ClaudeAdapter
  */
-import { Context } from "effect";
-
 import type { ProviderAdapterError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
 
 /**
- * ClaudeAdapterShape - Service API for the Claude Agent provider adapter.
+ * ClaudeAdapterShape — per-instance Claude adapter contract. Carries
+ * a branded driver kind as the nominal discriminant.
  */
-export interface ClaudeAdapterShape extends ProviderAdapterShape<ProviderAdapterError> {
-  readonly provider: "claudeAgent";
-}
-
-/**
- * ClaudeAdapter - Service tag for Claude Agent provider adapter operations.
- */
-export class ClaudeAdapter extends Context.Service<ClaudeAdapter, ClaudeAdapterShape>()(
-  "t3/provider/Services/ClaudeAdapter",
-) {}
+export interface ClaudeAdapterShape extends ProviderAdapterShape<ProviderAdapterError> {}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as EffectAcpErrors from "effect-acp/errors";
+import { ProviderDriverKind } from "@t3tools/contracts";
 
 import { acpPermissionOutcome, mapAcpToAdapterError } from "./AcpAdapterSupport.ts";
 
@@ -12,7 +13,7 @@ describe("AcpAdapterSupport", () => {
 
   it("maps ACP request errors to provider adapter request errors", () => {
     const error = mapAcpToAdapterError(
-      "cursor",
+      ProviderDriverKind.make("cursor"),
       "thread-1" as never,
       "session/prompt",
       new EffectAcpErrors.AcpRequestError({

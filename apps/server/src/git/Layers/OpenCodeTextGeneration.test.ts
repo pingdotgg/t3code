@@ -1,19 +1,19 @@
+import { OpenCodeSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Duration, Effect, Layer } from "effect";
+import { Duration, Effect, Layer, Schema } from "effect";
 import { TestClock } from "effect/testing";
 import { NetService } from "@t3tools/shared/Net";
 import { beforeEach, expect } from "vitest";
 
 import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   OpenCodeRuntime,
   OpenCodeRuntimeError,
   type OpenCodeRuntimeShape,
 } from "../../provider/opencodeRuntime.ts";
-import { TextGeneration } from "../Services/TextGeneration.ts";
-import { OpenCodeTextGenerationLive } from "./OpenCodeTextGeneration.ts";
+import { type TextGenerationShape } from "../Services/TextGeneration.ts";
+import { makeOpenCodeTextGeneration } from "./OpenCodeTextGeneration.ts";
 
 const runtimeMock = {
   state: {
@@ -97,23 +97,16 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
 };
 
 const DEFAULT_TEST_MODEL_SELECTION = {
-  provider: "opencode" as const,
+  instanceId: ProviderInstanceId.make("opencode"),
   model: "openai/gpt-5",
 };
 
 const OPENCODE_TEXT_GENERATION_IDLE_TTL_MS = 30_000;
 
-const OpenCodeTextGenerationTestLayer = OpenCodeTextGenerationLive.pipe(
-  Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
-  Layer.provideMerge(
-    ServerSettingsService.layerTest({
-      providers: {
-        opencode: {
-          binaryPath: "fake-opencode",
-        },
-      },
-    }),
-  ),
+const OpenCodeTextGenerationTestLayer = Layer.succeed(
+  OpenCodeRuntime,
+  OpenCodeRuntimeTestDouble,
+).pipe(
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
       prefix: "t3code-opencode-text-generation-test-",
@@ -123,19 +116,10 @@ const OpenCodeTextGenerationTestLayer = OpenCodeTextGenerationLive.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
-const OpenCodeTextGenerationExistingServerTestLayer = OpenCodeTextGenerationLive.pipe(
-  Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
-  Layer.provideMerge(
-    ServerSettingsService.layerTest({
-      providers: {
-        opencode: {
-          binaryPath: "fake-opencode",
-          serverUrl: "http://127.0.0.1:9999",
-          serverPassword: "secret-password",
-        },
-      },
-    }),
-  ),
+const OpenCodeTextGenerationExistingServerTestLayer = Layer.succeed(
+  OpenCodeRuntime,
+  OpenCodeRuntimeTestDouble,
+).pipe(
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), {
       prefix: "t3code-opencode-text-generation-existing-server-test-",
@@ -144,6 +128,25 @@ const OpenCodeTextGenerationExistingServerTestLayer = OpenCodeTextGenerationLive
   Layer.provideMerge(NetService.layer),
   Layer.provideMerge(NodeServices.layer),
 );
+
+const DEFAULT_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
+  binaryPath: "fake-opencode",
+});
+const EXISTING_SERVER_OPENCODE_SETTINGS = Schema.decodeSync(OpenCodeSettings)({
+  binaryPath: "fake-opencode",
+  serverUrl: "http://127.0.0.1:9999",
+  serverPassword: "secret-password",
+});
+
+function withOpenCodeTextGeneration<A, E, R>(
+  settings: OpenCodeSettings,
+  effectFn: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
+) {
+  return Effect.gen(function* () {
+    const textGeneration = yield* makeOpenCodeTextGeneration(settings);
+    return yield* effectFn(textGeneration);
+  }).pipe(Effect.scoped);
+}
 
 beforeEach(() => {
   runtimeMock.reset();
@@ -157,145 +160,148 @@ const advanceIdleClock = Effect.gen(function* () {
 
 it.layer(OpenCodeTextGenerationTestLayer)("OpenCodeTextGenerationLive", (it) => {
   it.effect("reuses a warm server across back-to-back requests and closes it after idling", () =>
-    Effect.gen(function* () {
-      const textGeneration = yield* TextGeneration;
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/opencode-reuse",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
+        yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/opencode-reuse",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
 
-      yield* textGeneration.generateCommitMessage({
-        cwd: process.cwd(),
-        branch: "feature/opencode-reuse",
-        stagedSummary: "M README.md",
-        stagedPatch: "diff --git a/README.md b/README.md",
-        modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-      });
-      yield* textGeneration.generateCommitMessage({
-        cwd: process.cwd(),
-        branch: "feature/opencode-reuse",
-        stagedSummary: "M README.md",
-        stagedPatch: "diff --git a/README.md b/README.md",
-        modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-      });
+        expect(runtimeMock.state.startCalls).toEqual(["fake-opencode"]);
+        expect(runtimeMock.state.promptUrls).toEqual([
+          "http://127.0.0.1:4301",
+          "http://127.0.0.1:4301",
+        ]);
+        expect(runtimeMock.state.closeCalls).toEqual([]);
 
-      expect(runtimeMock.state.startCalls).toEqual(["fake-opencode"]);
-      expect(runtimeMock.state.promptUrls).toEqual([
-        "http://127.0.0.1:4301",
-        "http://127.0.0.1:4301",
-      ]);
-      expect(runtimeMock.state.closeCalls).toEqual([]);
+        yield* advanceIdleClock;
 
-      yield* advanceIdleClock;
-
-      expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
-    }).pipe(Effect.provide(TestClock.layer())),
+        expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("starts a new server after the warm server idles out", () =>
-    Effect.gen(function* () {
-      const textGeneration = yield* TextGeneration;
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/opencode-reuse",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
 
-      yield* textGeneration.generateCommitMessage({
-        cwd: process.cwd(),
-        branch: "feature/opencode-reuse",
-        stagedSummary: "M README.md",
-        stagedPatch: "diff --git a/README.md b/README.md",
-        modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-      });
+        yield* advanceIdleClock;
 
-      yield* advanceIdleClock;
+        yield* textGeneration.generateCommitMessage({
+          cwd: process.cwd(),
+          branch: "feature/opencode-reuse",
+          stagedSummary: "M README.md",
+          stagedPatch: "diff --git a/README.md b/README.md",
+          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+        });
 
-      yield* textGeneration.generateCommitMessage({
-        cwd: process.cwd(),
-        branch: "feature/opencode-reuse",
-        stagedSummary: "M README.md",
-        stagedPatch: "diff --git a/README.md b/README.md",
-        modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-      });
-
-      expect(runtimeMock.state.startCalls).toEqual(["fake-opencode", "fake-opencode"]);
-      expect(runtimeMock.state.promptUrls).toEqual([
-        "http://127.0.0.1:4301",
-        "http://127.0.0.1:4302",
-      ]);
-      expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
-    }).pipe(Effect.provide(TestClock.layer())),
+        expect(runtimeMock.state.startCalls).toEqual(["fake-opencode", "fake-opencode"]);
+        expect(runtimeMock.state.promptUrls).toEqual([
+          "http://127.0.0.1:4301",
+          "http://127.0.0.1:4302",
+        ]);
+        expect(runtimeMock.state.closeCalls).toEqual(["http://127.0.0.1:4301"]);
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("returns a typed empty-output error when OpenCode returns no text parts", () =>
-    Effect.gen(function* () {
-      runtimeMock.state.promptResult = { data: {} };
-      const textGeneration = yield* TextGeneration;
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = { data: {} };
 
-      const error = yield* textGeneration
-        .generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/opencode-reuse",
-          stagedSummary: "M README.md",
-          stagedPatch: "diff --git a/README.md b/README.md",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-        })
-        .pipe(Effect.flip);
+        const error = yield* textGeneration
+          .generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/opencode-reuse",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          })
+          .pipe(Effect.flip);
 
-      expect(error.message).toContain("OpenCode returned empty output.");
-    }),
+        expect(error.message).toContain("OpenCode returned empty output.");
+      }),
+    ),
   );
 
   it.effect("parses JSON returned as plain text output", () =>
-    Effect.gen(function* () {
-      runtimeMock.state.promptResult = {
-        data: {
-          parts: [
-            {
-              type: "text",
-              text: 'Here is the result:\n{"subject":"Tighten OpenCode parsing","body":"Handle JSON text output locally."}',
-            },
-          ],
-        },
-      };
-      const textGeneration = yield* TextGeneration;
-
-      const result = yield* textGeneration.generateCommitMessage({
-        cwd: process.cwd(),
-        branch: "feature/opencode-reuse",
-        stagedSummary: "M README.md",
-        stagedPatch: "diff --git a/README.md b/README.md",
-        modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-      });
-
-      expect(result).toEqual({
-        subject: "Tighten OpenCode parsing",
-        body: "Handle JSON text output locally.",
-      });
-    }),
-  );
-
-  it.effect("surfaces the upstream OpenCode structured-output error message", () =>
-    Effect.gen(function* () {
-      runtimeMock.state.promptResult = {
-        data: {
-          info: {
-            error: {
-              name: "StructuredOutputError",
-              data: {
-                message: "Model did not produce structured output",
-                retries: 2,
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            parts: [
+              {
+                type: "text",
+                text: 'Here is the result:\n{"subject":"Tighten OpenCode parsing","body":"Handle JSON text output locally."}',
               },
-            },
+            ],
           },
-        },
-      };
-      const textGeneration = yield* TextGeneration;
+        };
 
-      const error = yield* textGeneration
-        .generateCommitMessage({
+        const result = yield* textGeneration.generateCommitMessage({
           cwd: process.cwd(),
           branch: "feature/opencode-reuse",
           stagedSummary: "M README.md",
           stagedPatch: "diff --git a/README.md b/README.md",
           modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-        })
-        .pipe(Effect.flip);
+        });
 
-      expect(error.message).toContain("Model did not produce structured output");
-    }),
+        expect(result).toEqual({
+          subject: "Tighten OpenCode parsing",
+          body: "Handle JSON text output locally.",
+        });
+      }),
+    ),
+  );
+
+  it.effect("surfaces the upstream OpenCode structured-output error message", () =>
+    withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+      Effect.gen(function* () {
+        runtimeMock.state.promptResult = {
+          data: {
+            info: {
+              error: {
+                name: "StructuredOutputError",
+                data: {
+                  message: "Model did not produce structured output",
+                  retries: 2,
+                },
+              },
+            },
+          },
+        };
+
+        const error = yield* textGeneration
+          .generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/opencode-reuse",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          })
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain("Model did not produce structured output");
+      }),
+    ),
   );
 });
 
@@ -303,38 +309,38 @@ it.layer(OpenCodeTextGenerationExistingServerTestLayer)(
   "OpenCodeTextGenerationLive with configured server URL",
   (it) => {
     it.effect("reuses a configured OpenCode server URL without spawning or applying idle TTL", () =>
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/opencode-reuse",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/opencode-reuse",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
 
-        yield* textGeneration.generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/opencode-reuse",
-          stagedSummary: "M README.md",
-          stagedPatch: "diff --git a/README.md b/README.md",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-        });
-        yield* textGeneration.generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/opencode-reuse",
-          stagedSummary: "M README.md",
-          stagedPatch: "diff --git a/README.md b/README.md",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-        });
+          expect(runtimeMock.state.startCalls).toEqual([]);
+          expect(runtimeMock.state.promptUrls).toEqual([
+            "http://127.0.0.1:9999",
+            "http://127.0.0.1:9999",
+          ]);
+          expect(runtimeMock.state.authHeaders).toEqual([
+            `Basic ${btoa("opencode:secret-password")}`,
+            `Basic ${btoa("opencode:secret-password")}`,
+          ]);
 
-        expect(runtimeMock.state.startCalls).toEqual([]);
-        expect(runtimeMock.state.promptUrls).toEqual([
-          "http://127.0.0.1:9999",
-          "http://127.0.0.1:9999",
-        ]);
-        expect(runtimeMock.state.authHeaders).toEqual([
-          `Basic ${btoa("opencode:secret-password")}`,
-          `Basic ${btoa("opencode:secret-password")}`,
-        ]);
+          yield* advanceIdleClock;
 
-        yield* advanceIdleClock;
-
-        expect(runtimeMock.state.closeCalls).toEqual([]);
-      }).pipe(Effect.provide(TestClock.layer())),
+          expect(runtimeMock.state.closeCalls).toEqual([]);
+        }),
+      ).pipe(Effect.provide(TestClock.layer())),
     );
   },
 );

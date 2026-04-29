@@ -7,6 +7,7 @@ import {
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
@@ -63,7 +64,7 @@ async function seedReadModel(): Promise<OrchestrationReadModel> {
         projectId: asProjectId("project-delete"),
         title: "Thread Delete 1",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -93,7 +94,7 @@ async function seedReadModel(): Promise<OrchestrationReadModel> {
         projectId: asProjectId("project-delete"),
         title: "Thread Delete 2",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,

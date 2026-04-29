@@ -1,30 +1,19 @@
 /**
- * CodexAdapter - Codex implementation of the generic provider adapter contract.
+ * CodexAdapter — shape type for the Codex provider adapter.
  *
- * This service owns Codex app-server process / JSON-RPC semantics and emits
- * Codex provider events. It does not perform cross-provider routing, shared
- * event fan-out, or checkpoint orchestration.
- *
- * Uses Effect `Context.Service` for dependency injection and returns the
- * shared provider-adapter error channel with `provider: "codex"` context.
+ * Historically this module exposed a `Context.Service` tag so consumers
+ * could inject the adapter through the Effect layer graph. The driver
+ * model ({@link ../Drivers/CodexDriver}) bundles one adapter per
+ * instance as a captured closure instead, so the tag is gone — we only
+ * retain the shape interface as a naming anchor for the driver bundle.
  *
  * @module CodexAdapter
  */
-import { Context } from "effect";
-
 import type { ProviderAdapterError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "./ProviderAdapter.ts";
 
 /**
- * CodexAdapterShape - Service API for the Codex provider adapter.
+ * CodexAdapterShape — per-instance Codex adapter contract. Carries
+ * a branded driver kind as the nominal discriminant.
  */
-export interface CodexAdapterShape extends ProviderAdapterShape<ProviderAdapterError> {
-  readonly provider: "codex";
-}
-
-/**
- * CodexAdapter - Service tag for Codex provider adapter operations.
- */
-export class CodexAdapter extends Context.Service<CodexAdapter, CodexAdapterShape>()(
-  "t3/provider/Services/CodexAdapter",
-) {}
+export interface CodexAdapterShape extends ProviderAdapterShape<ProviderAdapterError> {}

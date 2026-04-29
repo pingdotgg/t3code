@@ -17,6 +17,8 @@ import {
   type OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ResolvedKeybindingRule,
   ThreadId,
   WS_METHODS,
@@ -110,7 +112,7 @@ const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
 const defaultDesktopBootstrapToken = "test-desktop-bootstrap-token";
 const defaultModelSelection = {
-  provider: "codex",
+  instanceId: ProviderInstanceId.make("codex"),
   model: "gpt-5-codex",
 } as const;
 const testEnvironmentDescriptor = {
@@ -1845,7 +1847,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const providers = [
         {
-          provider: "codex" as const,
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
           enabled: true,
           installed: true,
           version: "1.0.0",
@@ -1915,7 +1918,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const nextProviders = [
         {
-          provider: "codex" as const,
+          instanceId: ProviderInstanceId.make("codex"),
+          driver: ProviderDriverKind.make("codex"),
           enabled: true,
           installed: true,
           version: "1.0.0",
@@ -2164,7 +2168,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             workspaceRoot: missingWorkspaceRoot,
             createWorkspaceRootIfMissing: true,
             defaultModelSelection: {
-              provider: "codex",
+              instanceId: ProviderInstanceId.make("codex"),
               model: "gpt-5-codex",
             },
             createdAt: new Date().toISOString(),

@@ -6,7 +6,8 @@ describe("buildModelPickerSearchText", () => {
   it("builds provider-agnostic search text from generic fields", () => {
     expect(
       buildModelPickerSearchText({
-        provider: "opencode",
+        driverKind: "opencode",
+        providerDisplayName: "opencode",
         name: "Claude Opus 4.7",
         subProvider: "GitHub Copilot",
       }),
@@ -19,7 +20,8 @@ describe("scoreModelPickerSearch", () => {
     expect(
       scoreModelPickerSearch(
         {
-          provider: "opencode",
+          driverKind: "opencode",
+          providerDisplayName: "opencode",
           name: "Claude Opus 4.7",
           subProvider: "GitHub Copilot",
         },
@@ -32,7 +34,8 @@ describe("scoreModelPickerSearch", () => {
     expect(
       scoreModelPickerSearch(
         {
-          provider: "codex",
+          driverKind: "codex",
+          providerDisplayName: "codex",
           name: "GPT-5 Codex",
         },
         "coplt op",
@@ -43,7 +46,8 @@ describe("scoreModelPickerSearch", () => {
   it("ranks exact token matches ahead of fuzzier matches", () => {
     const exactScore = scoreModelPickerSearch(
       {
-        provider: "opencode",
+        driverKind: "opencode",
+        providerDisplayName: "opencode",
         name: "Claude Opus 4.7",
         subProvider: "GitHub Copilot",
       },
@@ -51,7 +55,8 @@ describe("scoreModelPickerSearch", () => {
     );
     const fuzzyScore = scoreModelPickerSearch(
       {
-        provider: "opencode",
+        driverKind: "opencode",
+        providerDisplayName: "opencode",
         name: "Claude Opus 4.7",
         subProvider: "GitHub Copilot",
       },
@@ -66,7 +71,8 @@ describe("scoreModelPickerSearch", () => {
   it("gives favorite models a strong enough ranking boost for partial queries", () => {
     const favoriteScore = scoreModelPickerSearch(
       {
-        provider: "claudeAgent",
+        driverKind: "claudeAgent",
+        providerDisplayName: "Claude",
         name: "Claude Opus 4.7",
         isFavorite: true,
       },
@@ -74,7 +80,8 @@ describe("scoreModelPickerSearch", () => {
     );
     const nonFavoriteScore = scoreModelPickerSearch(
       {
-        provider: "cursor",
+        driverKind: "cursor",
+        providerDisplayName: "Cursor",
         name: "Opus 4.5",
       },
       "opu",
@@ -88,7 +95,8 @@ describe("scoreModelPickerSearch", () => {
   it("does not let the favorite boost outrank clearly better textual matches", () => {
     const favoriteScore = scoreModelPickerSearch(
       {
-        provider: "claudeAgent",
+        driverKind: "claudeAgent",
+        providerDisplayName: "Claude",
         name: "Claude Opus 4.7",
         isFavorite: true,
       },
@@ -96,7 +104,8 @@ describe("scoreModelPickerSearch", () => {
     );
     const nonFavoriteExactScore = scoreModelPickerSearch(
       {
-        provider: "cursor",
+        driverKind: "cursor",
+        providerDisplayName: "Cursor",
         name: "Opus 4.7",
       },
       "opus 4.7",
@@ -105,5 +114,18 @@ describe("scoreModelPickerSearch", () => {
     expect(favoriteScore).not.toBeNull();
     expect(nonFavoriteExactScore).not.toBeNull();
     expect(nonFavoriteExactScore!).toBeLessThan(favoriteScore!);
+  });
+
+  it("matches a custom instance's display name against its models", () => {
+    expect(
+      scoreModelPickerSearch(
+        {
+          driverKind: "codex",
+          providerDisplayName: "Codex Personal",
+          name: "GPT-5 Codex",
+        },
+        "personal",
+      ),
+    ).not.toBeNull();
   });
 });

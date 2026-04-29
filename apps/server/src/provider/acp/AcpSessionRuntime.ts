@@ -21,7 +21,7 @@ export interface AcpSpawnInput {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd?: string;
-  readonly env?: Readonly<Record<string, string>>;
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 export interface AcpSessionRuntimeOptions {

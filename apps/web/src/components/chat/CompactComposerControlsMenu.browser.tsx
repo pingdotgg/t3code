@@ -1,7 +1,10 @@
 import {
+  DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
   EnvironmentId,
   ModelSelection,
+  ProviderInstanceId,
+  ProviderDriverKind,
   ThreadId,
 } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
@@ -50,8 +53,10 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
   const threadId = ThreadId.make("thread-compact-menu");
   const threadRef = scopeThreadRef(LOCAL_ENVIRONMENT_ID, threadId);
   const threadKey = scopedThreadKey(threadRef);
-  const provider = props?.modelSelection?.provider ?? "claudeAgent";
-  const model = props?.modelSelection?.model ?? DEFAULT_MODEL_BY_PROVIDER[provider];
+  const provider = ProviderDriverKind.make("claudeAgent");
+  const instanceId = ProviderInstanceId.make(props?.modelSelection?.instanceId ?? provider);
+  const model =
+    props?.modelSelection?.model ?? DEFAULT_MODEL_BY_PROVIDER[provider] ?? DEFAULT_MODEL;
 
   useComposerDraftStore.setState({
     draftsByThreadKey: {
@@ -62,9 +67,9 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
         persistedAttachments: [],
         terminalContexts: [],
         modelSelectionByProvider: {
-          [provider]: createModelSelection(provider, model, props?.modelSelection?.options),
+          [instanceId]: createModelSelection(instanceId, model, props?.modelSelection?.options),
         },
-        activeProvider: provider,
+        activeProvider: instanceId,
         runtimeMode: null,
         interactionMode: null,
       },
@@ -178,7 +183,10 @@ describe("CompactComposerControlsMenu", () => {
 
   it("shows fast mode controls for Opus", async () => {
     await using _ = await mountMenu({
-      modelSelection: createModelSelection("claudeAgent", "claude-opus-4-6"),
+      modelSelection: createModelSelection(
+        ProviderInstanceId.make("claudeAgent"),
+        "claude-opus-4-6",
+      ),
     });
 
     await page.getByLabelText("More composer controls").click();
@@ -193,7 +201,10 @@ describe("CompactComposerControlsMenu", () => {
 
   it("hides fast mode controls for non-Opus Claude models", async () => {
     await using _ = await mountMenu({
-      modelSelection: createModelSelection("claudeAgent", "claude-sonnet-4-6"),
+      modelSelection: createModelSelection(
+        ProviderInstanceId.make("claudeAgent"),
+        "claude-sonnet-4-6",
+      ),
     });
 
     await page.getByLabelText("More composer controls").click();
@@ -205,7 +216,10 @@ describe("CompactComposerControlsMenu", () => {
 
   it("shows only the provided effort options", async () => {
     await using _ = await mountMenu({
-      modelSelection: createModelSelection("claudeAgent", "claude-sonnet-4-6"),
+      modelSelection: createModelSelection(
+        ProviderInstanceId.make("claudeAgent"),
+        "claude-sonnet-4-6",
+      ),
     });
 
     await page.getByLabelText("More composer controls").click();
@@ -222,9 +236,11 @@ describe("CompactComposerControlsMenu", () => {
 
   it("shows a Claude thinking on/off section for Haiku", async () => {
     await using _ = await mountMenu({
-      modelSelection: createModelSelection("claudeAgent", "claude-haiku-4-5", [
-        { id: "thinking", value: true },
-      ]),
+      modelSelection: createModelSelection(
+        ProviderInstanceId.make("claudeAgent"),
+        "claude-haiku-4-5",
+        [{ id: "thinking", value: true }],
+      ),
     });
 
     await page.getByLabelText("More composer controls").click();
@@ -239,9 +255,11 @@ describe("CompactComposerControlsMenu", () => {
 
   it("shows prompt-controlled Ultrathink state with selectable effort controls", async () => {
     await using _ = await mountMenu({
-      modelSelection: createModelSelection("claudeAgent", "claude-opus-4-6", [
-        { id: "effort", value: "high" },
-      ]),
+      modelSelection: createModelSelection(
+        ProviderInstanceId.make("claudeAgent"),
+        "claude-opus-4-6",
+        [{ id: "effort", value: "high" }],
+      ),
       prompt: "Ultrathink:\nInvestigate this",
     });
 
@@ -256,9 +274,11 @@ describe("CompactComposerControlsMenu", () => {
 
   it("warns when ultrathink appears in prompt body text", async () => {
     await using _ = await mountMenu({
-      modelSelection: createModelSelection("claudeAgent", "claude-opus-4-6", [
-        { id: "effort", value: "high" },
-      ]),
+      modelSelection: createModelSelection(
+        ProviderInstanceId.make("claudeAgent"),
+        "claude-opus-4-6",
+        [{ id: "effort", value: "high" }],
+      ),
       prompt: "Ultrathink:\nplease ultrathink about this problem",
     });
 
