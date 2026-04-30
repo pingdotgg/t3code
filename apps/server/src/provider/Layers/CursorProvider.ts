@@ -598,6 +598,15 @@ export const discoverCursorModelCapabilitiesViaAcp = (
           );
         }
 
+        type CursorAcpProbeResult =
+          | { readonly _tag: "skipped" }
+          | {
+              readonly _tag: "success";
+              readonly slug: string;
+              readonly capabilities: ModelCapabilities;
+            }
+          | { readonly _tag: "failed"; readonly slug: string };
+
         const probedCapabilities = yield* Effect.forEach(
           modelChoices,
           (modelChoice) => {
@@ -607,9 +616,7 @@ export const discoverCursorModelCapabilitiesViaAcp = (
               !targetModelSlugs.has(modelSlug) ||
               capabilitiesBySlug.has(modelSlug)
             ) {
-              return Effect.void.pipe(
-                Effect.as<readonly [string, ModelCapabilities] | undefined>(undefined),
-              );
+              return Effect.succeed<CursorAcpProbeResult>({ _tag: "skipped" });
             }
 
             return withCursorAcpProbeRuntime(
@@ -636,10 +643,11 @@ export const discoverCursorModelCapabilitiesViaAcp = (
                           .pipe(
                             Effect.map((response) => response.configOptions ?? probeConfigOptions),
                           );
-                  return [
-                    modelSlug,
-                    buildCursorCapabilitiesFromConfigOptions(nextConfigOptions),
-                  ] as const;
+                  return {
+                    _tag: "success",
+                    slug: modelSlug,
+                    capabilities: buildCursorCapabilitiesFromConfigOptions(nextConfigOptions),
+                  } as CursorAcpProbeResult;
                 }),
               environment,
             ).pipe(
@@ -650,7 +658,7 @@ export const discoverCursorModelCapabilitiesViaAcp = (
                 Effect.logDebug("Cursor ACP capability probe failed", {
                   modelSlug,
                   cause: Cause.pretty(cause),
-                }),
+                }).pipe(Effect.as<CursorAcpProbeResult>({ _tag: "failed", slug: modelSlug })),
               ),
             );
           },
@@ -659,11 +667,11 @@ export const discoverCursorModelCapabilitiesViaAcp = (
 
         const failedModels: Array<string> = [];
         for (const entry of probedCapabilities) {
-          if (!entry) {
-            failedModels.push("unknown");
-            continue;
+          if (entry._tag === "failed") {
+            failedModels.push(entry.slug);
+          } else if (entry._tag === "success") {
+            capabilitiesBySlug.set(entry.slug, entry.capabilities);
           }
-          capabilitiesBySlug.set(entry[0], entry[1]);
         }
 
         if (failedModels.length > 0) {
