@@ -92,7 +92,11 @@ export function getProviderVersionLabel(version: string | null | undefined) {
 
 export function getProviderVersionAdvisoryPresentation(
   advisory: ServerProviderVersionAdvisory | undefined,
-) {
+): {
+  readonly detail: string;
+  readonly updateCommand: string | null;
+  readonly emphasis: "normal" | "strong";
+} | null {
   if (!advisory || advisory.status === "current" || advisory.status === "unknown") {
     return null;
   }

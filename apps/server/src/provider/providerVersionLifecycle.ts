@@ -1,7 +1,7 @@
-import type {
+import {
   ProviderDriverKind,
-  ServerProvider,
-  ServerProviderVersionAdvisory,
+  type ServerProvider,
+  type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
 
 import { compareCliVersions } from "./cliVersion.ts";
@@ -11,6 +11,11 @@ const LATEST_VERSION_TIMEOUT_MS = 4_000;
 const PROVIDER_UPDATE_ACTION_TOAST_MESSAGE = "Install the update now or review provider settings.";
 
 type VersionLifecycleProvider = "codex" | "claudeAgent" | "cursor" | "opencode";
+
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
+const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
+const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
 
 export interface ProviderVersionLifecycle {
   readonly provider: ProviderDriverKind;
@@ -23,7 +28,7 @@ export interface ProviderVersionLifecycle {
 
 const PROVIDER_VERSION_LIFECYCLES = {
   codex: {
-    provider: "codex",
+    provider: CODEX_DRIVER,
     packageName: "@openai/codex",
     updateCommand: "npm install -g @openai/codex@latest",
     updateExecutable: "npm",
@@ -31,7 +36,7 @@ const PROVIDER_VERSION_LIFECYCLES = {
     updateLockKey: "npm-global",
   },
   claudeAgent: {
-    provider: "claudeAgent",
+    provider: CLAUDE_AGENT_DRIVER,
     packageName: "@anthropic-ai/claude-code",
     updateCommand: "npm install -g @anthropic-ai/claude-code@latest",
     updateExecutable: "npm",
@@ -39,7 +44,7 @@ const PROVIDER_VERSION_LIFECYCLES = {
     updateLockKey: "npm-global",
   },
   cursor: {
-    provider: "cursor",
+    provider: CURSOR_DRIVER,
     packageName: null,
     updateCommand: "agent update",
     updateExecutable: "agent",
@@ -47,7 +52,7 @@ const PROVIDER_VERSION_LIFECYCLES = {
     updateLockKey: "cursor-agent",
   },
   opencode: {
-    provider: "opencode",
+    provider: OPENCODE_DRIVER,
     packageName: "opencode-ai",
     updateCommand: "npm install -g opencode-ai@latest",
     updateExecutable: "npm",
@@ -67,15 +72,16 @@ function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
-function isVersionLifecycleProvider(
-  provider: ProviderDriverKind | string,
-): provider is VersionLifecycleProvider {
+function isVersionLifecycleProvider(provider: string): provider is VersionLifecycleProvider {
   return provider in PROVIDER_VERSION_LIFECYCLES;
 }
 
-export function getProviderVersionLifecycle(provider: ProviderDriverKind): ProviderVersionLifecycle {
-  if (isVersionLifecycleProvider(provider)) {
-    return PROVIDER_VERSION_LIFECYCLES[provider];
+export function getProviderVersionLifecycle(
+  provider: ProviderDriverKind,
+): ProviderVersionLifecycle {
+  const providerKey = String(provider);
+  if (isVersionLifecycleProvider(providerKey)) {
+    return PROVIDER_VERSION_LIFECYCLES[providerKey];
   }
   return {
     provider,

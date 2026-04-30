@@ -35,6 +35,14 @@ type ActiveProviderUpdateToast =
 function ProviderUpdateToastIcon({ provider }: { provider: ProviderDriverKind }) {
   const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[provider];
 
+  if (!ProviderIcon) {
+    return (
+      <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
+        <DownloadIcon aria-hidden="true" className="size-4 text-success" strokeWidth={2.5} />
+      </span>
+    );
+  }
+
   return (
     <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
       <ProviderIcon aria-hidden="true" className="size-4" />

@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import {
   createProviderVersionAdvisory,
   getProviderVersionLifecycle,
 } from "./providerVersionLifecycle.ts";
 
+const driver = (value: string) => ProviderDriverKind.make(value);
+
 describe("providerVersionLifecycle", () => {
   it("marks providers with unknown current versions as unknown", () => {
     expect(
       createProviderVersionAdvisory({
-        driver: "codex",
+        driver: driver("codex"),
         currentVersion: null,
         latestVersion: "9.9.9",
       }),
@@ -22,7 +25,7 @@ describe("providerVersionLifecycle", () => {
   it("marks providers with unknown latest versions as unknown", () => {
     expect(
       createProviderVersionAdvisory({
-        provider: "codex",
+        driver: driver("codex"),
         currentVersion: "1.0.0",
         latestVersion: null,
       }),
@@ -37,7 +40,7 @@ describe("providerVersionLifecycle", () => {
   it("marks installed providers behind latest when a newer provider version is available", () => {
     expect(
       createProviderVersionAdvisory({
-        driver: "claudeAgent",
+        driver: driver("claudeAgent"),
         currentVersion: "2.1.110",
         latestVersion: "2.1.117",
       }),
@@ -52,8 +55,8 @@ describe("providerVersionLifecycle", () => {
   });
 
   it("keeps update commands owned by provider lifecycle metadata", () => {
-    expect(getProviderVersionLifecycle("cursor")).toEqual({
-      provider: "cursor",
+    expect(getProviderVersionLifecycle(driver("cursor"))).toEqual({
+      provider: driver("cursor"),
       packageName: null,
       updateCommand: "agent update",
       updateExecutable: "agent",

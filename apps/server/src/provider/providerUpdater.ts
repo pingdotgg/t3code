@@ -1,6 +1,6 @@
 import {
+  ProviderDriverKind,
   ServerProviderUpdateError,
-  type ProviderDriverKind,
   type ServerProvider,
   type ServerProviderUpdatedPayload,
   type ServerProviderUpdateState,
@@ -36,10 +36,10 @@ interface VerifiedProviderRefresh {
 }
 
 const UPDATE_LOCK_PROVIDERS = [
-  "codex",
-  "claudeAgent",
-  "cursor",
-  "opencode",
+  ProviderDriverKind.make("codex"),
+  ProviderDriverKind.make("claudeAgent"),
+  ProviderDriverKind.make("cursor"),
+  ProviderDriverKind.make("opencode"),
 ] as const satisfies ReadonlyArray<ProviderDriverKind>;
 
 const defaultRunner: ProviderUpdateRunner = (command, args) =>
@@ -171,10 +171,12 @@ export const makeProviderUpdater = Effect.fn("makeProviderUpdater")(function* (i
             concurrency: "unbounded",
           },
         ).pipe(
-          Effect.map((verifiedProviders): VerifiedProviderRefresh => ({
-            providers,
-            verifiedProviders,
-          })),
+          Effect.map(
+            (verifiedProviders): VerifiedProviderRefresh => ({
+              providers,
+              verifiedProviders,
+            }),
+          ),
           Effect.catchCause((cause) =>
             Effect.logWarning("Provider post-update version verification failed", {
               provider,
@@ -258,7 +260,8 @@ export const makeProviderUpdater = Effect.fn("makeProviderUpdater")(function* (i
         const { verifiedProviders } = yield* verifyRefreshedProvider(provider);
         const couldNotVerify = verifiedProviders.length === 0;
         const stillOutdated =
-          couldNotVerify || verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));
+          couldNotVerify ||
+          verifiedProviders.some((verifiedProvider) => isOutdatedProvider(verifiedProvider));
         return yield* finish(
           makeUpdateState({
             status: stillOutdated ? "unchanged" : "succeeded",

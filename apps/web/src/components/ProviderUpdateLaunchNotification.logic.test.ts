@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 
 import {
   collectProviderUpdateCandidates,
@@ -19,9 +19,12 @@ const checkedAt = "2026-04-23T10:00:00.000Z";
 const sessionStartedAtMs = Date.parse("2026-04-23T09:59:00.000Z");
 const laterCheckedAt = "2026-04-23T10:01:00.000Z";
 
+const driver = (value: string) => ProviderDriverKind.make(value);
+const instanceId = (value: string) => ProviderInstanceId.make(value);
+
 function provider(input: {
-  readonly driver: ProviderDriverKind;
-  readonly instanceId?: string;
+  readonly driver: ReturnType<typeof ProviderDriverKind.make>;
+  readonly instanceId?: ReturnType<typeof ProviderInstanceId.make>;
   readonly enabled?: boolean;
   readonly version?: string | null;
   readonly latestVersion?: string | null;
@@ -30,7 +33,7 @@ function provider(input: {
   readonly advisoryStatus?: NonNullable<ServerProvider["versionAdvisory"]>["status"];
 }): ServerProvider {
   const result: ServerProvider = {
-    instanceId: input.instanceId ?? input.driver,
+    instanceId: input.instanceId ?? instanceId(String(input.driver)),
     driver: input.driver,
     enabled: input.enabled ?? true,
     installed: true,
@@ -51,9 +54,11 @@ function provider(input: {
       message: "Update available.",
     },
   };
+
   if (input.updateState) {
     return { ...result, updateState: input.updateState };
   }
+
   return result;
 }
 
@@ -63,36 +68,46 @@ function updateCandidate(input: Parameters<typeof provider>[0]): ProviderUpdateC
 
 describe("provider update launch notification logic", () => {
   it("detects enabled providers with a latest-version advisory", () => {
-    expect(isProviderUpdateCandidate(provider({ driver: "codex" }))).toBe(true);
-    expect(isProviderUpdateCandidate(provider({ driver: "codex", enabled: false }))).toBe(false);
-    expect(
-      isProviderUpdateCandidate(
-        provider({ driver: "codex", advisoryStatus: "current", latestVersion: null }),
-      ),
-    ).toBe(false);
-    expect(isProviderUpdateCandidate(provider({ driver: "codex", latestVersion: null }))).toBe(
+    expect(isProviderUpdateCandidate(provider({ driver: driver("codex") }))).toBe(true);
+    expect(isProviderUpdateCandidate(provider({ driver: driver("codex"), enabled: false }))).toBe(
       false,
     );
+    expect(
+      isProviderUpdateCandidate(
+        provider({ driver: driver("codex"), advisoryStatus: "current", latestVersion: null }),
+      ),
+    ).toBe(false);
+    expect(
+      isProviderUpdateCandidate(provider({ driver: driver("codex"), latestVersion: null })),
+    ).toBe(false);
   });
 
   it("deduplicates multi-instance provider candidates by driver", () => {
     expect(
       collectProviderUpdateCandidates([
-        provider({ driver: "codex", instanceId: "codex_personal", latestVersion: "1.1.0" }),
-        provider({ driver: "codex", instanceId: "codex", latestVersion: "1.1.0" }),
-        provider({ driver: "cursor", latestVersion: "0.3.0" }),
+        provider({
+          driver: driver("codex"),
+          instanceId: instanceId("codex_personal"),
+          latestVersion: "1.1.0",
+        }),
+        provider({
+          driver: driver("codex"),
+          instanceId: instanceId("codex"),
+          latestVersion: "1.1.0",
+        }),
+        provider({ driver: driver("cursor"), latestVersion: "0.3.0" }),
       ]),
     ).toHaveLength(2);
   });
 
   it("builds a notification key from the update advisory fields", () => {
     const codex = updateCandidate({
-      driver: "codex",
+      driver: driver("codex"),
       version: "1.0.0",
       latestVersion: "1.1.0",
     });
     const cursor = updateCandidate({
-      driver: "cursor",
+      driver: driver("cursor"),
       version: "0.2.0",
       latestVersion: "0.3.0",
     });
@@ -105,8 +120,8 @@ describe("provider update launch notification logic", () => {
 
   it("describes a single one-click update", () => {
     const view = getProviderUpdateInitialToastView({
-      updateProviders: [updateCandidate({ driver: "codex", latestVersion: "1.1.0" })],
-      oneClickProviders: [updateCandidate({ driver: "codex", latestVersion: "1.1.0" })],
+      updateProviders: [updateCandidate({ driver: driver("codex"), latestVersion: "1.1.0" })],
+      oneClickProviders: [updateCandidate({ driver: driver("codex"), latestVersion: "1.1.0" })],
     });
 
     expect(view).toMatchObject({
@@ -120,8 +135,8 @@ describe("provider update launch notification logic", () => {
   it("describes settings-only updates without one-click support", () => {
     const view = getProviderUpdateInitialToastView({
       updateProviders: [
-        updateCandidate({ driver: "codex", canUpdate: false }),
-        updateCandidate({ driver: "cursor", canUpdate: false }),
+        updateCandidate({ driver: driver("codex"), canUpdate: false }),
+        updateCandidate({ driver: driver("cursor"), canUpdate: false }),
       ],
       oneClickProviders: [],
     });
@@ -133,7 +148,7 @@ describe("provider update launch notification logic", () => {
     const view = getProviderUpdateProgressToastView({
       providers: [
         provider({
-          driver: "codex",
+          driver: driver("codex"),
           updateState: {
             status: "running",
             startedAt: checkedAt,
@@ -157,7 +172,7 @@ describe("provider update launch notification logic", () => {
     const view = getProviderUpdateProgressToastView({
       providers: [
         provider({
-          driver: "codex",
+          driver: driver("codex"),
           updateState: {
             status: "failed",
             startedAt: checkedAt,
@@ -181,7 +196,7 @@ describe("provider update launch notification logic", () => {
   it("resolves a single-provider completion view from the returned provider snapshot", () => {
     const view = getSingleProviderUpdateProgressToastView(
       provider({
-        provider: "codex",
+        driver: driver("codex"),
         updateState: {
           status: "failed",
           startedAt: checkedAt,
@@ -204,7 +219,7 @@ describe("provider update launch notification logic", () => {
     const view = getProviderUpdateProgressToastView({
       providers: [
         provider({
-          driver: "cursor",
+          driver: driver("cursor"),
           updateState: {
             status: "unchanged",
             startedAt: checkedAt,
@@ -229,7 +244,7 @@ describe("provider update launch notification logic", () => {
     const view = getProviderUpdateProgressToastView({
       providers: [
         provider({
-          driver: "codex",
+          driver: driver("codex"),
           version: "1.1.0",
           latestVersion: "1.1.0",
           advisoryStatus: "current",
@@ -257,7 +272,7 @@ describe("provider update launch notification logic", () => {
   it("uses the updated version in the single-provider success toast title", () => {
     const view = getSingleProviderUpdateProgressToastView(
       provider({
-        provider: "codex",
+        driver: driver("codex"),
         version: "1.1.0",
         latestVersion: "1.1.0",
         advisoryStatus: "current",
@@ -293,8 +308,8 @@ describe("provider update launch notification logic", () => {
   });
 
   it("collects only attempted provider snapshots from update responses", () => {
-    const codex = provider({ driver: "codex" });
-    const cursor = provider({ driver: "cursor" });
+    const codex = provider({ driver: driver("codex") });
+    const cursor = provider({ driver: driver("cursor") });
     const results: PromiseSettledResult<{ readonly providers: ReadonlyArray<ServerProvider> }>[] = [
       { status: "fulfilled", value: { providers: [codex, cursor] } },
     ];
@@ -302,7 +317,7 @@ describe("provider update launch notification logic", () => {
     expect(
       collectUpdatedProviderSnapshots({
         results,
-        providerKinds: new Set<ProviderDriverKind>(["cursor"]),
+        providerKinds: new Set([driver("cursor")]),
       }),
     ).toEqual([cursor]);
   });
@@ -310,7 +325,7 @@ describe("provider update launch notification logic", () => {
   it("summarizes active provider updates for the sidebar pill", () => {
     const view = getProviderUpdateSidebarPillView([
       provider({
-        provider: "codex",
+        driver: driver("codex"),
         updateState: {
           status: "running",
           startedAt: checkedAt,
@@ -320,7 +335,7 @@ describe("provider update launch notification logic", () => {
         },
       }),
       provider({
-        provider: "cursor",
+        driver: driver("cursor"),
         updateState: {
           status: "queued",
           startedAt: null,
@@ -341,7 +356,7 @@ describe("provider update launch notification logic", () => {
   it("uses the provider name for single active sidebar pill updates", () => {
     const view = getProviderUpdateSidebarPillView([
       provider({
-        provider: "codex",
+        driver: driver("codex"),
         updateState: {
           status: "running",
           startedAt: checkedAt,
@@ -364,7 +379,7 @@ describe("provider update launch notification logic", () => {
     const view = getProviderUpdateSidebarPillView(
       [
         provider({
-          provider: "claudeAgent",
+          driver: driver("claudeAgent"),
           updateState: {
             status: "failed",
             startedAt: checkedAt,
@@ -390,7 +405,7 @@ describe("provider update launch notification logic", () => {
     const view = getProviderUpdateSidebarPillView(
       [
         provider({
-          provider: "codex",
+          driver: driver("codex"),
           version: "1.1.0",
           latestVersion: "1.1.0",
           advisoryStatus: "current",
@@ -419,7 +434,7 @@ describe("provider update launch notification logic", () => {
     const view = getProviderUpdateSidebarPillView(
       [
         provider({
-          provider: "cursor",
+          driver: driver("cursor"),
           updateState: {
             status: "unchanged",
             startedAt: checkedAt,
@@ -445,7 +460,7 @@ describe("provider update launch notification logic", () => {
       getProviderUpdateSidebarPillView(
         [
           provider({
-            provider: "codex",
+            driver: driver("codex"),
             updateState: {
               status: "failed",
               startedAt: checkedAt,
@@ -463,7 +478,7 @@ describe("provider update launch notification logic", () => {
   it("shows a newer success before falling back to an older failure", () => {
     const providers = [
       provider({
-        provider: "claudeAgent",
+        driver: driver("claudeAgent"),
         updateState: {
           status: "failed",
           startedAt: checkedAt,
@@ -473,7 +488,7 @@ describe("provider update launch notification logic", () => {
         },
       }),
       provider({
-        provider: "codex",
+        driver: driver("codex"),
         version: "1.2.0",
         latestVersion: "1.2.0",
         advisoryStatus: "current",
@@ -510,8 +525,8 @@ describe("provider update launch notification logic", () => {
   it("does not show a sidebar pill for passive update availability", () => {
     expect(
       getProviderUpdateSidebarPillView([
-        provider({ provider: "codex", canUpdate: true }),
-        provider({ provider: "cursor", canUpdate: false }),
+        provider({ driver: driver("codex"), canUpdate: true }),
+        provider({ driver: driver("cursor"), canUpdate: false }),
       ]),
     ).toBeNull();
   });

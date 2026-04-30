@@ -383,7 +383,9 @@ export const ProviderRegistryLive = Layer.effect(
       });
 
       const existingProviders = yield* Ref.get(providersRef);
-      const matchingProviders = existingProviders.filter((candidate) => candidate.driver === provider);
+      const matchingProviders = existingProviders.filter(
+        (candidate) => candidate.driver === provider,
+      );
       if (matchingProviders.length === 0) {
         return existingProviders;
       }

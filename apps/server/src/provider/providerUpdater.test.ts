@@ -1,8 +1,9 @@
 import { describe, it, assert } from "@effect/vitest";
-import type {
+import {
   ProviderDriverKind,
-  ServerProvider,
-  ServerProviderUpdateState,
+  ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import { ServerProviderUpdateError } from "@t3tools/contracts";
 import { Cause, Effect, Exit, Fiber, Ref, Schema, Stream } from "effect";
@@ -11,9 +12,14 @@ import type { ProcessRunResult } from "../processRunner.ts";
 import type { ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
 import { makeProviderUpdater, type ProviderUpdateRunner } from "./providerUpdater.ts";
 
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
+const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+const CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
+const CURSOR_INSTANCE_ID = ProviderInstanceId.make("cursor");
+
 const baseProvider: ServerProvider = {
-  instanceId: "codex",
-  driver: "codex",
+  instanceId: CODEX_INSTANCE_ID,
+  driver: CODEX_DRIVER,
   enabled: true,
   installed: true,
   version: null,
@@ -27,8 +33,8 @@ const baseProvider: ServerProvider = {
 
 const baseCursorProvider: ServerProvider = {
   ...baseProvider,
-  instanceId: "cursor",
-  driver: "cursor",
+  instanceId: CURSOR_INSTANCE_ID,
+  driver: CURSOR_DRIVER,
 };
 
 const okResult = (stdout = ""): ProcessRunResult => ({
@@ -113,7 +119,7 @@ describe("providerUpdater", () => {
         },
       });
 
-      const result = yield* updater.updateProvider("cursor");
+      const result = yield* updater.updateProvider(CURSOR_DRIVER);
       assert.deepStrictEqual(calls, [
         {
           command: "agent",
@@ -136,7 +142,7 @@ describe("providerUpdater", () => {
         runUpdate: async () => failedResult("permission denied"),
       });
 
-      const result = yield* updater.updateProvider("codex");
+      const result = yield* updater.updateProvider(CODEX_DRIVER);
       const updateState = result.providers[0]?.updateState;
 
       assert.strictEqual(updateState?.status, "failed");
@@ -167,7 +173,7 @@ describe("providerUpdater", () => {
             runUpdate: async () => okResult(),
           });
 
-          const result = yield* updater.updateProvider("codex");
+          const result = yield* updater.updateProvider(CODEX_DRIVER);
 
           assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
           assert.include(result.providers[0]?.updateState?.message ?? "", "still detects");
@@ -198,10 +204,10 @@ describe("providerUpdater", () => {
         runUpdate: runner,
       });
 
-      const first = yield* updater.updateProvider("codex").pipe(Effect.forkScoped);
+      const first = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.forkScoped);
       yield* Effect.promise(() => started);
 
-      const second = yield* updater.updateProvider("codex").pipe(Effect.exit);
+      const second = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.exit);
       assert.strictEqual(Exit.isFailure(second), true);
       if (Exit.isFailure(second)) {
         const error = Cause.squash(second.cause);

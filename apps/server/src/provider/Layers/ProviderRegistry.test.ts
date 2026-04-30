@@ -35,6 +35,7 @@ import { ServerSettingsService, type ServerSettingsShape } from "../../serverSet
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
+import { getProviderVersionLifecycle } from "../providerVersionLifecycle.ts";
 
 const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
 const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({});
@@ -555,7 +556,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         const mergedProviders = mergeProviderSnapshots(previousProviders, [refreshedCursor]);
         const persistedProviders = selectProvidersByKind(
           mergedProviders,
-          new Set<ProviderDriverKind>(["cursor"]),
+          new Set([ProviderDriverKind.make("cursor")]),
         );
 
         assert.deepStrictEqual(persistedProviders, [
@@ -593,6 +594,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             displayName: undefined,
             enabled: true,
             snapshot: {
+              versionLifecycle: getProviderVersionLifecycle(codexDriver),
               getSnapshot: Effect.succeed(cachedProvider),
               refresh: Effect.die(new Error("simulated refresh failure")),
               streamChanges: Stream.empty,
@@ -678,6 +680,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             displayName: undefined,
             enabled: true,
             snapshot: {
+              versionLifecycle: getProviderVersionLifecycle(provider.driver),
               getSnapshot: Effect.succeed(provider),
               refresh: Effect.succeed(provider),
               streamChanges: Stream.empty,

@@ -140,7 +140,9 @@ export function providerUpdateCandidateKey(provider: ProviderUpdateCandidate): s
 }
 
 export function formatProviderList(providers: ReadonlyArray<Pick<ServerProvider, "driver">>) {
-  const names = providers.map((provider) => PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver);
+  const names = providers.map(
+    (provider) => PROVIDER_DISPLAY_NAMES[provider.driver] ?? provider.driver,
+  );
   if (names.length <= 2) {
     return names.join(" and ");
   }
@@ -348,7 +350,8 @@ export function getProviderUpdateSidebarPillView(
   const activeProviders = dedupedProviders.filter(isProviderUpdateActive);
   if (activeProviders.length > 0) {
     const activeProvider = activeProviders[0]!;
-    const activeProviderName = PROVIDER_DISPLAY_NAMES[activeProvider.driver] ?? activeProvider.driver;
+    const activeProviderName =
+      PROVIDER_DISPLAY_NAMES[activeProvider.driver] ?? activeProvider.driver;
     return {
       key: `loading:${activeProviders
         .map((provider) => `${provider.driver}:${provider.updateState?.status ?? "idle"}`)

@@ -21,7 +21,7 @@ interface TestSettings {
 }
 
 const versionLifecycle = {
-  provider: "codex",
+  provider: ProviderDriverKind.make("codex"),
   packageName: "@openai/codex",
   updateCommand: "npm install -g @openai/codex@latest",
   updateExecutable: "npm",

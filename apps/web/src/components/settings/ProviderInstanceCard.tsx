@@ -468,6 +468,7 @@ export function ProviderInstanceCard({
   const summary = rawSummary;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
   const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
+  const updateCommand = versionAdvisory?.updateCommand ?? null;
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
@@ -659,7 +660,7 @@ export function ProviderInstanceCard({
                 >
                   {versionAdvisory.detail}
                 </span>
-                {versionAdvisory.updateCommand ? (
+                {updateCommand ? (
                   <Tooltip>
                     <TooltipTrigger
                       render={
@@ -669,7 +670,7 @@ export function ProviderInstanceCard({
                           variant="ghost"
                           className="h-5 gap-1 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
                           onClick={() =>
-                            copyToClipboard(versionAdvisory.updateCommand, {
+                            copyToClipboard(updateCommand, {
                               providerName: displayName,
                             })
                           }
@@ -679,7 +680,7 @@ export function ProviderInstanceCard({
                         </Button>
                       }
                     />
-                    <TooltipPopup side="top">{versionAdvisory.updateCommand}</TooltipPopup>
+                    <TooltipPopup side="top">{updateCommand}</TooltipPopup>
                   </Tooltip>
                 ) : null}
               </div>
