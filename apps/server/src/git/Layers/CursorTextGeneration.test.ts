@@ -5,16 +5,15 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vitest";
 
-import { ServerSettingsError } from "@t3tools/contracts";
+import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
-import { TextGeneration } from "../Services/TextGeneration.ts";
-import { CursorTextGenerationLive } from "./CursorTextGeneration.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
+import { type TextGenerationShape } from "../Services/TextGeneration.ts";
+import { makeCursorTextGeneration } from "./CursorTextGeneration.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mockAgentPath = path.join(__dirname, "../../../scripts/acp-mock-agent.ts");
@@ -23,15 +22,9 @@ function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", `'"'"'`)}'`;
 }
 
-const CursorTextGenerationTestLayer = CursorTextGenerationLive.pipe(
-  Layer.provideMerge(ServerSettingsService.layerTest()),
-  Layer.provideMerge(
-    ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3code-cursor-text-generation-test-",
-    }),
-  ),
-  Layer.provideMerge(NodeServices.layer),
-);
+const CursorTextGenerationTestLayer = ServerConfig.layerTest(process.cwd(), {
+  prefix: "t3code-cursor-text-generation-test-",
+}).pipe(Layer.provideMerge(NodeServices.layer));
 
 function makeAcpAgentWrapper(dir: string, env: Record<string, string>): string {
   const binDir = path.join(dir, "bin");
@@ -57,44 +50,20 @@ function makeAcpAgentWrapper(dir: string, env: Record<string, string>): string {
 
 function withFakeAcpAgent<A, E, R>(
   env: Record<string, string>,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E | ServerSettingsError, R | ServerSettingsService> {
+  effectFn: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
+) {
   return Effect.gen(function* () {
     const tempDir = mkdtempSync(path.join(os.tmpdir(), "t3code-cursor-text-acp-"));
-    const agentPath = makeAcpAgentWrapper(tempDir, env);
-    const serverSettings = yield* ServerSettingsService;
-    const previousSettings = yield* serverSettings.getSettings;
-
-    yield* serverSettings.updateSettings({
-      providers: {
-        cursor: {
-          binaryPath: agentPath,
-        },
-      },
-    });
-
-    return yield* effect.pipe(
-      Effect.ensuring(
-        serverSettings
-          .updateSettings({
-            providers: {
-              cursor: {
-                binaryPath: previousSettings.providers.cursor.binaryPath,
-              },
-            },
-          })
-          .pipe(
-            Effect.catch(() => Effect.void),
-            Effect.ensuring(
-              Effect.sync(() => {
-                rmSync(tempDir, { recursive: true, force: true });
-              }),
-            ),
-            Effect.asVoid,
-          ),
-      ),
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        rmSync(tempDir, { recursive: true, force: true });
+      }),
     );
-  });
+    const agentPath = makeAcpAgentWrapper(tempDir, env);
+    const config = Schema.decodeSync(CursorSettings)({ binaryPath: agentPath });
+    const textGeneration = yield* makeCursorTextGeneration(config);
+    return yield* effectFn(textGeneration);
+  }).pipe(Effect.scoped);
 }
 
 function waitForFileContent(path: string): Effect.Effect<string> {
@@ -126,85 +95,86 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
           body: "- verify cursor acp model config path",
         }),
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/cursor-text-generation",
+            stagedSummary: "M apps/server/src/git/Layers/CursorTextGeneration.ts",
+            stagedPatch:
+              "diff --git a/apps/server/src/git/Layers/CursorTextGeneration.ts b/apps/server/src/git/Layers/CursorTextGeneration.ts",
+            modelSelection: {
+              ...createModelSelection(ProviderInstanceId.make("cursor"), "gpt-5.4", [
+                { id: "reasoning", value: "xhigh" },
+                { id: "fastMode", value: true },
+                { id: "contextWindow", value: "1m" },
+              ]),
+            },
+          });
 
-        const generated = yield* textGeneration.generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/cursor-text-generation",
-          stagedSummary: "M apps/server/src/git/Layers/CursorTextGeneration.ts",
-          stagedPatch:
-            "diff --git a/apps/server/src/git/Layers/CursorTextGeneration.ts b/apps/server/src/git/Layers/CursorTextGeneration.ts",
-          modelSelection: {
-            ...createModelSelection("cursor", "gpt-5.4", [
-              { id: "reasoning", value: "xhigh" },
-              { id: "fastMode", value: true },
-              { id: "contextWindow", value: "1m" },
+          expect(generated.subject).toBe("Add generated commit message");
+          expect(generated.body).toBe("- verify cursor acp model config path");
+
+          const requests = readFileSync(requestLogPath, "utf8")
+            .trim()
+            .split("\n")
+            .filter((line) => line.length > 0)
+            .map(
+              (line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> },
+            );
+
+          expect(
+            requests.find((request) => request.method === "initialize")?.params?.clientCapabilities,
+          ).toMatchObject({
+            _meta: {
+              parameterizedModelPicker: true,
+            },
+          });
+          expect(
+            requests.some(
+              (request) =>
+                request.method === "session/set_config_option" &&
+                request.params?.configId === "model" &&
+                request.params?.value === "gpt-5.4",
+            ),
+          ).toBe(true);
+          expect(
+            requests.some(
+              (request) =>
+                request.method === "session/set_config_option" &&
+                request.params?.configId === "reasoning" &&
+                request.params?.value === "extra-high",
+            ),
+          ).toBe(true);
+          expect(
+            requests.some(
+              (request) =>
+                request.method === "session/set_config_option" &&
+                request.params?.configId === "context" &&
+                request.params?.value === "1m",
+            ),
+          ).toBe(true);
+          expect(
+            requests.some(
+              (request) =>
+                request.method === "session/set_config_option" &&
+                request.params?.configId === "fast" &&
+                request.params?.value === "true",
+            ),
+          ).toBe(true);
+          expect(
+            requests.find((request) => request.method === "session/prompt")?.params?.prompt,
+          ).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                type: "text",
+                text: expect.stringContaining("Staged patch:"),
+              }),
             ]),
-          },
-        });
+          );
 
-        expect(generated.subject).toBe("Add generated commit message");
-        expect(generated.body).toBe("- verify cursor acp model config path");
-
-        const requests = readFileSync(requestLogPath, "utf8")
-          .trim()
-          .split("\n")
-          .filter((line) => line.length > 0)
-          .map((line) => JSON.parse(line) as { method?: string; params?: Record<string, unknown> });
-
-        expect(
-          requests.find((request) => request.method === "initialize")?.params?.clientCapabilities,
-        ).toMatchObject({
-          _meta: {
-            parameterizedModelPicker: true,
-          },
-        });
-        expect(
-          requests.some(
-            (request) =>
-              request.method === "session/set_config_option" &&
-              request.params?.configId === "model" &&
-              request.params?.value === "gpt-5.4",
-          ),
-        ).toBe(true);
-        expect(
-          requests.some(
-            (request) =>
-              request.method === "session/set_config_option" &&
-              request.params?.configId === "reasoning" &&
-              request.params?.value === "extra-high",
-          ),
-        ).toBe(true);
-        expect(
-          requests.some(
-            (request) =>
-              request.method === "session/set_config_option" &&
-              request.params?.configId === "context" &&
-              request.params?.value === "1m",
-          ),
-        ).toBe(true);
-        expect(
-          requests.some(
-            (request) =>
-              request.method === "session/set_config_option" &&
-              request.params?.configId === "fast" &&
-              request.params?.value === "true",
-          ),
-        ).toBe(true);
-        expect(
-          requests.find((request) => request.method === "session/prompt")?.params?.prompt,
-        ).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              type: "text",
-              text: expect.stringContaining("Staged patch:"),
-            }),
-          ]),
-        );
-
-        rmSync(requestLogDir, { recursive: true, force: true });
-      }),
+          rmSync(requestLogDir, { recursive: true, force: true });
+        }),
     );
   });
 
@@ -214,23 +184,22 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
         T3_ACP_PROMPT_RESPONSE_TEXT:
           'Sure, here is the JSON:\n```json\n{\n  "subject": "Update README dummy comment with attribution and date",\n  "body": ""\n}\n```\nDone.',
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/cursor-noisy-json",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("cursor"),
+              model: "composer-2",
+            },
+          });
 
-        const generated = yield* textGeneration.generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/cursor-noisy-json",
-          stagedSummary: "M README.md",
-          stagedPatch: "diff --git a/README.md b/README.md",
-          modelSelection: {
-            provider: "cursor",
-            model: "composer-2",
-          },
-        });
-
-        expect(generated.subject).toBe("Update README dummy comment with attribution and date");
-        expect(generated.body).toBe("");
-      }),
+          expect(generated.subject).toBe("Update README dummy comment with attribution and date");
+          expect(generated.body).toBe("");
+        }),
     ),
   );
 
@@ -241,20 +210,19 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
           title: '"Trim reconnect spinner status after resume."',
         }),
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Fix the reconnect spinner after a resumed session.",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("cursor"),
+              model: "composer-2",
+            },
+          });
 
-        const generated = yield* textGeneration.generateThreadTitle({
-          cwd: process.cwd(),
-          message: "Fix the reconnect spinner after a resumed session.",
-          modelSelection: {
-            provider: "cursor",
-            model: "composer-2",
-          },
-        });
-
-        expect(generated.title).toBe("Trim reconnect spinner status after resume.");
-      }),
+          expect(generated.title).toBe("Trim reconnect spinner status after resume.");
+        }),
     ),
   );
 
@@ -270,28 +238,27 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGenerationLive", (it) => {
           body: "",
         }),
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/cursor-runtime-close",
+            stagedSummary: "M apps/server/src/git/Layers/CursorTextGeneration.ts",
+            stagedPatch:
+              "diff --git a/apps/server/src/git/Layers/CursorTextGeneration.ts b/apps/server/src/git/Layers/CursorTextGeneration.ts",
+            modelSelection: {
+              instanceId: ProviderInstanceId.make("cursor"),
+              model: "composer-2",
+            },
+          });
 
-        const generated = yield* textGeneration.generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/cursor-runtime-close",
-          stagedSummary: "M apps/server/src/git/Layers/CursorTextGeneration.ts",
-          stagedPatch:
-            "diff --git a/apps/server/src/git/Layers/CursorTextGeneration.ts b/apps/server/src/git/Layers/CursorTextGeneration.ts",
-          modelSelection: {
-            provider: "cursor",
-            model: "composer-2",
-          },
-        });
+          expect(generated.subject).toBe("Close runtime after generation");
 
-        expect(generated.subject).toBe("Close runtime after generation");
+          const exitLog = yield* waitForFileContent(exitLogPath);
+          expect(exitLog).toContain("exit:0");
 
-        const exitLog = yield* waitForFileContent(exitLogPath);
-        expect(exitLog).toContain("exit:0");
-
-        rmSync(exitLogDir, { recursive: true, force: true });
-      }),
+          rmSync(exitLogDir, { recursive: true, force: true });
+        }),
     );
   });
 });

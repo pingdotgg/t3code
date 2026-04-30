@@ -1,8 +1,14 @@
-import { type ProviderKind, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
 import { normalizeSearchQuery, scoreQueryMatch } from "@t3tools/shared/searchRanking";
 
 type ModelPickerSearchableModel = {
-  provider: ProviderKind;
+  /** Driver kind — indexed so "codex" still matches a Codex Personal instance. */
+  driverKind: string;
+  /**
+   * Instance display name (e.g. "Codex Personal"). Indexed as a search
+   * field so typing the custom instance's user-authored name matches its
+   * models directly instead of just the driver kind.
+   */
+  providerDisplayName: string;
   name: string;
   shortName?: string;
   subProvider?: string;
@@ -16,8 +22,8 @@ function getModelPickerSearchFields(model: ModelPickerSearchableModel): string[]
     normalizeSearchQuery(model.name),
     ...(model.shortName ? [normalizeSearchQuery(model.shortName)] : []),
     ...(model.subProvider ? [normalizeSearchQuery(model.subProvider)] : []),
-    normalizeSearchQuery(model.provider),
-    normalizeSearchQuery(PROVIDER_DISPLAY_NAMES[model.provider]),
+    normalizeSearchQuery(model.driverKind),
+    normalizeSearchQuery(model.providerDisplayName),
     buildModelPickerSearchText(model),
   ];
 }
@@ -40,13 +46,7 @@ function scoreModelPickerSearchToken(
 
 export function buildModelPickerSearchText(model: ModelPickerSearchableModel): string {
   return normalizeSearchQuery(
-    [
-      model.name,
-      model.shortName,
-      model.subProvider,
-      model.provider,
-      PROVIDER_DISPLAY_NAMES[model.provider],
-    ]
+    [model.name, model.shortName, model.subProvider, model.driverKind, model.providerDisplayName]
       .filter((value): value is string => typeof value === "string" && value.length > 0)
       .join(" "),
   );

@@ -1,5 +1,5 @@
 import { describe, it, assert } from "@effect/vitest";
-import type { ServerProvider } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { Deferred, Effect, Fiber, PubSub, Ref, Stream } from "effect";
 
@@ -21,7 +21,8 @@ interface TestSettings {
 }
 
 const initialSnapshot: ServerProvider = {
-  provider: "codex",
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: ProviderDriverKind.make("codex"),
   enabled: true,
   installed: true,
   version: null,
@@ -35,7 +36,8 @@ const initialSnapshot: ServerProvider = {
 };
 
 const refreshedSnapshot: ServerProvider = {
-  provider: "codex",
+  instanceId: ProviderInstanceId.make("codex"),
+  driver: ProviderDriverKind.make("codex"),
   enabled: true,
   installed: true,
   version: "1.0.0",

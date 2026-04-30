@@ -44,7 +44,7 @@ export function parsePersistedServerObservabilitySettings(
 function shouldReplaceTextGenerationModelSelection(
   patch: ServerSettingsPatch["textGenerationModelSelection"] | undefined,
 ): boolean {
-  return Boolean(patch && (patch.provider !== undefined || patch.model !== undefined));
+  return Boolean(patch && (patch.instanceId !== undefined || patch.model !== undefined));
 }
 
 function mergeModelSelectionOptionsById(input: {
@@ -76,11 +76,18 @@ export function applyServerSettingsPatch(
 ): ServerSettings {
   const selectionPatch = patch.textGenerationModelSelection;
   const next = deepMerge(current, patch);
+  const nextWithReplacements =
+    patch.providerInstances !== undefined
+      ? {
+          ...next,
+          providerInstances: patch.providerInstances,
+        }
+      : next;
   if (!selectionPatch) {
-    return next;
+    return nextWithReplacements;
   }
 
-  const provider = selectionPatch.provider ?? current.textGenerationModelSelection.provider;
+  const instanceId = selectionPatch.instanceId ?? current.textGenerationModelSelection.instanceId;
   const model = selectionPatch.model ?? current.textGenerationModelSelection.model;
   const options = shouldReplaceTextGenerationModelSelection(selectionPatch)
     ? selectionPatch.options
@@ -90,7 +97,7 @@ export function applyServerSettingsPatch(
       });
 
   return {
-    ...next,
-    textGenerationModelSelection: createModelSelection(provider, model, options),
+    ...nextWithReplacements,
+    textGenerationModelSelection: createModelSelection(instanceId, model, options),
   };
 }

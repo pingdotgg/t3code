@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ModelCapabilities } from "@t3tools/contracts";
+import { ProviderDriverKind, type ModelCapabilities } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
 import { providerModelsFromSettings } from "./providerSnapshot.ts";
@@ -27,7 +27,7 @@ describe("providerModelsFromSettings", () => {
   it("applies the provided capabilities to custom models", () => {
     const models = providerModelsFromSettings(
       [],
-      "opencode",
+      ProviderDriverKind.make("opencode"),
       ["openai/gpt-5"],
       OPENCODE_CUSTOM_MODEL_CAPABILITIES,
     );

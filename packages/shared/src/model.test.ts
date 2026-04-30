@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_MODEL_BY_PROVIDER, type ModelCapabilities } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ModelCapabilities,
+} from "@t3tools/contracts";
 
 import {
   applyClaudePromptEffortPrefix,
@@ -67,9 +72,10 @@ const claudeCaps: ModelCapabilities = createModelCapabilities({
 
 describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
+    const claude = ProviderDriverKind.make("claudeAgent");
     expect(normalizeModelSlug("gpt-5-codex")).toBe("gpt-5.4");
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
-    expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("claude-sonnet-4-6");
+    expect(normalizeModelSlug("sonnet", claude)).toBe("claude-sonnet-4-6");
   });
 
   it("returns null for empty or missing values", () => {
@@ -82,16 +88,18 @@ describe("normalizeModelSlug", () => {
 
 describe("resolveModelSlugForProvider", () => {
   it("returns defaults when the model is missing", () => {
-    expect(resolveModelSlugForProvider("codex", undefined)).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
-    expect(resolveModelSlugForProvider("claudeAgent", undefined)).toBe(
-      DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
+    expect(resolveModelSlugForProvider(ProviderDriverKind.make("codex"), undefined)).toBe(
+      DEFAULT_MODEL,
+    );
+    expect(resolveModelSlugForProvider(ProviderDriverKind.make("ollama"), undefined)).toBe(
+      DEFAULT_MODEL,
     );
   });
 
   it("preserves normalized unknown models", () => {
-    expect(resolveModelSlugForProvider("codex", "custom/internal-model")).toBe(
-      "custom/internal-model",
-    );
+    expect(
+      resolveModelSlugForProvider(ProviderDriverKind.make("codex"), "custom/internal-model"),
+    ).toBe("custom/internal-model");
   });
 });
 
@@ -101,9 +109,15 @@ describe("resolveSelectableModel", () => {
       { slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" },
       { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
     ];
-    expect(resolveSelectableModel("codex", "gpt-5.3-codex", options)).toBe("gpt-5.3-codex");
-    expect(resolveSelectableModel("codex", "gpt-5.3 codex", options)).toBe("gpt-5.3-codex");
-    expect(resolveSelectableModel("claudeAgent", "sonnet", options)).toBe("claude-sonnet-4-6");
+    expect(resolveSelectableModel(ProviderDriverKind.make("codex"), "gpt-5.3-codex", options)).toBe(
+      "gpt-5.3-codex",
+    );
+    expect(resolveSelectableModel(ProviderDriverKind.make("codex"), "gpt-5.3 codex", options)).toBe(
+      "gpt-5.3-codex",
+    );
+    expect(resolveSelectableModel(ProviderDriverKind.make("claudeAgent"), "sonnet", options)).toBe(
+      "claude-sonnet-4-6",
+    );
   });
 });
 
@@ -182,12 +196,12 @@ describe("descriptor helpers", () => {
 
   it("stores option selection arrays in model selections", () => {
     expect(
-      createModelSelection("codex", "gpt-5.4", [
+      createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
         { id: "reasoningEffort", value: "high" },
         { id: "fastMode", value: true },
       ]),
     ).toEqual({
-      provider: "codex",
+      instanceId: "codex",
       model: "gpt-5.4",
       options: [
         { id: "reasoningEffort", value: "high" },
@@ -197,7 +211,7 @@ describe("descriptor helpers", () => {
   });
 
   it("reads typed option selection values", () => {
-    const selection = createModelSelection("codex", "gpt-5.4", [
+    const selection = createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
       { id: "reasoningEffort", value: "high" },
       { id: "fastMode", value: true },
     ]);
