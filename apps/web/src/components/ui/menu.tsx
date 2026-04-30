@@ -11,6 +11,7 @@ import {
 } from "~/lib/motion";
 
 const MenuCreateHandle = MenuPrimitive.createHandle;
+type MenuHandle<Payload = unknown> = NonNullable<MenuPrimitive.Root.Props<Payload>["handle"]>;
 
 const Menu = MenuPrimitive.Root;
 
@@ -281,6 +282,7 @@ function MenuSubPopup({
 
 export {
   MenuCreateHandle,
+  type MenuHandle,
   MenuCreateHandle as DropdownMenuCreateHandle,
   Menu,
   Menu as DropdownMenu,

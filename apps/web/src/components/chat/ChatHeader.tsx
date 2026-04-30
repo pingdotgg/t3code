@@ -13,6 +13,7 @@ import {
   IconChevronRight as ChevronRightIcon,
   IconCube as CubeIcon,
   IconPlusminus as DiffIcon,
+  IconRectangleOnRectangle as PreviewIcon,
 } from "symbols-react";
 import { TerminalToggleIcon } from "../icons/custom";
 import { Badge } from "../ui/badge";
@@ -44,6 +45,7 @@ interface ChatHeaderProps {
   terminalAvailable: boolean;
   terminalOpen: boolean;
   terminalToggleShortcutLabel: string | null;
+  previewOpen: boolean;
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
   diffOpen: boolean;
@@ -53,6 +55,7 @@ interface ChatHeaderProps {
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onOpenProjectSwitcher: () => void;
   onToggleTerminal: () => void;
+  onTogglePreview: () => void;
   onToggleDiff: () => void;
 }
 
@@ -71,6 +74,7 @@ export const ChatHeader = memo(function ChatHeader({
   terminalAvailable,
   terminalOpen,
   terminalToggleShortcutLabel,
+  previewOpen,
   diffToggleShortcutLabel,
   gitCwd,
   diffOpen,
@@ -80,6 +84,7 @@ export const ChatHeader = memo(function ChatHeader({
   onDeleteProjectScript,
   onOpenProjectSwitcher,
   onToggleTerminal,
+  onTogglePreview,
   onToggleDiff,
 }: ChatHeaderProps) {
   return (
@@ -161,8 +166,30 @@ export const ChatHeader = memo(function ChatHeader({
             render={
               <Toggle
                 className="shrink-0 [&_svg]:fill-current"
+                pressed={previewOpen}
+                onClick={onTogglePreview}
+                aria-label="Toggle preview drawer"
+                variant="outline"
+                size="xs"
+                disabled={!activeProjectName}
+              >
+                <PreviewIcon className="size-3" />
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">
+            {!activeProjectName
+              ? "Preview is unavailable until this thread has an active project."
+              : "Toggle component preview drawer"}
+          </TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0 [&_svg]:fill-current"
                 pressed={terminalOpen}
-                onPressedChange={onToggleTerminal}
+                onClick={onToggleTerminal}
                 aria-label="Toggle terminal drawer"
                 variant="outline"
                 size="xs"
@@ -186,7 +213,7 @@ export const ChatHeader = memo(function ChatHeader({
               <Toggle
                 className="shrink-0 [&_svg]:fill-current"
                 pressed={diffOpen}
-                onPressedChange={onToggleDiff}
+                onClick={onToggleDiff}
                 aria-label="Toggle diff panel"
                 variant="outline"
                 size="xs"

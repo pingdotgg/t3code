@@ -258,6 +258,8 @@ index 1111111..2222222 100644
           resolvedTheme="dark"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
+          onOpenPreview={vi.fn()}
+          previewDisabledReason={null}
           onPersisted={onPersisted}
           onRequestBack={vi.fn()}
           onRequestFilePathChange={vi.fn()}
@@ -312,6 +314,8 @@ index 1111111..2222222 100644
           resolvedTheme="light"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
+          onOpenPreview={vi.fn()}
+          previewDisabledReason={null}
           onPersisted={vi.fn()}
           onRequestBack={vi.fn()}
           onRequestFilePathChange={onRequestFilePathChange}
@@ -360,6 +364,8 @@ index 1111111..2222222 100644
           resolvedTheme="dark"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
+          onOpenPreview={vi.fn()}
+          previewDisabledReason={null}
           onPersisted={vi.fn()}
           onRequestBack={vi.fn()}
           onRequestFilePathChange={vi.fn()}
@@ -402,6 +408,8 @@ index 1111111..2222222 100644
           resolvedTheme="dark"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
+          onOpenPreview={vi.fn()}
+          previewDisabledReason={null}
           onPersisted={vi.fn()}
           onRequestBack={vi.fn()}
           onRequestFilePathChange={vi.fn()}
@@ -445,6 +453,8 @@ index 1111111..2222222 100644
           resolvedTheme="dark"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
+          onOpenPreview={vi.fn()}
+          previewDisabledReason={null}
           onPersisted={vi.fn()}
           onRequestBack={vi.fn()}
           onRequestFilePathChange={vi.fn()}
@@ -494,6 +504,8 @@ index 1111111..2222222 100644
           resolvedTheme="dark"
           onAddCodeContext={onAddCodeContext}
           onOpenInEditor={vi.fn()}
+          onOpenPreview={vi.fn()}
+          previewDisabledReason={null}
           onPersisted={vi.fn()}
           onRequestBack={vi.fn()}
           onRequestFilePathChange={vi.fn()}
@@ -547,6 +559,8 @@ index 1111111..2222222 100644
           resolvedTheme="dark"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
+          onOpenPreview={vi.fn()}
+          previewDisabledReason={null}
           onPersisted={vi.fn()}
           onRequestBack={vi.fn()}
           onRequestFilePathChange={vi.fn()}
@@ -596,6 +610,8 @@ index 1111111..2222222 100644
           resolvedTheme="dark"
           onAddCodeContext={vi.fn()}
           onOpenInEditor={vi.fn()}
+          onOpenPreview={vi.fn()}
+          previewDisabledReason={null}
           onPersisted={vi.fn()}
           onRequestBack={vi.fn()}
           onRequestFilePathChange={vi.fn()}

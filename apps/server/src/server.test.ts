@@ -107,6 +107,7 @@ import {
   ServerEnvironment,
   type ServerEnvironmentShape,
 } from "./environment/Services/ServerEnvironment.ts";
+import { PreviewManager, type PreviewManagerShape } from "./preview/Services/PreviewManager.ts";
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
@@ -339,6 +340,7 @@ const buildAppUnderTest = (options?: {
     orchestrationEngine?: Partial<OrchestrationEngineShape>;
     projectionSnapshotQuery?: Partial<ProjectionSnapshotQueryShape>;
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
+    previewManager?: Partial<PreviewManagerShape>;
     browserTraceCollector?: Partial<BrowserTraceCollectorShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
@@ -520,6 +522,64 @@ const buildAppUnderTest = (options?: {
             }),
           ...options?.layers?.checkpointDiffQuery,
         }),
+      ),
+      Layer.provide(
+        Layer.mock(PreviewManager)({
+          inspectProject: () =>
+            Effect.succeed({
+              projectId: defaultProjectId,
+              provider: "storybook",
+              status: "unsupported",
+              framework: null,
+              detectedStartCommands: [],
+              storybookConfigPaths: [],
+              packageManager: null,
+              controlsBridgeStatus: "missing",
+              summary: "Previews unavailable.",
+            }),
+          searchComponents: () => Effect.succeed({ components: [], truncated: false }),
+          resolveTarget: () =>
+            Effect.succeed({
+              status: "notFound",
+              targetKind: "component",
+              relativePath: "src/Component.tsx",
+            }),
+          chooseStoryMapping: () => Effect.void,
+          setStartCommandOverride: () => Effect.void,
+          prepareWorkspaceSetupThread: () =>
+            Effect.succeed({
+              workspaceRootRelativePath: "",
+              existingThreadId: null,
+              threadTitle: "Preview setup · project root",
+              initialPrompt: "Set up previews.",
+              inspectionSummary: "No preview workspace covers this component.",
+              reviewSummary: [],
+            }),
+          prepareStoryWorkTurn: () =>
+            Effect.succeed({
+              workspaceRootRelativePath: "",
+              threadId: null,
+              turnPrompt: "Create or fix the story.",
+              storyRelativePath: null,
+            }),
+          ensureRuntime: () =>
+            Effect.succeed({
+              projectId: defaultProjectId,
+              provider: "storybook",
+              started: false,
+              iframeBasePath: "/__preview/project-default",
+            }),
+          issueAccessToken: () =>
+            Effect.succeed({
+              projectId: defaultProjectId,
+              accessToken: "preview-access-token",
+            }),
+          stopRuntime: () => Effect.void,
+          streamProject: () => Stream.empty,
+          getRuntimeTarget: () => Effect.succeed(null),
+          authenticateAccessToken: () => Effect.succeed(false),
+          ...options?.layers?.previewManager,
+        } satisfies Partial<PreviewManagerShape>),
       ),
     );
 

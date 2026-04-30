@@ -6,6 +6,7 @@ import {
   IconCube as CubeIcon,
   IconEllipsis as EllipsisIcon,
   IconMagnifyingglass as SearchIcon,
+  IconRectangleOnRectangle as PreviewIcon,
 } from "symbols-react";
 import {
   useCallback,
@@ -26,6 +27,7 @@ import { useThreadRowActions } from "../hooks/useThreadRowActions";
 import { openProjectOrCreateThread } from "../lib/chatThreadActions";
 import { MICRO_FADE_MOTION_CLASS_NAME } from "../lib/motion";
 import { cn } from "../lib/utils";
+import { openPreviewDrawer } from "../previewTargets";
 import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsAcrossEnvironments,
@@ -41,6 +43,7 @@ import {
   resolveNoActiveThreadStateVariant,
 } from "./NoActiveThreadState.logic";
 import { LogomarkForma } from "./LogomarkForma";
+import { BottomDrawerHost } from "./BottomDrawerHost";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { DesktopSidebarReopenButton } from "./sidebar/DesktopSidebarReopenButton";
 import {
@@ -632,6 +635,18 @@ export function NoActiveThreadState() {
         },
       },
       {
+        title: "Open preview",
+        description: singleProject
+          ? "Browse live component previews in this project."
+          : "Open the preview drawer and choose a project.",
+        icon: <PreviewIcon className="size-5" />,
+        testId: "no-active-thread-action-open-preview",
+        onClick: () =>
+          openPreviewDrawer(
+            singleProject ? scopeProjectRef(singleProject.environmentId, singleProject.id) : null,
+          ),
+      },
+      {
         title: "Search",
         description: "Jump straight to a project or thread.",
         icon: <SearchIcon className="size-5 fill-current" />,
@@ -773,6 +788,7 @@ export function NoActiveThreadState() {
             ) : null}
           </div>
         </div>
+        <BottomDrawerHost />
       </div>
     </SidebarInset>
   );

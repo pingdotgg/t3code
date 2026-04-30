@@ -53,6 +53,8 @@ import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { getServerConfig } from "../rpc/serverState";
 import { getRouter } from "../router";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
+import { useBottomDrawerUiStore } from "../bottomDrawerUiStore";
+import { usePreviewWorkspaceStore } from "../previewWorkspaceStore";
 import { selectBootstrapCompleteForActiveEnvironment, useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
@@ -235,6 +237,7 @@ function createMockEnvironmentApi(input: {
           throw new Error("Not implemented in browser test.");
         }) as EnvironmentApi["projects"]["writeFile"]),
     },
+    preview: {} as EnvironmentApi["preview"],
     filesystem: {
       browse: input.browse,
     },
@@ -384,6 +387,7 @@ function createSnapshotForTargetUser(options: {
           model: "gpt-5",
         },
         scripts: [],
+        previewConfig: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
@@ -896,6 +900,7 @@ function createSnapshotWithSecondaryProject(options?: {
         workspaceRoot: "/repo/clients/docs-portal",
         defaultModelSelection: { provider: "codex", model: "gpt-5" },
         scripts: [],
+        previewConfig: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
@@ -984,6 +989,7 @@ function createSnapshotWithGroupedCleanupThreads(): OrchestrationReadModel {
         repositoryIdentity,
         defaultModelSelection: { provider: "codex", model: "gpt-5" },
         scripts: [],
+        previewConfig: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
@@ -2224,6 +2230,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
       terminalLaunchContextByThreadKey: {},
       terminalEventEntriesByKey: {},
       nextTerminalEventId: 1,
+    });
+    useBottomDrawerUiStore.persist.clearStorage();
+    useBottomDrawerUiStore.setState({
+      visibleMode: "hidden",
+      previousVisibleMode: null,
+      sharedHeight: 320,
+    });
+    usePreviewWorkspaceStore.setState({
+      activeProjectRef: null,
+      projectStateByKey: {},
     });
   });
 
@@ -3866,6 +3882,46 @@ describe("ChatView timeline estimator parity (full app)", () => {
       buildItem.click();
 
       await waitForComposerInteractionModePill("Agent");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the plus menu from the interaction mode pill", async () => {
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-mode-pill-trigger" as MessageId,
+        targetText: "mode pill trigger target",
+      }),
+    });
+
+    try {
+      const addActionsButton = await waitForComposerAddActionsButton();
+      const pill = await waitForComposerInteractionModePill("Agent");
+      pill.click();
+
+      const planItem = await waitForComposerAddActionsMenuItem("Plan");
+      const popup = await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-slot="menu-popup"]'),
+        "Unable to find composer add actions popup.",
+      );
+
+      await vi.waitFor(
+        () => {
+          const popupRect = popup.getBoundingClientRect();
+          const addActionsRect = addActionsButton.getBoundingClientRect();
+          const pillRect = pill.getBoundingClientRect();
+
+          expect(Math.abs(popupRect.left - addActionsRect.left)).toBeLessThan(
+            Math.abs(popupRect.left - pillRect.left),
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      planItem.click();
+      await waitForComposerInteractionModePill("Plan");
     } finally {
       await mounted.cleanup();
     }
@@ -7690,6 +7746,106 @@ describe("ChatView timeline estimator parity (full app)", () => {
           const tooltip = document.querySelector<HTMLElement>('[data-slot="tooltip-popup"]');
           expect(tooltip).not.toBeNull();
           expect(tooltip?.textContent).toContain("Open pages, click around, and inspect web apps.");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens and closes the shared terminal drawer from the header toggle", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-terminal-toggle" as MessageId,
+        targetText: "terminal toggle thread",
+      }),
+    });
+
+    try {
+      await page.getByLabelText("Toggle terminal drawer").click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector(".thread-terminal-drawer")).not.toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByLabelText("Toggle terminal drawer").click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector(".thread-terminal-drawer")).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens and closes the shared preview drawer from the header toggle", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-preview-toggle" as MessageId,
+        targetText: "preview toggle thread",
+      }),
+    });
+
+    try {
+      await page.getByLabelText("Toggle preview drawer").click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain(
+            "Search for a component or open preview from a file.",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByLabelText("Toggle preview drawer").click();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).not.toContain(
+            "Search for a component or open preview from a file.",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("closes the diff panel when the header diff toggle is pressed twice", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-diff-toggle" as MessageId,
+        targetText: "diff toggle thread",
+      }),
+    });
+
+    try {
+      await page.getByLabelText("Toggle diff panel").click();
+
+      await vi.waitFor(
+        () => {
+          expect(mounted.router.state.location.search.diff).toBe("1");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByLabelText("Toggle diff panel").click();
+
+      await vi.waitFor(
+        () => {
+          expect(mounted.router.state.location.search.diff).toBeUndefined();
         },
         { timeout: 8_000, interval: 16 },
       );

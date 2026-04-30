@@ -4,7 +4,10 @@ import { type TimestampFormat } from "@forma/contracts/settings";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
-import ChatMarkdown, { type OpenChatMarkdownFileInApp } from "./ChatMarkdown";
+import ChatMarkdown, {
+  type OpenChatMarkdownFileInApp,
+  type OpenChatMarkdownFilePreview,
+} from "./ChatMarkdown";
 import {
   IconCheckmark as CheckIcon,
   IconChevronDown as ChevronDownIcon,
@@ -62,6 +65,7 @@ interface PlanSidebarProps {
   mode?: "sheet" | "sidebar";
   onClose: () => void;
   onOpenFileInApp?: OpenChatMarkdownFileInApp | undefined;
+  onOpenFilePreview?: OpenChatMarkdownFilePreview | undefined;
 }
 
 const PlanSidebar = memo(function PlanSidebar({
@@ -75,6 +79,7 @@ const PlanSidebar = memo(function PlanSidebar({
   mode = "sidebar",
   onClose,
   onOpenFileInApp,
+  onOpenFilePreview,
 }: PlanSidebarProps) {
   const [proposedPlanExpanded, setProposedPlanExpanded] = useState(false);
   const [isSavingToWorkspace, setIsSavingToWorkspace] = useState(false);
@@ -260,6 +265,7 @@ const PlanSidebar = memo(function PlanSidebar({
                     cwd={markdownCwd}
                     isStreaming={false}
                     onOpenFileInApp={onOpenFileInApp}
+                    onOpenFilePreview={onOpenFilePreview}
                   />
                 </div>
               ) : null}

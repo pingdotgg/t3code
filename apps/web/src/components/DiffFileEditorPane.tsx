@@ -68,6 +68,8 @@ interface DiffFileEditorPaneProps {
   onRequestBack: () => void;
   onRequestFilePathChange: (filePath: string) => void;
   onOpenInEditor: (filePath: string) => void;
+  onOpenPreview: (filePath: string) => void;
+  previewDisabledReason: string | null;
   onPersisted: (input: {
     filePath: string;
     savedContents: string;
@@ -154,6 +156,8 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     initialOverride,
     navigationLabel,
     onOpenInEditor,
+    onOpenPreview,
+    previewDisabledReason,
     onPersisted,
     onAddCodeContext,
     onRequestBack,
@@ -540,6 +544,15 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                   S
                 </Kbd>
               </KbdGroup>
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() => onOpenPreview(filePath)}
+              disabled={previewDisabledReason !== null}
+              title={previewDisabledReason ?? "Open Preview"}
+            >
+              Preview
             </Button>
             <Button
               size="icon-xs"

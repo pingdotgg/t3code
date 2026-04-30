@@ -123,6 +123,8 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           workspaceRoot: command.workspaceRoot,
           defaultModelSelection: command.defaultModelSelection ?? null,
           scripts: [],
+          previewConfig: null,
+          previewWorkspaceRecords: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -152,6 +154,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { defaultModelSelection: command.defaultModelSelection }
             : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
+          ...(command.previewConfig !== undefined ? { previewConfig: command.previewConfig } : {}),
+          ...(command.previewWorkspaceRecords !== undefined
+            ? { previewWorkspaceRecords: command.previewWorkspaceRecords }
+            : {}),
           updatedAt: occurredAt,
         },
       };

@@ -4,9 +4,15 @@ import type { WsRpcClient } from "./rpc/wsRpcClient";
 import { readEnvironmentConnection } from "./environments/runtime";
 
 const environmentApiOverridesForTests = new Map<EnvironmentId, EnvironmentApi>();
+const environmentApiByRpcClient = new WeakMap<WsRpcClient, EnvironmentApi>();
 
 export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
-  return {
+  const existingApi = environmentApiByRpcClient.get(rpcClient);
+  if (existingApi) {
+    return existingApi;
+  }
+
+  const api: EnvironmentApi = {
     terminal: {
       open: (input) => rpcClient.terminal.open(input as never),
       write: (input) => rpcClient.terminal.write(input as never),
@@ -21,6 +27,20 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       readFile: rpcClient.projects.readFile,
       searchEntries: rpcClient.projects.searchEntries,
       writeFile: rpcClient.projects.writeFile,
+    },
+    preview: {
+      inspectProject: rpcClient.preview.inspectProject,
+      searchComponents: rpcClient.preview.searchComponents,
+      resolveTarget: rpcClient.preview.resolveTarget,
+      chooseStoryMapping: rpcClient.preview.chooseStoryMapping,
+      setStartCommandOverride: rpcClient.preview.setStartCommandOverride,
+      prepareWorkspaceSetupThread: rpcClient.preview.prepareWorkspaceSetupThread,
+      prepareStoryWorkTurn: rpcClient.preview.prepareStoryWorkTurn,
+      ensureRuntime: rpcClient.preview.ensureRuntime,
+      issueAccessToken: rpcClient.preview.issueAccessToken,
+      stopRuntime: rpcClient.preview.stopRuntime,
+      subscribeProject: (input, callback, options) =>
+        rpcClient.preview.subscribeProject(input, callback, options),
     },
     filesystem: {
       browse: rpcClient.filesystem.browse,
@@ -48,6 +68,9 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
         rpcClient.orchestration.subscribeThread(input, callback, options),
     },
   };
+
+  environmentApiByRpcClient.set(rpcClient, api);
+  return api;
 }
 
 export function readEnvironmentApi(environmentId: EnvironmentId): EnvironmentApi | undefined {

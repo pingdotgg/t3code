@@ -17,6 +17,8 @@ import {
   type OrchestrationProjectShell,
   type OrchestrationProposedPlan,
   type OrchestrationProject,
+  ProjectPreviewConfig,
+  ProjectPreviewWorkspaceRecord,
   type OrchestrationSession,
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
@@ -59,6 +61,8 @@ const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+    previewConfig: Schema.NullOr(Schema.fromJsonString(ProjectPreviewConfig)),
+    previewWorkspaceRecords: Schema.fromJsonString(Schema.Array(ProjectPreviewWorkspaceRecord)),
   }),
 );
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
@@ -244,6 +248,8 @@ function mapProjectShellRow(
     repositoryIdentity,
     defaultModelSelection: row.defaultModelSelection,
     scripts: row.scripts,
+    previewConfig: row.previewConfig,
+    previewWorkspaceRecords: row.previewWorkspaceRecords,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -272,6 +278,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
+          preview_config_json AS "previewConfig",
+          preview_workspace_records_json AS "previewWorkspaceRecords",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -494,6 +502,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
+          preview_config_json AS "previewConfig",
+          preview_workspace_records_json AS "previewWorkspaceRecords",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -516,6 +526,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
+          preview_config_json AS "previewConfig",
+          preview_workspace_records_json AS "previewWorkspaceRecords",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
           deleted_at AS "deletedAt"
@@ -1005,6 +1017,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 repositoryIdentity: repositoryIdentities.get(row.projectId) ?? null,
                 defaultModelSelection: row.defaultModelSelection,
                 scripts: row.scripts,
+                previewConfig: row.previewConfig,
+                previewWorkspaceRecords: row.previewWorkspaceRecords,
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
                 deletedAt: row.deletedAt,

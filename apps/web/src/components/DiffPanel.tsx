@@ -2,7 +2,7 @@ import { parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
 import { FileDiff, Virtualizer } from "@pierre/diffs/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { scopeThreadRef } from "@forma/client-runtime";
+import { scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
 import type { TurnId } from "@forma/contracts";
 import {
   IconChevronLeft as ChevronLeftIcon,
@@ -30,6 +30,7 @@ import {
 } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey, resolveDiffThemeName } from "../lib/diffRendering";
+import { classifyPreviewRelativePath, openPreviewTarget } from "../previewTargets";
 import {
   buildDiffFileEditOverrideKey,
   buildDiffFileEditThreadKey,
@@ -222,6 +223,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         })
       : undefined,
   );
+  const activeProjectRef =
+    activeThread && activeProjectId
+      ? scopeProjectRef(activeThread.environmentId, activeProjectId)
+      : null;
   const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
   const gitStatusQuery = useGitStatus({
     environmentId: activeThread?.environmentId ?? null,
@@ -528,6 +533,32 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     },
     [activeThread, canEditFiles, navigate, selectedTurn, selectedTurnFilePathSet],
   );
+  const previewDisabledReasonForFile = useCallback(
+    (filePath: string) => {
+      if (!activeProjectRef) {
+        return "Preview is unavailable until this diff is attached to a project.";
+      }
+      const classification = classifyPreviewRelativePath(filePath);
+      return classification.enabled ? null : (classification.reason ?? "Preview is unavailable.");
+    },
+    [activeProjectRef],
+  );
+  const openPreviewForFile = useCallback(
+    (filePath: string) => {
+      if (!activeProjectRef) {
+        return;
+      }
+      const classification = classifyPreviewRelativePath(filePath);
+      if (!classification.enabled || !classification.targetKind) {
+        return;
+      }
+      openPreviewTarget(activeProjectRef, {
+        targetKind: classification.targetKind,
+        relativePath: filePath,
+      });
+    },
+    [activeProjectRef],
+  );
 
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
@@ -760,6 +791,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           resolvedTheme={resolvedTheme}
           onAddCodeContext={addEditorCodeContext}
           onOpenInEditor={openDiffFileInEditor}
+          onOpenPreview={openPreviewForFile}
+          previewDisabledReason={previewDisabledReasonForFile(editorFilePath)}
           onPersisted={persistSavedDiffOverride}
           onRequestBack={() => {
             if (editorBackToDiff && selectedTurn) {
@@ -894,6 +927,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                         ) : null}
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5">
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          disabled={previewDisabledReasonForFile(filePath) !== null}
+                          title={previewDisabledReasonForFile(filePath) ?? "Open Preview"}
+                          onClick={() => openPreviewForFile(filePath)}
+                        >
+                          Preview
+                        </Button>
                         {canEditFile ? (
                           <Button
                             size="xs"

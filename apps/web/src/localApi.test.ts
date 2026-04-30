@@ -58,6 +58,23 @@ const rpcClientMock = {
     searchEntries: vi.fn(),
     writeFile: vi.fn(),
   },
+  preview: {
+    inspectProject: vi.fn(),
+    searchComponents: vi.fn(),
+    resolveTarget: vi.fn(),
+    chooseStoryMapping: vi.fn(),
+    setStartCommandOverride: vi.fn(),
+    prepareEnableProject: vi.fn(),
+    prepareGenerateStory: vi.fn(),
+    prepareEnableControlsBridge: vi.fn(),
+    enableProject: vi.fn(),
+    generateStory: vi.fn(),
+    enableControlsBridge: vi.fn(),
+    ensureRuntime: vi.fn(),
+    issueAccessToken: vi.fn(),
+    stopRuntime: vi.fn(),
+    subscribeProject: vi.fn(),
+  },
   filesystem: {
     browse: vi.fn(),
   },
@@ -343,6 +360,7 @@ describe("wsApi", () => {
           model: "gpt-5-codex",
         },
         scripts: [],
+        previewConfig: null,
         createdAt: "2026-02-24T00:00:00.000Z",
         updatedAt: "2026-02-24T00:00:00.000Z",
       },
@@ -351,6 +369,15 @@ describe("wsApi", () => {
 
     expect(onTerminalEvent).toHaveBeenCalledWith(terminalEvent);
     expect(onShellEvent).toHaveBeenCalledWith(shellEvent);
+  });
+
+  it("reuses the same environment API wrapper for the same RPC client", async () => {
+    const { createEnvironmentApi } = await import("./environmentApi");
+
+    const firstApi = createEnvironmentApi(rpcClientMock as never);
+    const secondApi = createEnvironmentApi(rpcClientMock as never);
+
+    expect(secondApi).toBe(firstApi);
   });
 
   it("forwards git status stream events", async () => {

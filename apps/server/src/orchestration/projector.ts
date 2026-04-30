@@ -196,6 +196,8 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             scripts: payload.scripts,
+            previewConfig: payload.previewConfig,
+            previewWorkspaceRecords: payload.previewWorkspaceRecords ?? [],
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             deletedAt: null,
@@ -228,6 +230,12 @@ export function projectEvent(
                     ? { defaultModelSelection: payload.defaultModelSelection }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
+                  ...(payload.previewConfig !== undefined
+                    ? { previewConfig: payload.previewConfig }
+                    : {}),
+                  ...(payload.previewWorkspaceRecords !== undefined
+                    ? { previewWorkspaceRecords: payload.previewWorkspaceRecords }
+                    : {}),
                   updatedAt: payload.updatedAt,
                 }
               : project,

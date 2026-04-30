@@ -63,6 +63,28 @@ import {
   ProjectWriteFileRpcError,
 } from "./project.ts";
 import {
+  PreviewChooseStoryMappingInput,
+  PreviewEnsureRuntimeInput,
+  PreviewEnsureRuntimeResult,
+  PreviewIssueAccessTokenInput,
+  PreviewIssueAccessTokenResult,
+  PreviewInspectProjectInput,
+  PreviewPrepareStoryWorkTurnInput,
+  PreviewPrepareStoryWorkTurnResult,
+  PreviewPrepareWorkspaceSetupThreadInput,
+  PreviewPrepareWorkspaceSetupThreadResult,
+  PreviewProjectEvent,
+  PreviewProjectInspectionResult,
+  PreviewResolveTargetInput,
+  PreviewResolveTargetResult,
+  PreviewRpcError,
+  PreviewSearchComponentsInput,
+  PreviewSearchComponentsResult,
+  PreviewSetStartCommandOverrideInput,
+  PreviewStopRuntimeInput,
+  PreviewSubscribeProjectInput,
+} from "./preview.ts";
+import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalError,
@@ -92,6 +114,16 @@ export const WS_METHODS = {
   projectsGetLocalAgentInventory: "projects.getLocalAgentInventory",
   projectsReadFile: "projects.readFile",
   projectsWriteFile: "projects.writeFile",
+  previewInspectProject: "preview.inspectProject",
+  previewSearchComponents: "preview.searchComponents",
+  previewResolveTarget: "preview.resolveTarget",
+  previewChooseStoryMapping: "preview.chooseStoryMapping",
+  previewSetStartCommandOverride: "preview.setStartCommandOverride",
+  previewPrepareWorkspaceSetupThread: "preview.prepareWorkspaceSetupThread",
+  previewPrepareStoryWorkTurn: "preview.prepareStoryWorkTurn",
+  previewEnsureRuntime: "preview.ensureRuntime",
+  previewIssueAccessToken: "preview.issueAccessToken",
+  previewStopRuntime: "preview.stopRuntime",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -130,6 +162,7 @@ export const WS_METHODS = {
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
+  subscribePreviewProject: "subscribePreviewProject",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -189,6 +222,79 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
   error: ProjectWriteFileRpcError,
+});
+
+export const WsPreviewInspectProjectRpc = Rpc.make(WS_METHODS.previewInspectProject, {
+  payload: PreviewInspectProjectInput,
+  success: PreviewProjectInspectionResult,
+  error: PreviewRpcError,
+});
+
+export const WsPreviewSearchComponentsRpc = Rpc.make(WS_METHODS.previewSearchComponents, {
+  payload: PreviewSearchComponentsInput,
+  success: PreviewSearchComponentsResult,
+  error: PreviewRpcError,
+});
+
+export const WsPreviewResolveTargetRpc = Rpc.make(WS_METHODS.previewResolveTarget, {
+  payload: PreviewResolveTargetInput,
+  success: PreviewResolveTargetResult,
+  error: PreviewRpcError,
+});
+
+export const WsPreviewChooseStoryMappingRpc = Rpc.make(WS_METHODS.previewChooseStoryMapping, {
+  payload: PreviewChooseStoryMappingInput,
+  success: Schema.Void,
+  error: PreviewRpcError,
+});
+
+export const WsPreviewSetStartCommandOverrideRpc = Rpc.make(
+  WS_METHODS.previewSetStartCommandOverride,
+  {
+    payload: PreviewSetStartCommandOverrideInput,
+    success: Schema.Void,
+    error: PreviewRpcError,
+  },
+);
+
+export const WsPreviewPrepareWorkspaceSetupThreadRpc = Rpc.make(
+  WS_METHODS.previewPrepareWorkspaceSetupThread,
+  {
+    payload: PreviewPrepareWorkspaceSetupThreadInput,
+    success: PreviewPrepareWorkspaceSetupThreadResult,
+    error: PreviewRpcError,
+  },
+);
+
+export const WsPreviewPrepareStoryWorkTurnRpc = Rpc.make(WS_METHODS.previewPrepareStoryWorkTurn, {
+  payload: PreviewPrepareStoryWorkTurnInput,
+  success: PreviewPrepareStoryWorkTurnResult,
+  error: PreviewRpcError,
+});
+
+export const WsPreviewEnsureRuntimeRpc = Rpc.make(WS_METHODS.previewEnsureRuntime, {
+  payload: PreviewEnsureRuntimeInput,
+  success: PreviewEnsureRuntimeResult,
+  error: PreviewRpcError,
+});
+
+export const WsPreviewIssueAccessTokenRpc = Rpc.make(WS_METHODS.previewIssueAccessToken, {
+  payload: PreviewIssueAccessTokenInput,
+  success: PreviewIssueAccessTokenResult,
+  error: PreviewRpcError,
+});
+
+export const WsPreviewStopRuntimeRpc = Rpc.make(WS_METHODS.previewStopRuntime, {
+  payload: PreviewStopRuntimeInput,
+  success: Schema.Void,
+  error: PreviewRpcError,
+});
+
+export const WsSubscribePreviewProjectRpc = Rpc.make(WS_METHODS.subscribePreviewProject, {
+  payload: PreviewSubscribeProjectInput,
+  success: PreviewProjectEvent,
+  error: PreviewRpcError,
+  stream: true,
 });
 
 export const WsShellOpenInEditorRpc = Rpc.make(WS_METHODS.shellOpenInEditor, {
@@ -388,6 +494,16 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsGetLocalAgentInventoryRpc,
   WsProjectsReadFileRpc,
   WsProjectsWriteFileRpc,
+  WsPreviewInspectProjectRpc,
+  WsPreviewSearchComponentsRpc,
+  WsPreviewResolveTargetRpc,
+  WsPreviewChooseStoryMappingRpc,
+  WsPreviewSetStartCommandOverrideRpc,
+  WsPreviewPrepareWorkspaceSetupThreadRpc,
+  WsPreviewPrepareStoryWorkTurnRpc,
+  WsPreviewEnsureRuntimeRpc,
+  WsPreviewIssueAccessTokenRpc,
+  WsPreviewStopRuntimeRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsSubscribeGitStatusRpc,
@@ -409,6 +525,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsTerminalRestartRpc,
   WsTerminalCloseRpc,
   WsSubscribeTerminalEventsRpc,
+  WsSubscribePreviewProjectRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

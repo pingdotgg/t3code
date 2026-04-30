@@ -18,6 +18,7 @@ import {
   IconCube as CubeIcon,
   IconFolder as FolderIcon,
   IconFolderBadgePlus as FolderPlusIcon,
+  IconRectangleOnRectangle as PreviewIcon,
 } from "symbols-react";
 import {
   useCallback,
@@ -105,6 +106,7 @@ import { Kbd, KbdGroup } from "./ui/kbd";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { ComposerHandleContext, useComposerHandleContext } from "../composerHandleContext";
 import type { ChatComposerHandle } from "./chat/ChatComposer";
+import { openPreviewDrawer } from "../previewTargets";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const BROWSE_STALE_TIME_MS = 30_000;
@@ -647,12 +649,32 @@ function OpenCommandPaletteDialog() {
       return;
     }
 
+    if (openIntent?.kind === "open-preview") {
+      clearOpenIntent();
+      openPreviewDrawer(
+        currentProjectEnvironmentId && currentProjectId
+          ? scopeProjectRef(currentProjectEnvironmentId, currentProjectId)
+          : null,
+      );
+      setOpen(false);
+      return;
+    }
+
     if (openIntent?.kind !== "new-thread-in") {
       return;
     }
     clearOpenIntent();
     pushPaletteView(newThreadInView);
-  }, [clearOpenIntent, newThreadInView, openAddProjectFlow, openIntent, projectSwitcherView]);
+  }, [
+    clearOpenIntent,
+    currentProjectEnvironmentId,
+    currentProjectId,
+    newThreadInView,
+    openAddProjectFlow,
+    openIntent,
+    projectSwitcherView,
+    setOpen,
+  ]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
@@ -719,6 +741,21 @@ function OpenCommandPaletteDialog() {
       },
     });
   }
+
+  actionItems.push({
+    kind: "action",
+    value: "action:open-preview",
+    searchTerms: ["preview", "storybook", "component", "canvas"],
+    title: "Open component preview",
+    icon: <PreviewIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      openPreviewDrawer(
+        currentProjectEnvironmentId && currentProjectId
+          ? scopeProjectRef(currentProjectEnvironmentId, currentProjectId)
+          : null,
+      );
+    },
+  });
 
   actionItems.push({
     kind: "action",

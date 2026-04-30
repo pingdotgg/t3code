@@ -247,6 +247,8 @@ function mapProject(
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     scripts: mapProjectScripts(project.scripts),
+    previewConfig: project.previewConfig ?? null,
+    previewWorkspaceRecords: project.previewWorkspaceRecords ?? [],
   };
 }
 
@@ -1335,6 +1337,8 @@ function applyEnvironmentOrchestrationEvent(
           repositoryIdentity: event.payload.repositoryIdentity ?? null,
           defaultModelSelection: event.payload.defaultModelSelection,
           scripts: event.payload.scripts,
+          previewConfig: event.payload.previewConfig ?? null,
+          previewWorkspaceRecords: event.payload.previewWorkspaceRecords ?? [],
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
           deletedAt: null,
@@ -1398,6 +1402,12 @@ function applyEnvironmentOrchestrationEvent(
           : {}),
         ...(event.payload.scripts !== undefined
           ? { scripts: mapProjectScripts(event.payload.scripts) }
+          : {}),
+        ...(event.payload.previewConfig !== undefined
+          ? { previewConfig: event.payload.previewConfig ?? null }
+          : {}),
+        ...(event.payload.previewWorkspaceRecords !== undefined
+          ? { previewWorkspaceRecords: event.payload.previewWorkspaceRecords }
           : {}),
         updatedAt: event.payload.updatedAt,
       };

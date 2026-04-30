@@ -1,5 +1,5 @@
 import Mime from "@effect/platform-node/Mime";
-import { Data, Effect, FileSystem, Option, Path } from "effect";
+import { Data, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { cast } from "effect/Function";
 import {
   HttpBody,
@@ -24,11 +24,15 @@ import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolve
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { respondToAuthError } from "./auth/http.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
+import { PreviewManager } from "./preview/Services/PreviewManager.ts";
 
 const PROJECT_FAVICON_CACHE_CONTROL = "public, max-age=3600";
 const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>`;
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
+const PREVIEW_TOKEN_QUERY_PARAM = "previewToken";
+const PREVIEW_ROOT_ASSET_REGEX =
+  /(["'(=])\/((?:@vite\/|@id\/|@fs\/|node_modules\/|\.storybook\/|src\/|sb-common-assets\/)[^"'()\s]*|__vite_ping|@react-refresh|vite-inject-mocker-entry\.js|index\.json|stories\.json)(["')\s])/g;
 
 export const browserApiCorsLayer = HttpRouter.cors({
   allowedMethods: ["GET", "POST", "OPTIONS"],
@@ -73,6 +77,258 @@ class DecodeOtlpTraceRecordsError extends Data.TaggedError("DecodeOtlpTraceRecor
   readonly cause: unknown;
   readonly bodyJson: OtlpTracer.TraceData;
 }> {}
+
+class PreviewProxyRequestError extends Data.TaggedError("PreviewProxyRequestError")<{
+  readonly cause: unknown;
+}> {}
+
+class PreviewProxyBodyReadError extends Data.TaggedError("PreviewProxyBodyReadError")<{
+  readonly cause: unknown;
+}> {}
+
+function buildPreviewScopedAssetPath(
+  projectId: string,
+  assetPath: string,
+  previewToken: string | null,
+): string {
+  const previewPrefix = `/__preview/${projectId}`;
+  const scopedPath = `${previewPrefix}/${assetPath}`;
+  if (!previewToken) {
+    return scopedPath;
+  }
+  const separator = assetPath.includes("?") ? "&" : "?";
+  return `${scopedPath}${separator}${PREVIEW_TOKEN_QUERY_PARAM}=${encodeURIComponent(previewToken)}`;
+}
+
+function rewritePreviewRuntimeUrls(
+  source: string,
+  projectId: string,
+  previewToken: string | null,
+): string {
+  return source.replace(
+    PREVIEW_ROOT_ASSET_REGEX,
+    (_match, prefix: string, assetPath: string, suffix: string) =>
+      `${prefix}${buildPreviewScopedAssetPath(projectId, assetPath, previewToken)}${suffix}`,
+  );
+}
+
+function rewritePreviewResponseBody(
+  projectId: string,
+  previewToken: string | null,
+  contentType: string,
+  body: Uint8Array,
+): Uint8Array {
+  if (!/(text\/html|text\/css|javascript|ecmascript|typescript)/i.test(contentType)) {
+    return body;
+  }
+  const decoded = new TextDecoder().decode(body);
+  const rewritten = rewritePreviewRuntimeUrls(decoded, projectId, previewToken);
+  if (rewritten === decoded) {
+    return body;
+  }
+  return new TextEncoder().encode(rewritten);
+}
+
+function extractPreviewProjectIdFromPathname(pathname: string): string | null {
+  const pathMatch = pathname.match(/^\/__preview\/([^/]+)(?:\/|$)/);
+  return pathMatch?.[1] ?? null;
+}
+
+function resolvePreviewProjectIdFromReferer(
+  request: HttpServerRequest.HttpServerRequest,
+): string | null {
+  const referer = request.headers["referer"] ?? request.headers["referrer"];
+  if (!referer) {
+    return null;
+  }
+  try {
+    const refererUrl = new URL(referer);
+    return extractPreviewProjectIdFromPathname(refererUrl.pathname);
+  } catch {
+    return null;
+  }
+}
+
+function resolvePreviewAccessTokenFromUrl(url: URL): string | null {
+  const previewToken = url.searchParams.get(PREVIEW_TOKEN_QUERY_PARAM);
+  return previewToken && previewToken.trim().length > 0 ? previewToken.trim() : null;
+}
+
+function resolvePreviewAccessTokenFromReferer(
+  request: HttpServerRequest.HttpServerRequest,
+): string | null {
+  const referer = request.headers["referer"] ?? request.headers["referrer"];
+  if (!referer) {
+    return null;
+  }
+  try {
+    const refererUrl = new URL(referer);
+    return resolvePreviewAccessTokenFromUrl(refererUrl);
+  } catch {
+    return null;
+  }
+}
+
+function stripPreviewTokenFromSearch(search: string): string {
+  const searchParams = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  searchParams.delete(PREVIEW_TOKEN_QUERY_PARAM);
+  const nextSearch = searchParams.toString();
+  return nextSearch.length > 0 ? `?${nextSearch}` : "";
+}
+
+const authorizePreviewRequest = (
+  projectId: string,
+  request: HttpServerRequest.HttpServerRequest,
+  url: URL,
+) =>
+  Effect.gen(function* () {
+    const previewManager = yield* PreviewManager;
+    const previewToken =
+      resolvePreviewAccessTokenFromUrl(url) ?? resolvePreviewAccessTokenFromReferer(request);
+    if (previewToken) {
+      const isAuthorized = yield* previewManager.authenticateAccessToken(
+        projectId as never,
+        previewToken,
+      );
+      if (isAuthorized) {
+        return previewToken;
+      }
+    }
+    yield* requireAuthenticatedRequest;
+    return previewToken;
+  });
+
+const proxyPreviewRequest = (
+  projectId: string,
+  proxiedPath: string,
+  search: string,
+  previewToken: string | null,
+) =>
+  Effect.gen(function* () {
+    const previewManager = yield* PreviewManager;
+    const target = yield* previewManager.getRuntimeTarget(projectId as never);
+    if (!target) {
+      return HttpServerResponse.text("Preview runtime not found", { status: 404 });
+    }
+
+    const targetUrl = new URL(`${target.baseUrl}/${proxiedPath.replace(/^\/+/, "")}`);
+    targetUrl.search = stripPreviewTokenFromSearch(search);
+    const response = yield* Effect.tryPromise({
+      try: () => fetch(targetUrl),
+      catch: (cause) => new PreviewProxyRequestError({ cause }),
+    }).pipe(
+      Effect.catch(() =>
+        Effect.succeed(
+          new Response("Preview runtime unavailable", {
+            status: 502,
+            headers: { "content-type": "text/plain; charset=utf-8" },
+          }),
+        ),
+      ),
+    );
+
+    const contentType = response.headers.get("content-type") ?? "application/octet-stream";
+    const arrayBuffer = yield* Effect.tryPromise({
+      try: () => response.arrayBuffer(),
+      catch: (cause) => new PreviewProxyBodyReadError({ cause }),
+    }).pipe(Effect.catch(() => Effect.succeed(new ArrayBuffer(0))));
+    const body = rewritePreviewResponseBody(
+      projectId,
+      previewToken,
+      contentType,
+      new Uint8Array(arrayBuffer),
+    );
+    return HttpServerResponse.uint8Array(body, {
+      status: response.status,
+      contentType,
+      headers: {
+        "Cache-Control": "no-store",
+      },
+    });
+  });
+
+const serveStaticOrDevRequest = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  const url = HttpServerRequest.toURL(request);
+
+  if (Option.isNone(url)) {
+    return HttpServerResponse.text("Bad Request", { status: 400 });
+  }
+
+  const config = yield* ServerConfig;
+  if (config.devUrl && isLoopbackHostname(url.value.hostname)) {
+    return HttpServerResponse.redirect(resolveDevRedirectUrl(config.devUrl, url.value), {
+      status: 302,
+    });
+  }
+
+  const staticDir = config.staticDir ?? (config.devUrl ? yield* resolveStaticDir() : undefined);
+  if (!staticDir) {
+    return HttpServerResponse.text("No static directory configured and no dev URL set.", {
+      status: 503,
+    });
+  }
+
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const staticRoot = path.resolve(staticDir);
+  const staticRequestPath = url.value.pathname === "/" ? "/index.html" : url.value.pathname;
+  const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
+  const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
+  const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
+  const hasPathTraversalSegment = staticRelativePath.startsWith("..");
+  if (
+    staticRelativePath.length === 0 ||
+    hasRawLeadingParentSegment ||
+    hasPathTraversalSegment ||
+    staticRelativePath.includes("\0")
+  ) {
+    return HttpServerResponse.text("Invalid static file path", { status: 400 });
+  }
+
+  const isWithinStaticRoot = (candidate: string) =>
+    candidate === staticRoot ||
+    candidate.startsWith(staticRoot.endsWith(path.sep) ? staticRoot : `${staticRoot}${path.sep}`);
+
+  let filePath = path.resolve(staticRoot, staticRelativePath);
+  if (!isWithinStaticRoot(filePath)) {
+    return HttpServerResponse.text("Invalid static file path", { status: 400 });
+  }
+
+  const ext = path.extname(filePath);
+  if (!ext) {
+    filePath = path.resolve(filePath, "index.html");
+    if (!isWithinStaticRoot(filePath)) {
+      return HttpServerResponse.text("Invalid static file path", { status: 400 });
+    }
+  }
+
+  const fileInfo = yield* fileSystem.stat(filePath).pipe(Effect.catch(() => Effect.succeed(null)));
+  if (!fileInfo || fileInfo.type !== "File") {
+    const indexPath = path.resolve(staticRoot, "index.html");
+    const indexData = yield* fileSystem
+      .readFile(indexPath)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!indexData) {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+    return HttpServerResponse.uint8Array(indexData, {
+      status: 200,
+      contentType: "text/html; charset=utf-8",
+    });
+  }
+
+  const contentType = Mime.getType(filePath) ?? "application/octet-stream";
+  const data = yield* fileSystem.readFile(filePath).pipe(Effect.catch(() => Effect.succeed(null)));
+  if (!data) {
+    return HttpServerResponse.text("Internal Server Error", { status: 500 });
+  }
+
+  return HttpServerResponse.uint8Array(data, {
+    status: 200,
+    contentType,
+  });
+});
 
 export const otlpTracesProxyRouteLayer = HttpRouter.add(
   "POST",
@@ -220,93 +476,60 @@ export const projectFaviconRouteLayer = HttpRouter.add(
   }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
 );
 
-export const staticAndDevRouteLayer = HttpRouter.add(
+export const previewProxyRouteLayer = HttpRouter.add(
   "GET",
-  "*",
+  "/__preview/:projectId/*",
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest;
     const url = HttpServerRequest.toURL(request);
-
     if (Option.isNone(url)) {
       return HttpServerResponse.text("Bad Request", { status: 400 });
     }
-
-    const config = yield* ServerConfig;
-    if (config.devUrl && isLoopbackHostname(url.value.hostname)) {
-      return HttpServerResponse.redirect(resolveDevRedirectUrl(config.devUrl, url.value), {
-        status: 302,
-      });
+    const projectId = extractPreviewProjectIdFromPathname(url.value.pathname);
+    if (!projectId) {
+      return HttpServerResponse.text("Missing projectId parameter", { status: 400 });
     }
-
-    const staticDir = config.staticDir ?? (config.devUrl ? yield* resolveStaticDir() : undefined);
-    if (!staticDir) {
-      return HttpServerResponse.text("No static directory configured and no dev URL set.", {
-        status: 503,
-      });
-    }
-
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const staticRoot = path.resolve(staticDir);
-    const staticRequestPath = url.value.pathname === "/" ? "/index.html" : url.value.pathname;
-    const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
-    const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
-    const staticRelativePath = path.normalize(rawStaticRelativePath).replace(/^[/\\]+/, "");
-    const hasPathTraversalSegment = staticRelativePath.startsWith("..");
-    if (
-      staticRelativePath.length === 0 ||
-      hasRawLeadingParentSegment ||
-      hasPathTraversalSegment ||
-      staticRelativePath.includes("\0")
-    ) {
-      return HttpServerResponse.text("Invalid static file path", { status: 400 });
-    }
-
-    const isWithinStaticRoot = (candidate: string) =>
-      candidate === staticRoot ||
-      candidate.startsWith(staticRoot.endsWith(path.sep) ? staticRoot : `${staticRoot}${path.sep}`);
-
-    let filePath = path.resolve(staticRoot, staticRelativePath);
-    if (!isWithinStaticRoot(filePath)) {
-      return HttpServerResponse.text("Invalid static file path", { status: 400 });
-    }
-
-    const ext = path.extname(filePath);
-    if (!ext) {
-      filePath = path.resolve(filePath, "index.html");
-      if (!isWithinStaticRoot(filePath)) {
-        return HttpServerResponse.text("Invalid static file path", { status: 400 });
-      }
-    }
-
-    const fileInfo = yield* fileSystem
-      .stat(filePath)
-      .pipe(Effect.catch(() => Effect.succeed(null)));
-    if (!fileInfo || fileInfo.type !== "File") {
-      const indexPath = path.resolve(staticRoot, "index.html");
-      const indexData = yield* fileSystem
-        .readFile(indexPath)
-        .pipe(Effect.catch(() => Effect.succeed(null)));
-      if (!indexData) {
-        return HttpServerResponse.text("Not Found", { status: 404 });
-      }
-      return HttpServerResponse.uint8Array(indexData, {
-        status: 200,
-        contentType: "text/html; charset=utf-8",
-      });
-    }
-
-    const contentType = Mime.getType(filePath) ?? "application/octet-stream";
-    const data = yield* fileSystem
-      .readFile(filePath)
-      .pipe(Effect.catch(() => Effect.succeed(null)));
-    if (!data) {
-      return HttpServerResponse.text("Internal Server Error", { status: 500 });
-    }
-
-    return HttpServerResponse.uint8Array(data, {
-      status: 200,
-      contentType,
-    });
-  }),
+    const previewToken = yield* authorizePreviewRequest(projectId, request, url.value);
+    const proxiedPath = url.value.pathname.replace(/^\/__preview\/[^/]+\/?/, "");
+    return yield* proxyPreviewRequest(projectId, proxiedPath, url.value.search, previewToken);
+  }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
 );
+
+function makePreviewAssetProxyRoute(pathPattern: string) {
+  return HttpRouter.add(
+    "GET",
+    pathPattern as never,
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      const url = HttpServerRequest.toURL(request);
+      if (Option.isNone(url)) {
+        return HttpServerResponse.text("Bad Request", { status: 400 });
+      }
+
+      const projectId = resolvePreviewProjectIdFromReferer(request);
+      if (!projectId) {
+        return yield* serveStaticOrDevRequest;
+      }
+
+      const previewToken = yield* authorizePreviewRequest(projectId, request, url.value);
+      const proxiedPath = url.value.pathname.replace(/^\/+/, "");
+      return yield* proxyPreviewRequest(projectId, proxiedPath, url.value.search, previewToken);
+    }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
+  );
+}
+
+export const previewAssetProxyRouteLayer = Layer.mergeAll(
+  makePreviewAssetProxyRoute("/@vite/*"),
+  makePreviewAssetProxyRoute("/@id/*"),
+  makePreviewAssetProxyRoute("/@fs/*"),
+  makePreviewAssetProxyRoute("/@react-refresh"),
+  makePreviewAssetProxyRoute("/index.json"),
+  makePreviewAssetProxyRoute("/stories.json"),
+  makePreviewAssetProxyRoute("/node_modules/*"),
+  makePreviewAssetProxyRoute("/.storybook/*"),
+  makePreviewAssetProxyRoute("/src/*"),
+  makePreviewAssetProxyRoute("/vite-inject-mocker-entry.js"),
+  makePreviewAssetProxyRoute("/__vite_ping"),
+);
+
+export const staticAndDevRouteLayer = HttpRouter.add("GET", "*", serveStaticOrDevRequest);

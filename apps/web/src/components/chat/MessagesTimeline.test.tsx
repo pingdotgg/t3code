@@ -209,6 +209,55 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/forma/apps/web/src/session-logic.ts");
   });
 
+  it("uses UI-scaled typography classes for compact work entry labels", async () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Ran command",
+              command: "pwd",
+              tone: "tool",
+            },
+          },
+          {
+            id: "entry-2",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:29.000Z",
+            entry: {
+              id: "work-2",
+              createdAt: "2026-03-17T19:12:29.000Z",
+              label: "File change",
+              changedFiles: ["apps/web/src/components/chat/MessagesTimeline.tsx"],
+              tone: "tool",
+            },
+          },
+          {
+            id: "entry-3",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:30.000Z",
+            entry: {
+              id: "work-3",
+              createdAt: "2026-03-17T19:12:30.000Z",
+              label: "Web browser",
+              tone: "tool",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("text-ui-xs truncate leading-5");
+    expect(markup).toContain("text-ui-xs rounded-md border border-border/55");
+    expect(markup).not.toContain("text-code-compact truncate leading-5");
+  });
+
   it("renders the chat pixel grid loader while a turn is working", async () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

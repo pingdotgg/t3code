@@ -30,6 +30,27 @@ import type {
   ProjectWriteFileResult,
 } from "./project.ts";
 import type {
+  PreviewChooseStoryMappingInput,
+  PreviewEnsureRuntimeInput,
+  PreviewEnsureRuntimeResult,
+  PreviewIssueAccessTokenInput,
+  PreviewIssueAccessTokenResult,
+  PreviewInspectProjectInput,
+  PreviewPrepareStoryWorkTurnInput,
+  PreviewPrepareStoryWorkTurnResult,
+  PreviewPrepareWorkspaceSetupThreadInput,
+  PreviewPrepareWorkspaceSetupThreadResult,
+  PreviewProjectEvent,
+  PreviewProjectInspectionResult,
+  PreviewResolveTargetInput,
+  PreviewResolveTargetResult,
+  PreviewSearchComponentsInput,
+  PreviewSearchComponentsResult,
+  PreviewSetStartCommandOverrideInput,
+  PreviewStopRuntimeInput,
+  PreviewSubscribeProjectInput,
+} from "./preview.ts";
+import type {
   ServerConfig,
   ServerProviderUpdatedPayload,
   ServerUpsertKeybindingResult,
@@ -274,6 +295,33 @@ export interface EnvironmentApi {
     readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+  };
+  preview: {
+    inspectProject: (input: PreviewInspectProjectInput) => Promise<PreviewProjectInspectionResult>;
+    searchComponents: (
+      input: PreviewSearchComponentsInput,
+    ) => Promise<PreviewSearchComponentsResult>;
+    resolveTarget: (input: PreviewResolveTargetInput) => Promise<PreviewResolveTargetResult>;
+    chooseStoryMapping: (input: PreviewChooseStoryMappingInput) => Promise<void>;
+    setStartCommandOverride: (input: PreviewSetStartCommandOverrideInput) => Promise<void>;
+    prepareWorkspaceSetupThread: (
+      input: PreviewPrepareWorkspaceSetupThreadInput,
+    ) => Promise<PreviewPrepareWorkspaceSetupThreadResult>;
+    prepareStoryWorkTurn: (
+      input: PreviewPrepareStoryWorkTurnInput,
+    ) => Promise<PreviewPrepareStoryWorkTurnResult>;
+    ensureRuntime: (input: PreviewEnsureRuntimeInput) => Promise<PreviewEnsureRuntimeResult>;
+    issueAccessToken: (
+      input: PreviewIssueAccessTokenInput,
+    ) => Promise<PreviewIssueAccessTokenResult>;
+    stopRuntime: (input: PreviewStopRuntimeInput) => Promise<void>;
+    subscribeProject: (
+      input: PreviewSubscribeProjectInput,
+      callback: (event: PreviewProjectEvent) => void,
+      options?: {
+        onResubscribe?: () => void;
+      },
+    ) => () => void;
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;

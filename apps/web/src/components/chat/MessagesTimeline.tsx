@@ -15,7 +15,10 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
-import ChatMarkdown, { type OpenChatMarkdownFileInApp } from "../ChatMarkdown";
+import ChatMarkdown, {
+  type OpenChatMarkdownFileInApp,
+  type OpenChatMarkdownFilePreview,
+} from "../ChatMarkdown";
 import {
   IconMessage as BotIcon,
   IconCheckmark as CheckIcon,
@@ -93,6 +96,10 @@ interface TimelineRowSharedState {
     meta: Parameters<OpenChatMarkdownFileInApp>[0],
     turnId: TurnId | null | undefined,
   ) => boolean | Promise<boolean>;
+  onOpenFilePreview?: (
+    meta: Parameters<OpenChatMarkdownFilePreview>[0],
+    turnId: TurnId | null | undefined,
+  ) => boolean | Promise<boolean>;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
@@ -115,6 +122,10 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   onOpenFileInApp?: (
     meta: Parameters<OpenChatMarkdownFileInApp>[0],
+    turnId: TurnId | null | undefined,
+  ) => boolean | Promise<boolean>;
+  onOpenFilePreview?: (
+    meta: Parameters<OpenChatMarkdownFilePreview>[0],
     turnId: TurnId | null | undefined,
   ) => boolean | Promise<boolean>;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
@@ -148,6 +159,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   routeThreadKey,
   onOpenTurnDiff,
   onOpenFileInApp,
+  onOpenFilePreview,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   isRevertingCheckpoint,
@@ -224,6 +236,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onImageExpand,
       onOpenTurnDiff,
       ...(onOpenFileInApp ? { onOpenFileInApp } : {}),
+      ...(onOpenFilePreview ? { onOpenFilePreview } : {}),
     }),
     [
       activeTurnInProgress,
@@ -241,6 +254,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onImageExpand,
       onOpenTurnDiff,
       onOpenFileInApp,
+      onOpenFilePreview,
     ],
   );
 
@@ -417,6 +431,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
             streaming: row.message.streaming || assistantTurnStillInProgress,
           });
           const onOpenFileInApp = ctx.onOpenFileInApp;
+          const onOpenFilePreview = ctx.onOpenFilePreview;
           return (
             <>
               {row.showCompletionDivider && (
@@ -436,6 +451,11 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                   onOpenFileInApp={
                     onOpenFileInApp
                       ? (meta) => onOpenFileInApp(meta, row.message.turnId)
+                      : undefined
+                  }
+                  onOpenFilePreview={
+                    onOpenFilePreview
+                      ? (meta) => onOpenFilePreview(meta, row.message.turnId)
                       : undefined
                   }
                 />
@@ -486,6 +506,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
         <div className="min-w-0 px-1 py-0.5">
           {(() => {
             const onOpenFileInApp = ctx.onOpenFileInApp;
+            const onOpenFilePreview = ctx.onOpenFilePreview;
             return (
               <ProposedPlanCard
                 planMarkdown={row.proposedPlan.planMarkdown}
@@ -495,6 +516,11 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
                 onOpenFileInApp={
                   onOpenFileInApp
                     ? (meta) => onOpenFileInApp(meta, row.proposedPlan.turnId)
+                    : undefined
+                }
+                onOpenFilePreview={
+                  onOpenFilePreview
+                    ? (meta) => onOpenFilePreview(meta, row.proposedPlan.turnId)
                     : undefined
                 }
               />
@@ -590,13 +616,13 @@ const WorkGroupSection = memo(function WorkGroupSection({
     <div className="rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
       {showHeader && (
         <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
-          <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
+          <p className="text-ui-2xs uppercase tracking-[0.16em] text-muted-foreground/55">
             {groupLabel} ({groupedEntries.length})
           </p>
           {hasOverflow && (
             <button
               type="button"
-              className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] hover:text-foreground/75"
+              className="text-ui-2xs uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] hover:text-foreground/75"
               onClick={() => setIsExpanded((v) => !v)}
             >
               {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
@@ -1071,7 +1097,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             <div className="max-w-full">
               <p
                 className={cn(
-                  "truncate text-xs leading-5",
+                  "text-ui-xs truncate leading-5",
                   workToneClass(workEntry.tone),
                   preview ? "text-muted-foreground/70" : "",
                 )}
@@ -1114,7 +1140,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
               >
                 <p
                   className={cn(
-                    "text-code-compact truncate leading-5",
+                    "text-ui-xs truncate leading-5",
                     workToneClass(workEntry.tone),
                     preview ? "text-muted-foreground/70" : "",
                   )}
@@ -1126,7 +1152,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                 </p>
               </TooltipTrigger>
               <TooltipPopup className="max-w-[min(720px,calc(100vw-2rem))]">
-                <p className="whitespace-pre-wrap wrap-break-word text-xs leading-5">
+                <p className="text-ui-xs whitespace-pre-wrap wrap-break-word leading-5">
                   {displayText}
                 </p>
               </TooltipPopup>
@@ -1141,7 +1167,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
             return (
               <span
                 key={`${workEntry.id}:${filePath}`}
-                className="text-code-compact rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-muted-foreground/75"
+                className="text-ui-xs rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-muted-foreground/75"
                 title={displayPath}
               >
                 {displayPath}

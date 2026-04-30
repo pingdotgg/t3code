@@ -8,7 +8,10 @@ import {
   proposedPlanTitle,
   stripDisplayedPlanMarkdown,
 } from "../../proposedPlan";
-import ChatMarkdown, { type OpenChatMarkdownFileInApp } from "../ChatMarkdown";
+import ChatMarkdown, {
+  type OpenChatMarkdownFileInApp,
+  type OpenChatMarkdownFilePreview,
+} from "../ChatMarkdown";
 import { IconEllipsis as EllipsisIcon } from "symbols-react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -34,12 +37,14 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   cwd,
   workspaceRoot,
   onOpenFileInApp,
+  onOpenFilePreview,
 }: {
   planMarkdown: string;
   environmentId: EnvironmentId;
   cwd: string | undefined;
   workspaceRoot: string | undefined;
   onOpenFileInApp?: OpenChatMarkdownFileInApp | undefined;
+  onOpenFilePreview?: OpenChatMarkdownFilePreview | undefined;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
@@ -170,6 +175,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               isStreaming={false}
               onOpenFileInApp={onOpenFileInApp}
+              onOpenFilePreview={onOpenFilePreview}
             />
           ) : (
             <ChatMarkdown
@@ -177,6 +183,7 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
               cwd={cwd}
               isStreaming={false}
               onOpenFileInApp={onOpenFileInApp}
+              onOpenFilePreview={onOpenFilePreview}
             />
           )}
           {canCollapse && !expanded ? (

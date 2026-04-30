@@ -72,6 +72,23 @@ export interface WsRpcClient {
     readonly searchEntries: RpcUnaryMethod<typeof WS_METHODS.projectsSearchEntries>;
     readonly writeFile: RpcUnaryMethod<typeof WS_METHODS.projectsWriteFile>;
   };
+  readonly preview: {
+    readonly inspectProject: RpcUnaryMethod<typeof WS_METHODS.previewInspectProject>;
+    readonly searchComponents: RpcUnaryMethod<typeof WS_METHODS.previewSearchComponents>;
+    readonly resolveTarget: RpcUnaryMethod<typeof WS_METHODS.previewResolveTarget>;
+    readonly chooseStoryMapping: RpcUnaryMethod<typeof WS_METHODS.previewChooseStoryMapping>;
+    readonly setStartCommandOverride: RpcUnaryMethod<
+      typeof WS_METHODS.previewSetStartCommandOverride
+    >;
+    readonly prepareWorkspaceSetupThread: RpcUnaryMethod<
+      typeof WS_METHODS.previewPrepareWorkspaceSetupThread
+    >;
+    readonly prepareStoryWorkTurn: RpcUnaryMethod<typeof WS_METHODS.previewPrepareStoryWorkTurn>;
+    readonly ensureRuntime: RpcUnaryMethod<typeof WS_METHODS.previewEnsureRuntime>;
+    readonly issueAccessToken: RpcUnaryMethod<typeof WS_METHODS.previewIssueAccessToken>;
+    readonly stopRuntime: RpcUnaryMethod<typeof WS_METHODS.previewStopRuntime>;
+    readonly subscribeProject: RpcInputStreamMethod<typeof WS_METHODS.subscribePreviewProject>;
+  };
   readonly filesystem: {
     readonly browse: RpcUnaryMethod<typeof WS_METHODS.filesystemBrowse>;
   };
@@ -155,6 +172,34 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.projectsSearchEntries](input)),
       writeFile: (input) =>
         transport.request((client) => client[WS_METHODS.projectsWriteFile](input)),
+    },
+    preview: {
+      inspectProject: (input) =>
+        transport.request((client) => client[WS_METHODS.previewInspectProject](input)),
+      searchComponents: (input) =>
+        transport.request((client) => client[WS_METHODS.previewSearchComponents](input)),
+      resolveTarget: (input) =>
+        transport.request((client) => client[WS_METHODS.previewResolveTarget](input)),
+      chooseStoryMapping: (input) =>
+        transport.request((client) => client[WS_METHODS.previewChooseStoryMapping](input)),
+      setStartCommandOverride: (input) =>
+        transport.request((client) => client[WS_METHODS.previewSetStartCommandOverride](input)),
+      prepareWorkspaceSetupThread: (input) =>
+        transport.request((client) => client[WS_METHODS.previewPrepareWorkspaceSetupThread](input)),
+      prepareStoryWorkTurn: (input) =>
+        transport.request((client) => client[WS_METHODS.previewPrepareStoryWorkTurn](input)),
+      ensureRuntime: (input) =>
+        transport.request((client) => client[WS_METHODS.previewEnsureRuntime](input)),
+      issueAccessToken: (input) =>
+        transport.request((client) => client[WS_METHODS.previewIssueAccessToken](input)),
+      stopRuntime: (input) =>
+        transport.request((client) => client[WS_METHODS.previewStopRuntime](input)),
+      subscribeProject: (input, listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribePreviewProject](input),
+          listener,
+          options,
+        ),
     },
     filesystem: {
       browse: (input) => transport.request((client) => client[WS_METHODS.filesystemBrowse](input)),

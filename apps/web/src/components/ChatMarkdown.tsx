@@ -33,6 +33,9 @@ import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
 
 export type OpenChatMarkdownFileInApp = (meta: MarkdownFileLinkMeta) => boolean | Promise<boolean>;
+export type OpenChatMarkdownFilePreview = (
+  meta: MarkdownFileLinkMeta,
+) => boolean | Promise<boolean>;
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -60,6 +63,7 @@ interface ChatMarkdownProps {
   cwd: string | undefined;
   isStreaming?: boolean;
   onOpenFileInApp?: OpenChatMarkdownFileInApp | undefined;
+  onOpenFilePreview?: OpenChatMarkdownFilePreview | undefined;
 }
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
@@ -221,6 +225,7 @@ interface MarkdownFileLinkProps {
   label: string;
   theme: "light" | "dark";
   onOpenFileInApp?: OpenChatMarkdownFileInApp | undefined;
+  onOpenFilePreview?: OpenChatMarkdownFilePreview | undefined;
   className?: string | undefined;
 }
 
@@ -313,6 +318,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   label,
   theme,
   onOpenFileInApp,
+  onOpenFilePreview,
   className,
 }: MarkdownFileLinkProps) {
   const handleOpenInIde = useCallback(() => {
@@ -362,6 +368,24 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
     });
   }, [handleOpenInApp, handleOpenInIde]);
 
+  const handleOpenPreview = useCallback(async () => {
+    if (!onOpenFilePreview) {
+      return false;
+    }
+    try {
+      return (await onOpenFilePreview(fileLinkMeta)) === true;
+    } catch (error) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to open preview",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+      return false;
+    }
+  }, [fileLinkMeta, onOpenFilePreview]);
+
   const handleCopy = useCallback((value: string, title: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
       toastManager.add(
@@ -405,6 +429,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       const clicked = await api.contextMenu.show(
         [
           { id: "open-in-app", label: "Open in app editor" },
+          ...(onOpenFilePreview ? [{ id: "open-preview", label: "Open Preview" }] : []),
           { id: "open-in-ide", label: "Open in IDE" },
           { id: "copy-relative", label: "Copy relative path" },
           { id: "copy-full", label: "Copy full path" },
@@ -419,6 +444,10 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         }
         return;
       }
+      if (clicked === "open-preview") {
+        await handleOpenPreview();
+        return;
+      }
       if (clicked === "open-in-ide") {
         handleOpenInIde();
         return;
@@ -431,7 +460,15 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         handleCopy(targetPath, "Full path");
       }
     },
-    [displayPath, handleCopy, handleOpenInApp, handleOpenInIde, targetPath],
+    [
+      displayPath,
+      handleCopy,
+      handleOpenInApp,
+      handleOpenInIde,
+      handleOpenPreview,
+      onOpenFilePreview,
+      targetPath,
+    ],
   );
 
   return (
@@ -483,11 +520,18 @@ function areMarkdownFileLinkPropsEqual(
     previous.label === next.label &&
     previous.theme === next.theme &&
     previous.onOpenFileInApp === next.onOpenFileInApp &&
+    previous.onOpenFilePreview === next.onOpenFilePreview &&
     previous.className === next.className
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false, onOpenFileInApp }: ChatMarkdownProps) {
+function ChatMarkdown({
+  text,
+  cwd,
+  isStreaming = false,
+  onOpenFileInApp,
+  onOpenFilePreview,
+}: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
@@ -542,6 +586,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false, onOpenFileInApp }: ChatM
             theme={resolvedTheme}
             fileLinkMeta={fileLinkMeta}
             onOpenFileInApp={onOpenFileInApp}
+            onOpenFilePreview={onOpenFilePreview}
             className={props.className}
           />
         );
@@ -574,6 +619,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false, onOpenFileInApp }: ChatM
       isStreaming,
       markdownFileLinkMetaByHref,
       onOpenFileInApp,
+      onOpenFilePreview,
       resolvedTheme,
     ],
   );

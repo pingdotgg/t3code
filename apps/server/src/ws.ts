@@ -57,6 +57,7 @@ import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentit
 import { ProjectAgentInventory } from "./project/Services/ProjectAgentInventory.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import { PreviewManager } from "./preview/Services/PreviewManager.ts";
 import {
   BootstrapCredentialService,
   type BootstrapCredentialChange,
@@ -155,6 +156,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const projectAgentInventory = yield* ProjectAgentInventory;
       const serverEnvironment = yield* ServerEnvironment;
       const serverAuth = yield* ServerAuth;
+      const previewManager = yield* PreviewManager;
       const bootstrapCredentials = yield* BootstrapCredentialService;
       const sessions = yield* SessionCredentialService;
       const serverCommandId = (tag: string) =>
@@ -834,6 +836,70 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.previewInspectProject]: (input) =>
+          observeRpcEffect(WS_METHODS.previewInspectProject, previewManager.inspectProject(input), {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.previewSearchComponents]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewSearchComponents,
+            previewManager.searchComponents(input),
+            {
+              "rpc.aggregate": "preview",
+            },
+          ),
+        [WS_METHODS.previewResolveTarget]: (input) =>
+          observeRpcEffect(WS_METHODS.previewResolveTarget, previewManager.resolveTarget(input), {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.previewChooseStoryMapping]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewChooseStoryMapping,
+            previewManager.chooseStoryMapping(input),
+            {
+              "rpc.aggregate": "preview",
+            },
+          ),
+        [WS_METHODS.previewSetStartCommandOverride]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewSetStartCommandOverride,
+            previewManager.setStartCommandOverride(input),
+            {
+              "rpc.aggregate": "preview",
+            },
+          ),
+        [WS_METHODS.previewPrepareWorkspaceSetupThread]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewPrepareWorkspaceSetupThread,
+            previewManager.prepareWorkspaceSetupThread(input),
+            {
+              "rpc.aggregate": "preview",
+            },
+          ),
+        [WS_METHODS.previewPrepareStoryWorkTurn]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewPrepareStoryWorkTurn,
+            previewManager.prepareStoryWorkTurn(input),
+            {
+              "rpc.aggregate": "preview",
+            },
+          ),
+        [WS_METHODS.previewEnsureRuntime]: (input) =>
+          observeRpcEffect(WS_METHODS.previewEnsureRuntime, previewManager.ensureRuntime(input), {
+            "rpc.aggregate": "preview",
+          }),
+        [WS_METHODS.previewIssueAccessToken]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.previewIssueAccessToken,
+            previewManager.issueAccessToken(input),
+            {
+              "rpc.aggregate": "preview",
+            },
+          ),
+        [WS_METHODS.previewStopRuntime]: (input) =>
+          observeRpcEffect(WS_METHODS.previewStopRuntime, previewManager.stopRuntime(input), {
+            "rpc.aggregate": "preview",
+          }),
         [WS_METHODS.shellOpenInEditor]: (input) =>
           observeRpcEffect(WS_METHODS.shellOpenInEditor, open.openInEditor(input), {
             "rpc.aggregate": "workspace",
@@ -985,6 +1051,12 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               ),
             ),
             { "rpc.aggregate": "terminal" },
+          ),
+        [WS_METHODS.subscribePreviewProject]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribePreviewProject,
+            previewManager.streamProject(input),
+            { "rpc.aggregate": "preview" },
           ),
         [WS_METHODS.subscribeServerConfig]: (_input) =>
           observeRpcStreamEffect(
