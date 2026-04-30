@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearThreadUi,
   hydratePersistedProjectState,
+  markThreadVisited,
   markThreadUnread,
   PERSISTED_STATE_KEY,
   type PersistedUiState,
@@ -27,6 +28,28 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
 }
 
 describe("uiStateStore pure functions", () => {
+  it("markThreadVisited stores the provided server timestamp", () => {
+    const threadId = ThreadId.make("thread-1");
+    const initialState = makeUiState();
+
+    const next = markThreadVisited(initialState, threadId, "2026-02-25T12:30:00.700Z");
+
+    expect(next.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:30:00.700Z");
+  });
+
+  it("markThreadVisited does not move visit state backwards under clock skew", () => {
+    const threadId = ThreadId.make("thread-1");
+    const initialState = makeUiState({
+      threadLastVisitedAtById: {
+        [threadId]: "2026-02-25T12:30:00.700Z",
+      },
+    });
+
+    const next = markThreadVisited(initialState, threadId, "2026-02-25T12:30:00.000Z");
+
+    expect(next).toBe(initialState);
+  });
+
   it("markThreadUnread moves lastVisitedAt before completion for a completed thread", () => {
     const threadId = ThreadId.make("thread-1");
     const latestTurnCompletedAt = "2026-02-25T12:30:00.000Z";
