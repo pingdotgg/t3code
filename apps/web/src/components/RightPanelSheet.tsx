@@ -7,6 +7,12 @@ export function RightPanelSheet(props: {
   children: ReactNode;
   open: boolean;
   onClose: () => void;
+  /**
+   * Override the default sheet sizing classes. Use one of the named exports
+   * from `rightPanelLayout` (e.g. `RIGHT_PANEL_NARROW_SHEET_CLASS_NAME`) to
+   * pick a specific width preset; defaults to the wide variant.
+   */
+  className?: string;
 }) {
   return (
     <Sheet
@@ -21,7 +27,7 @@ export function RightPanelSheet(props: {
         side="right"
         showCloseButton={false}
         keepMounted
-        className={RIGHT_PANEL_SHEET_CLASS_NAME}
+        className={props.className ?? RIGHT_PANEL_SHEET_CLASS_NAME}
       >
         {props.children}
       </SheetPopup>
