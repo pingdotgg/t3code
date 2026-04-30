@@ -191,6 +191,7 @@ export async function probeClaudeUsageLimits(input: {
   readonly launchArgs?: string;
   readonly cwd: string;
   readonly checkedAt: string;
+  readonly environment?: NodeJS.ProcessEnv;
 }): Promise<ClaudeUsageProbeResult> {
   const nodePty = await getNodePtyModule();
   const probeArgs = [
@@ -204,7 +205,7 @@ export async function probeClaudeUsageLimits(input: {
       cwd: input.cwd,
       cols: 120,
       rows: 40,
-      env: process.env,
+      env: input.environment ?? process.env,
       name: process.platform === "win32" ? "xterm-color" : "xterm-256color",
     });
     let rawOutput = "";

@@ -642,6 +642,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+
   // Run the Claude usage probe — best-effort; failures are swallowed so they
   // never block the main provider snapshot.
   const usageLimits = yield* Effect.tryPromise(() =>
@@ -649,6 +651,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       binaryPath: claudeSettings.binaryPath,
       cwd: process.cwd(),
       checkedAt,
+      environment: claudeEnvironment,
     }).then((result) => result.usageLimits),
   ).pipe(
     Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
