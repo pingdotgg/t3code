@@ -1,4 +1,4 @@
-import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import { useCommandPaletteStore } from "../commandPaletteStore";
@@ -9,11 +9,13 @@ import {
 } from "../lib/chatThreadActions";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
+import { isGridSplitViewShortcut } from "../components/grid/gridShortcut";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "~/rpc/serverState";
+import { usePrimaryEnvironmentId } from "~/environments/primary";
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
@@ -27,6 +29,8 @@ function ChatRouteGlobalShortcuts() {
       : false,
   );
   const appSettings = useSettings();
+  const navigate = useNavigate();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -45,6 +49,19 @@ function ChatRouteGlobalShortcuts() {
       if (event.key === "Escape" && selectedThreadKeysSize > 0) {
         event.preventDefault();
         clearSelection();
+        return;
+      }
+
+      if (isGridSplitViewShortcut(event)) {
+        const environmentId = routeThreadRef?.environmentId ?? primaryEnvironmentId;
+        if (environmentId) {
+          event.preventDefault();
+          event.stopPropagation();
+          void navigate({
+            to: "/$environmentId/grid",
+            params: { environmentId },
+          });
+        }
         return;
       }
 
@@ -89,6 +106,9 @@ function ChatRouteGlobalShortcuts() {
     handleNewThread,
     keybindings,
     defaultProjectRef,
+    navigate,
+    primaryEnvironmentId,
+    routeThreadRef,
     selectedThreadKeysSize,
     terminalOpen,
     appSettings.defaultThreadEnvMode,

@@ -17,6 +17,7 @@ import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
+import { Route as ChatEnvironmentIdGridRouteImport } from './routes/_chat.$environmentId.grid'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
 
 const SettingsRoute = SettingsRouteImport.update({
@@ -58,6 +59,11 @@ const ChatDraftDraftIdRoute = ChatDraftDraftIdRouteImport.update({
   path: '/draft/$draftId',
   getParentRoute: () => ChatRoute,
 } as any)
+const ChatEnvironmentIdGridRoute = ChatEnvironmentIdGridRouteImport.update({
+  id: '/$environmentId/grid',
+  path: '/$environmentId/grid',
+  getParentRoute: () => ChatRoute,
+} as any)
 const ChatEnvironmentIdThreadIdRoute =
   ChatEnvironmentIdThreadIdRouteImport.update({
     id: '/$environmentId/$threadId',
@@ -73,6 +79,7 @@ export interface FileRoutesByFullPath {
   '/settings/connections': typeof SettingsConnectionsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
+  '/$environmentId/grid': typeof ChatEnvironmentIdGridRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
 export interface FileRoutesByTo {
@@ -83,6 +90,7 @@ export interface FileRoutesByTo {
   '/settings/general': typeof SettingsGeneralRoute
   '/': typeof ChatIndexRoute
   '/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
+  '/$environmentId/grid': typeof ChatEnvironmentIdGridRoute
   '/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
 export interface FileRoutesById {
@@ -95,6 +103,7 @@ export interface FileRoutesById {
   '/settings/general': typeof SettingsGeneralRoute
   '/_chat/': typeof ChatIndexRoute
   '/_chat/$environmentId/$threadId': typeof ChatEnvironmentIdThreadIdRoute
+  '/_chat/$environmentId/grid': typeof ChatEnvironmentIdGridRoute
   '/_chat/draft/$draftId': typeof ChatDraftDraftIdRoute
 }
 export interface FileRouteTypes {
@@ -107,6 +116,7 @@ export interface FileRouteTypes {
     | '/settings/connections'
     | '/settings/general'
     | '/$environmentId/$threadId'
+    | '/$environmentId/grid'
     | '/draft/$draftId'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -117,6 +127,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/'
     | '/$environmentId/$threadId'
+    | '/$environmentId/grid'
     | '/draft/$draftId'
   id:
     | '__root__'
@@ -128,6 +139,7 @@ export interface FileRouteTypes {
     | '/settings/general'
     | '/_chat/'
     | '/_chat/$environmentId/$threadId'
+    | '/_chat/$environmentId/grid'
     | '/_chat/draft/$draftId'
   fileRoutesById: FileRoutesById
 }
@@ -195,6 +207,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatDraftDraftIdRouteImport
       parentRoute: typeof ChatRoute
     }
+    '/_chat/$environmentId/grid': {
+      id: '/_chat/$environmentId/grid'
+      path: '/$environmentId/grid'
+      fullPath: '/$environmentId/grid'
+      preLoaderRoute: typeof ChatEnvironmentIdGridRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/$environmentId/$threadId': {
       id: '/_chat/$environmentId/$threadId'
       path: '/$environmentId/$threadId'
@@ -208,12 +227,14 @@ declare module '@tanstack/react-router' {
 interface ChatRouteChildren {
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
+  ChatEnvironmentIdGridRoute: typeof ChatEnvironmentIdGridRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
+  ChatEnvironmentIdGridRoute: ChatEnvironmentIdGridRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
 }
 

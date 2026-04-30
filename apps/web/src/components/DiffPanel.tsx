@@ -3,7 +3,9 @@ import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/reac
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import type { TurnId } from "@t3tools/contracts";
+import type { ScopedThreadRef, TurnId } from "@t3tools/contracts";
+
+import type { DiffRouteSearch } from "../diffRouteSearch";
 import {
   ChevronLeftIcon,
   ChevronRightIcon,
@@ -162,11 +164,26 @@ function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
 
 interface DiffPanelProps {
   mode?: DiffPanelMode;
+  /**
+   * Optional thread-ref override. When provided, DiffPanel uses this instead
+   * of reading the thread from the current route params. Used by grid panes
+   * where the route doesn't contain the thread.
+   */
+  threadRefOverride?: ScopedThreadRef | null;
+  /** Optional override for diff search state (diff open, turn id, file path). */
+  diffSearchOverride?: DiffRouteSearch;
+  /** Called when the user picks a turn in the strip — overrides route navigate. */
+  onSelectTurnOverride?: (turnId: TurnId | null) => void;
 }
 
 export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 
-export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
+export default function DiffPanel({
+  mode = "inline",
+  threadRefOverride,
+  diffSearchOverride,
+  onSelectTurnOverride,
+}: DiffPanelProps) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   const settings = useSettings();
@@ -177,11 +194,17 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const previousDiffOpenRef = useRef(false);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
   const [canScrollTurnStripRight, setCanScrollTurnStripRight] = useState(false);
-  const routeThreadRef = useParams({
+  const routeThreadRefFromParams = useParams({
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
   });
-  const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
+  const routeThreadRef =
+    threadRefOverride !== undefined ? threadRefOverride : routeThreadRefFromParams;
+  const routeDiffSearch = useSearch({
+    strict: false,
+    select: (search) => parseDiffRouteSearch(search),
+  });
+  const diffSearch = diffSearchOverride ?? routeDiffSearch;
   const diffOpen = diffSearch.diff === "1";
   const activeThreadId = routeThreadRef?.threadId ?? null;
   const activeThread = useStore(
@@ -345,6 +368,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
+    if (onSelectTurnOverride) {
+      onSelectTurnOverride(turnId);
+      return;
+    }
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
@@ -356,6 +383,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   };
   const selectWholeConversation = () => {
     if (!activeThread) return;
+    if (onSelectTurnOverride) {
+      onSelectTurnOverride(null);
+      return;
+    }
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),

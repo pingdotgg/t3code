@@ -13,6 +13,7 @@ import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { APP_DISPLAY_NAME } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
+import { useGridLayoutStore } from "../gridLayoutStore";
 import {
   SlowRpcAckToastCoordinator,
   WebSocketConnectionCoordinator,
@@ -260,14 +261,25 @@ function EventRouter() {
       if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
         return;
       }
-      await navigate({
-        to: "/$environmentId/$threadId",
-        params: {
-          environmentId: payload.environment.environmentId,
-          threadId: payload.bootstrapThreadId,
-        },
-        replace: true,
-      });
+      const lastView = useGridLayoutStore
+        .getState()
+        .getState(payload.environment.environmentId).lastView;
+      if (lastView === "grid") {
+        await navigate({
+          to: "/$environmentId/grid",
+          params: { environmentId: payload.environment.environmentId },
+          replace: true,
+        });
+      } else {
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId: payload.environment.environmentId,
+            threadId: payload.bootstrapThreadId,
+          },
+          replace: true,
+        });
+      }
       handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
     })().catch(() => undefined);
   });

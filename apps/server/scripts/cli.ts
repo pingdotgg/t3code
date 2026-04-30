@@ -151,8 +151,10 @@ const buildCmd = Command.make(
           cwd: serverDir,
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
-          // Windows needs shell mode to resolve `.cmd` shims on PATH.
-          shell: process.platform === "win32",
+          // process.execPath is node.exe (not a .cmd shim), so don't go through
+          // cmd.exe — if the path contains spaces (e.g. "C:\Program Files\nodejs")
+          // the shell splits on the space and the spawn fails.
+          shell: false,
         }),
       );
 

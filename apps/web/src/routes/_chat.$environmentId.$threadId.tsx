@@ -4,6 +4,7 @@ import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { DiffWorkerPoolProvider } from "../components/DiffWorkerPoolProvider";
+import { useGridLayoutStore } from "../gridLayoutStore";
 import {
   DiffPanelHeaderSkeleton,
   DiffPanelLoadingState,
@@ -221,6 +222,12 @@ function ChatThreadRouteView() {
       void navigate({ to: "/", replace: true });
     }
   }, [bootstrapComplete, environmentHasAnyThreads, navigate, routeThreadExists, threadRef]);
+
+  useEffect(() => {
+    if (threadRef) {
+      useGridLayoutStore.getState().setLastView(threadRef.environmentId, "thread");
+    }
+  }, [threadRef]);
 
   useEffect(() => {
     if (!threadRef || !serverThreadStarted || !draftThread?.promotedTo) {

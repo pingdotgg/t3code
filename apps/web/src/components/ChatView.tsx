@@ -143,6 +143,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import { useGridPaneContext } from "./grid/gridPaneContext";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
@@ -794,7 +795,9 @@ export default function ChatView(props: ChatViewProps) {
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
-  const diffOpen = rawSearch.diff === "1";
+  const diffOpenFromRoute = rawSearch.diff === "1";
+  const gridPaneContext = useGridPaneContext();
+  const diffOpen = gridPaneContext ? gridPaneContext.diffOpen : diffOpenFromRoute;
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadRef = useMemo(
     () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
@@ -1501,6 +1504,10 @@ export default function ChatView(props: ChatViewProps) {
     if (!isServerThread) {
       return;
     }
+    if (gridPaneContext) {
+      gridPaneContext.onRequestDiff({ open: !gridPaneContext.diffOpen });
+      return;
+    }
     if (!diffOpen) {
       onDiffPanelOpen?.();
     }
@@ -1516,7 +1523,15 @@ export default function ChatView(props: ChatViewProps) {
         return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
       },
     });
-  }, [diffOpen, environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
+  }, [
+    diffOpen,
+    environmentId,
+    gridPaneContext,
+    isServerThread,
+    navigate,
+    onDiffPanelOpen,
+    threadId,
+  ]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -3240,6 +3255,14 @@ export default function ChatView(props: ChatViewProps) {
       if (!isServerThread) {
         return;
       }
+      if (gridPaneContext) {
+        gridPaneContext.onRequestDiff({
+          open: true,
+          turnId,
+          ...(filePath ? { filePath } : {}),
+        });
+        return;
+      }
       onDiffPanelOpen?.();
       void navigate({
         to: "/$environmentId/$threadId",
@@ -3255,7 +3278,7 @@ export default function ChatView(props: ChatViewProps) {
         },
       });
     },
-    [environmentId, isServerThread, navigate, onDiffPanelOpen, threadId],
+    [environmentId, gridPaneContext, isServerThread, navigate, onDiffPanelOpen, threadId],
   );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.

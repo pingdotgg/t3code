@@ -6,15 +6,18 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { memo } from "react";
+import { memo, useCallback } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { DiffIcon, TerminalSquareIcon } from "lucide-react";
+import { DiffIcon, Grid2X2Icon, TerminalSquareIcon, XIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { Toggle } from "../ui/toggle";
+import { Button } from "../ui/button";
 import { SidebarTrigger } from "../ui/sidebar";
+import { useGridPaneContext } from "../grid/gridPaneContext";
 import { OpenInPicker } from "./OpenInPicker";
 
 interface ChatHeaderProps {
@@ -68,10 +71,18 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleTerminal,
   onToggleDiff,
 }: ChatHeaderProps) {
+  const navigate = useNavigate();
+  const gridPane = useGridPaneContext();
+  const openGridView = useCallback(() => {
+    void navigate({
+      to: "/$environmentId/grid",
+      params: { environmentId: activeThreadEnvironmentId },
+    });
+  }, [activeThreadEnvironmentId, navigate]);
   return (
     <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
-        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+        {gridPane ? null : <SidebarTrigger className="size-7 shrink-0 md:hidden" />}
         <h2
           className="min-w-0 shrink truncate text-sm font-medium text-foreground"
           title={activeThreadTitle}
@@ -158,11 +169,51 @@ export const ChatHeader = memo(function ChatHeader({
           <TooltipPopup side="bottom">
             {!isGitRepo && !diffOpen
               ? "Diff panel is unavailable because this project is not a git repository."
-              : diffToggleShortcutLabel
-                ? `Toggle diff panel (${diffToggleShortcutLabel})`
-                : "Toggle diff panel"}
+              : gridPane
+                ? "Open diff (switches this pane to full-thread view)"
+                : diffToggleShortcutLabel
+                  ? `Toggle diff panel (${diffToggleShortcutLabel})`
+                  : "Toggle diff panel"}
           </TooltipPopup>
         </Tooltip>
+        {gridPane ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  className="shrink-0"
+                  variant="outline"
+                  size="icon-xs"
+                  aria-label="Remove this pane from the grid"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    gridPane.onClosePane();
+                  }}
+                >
+                  <XIcon className="size-3" />
+                </Button>
+              }
+            />
+            <TooltipPopup side="bottom">Remove pane from grid</TooltipPopup>
+          </Tooltip>
+        ) : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  className="shrink-0"
+                  variant="outline"
+                  size="icon-xs"
+                  aria-label="Open grid split view"
+                  onClick={openGridView}
+                >
+                  <Grid2X2Icon className="size-3" />
+                </Button>
+              }
+            />
+            <TooltipPopup side="bottom">Open grid split view</TooltipPopup>
+          </Tooltip>
+        )}
       </div>
     </div>
   );
