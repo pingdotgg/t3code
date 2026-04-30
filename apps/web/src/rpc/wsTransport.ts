@@ -227,7 +227,7 @@ export class WsTransport {
       Layer.mergeAll(
         createWsRpcProtocolLayer(this.url, {
           ...this.lifecycleHandlers,
-          isActive: () => this.activeSessionId === sessionId || this.disposed,
+          isActive: () => this.activeSessionId === sessionId,
           isCloseIntentional: () =>
             this.disposed ||
             this.intentionalCloseDepth > 0 ||

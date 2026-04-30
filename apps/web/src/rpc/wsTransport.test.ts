@@ -463,6 +463,40 @@ describe("WsTransport", () => {
     await transport.dispose();
   });
 
+  it("ignores stale socket close events after the transport is disposed", async () => {
+    const onClose = vi.fn();
+    const transport = createTransport("ws://localhost:3020", { onClose });
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const firstSocket = getSocket();
+    firstSocket.open();
+
+    await waitFor(() => {
+      expect(getWsConnectionStatus()).toMatchObject({
+        hasConnected: true,
+        phase: "connected",
+      });
+    });
+
+    await transport.reconnect();
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(2);
+    });
+
+    const secondSocket = getSocket();
+    secondSocket.open();
+    await transport.dispose();
+
+    onClose.mockClear();
+    firstSocket.close(1006, "stale close after dispose");
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
   it("marks unary requests as slow until the first server ack arrives", async () => {
     const slowAckThresholdMs = 25;
     setSlowRpcAckThresholdMsForTests(slowAckThresholdMs);

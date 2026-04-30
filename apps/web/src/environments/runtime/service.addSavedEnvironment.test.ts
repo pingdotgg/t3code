@@ -702,6 +702,71 @@ describe("addSavedEnvironment", () => {
     await resetEnvironmentServiceForTests();
   });
 
+  it("cancels a pending saved environment connection when disconnected", async () => {
+    mockSavedRecords = [
+      {
+        environmentId: EnvironmentId.make("environment-1"),
+        label: "Remote environment",
+        httpBaseUrl: "https://remote.example.com/",
+        wsBaseUrl: "wss://remote.example.com/",
+        createdAt: "2026-04-14T00:00:00.000Z",
+        lastConnectedAt: null,
+      },
+    ];
+    mockReadSavedEnvironmentBearerToken.mockResolvedValue("bearer-token");
+    const dispose = vi.fn(async () => undefined);
+    mockCreateEnvironmentConnection.mockImplementation(
+      (input: { knownEnvironment: { environmentId: EnvironmentId }; client: unknown }) => ({
+        kind: "saved" as const,
+        environmentId: input.knownEnvironment.environmentId,
+        knownEnvironment: input.knownEnvironment,
+        client: input.client,
+        ensureBootstrapped: async () => undefined,
+        reconnect: async () => undefined,
+        dispose,
+      }),
+    );
+    let resolveSessionState!: (value: {
+      readonly authenticated: true;
+      readonly role: "owner";
+    }) => void;
+    mockFetchRemoteSessionState.mockReturnValue(
+      new Promise((resolve) => {
+        resolveSessionState = resolve;
+      }),
+    );
+
+    const {
+      disconnectSavedEnvironment,
+      listEnvironmentConnections,
+      reconnectSavedEnvironment,
+      resetEnvironmentServiceForTests,
+    } = await import("./service");
+
+    const reconnectPromise = reconnectSavedEnvironment(EnvironmentId.make("environment-1"));
+    await vi.waitFor(() => {
+      expect(mockFetchRemoteSessionState).toHaveBeenCalledOnce();
+    });
+
+    await disconnectSavedEnvironment(EnvironmentId.make("environment-1"));
+    resolveSessionState({
+      authenticated: true,
+      role: "owner",
+    });
+    await expect(reconnectPromise).resolves.toBeUndefined();
+
+    expect(listEnvironmentConnections()).toHaveLength(0);
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(mockPatchRuntime).not.toHaveBeenCalledWith(
+      EnvironmentId.make("environment-1"),
+      expect.objectContaining({
+        connectionState: "error",
+      }),
+    );
+
+    await resetEnvironmentServiceForTests();
+  });
+
   it("reissues ssh pairing credentials when connecting after a manual ssh disconnect", async () => {
     mockSavedRecords = [
       {
