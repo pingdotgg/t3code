@@ -110,6 +110,7 @@ interface CodexAdapterSessionContext {
   readonly eventFiber: Fiber.Fiber<void, never>;
   readonly turnSpans: Map<string, CodexTurnSpanState>;
   readonly sentryScope: ReturnType<typeof Sentry.getIsolationScope>;
+  pendingTurnSpan?: CodexTurnSpanState | undefined;
   stopped: boolean;
 }
 
@@ -1374,39 +1375,21 @@ function codexItemToolName(item: { type: string; command?: string }): string {
 function processCodexGenAiEvent(
   event: ProviderEvent,
   threadId: ThreadId,
-  getModel: () => string,
-  getCwd: () => string | undefined,
   turnSpans: Map<string, CodexTurnSpanState>,
+  getPendingSpan: () => CodexTurnSpanState | undefined,
+  clearPendingSpan: () => void,
 ): void {
   const turnId =
     event.turnId ??
     ((event.payload as { turnId?: string } | undefined)?.turnId as string | undefined);
 
   if (event.method === "turn/started" && turnId) {
-    const cwd = getCwd();
-    const model = getModel();
-    const invokeSpan = startInvokeAgentSpan({
-      agentName: codexAgentName(cwd),
-      system: "openai",
-      model,
-      conversationId: threadId,
-      extraAttributes: {
-        "t3.provider": PROVIDER,
-        "t3.thread.id": threadId,
-        "t3.turn.id": turnId,
-        ...(cwd ? { "t3.workspace.cwd": cwd } : {}),
-      },
-    });
-    const requestSpan = startGenAiRequestSpan(invokeSpan, {
-      model,
-      system: "openai",
-      conversationId: threadId,
-    });
-    turnSpans.set(turnId, {
-      invokeAgentSpan: invokeSpan,
-      requestSpan,
-      toolSpans: new Map(),
-    });
+    const pending = getPendingSpan();
+    if (pending) {
+      pending.invokeAgentSpan.setAttribute("t3.turn.id", turnId);
+      turnSpans.set(turnId, pending);
+      clearPendingSpan();
+    }
     return;
   }
 
@@ -1604,6 +1587,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         );
 
         const turnSpans = new Map<string, CodexTurnSpanState>();
+        let sessionRef: CodexAdapterSessionContext | undefined;
         let sessionModel =
           input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection.model : "unknown";
         let sessionCwd: string | undefined = input.cwd ?? process.cwd();
@@ -1617,9 +1601,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               processCodexGenAiEvent(
                 event,
                 input.threadId,
-                () => sessionModel,
-                () => sessionCwd,
                 turnSpans,
+                () => sessionRef?.pendingTurnSpan,
+                () => { if (sessionRef) sessionRef.pendingTurnSpan = undefined; },
               ),
             );
             yield* writeNativeEvent(event);
@@ -1659,7 +1643,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         if (started.model) sessionModel = started.model;
         if (started.cwd) sessionCwd = started.cwd;
 
-        sessions.set(input.threadId, {
+        const sessionCtx: CodexAdapterSessionContext = {
           threadId: input.threadId,
           scope: sessionScope,
           runtime,
@@ -1667,7 +1651,9 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           turnSpans,
           sentryScope,
           stopped: false,
-        });
+        };
+        sessions.set(input.threadId, sessionCtx);
+        sessionRef = sessionCtx;
         sessionScopeTransferred = true;
 
         return started;
@@ -1722,15 +1708,44 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       input.modelSelection?.instanceId === boundInstanceId
         ? getModelSelectionBooleanOptionValue(input.modelSelection, "fastMode")
         : undefined;
+
+    const model =
+      input.modelSelection?.instanceId === boundInstanceId
+        ? input.modelSelection.model
+        : "unknown";
+    const userText =
+      input.input !== undefined
+        ? typeof input.input === "string"
+          ? input.input
+          : JSON.stringify(input.input)
+        : undefined;
+    const messagesJson = userText ? JSON.stringify([{ role: "user", content: userText }]) : undefined;
+    const cwd = process.cwd();
+
     Sentry.withIsolationScope(session.sentryScope, () => {
-      if (input.input !== undefined) {
-        const userText = typeof input.input === "string" ? input.input : JSON.stringify(input.input);
-        const messagesJson = JSON.stringify([{ role: "user", content: userText }]);
-        for (const state of session.turnSpans.values()) {
-          state.invokeAgentSpan.setAttribute("gen_ai.input.messages", messagesJson);
-          state.requestSpan?.setAttribute("gen_ai.input.messages", messagesJson);
-        }
-      }
+      const invokeSpan = startInvokeAgentSpan({
+        agentName: codexAgentName(cwd),
+        system: "openai",
+        model,
+        conversationId: input.threadId,
+        ...(messagesJson ? { messages: messagesJson } : {}),
+        extraAttributes: {
+          "t3.provider": PROVIDER,
+          "t3.thread.id": input.threadId,
+          ...(cwd ? { "t3.workspace.cwd": cwd } : {}),
+        },
+      });
+      const requestSpan = startGenAiRequestSpan(invokeSpan, {
+        model,
+        system: "openai",
+        conversationId: input.threadId,
+        ...(messagesJson ? { messages: messagesJson } : {}),
+      });
+      session.pendingTurnSpan = {
+        invokeAgentSpan: invokeSpan,
+        requestSpan,
+        toolSpans: new Map(),
+      };
     });
 
     return yield* session.runtime
