@@ -656,11 +656,10 @@ function AssistantChangedFilesSectionInner({
       </div>
       <ChangedFilesTree
         key={`changed-files-tree:${turnSummary.turnId}`}
-        turnId={turnSummary.turnId}
         files={checkpointFiles}
         allDirectoriesExpanded={allDirectoriesExpanded}
         resolvedTheme={resolvedTheme}
-        onOpenTurnDiff={onOpenTurnDiff}
+        onSelectFile={(filePath) => onOpenTurnDiff(turnSummary.turnId, filePath)}
       />
     </div>
   );

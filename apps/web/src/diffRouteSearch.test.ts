@@ -1,6 +1,7 @@
+import { TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
-import { parseDiffRouteSearch } from "./diffRouteSearch";
+import { buildOpenDiffSearch, parseDiffRouteSearch } from "./diffRouteSearch";
 
 describe("parseDiffRouteSearch", () => {
   it("parses valid diff search values", () => {
@@ -69,6 +70,50 @@ describe("parseDiffRouteSearch", () => {
 
     expect(parsed).toEqual({
       diff: "1",
+    });
+  });
+});
+
+describe("buildOpenDiffSearch", () => {
+  it("clears preview state and sets diff state", () => {
+    expect(
+      buildOpenDiffSearch(
+        {
+          diff: "1",
+          diffTurnId: "old-turn",
+          diffFilePath: "old.ts",
+          preview: "1",
+          foo: "bar",
+        },
+        {
+          diffTurnId: TurnId.make("turn-1"),
+          diffFilePath: "src/app.ts",
+        },
+      ),
+    ).toEqual({
+      diff: "1",
+      diffTurnId: "turn-1",
+      diffFilePath: "src/app.ts",
+      foo: "bar",
+      preview: undefined,
+    });
+  });
+
+  it("drops file selection when no turn is selected", () => {
+    expect(
+      buildOpenDiffSearch(
+        {
+          preview: "1",
+          foo: "bar",
+        },
+        {
+          diffFilePath: "src/app.ts",
+        },
+      ),
+    ).toEqual({
+      diff: "1",
+      foo: "bar",
+      preview: undefined,
     });
   });
 });

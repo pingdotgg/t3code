@@ -1,4 +1,5 @@
 import type { TurnDiffFileChange } from "../types";
+import type { ProjectEntry } from "@t3tools/contracts";
 
 export interface TurnDiffStat {
   additions: number;
@@ -22,6 +23,8 @@ export interface TurnDiffTreeFileNode {
 
 export type TurnDiffTreeNode = TurnDiffTreeDirectoryNode | TurnDiffTreeFileNode;
 
+export type TurnDiffTreeEntryInput = TurnDiffFileChange | Pick<ProjectEntry, "path" | "kind">;
+
 interface MutableDirectoryNode {
   name: string;
   path: string;
@@ -43,8 +46,13 @@ function compareByName(a: { name: string }, b: { name: string }): number {
   return a.name.localeCompare(b.name, undefined, SORT_LOCALE_OPTIONS);
 }
 
-function readStat(file: TurnDiffFileChange): TurnDiffStat | null {
-  if (typeof file.additions !== "number" || typeof file.deletions !== "number") {
+function readStat(file: TurnDiffTreeEntryInput): TurnDiffStat | null {
+  if (
+    !("additions" in file) ||
+    typeof file.additions !== "number" ||
+    !("deletions" in file) ||
+    typeof file.deletions !== "number"
+  ) {
     return null;
   }
   return {
@@ -110,7 +118,9 @@ export function summarizeTurnDiffStats(files: ReadonlyArray<TurnDiffFileChange>)
   );
 }
 
-export function buildTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>): TurnDiffTreeNode[] {
+export function buildTurnDiffTree(
+  files: ReadonlyArray<TurnDiffTreeEntryInput>,
+): TurnDiffTreeNode[] {
   const root: MutableDirectoryNode = {
     name: "",
     path: "",
@@ -125,16 +135,12 @@ export function buildTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>): Tur
       continue;
     }
 
-    const filePath = segments.join("/");
-    const fileName = segments.at(-1);
-    if (!fileName) {
-      continue;
-    }
+    const isDirectoryEntry = file.kind === "directory";
     const stat = readStat(file);
     const ancestors: MutableDirectoryNode[] = [root];
     let currentDirectory = root;
 
-    for (const segment of segments.slice(0, -1)) {
+    for (const segment of isDirectoryEntry ? segments : segments.slice(0, -1)) {
       const nextPath = currentDirectory.path ? `${currentDirectory.path}/${segment}` : segment;
       const existing = currentDirectory.directories.get(segment);
       if (existing) {
@@ -153,12 +159,19 @@ export function buildTurnDiffTree(files: ReadonlyArray<TurnDiffFileChange>): Tur
       ancestors.push(currentDirectory);
     }
 
-    currentDirectory.files.push({
-      kind: "file",
-      name: fileName,
-      path: filePath,
-      stat,
-    });
+    if (!isDirectoryEntry) {
+      const filePath = segments.join("/");
+      const fileName = segments.at(-1);
+      if (!fileName) {
+        continue;
+      }
+      currentDirectory.files.push({
+        kind: "file",
+        name: fileName,
+        path: filePath,
+        stat,
+      });
+    }
 
     if (stat) {
       for (const ancestor of ancestors) {

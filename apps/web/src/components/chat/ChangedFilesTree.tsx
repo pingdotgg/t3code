@@ -1,7 +1,9 @@
-import { type TurnId } from "@t3tools/contracts";
 import { memo, useCallback, useMemo, useState } from "react";
-import { type TurnDiffFileChange } from "../../types";
-import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
+import {
+  buildTurnDiffTree,
+  type TurnDiffTreeEntryInput,
+  type TurnDiffTreeNode,
+} from "../../lib/turnDiffTree";
 import { ChevronRightIcon, FolderIcon, FolderClosedIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
@@ -10,13 +12,21 @@ import { VscodeEntryIcon } from "./VscodeEntryIcon";
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
 export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
-  turnId: TurnId;
-  files: ReadonlyArray<TurnDiffFileChange>;
+  files: ReadonlyArray<TurnDiffTreeEntryInput>;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
-  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
+  onSelectFile: (filePath: string) => void;
+  selectedFilePath?: string | null;
+  showStats?: boolean;
 }) {
-  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
+  const {
+    files,
+    allDirectoriesExpanded,
+    onSelectFile,
+    resolvedTheme,
+    selectedFilePath = null,
+    showStats = true,
+  } = props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
   const directoryPathsKey = useMemo(
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
@@ -60,14 +70,14 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           <button
             type="button"
             data-scroll-anchor-ignore
-            className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
+            className="group/tree-row flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
             style={{ paddingLeft: `${leftPadding}px` }}
             onClick={() => toggleDirectory(node.path)}
           >
             <ChevronRightIcon
               aria-hidden="true"
               className={cn(
-                "size-3.5 shrink-0 text-muted-foreground/70 transition-transform group-hover:text-foreground/80",
+                "size-3.5 shrink-0 text-muted-foreground/70 transition-transform",
                 isExpanded && "rotate-90",
               )}
             />
@@ -76,10 +86,13 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             ) : (
               <FolderClosedIcon className="size-3.5 shrink-0 text-muted-foreground/75" />
             )}
-            <span className="truncate font-mono text-[11px] text-muted-foreground/90 group-hover:text-foreground/90">
+            <span
+              data-tree-label
+              className="truncate font-mono text-[11px] text-muted-foreground/90 group-hover/tree-row:text-foreground/90"
+            >
               {node.name}
             </span>
-            {hasNonZeroStat(node.stat) && (
+            {showStats && hasNonZeroStat(node.stat) && (
               <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
                 <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
               </span>
@@ -98,9 +111,12 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
       <button
         key={`file:${node.path}`}
         type="button"
-        className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
+        className={cn(
+          "group/tree-row flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80",
+          selectedFilePath === node.path && "bg-accent text-accent-foreground hover:bg-accent",
+        )}
         style={{ paddingLeft: `${leftPadding}px` }}
-        onClick={() => onOpenTurnDiff(turnId, node.path)}
+        onClick={() => onSelectFile(node.path)}
       >
         <span aria-hidden="true" className="size-3.5 shrink-0" />
         <VscodeEntryIcon
@@ -109,10 +125,16 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
           theme={resolvedTheme}
           className="size-3.5 text-muted-foreground/70"
         />
-        <span className="truncate font-mono text-[11px] text-muted-foreground/80 group-hover:text-foreground/90">
+        <span
+          data-tree-label
+          className={cn(
+            "truncate font-mono text-[11px] text-muted-foreground/80 group-hover/tree-row:text-foreground/90",
+            selectedFilePath === node.path && "text-accent-foreground",
+          )}
+        >
           {node.name}
         </span>
-        {node.stat && (
+        {showStats && node.stat && (
           <span className="ml-auto shrink-0 font-mono text-[10px] tabular-nums">
             <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
           </span>
