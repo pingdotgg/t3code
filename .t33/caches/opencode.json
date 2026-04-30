@@ -1,0 +1,1375 @@
+{
+  "provider": "opencode",
+  "displayName": "OpenCode",
+  "showInteractionModeToggle": false,
+  "enabled": true,
+  "installed": true,
+  "version": "1.14.20",
+  "status": "ready",
+  "auth": {
+    "status": "authenticated",
+    "type": "opencode"
+  },
+  "checkedAt": "2026-04-30T18:12:12.380Z",
+  "message": "3 upstream providers connected through OpenCode.",
+  "models": [
+    {
+      "slug": "opencode/big-pickle",
+      "name": "Big Pickle",
+      "subProvider": "OpenCode Zen",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/claude-haiku-4.5",
+      "name": "Claude Haiku 4.5",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "max",
+                "label": "Max"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/claude-opus-4.5",
+      "name": "Claude Opus 4.5",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "max",
+                "label": "Max"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/claude-sonnet-4",
+      "name": "Claude Sonnet 4",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "max",
+                "label": "Max"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/claude-sonnet-4.5",
+      "name": "Claude Sonnet 4.5",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "max",
+                "label": "Max"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/gemini-2.5-pro",
+      "name": "Gemini 2.5 Pro",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/gemini-3-flash-preview",
+      "name": "Gemini 3 Flash",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/gemini-3.1-pro-preview",
+      "name": "Gemini 3.1 Pro Preview",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/gpt-4.1",
+      "name": "GPT-4.1",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/gpt-4o",
+      "name": "GPT-4o",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "opencode/gpt-5-nano",
+      "name": "GPT-5 Nano",
+      "subProvider": "OpenCode Zen",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "minimal",
+                "label": "Minimal"
+              },
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "openai/gpt-5-codex",
+      "name": "GPT-5-Codex",
+      "subProvider": "OpenAI",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/gpt-5-mini",
+      "name": "GPT-5-mini",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium"
+              },
+              {
+                "id": "high",
+                "label": "High"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "openai/gpt-5.1-codex",
+      "name": "GPT-5.1 Codex",
+      "subProvider": "OpenAI",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "openai/gpt-5.1-codex-max",
+      "name": "GPT-5.1 Codex Max",
+      "subProvider": "OpenAI",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "openai/gpt-5.1-codex-mini",
+      "name": "GPT-5.1 Codex mini",
+      "subProvider": "OpenAI",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/gpt-5.2",
+      "name": "GPT-5.2",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium"
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Xhigh"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "openai/gpt-5.2",
+      "name": "GPT-5.2",
+      "subProvider": "OpenAI",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "none",
+                "label": "None"
+              },
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Xhigh"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "openai/gpt-5.2-codex",
+      "name": "GPT-5.2 Codex",
+      "subProvider": "OpenAI",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Xhigh"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/gpt-5.2-codex",
+      "name": "GPT-5.2-Codex",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium"
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Xhigh"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "openai/gpt-5.3-codex",
+      "name": "GPT-5.3 Codex",
+      "subProvider": "OpenAI",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Xhigh"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "openai/gpt-5.3-codex-spark",
+      "name": "GPT-5.3 Codex Spark",
+      "subProvider": "OpenAI",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Xhigh"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "openai/gpt-5.4",
+      "name": "GPT-5.4",
+      "subProvider": "OpenAI",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "none",
+                "label": "None"
+              },
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Xhigh"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "openai/gpt-5.4-fast",
+      "name": "GPT-5.4 Fast",
+      "subProvider": "OpenAI",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "none",
+                "label": "None"
+              },
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Xhigh"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "openai/gpt-5.4-mini",
+      "name": "GPT-5.4 mini",
+      "subProvider": "OpenAI",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "none",
+                "label": "None"
+              },
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Xhigh"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/gpt-5.4-mini",
+      "name": "GPT-5.4 Mini",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium"
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Xhigh"
+              }
+            ]
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "openai/gpt-5.4-mini-fast",
+      "name": "GPT-5.4 mini Fast",
+      "subProvider": "OpenAI",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "none",
+                "label": "None"
+              },
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Xhigh"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "github-copilot/grok-code-fast-1",
+      "name": "Grok Code Fast 1",
+      "subProvider": "GitHub Copilot",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "opencode/hy3-preview-free",
+      "name": "Hy3 preview Free",
+      "subProvider": "OpenCode Zen",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "opencode/minimax-m2.5-free",
+      "name": "MiniMax M2.5 Free",
+      "subProvider": "OpenCode Zen",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "opencode/nemotron-3-super-free",
+      "name": "Nemotron 3 Super Free",
+      "subProvider": "OpenCode Zen",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "variant",
+            "label": "Variant",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "agent",
+            "label": "Agent",
+            "type": "select",
+            "options": [
+              {
+                "id": "build",
+                "label": "Build",
+                "isDefault": true
+              },
+              {
+                "id": "plan",
+                "label": "Plan"
+              }
+            ],
+            "currentValue": "build"
+          }
+        ]
+      }
+    }
+  ],
+  "slashCommands": [],
+  "skills": []
+}

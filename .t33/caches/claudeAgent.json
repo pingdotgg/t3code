@@ -1,0 +1,419 @@
+{
+  "provider": "claudeAgent",
+  "displayName": "Claude",
+  "showInteractionModeToggle": true,
+  "enabled": true,
+  "installed": true,
+  "version": "2.1.121",
+  "status": "ready",
+  "auth": {
+    "status": "authenticated",
+    "type": "max",
+    "label": "Claude Max Subscription"
+  },
+  "checkedAt": "2026-04-30T18:12:05.075Z",
+  "models": [
+    {
+      "slug": "claude-opus-4-7",
+      "name": "Claude Opus 4.7",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "effort",
+            "label": "Reasoning",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium"
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Extra High",
+                "isDefault": true
+              },
+              {
+                "id": "max",
+                "label": "Max"
+              },
+              {
+                "id": "ultrathink",
+                "label": "Ultrathink"
+              }
+            ],
+            "currentValue": "xhigh",
+            "promptInjectedValues": [
+              "ultrathink"
+            ]
+          },
+          {
+            "id": "contextWindow",
+            "label": "Context Window",
+            "type": "select",
+            "options": [
+              {
+                "id": "200k",
+                "label": "200k",
+                "isDefault": true
+              },
+              {
+                "id": "1m",
+                "label": "1M"
+              }
+            ],
+            "currentValue": "200k"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "claude-opus-4-6",
+      "name": "Claude Opus 4.6",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "effort",
+            "label": "Reasoning",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium"
+              },
+              {
+                "id": "high",
+                "label": "High",
+                "isDefault": true
+              },
+              {
+                "id": "max",
+                "label": "Max"
+              },
+              {
+                "id": "ultrathink",
+                "label": "Ultrathink"
+              }
+            ],
+            "currentValue": "high",
+            "promptInjectedValues": [
+              "ultrathink"
+            ]
+          },
+          {
+            "id": "fastMode",
+            "label": "Fast Mode",
+            "type": "boolean"
+          },
+          {
+            "id": "contextWindow",
+            "label": "Context Window",
+            "type": "select",
+            "options": [
+              {
+                "id": "200k",
+                "label": "200k",
+                "isDefault": true
+              },
+              {
+                "id": "1m",
+                "label": "1M"
+              }
+            ],
+            "currentValue": "200k"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "claude-opus-4-5",
+      "name": "Claude Opus 4.5",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "effort",
+            "label": "Reasoning",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium"
+              },
+              {
+                "id": "high",
+                "label": "High",
+                "isDefault": true
+              },
+              {
+                "id": "max",
+                "label": "Max"
+              }
+            ],
+            "currentValue": "high"
+          },
+          {
+            "id": "fastMode",
+            "label": "Fast Mode",
+            "type": "boolean"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "claude-sonnet-4-6",
+      "name": "Claude Sonnet 4.6",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "effort",
+            "label": "Reasoning",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium"
+              },
+              {
+                "id": "high",
+                "label": "High",
+                "isDefault": true
+              },
+              {
+                "id": "ultrathink",
+                "label": "Ultrathink"
+              }
+            ],
+            "currentValue": "high",
+            "promptInjectedValues": [
+              "ultrathink"
+            ]
+          },
+          {
+            "id": "contextWindow",
+            "label": "Context Window",
+            "type": "select",
+            "options": [
+              {
+                "id": "200k",
+                "label": "200k",
+                "isDefault": true
+              },
+              {
+                "id": "1m",
+                "label": "1M"
+              }
+            ],
+            "currentValue": "200k"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "claude-haiku-4-5",
+      "name": "Claude Haiku 4.5",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "thinking",
+            "label": "Thinking",
+            "type": "boolean"
+          }
+        ]
+      }
+    }
+  ],
+  "slashCommands": [
+    {
+      "name": "update-config",
+      "description": "Use this skill to configure the Claude Code harness via settings.json. Automated behaviors (\"from now on when X\", \"each time X\", \"whenever X\", \"before/after X\") require hooks configured in settings.json - the harness executes these, not Claude, so memory/preferences cannot fulfill them. Also use for: permissions (\"allow X\", \"add permission\", \"move permission to\"), env vars (\"set X=Y\"), hook troubleshooting, or any changes to settings.json/settings.local.json files. Examples: \"allow npm commands\", \"add bq permission to global settings\", \"move permission to user settings\", \"set DEBUG=true\", \"when claude stops show X\". For simple settings like theme/model, suggest the /config command."
+    },
+    {
+      "name": "debug",
+      "description": "Enable debug logging for this session and help diagnose issues",
+      "input": {
+        "hint": "[issue description]"
+      }
+    },
+    {
+      "name": "simplify",
+      "description": "Review changed code for reuse, quality, and efficiency, then fix any issues found."
+    },
+    {
+      "name": "batch",
+      "description": "Research and plan a large-scale change, then execute it in parallel across 5–30 isolated worktree agents that each open a PR.",
+      "input": {
+        "hint": "<instruction>"
+      }
+    },
+    {
+      "name": "fewer-permission-prompts",
+      "description": "Scan your transcripts for common read-only Bash and MCP tool calls, then add a prioritized allowlist to project .claude/settings.json to reduce permission prompts."
+    },
+    {
+      "name": "loop",
+      "description": "Run a prompt or slash command on a recurring interval (e.g. /loop 5m /foo). Omit the interval to let the model self-pace.",
+      "input": {
+        "hint": "[interval] <prompt>"
+      }
+    },
+    {
+      "name": "schedule",
+      "description": "Create, update, list, or run scheduled remote agents (routines) that execute on a cron schedule."
+    },
+    {
+      "name": "claude-api",
+      "description": "Build, debug, and optimize Claude API / Anthropic SDK apps. Apps built with this skill should include prompt caching. Also handles migrating existing Claude API code between Claude model versions (4.5 → 4.6, 4.6 → 4.7, retired-model replacements).\nTRIGGER when: code imports `anthropic`/`@anthropic-ai/sdk`; user asks for the Claude API, Anthropic SDK, or Managed Agents; user adds/modifies/tunes a Claude feature (caching, thinking, compaction, tool use, batch, files, citations, memory) or model (Opus/Sonnet/Haiku) in a file; questions about prompt caching / cache hit rate in an Anthropic SDK project.\nSKIP: file imports `openai`/other-provider SDK, filename like `*-openai.py`/`*-generic.py`, provider-neutral code, general programming/ML."
+    },
+    {
+      "name": "expo-dev-client",
+      "description": "Build and distribute Expo development clients locally or via TestFlight (user)"
+    },
+    {
+      "name": "ui",
+      "description": "Explore, build, and refine UI. (user)"
+    },
+    {
+      "name": "agent-browser",
+      "description": "Browser automation CLI for AI agents. Use when the user needs to interact with websites, including navigating pages, filling forms, clicking buttons, taking screenshots, extracting data, testing web apps, or automating any browser task. Triggers include requests to \"open a website\", \"fill out a form\", \"click a button\", \"take a screenshot\", \"scrape data from a page\", \"test this web app\", \"login to a site\", \"automate browser actions\", or any task requiring programmatic web interaction. (user)"
+    },
+    {
+      "name": "native-data-fetching",
+      "description": "Use when implementing or debugging ANY network request, API call, or data fetching. Covers fetch API, React Query, SWR, error handling, caching, offline support, and Expo Router data loaders (`useLoaderData`). (user)"
+    },
+    {
+      "name": "expo-deployment",
+      "description": "Deploying Expo apps to iOS App Store, Android Play Store, web hosting, and API routes (user)"
+    },
+    {
+      "name": "btca-cli",
+      "description": "Operate the btca CLI for local resources and source-first answers. Use when setting up btca in a project, connecting a provider, adding or managing resources, and asking questions via btca commands. Invoke this skill when the user says \"use btca\" or needs to do more detailed research on a specific library or framework. (user)"
+    },
+    {
+      "name": "uniwind",
+      "description": "Uniwind — Tailwind CSS v4 styling for React Native. Use when adding, building, or styling components in a React Native project that uses Tailwind with className. Triggers on: className on RN components, Tailwind classes in RN, global.css with @import 'uniwind', withUniwindConfig, withUniwind, metro.config.js with Uniwind, useResolveClassNames, useCSSVariable, useUniwind, dark:/light: theming, platform selectors (ios:/android:/native:/web:/tv:), data-[prop=value], responsive breakpoints (sm:/md:/lg:), tailwind-variants, tv() variants, ScopedTheme, Uniwind.setTheme, Uniwind.updateCSSVariables, @theme, @utility, @variant, CSS variables in RN, colorClassName, tintColorClassName, contentContainerClassName, Uniwind Pro (animations, transitions, shadow tree, native insets), safe area utilities, gradients, hairlineWidth(), fontScale(), pixelRatio(), light-dark(), OKLCH, cn, tailwind-merge, HeroUI Native, react-native-reusables, Gluestack. Does NOT handle migration — use migrate-nativewind-to-uniwind skill. (user)"
+    },
+    {
+      "name": "web-design-guidelines",
+      "description": "Review UI code for Web Interface Guidelines compliance. Use when asked to \"review my UI\", \"check accessibility\", \"audit design\", \"review UX\", or \"check my site against best practices\". (user)"
+    },
+    {
+      "name": "react-doctor",
+      "description": "Run after making React changes to catch issues early. Use when reviewing code, finishing a feature, or fixing bugs in a React project. (user)"
+    },
+    {
+      "name": "migrate-nativewind-to-uniwind",
+      "description": "Migrate a React Native project from NativeWind to Uniwind. Use when the user wants to replace NativeWind with Uniwind, upgrade from NativeWind, switch to Uniwind, or mentions NativeWind-to-Uniwind migration. Handles package removal, config migration, Tailwind 4 upgrade, cssInterop removal, theme conversion, and all breaking changes. (user)"
+    },
+    {
+      "name": "building-native-ui",
+      "description": "Complete guide for building beautiful apps with Expo Router. Covers fundamentals, styling, components, navigation, animations, patterns, and native tabs. (user)"
+    },
+    {
+      "name": "frontend-design",
+      "description": "Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics. (user)"
+    },
+    {
+      "name": "turborepo",
+      "description": "Turborepo monorepo build system guidance. Triggers on: turbo.json, task pipelines,\ndependsOn, caching, remote cache, the \"turbo\" CLI, --filter, --affected, CI optimization, environment\nvariables, internal packages, monorepo structure/best practices, and boundaries.\n\nUse when user: configures tasks/workflows/pipelines, creates packages, sets up\nmonorepo, shares code between apps, runs changed/affected packages, debugs cache,\nor has apps/packages directories. (user)"
+    },
+    {
+      "name": "vercel-composition-patterns",
+      "description": "React composition patterns that scale. Use when refactoring components with boolean prop proliferation, building flexible component libraries, or designing reusable APIs. Triggers on tasks involving compound components, render props, context providers, or component architecture. Includes React 19 API changes. (user)"
+    },
+    {
+      "name": "expo-cicd-workflows",
+      "description": "Helps understand and write EAS workflow YAML files for Expo projects. Use this skill when the user asks about CI/CD or workflows in an Expo or EAS context, mentions .eas/workflows/, or wants help with EAS build pipelines or deployment automation. (user)"
+    },
+    {
+      "name": "expo-tailwind-setup",
+      "description": "Set up Tailwind CSS v4 in Expo with react-native-css and NativeWind v5 for universal styling (user)"
+    },
+    {
+      "name": "coderabbit:review",
+      "description": "(coderabbit) Run CodeRabbit AI code review on your changes",
+      "input": {
+        "hint": "[type] [--base <branch>]"
+      }
+    },
+    {
+      "name": "code-review",
+      "description": "(coderabbit) Reviews code changes using CodeRabbit AI. Use when user asks for code review, PR feedback, code quality checks, security issues, or wants autonomous fix-review cycles."
+    },
+    {
+      "name": "autofix",
+      "description": "(coderabbit) Auto-fix CodeRabbit review comments - get CodeRabbit review comments from GitHub and fix them interactively or in batch"
+    },
+    {
+      "name": "clear",
+      "description": "Start a new session with empty context; previous session stays on disk (resumable with /resume)"
+    },
+    {
+      "name": "compact",
+      "description": "Free up context by summarizing the conversation so far",
+      "input": {
+        "hint": "<optional custom summarization instructions>"
+      }
+    },
+    {
+      "name": "context",
+      "description": "Show current context usage"
+    },
+    {
+      "name": "heapdump",
+      "description": "Dump the JS heap to ~/Desktop"
+    },
+    {
+      "name": "init",
+      "description": "Initialize a new CLAUDE.md file with codebase documentation"
+    },
+    {
+      "name": "review",
+      "description": "Review a pull request"
+    },
+    {
+      "name": "security-review",
+      "description": "Complete a security review of the pending changes on the current branch"
+    },
+    {
+      "name": "extra-usage",
+      "description": "Configure extra usage to keep working when limits are hit"
+    },
+    {
+      "name": "usage",
+      "description": "Show the total cost and duration of the current session"
+    },
+    {
+      "name": "insights",
+      "description": "Generate a report analyzing your Claude Code sessions"
+    },
+    {
+      "name": "team-onboarding",
+      "description": "Help teammates ramp on Claude Code with a guide from your usage"
+    }
+  ],
+  "skills": []
+}
