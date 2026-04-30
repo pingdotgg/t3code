@@ -1,5 +1,7 @@
 import { FitAddon } from "@xterm/addon-fit";
 import {
+  IconChevronDown as ChevronDownIcon,
+  IconChevronUp as ChevronUpIcon,
   IconPlus as Plus,
   IconSquareSplit2x1 as SquareSplitHorizontal,
   IconAppleTerminalOnRectangle as TerminalSquare,
@@ -15,7 +17,6 @@ import {
 } from "@forma/contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
-  type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useCallback,
   useEffect,
@@ -47,8 +48,8 @@ import {
 } from "../keybindings";
 import { useSettings } from "../hooks/useSettings";
 import { getCodeTerminalFontSize } from "../interfaceAppearance";
+import { useBottomDrawerSizing } from "../bottomDrawerSizing";
 import {
-  DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ThreadTerminalGroup,
@@ -58,20 +59,7 @@ import { readLocalApi } from "~/localApi";
 import { generateTheme, readThemeSettingsFromDocument } from "../theme";
 import { selectTerminalEventEntries, useTerminalStateStore } from "../terminalStateStore";
 
-const MIN_DRAWER_HEIGHT = 180;
-const MAX_DRAWER_HEIGHT_RATIO = 0.75;
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
-
-function maxDrawerHeight(): number {
-  if (typeof window === "undefined") return DEFAULT_THREAD_TERMINAL_HEIGHT;
-  return Math.max(MIN_DRAWER_HEIGHT, Math.floor(window.innerHeight * MAX_DRAWER_HEIGHT_RATIO));
-}
-
-function clampDrawerHeight(height: number): number {
-  const safeHeight = Number.isFinite(height) ? height : DEFAULT_THREAD_TERMINAL_HEIGHT;
-  const maxHeight = maxDrawerHeight();
-  return Math.min(Math.max(Math.round(safeHeight), MIN_DRAWER_HEIGHT), maxHeight);
-}
 
 function writeSystemMessage(terminal: Terminal, message: string): void {
   terminal.write(`\r\n[terminal] ${message}\r\n`);
@@ -787,6 +775,7 @@ interface ThreadTerminalDrawerProps {
   runtimeEnv?: Record<string, string>;
   visible?: boolean;
   height: number;
+  fullHeight: boolean;
   terminalIds: string[];
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
@@ -800,6 +789,7 @@ interface ThreadTerminalDrawerProps {
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
   onHeightChange: (height: number) => void;
+  onFullHeightChange: (fullHeight: boolean) => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
 }
@@ -841,6 +831,7 @@ export default function ThreadTerminalDrawer({
   runtimeEnv,
   visible = true,
   height,
+  fullHeight,
   terminalIds,
   activeTerminalId,
   terminalGroups,
@@ -854,20 +845,28 @@ export default function ThreadTerminalDrawer({
   onActiveTerminalChange,
   onCloseTerminal,
   onHeightChange,
+  onFullHeightChange,
   onAddTerminalContext,
   keybindings,
 }: ThreadTerminalDrawerProps) {
-  const [drawerHeight, setDrawerHeight] = useState(() => clampDrawerHeight(height));
   const [resizeEpoch, setResizeEpoch] = useState(0);
-  const drawerHeightRef = useRef(drawerHeight);
-  const lastSyncedHeightRef = useRef(clampDrawerHeight(height));
-  const onHeightChangeRef = useRef(onHeightChange);
-  const resizeStateRef = useRef<{
-    pointerId: number;
-    startY: number;
-    startHeight: number;
-  } | null>(null);
-  const didResizeDuringDragRef = useRef(false);
+  const {
+    drawerRef,
+    drawerHeight,
+    handleResizePointerDown,
+    handleResizePointerMove,
+    handleResizePointerEnd,
+  } = useBottomDrawerSizing<HTMLElement>({
+    visible,
+    height,
+    fullHeight,
+    onHeightChange,
+    onFullHeightChange,
+    onHeightSettled: () => {
+      setResizeEpoch((value) => value + 1);
+    },
+    identityKey: threadId,
+  });
 
   const normalizedTerminalIds = useMemo(() => {
     const cleaned = [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
@@ -980,6 +979,7 @@ export default function ThreadTerminalDrawer({
   const closeTerminalActionLabel = closeShortcutLabel
     ? `Close Terminal (${closeShortcutLabel})`
     : "Close Terminal";
+  const fullHeightActionLabel = fullHeight ? "Restore drawer height" : "Expand to full height";
   const onSplitTerminalAction = useCallback(() => {
     if (hasReachedSplitLimit) return;
     onSplitTerminal();
@@ -987,95 +987,9 @@ export default function ThreadTerminalDrawer({
   const onNewTerminalAction = useCallback(() => {
     onNewTerminal();
   }, [onNewTerminal]);
-
-  useEffect(() => {
-    onHeightChangeRef.current = onHeightChange;
-  }, [onHeightChange]);
-
-  useEffect(() => {
-    drawerHeightRef.current = drawerHeight;
-  }, [drawerHeight]);
-
-  const syncHeight = useCallback((nextHeight: number) => {
-    const clampedHeight = clampDrawerHeight(nextHeight);
-    if (lastSyncedHeightRef.current === clampedHeight) return;
-    lastSyncedHeightRef.current = clampedHeight;
-    onHeightChangeRef.current(clampedHeight);
-  }, []);
-
-  useEffect(() => {
-    const clampedHeight = clampDrawerHeight(height);
-    setDrawerHeight(clampedHeight);
-    drawerHeightRef.current = clampedHeight;
-    lastSyncedHeightRef.current = clampedHeight;
-  }, [height, threadId]);
-
-  const handleResizePointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    didResizeDuringDragRef.current = false;
-    resizeStateRef.current = {
-      pointerId: event.pointerId,
-      startY: event.clientY,
-      startHeight: drawerHeightRef.current,
-    };
-  }, []);
-
-  const handleResizePointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const resizeState = resizeStateRef.current;
-    if (!resizeState || resizeState.pointerId !== event.pointerId) return;
-    event.preventDefault();
-    const clampedHeight = clampDrawerHeight(
-      resizeState.startHeight + (resizeState.startY - event.clientY),
-    );
-    if (clampedHeight === drawerHeightRef.current) {
-      return;
-    }
-    didResizeDuringDragRef.current = true;
-    drawerHeightRef.current = clampedHeight;
-    setDrawerHeight(clampedHeight);
-  }, []);
-
-  const handleResizePointerEnd = useCallback(
-    (event: ReactPointerEvent<HTMLDivElement>) => {
-      const resizeState = resizeStateRef.current;
-      if (!resizeState || resizeState.pointerId !== event.pointerId) return;
-      resizeStateRef.current = null;
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
-      if (!didResizeDuringDragRef.current) {
-        return;
-      }
-      syncHeight(drawerHeightRef.current);
-      setResizeEpoch((value) => value + 1);
-    },
-    [syncHeight],
-  );
-
-  useEffect(() => {
-    if (!visible) {
-      return;
-    }
-
-    const onWindowResize = () => {
-      const clampedHeight = clampDrawerHeight(drawerHeightRef.current);
-      const changed = clampedHeight !== drawerHeightRef.current;
-      if (changed) {
-        setDrawerHeight(clampedHeight);
-        drawerHeightRef.current = clampedHeight;
-      }
-      if (!resizeStateRef.current) {
-        syncHeight(clampedHeight);
-      }
-      setResizeEpoch((value) => value + 1);
-    };
-    window.addEventListener("resize", onWindowResize);
-    return () => {
-      window.removeEventListener("resize", onWindowResize);
-    };
-  }, [syncHeight, visible]);
+  const onToggleFullHeightAction = useCallback(() => {
+    onFullHeightChange(!fullHeight);
+  }, [fullHeight, onFullHeightChange]);
 
   useEffect(() => {
     if (!visible) {
@@ -1084,16 +998,11 @@ export default function ThreadTerminalDrawer({
     setResizeEpoch((value) => value + 1);
   }, [visible]);
 
-  useEffect(() => {
-    return () => {
-      syncHeight(drawerHeightRef.current);
-    };
-  }, [syncHeight]);
-
   return (
     <aside
+      ref={drawerRef}
       className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
-      style={{ height: `${drawerHeight}px` }}
+      style={{ height: fullHeight ? "100%" : `${drawerHeight}px` }}
     >
       <div
         className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
@@ -1106,6 +1015,18 @@ export default function ThreadTerminalDrawer({
       {!hasTerminalSidebar && (
         <div className="pointer-events-none absolute right-2 top-2 z-20">
           <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70">
+            <TerminalActionButton
+              className="p-1 text-foreground/90 transition-colors hover:bg-accent"
+              onClick={onToggleFullHeightAction}
+              label={fullHeightActionLabel}
+            >
+              {fullHeight ? (
+                <ChevronDownIcon className="size-3.25 fill-current" />
+              ) : (
+                <ChevronUpIcon className="size-3.25 fill-current" />
+              )}
+            </TerminalActionButton>
+            <div className="h-4 w-px bg-border/80" />
             <TerminalActionButton
               className={`p-1 text-foreground/90 transition-colors ${
                 hasReachedSplitLimit
@@ -1208,7 +1129,18 @@ export default function ThreadTerminalDrawer({
               <div className="flex h-[22px] items-stretch justify-end border-b border-border/70">
                 <div className="inline-flex h-full items-stretch">
                   <TerminalActionButton
-                    className={`inline-flex h-full items-center px-1 text-foreground/90 transition-colors ${
+                    className="inline-flex h-full items-center px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                    onClick={onToggleFullHeightAction}
+                    label={fullHeightActionLabel}
+                  >
+                    {fullHeight ? (
+                      <ChevronDownIcon className="size-3.25 fill-current" />
+                    ) : (
+                      <ChevronUpIcon className="size-3.25 fill-current" />
+                    )}
+                  </TerminalActionButton>
+                  <TerminalActionButton
+                    className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${
                       hasReachedSplitLimit
                         ? "cursor-not-allowed opacity-45 hover:bg-transparent"
                         : "hover:bg-accent/70"

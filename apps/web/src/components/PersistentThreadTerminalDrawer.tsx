@@ -54,7 +54,9 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
   const storeSetActiveTerminal = useTerminalStateStore((state) => state.setActiveTerminal);
   const storeCloseTerminal = useTerminalStateStore((state) => state.closeTerminal);
   const sharedHeight = useBottomDrawerUiStore((state) => state.sharedHeight);
+  const fullHeight = useBottomDrawerUiStore((state) => state.isFullHeight);
   const setSharedHeight = useBottomDrawerUiStore((state) => state.setSharedHeight);
+  const setFullHeight = useBottomDrawerUiStore((state) => state.setFullHeight);
   const [localFocusRequestId, setLocalFocusRequestId] = useState(0);
   const worktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const effectiveWorktreePath = useMemo(
@@ -168,6 +170,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
       runtimeEnv={runtimeEnv}
       visible={visible}
       height={sharedHeight}
+      fullHeight={fullHeight}
       terminalIds={terminalState.terminalIds}
       activeTerminalId={terminalState.activeTerminalId}
       terminalGroups={terminalState.terminalGroups}
@@ -182,6 +185,7 @@ export const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerm
       onActiveTerminalChange={activateTerminal}
       onCloseTerminal={closeTerminal}
       onHeightChange={setTerminalHeight}
+      onFullHeightChange={setFullHeight}
       onAddTerminalContext={handleAddTerminalContext}
     />
   );

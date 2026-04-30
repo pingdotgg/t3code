@@ -72,6 +72,8 @@ function buildProps() {
     timestampFormat: "24-hour" as const,
     workspaceRoot: undefined,
     onIsAtEndChange: vi.fn(),
+    scrollToMessageId: null,
+    onScrollToMessageHandled: undefined,
   };
 }
 
@@ -299,6 +301,50 @@ describe("MessagesTimeline", () => {
       await expect.element(page.getByText("example.ts lines 7-8")).toBeVisible();
       await expect.element(page.getByText("<terminal_context>")).not.toBeInTheDocument();
       await expect.element(page.getByText("<code_context>")).not.toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("collapses long user messages and lets them expand in place", async () => {
+    const longMessage = Array.from(
+      { length: 12 },
+      () =>
+        "This is a long pinned request that should wrap across multiple lines in the chat view.",
+    ).join(" ");
+
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-user-long-message",
+            kind: "message",
+            createdAt: "2026-04-30T12:00:00.000Z",
+            message: {
+              id: "message-user-long-message" as MessageId,
+              role: "user",
+              text: longMessage,
+              createdAt: "2026-04-30T12:00:00.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      const body = document.querySelector<HTMLElement>(
+        '[data-user-message-body-collapsible="true"]',
+      );
+      expect(body).toBeTruthy();
+      expect(body?.dataset.userMessageBodyExpanded).toBe("false");
+      await expect.element(page.getByRole("button", { name: "Expand message" })).toBeVisible();
+
+      await page.getByRole("button", { name: "Expand message" }).click();
+
+      expect(body?.dataset.userMessageBodyExpanded).toBe("true");
+      await expect.element(page.getByRole("button", { name: "Collapse message" })).toBeVisible();
     } finally {
       await screen.unmount();
     }

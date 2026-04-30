@@ -26,7 +26,7 @@ describe("ThreadStatusLabel", () => {
     expect(markup.match(/data-slot="pixel-grid-loader-cell"/g)).toHaveLength(9);
   });
 
-  it("renders lucide glyphs for settled statuses", () => {
+  it("renders settled status glyphs", () => {
     const markup = renderToStaticMarkup(
       <>
         <ThreadStatusLabel
@@ -73,9 +73,9 @@ describe("ThreadStatusLabel", () => {
     expect(markup).toContain('data-status-glyph="circle-question-mark"');
     expect(markup).toContain("lucide-circle-question-mark");
     expect(markup).toContain('data-status-glyph="file-text"');
-    expect(markup).toContain("lucide-file-text");
+    expect(markup).toContain('data-icon="plan-ready"');
     expect(markup).toContain('data-status-glyph="check-check"');
-    expect(markup).toContain("lucide-check-check");
+    expect(markup).toContain('data-icon="sidebar-completed"');
   });
 });
 

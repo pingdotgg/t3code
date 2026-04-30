@@ -18,7 +18,6 @@ import {
   IconCube as CubeIcon,
   IconFolder as FolderIcon,
   IconFolderBadgePlus as FolderPlusIcon,
-  IconRectangleOnRectangle as PreviewIcon,
 } from "symbols-react";
 import {
   useCallback,
@@ -90,7 +89,7 @@ import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
-import { AddProjectIcon, NewThreadIcon, SettingsHexIcon } from "./icons/custom";
+import { AddProjectIcon, NewThreadIcon, PreviewTriggerIcon, SettingsHexIcon } from "./icons/custom";
 import { useServerKeybindings } from "../rpc/serverState";
 import { resolveShortcutCommand } from "../keybindings";
 import {
@@ -747,7 +746,7 @@ function OpenCommandPaletteDialog() {
     value: "action:open-preview",
     searchTerms: ["preview", "storybook", "component", "canvas"],
     title: "Open component preview",
-    icon: <PreviewIcon className={ITEM_ICON_CLASS} />,
+    icon: <PreviewTriggerIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       openPreviewDrawer(
         currentProjectEnvironmentId && currentProjectId

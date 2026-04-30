@@ -3,13 +3,13 @@ import {
   createContext,
   type ElementType,
   memo,
+  type ReactNode,
   use,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
@@ -23,8 +23,8 @@ import {
   IconMessage as BotIcon,
   IconCheckmark as CheckIcon,
   IconExclamationmarkCircle as CircleAlertIcon,
-  IconEye as EyeIcon,
   IconArrowTurnUpLeft as Undo2Icon,
+  IconEye as EyeIcon,
   IconGlobe as GlobeIcon,
   IconSquareAndPencil as SquarePenIcon,
   IconBolt as ZapIcon,
@@ -57,7 +57,6 @@ import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@forma/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
-
 import {
   buildInlineTerminalContextText,
   formatInlineTerminalContextLabel,
@@ -141,6 +140,30 @@ interface MessagesTimelineProps {
 }
 
 type TimelineIcon = ElementType<{ className?: string }>;
+type TimelineRenderItem =
+  | {
+      id: string;
+      kind: "standalone-row";
+      row: MessagesTimelineRow;
+    }
+  | {
+      id: string;
+      kind: "user-section";
+      userRow: Extract<MessagesTimelineRow, { kind: "message" }>;
+      contentRows: MessagesTimelineRow[];
+    };
+
+const COLLAPSED_USER_MESSAGE_BODY_MAX_HEIGHT_PX = 72;
+const STICKY_USER_MESSAGE_SURFACE_STYLE = {
+  backgroundColor: "var(--chat-area-background, var(--background))",
+} as const;
+const STICKY_USER_MESSAGE_SHADOW_STYLE = {
+  backgroundColor: "rgb(0 0 0 / 0.16)",
+} as const;
+const STICKY_USER_MESSAGE_FADE_STYLE = {
+  background:
+    "linear-gradient(to bottom, rgb(from var(--chat-area-background, var(--background)) r g b / 1) 0%, rgb(from var(--chat-area-background, var(--background)) r g b / 0.78) 62%, rgb(from var(--chat-area-background, var(--background)) r g b / 0) 100%)",
+} as const;
 
 // ---------------------------------------------------------------------------
 // MessagesTimeline — list owner
@@ -191,6 +214,49 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const renderedItems = useMemo<TimelineRenderItem[]>(() => {
+    const nextItems: TimelineRenderItem[] = [];
+
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      if (!row) {
+        continue;
+      }
+
+      if (row.kind === "message" && row.message.role === "user") {
+        const contentRows: MessagesTimelineRow[] = [];
+        let cursor = index + 1;
+        while (cursor < rows.length) {
+          const nextRow = rows[cursor];
+          if (!nextRow) {
+            cursor += 1;
+            continue;
+          }
+          if (nextRow.kind === "message" && nextRow.message.role === "user") {
+            break;
+          }
+          contentRows.push(nextRow);
+          cursor += 1;
+        }
+
+        nextItems.push({
+          id: `user-section:${row.id}`,
+          kind: "user-section",
+          userRow: row,
+          contentRows,
+        });
+        index = cursor - 1;
+        continue;
+      }
+
+      nextItems.push({
+        id: row.id,
+        kind: "standalone-row",
+        row,
+      });
+    }
+    return nextItems;
+  }, [rows]);
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
@@ -260,14 +326,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   // Stable renderItem — no closure deps. Row components read shared state
   // from TimelineRowCtx, which propagates through LegendList's memo.
-  const renderItem = useCallback(
-    ({ item }: { item: MessagesTimelineRow }) => (
-      <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden" data-timeline-root="true">
-        <TimelineRowContent row={item} />
+  const renderItem = useCallback(({ item }: { item: TimelineRenderItem }) => {
+    return (
+      <div className="mx-auto w-full min-w-0 max-w-3xl" data-timeline-root="true">
+        {item.kind === "standalone-row" ? (
+          <TimelineRowContent row={item.row} />
+        ) : (
+          <TimelineUserSection userRow={item.userRow} contentRows={item.contentRows} />
+        )}
       </div>
-    ),
-    [],
-  );
+    );
+  }, []);
 
   if (rows.length === 0 && !isWorking) {
     return (
@@ -281,9 +350,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   return (
     <TimelineRowCtx.Provider value={sharedState}>
-      <LegendList<MessagesTimelineRow>
+      <LegendList<TimelineRenderItem>
         ref={listRef}
-        data={rows}
+        data={renderedItems}
         keyExtractor={keyExtractor}
         renderItem={renderItem}
         estimatedItemSize={90}
@@ -292,15 +361,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         maintainScrollAtEndThreshold={0.1}
         maintainVisibleContentPosition
         onScroll={handleScroll}
-        className="h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
-        ListHeaderComponent={<div className="h-3 sm:h-4" />}
+        data-messages-timeline="true"
+        className="h-full overflow-y-auto overscroll-y-contain px-3 sm:px-5"
+        ListHeaderComponent={<div className="h-px" />}
         ListFooterComponent={<div className="h-3 sm:h-4" />}
       />
     </TimelineRowCtx.Provider>
   );
 });
 
-function keyExtractor(item: MessagesTimelineRow) {
+function keyExtractor(item: TimelineRenderItem) {
   return item.id;
 }
 
@@ -308,10 +378,60 @@ function keyExtractor(item: MessagesTimelineRow) {
 // TimelineRowContent — the actual row component
 // ---------------------------------------------------------------------------
 
-type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
-type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
+
+function TimelineUserSection({
+  userRow,
+  contentRows,
+}: {
+  userRow: Extract<TimelineRow, { kind: "message" }>;
+  contentRows: MessagesTimelineRow[];
+}) {
+  const ctx = use(TimelineRowCtx);
+
+  return (
+    <section className="relative">
+      <div data-sticky-user-message="true" className="sticky top-0 z-20 w-full py-2">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-2 inset-y-3 z-0 rounded-[26px] opacity-40 blur-xl sm:inset-x-4"
+          style={STICKY_USER_MESSAGE_SHADOW_STYLE}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 -inset-x-3 z-0 opacity-95 blur-lg sm:-inset-x-5"
+          style={STICKY_USER_MESSAGE_SURFACE_STYLE}
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-[-0.75rem] bottom-[-1rem] z-0 h-12 opacity-90 blur-xl sm:-inset-x-5"
+          style={STICKY_USER_MESSAGE_FADE_STYLE}
+        />
+        <div
+          className="relative z-10"
+          data-timeline-row-id={userRow.id}
+          data-timeline-row-kind={userRow.kind}
+          data-message-id={userRow.message.id}
+          data-message-role={userRow.message.role}
+        >
+          <TimelineUserMessageCard
+            message={userRow.message}
+            timestampFormat={ctx.timestampFormat}
+            onImageExpand={ctx.onImageExpand}
+            onRevertUserMessage={ctx.onRevertUserMessage}
+            revertDisabled={ctx.isRevertingCheckpoint || ctx.isWorking}
+            showRevertAction={typeof userRow.revertTurnCount === "number"}
+          />
+        </div>
+      </div>
+
+      {contentRows.map((row) => (
+        <TimelineRowContent key={row.id} row={row} />
+      ))}
+    </section>
+  );
+}
 
 function TimelineRowContent({ row }: { row: TimelineRow }) {
   const ctx = use(TimelineRowCtx);
@@ -319,7 +439,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
   return (
     <div
       className={cn(
-        "pb-4",
+        "relative pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
       )}
       data-timeline-row-id={row.id}
@@ -329,92 +449,7 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
     >
       {row.kind === "work" && <WorkGroupSection groupedEntries={row.groupedEntries} />}
 
-      {row.kind === "message" &&
-        row.message.role === "user" &&
-        (() => {
-          const userImages = row.message.attachments ?? [];
-          const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
-          const terminalContexts = displayedUserMessage.terminalContexts;
-          const codeContexts = displayedUserMessage.codeContexts;
-          const canRevertAgentWork = typeof row.revertTurnCount === "number";
-          return (
-            <div className="flex justify-end">
-              <div className="group relative max-w-[80%] rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
-                {userImages.length > 0 && (
-                  <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                    {userImages.map(
-                      (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-                        <div
-                          key={image.id}
-                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-                        >
-                          {image.previewUrl ? (
-                            <button
-                              type="button"
-                              className="h-full w-full cursor-zoom-in"
-                              aria-label={`Preview ${image.name}`}
-                              onClick={() => {
-                                const preview = buildExpandedImagePreview(userImages, image.id);
-                                if (!preview) return;
-                                ctx.onImageExpand(preview);
-                              }}
-                            >
-                              <img
-                                src={image.previewUrl}
-                                alt={image.name}
-                                className="block h-auto max-h-[220px] w-full object-cover"
-                              />
-                            </button>
-                          ) : (
-                            <div className="text-ui-xs flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-muted-foreground/70">
-                              {image.name}
-                            </div>
-                          )}
-                        </div>
-                      ),
-                    )}
-                  </div>
-                )}
-                {(displayedUserMessage.visibleText.trim().length > 0 ||
-                  terminalContexts.length > 0 ||
-                  codeContexts.length > 0) && (
-                  <UserMessageBody
-                    text={displayedUserMessage.visibleText}
-                    terminalContexts={terminalContexts}
-                    codeContexts={codeContexts}
-                  />
-                )}
-                <div className="mt-1.5 flex items-center justify-end gap-2">
-                  <div
-                    className={cn(
-                      "flex items-center gap-1.5 opacity-0 focus-within:opacity-100 group-hover:opacity-100",
-                      MICRO_FADE_MOTION_CLASS_NAME,
-                    )}
-                  >
-                    {displayedUserMessage.copyText && (
-                      <MessageCopyButton text={displayedUserMessage.copyText} />
-                    )}
-                    {canRevertAgentWork && (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="outline"
-                        disabled={ctx.isRevertingCheckpoint || ctx.isWorking}
-                        onClick={() => ctx.onRevertUserMessage(row.message.id)}
-                        title="Revert to this message"
-                      >
-                        <Undo2Icon className="size-3" />
-                      </Button>
-                    )}
-                  </div>
-                  <p className="text-right text-xs text-muted-foreground/50">
-                    {formatTimestamp(row.message.createdAt, ctx.timestampFormat)}
-                  </p>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
+      {row.kind === "message" && row.message.role === "user" && null}
 
       {row.kind === "message" &&
         row.message.role === "assistant" &&
@@ -909,6 +944,186 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   );
 });
 
+const TimelineUserMessageCard = memo(function TimelineUserMessageCard(props: {
+  message: Extract<TimelineRow, { kind: "message" }>["message"];
+  timestampFormat: TimestampFormat;
+  onImageExpand: (preview: ExpandedImagePreview) => void;
+  onRevertUserMessage: (messageId: MessageId) => void;
+  revertDisabled: boolean;
+  showRevertAction: boolean;
+}) {
+  const [messageBodyExpanded, setMessageBodyExpanded] = useState(false);
+  const [canCollapseMessageBody, setCanCollapseMessageBody] = useState(false);
+  const userImages = props.message.attachments ?? [];
+  const displayedUserMessage = deriveDisplayedUserMessageState(props.message.text);
+  const terminalContexts = displayedUserMessage.terminalContexts;
+  const codeContexts = displayedUserMessage.codeContexts;
+
+  useEffect(() => {
+    if (!canCollapseMessageBody && messageBodyExpanded) {
+      setMessageBodyExpanded(false);
+    }
+  }, [canCollapseMessageBody, messageBodyExpanded]);
+
+  return (
+    <div className="flex justify-end">
+      <div
+        data-user-message-card="true"
+        className="group relative w-full rounded-xl border border-border bg-secondary px-4 py-3"
+      >
+        {userImages.length > 0 ? (
+          <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+            {userImages.map((image) => (
+              <div
+                key={image.id}
+                className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+              >
+                {image.previewUrl ? (
+                  <button
+                    type="button"
+                    className="h-full w-full cursor-zoom-in"
+                    aria-label={`Preview ${image.name}`}
+                    onClick={() => {
+                      const preview = buildExpandedImagePreview(userImages, image.id);
+                      if (!preview) return;
+                      props.onImageExpand(preview);
+                    }}
+                  >
+                    <img
+                      src={image.previewUrl}
+                      alt={image.name}
+                      className="block h-auto max-h-[220px] w-full object-cover"
+                    />
+                  </button>
+                ) : (
+                  <div className="text-ui-xs flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-muted-foreground/70">
+                    {image.name}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {displayedUserMessage.visibleText.trim().length > 0 ||
+        terminalContexts.length > 0 ||
+        codeContexts.length > 0 ? (
+          <CollapsibleUserMessageBody
+            text={displayedUserMessage.visibleText}
+            terminalContexts={terminalContexts}
+            codeContexts={codeContexts}
+            expanded={messageBodyExpanded}
+            onCanCollapseChange={setCanCollapseMessageBody}
+          />
+        ) : null}
+
+        <div className="mt-1.5 flex items-center gap-2">
+          {canCollapseMessageBody ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              data-scroll-anchor-ignore
+              onClick={() => setMessageBodyExpanded((value) => !value)}
+            >
+              {messageBodyExpanded ? "Collapse message" : "Expand message"}
+            </Button>
+          ) : null}
+          <div className="ml-auto flex items-center gap-2">
+            <div
+              className={cn(
+                "flex items-center gap-1.5 opacity-0 focus-within:opacity-100 group-hover:opacity-100",
+                MICRO_FADE_MOTION_CLASS_NAME,
+              )}
+            >
+              {displayedUserMessage.copyText ? (
+                <MessageCopyButton text={displayedUserMessage.copyText} />
+              ) : null}
+              {props.showRevertAction ? (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  disabled={props.revertDisabled}
+                  onClick={() => props.onRevertUserMessage(props.message.id)}
+                  title="Revert to this message"
+                >
+                  <Undo2Icon className="size-3" />
+                </Button>
+              ) : null}
+            </div>
+            <p className="text-right text-xs text-muted-foreground/50">
+              {formatTimestamp(props.message.createdAt, props.timestampFormat)}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
+  text: string;
+  terminalContexts: ParsedTerminalContextEntry[];
+  codeContexts: ParsedCodeContextEntry[];
+  expanded: boolean;
+  onCanCollapseChange: (canCollapse: boolean) => void;
+}) {
+  const { codeContexts, expanded, onCanCollapseChange, terminalContexts, text } = props;
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [canCollapse, setCanCollapse] = useState(false);
+
+  useEffect(() => {
+    const element = contentRef.current;
+    if (!element) {
+      setCanCollapse(false);
+      onCanCollapseChange(false);
+      return;
+    }
+
+    const checkOverflow = () => {
+      const nextCanCollapse = element.scrollHeight > COLLAPSED_USER_MESSAGE_BODY_MAX_HEIGHT_PX + 1;
+      setCanCollapse(nextCanCollapse);
+      onCanCollapseChange(nextCanCollapse);
+    };
+
+    checkOverflow();
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      checkOverflow();
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [codeContexts, onCanCollapseChange, terminalContexts, text]);
+
+  return (
+    <div
+      data-user-message-body-collapsible={canCollapse ? "true" : undefined}
+      data-user-message-body-expanded={canCollapse ? String(expanded) : undefined}
+      className={cn("relative", canCollapse && !expanded && "overflow-hidden")}
+      style={
+        canCollapse && !expanded
+          ? { maxHeight: `${COLLAPSED_USER_MESSAGE_BODY_MAX_HEIGHT_PX}px` }
+          : undefined
+      }
+    >
+      <div ref={contentRef}>
+        <UserMessageBody
+          text={text}
+          terminalContexts={terminalContexts}
+          codeContexts={codeContexts}
+        />
+      </div>
+      {canCollapse && !expanded ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-secondary/95 via-secondary/80 to-transparent" />
+      ) : null}
+    </div>
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Structural sharing — reuse old row references when data hasn't changed
 // so LegendList (and React) can skip re-rendering unchanged items.
@@ -1083,6 +1298,15 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
+  const compactTextClassName = [
+    "text-ui-xs",
+    "truncate",
+    "leading-5",
+    workToneClass(workEntry.tone),
+    preview ? "text-muted-foreground/70" : null,
+  ]
+    .filter((value): value is string => Boolean(value))
+    .join(" ");
 
   return (
     <div className="rounded-lg px-1 py-1">
@@ -1095,14 +1319,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
         <div className="min-w-0 flex-1 overflow-hidden">
           {rawCommand ? (
             <div className="max-w-full">
-              <p
-                className={cn(
-                  "text-ui-xs truncate leading-5",
-                  workToneClass(workEntry.tone),
-                  preview ? "text-muted-foreground/70" : "",
-                )}
-                title={displayText}
-              >
+              <p className={compactTextClassName} title={displayText}>
                 <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
                   {heading}
                 </span>
@@ -1138,13 +1355,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                 title={displayText}
                 aria-label={displayText}
               >
-                <p
-                  className={cn(
-                    "text-ui-xs truncate leading-5",
-                    workToneClass(workEntry.tone),
-                    preview ? "text-muted-foreground/70" : "",
-                  )}
-                >
+                <p className={compactTextClassName}>
                   <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
                     {heading}
                   </span>

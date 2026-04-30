@@ -238,7 +238,7 @@ function ChatThreadRouteView() {
     return (
       <>
         <SidebarInset className="h-dvh  min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
             <ChatView
               environmentId={threadRef.environmentId}
               threadId={threadRef.threadId}
@@ -262,7 +262,7 @@ function ChatThreadRouteView() {
   return (
     <>
       <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
           <ChatView
             environmentId={threadRef.environmentId}
             threadId={threadRef.threadId}

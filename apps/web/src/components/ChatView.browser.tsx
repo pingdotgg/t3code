@@ -1733,11 +1733,43 @@ function countBodyOccurrences(text: string): number {
   return (document.body.textContent ?? "").split(text).length - 1;
 }
 
+function findStickyMessageContainer(messageRow: HTMLElement | null): HTMLElement | null {
+  let current = messageRow?.parentElement ?? null;
+  while (current && current !== document.body) {
+    if (getComputedStyle(current).position === "sticky") {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
 function emitThreadDetailEvent(event: OrchestrationEvent): void {
   rpcHarness.emitStreamValue(ORCHESTRATION_WS_METHODS.subscribeThread, {
     kind: "event",
     event,
   });
+}
+
+function emitThreadSnapshot(threadId: ThreadId = THREAD_ID): void {
+  const thread = fixture.snapshot.threads.find((entry) => entry.id === threadId);
+  if (!thread) {
+    throw new Error(`Unable to find thread snapshot for ${threadId}.`);
+  }
+  rpcHarness.emitStreamValue(ORCHESTRATION_WS_METHODS.subscribeThread, {
+    kind: "snapshot",
+    snapshot: {
+      snapshotSequence: fixture.snapshot.snapshotSequence,
+      thread,
+    },
+  });
+}
+
+async function waitForMessageRow(messageId: MessageId): Promise<HTMLElement> {
+  return waitForElement(
+    () => document.querySelector<HTMLElement>(`[data-message-id="${messageId}"]`),
+    `Unable to find message row "${messageId}".`,
+  );
 }
 
 async function waitForSelectItemContainingText(text: string): Promise<HTMLElement> {
@@ -4780,7 +4812,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("shows queued turns separately from the timeline while a turn is running", async () => {
+  it("keeps queued requests in the queue panel while a turn is running", async () => {
     const queuedPrompt = "browser queued prompt only";
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -4795,14 +4827,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      await waitForActionButton("Add to queue");
-
       await vi.waitFor(
         () => {
-          expect(document.body.textContent).toContain("Queued");
+          expect(document.querySelector('[data-message-id="queued-browser-1"]')).toBeNull();
+          expect(document.querySelector('[data-composer-queue-panel="true"]')).toBeTruthy();
           expect(document.body.textContent).toContain("1 queued");
-          expect(countBodyOccurrences(queuedPrompt)).toBe(1);
-          expect(document.body.textContent).not.toContain("Queue 1");
+          expect(document.body.textContent).toContain(queuedPrompt);
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -4839,9 +4869,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       (await waitForButtonByText("Resume queue")).click();
       (
         await waitForElement(
-          () =>
-            document.querySelector<HTMLButtonElement>('button[aria-label="Remove queued turn"]'),
-          "Unable to find queued-turn remove button.",
+          () => document.querySelector<HTMLButtonElement>('button[title="Remove queued turn"]'),
+          'Unable to find "Remove queued turn" queue action.',
         )
       ).click();
 
@@ -4920,19 +4949,19 @@ describe("ChatView timeline estimator parity (full app)", () => {
           const composerEditor = document.querySelector<HTMLElement>(
             '[data-testid="composer-editor"]',
           );
-          const queuePanel = document.querySelector<HTMLElement>(
-            '[data-composer-queue-panel="true"]',
-          );
           const composerForm = document.querySelector<HTMLElement>(
             '[data-chat-composer-form="true"]',
           );
+          const queuedMessageId = dispatchRequest?.message?.messageId;
           expect(composerEditor?.textContent?.trim() ?? "").toBe("");
-          expect(countBodyOccurrences(queuedPrompt)).toBe(0);
-          expect(queuePanel).not.toBeNull();
+          expect(document.querySelector('[data-composer-queue-panel="true"]')).not.toBeNull();
+          expect(queuedMessageId).toBeTruthy();
+          expect(
+            queuedMessageId
+              ? document.querySelector(`[data-message-id="${queuedMessageId}"]`)
+              : null,
+          ).toBeNull();
           expect(composerForm).not.toBeNull();
-          expect(queuePanel?.compareDocumentPosition(composerForm as Node)).toBe(
-            Node.DOCUMENT_POSITION_FOLLOWING,
-          );
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -4989,9 +5018,179 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          expect(countBodyOccurrences(queuedPrompt)).toBe(1);
-          expect(document.body.textContent).toContain("Queued");
-          expect(document.body.textContent).not.toContain("Queue 1");
+          expect(document.querySelector('[data-composer-queue-panel="true"]')).toBeTruthy();
+          expect(document.body.textContent).toContain("1 queued");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps a sent request sticky after the turn settles", async () => {
+    const sentPrompt = "sticky row immediate send";
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sticky-send-seed" as MessageId,
+        targetText: "seed sticky send",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForComposerEditor();
+      await page.getByTestId("composer-editor").fill(sentPrompt);
+      (await waitForSendButton()).click();
+
+      let dispatchRequest:
+        | {
+            _tag: string;
+            type?: string;
+            message?: {
+              messageId?: MessageId;
+              text?: string;
+            };
+          }
+        | undefined;
+      await vi.waitFor(
+        () => {
+          dispatchRequest = wsRequests.find(
+            (entry) =>
+              entry._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              entry.type === "thread.turn.start" &&
+              typeof entry.message === "object" &&
+              entry.message !== null &&
+              "text" in entry.message &&
+              (entry.message as { text?: unknown }).text === sentPrompt,
+          ) as typeof dispatchRequest;
+          expect(dispatchRequest).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const sentMessageId =
+        dispatchRequest?.message?.messageId ?? ("sticky-sent-message" as MessageId);
+      const sentTurnId = "turn-sticky-browser-send" as TurnId;
+      const sentCreatedAt = isoAt(170);
+      await waitForMessageRow(sentMessageId);
+
+      await vi.waitFor(
+        () => {
+          const messageRow = document.querySelector<HTMLElement>(
+            `[data-message-id="${sentMessageId}"]`,
+          );
+          const stickyContainer = findStickyMessageContainer(messageRow ?? null);
+          expect(messageRow).toBeTruthy();
+          expect(stickyContainer).toBeTruthy();
+          expect(countBodyOccurrences(sentPrompt)).toBe(1);
+          expect(getComputedStyle(stickyContainer!).position).toBe("sticky");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      fixture.snapshot = {
+        ...fixture.snapshot,
+        snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+        threads: fixture.snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? {
+                ...thread,
+                messages: [
+                  ...thread.messages,
+                  {
+                    id: sentMessageId,
+                    role: "user" as const,
+                    text: sentPrompt,
+                    turnId: sentTurnId,
+                    streaming: false,
+                    createdAt: sentCreatedAt,
+                    updatedAt: isoAt(71),
+                  },
+                ],
+                latestTurn: {
+                  turnId: sentTurnId,
+                  state: "running" as const,
+                  requestedAt: sentCreatedAt,
+                  startedAt: isoAt(71),
+                  completedAt: null,
+                  assistantMessageId: null,
+                },
+                session: {
+                  ...thread.session!,
+                  status: "running",
+                  activeTurnId: sentTurnId,
+                  updatedAt: isoAt(71),
+                },
+                updatedAt: isoAt(71),
+              }
+            : thread,
+        ),
+        updatedAt: isoAt(71),
+      };
+      emitThreadSnapshot();
+
+      await vi.waitFor(
+        () => {
+          const messageRow = document.querySelector<HTMLElement>(
+            `[data-message-id="${sentMessageId}"]`,
+          );
+          const stickyContainer = findStickyMessageContainer(messageRow ?? null);
+          expect(messageRow).toBeTruthy();
+          expect(stickyContainer).toBeTruthy();
+          expect(countBodyOccurrences(sentPrompt)).toBe(1);
+          expect(getComputedStyle(stickyContainer!).position).toBe("sticky");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      fixture.snapshot = {
+        ...fixture.snapshot,
+        snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+        threads: fixture.snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? {
+                ...thread,
+                latestTurn: {
+                  turnId: sentTurnId,
+                  state: "completed" as const,
+                  requestedAt: sentCreatedAt,
+                  startedAt: isoAt(71),
+                  completedAt: isoAt(75),
+                  assistantMessageId: null,
+                },
+                session: {
+                  ...thread.session!,
+                  status: "ready",
+                  activeTurnId: null,
+                  updatedAt: isoAt(75),
+                },
+                updatedAt: isoAt(75),
+              }
+            : thread,
+        ),
+        updatedAt: isoAt(75),
+      };
+      emitThreadSnapshot();
+
+      await vi.waitFor(
+        () => {
+          const messageRow = document.querySelector<HTMLElement>(
+            `[data-message-id="${sentMessageId}"]`,
+          );
+          const stickyContainer = findStickyMessageContainer(messageRow ?? null);
+          expect(messageRow).toBeTruthy();
+          expect(stickyContainer).toBeTruthy();
+          expect(getComputedStyle(stickyContainer!).position).toBe("sticky");
+          expect(countBodyOccurrences(sentPrompt)).toBe(1);
         },
         { timeout: 8_000, interval: 16 },
       );

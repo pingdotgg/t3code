@@ -1,11 +1,9 @@
 import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@forma/client-runtime";
 import type { GitStatusResult } from "@forma/contracts";
 import {
-  CheckCheckIcon,
   CircleAlertIcon,
   CircleQuestionMarkIcon,
   CloudIcon,
-  FileTextIcon,
   GitMergeIcon,
   GitPullRequestClosedIcon,
   GitPullRequestIcon,
@@ -27,6 +25,7 @@ import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic"
 import type { SidebarThreadSummary } from "../types";
 import { PixelGridLoader } from "./ui/pixel-grid-loader";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { SidebarCompletedIcon, SidebarPlanReadyIcon } from "./icons/custom";
 
 export interface PrStatusIndicator {
   label: "PR open" | "PR closed" | "PR merged";
@@ -45,13 +44,11 @@ export interface TerminalStatusIndicator {
 export type ThreadPr = GitStatusResult["pr"];
 
 const THREAD_STATUS_ICON_BY_GLYPH: Record<
-  Exclude<ThreadStatusPill["glyph"], "grid">,
+  Exclude<ThreadStatusPill["glyph"], "grid" | "file-text" | "check-check">,
   LucideIcon
 > = {
   "circle-alert": CircleAlertIcon,
   "circle-question-mark": CircleQuestionMarkIcon,
-  "file-text": FileTextIcon,
-  "check-check": CheckCheckIcon,
 };
 
 export function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
@@ -144,6 +141,10 @@ export function SidebarStatusGlyph({
     >
       {status.glyph === "grid" ? (
         <PixelGridLoader variant="sidebar" className="text-current" />
+      ) : status.glyph === "file-text" ? (
+        <SidebarPlanReadyIcon className="size-3" />
+      ) : status.glyph === "check-check" ? (
+        <SidebarCompletedIcon className="size-3" />
       ) : (
         (() => {
           const Icon = THREAD_STATUS_ICON_BY_GLYPH[status.glyph];

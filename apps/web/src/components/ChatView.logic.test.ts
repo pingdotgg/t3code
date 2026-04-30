@@ -209,6 +209,8 @@ describe("shouldWriteThreadErrorToCurrentServerThread", () => {
 
 const makeThread = (input?: {
   id?: ThreadId;
+  messages?: Thread["messages"];
+  turnQueue?: Thread["turnQueue"];
   latestTurn?: {
     turnId: TurnId;
     state: "running" | "completed";
@@ -226,7 +228,7 @@ const makeThread = (input?: {
   runtimeMode: "full-access" as const,
   interactionMode: "default" as const,
   session: null,
-  messages: [],
+  messages: input?.messages ?? [],
   proposedPlans: [],
   error: null,
   createdAt: "2026-03-29T00:00:00.000Z",
@@ -242,7 +244,7 @@ const makeThread = (input?: {
   worktreePath: null,
   turnDiffSummaries: [],
   activities: [],
-  turnQueue: {
+  turnQueue: input?.turnQueue ?? {
     items: [],
     status: "idle",
     pauseReason: null,

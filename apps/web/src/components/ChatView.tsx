@@ -2410,27 +2410,19 @@ export default function ChatView(props: ChatViewProps) {
       sizeBytes: image.sizeBytes,
       previewUrl: image.previewUrl,
     }));
-
+    const optimisticMessageForSend: ChatMessage = {
+      id: messageIdForSend,
+      role: "user",
+      text: outgoingMessageText,
+      ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+      createdAt: messageCreatedAt,
+      streaming: false,
+    };
     if (!queueSend) {
-      // Scroll to the current end *before* adding the optimistic message.
-      // This sets LegendList's internal isAtEnd=true so maintainScrollAtEnd
-      // automatically pins to the new item when the data changes.
       isAtEndRef.current = true;
       showScrollDebouncer.current.cancel();
       setShowScrollToBottom(false);
-      await legendListRef.current?.scrollToEnd?.({ animated: false });
-
-      setOptimisticUserMessages((existing) => [
-        ...existing,
-        {
-          id: messageIdForSend,
-          role: "user",
-          text: outgoingMessageText,
-          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-          createdAt: messageCreatedAt,
-          streaming: false,
-        },
-      ]);
+      setOptimisticUserMessages((existing) => [...existing, optimisticMessageForSend]);
     }
 
     setThreadError(threadIdForSend, null);
@@ -2870,7 +2862,13 @@ export default function ChatView(props: ChatViewProps) {
         effort: ctxSelectedPromptEffort,
         text: trimmed,
       });
-
+      const optimisticMessageForSend: ChatMessage = {
+        id: messageIdForSend,
+        role: "user",
+        text: outgoingMessageText,
+        createdAt: messageCreatedAt,
+        streaming: false,
+      };
       sendInFlightRef.current = true;
       if (!queueSend) {
         beginLocalDispatch({ preparingWorktree: false });
@@ -2880,22 +2878,10 @@ export default function ChatView(props: ChatViewProps) {
       setThreadError(threadIdForSend, null);
 
       if (!queueSend) {
-        // Scroll to the current end *before* adding the optimistic message.
         isAtEndRef.current = true;
         showScrollDebouncer.current.cancel();
         setShowScrollToBottom(false);
-        await legendListRef.current?.scrollToEnd?.({ animated: false });
-
-        setOptimisticUserMessages((existing) => [
-          ...existing,
-          {
-            id: messageIdForSend,
-            role: "user",
-            text: outgoingMessageText,
-            createdAt: messageCreatedAt,
-            streaming: false,
-          },
-        ]);
+        setOptimisticUserMessages((existing) => [...existing, optimisticMessageForSend]);
         promptRef.current = "";
         clearComposerDraftContent(composerDraftTarget);
         composerRef.current?.resetCursorState();
@@ -3314,7 +3300,7 @@ export default function ChatView(props: ChatViewProps) {
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background [--chat-area-background:var(--background)]">
       {/* Top bar */}
       <header
         className={cn(
@@ -3367,38 +3353,40 @@ export default function ChatView(props: ChatViewProps) {
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
       {/* Main content area with optional plan sidebar */}
-      <div className="flex min-h-0 min-w-0 flex-1">
+      <div data-bottom-drawer-anchor="true" className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {/* Messages Wrapper */}
           <div className="relative flex min-h-0 flex-1 flex-col">
             {/* Messages — LegendList handles virtualization and scrolling internally */}
-            <MessagesTimeline
-              key={activeThread.id}
-              isWorking={isWorking}
-              activeTurnInProgress={isWorking || !latestTurnSettled}
-              activeTurnId={activeLatestTurn?.turnId ?? null}
-              activeTurnStartedAt={activeWorkStartedAt}
-              listRef={legendListRef}
-              timelineEntries={timelineEntries}
-              completionDividerBeforeEntryId={completionDividerBeforeEntryId}
-              completionSummary={completionSummary}
-              turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
-              activeThreadEnvironmentId={activeThread.environmentId}
-              routeThreadKey={routeThreadKey}
-              onOpenTurnDiff={onOpenTurnDiff}
-              onOpenFileInApp={onOpenFileInPanel}
-              onOpenFilePreview={onOpenFilePreview}
-              revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
-              onRevertUserMessage={onRevertUserMessage}
-              isRevertingCheckpoint={isRevertingCheckpoint}
-              onImageExpand={onExpandTimelineImage}
-              markdownCwd={gitCwd ?? undefined}
-              resolvedTheme={resolvedTheme}
-              timestampFormat={timestampFormat}
-              workspaceRoot={activeWorkspaceRoot}
-              onIsAtEndChange={onIsAtEndChange}
-            />
+            <div className="min-h-0 flex-1">
+              <MessagesTimeline
+                key={activeThread.id}
+                isWorking={isWorking}
+                activeTurnInProgress={isWorking || !latestTurnSettled}
+                activeTurnId={activeLatestTurn?.turnId ?? null}
+                activeTurnStartedAt={activeWorkStartedAt}
+                listRef={legendListRef}
+                timelineEntries={timelineEntries}
+                completionDividerBeforeEntryId={completionDividerBeforeEntryId}
+                completionSummary={completionSummary}
+                turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+                activeThreadEnvironmentId={activeThread.environmentId}
+                routeThreadKey={routeThreadKey}
+                onOpenTurnDiff={onOpenTurnDiff}
+                onOpenFileInApp={onOpenFileInPanel}
+                onOpenFilePreview={onOpenFilePreview}
+                revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
+                onRevertUserMessage={onRevertUserMessage}
+                isRevertingCheckpoint={isRevertingCheckpoint}
+                onImageExpand={onExpandTimelineImage}
+                markdownCwd={gitCwd ?? undefined}
+                resolvedTheme={resolvedTheme}
+                timestampFormat={timestampFormat}
+                workspaceRoot={activeWorkspaceRoot}
+                onIsAtEndChange={onIsAtEndChange}
+              />
+            </div>
 
             {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
             {showScrollToBottom && (

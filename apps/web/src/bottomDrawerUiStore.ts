@@ -10,10 +10,12 @@ interface BottomDrawerUiStore {
   visibleMode: BottomDrawerMode;
   previousVisibleMode: Exclude<BottomDrawerMode, "hidden"> | null;
   sharedHeight: number;
+  isFullHeight: boolean;
   showTerminal: () => void;
   showPreview: () => void;
   closeVisibleMode: () => void;
   setSharedHeight: (height: number) => void;
+  setFullHeight: (fullHeight: boolean) => void;
 }
 
 function createBottomDrawerStorage() {
@@ -33,6 +35,7 @@ export const useBottomDrawerUiStore = create<BottomDrawerUiStore>()(
       visibleMode: "hidden",
       previousVisibleMode: null,
       sharedHeight: DEFAULT_THREAD_TERMINAL_HEIGHT,
+      isFullHeight: false,
       showTerminal: () =>
         set((state) => ({
           visibleMode: "terminal",
@@ -59,10 +62,15 @@ export const useBottomDrawerUiStore = create<BottomDrawerUiStore>()(
         }),
       setSharedHeight: (height) =>
         set(() => ({
+          isFullHeight: false,
           sharedHeight:
             Number.isFinite(height) && height > 0
               ? Math.round(height)
               : DEFAULT_THREAD_TERMINAL_HEIGHT,
+        })),
+      setFullHeight: (fullHeight) =>
+        set(() => ({
+          isFullHeight: fullHeight,
         })),
     }),
     {

@@ -1,4 +1,4 @@
-import { scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
+import { scopeThreadRef } from "@forma/client-runtime";
 import type {
   ModelSelection,
   ProjectPreviewWorkspaceRecord,
@@ -9,8 +9,12 @@ import { DEFAULT_MODEL_BY_PROVIDER } from "@forma/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import {
   IconArrowClockwise as RefreshIcon,
+  IconChevronDown as ChevronDownIcon,
   IconChevronLeft,
   IconChevronRight,
+  IconChevronUp as ChevronUpIcon,
+  IconMagnifyingglass as SearchIcon,
+  IconXmark as XIcon,
   IconSparkles,
   IconRectangleOnRectangle as PreviewIcon,
 } from "symbols-react";
@@ -18,6 +22,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { readEnvironmentApi } from "../environmentApi";
+import { useBottomDrawerSizing } from "../bottomDrawerSizing";
 import { getEnvironmentHttpBaseUrl, resolveEnvironmentHttpUrl } from "../environments/runtime";
 import { useBottomDrawerUiStore } from "../bottomDrawerUiStore";
 import { newCommandId, newMessageId, newThreadId } from "../lib/utils";
@@ -28,7 +33,6 @@ import { buildThreadRouteParams } from "../threadRoutes";
 import type { Project } from "../types";
 import { waitForStartedServerThread } from "./ChatView.logic";
 import { Button } from "./ui/button";
-import { ProjectFavicon } from "./ProjectFavicon";
 
 function resolvePreviewUrl(
   projectRef: ScopedProjectRef,
@@ -289,29 +293,44 @@ function PreviewControlsRail(props: {
 export function PreviewDrawer() {
   const navigate = useNavigate();
   const sharedHeight = useBottomDrawerUiStore((state) => state.sharedHeight);
+  const setSharedHeight = useBottomDrawerUiStore((state) => state.setSharedHeight);
+  const fullHeight = useBottomDrawerUiStore((state) => state.isFullHeight);
+  const setFullHeight = useBottomDrawerUiStore((state) => state.setFullHeight);
+  const closePreviewDrawer = useBottomDrawerUiStore((state) => state.closeVisibleMode);
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
-  const {
-    activeProjectRef,
-    patchProjectState,
-    projectStateByKey,
-    resetProjectState,
-    setActiveProjectRef,
-  } = usePreviewWorkspaceStore(
-    useShallow((state) => ({
-      activeProjectRef: state.activeProjectRef,
-      patchProjectState: state.patchProjectState,
-      projectStateByKey: state.projectStateByKey,
-      resetProjectState: state.resetProjectState,
-      setActiveProjectRef: state.setActiveProjectRef,
-    })),
-  );
+  const { activeProjectRef, patchProjectState, projectStateByKey, resetProjectState } =
+    usePreviewWorkspaceStore(
+      useShallow((state) => ({
+        activeProjectRef: state.activeProjectRef,
+        patchProjectState: state.patchProjectState,
+        projectStateByKey: state.projectStateByKey,
+        resetProjectState: state.resetProjectState,
+      })),
+    );
   const [componentQuery, setComponentQuery] = useState("");
   const [searchResults, setSearchResults] = useState<
     ReadonlyArray<{ relativePath: string; displayName: string }>
   >([]);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [searchSidebarOpen, setSearchSidebarOpen] = useState(true);
   const [commandOverride, setCommandOverride] = useState("");
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const {
+    drawerRef,
+    drawerHeight,
+    handleResizePointerDown,
+    handleResizePointerMove,
+    handleResizePointerEnd,
+  } = useBottomDrawerSizing<HTMLDivElement>({
+    visible: true,
+    height: sharedHeight,
+    fullHeight,
+    onHeightChange: setSharedHeight,
+    onFullHeightChange: setFullHeight,
+    identityKey: activeProjectRef
+      ? `${activeProjectRef.environmentId}:${activeProjectRef.projectId}`
+      : "preview",
+  });
 
   const activeProject = useMemo(
     () =>
@@ -548,6 +567,7 @@ export function PreviewDrawer() {
             )
           : null
       : null;
+  const fullHeightActionLabel = fullHeight ? "Restore drawer height" : "Expand to full height";
 
   useEffect(() => {
     if (
@@ -813,35 +833,37 @@ export function PreviewDrawer() {
   if (!activeProjectRef) {
     return (
       <div
-        className="border-t border-border/80 bg-background"
-        style={{ height: `${sharedHeight}px` }}
+        ref={drawerRef}
+        className="relative border-t border-border/80 bg-background"
+        style={{ height: fullHeight ? "100%" : `${drawerHeight}px` }}
       >
-        <div className="h-full overflow-auto px-4 pb-4 pt-14">
+        <div
+          className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerEnd}
+          onPointerCancel={handleResizePointerEnd}
+        />
+        <div className="absolute right-2 top-2 z-20">
+          <Button
+            size="icon-xs"
+            variant="outline"
+            onClick={() => setFullHeight(!fullHeight)}
+            aria-label={fullHeightActionLabel}
+            title={fullHeightActionLabel}
+          >
+            {fullHeight ? (
+              <ChevronDownIcon className="size-3.5" />
+            ) : (
+              <ChevronUpIcon className="size-3.5" />
+            )}
+          </Button>
+        </div>
+        <div className="h-full overflow-auto px-4 py-4">
           <div className="text-sm font-semibold text-foreground">Preview</div>
           <div className="mt-1 text-sm text-muted-foreground">
-            Select a project to browse component previews.
-          </div>
-          <div className="mt-4 grid gap-2">
-            {projects.map((project) => (
-              <button
-                key={`${project.environmentId}:${project.id}`}
-                className="flex items-center gap-3 rounded-xl border border-border/70 bg-card px-3 py-3 text-left transition-colors hover:bg-accent/40"
-                onClick={() =>
-                  setActiveProjectRef(scopeProjectRef(project.environmentId, project.id))
-                }
-                type="button"
-              >
-                <ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium text-foreground">
-                    {project.name}
-                  </span>
-                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">
-                    {project.cwd}
-                  </span>
-                </span>
-              </button>
-            ))}
+            Open preview from a thread with an active project or from a project-scoped preview
+            action.
           </div>
         </div>
       </div>
@@ -849,6 +871,10 @@ export function PreviewDrawer() {
   }
 
   const inspection = activeProjectState?.inspection ?? null;
+  const shouldShowMissingSetupHeader =
+    activeProjectState?.resolution?.status === "needsWorkspaceSetup" ||
+    inspection?.status === "unsupported" ||
+    inspection?.status === "enableable";
   const resolutionCommandChoices =
     activeProjectState?.resolution?.status === "needsCommandOverride"
       ? activeProjectState.resolution.detectedCommands
@@ -865,112 +891,156 @@ export function PreviewDrawer() {
 
   return (
     <div
-      className="border-t border-border/80 bg-background"
-      style={{ height: `${sharedHeight}px` }}
+      ref={drawerRef}
+      className="relative border-t border-border/80 bg-background"
+      style={{ height: fullHeight ? "100%" : `${drawerHeight}px` }}
     >
+      <div
+        className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
+        onPointerDown={handleResizePointerDown}
+        onPointerMove={handleResizePointerMove}
+        onPointerUp={handleResizePointerEnd}
+        onPointerCancel={handleResizePointerEnd}
+      />
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <div className="flex items-center gap-3 border-b border-border/70 px-4 pb-3 pt-14">
-          <select
-            className="max-w-80 rounded-md border border-border bg-background px-2 py-1 text-sm"
-            value={`${activeProjectRef.environmentId}:${activeProjectRef.projectId}`}
-            onChange={(event) => {
-              const next = projects.find(
-                (project) => `${project.environmentId}:${project.id}` === event.currentTarget.value,
-              );
-              if (!next) return;
-              setActiveProjectRef(scopeProjectRef(next.environmentId, next.id));
-            }}
-          >
-            {projects.map((project) => (
-              <option
-                key={`${project.environmentId}:${project.id}`}
-                value={`${project.environmentId}:${project.id}`}
-              >
-                {project.name}
-              </option>
-            ))}
-          </select>
-          <input
-            className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-1.5 text-sm"
-            placeholder="Search components..."
-            value={componentQuery}
-            onChange={(event) => setComponentQuery(event.currentTarget.value)}
-          />
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              if (!activeProjectRef) return;
-              resetProjectState(activeProjectRef);
-            }}
-          >
-            Reset
-          </Button>
-        </div>
-
-        {componentQuery.trim().length > 0 && !activeProjectState?.currentRelativePath ? (
-          <div className="border-b border-border/70 px-4 py-2">
-            {searchLoading ? <div className="text-sm text-muted-foreground">Searching…</div> : null}
-            <div className="grid gap-1">
-              {searchResults.map((result) => (
-                <button
-                  key={result.relativePath}
-                  type="button"
-                  className="rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent"
+        <div className="flex min-h-0 flex-1">
+          {searchSidebarOpen ? (
+            <aside className="flex w-72 shrink-0 flex-col border-r border-border/70 bg-card/30">
+              <div className="border-b border-border/70 px-4 py-3">
+                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">
+                  Search
+                </div>
+                <input
+                  className="mt-3 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  placeholder="Search components..."
+                  value={componentQuery}
+                  onChange={(event) => setComponentQuery(event.currentTarget.value)}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-3"
                   onClick={() => {
-                    setComponentQuery(result.displayName);
-                    openPreviewTarget(activeProjectRef, {
-                      targetKind: "component",
-                      relativePath: result.relativePath,
-                    });
+                    if (!activeProjectRef) return;
+                    resetProjectState(activeProjectRef);
+                    setComponentQuery("");
                   }}
                 >
-                  <div className="text-sm font-medium text-foreground">{result.displayName}</div>
-                  <div className="text-xs text-muted-foreground">{result.relativePath}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
-
-        <div className="flex min-h-0 flex-1">
+                  Reset preview
+                </Button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+                {searchLoading ? (
+                  <div className="px-2 py-2 text-sm text-muted-foreground">Searching…</div>
+                ) : null}
+                {componentQuery.trim().length > 0 ? (
+                  <div className="grid gap-1">
+                    {searchResults.map((result) => (
+                      <button
+                        key={result.relativePath}
+                        type="button"
+                        className="rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent"
+                        onClick={() => {
+                          setComponentQuery(result.displayName);
+                          openPreviewTarget(activeProjectRef, {
+                            targetKind: "component",
+                            relativePath: result.relativePath,
+                          });
+                        }}
+                      >
+                        <div className="text-sm font-medium text-foreground">
+                          {result.displayName}
+                        </div>
+                        <div className="text-xs text-muted-foreground">{result.relativePath}</div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="px-2 py-2 text-sm text-muted-foreground">
+                    Search for a component to open its preview here.
+                  </div>
+                )}
+              </div>
+            </aside>
+          ) : null}
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold text-foreground">
-                  {activeProject?.name ?? "Preview"}
-                  {activeProjectState?.currentRelativePath
-                    ? ` · ${activeProjectState.currentRelativePath}`
-                    : ""}
-                </div>
-                <div className="truncate text-xs text-muted-foreground">
-                  {activeProjectState?.runtimeState?.kind === "runtime.ready"
-                    ? "Live preview connected"
-                    : activeProjectState?.runtimeState?.kind === "runtime.starting"
-                      ? "Starting Storybook…"
-                      : activeProjectState?.runtimeState?.kind === "runtime.error"
-                        ? activeProjectState.runtimeState.message
-                        : (inspection?.summary ?? "Search for a component to preview")}
+              <div className="flex min-w-0 items-center gap-3">
+                <button
+                  type="button"
+                  className="inline-flex items-center rounded-md p-1 text-foreground/90 transition-colors hover:bg-accent"
+                  onClick={() => setSearchSidebarOpen((current) => !current)}
+                  aria-label={searchSidebarOpen ? "Hide preview search" : "Show preview search"}
+                  title={searchSidebarOpen ? "Hide preview search" : "Show preview search"}
+                >
+                  <SearchIcon className="size-3.5 fill-current" />
+                </button>
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-foreground">
+                    {activeProject?.name ?? "Preview"}
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {shouldShowMissingSetupHeader
+                      ? "Forma could not detect a Storybook-compatible preview setup."
+                      : activeProjectState?.runtimeState?.kind === "runtime.ready"
+                        ? "Live preview connected"
+                        : activeProjectState?.runtimeState?.kind === "runtime.starting"
+                          ? "Starting Storybook…"
+                          : activeProjectState?.runtimeState?.kind === "runtime.error"
+                            ? activeProjectState.runtimeState.message
+                            : (inspection?.summary ?? "Search for a component to preview")}
+                  </div>
                 </div>
               </div>
-              {resolved ? (
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="icon-xs"
-                    onClick={() =>
-                      void restartPreviewRuntime()
-                        .then(refreshInspection)
-                        .then(resolveCurrentTarget)
-                    }
-                    aria-label="Refresh preview"
+              <div className="flex items-center gap-2">
+                <div className="inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70">
+                  <button
+                    type="button"
+                    className="inline-flex items-center p-1 text-foreground/90 transition-colors hover:bg-accent"
+                    onClick={() => setFullHeight(!fullHeight)}
+                    aria-label={fullHeightActionLabel}
+                    title={fullHeightActionLabel}
                   >
-                    <RefreshIcon className="size-3.5" />
-                  </Button>
+                    {fullHeight ? (
+                      <ChevronDownIcon className="size-3.25 fill-current" />
+                    ) : (
+                      <ChevronUpIcon className="size-3.25 fill-current" />
+                    )}
+                  </button>
+                  <div className="h-4 w-px bg-border/80" />
+                  <button
+                    type="button"
+                    className="inline-flex items-center p-1 text-foreground/90 transition-colors hover:bg-accent"
+                    onClick={closePreviewDrawer}
+                    aria-label="Close preview"
+                    title="Close preview"
+                  >
+                    <XIcon className="size-3.25 fill-current" />
+                  </button>
+                  {resolved ? (
+                    <>
+                      <div className="h-4 w-px bg-border/80" />
+                      <button
+                        type="button"
+                        className="inline-flex items-center p-1 text-foreground/90 transition-colors hover:bg-accent"
+                        onClick={() =>
+                          void restartPreviewRuntime()
+                            .then(refreshInspection)
+                            .then(resolveCurrentTarget)
+                        }
+                        aria-label="Refresh preview"
+                        title="Refresh preview"
+                      >
+                        <RefreshIcon className="size-3.25 fill-current" />
+                      </button>
+                    </>
+                  ) : null}
+                </div>
+                {resolved ? (
                   <div className="flex items-center gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
+                    <button
+                      type="button"
+                      className="inline-flex items-center rounded-md p-1 text-foreground/90 transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
                       disabled={(activeProjectState?.currentVariantIndex ?? 0) <= 0}
                       onClick={() => {
                         if (!activeProjectRef) return;
@@ -986,14 +1056,14 @@ export function PreviewDrawer() {
                         });
                       }}
                     >
-                      <IconChevronLeft className="size-4" />
-                    </Button>
+                      <IconChevronLeft className="size-4 fill-current" />
+                    </button>
                     <div className="min-w-36 text-center text-sm text-foreground">
                       {currentVariant?.name ?? "Variant"}
                     </div>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
+                    <button
+                      type="button"
+                      className="inline-flex items-center rounded-md p-1 text-foreground/90 transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
                       disabled={
                         (activeProjectState?.currentVariantIndex ?? 0) >= variants.length - 1
                       }
@@ -1011,11 +1081,11 @@ export function PreviewDrawer() {
                         });
                       }}
                     >
-                      <IconChevronRight className="size-4" />
-                    </Button>
+                      <IconChevronRight className="size-4 fill-current" />
+                    </button>
                   </div>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
 
             <div className="min-h-0 flex-1 overflow-auto p-4">

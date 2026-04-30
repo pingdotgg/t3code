@@ -57,6 +57,11 @@ beforeAll(() => {
   const bodyStyle: Record<string, string> = {
     backgroundColor: "",
   };
+  const rootStyle = {
+    backgroundColor: "",
+    setProperty: () => {},
+    removeProperty: () => {},
+  };
 
   vi.stubGlobal("localStorage", {
     getItem: () => null,
@@ -79,9 +84,7 @@ beforeAll(() => {
     documentElement: {
       classList,
       dataset: {},
-      style: {
-        backgroundColor: "",
-      },
+      style: rootStyle,
       offsetHeight: 0,
     },
     body: {
@@ -118,6 +121,8 @@ function buildProps() {
     timestampFormat: "locale" as const,
     workspaceRoot: undefined,
     onIsAtEndChange: () => {},
+    scrollToMessageId: null,
+    onScrollToMessageHandled: undefined,
   };
 }
 
@@ -234,6 +239,7 @@ describe("MessagesTimeline", () => {
               id: "work-2",
               createdAt: "2026-03-17T19:12:29.000Z",
               label: "File change",
+              detail: "Updated tracked file",
               changedFiles: ["apps/web/src/components/chat/MessagesTimeline.tsx"],
               tone: "tool",
             },
