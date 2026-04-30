@@ -203,6 +203,15 @@ export const makeProviderUpdater = Effect.fn("makeProviderUpdater")(function* (i
         });
       }
 
+      const lock = updateLocks.get(updateLockKey);
+      if (!lock) {
+        yield* releaseProvider(provider);
+        return yield* new ServerProviderUpdateError({
+          provider,
+          reason: `Unsupported provider update lock key: ${updateLockKey}`,
+        });
+      }
+
       yield* input.providerRegistry.setProviderUpdateState(
         provider,
         makeUpdateState({
@@ -267,14 +276,6 @@ export const makeProviderUpdater = Effect.fn("makeProviderUpdater")(function* (i
           }),
         );
       });
-      const lock = updateLocks.get(updateLockKey);
-      if (!lock) {
-        yield* releaseProvider(provider);
-        return yield* new ServerProviderUpdateError({
-          provider,
-          reason: `Unsupported provider update lock key: ${updateLockKey}`,
-        });
-      }
 
       return yield* lock
         .withPermits(1)(run)

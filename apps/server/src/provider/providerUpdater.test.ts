@@ -359,6 +359,7 @@ describe("providerUpdater", () => {
 
       const second = yield* updater.updateProvider(CODEX_DRIVER).pipe(Effect.exit);
       assert.strictEqual(Exit.isFailure(second), true);
+      assert.deepStrictEqual(yield* registry.getProviders, [baseProvider]);
 
       if (Exit.isFailure(second)) {
         const error = Cause.squash(second.cause);
