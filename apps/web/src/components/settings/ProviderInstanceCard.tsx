@@ -10,6 +10,7 @@ import {
   type ProviderDriverKind,
   type ServerProvider,
   type ServerProviderModel,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 
 import { cn } from "../../lib/utils";
@@ -29,6 +30,56 @@ import {
   getProviderVersionLabel,
   type ProviderStatusKey,
 } from "./providerStatus";
+
+function usageBarColor(percent: number): string {
+  if (percent >= 90) return "bg-destructive";
+  if (percent >= 75) return "bg-warning";
+  return "bg-success";
+}
+
+function ProviderUsageBars(props: {
+  readonly usageLimits: ServerProviderUsageLimits | undefined;
+  readonly enabled: boolean;
+}) {
+  if (!props.enabled || !props.usageLimits) return null;
+
+  const { usageLimits } = props;
+
+  if (!usageLimits.available) {
+    return (
+      <p className="mt-1 text-xs text-muted-foreground">
+        {usageLimits.reason ?? "Usage data unavailable"}
+      </p>
+    );
+  }
+
+  if (usageLimits.windows.length === 0) return null;
+
+  return (
+    <div className="mt-2 grid gap-1.5">
+      {usageLimits.windows.map((window) => {
+        const color = usageBarColor(window.usedPercent);
+        return (
+          <div key={window.label} className="grid gap-0.5">
+            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+              <span>{window.label}</span>
+              <span>{Math.round(window.usedPercent)}%</span>
+            </div>
+            <div
+              className={cn("h-1.5 rounded-full", color)}
+              style={{ width: `${Math.max(2, Math.min(100, window.usedPercent))}%` }}
+              role="progressbar"
+              aria-label={`${window.label} usage ${Math.round(window.usedPercent)}%`}
+              aria-valuenow={Math.round(window.usedPercent)}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 const PROVIDER_ACCENT_SWATCHES = [
   "#2563eb",
@@ -702,6 +753,7 @@ export function ProviderInstanceCard({
               )}
               {summary.detail ? <span>- {summary.detail}</span> : null}
             </p>
+            <ProviderUsageBars usageLimits={liveProvider?.usageLimits} enabled={enabled} />
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
             <Button

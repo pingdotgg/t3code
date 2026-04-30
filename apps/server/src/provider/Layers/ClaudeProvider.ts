@@ -34,6 +34,8 @@ import {
 } from "../providerSnapshot.ts";
 import { compareCliVersions } from "../cliVersion.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { probeClaudeUsageLimits } from "../claudeUsageProbe.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -640,6 +642,26 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  // Run the Claude usage probe — best-effort; failures are swallowed so they
+  // never block the main provider snapshot.
+  const usageLimits = yield* Effect.tryPromise(() =>
+    probeClaudeUsageLimits({
+      binaryPath: claudeSettings.binaryPath,
+      cwd: process.cwd(),
+      checkedAt,
+    }).then((result) => result.usageLimits),
+  ).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.map((opt) => Option.getOrUndefined(opt)),
+    Effect.orElseSucceed(() =>
+      makeUnavailableUsageLimits({
+        source: "claudeStatusProbe",
+        checkedAt,
+        reason: "Unable to fetch usage",
+      }),
+    ),
+  );
+
   const authMetadata = claudeAuthMetadata({
     subscriptionType: capabilities.subscriptionType,
     authMethod: capabilities.tokenSource,
@@ -660,6 +682,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(authMetadata ? authMetadata : {}),
       },
       ...(opus47UpgradeMessage ? { message: opus47UpgradeMessage } : {}),
+      ...(usageLimits ? { usageLimits } : {}),
     },
   });
 });

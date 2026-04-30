@@ -29,6 +29,7 @@ import {
   type CommandResult,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import { AcpSessionRuntime } from "../acp/AcpSessionRuntime.ts";
 
 const PROVIDER = ProviderDriverKind.make("cursor");
@@ -646,7 +647,7 @@ export const discoverCursorModelCapabilitiesViaAcp = (
               Effect.retry({ times: 3 }),
               Effect.withSpan("cursor-acp-model-capability-probe"),
               Effect.catchCause((cause) =>
-                Effect.logWarning("Cursor ACP capability probe failed", {
+                Effect.logDebug("Cursor ACP capability probe failed", {
                   modelSlug,
                   cause: Cause.pretty(cause),
                 }),
@@ -656,11 +657,19 @@ export const discoverCursorModelCapabilitiesViaAcp = (
           { concurrency: CURSOR_ACP_MODEL_DISCOVERY_CONCURRENCY },
         );
 
+        const failedModels: Array<string> = [];
         for (const entry of probedCapabilities) {
           if (!entry) {
+            failedModels.push("unknown");
             continue;
           }
           capabilitiesBySlug.set(entry[0], entry[1]);
+        }
+
+        if (failedModels.length > 0) {
+          yield* Effect.logWarning(
+            `Cursor ACP capability probe failed for ${failedModels.length} model(s) — Cursor Agent may be unresponsive`,
+          );
         }
 
         return buildCursorDiscoveredModels(
@@ -721,6 +730,14 @@ export function buildCursorProviderSnapshot(input: {
   readonly discoveryWarning?: string;
 }): ServerProviderDraft {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
+  const usageLimits =
+    input.parsed.auth.status === "authenticated"
+      ? makeUnavailableUsageLimits({
+          source: "cursorAcp",
+          checkedAt: input.checkedAt,
+          reason: "Cursor Agent CLI does not expose usage information",
+        })
+      : undefined;
   return buildServerProvider({
     presentation: CURSOR_PRESENTATION,
     enabled: input.cursorSettings.enabled,
@@ -738,6 +755,7 @@ export function buildCursorProviderSnapshot(input: {
         input.discoveryWarning && input.parsed.status === "ready" ? "warning" : input.parsed.status,
       auth: input.parsed.auth,
       ...(message ? { message } : {}),
+      ...(usageLimits ? { usageLimits } : {}),
     },
   });
 }
