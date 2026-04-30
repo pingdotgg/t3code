@@ -58,6 +58,7 @@
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },
   "devDependencies": {
+    "@effect/language-service": "catalog:",
     "@types/node": "catalog:",
     "oxfmt": "^0.40.0",
     "oxlint": "^1.55.0",
@@ -85,6 +86,7 @@
     ]
   },
   "trustedDependencies": [
+    "electron",
     "node-pty"
   ]
 }
