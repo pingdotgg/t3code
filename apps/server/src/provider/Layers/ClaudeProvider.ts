@@ -654,8 +654,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       environment: claudeEnvironment,
     }).then((result) => result.usageLimits),
   ).pipe(
-    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
-    Effect.map((opt) => Option.getOrUndefined(opt)),
     Effect.orElseSucceed(() =>
       makeUnavailableUsageLimits({
         source: "claudeStatusProbe",

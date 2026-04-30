@@ -66,14 +66,18 @@ function ProviderUsageBars(props: {
               <span>{Math.round(window.usedPercent)}%</span>
             </div>
             <div
-              className={cn("h-1.5 rounded-full", color)}
-              style={{ width: `${Math.max(2, Math.min(100, window.usedPercent))}%` }}
+              className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
               role="progressbar"
               aria-label={`${window.label} usage ${Math.round(window.usedPercent)}%`}
               aria-valuenow={Math.round(window.usedPercent)}
               aria-valuemin={0}
               aria-valuemax={100}
-            />
+            >
+              <div
+                className={cn("h-full rounded-full transition-all", color)}
+                style={{ width: `${Math.max(2, Math.min(100, window.usedPercent))}%` }}
+              />
+            </div>
           </div>
         );
       })}
