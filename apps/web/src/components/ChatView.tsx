@@ -3875,15 +3875,19 @@ function ChatViewBody(
           "border-b border-border",
           isElectron
             ? cn(
-                "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]",
+                "drag-region flex h-[52px] items-center px-3 sm:px-5 wco:h-[env(titlebar-area-height)]",
                 reserveTitleBarControlInset &&
                   "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
               )
             : "",
         )}
         style={{
-          paddingLeft: "var(--density-chat-header-px)",
-          paddingRight: "var(--density-chat-header-px)",
+          paddingLeft: isElectron
+            ? undefined
+            : "calc(env(safe-area-inset-left) + var(--density-chat-header-px))",
+          paddingRight: isElectron
+            ? undefined
+            : "calc(env(safe-area-inset-right) + var(--density-chat-header-px))",
           paddingTop: isElectron ? undefined : "var(--density-chat-header-py)",
           paddingBottom: isElectron ? undefined : "var(--density-chat-header-py)",
         }}
@@ -3991,12 +3995,12 @@ function ChatViewBody(
           {/* Input bar */}
           <div
             style={{
-              paddingLeft: "var(--density-composer-outer-px)",
-              paddingRight: "var(--density-composer-outer-px)",
+              paddingLeft: "calc(env(safe-area-inset-left) + var(--density-composer-outer-px))",
+              paddingRight: "calc(env(safe-area-inset-right) + var(--density-composer-outer-px))",
               paddingTop: "var(--density-composer-outer-pt)",
               paddingBottom: isGitRepo
-                ? "var(--density-composer-outer-pb-git)"
-                : "var(--density-composer-outer-pb)",
+                ? "calc(env(safe-area-inset-bottom) + var(--density-composer-outer-pb-git))"
+                : "calc(env(safe-area-inset-bottom) + var(--density-composer-outer-pb))",
             }}
           >
             <ChatComposer
@@ -4067,34 +4071,34 @@ function ChatViewBody(
               setThreadError={setThreadError}
               onExpandImage={onExpandTimelineImage}
             />
+            {isGitRepo && (
+              <BranchToolbar
+                environmentId={activeThread.environmentId}
+                threadId={activeThread.id}
+                {...(routeKind === "draft" && draftId ? { draftId } : {})}
+                onEnvModeChange={onEnvModeChange}
+                {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
+                {...(canOverrideServerThreadEnvMode
+                  ? {
+                      activeThreadBranchOverride: activeThreadBranch,
+                      onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
+                    }
+                  : {})}
+                envLocked={envLocked}
+                onComposerFocusRequest={scheduleComposerFocus}
+                {...(canCheckoutPullRequestIntoThread
+                  ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                  : {})}
+                {...(hasMultipleEnvironments
+                  ? {
+                      availableEnvironments: logicalProjectEnvironments,
+                      onEnvironmentChange,
+                    }
+                  : {})}
+              />
+            )}
           </div>
 
-          {isGitRepo && (
-            <BranchToolbar
-              environmentId={activeThread.environmentId}
-              threadId={activeThread.id}
-              {...(routeKind === "draft" && draftId ? { draftId } : {})}
-              onEnvModeChange={onEnvModeChange}
-              {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
-              {...(canOverrideServerThreadEnvMode
-                ? {
-                    activeThreadBranchOverride: activeThreadBranch,
-                    onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
-                  }
-                : {})}
-              envLocked={envLocked}
-              onComposerFocusRequest={scheduleComposerFocus}
-              {...(canCheckoutPullRequestIntoThread
-                ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                : {})}
-              {...(hasMultipleEnvironments
-                ? {
-                    availableEnvironments: logicalProjectEnvironments,
-                    onEnvironmentChange,
-                  }
-                : {})}
-            />
-          )}
           {pullRequestDialogState ? (
             <PullRequestThreadDialog
               key={pullRequestDialogState.key}
