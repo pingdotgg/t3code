@@ -1,3 +1,4 @@
+// Zustand store for managing UI state including project expansion and diff file visibility
 import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
 
@@ -20,6 +21,8 @@ export interface PersistedUiState {
   expandedProjectCwds?: string[];
   projectOrderCwds?: string[];
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
+  threadDiffFilesCollapsedById?: Record<string, Record<string, Record<string, boolean>>>;
+  threadDiffFilesViewedById?: Record<string, Record<string, Record<string, boolean>>>;
 }
 
 export interface UiProjectState {
@@ -30,7 +33,27 @@ export interface UiProjectState {
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
+  /**
+   * Per-file collapsed state in the diff viewer.
+   * Shape: threadId -> turnKey -> filePath -> true.
+   * `turnKey` is the selected turn id or `CONVERSATION_DIFF_TURN_KEY` for the
+   * "all turns" aggregate view. Only `true` (collapsed) entries are tracked;
+   * missing entries mean the file is expanded by default.
+   */
+  threadDiffFilesCollapsedById: Record<string, Record<string, Record<string, boolean>>>;
+  /**
+   * Per-file "viewed" state in the diff viewer. Same shape as
+   * `threadDiffFilesCollapsedById`. Only `true` (viewed) entries are tracked.
+   */
+  threadDiffFilesViewedById: Record<string, Record<string, Record<string, boolean>>>;
 }
+
+/**
+ * Sentinel `turnKey` used when the diff panel is showing the aggregate
+ * "all turns" patch rather than a specific turn. Kept as a constant so
+ * consumers import it instead of hard-coding the string.
+ */
+export const CONVERSATION_DIFF_TURN_KEY = "__conversation__";
 
 export interface UiState extends UiProjectState, UiThreadState {}
 
@@ -52,6 +75,8 @@ const initialState: UiState = {
   projectOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
+  threadDiffFilesCollapsedById: {},
+  threadDiffFilesViewedById: {},
 };
 
 const persistedCollapsedProjectCwds = new Set<string>();
@@ -91,10 +116,61 @@ function readPersistedState(): UiState {
       threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
         parsed.threadChangedFilesExpandedById,
       ),
+      threadDiffFilesCollapsedById: sanitizePersistedThreadDiffFileFlags(
+        parsed.threadDiffFilesCollapsedById,
+      ),
+      threadDiffFilesViewedById: sanitizePersistedThreadDiffFileFlags(
+        parsed.threadDiffFilesViewedById,
+      ),
     };
   } catch {
     return initialState;
   }
+}
+
+/**
+ * Shared sanitizer for persisted per-file boolean flags (collapsed / viewed)
+ * keyed by threadId -> turnKey -> filePath. Drops entries whose values are not
+ * strictly `true` since both stored flags use the convention that a missing
+ * entry means the default state, and only `true` is persisted.
+ */
+function sanitizePersistedThreadDiffFileFlags(
+  value: PersistedUiState["threadDiffFilesCollapsedById"],
+): Record<string, Record<string, Record<string, boolean>>> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const nextState: Record<string, Record<string, Record<string, boolean>>> = {};
+  for (const [threadId, turns] of Object.entries(value)) {
+    if (!threadId || !turns || typeof turns !== "object") {
+      continue;
+    }
+
+    const nextTurns: Record<string, Record<string, boolean>> = {};
+    for (const [turnKey, files] of Object.entries(turns)) {
+      if (!turnKey || !files || typeof files !== "object") {
+        continue;
+      }
+
+      const nextFiles: Record<string, boolean> = {};
+      for (const [filePath, flag] of Object.entries(files)) {
+        if (filePath && typeof flag === "boolean" && flag === true) {
+          nextFiles[filePath] = true;
+        }
+      }
+
+      if (Object.keys(nextFiles).length > 0) {
+        nextTurns[turnKey] = nextFiles;
+      }
+    }
+
+    if (Object.keys(nextTurns).length > 0) {
+      nextState[threadId] = nextTurns;
+    }
+  }
+
+  return nextState;
 }
 
 function sanitizePersistedThreadChangedFilesExpanded(
@@ -173,6 +249,12 @@ export function persistState(state: UiState): void {
         return Object.keys(nextTurns).length > 0 ? [[threadId, nextTurns]] : [];
       }),
     );
+    const threadDiffFilesCollapsedById = serializeThreadDiffFileFlags(
+      state.threadDiffFilesCollapsedById,
+    );
+    const threadDiffFilesViewedById = serializeThreadDiffFileFlags(
+      state.threadDiffFilesViewedById,
+    );
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
@@ -180,6 +262,8 @@ export function persistState(state: UiState): void {
         expandedProjectCwds,
         projectOrderCwds,
         threadChangedFilesExpandedById,
+        threadDiffFilesCollapsedById,
+        threadDiffFilesViewedById,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -189,8 +273,26 @@ export function persistState(state: UiState): void {
       }
     }
   } catch {
-    // Ignore quota/storage errors to avoid breaking chat UX.
+    // Swallow quota/storage errors so they don't break the chat UX.
   }
+}
+
+function serializeThreadDiffFileFlags(
+  value: Record<string, Record<string, Record<string, boolean>>>,
+): Record<string, Record<string, Record<string, boolean>>> {
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([threadId, turns]) => {
+      const nextTurns = Object.fromEntries(
+        Object.entries(turns).flatMap(([turnKey, files]) => {
+          const nextFiles = Object.fromEntries(
+            Object.entries(files).filter(([, flag]) => flag === true),
+          );
+          return Object.keys(nextFiles).length > 0 ? [[turnKey, nextFiles]] : [];
+        }),
+      );
+      return Object.keys(nextTurns).length > 0 ? [[threadId, nextTurns]] : [];
+    }),
+  );
 }
 
 const debouncedPersistState = new Debouncer(persistState, { wait: 500 });
@@ -226,6 +328,23 @@ function nestedBooleanRecordsEqual(
   }
   for (const [key, value] of leftEntries) {
     if (!(key in right) || !recordsEqual(value, right[key]!)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function deeplyNestedBooleanRecordsEqual(
+  left: Record<string, Record<string, Record<string, boolean>>>,
+  right: Record<string, Record<string, Record<string, boolean>>>,
+): boolean {
+  const leftEntries = Object.entries(left);
+  const rightEntries = Object.entries(right);
+  if (leftEntries.length !== rightEntries.length) {
+    return false;
+  }
+  for (const [key, value] of leftEntries) {
+    if (!(key in right) || !nestedBooleanRecordsEqual(value, right[key]!)) {
       return false;
     }
   }
@@ -404,11 +523,29 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
       retainedThreadIds.has(threadId),
     ),
   );
+  const nextThreadDiffFilesCollapsedById = Object.fromEntries(
+    Object.entries(state.threadDiffFilesCollapsedById).filter(([threadId]) =>
+      retainedThreadIds.has(threadId),
+    ),
+  );
+  const nextThreadDiffFilesViewedById = Object.fromEntries(
+    Object.entries(state.threadDiffFilesViewedById).filter(([threadId]) =>
+      retainedThreadIds.has(threadId),
+    ),
+  );
   if (
     recordsEqual(state.threadLastVisitedAtById, nextThreadLastVisitedAtById) &&
     nestedBooleanRecordsEqual(
       state.threadChangedFilesExpandedById,
       nextThreadChangedFilesExpandedById,
+    ) &&
+    deeplyNestedBooleanRecordsEqual(
+      state.threadDiffFilesCollapsedById,
+      nextThreadDiffFilesCollapsedById,
+    ) &&
+    deeplyNestedBooleanRecordsEqual(
+      state.threadDiffFilesViewedById,
+      nextThreadDiffFilesViewedById,
     )
   ) {
     return state;
@@ -417,6 +554,8 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
     ...state,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
+    threadDiffFilesCollapsedById: nextThreadDiffFilesCollapsedById,
+    threadDiffFilesViewedById: nextThreadDiffFilesViewedById,
   };
 }
 
@@ -469,17 +608,30 @@ export function markThreadUnread(
 export function clearThreadUi(state: UiState, threadId: string): UiState {
   const hasVisitedState = threadId in state.threadLastVisitedAtById;
   const hasChangedFilesState = threadId in state.threadChangedFilesExpandedById;
-  if (!hasVisitedState && !hasChangedFilesState) {
+  const hasDiffCollapsedState = threadId in state.threadDiffFilesCollapsedById;
+  const hasDiffViewedState = threadId in state.threadDiffFilesViewedById;
+  if (
+    !hasVisitedState &&
+    !hasChangedFilesState &&
+    !hasDiffCollapsedState &&
+    !hasDiffViewedState
+  ) {
     return state;
   }
   const nextThreadLastVisitedAtById = { ...state.threadLastVisitedAtById };
   const nextThreadChangedFilesExpandedById = { ...state.threadChangedFilesExpandedById };
+  const nextThreadDiffFilesCollapsedById = { ...state.threadDiffFilesCollapsedById };
+  const nextThreadDiffFilesViewedById = { ...state.threadDiffFilesViewedById };
   delete nextThreadLastVisitedAtById[threadId];
   delete nextThreadChangedFilesExpandedById[threadId];
+  delete nextThreadDiffFilesCollapsedById[threadId];
+  delete nextThreadDiffFilesViewedById[threadId];
   return {
     ...state,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
+    threadDiffFilesCollapsedById: nextThreadDiffFilesCollapsedById,
+    threadDiffFilesViewedById: nextThreadDiffFilesViewedById,
   };
 }
 
@@ -530,6 +682,94 @@ export function setThreadChangedFilesExpanded(
       },
     },
   };
+}
+
+function setThreadDiffFileFlag(
+  state: UiState,
+  selector: (state: UiState) => Record<string, Record<string, Record<string, boolean>>>,
+  apply: (
+    state: UiState,
+    next: Record<string, Record<string, Record<string, boolean>>>,
+  ) => UiState,
+  threadId: string,
+  turnKey: string,
+  filePath: string,
+  flag: boolean,
+): UiState {
+  if (!threadId || !turnKey || !filePath) {
+    return state;
+  }
+  const root = selector(state);
+  const threadState = root[threadId] ?? {};
+  const turnState = threadState[turnKey] ?? {};
+  const current = turnState[filePath] === true;
+  if (current === flag) {
+    return state;
+  }
+
+  if (flag) {
+    const nextTurnState = { ...turnState, [filePath]: true };
+    const nextThreadState = { ...threadState, [turnKey]: nextTurnState };
+    return apply(state, { ...root, [threadId]: nextThreadState });
+  }
+
+  if (!(filePath in turnState)) {
+    return state;
+  }
+  const nextTurnState = { ...turnState };
+  delete nextTurnState[filePath];
+
+  if (Object.keys(nextTurnState).length === 0) {
+    const nextThreadState = { ...threadState };
+    delete nextThreadState[turnKey];
+    if (Object.keys(nextThreadState).length === 0) {
+      const nextRoot = { ...root };
+      delete nextRoot[threadId];
+      return apply(state, nextRoot);
+    }
+    return apply(state, { ...root, [threadId]: nextThreadState });
+  }
+
+  return apply(state, {
+    ...root,
+    [threadId]: { ...threadState, [turnKey]: nextTurnState },
+  });
+}
+
+export function setDiffFileCollapsed(
+  state: UiState,
+  threadId: string,
+  turnKey: string,
+  filePath: string,
+  collapsed: boolean,
+): UiState {
+  return setThreadDiffFileFlag(
+    state,
+    (current) => current.threadDiffFilesCollapsedById,
+    (current, next) => ({ ...current, threadDiffFilesCollapsedById: next }),
+    threadId,
+    turnKey,
+    filePath,
+    collapsed,
+  );
+}
+
+export function setDiffFileViewed(
+  state: UiState,
+  threadId: string,
+  turnKey: string,
+  filePath: string,
+  viewed: boolean,
+): UiState {
+  return setThreadDiffFileFlag(
+    state,
+    (current) => current.threadDiffFilesViewedById,
+    (current, next) => ({ ...current, threadDiffFilesViewedById: next }),
+    threadId,
+    turnKey,
+    filePath,
+    viewed,
+  );
 }
 
 export function toggleProject(state: UiState, projectId: string): UiState {
@@ -606,6 +846,18 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   clearThreadUi: (threadId: string) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
+  setDiffFileCollapsed: (
+    threadId: string,
+    turnKey: string,
+    filePath: string,
+    collapsed: boolean,
+  ) => void;
+  setDiffFileViewed: (
+    threadId: string,
+    turnKey: string,
+    filePath: string,
+    viewed: boolean,
+  ) => void;
   toggleProject: (projectId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
   reorderProjects: (
@@ -625,6 +877,10 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   clearThreadUi: (threadId) => set((state) => clearThreadUi(state, threadId)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
+  setDiffFileCollapsed: (threadId, turnKey, filePath, collapsed) =>
+    set((state) => setDiffFileCollapsed(state, threadId, turnKey, filePath, collapsed)),
+  setDiffFileViewed: (threadId, turnKey, filePath, viewed) =>
+    set((state) => setDiffFileViewed(state, threadId, turnKey, filePath, viewed)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),

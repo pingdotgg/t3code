@@ -1,3 +1,4 @@
+// Component for displaying unified diff view with collapsible files and syntax highlighting
 import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiff, type FileDiffMetadata, Virtualizer } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
@@ -5,6 +6,8 @@ import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import type { TurnId } from "@t3tools/contracts";
 import {
+  CheckIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   Columns2Icon,
@@ -35,6 +38,7 @@ import { createThreadSelectorByRef } from "../storeSelectors";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
+import { CONVERSATION_DIFF_TURN_KEY, useUiStateStore } from "../uiStateStore";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
@@ -87,6 +91,13 @@ const DIFF_PANEL_UNSAFE_CSS = `
   z-index: 4;
   background-color: color-mix(in srgb, var(--card) 94%, var(--foreground)) !important;
   border-bottom: 1px solid var(--border) !important;
+}
+
+/* The default @pierre/diffs header renders a coloured "change type" dot on
+   the left. We hide it so the collapse/expand chevron injected via
+   renderHeaderPrefix can take its place, matching GitHub's diff header. */
+[data-change-icon] {
+  display: none !important;
 }
 
 [data-title] {
@@ -172,6 +183,12 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const settings = useSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
+  const diffFilesCollapsedByThread = useUiStateStore(
+    (store) => store.threadDiffFilesCollapsedById,
+  );
+  const diffFilesViewedByThread = useUiStateStore((store) => store.threadDiffFilesViewedById);
+  const setDiffFileCollapsed = useUiStateStore((store) => store.setDiffFileCollapsed);
+  const setDiffFileViewed = useUiStateStore((store) => store.setDiffFileViewed);
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const previousDiffOpenRef = useRef(false);
@@ -313,6 +330,74 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       }),
     );
   }, [renderablePatch]);
+
+  // Key identifying which slice of the thread's diff state we're looking at.
+  // Either a specific turn, or the aggregate "all turns" sentinel.
+  const activeDiffTurnKey = selectedTurn?.turnId ?? CONVERSATION_DIFF_TURN_KEY;
+  const diffFileFlagsForActiveView = useMemo(() => {
+    if (!activeThreadId) {
+      return { collapsed: {} as Record<string, boolean>, viewed: {} as Record<string, boolean> };
+    }
+    return {
+      collapsed: diffFilesCollapsedByThread[activeThreadId]?.[activeDiffTurnKey] ?? {},
+      viewed: diffFilesViewedByThread[activeThreadId]?.[activeDiffTurnKey] ?? {},
+    };
+  }, [
+    activeDiffTurnKey,
+    activeThreadId,
+    diffFilesCollapsedByThread,
+    diffFilesViewedByThread,
+  ]);
+  const viewedFileCount = useMemo(
+    () =>
+      renderableFiles.reduce(
+        (total, fileDiff) =>
+          total + (diffFileFlagsForActiveView.viewed[resolveFileDiffPath(fileDiff)] ? 1 : 0),
+        0,
+      ),
+    [diffFileFlagsForActiveView.viewed, renderableFiles],
+  );
+  const anyDiffFileCollapsed = useMemo(
+    () =>
+      renderableFiles.some(
+        (fileDiff) => diffFileFlagsForActiveView.collapsed[resolveFileDiffPath(fileDiff)] === true,
+      ),
+    [diffFileFlagsForActiveView.collapsed, renderableFiles],
+  );
+
+  const handleToggleDiffFileCollapsed = useCallback(
+    (filePath: string, collapsed: boolean) => {
+      if (!activeThreadId) return;
+      setDiffFileCollapsed(activeThreadId, activeDiffTurnKey, filePath, collapsed);
+    },
+    [activeDiffTurnKey, activeThreadId, setDiffFileCollapsed],
+  );
+  const handleToggleDiffFileViewed = useCallback(
+    (filePath: string, viewed: boolean, alreadyCollapsed: boolean) => {
+      if (!activeThreadId) return;
+      setDiffFileViewed(activeThreadId, activeDiffTurnKey, filePath, viewed);
+      // Auto-collapse when marking as viewed — mirrors the standard PR review UX so
+      // the reviewer can keep scrolling without manually collapsing the file too.
+      if (viewed && !alreadyCollapsed) {
+        setDiffFileCollapsed(activeThreadId, activeDiffTurnKey, filePath, true);
+      }
+    },
+    [activeDiffTurnKey, activeThreadId, setDiffFileCollapsed, setDiffFileViewed],
+  );
+  const handleCollapseAllDiffFiles = useCallback(
+    (collapsed: boolean) => {
+      if (!activeThreadId) return;
+      for (const fileDiff of renderableFiles) {
+        setDiffFileCollapsed(
+          activeThreadId,
+          activeDiffTurnKey,
+          resolveFileDiffPath(fileDiff),
+          collapsed,
+        );
+      }
+    },
+    [activeDiffTurnKey, activeThreadId, renderableFiles, setDiffFileCollapsed],
+  );
 
   useEffect(() => {
     if (diffOpen && !previousDiffOpenRef.current) {
@@ -520,6 +605,24 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]">
+        {renderableFiles.length > 0 && viewedFileCount > 0 && (
+          <span
+            className="hidden text-[10px] font-medium text-muted-foreground/80 tabular-nums sm:inline"
+            title="Files marked as viewed"
+          >
+            {viewedFileCount}/{renderableFiles.length} viewed
+          </span>
+        )}
+        {renderableFiles.length > 0 && (
+          <button
+            type="button"
+            onClick={() => handleCollapseAllDiffFiles(!anyDiffFileCollapsed)}
+            className="inline-flex h-6 items-center rounded-md border border-input bg-transparent px-2 text-[10px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
+            title={anyDiffFileCollapsed ? "Expand all files" : "Collapse all files"}
+          >
+            {anyDiffFileCollapsed ? "Expand all" : "Collapse all"}
+          </button>
+        )}
         <ToggleGroup
           className="shrink-0"
           variant="outline"
@@ -604,11 +707,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   const filePath = resolveFileDiffPath(fileDiff);
                   const fileKey = buildFileDiffRenderKey(fileDiff);
                   const themedFileKey = `${fileKey}:${resolvedTheme}`;
+                  const isCollapsed = diffFileFlagsForActiveView.collapsed[filePath] === true;
+                  const isViewed = diffFileFlagsForActiveView.viewed[filePath] === true;
                   return (
                     <div
                       key={themedFileKey}
                       data-diff-file-path={filePath}
-                      className="diff-render-file mb-2 rounded-md first:mt-2 last:mb-0"
+                      className={cn(
+                        "diff-render-file mb-2 rounded-md first:mt-2 last:mb-0",
+                        isViewed &&
+                          !isCollapsed &&
+                          "opacity-75 transition-opacity hover:opacity-100",
+                      )}
                       onClickCapture={(event) => {
                         const nativeEvent = event.nativeEvent as MouseEvent;
                         const composedPath = nativeEvent.composedPath?.() ?? [];
@@ -622,7 +732,27 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                     >
                       <FileDiff
                         fileDiff={fileDiff}
+                        renderHeaderPrefix={() => (
+                          <DiffFileChevronButton
+                            collapsed={isCollapsed}
+                            onClick={() =>
+                              handleToggleDiffFileCollapsed(filePath, !isCollapsed)
+                            }
+                          />
+                        )}
+                        renderHeaderMetadata={() => (
+                          <DiffFileViewedButton
+                            viewed={isViewed}
+                            onClick={() =>
+                              handleToggleDiffFileViewed(filePath, !isViewed, isCollapsed)
+                            }
+                          />
+                        )}
                         options={{
+                          // Native library collapse — hides the diff body while
+                          // keeping the real (shadow-DOM) header, so expanded and
+                          // collapsed rows share identical typography & layout.
+                          collapsed: isCollapsed,
                           diffStyle: diffRenderMode === "split" ? "split" : "unified",
                           lineDiffType: "none",
                           overflow: diffWordWrap ? "wrap" : "scroll",
@@ -658,3 +788,69 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     </DiffPanelShell>
   );
 }
+
+/**
+ * Chevron toggle injected into the `FileDiff` header's prefix slot via
+ * `renderHeaderPrefix`. Replaces the library's coloured change-type dot (hidden
+ * via `unsafeCSS`) and flips direction based on the library's
+ * `options.collapsed` state.
+ */
+function DiffFileChevronButton({
+  collapsed,
+  onClick,
+}: {
+  collapsed: boolean;
+  onClick: () => void;
+}) {
+  const Icon = collapsed ? ChevronRightIcon : ChevronDownIcon;
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      className="-ml-1 inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+      aria-expanded={!collapsed}
+      aria-label={collapsed ? "Expand file" : "Collapse file"}
+      title={collapsed ? "Expand file" : "Collapse file"}
+    >
+      <Icon className="size-4" />
+    </button>
+  );
+}
+
+/**
+ * "Viewed" pill injected into the `FileDiff` header's metadata slot via
+ * `renderHeaderMetadata`. Renders after the built-in `+/-` counts and mirrors
+ * GitHub's per-file viewed checkbox without requiring a real `<input>`.
+ */
+function DiffFileViewedButton({
+  viewed,
+  onClick,
+}: {
+  viewed: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+      className={cn(
+        "inline-flex h-6 shrink-0 items-center gap-1 rounded-md border px-2 text-[11px] font-medium transition-colors",
+        viewed
+          ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500/25 dark:text-emerald-400"
+          : "border-border bg-background/70 text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+      aria-pressed={viewed}
+      title={viewed ? "Mark as not viewed" : "Mark as viewed"}
+    >
+      <CheckIcon className="size-3" />
+      Viewed
+    </button>
+  );
+}
+

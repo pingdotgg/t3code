@@ -1,3 +1,4 @@
+// Tests for UI state store functionality
 import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +11,8 @@ import {
   type PersistedUiState,
   persistState,
   reorderProjects,
+  setDiffFileCollapsed,
+  setDiffFileViewed,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
   syncProjects,
@@ -23,6 +26,8 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    threadDiffFilesCollapsedById: {},
+    threadDiffFilesViewedById: {},
     ...overrides,
   };
 }
@@ -170,7 +175,7 @@ describe("uiStateStore pure functions", () => {
 
     const next = reorderProjects(initialState, [keyALocal, keyARemote], [keyBLocal, keyBRemote]);
 
-    // Target members may become non-contiguous; this is fine because the
+    // Target members may end up non-contiguous; that's fine because the
     // sidebar groups by logical key using first-occurrence positioning.
     expect(next.projectOrder).toEqual([keyBLocal, keyALocal, keyARemote, keyBRemote]);
   });
@@ -428,6 +433,76 @@ describe("uiStateStore pure functions", () => {
     const next = setThreadChangedFilesExpanded(initialState, thread1, "turn-1", true);
 
     expect(next.threadChangedFilesExpandedById).toEqual({});
+  });
+
+  it("setDiffFileCollapsed records per-file collapse state nested by turn", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const initialState = makeUiState();
+
+    const next = setDiffFileCollapsed(initialState, thread1, "turn-1", "src/foo.ts", true);
+
+    expect(next.threadDiffFilesCollapsedById).toEqual({
+      [thread1]: {
+        "turn-1": {
+          "src/foo.ts": true,
+        },
+      },
+    });
+  });
+
+  it("setDiffFileCollapsed prunes empty branches when a file is expanded again", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const initialState = makeUiState({
+      threadDiffFilesCollapsedById: {
+        [thread1]: {
+          "turn-1": {
+            "src/foo.ts": true,
+          },
+        },
+      },
+    });
+
+    const next = setDiffFileCollapsed(initialState, thread1, "turn-1", "src/foo.ts", false);
+
+    expect(next.threadDiffFilesCollapsedById).toEqual({});
+  });
+
+  it("setDiffFileViewed is a no-op when toggling to the current value", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const initialState = makeUiState({
+      threadDiffFilesViewedById: {
+        [thread1]: {
+          "turn-1": {
+            "src/foo.ts": true,
+          },
+        },
+      },
+    });
+
+    const next = setDiffFileViewed(initialState, thread1, "turn-1", "src/foo.ts", true);
+
+    expect(next).toBe(initialState);
+  });
+
+  it("clearThreadUi wipes diff viewer state for the thread", () => {
+    const thread1 = ThreadId.make("thread-1");
+    const thread2 = ThreadId.make("thread-2");
+    const initialState = makeUiState({
+      threadDiffFilesCollapsedById: {
+        [thread1]: { "turn-1": { "src/foo.ts": true } },
+        [thread2]: { "turn-2": { "src/bar.ts": true } },
+      },
+      threadDiffFilesViewedById: {
+        [thread1]: { "turn-1": { "src/foo.ts": true } },
+      },
+    });
+
+    const next = clearThreadUi(initialState, thread1);
+
+    expect(next.threadDiffFilesCollapsedById).toEqual({
+      [thread2]: { "turn-2": { "src/bar.ts": true } },
+    });
+    expect(next.threadDiffFilesViewedById).toEqual({});
   });
 });
 
