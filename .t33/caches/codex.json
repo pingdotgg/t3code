@@ -1,0 +1,451 @@
+{
+  "displayName": "Codex",
+  "showInteractionModeToggle": true,
+  "enabled": true,
+  "installed": true,
+  "version": "0.124.0-alpha.3",
+  "status": "ready",
+  "auth": {
+    "status": "authenticated",
+    "type": "chatgpt",
+    "label": "ChatGPT Pro 20x Subscription",
+    "email": "julius@ping.gg"
+  },
+  "checkedAt": "2026-04-30T18:32:58.989Z",
+  "models": [
+    {
+      "slug": "gpt-5.5",
+      "name": "GPT-5.5",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "reasoningEffort",
+            "label": "Reasoning",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Extra High"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "fastMode",
+            "label": "Fast Mode",
+            "type": "boolean"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "gpt-5.4",
+      "name": "GPT-5.4",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "reasoningEffort",
+            "label": "Reasoning",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Extra High"
+              }
+            ],
+            "currentValue": "medium"
+          },
+          {
+            "id": "fastMode",
+            "label": "Fast Mode",
+            "type": "boolean"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "gpt-5.4-mini",
+      "name": "GPT-5.4-Mini",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "reasoningEffort",
+            "label": "Reasoning",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Extra High"
+              }
+            ],
+            "currentValue": "medium"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "gpt-5.3-codex",
+      "name": "GPT-5.3-Codex",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "reasoningEffort",
+            "label": "Reasoning",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Extra High"
+              }
+            ],
+            "currentValue": "medium"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "gpt-5.3-codex-spark",
+      "name": "GPT-5.3-Codex-Spark",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "reasoningEffort",
+            "label": "Reasoning",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium"
+              },
+              {
+                "id": "high",
+                "label": "High",
+                "isDefault": true
+              },
+              {
+                "id": "xhigh",
+                "label": "Extra High"
+              }
+            ],
+            "currentValue": "high"
+          }
+        ]
+      }
+    },
+    {
+      "slug": "gpt-5.2",
+      "name": "GPT-5.2",
+      "isCustom": false,
+      "capabilities": {
+        "optionDescriptors": [
+          {
+            "id": "reasoningEffort",
+            "label": "Reasoning",
+            "type": "select",
+            "options": [
+              {
+                "id": "low",
+                "label": "Low"
+              },
+              {
+                "id": "medium",
+                "label": "Medium",
+                "isDefault": true
+              },
+              {
+                "id": "high",
+                "label": "High"
+              },
+              {
+                "id": "xhigh",
+                "label": "Extra High"
+              }
+            ],
+            "currentValue": "medium"
+          }
+        ]
+      }
+    }
+  ],
+  "slashCommands": [],
+  "skills": [
+    {
+      "name": "agent-browser",
+      "path": "/Users/julius/.agents/skills/agent-browser/SKILL.md",
+      "enabled": true,
+      "description": "Browser automation CLI for AI agents. Use when the user needs to interact with websites, including navigating pages, filling forms, clicking buttons, taking screenshots, extracting data, testing web apps, or automating any browser task. Triggers include requests to \"open a website\", \"fill out a form\", \"click a button\", \"take a screenshot\", \"scrape data from a page\", \"test this web app\", \"login to a site\", \"automate browser actions\", or any task requiring programmatic web interaction.",
+      "scope": "user"
+    },
+    {
+      "name": "browser-use:browser",
+      "path": "/Users/julius/.codex/plugins/cache/openai-bundled/browser-use/0.1.0-alpha1/skills/browser/SKILL.md",
+      "enabled": true,
+      "description": "Use the Codex in-app browser to inspect, navigate, test, or automate local targets such as localhost, 127.0.0.1, ::1, file://, or the current in-app browser tab.",
+      "scope": "user",
+      "displayName": "Browser Use",
+      "shortDescription": "Use Browser for Codex in-app browser (IAB) local targets such as localhost, 127.0.0.1, ::1, and file://."
+    },
+    {
+      "name": "btca-cli",
+      "path": "/Users/julius/.agents/skills/btca-cli/SKILL.md",
+      "enabled": true,
+      "description": "Operate the btca CLI for local resources and source-first answers. Use when setting up btca in a project, connecting a provider, adding or managing resources, and asking questions via btca commands. Invoke this skill when the user says \"use btca\" or needs to do more detailed research on a specific library or framework.",
+      "scope": "user",
+      "displayName": "BTCA CLI",
+      "shortDescription": "Help with BTCA CLI setup and usage workflows"
+    },
+    {
+      "name": "building-native-ui",
+      "path": "/Users/julius/.agents/skills/building-native-ui/SKILL.md",
+      "enabled": true,
+      "description": "Complete guide for building beautiful apps with Expo Router. Covers fundamentals, styling, components, navigation, animations, patterns, and native tabs.",
+      "scope": "user"
+    },
+    {
+      "name": "documents:documents",
+      "path": "/Users/julius/.codex/plugins/cache/openai-primary-runtime/documents/26.426.12240/skills/documents/SKILL.md",
+      "enabled": true,
+      "description": "Create, edit, redline, and comment on `.docx` files inside the container, with a strict render-and-verify workflow. Use `render_docx.py` to generate page PNGs (and optional PDF) for visual QA, then iterate until layout is flawless before delivering the final DOCX.",
+      "scope": "user",
+      "displayName": "Documents",
+      "shortDescription": "Create and edit document files"
+    },
+    {
+      "name": "expo-cicd-workflows",
+      "path": "/Users/julius/.agents/skills/expo-cicd-workflows/SKILL.md",
+      "enabled": true,
+      "description": "Helps understand and write EAS workflow YAML files for Expo projects. Use this skill when the user asks about CI/CD or workflows in an Expo or EAS context, mentions .eas/workflows/, or wants help with EAS build pipelines or deployment automation.",
+      "scope": "user"
+    },
+    {
+      "name": "expo-deployment",
+      "path": "/Users/julius/.agents/skills/expo-deployment/SKILL.md",
+      "enabled": true,
+      "description": "Deploying Expo apps to iOS App Store, Android Play Store, web hosting, and API routes",
+      "scope": "user"
+    },
+    {
+      "name": "expo-dev-client",
+      "path": "/Users/julius/.agents/skills/expo-dev-client/SKILL.md",
+      "enabled": true,
+      "description": "Build and distribute Expo development clients locally or via TestFlight",
+      "scope": "user"
+    },
+    {
+      "name": "expo-tailwind-setup",
+      "path": "/Users/julius/.agents/skills/expo-tailwind-setup/SKILL.md",
+      "enabled": true,
+      "description": "Set up Tailwind CSS v4 in Expo with react-native-css and NativeWind v5 for universal styling",
+      "scope": "user"
+    },
+    {
+      "name": "frontend-design",
+      "path": "/Users/julius/.agents/skills/frontend-design/SKILL.md",
+      "enabled": true,
+      "description": "Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics.",
+      "scope": "user"
+    },
+    {
+      "name": "gh-address-comments",
+      "path": "/Users/julius/.codex/skills/gh-address-comments/SKILL.md",
+      "enabled": true,
+      "description": "Help address review/issue comments on the open GitHub PR for the current branch using gh CLI; verify gh auth first and prompt the user to authenticate if not logged in.",
+      "scope": "user",
+      "shortDescription": "Address comments in a GitHub PR review"
+    },
+    {
+      "name": "gh-fix-ci",
+      "path": "/Users/julius/.codex/skills/gh-fix-ci/SKILL.md",
+      "enabled": true,
+      "description": "Inspect GitHub PR checks with gh, pull failing GitHub Actions logs, summarize failure context, then create a fix plan and implement after user approval. Use when a user asks to debug or fix failing PR CI/CD checks on GitHub Actions and wants a plan + code changes; for external checks (e.g., Buildkite), only report the details URL and mark them out of scope.",
+      "scope": "user",
+      "shortDescription": "Fix failing Github CI actions"
+    },
+    {
+      "name": "github:gh-address-comments",
+      "path": "/Users/julius/.codex/plugins/cache/openai-curated/github/60302735b37d7db8ee48d9d5399c17f1d72b0c32/skills/gh-address-comments/SKILL.md",
+      "enabled": true,
+      "description": "Address actionable GitHub pull request review feedback. Use when the user wants to inspect unresolved review threads, requested changes, or inline review comments on a PR, then implement selected fixes. Use the GitHub app for PR metadata and flat comment reads, and use the bundled GraphQL script via `gh` whenever thread-level state, resolution status, or inline review context matters.",
+      "scope": "user",
+      "displayName": "Review Follow-up",
+      "shortDescription": "Address actionable PR feedback"
+    },
+    {
+      "name": "github:gh-fix-ci",
+      "path": "/Users/julius/.codex/plugins/cache/openai-curated/github/60302735b37d7db8ee48d9d5399c17f1d72b0c32/skills/gh-fix-ci/SKILL.md",
+      "enabled": true,
+      "description": "Use when a user asks to debug or fix failing GitHub PR checks that run in GitHub Actions. Use the GitHub app from this plugin for PR metadata and patch context, and use `gh` for Actions check and log inspection before implementing any approved fix.",
+      "scope": "user",
+      "displayName": "CI Debug",
+      "shortDescription": "Debug failing GitHub Actions checks"
+    },
+    {
+      "name": "github:github",
+      "path": "/Users/julius/.codex/plugins/cache/openai-curated/github/60302735b37d7db8ee48d9d5399c17f1d72b0c32/skills/github/SKILL.md",
+      "enabled": true,
+      "description": "Triage and orient GitHub repository, pull request, and issue work through the connected GitHub app. Use when the user asks for general GitHub help, wants PR or issue summaries, or needs repository context before choosing a more specific GitHub workflow.",
+      "scope": "user",
+      "displayName": "GitHub",
+      "shortDescription": "Inspect PRs, issues, CI, and publish flows"
+    },
+    {
+      "name": "github:yeet",
+      "path": "/Users/julius/.codex/plugins/cache/openai-curated/github/60302735b37d7db8ee48d9d5399c17f1d72b0c32/skills/yeet/SKILL.md",
+      "enabled": true,
+      "description": "Publish local changes to GitHub by confirming scope, committing intentionally, pushing the branch, and opening a draft PR through the GitHub app from this plugin, with `gh` used only as a fallback where connector coverage is insufficient.",
+      "scope": "user",
+      "displayName": "Publish Changes",
+      "shortDescription": "Commit, push, and open a PR"
+    },
+    {
+      "name": "migrate-nativewind-to-uniwind",
+      "path": "/Users/julius/.agents/skills/migrate-nativewind-to-uniwind/SKILL.md",
+      "enabled": true,
+      "description": "Migrate a React Native project from NativeWind to Uniwind. Use when the user wants to replace NativeWind with Uniwind, upgrade from NativeWind, switch to Uniwind, or mentions NativeWind-to-Uniwind migration. Handles package removal, config migration, Tailwind 4 upgrade, cssInterop removal, theme conversion, and all breaking changes.",
+      "scope": "user"
+    },
+    {
+      "name": "native-data-fetching",
+      "path": "/Users/julius/.agents/skills/native-data-fetching/SKILL.md",
+      "enabled": true,
+      "description": "Use when implementing or debugging ANY network request, API call, or data fetching. Covers fetch API, React Query, SWR, error handling, caching, offline support, and Expo Router data loaders (`useLoaderData`).",
+      "scope": "user"
+    },
+    {
+      "name": "presentations:Presentations",
+      "path": "/Users/julius/.codex/plugins/cache/openai-primary-runtime/presentations/26.426.12240/skills/presentations/SKILL.md",
+      "enabled": true,
+      "description": "Create, edit, render, verify, and export PowerPoint slide decks. Use when Codex needs to build or modify a deck, presentation deck, slide deck, slides, PowerPoint, PPT, PPTX, or .pptx file.",
+      "scope": "user",
+      "displayName": "Presentations",
+      "shortDescription": "Create and edit presentation slide decks"
+    },
+    {
+      "name": "react-doctor",
+      "path": "/Users/julius/.codex/skills/react-doctor/SKILL.md",
+      "enabled": true,
+      "description": "Run after making React changes to catch issues early. Use when reviewing code, finishing a feature, or fixing bugs in a React project.",
+      "scope": "user",
+      "displayName": "react-doctor",
+      "shortDescription": "Diagnose and fix React codebase health issues"
+    },
+    {
+      "name": "spreadsheets:Spreadsheets",
+      "path": "/Users/julius/.codex/plugins/cache/openai-primary-runtime/spreadsheets/26.426.12240/skills/spreadsheets/SKILL.md",
+      "enabled": true,
+      "description": "Use this skill when a user requests to create, modify, analyze, visualize, or work with spreadsheet files (`.xlsx`, `.xls`, `.csv`, `.tsv`) with formulas, formatting, charts, tables, and recalculation.",
+      "scope": "user",
+      "displayName": "Spreadsheets",
+      "shortDescription": "Create and edit spreadsheet or excel files"
+    },
+    {
+      "name": "turborepo",
+      "path": "/Users/julius/.agents/skills/turborepo/SKILL.md",
+      "enabled": true,
+      "description": "Turborepo monorepo build system guidance. Triggers on: turbo.json, task pipelines, dependsOn, caching, remote cache, the \"turbo\" CLI, --filter, --affected, CI optimization, environment variables, internal packages, monorepo structure/best practices, and boundaries. Use when user: configures tasks/workflows/pipelines, creates packages, sets up monorepo, shares code between apps, runs changed/affected packages, debugs cache, or has apps/packages directories.",
+      "scope": "user"
+    },
+    {
+      "name": "ui",
+      "path": "/Users/julius/.agents/skills/ui/SKILL.md",
+      "enabled": true,
+      "description": "Explore, build, and refine UI.",
+      "scope": "user"
+    },
+    {
+      "name": "uniwind",
+      "path": "/Users/julius/.agents/skills/uniwind/SKILL.md",
+      "enabled": true,
+      "description": "Uniwind — Tailwind CSS v4 styling for React Native. Use when adding, building, or styling components in a React Native project that uses Tailwind with className. Triggers on: className on RN components, Tailwind classes in RN, global.css with @import 'uniwind', withUniwindConfig, withUniwind, metro.config.js with Uniwind, useResolveClassNames, useCSSVariable, useUniwind, dark:/light: theming, platform selectors (ios:/android:/native:/web:/tv:), data-[prop=value], responsive breakpoints (sm:/md:/lg:), tailwind-variants, tv() variants, ScopedTheme, Uniwind.setTheme, Uniwind.updateCSSVariables, @theme, @utility, @variant, CSS variables in RN, colorClassName, tintColorClassName, contentContainerClassName, Uniwind Pro (animations, transitions, shadow tree, native insets), safe area utilities, gradients, hairlineWidth(), fontScale(), pixelRatio(), light-dark(), OKLCH, cn, tailwind-merge, HeroUI Native, react-native-reusables, Gluestack. Does NOT handle migration — use migrate-nativewind-to-uniwind skill.",
+      "scope": "user"
+    },
+    {
+      "name": "vercel-composition-patterns",
+      "path": "/Users/julius/.agents/skills/vercel-composition-patterns/SKILL.md",
+      "enabled": true,
+      "description": "React composition patterns that scale. Use when refactoring components with boolean prop proliferation, building flexible component libraries, or designing reusable APIs. Triggers on tasks involving compound components, render props, context providers, or component architecture. Includes React 19 API changes.",
+      "scope": "user"
+    },
+    {
+      "name": "web-design-guidelines",
+      "path": "/Users/julius/.agents/skills/web-design-guidelines/SKILL.md",
+      "enabled": true,
+      "description": "Review UI code for Web Interface Guidelines compliance. Use when asked to \"review my UI\", \"check accessibility\", \"audit design\", \"review UX\", or \"check my site against best practices\".",
+      "scope": "user"
+    },
+    {
+      "name": "yeet",
+      "path": "/Users/julius/.codex/skills/yeet/SKILL.md",
+      "enabled": true,
+      "description": "Use only when the user explicitly asks to stage, commit, push, and open a GitHub pull request in one flow using the GitHub CLI (`gh`).",
+      "scope": "user",
+      "shortDescription": "Stage, commit, and open PR"
+    }
+  ],
+  "instanceId": "codex",
+  "driver": "codex",
+  "continuation": {
+    "groupKey": "codex:home:/Users/julius/.codex"
+  }
+}
