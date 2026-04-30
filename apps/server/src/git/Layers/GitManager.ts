@@ -688,7 +688,13 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
             branch: details.branch,
             upstreamRef: details.upstreamRef,
           }).pipe(
-            Effect.map((latest) => (latest ? toStatusPr(latest) : null)),
+            Effect.map((latest) => {
+              if (!latest) return null;
+              // On the default branch, only surface open PRs.
+              // Merged/closed matches are usually reverse-merge history, not the thread's PR context.
+              if (details.isDefaultBranch && latest.state !== "open") return null;
+              return toStatusPr(latest);
+            }),
             Effect.catch(() => Effect.succeed(null)),
           )
         : null;

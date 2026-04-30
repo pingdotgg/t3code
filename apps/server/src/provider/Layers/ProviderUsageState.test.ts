@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Effect, Layer, PubSub, Stream } from "effect";
-import type { ProviderRuntimeEvent, ThreadId } from "@t3tools/contracts";
+import { ProviderDriverKind, type ProviderRuntimeEvent, type ThreadId } from "@t3tools/contracts";
 
 import { ProviderUsageState } from "../Services/ProviderUsageState.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
@@ -21,6 +21,7 @@ function makeProviderServiceStub() {
       listSessions: () => Effect.succeed([]),
       getCapabilities: () => Effect.die("unused"),
       rollbackConversation: () => Effect.die("unused"),
+      getInstanceInfo: () => Effect.die("unused"),
       streamEvents: Stream.fromPubSub(pubsub),
     }),
   };
@@ -33,21 +34,23 @@ describe("ProviderUsageStateLive", () => {
       Effect.gen(function* () {
         const usageState = yield* ProviderUsageState;
 
-        yield* usageState.set("cursor", "thread-probe" as ThreadId, {
+        yield* usageState.set(ProviderDriverKind.make("cursor"), "thread-probe" as ThreadId, {
           source: "cursorAcp",
           available: true,
           checkedAt: "2026-04-18T00:00:00.000Z",
           windows: [{ kind: "session", label: "Context window", usedPercent: 25 }],
         });
-        const first = yield* usageState.get("cursor");
-        yield* usageState.clear("cursor");
-        const second = yield* usageState.get("cursor");
+        const first = yield* usageState.get(ProviderDriverKind.make("cursor"));
+        yield* usageState.clear(ProviderDriverKind.make("cursor"));
+        const second = yield* usageState.get(ProviderDriverKind.make("cursor"));
 
         return { first, second };
       }).pipe(Effect.provide(ProviderUsageStateLive.pipe(Layer.provide(stub.layer)))),
     );
 
-    expect(result.first?.windows).toEqual([{ kind: "session", label: "Context window", usedPercent: 25 }]);
+    expect(result.first?.windows).toEqual([
+      { kind: "session", label: "Context window", usedPercent: 25 },
+    ]);
     expect(result.second).toBeUndefined();
   });
 
@@ -61,7 +64,7 @@ describe("ProviderUsageStateLive", () => {
         yield* PubSub.publish(stub.pubsub, {
           type: "thread.token-usage.updated",
           eventId: "evt-1" as never,
-          provider: "cursor",
+          provider: ProviderDriverKind.make("cursor"),
           threadId: "thread-1" as never,
           createdAt: "2026-04-18T00:00:00.000Z",
           payload: {
@@ -75,13 +78,15 @@ describe("ProviderUsageStateLive", () => {
         yield* Effect.sleep("10 millis");
 
         return {
-          cursor: yield* usageState.get("cursor"),
-          opencode: yield* usageState.get("opencode"),
+          cursor: yield* usageState.get(ProviderDriverKind.make("cursor")),
+          opencode: yield* usageState.get(ProviderDriverKind.make("opencode")),
         };
       }).pipe(Effect.provide(ProviderUsageStateLive.pipe(Layer.provide(stub.layer)))),
     );
 
-    expect(state.cursor?.windows).toEqual([{ kind: "session", label: "Context window", usedPercent: 50 }]);
+    expect(state.cursor?.windows).toEqual([
+      { kind: "session", label: "Context window", usedPercent: 50 },
+    ]);
     expect(state.opencode).toBeUndefined();
   });
 
@@ -95,7 +100,7 @@ describe("ProviderUsageStateLive", () => {
         yield* PubSub.publish(stub.pubsub, {
           type: "thread.token-usage.updated",
           eventId: "evt-1" as never,
-          provider: "cursor",
+          provider: ProviderDriverKind.make("cursor"),
           threadId: "thread-a" as never,
           createdAt: "2026-04-18T00:00:00.000Z",
           payload: {
@@ -108,7 +113,7 @@ describe("ProviderUsageStateLive", () => {
         yield* PubSub.publish(stub.pubsub, {
           type: "thread.token-usage.updated",
           eventId: "evt-2" as never,
-          provider: "cursor",
+          provider: ProviderDriverKind.make("cursor"),
           threadId: "thread-b" as never,
           createdAt: "2026-04-18T00:01:00.000Z",
           payload: {
@@ -121,7 +126,7 @@ describe("ProviderUsageStateLive", () => {
         yield* PubSub.publish(stub.pubsub, {
           type: "thread.token-usage.updated",
           eventId: "evt-3" as never,
-          provider: "cursor",
+          provider: ProviderDriverKind.make("cursor"),
           threadId: "thread-a" as never,
           createdAt: "2026-04-18T00:02:00.000Z",
           payload: {
@@ -133,7 +138,7 @@ describe("ProviderUsageStateLive", () => {
         });
 
         yield* Effect.sleep("10 millis");
-        return yield* usageState.get("cursor");
+        return yield* usageState.get(ProviderDriverKind.make("cursor"));
       }).pipe(Effect.provide(ProviderUsageStateLive.pipe(Layer.provide(stub.layer)))),
     );
 

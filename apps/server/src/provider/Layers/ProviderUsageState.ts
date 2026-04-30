@@ -1,9 +1,10 @@
 import type {
-  ProviderKind,
+  ProviderDriverKind,
   ProviderRuntimeEvent,
   ServerProviderUsageLimits,
   ThreadId,
 } from "@t3tools/contracts";
+import { ProviderDriverKind as ProviderDriverKindSchema } from "@t3tools/contracts";
 import { Effect, Layer, Ref, Stream } from "effect";
 
 import { runtimeUsageToProviderUsageLimits } from "../runtimeUsageToProviderUsageLimits.ts";
@@ -12,6 +13,8 @@ import {
   type ProviderUsageStateShape,
 } from "../Services/ProviderUsageState.ts";
 import { ProviderService } from "../Services/ProviderService.ts";
+
+const CURSOR_DRIVER = ProviderDriverKindSchema.make("cursor");
 
 function toCursorUsageLimits(
   event: Extract<ProviderRuntimeEvent, { readonly type: "thread.token-usage.updated" }>,
@@ -35,7 +38,7 @@ export const ProviderUsageStateLive = Layer.effect(
     const providerService = yield* ProviderService;
     const stateRef = yield* Ref.make(
       new Map<
-        ProviderKind,
+        ProviderDriverKind,
         Map<ThreadId, { readonly usage: ServerProviderUsageLimits; readonly updatedAtMs: number }>
       >(),
     );
@@ -105,13 +108,13 @@ export const ProviderUsageStateLive = Layer.effect(
         if (event.type === "session.started" || event.type === "session.exited") {
           yield* Ref.update(stateRef, (state) => {
             const next = new Map(state);
-            const existingThreadMap = next.get("cursor");
+            const existingThreadMap = next.get(CURSOR_DRIVER);
             if (existingThreadMap) {
               const threadMap = new Map(existingThreadMap);
-              next.set("cursor", threadMap);
+              next.set(CURSOR_DRIVER, threadMap);
               threadMap.delete(event.threadId);
               if (threadMap.size === 0) {
-                next.delete("cursor");
+                next.delete(CURSOR_DRIVER);
               }
             }
             return next;
@@ -130,13 +133,13 @@ export const ProviderUsageStateLive = Layer.effect(
 
         yield* Ref.update(stateRef, (state) => {
           const next = new Map(state);
-          let threadMap = next.get("cursor");
+          let threadMap = next.get(CURSOR_DRIVER);
           if (!threadMap) {
             threadMap = new Map();
           } else {
             threadMap = new Map(threadMap);
           }
-          next.set("cursor", threadMap);
+          next.set(CURSOR_DRIVER, threadMap);
           threadMap.set(event.threadId, {
             usage,
             updatedAtMs: Date.parse(event.createdAt) || Date.now(),

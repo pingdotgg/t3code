@@ -5,11 +5,12 @@ T3 Code is a minimal web GUI for coding agents (currently Codex and Claude, more
 ## Installation
 
 > [!WARNING]
-> T3 Code currently supports Codex and Claude.
+> T3 Code currently supports Codex, Claude, and OpenCode.
 > Install and authenticate at least one provider before use:
 >
-> - Codex: install [Codex CLI](https://github.com/openai/codex) and run `codex login`
-> - Claude: install Claude Code and run `claude auth login`
+> - Codex: install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`
+> - Claude: install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`
+> - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
 
 ### Run without installing
 

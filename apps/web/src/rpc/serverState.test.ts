@@ -1,6 +1,8 @@
 import {
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
+  ProviderDriverKind,
+  ProviderInstanceId,
   ProjectId,
   ThreadId,
   type ServerConfig,
@@ -40,7 +42,8 @@ const configListeners = new Set<(event: ServerConfigStreamEvent) => void>();
 
 const defaultProviders: ReadonlyArray<ServerProvider> = [
   {
-    provider: "codex",
+    instanceId: ProviderInstanceId.make("codex"),
+    driver: ProviderDriverKind.make("codex"),
     enabled: true,
     installed: true,
     version: "0.116.0",

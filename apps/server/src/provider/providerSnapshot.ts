@@ -1,4 +1,5 @@
 import type {
+  ProviderDriverKind,
   ModelCapabilities,
   ServerProvider,
   ServerProviderAuth,
@@ -37,6 +38,8 @@ export interface ServerProviderPresentation {
   readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
 }
+
+export type ServerProviderDraft = Omit<ServerProvider, "instanceId" | "driver">;
 
 export function nonEmptyTrimmed(value: string | undefined): string | undefined {
   if (!value) return undefined;
@@ -112,7 +115,7 @@ export function parseGenericCliVersion(output: string): string | null {
 
 export function providerModelsFromSettings(
   builtInModels: ReadonlyArray<ServerProviderModel>,
-  provider: ServerProvider["provider"],
+  provider: ProviderDriverKind,
   customModels: ReadonlyArray<string>,
   customModelCapabilities: ModelCapabilities,
 ): ReadonlyArray<ServerProviderModel> {
@@ -181,7 +184,6 @@ export function buildBooleanOptionDescriptor(input: {
 }
 
 export function buildServerProvider(input: {
-  provider: ServerProvider["provider"];
   presentation: ServerProviderPresentation;
   enabled: boolean;
   checkedAt: string;
@@ -189,9 +191,8 @@ export function buildServerProvider(input: {
   slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
   skills?: ReadonlyArray<ServerProviderSkill>;
   probe: ProviderProbeResult;
-}): ServerProvider {
+}): ServerProviderDraft {
   return {
-    provider: input.provider,
     displayName: input.presentation.displayName,
     ...(input.presentation.badgeLabel ? { badgeLabel: input.presentation.badgeLabel } : {}),
     ...(typeof input.presentation.showInteractionModeToggle === "boolean"

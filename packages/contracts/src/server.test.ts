@@ -6,9 +6,10 @@ import { ServerProvider } from "./server.ts";
 const decodeServerProvider = Schema.decodeUnknownSync(ServerProvider);
 
 describe("ServerProvider", () => {
-  it("defaults capability arrays when decoding legacy snapshots", () => {
+  it("defaults capability arrays when decoding provider snapshots", () => {
     const parsed = decodeServerProvider({
-      provider: "codex",
+      instanceId: "codex",
+      driver: "codex",
       enabled: true,
       installed: true,
       version: "1.0.0",
@@ -24,9 +25,29 @@ describe("ServerProvider", () => {
     expect(parsed.skills).toEqual([]);
   });
 
+  it("decodes continuation group metadata", () => {
+    const parsed = decodeServerProvider({
+      instanceId: "codex_personal",
+      driver: "codex",
+      continuation: { groupKey: "codex:home:/Users/julius/.codex" },
+      enabled: true,
+      installed: true,
+      version: "1.0.0",
+      status: "ready",
+      auth: {
+        status: "authenticated",
+      },
+      checkedAt: "2026-04-10T00:00:00.000Z",
+      models: [],
+    });
+
+    expect(parsed.continuation?.groupKey).toBe("codex:home:/Users/julius/.codex");
+  });
+
   it("accepts provider snapshots with usage limits", () => {
     const parsed = decodeServerProvider({
-      provider: "codex",
+      instanceId: "codex",
+      driver: "codex",
       enabled: true,
       installed: true,
       version: "1.0.0",
@@ -58,7 +79,8 @@ describe("ServerProvider", () => {
 
   it("accepts unavailable usage limit snapshots", () => {
     const parsed = decodeServerProvider({
-      provider: "claudeAgent",
+      instanceId: "claudeAgent",
+      driver: "claudeAgent",
       enabled: true,
       installed: true,
       version: "1.0.0",
@@ -88,7 +110,8 @@ describe("ServerProvider", () => {
 
   it("accepts cursor and opencode usage limit sources", () => {
     const cursorParsed = decodeServerProvider({
-      provider: "cursor",
+      instanceId: "cursor",
+      driver: "cursor",
       enabled: true,
       installed: true,
       version: "1.0.0",
@@ -106,7 +129,8 @@ describe("ServerProvider", () => {
       },
     });
     const openCodeParsed = decodeServerProvider({
-      provider: "opencode",
+      instanceId: "opencode",
+      driver: "opencode",
       enabled: true,
       installed: true,
       version: "1.0.0",
@@ -132,7 +156,8 @@ describe("ServerProvider", () => {
   it("rejects invalid usage percentages", () => {
     expect(() =>
       decodeServerProvider({
-        provider: "codex",
+        instanceId: "codex",
+        driver: "codex",
         enabled: true,
         installed: true,
         version: "1.0.0",

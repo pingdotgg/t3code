@@ -1,15 +1,4 @@
-import {
-  DateTime,
-  Duration,
-  Effect,
-  Equal,
-  Layer,
-  Option,
-  Result,
-  Schema,
-  Stream,
-  Types,
-} from "effect";
+import { DateTime, Duration, Effect, Layer, Option, Result, Schema, Types } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
@@ -33,14 +22,11 @@ import {
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 
-import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
-import { buildServerProvider } from "../providerSnapshot.ts";
-import { CodexProvider } from "../Services/CodexProvider.ts";
+import { buildServerProvider, type ServerProviderDraft } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
+import { scopedSafeTeardown } from "./scopedSafeTeardown.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 
-const PROVIDER = "codex" as const;
 const PROVIDER_PROBE_TIMEOUT_MS = 8_000;
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -95,6 +81,11 @@ function codexAccountAuthLabel(account: CodexSchema.V2GetAccountResponse["accoun
       account.planType satisfies never;
       return undefined;
   }
+}
+
+function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"]) {
+  if (!account || account.type !== "chatgpt") return undefined;
+  return account.email;
 }
 
 function mapCodexModelCapabilities(
@@ -252,18 +243,33 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   };
 }
 
+// Wrapped with `scopedSafeTeardown("codex-probe")` rather than the usual
+// `Effect.scoped` so that a defect from the `Layer.build` finalizer (e.g.
+// `ChildProcess.kill` throwing because the `codex app-server` child exited
+// early) cannot override a successful probe body. Without this guard the
+// defect bubbles past `Effect.result` in `checkCodexProviderStatus`, dies
+// `refreshOneSource`, and `providersRef` never receives the snapshot.
 const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(function* (input: {
   readonly binaryPath: string;
   readonly homePath?: string;
   readonly cwd: string;
   readonly customModels?: ReadonlyArray<string>;
+  readonly environment?: NodeJS.ProcessEnv;
 }) {
+  // `~` is not shell-expanded when env vars are set via `child_process.spawn`,
+  // so `CODEX_HOME=~/.codex_work` would reach codex verbatim and trip
+  // "CODEX_HOME points to '~/.codex_work', but that path does not exist".
+  // Expand here for parity with `CodexTextGeneration`/`CodexSessionRuntime`.
+  const resolvedHomePath = input.homePath ? expandHomePath(input.homePath) : undefined;
   const clientContext = yield* Layer.build(
     CodexClient.layerCommand({
       command: input.binaryPath,
       args: ["app-server"],
       cwd: input.cwd,
-      ...(input.homePath ? { env: { CODEX_HOME: expandHomePath(input.homePath) } } : {}),
+      env: {
+        ...(input.environment ?? process.env),
+        ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
+      },
     }),
   );
   const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
@@ -304,7 +310,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       requestAllCodexModels(client),
       client.request("account/rateLimits/read", undefined).pipe(
         // Rate limits are optional metadata and should not fail the whole provider probe.
-        Effect.catchAll(() => Effect.void),
+        Effect.catch(() => Effect.void),
       ),
     ],
     { concurrency: "unbounded" },
@@ -317,7 +323,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     models: appendCustomCodexModels(models, input.customModels ?? []),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;
-}, Effect.scoped);
+}, scopedSafeTeardown("codex-probe"));
 
 const CODEX_PRIMARY_WINDOW_DURATION_MINS = 300; // ~5 hours (short / session window)
 const CODEX_SECONDARY_WINDOW_DURATION_MINS = 10080; // 7 days (weekly window)
@@ -347,7 +353,7 @@ function resolveCodexManagedUsageLimits(
         ? window.windowDurationMins
         : fallbackDurationMins;
     windows.push({
-      ...(label ? { label } : {}),
+      label: label ?? "Quota",
       usedPercent: window.usedPercent,
       ...(typeof window.resetsAt === "number"
         ? { resetsAt: new Date(window.resetsAt * 1000).toISOString() }
@@ -378,13 +384,12 @@ const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvi
       capabilities: null,
     }));
 
-const makePendingCodexProvider = (codexSettings: CodexSettings): ServerProvider => {
+const makePendingCodexProvider = (codexSettings: CodexSettings): ServerProviderDraft => {
   const checkedAt = new Date().toISOString();
   const models = emptyCodexModelsFromSettings(codexSettings);
 
   if (!codexSettings.enabled) {
     return buildServerProvider({
-      provider: PROVIDER,
       presentation: CODEX_PRESENTATION,
       enabled: false,
       checkedAt,
@@ -401,7 +406,6 @@ const makePendingCodexProvider = (codexSettings: CodexSettings): ServerProvider 
   }
 
   return buildServerProvider({
-    provider: PROVIDER,
     presentation: CODEX_PRESENTATION,
     enabled: true,
     checkedAt,
@@ -423,10 +427,12 @@ function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]):
   readonly message?: string;
 } {
   const authLabel = codexAccountAuthLabel(account.account);
+  const authEmail = codexAccountEmail(account.account);
   const auth = {
     status: account.account ? ("authenticated" as const) : ("unknown" as const),
     ...(account.account?.type ? { type: account.account?.type } : {}),
     ...(authLabel ? { label: authLabel } : {}),
+    ...(authEmail ? { email: authEmail } : {}),
   } satisfies ServerProvider["auth"];
 
   if (account.account) {
@@ -445,31 +451,29 @@ function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]):
 }
 
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
+  codexSettings: CodexSettings,
   probe: (input: {
     readonly binaryPath: string;
     readonly homePath?: string;
     readonly cwd: string;
     readonly customModels: ReadonlyArray<string>;
+    readonly environment?: NodeJS.ProcessEnv;
   }) => Effect.Effect<
     CodexAppServerProviderSnapshot,
     CodexErrors.CodexAppServerError,
     ChildProcessSpawner.ChildProcessSpawner
   > = probeCodexAppServerProvider,
+  environment: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<
-  ServerProvider,
+  ServerProviderDraft,
   ServerSettingsError,
-  ServerSettingsService | ChildProcessSpawner.ChildProcessSpawner
+  ChildProcessSpawner.ChildProcessSpawner
 > {
-  const codexSettings = yield* Effect.service(ServerSettingsService).pipe(
-    Effect.flatMap((service) => service.getSettings),
-    Effect.map((settings) => settings.providers.codex),
-  );
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const emptyModels = emptyCodexModelsFromSettings(codexSettings);
 
   if (!codexSettings.enabled) {
     return buildServerProvider({
-      provider: PROVIDER,
       presentation: CODEX_PRESENTATION,
       enabled: false,
       checkedAt,
@@ -490,13 +494,13 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     homePath: codexSettings.homePath,
     cwd: process.cwd(),
     customModels: codexSettings.customModels,
+    environment,
   }).pipe(Effect.timeoutOption(Duration.millis(PROVIDER_PROBE_TIMEOUT_MS)), Effect.result);
 
   if (Result.isFailure(probeResult)) {
     const error = probeResult.failure;
     const installed = !Schema.is(CodexErrors.CodexAppServerSpawnError)(error);
     return buildServerProvider({
-      provider: PROVIDER,
       presentation: CODEX_PRESENTATION,
       enabled: codexSettings.enabled,
       checkedAt,
@@ -516,7 +520,6 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   if (Option.isNone(probeResult.success)) {
     return buildServerProvider({
-      provider: PROVIDER,
       presentation: CODEX_PRESENTATION,
       enabled: codexSettings.enabled,
       checkedAt,
@@ -544,7 +547,6 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       : resolveCodexManagedUsageLimits(checkedAt, snapshot.rateLimits);
 
   return buildServerProvider({
-    provider: PROVIDER,
     presentation: CODEX_PRESENTATION,
     enabled: codexSettings.enabled,
     checkedAt,
@@ -561,28 +563,11 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   });
 });
 
-export const CodexProviderLive = Layer.effect(
-  CodexProvider,
-  Effect.gen(function* () {
-    const serverSettings = yield* ServerSettingsService;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const checkProvider = checkCodexProviderStatus().pipe(
-      Effect.provideService(ServerSettingsService, serverSettings),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
-
-    return yield* makeManagedServerProvider<CodexSettings>({
-      getSettings: serverSettings.getSettings.pipe(
-        Effect.map((settings) => settings.providers.codex),
-        Effect.orDie,
-      ),
-      streamSettings: serverSettings.streamChanges.pipe(
-        Stream.map((settings) => settings.providers.codex),
-      ),
-      haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
-      initialSnapshot: makePendingCodexProvider,
-      checkProvider,
-      refreshInterval: Duration.minutes(5),
-    });
-  }),
-);
+// NOTE: the singleton `CodexProviderLive` Layer has been removed as part of
+// the per-instance-driver refactor. `CodexDriver.create()` builds a managed
+// snapshot per instance (each with its own `CodexSettings`) and hands the
+// resulting `ServerProviderShape` back as `ProviderInstance.snapshot`.
+//
+// The `makePendingCodexProvider` and `checkCodexProviderStatus` helpers are
+// re-exported for use by `CodexDriver`.
+export { makePendingCodexProvider };

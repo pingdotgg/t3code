@@ -202,19 +202,17 @@ function createBaseServerConfig(): ServerConfig {
   };
 }
 
-function makeProvider(
-  provider: ServerProvider["provider"],
-  overrides?: Partial<ServerProvider>,
-): ServerProvider {
+function makeProvider(driver: string, overrides?: Partial<ServerProvider>): ServerProvider {
   return {
-    provider,
+    instanceId: driver as ServerProvider["instanceId"],
+    driver: driver as ServerProvider["driver"],
     enabled: true,
     installed: true,
     version: "1.0.0",
     status: "ready",
     auth: {
       status: "authenticated",
-      label: provider === "codex" ? "ChatGPT Pro Subscription" : "Claude Max Subscription",
+      label: driver === "codex" ? "ChatGPT Pro Subscription" : "Claude Max Subscription",
     },
     checkedAt: "2036-04-07T00:00:00.000Z",
     models: [],
@@ -926,9 +924,13 @@ describe("GeneralSettingsPanel observability", () => {
 
     await page.getByLabelText("Toggle OpenCode details").click();
 
-    await expect.element(page.getByText("OpenCode server URL")).toBeInTheDocument();
+    // The unified provider-instance card renders field labels without a
+    // driver-name prefix (the driver name is already shown in the card
+    // header), so the labels read "Server URL" / "Server password"
+    // rather than the old "OpenCode server URL" / "OpenCode server password".
+    await expect.element(page.getByText("Server URL")).toBeInTheDocument();
     await expect.element(page.getByPlaceholder("http://127.0.0.1:4096")).toBeInTheDocument();
-    await expect.element(page.getByText("OpenCode server password")).toBeInTheDocument();
-    await expect.element(page.getByPlaceholder("Server password")).toBeInTheDocument();
+    await expect.element(page.getByText("Server password")).toBeInTheDocument();
+    await expect.element(page.getByPlaceholder("Optional")).toBeInTheDocument();
   });
 });
