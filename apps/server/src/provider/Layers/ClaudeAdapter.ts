@@ -2563,10 +2563,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         const requestId = ApprovalRequestId.make(yield* Random.nextUUIDv4);
 
         // Parse questions from the SDK's AskUserQuestion input.
+        // `id` MUST equal the full question text — Claude SDK >= 2.1.121 looks
+        // up answers by question text in `mapToolResultToToolResultBlockParam`,
+        // so the key the UI uses to keep its draft answer must match the SDK's
+        // expected lookup key. See https://github.com/pingdotgg/t3code/issues/2388
         const rawQuestions = Array.isArray(toolInput.questions) ? toolInput.questions : [];
         const questions: Array<UserInputQuestion> = rawQuestions.map(
           (q: Record<string, unknown>, idx: number) => ({
-            id: typeof q.header === "string" ? q.header : `q-${idx}`,
+            id: typeof q.question === "string" && q.question.length > 0 ? q.question : `q-${idx}`,
             header: typeof q.header === "string" ? q.header : `Question ${idx + 1}`,
             question: typeof q.question === "string" ? q.question : "",
             options: Array.isArray(q.options)

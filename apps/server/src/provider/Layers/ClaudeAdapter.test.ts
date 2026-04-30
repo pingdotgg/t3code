@@ -3296,6 +3296,9 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(typeof requestId, "string");
       assert.equal(requestedEvent.value.payload.questions.length, 1);
       assert.equal(requestedEvent.value.payload.questions[0]?.question, "Which framework?");
+      // Regression for #2388: `id` must equal the full question text so the
+      // UI's draft-answer key matches what the SDK looks up downstream.
+      assert.equal(requestedEvent.value.payload.questions[0]?.id, "Which framework?");
       assert.deepEqual(requestedEvent.value.providerRefs, {
         providerItemId: ProviderItemId.make("tool-ask-1"),
       });
@@ -3330,6 +3333,34 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(updatedInput.answers, { "Which framework?": "React" });
       // Original questions should be passed through.
       assert.deepEqual(updatedInput.questions, askInput.questions);
+
+      // Compatibility check for #2388: the answers shape we hand to the SDK
+      // must produce a non-empty rendered tool_result on BOTH SDK iteration
+      // patterns we have seen, so we don't regress the issue and we don't
+      // break users still on the older Claude CLI.
+      const sdkAnswers = updatedInput.answers as Record<string, unknown>;
+      const sdkQuestions = updatedInput.questions as ReadonlyArray<{
+        readonly question: string;
+      }>;
+
+      // Claude CLI 2.1.119 — key-agnostic Object.entries iteration. Any key
+      // works here, but it must at least round-trip into a non-empty string.
+      const v119Rendered = Object.entries(sdkAnswers)
+        .map(([key, value]) => `"${key}"="${String(value)}"`)
+        .join(", ");
+      assert.equal(v119Rendered, '"Which framework?"="React"');
+
+      // Claude CLI 2.1.121 — lookup by full question text. This is the path
+      // that regressed in #2388 when the answers were keyed by `header`.
+      const v121Rendered = sdkQuestions
+        .map(({ question }) => {
+          const answer = sdkAnswers[question];
+          return answer === undefined ? null : `"${question}"="${String(answer)}"`;
+        })
+        .filter((entry): entry is string => entry !== null)
+        .join(", ");
+      assert.notEqual(v121Rendered, "", "Expected non-empty SDK 2.1.121 tool_result (#2388)");
+      assert.equal(v121Rendered, '"Which framework?"="React"');
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
