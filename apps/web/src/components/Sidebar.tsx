@@ -3,6 +3,7 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   CloudIcon,
+  CloudOffIcon,
   GitPullRequestIcon,
   FolderPlusIcon,
   SearchIcon,
@@ -178,6 +179,10 @@ import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
+import {
+  isRemoteEnvironmentDisconnected,
+  useRemoteThreadEnvironmentStatus,
+} from "../hooks/useRemoteThreadEnvironmentStatus";
 import type { SidebarThreadSummary } from "../types";
 import {
   buildPhysicalToLogicalProjectKeyMap,
@@ -329,18 +334,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     (state) =>
       selectThreadTerminalState(state.terminalStateByThreadKey, threadRef).runningTerminalIds,
   );
-  const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const isRemoteThread =
-    primaryEnvironmentId !== null && thread.environmentId !== primaryEnvironmentId;
-  const remoteEnvLabel = useSavedEnvironmentRuntimeStore(
-    (s) => s.byId[thread.environmentId]?.descriptor?.label ?? null,
-  );
-  const remoteEnvSavedLabel = useSavedEnvironmentRegistryStore(
-    (s) => s.byId[thread.environmentId]?.label ?? null,
-  );
-  const threadEnvironmentLabel = isRemoteThread
-    ? (remoteEnvLabel ?? remoteEnvSavedLabel ?? "Remote")
-    : null;
+  const { isRemoteThread, isRemoteThreadDisconnected, remoteThreadTooltip } =
+    useRemoteThreadEnvironmentStatus(thread.environmentId);
   // For grouped projects, the thread may belong to a different environment
   // than the representative project.  Look up the thread's own project cwd
   // so git status (and thus PR detection) queries the correct path.
@@ -664,14 +659,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     <TooltipTrigger
                       render={
                         <span
-                          aria-label={threadEnvironmentLabel ?? "Remote"}
+                          aria-label={remoteThreadTooltip}
                           className="inline-flex items-center justify-center"
                         />
                       }
                     >
-                      <CloudIcon className="size-3 text-muted-foreground/40" />
+                      {isRemoteThreadDisconnected ? (
+                        <CloudOffIcon className="size-3 text-destructive" />
+                      ) : (
+                        <CloudIcon className="size-3 text-muted-foreground/40" />
+                      )}
                     </TooltipTrigger>
-                    <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
+                    <TooltipPopup side="top">{remoteThreadTooltip}</TooltipPopup>
                   </Tooltip>
                 )}
                 {jumpLabel ? (
@@ -1067,6 +1066,32 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       ),
     [project.memberProjects],
   );
+  const projectRemoteEnvironmentIds = useMemo(
+    () => [...new Set(project.memberProjects.map((member) => member.environmentId))],
+    [project.memberProjects],
+  );
+  const projectRemoteEnvironmentConnectionStates = useSavedEnvironmentRuntimeStore(
+    useShallow((state) =>
+      projectRemoteEnvironmentIds.map(
+        (environmentId) => state.byId[environmentId]?.connectionState ?? "disconnected",
+      ),
+    ),
+  );
+  const isRemoteProjectDisconnected = isRemoteEnvironmentDisconnected(
+    projectRemoteEnvironmentConnectionStates,
+  );
+  const remoteProjectTooltipTitle =
+    project.remoteEnvironmentLabels.length > 1
+      ? isRemoteProjectDisconnected
+        ? "Remote environments disconnected"
+        : "Remote environments"
+      : isRemoteProjectDisconnected
+        ? "Remote environment disconnected"
+        : "Remote environment";
+  const remoteProjectTooltip =
+    project.remoteEnvironmentLabels.length > 0
+      ? `${remoteProjectTooltipTitle}: ${project.remoteEnvironmentLabels.join(", ")}`
+      : remoteProjectTooltipTitle;
   const memberThreadCountByPhysicalKey = useMemo(() => {
     const counts = new Map<string, number>(
       project.memberProjects.map((member) => [member.physicalProjectKey, 0] as const),
@@ -2002,9 +2027,28 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           )}
           <ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />
           <span className="flex min-w-0 flex-1 items-center gap-2">
-            <span className="truncate text-xs font-medium text-foreground/90">
+            <span className="min-w-0 truncate text-xs font-medium text-foreground/90">
               {project.displayName}
             </span>
+            {project.environmentPresence === "remote-only" ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      aria-label={remoteProjectTooltip}
+                      className="inline-flex shrink-0 items-center justify-center"
+                    />
+                  }
+                >
+                  {isRemoteProjectDisconnected ? (
+                    <CloudOffIcon className="size-3 text-destructive" />
+                  ) : (
+                    <CloudIcon className="size-3 text-muted-foreground/50" />
+                  )}
+                </TooltipTrigger>
+                <TooltipPopup side="top">{remoteProjectTooltip}</TooltipPopup>
+              </Tooltip>
+            ) : null}
             {project.groupedProjectCount > 1 ? (
               <span className="shrink-0 text-[10px] text-muted-foreground/60">
                 {project.groupedProjectCount} projects
@@ -2012,30 +2056,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             ) : null}
           </span>
         </SidebarMenuButton>
-        {/* Environment badge – visible by default, crossfades with the
-            "new thread" button on hover using the same pointer-events +
-            opacity pattern as the thread row archive/timestamp swap. */}
-        {project.environmentPresence === "remote-only" && (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <span
-                  aria-label={
-                    project.environmentPresence === "remote-only"
-                      ? "Remote project"
-                      : "Available in multiple environments"
-                  }
-                  className="pointer-events-none absolute top-1 right-1.5 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/50 transition-opacity duration-150 group-hover/project-header:opacity-0 group-focus-within/project-header:opacity-0"
-                />
-              }
-            >
-              <CloudIcon className="size-3" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              Remote environment: {project.remoteEnvironmentLabels.join(", ")}
-            </TooltipPopup>
-          </Tooltip>
-        )}
         <Tooltip>
           <TooltipTrigger
             render={
