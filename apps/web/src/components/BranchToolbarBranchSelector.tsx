@@ -19,6 +19,7 @@ import { readEnvironmentApi } from "../environmentApi";
 import { gitBranchSearchInfiniteQueryOptions, gitQueryKeys } from "../lib/gitReactQuery";
 import { useGitStatus } from "../lib/gitStatusState";
 import { newCommandId } from "../lib/utils";
+import { cn } from "../lib/utils";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { useStore } from "../store";
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
@@ -45,6 +46,7 @@ import {
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
 interface BranchToolbarBranchSelectorProps {
+  className?: string;
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
@@ -76,6 +78,7 @@ function getBranchTriggerLabel(input: {
 }
 
 export function BranchToolbarBranchSelector({
+  className,
   environmentId,
   threadId,
   draftId,
@@ -577,11 +580,11 @@ export function BranchToolbarBranchSelector({
     >
       <ComboboxTrigger
         render={<Button variant="ghost" size="xs" />}
-        className="text-muted-foreground/70 hover:text-foreground/80"
+        className={cn("min-w-0 text-muted-foreground/70 hover:text-foreground/80", className)}
         disabled={(isBranchesSearchPending && branches.length === 0) || isBranchActionPending}
       >
-        <span className="max-w-[240px] truncate">{triggerLabel}</span>
-        <ChevronDownIcon />
+        <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
+        <ChevronDownIcon className="shrink-0" />
       </ComboboxTrigger>
       <ComboboxPopup align="end" side="top" className="w-80">
         <div className="border-b p-1">

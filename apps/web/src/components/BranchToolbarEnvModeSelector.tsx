@@ -58,6 +58,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
 
   return (
     <Select
+      modal={false}
       value={effectiveEnvMode}
       onValueChange={(value) => onEnvModeChange(value as EnvMode)}
       items={envModeItems}
