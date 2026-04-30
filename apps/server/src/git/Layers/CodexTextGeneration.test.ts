@@ -1,29 +1,23 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Result } from "effect";
+import { Effect, FileSystem, Layer, Path, Result, Schema } from "effect";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vitest";
 
+import { CodexSettings, ProviderInstanceId, TextGenerationError } from "@t3tools/contracts";
+
 import { ServerConfig } from "../../config.ts";
-import { CodexTextGenerationLive } from "./CodexTextGeneration.ts";
-import { TextGenerationError } from "@t3tools/contracts";
-import { TextGeneration } from "../Services/TextGeneration.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
+import { type TextGenerationShape } from "../Services/TextGeneration.ts";
+import { makeCodexTextGeneration } from "./CodexTextGeneration.ts";
 
-const DEFAULT_TEST_MODEL_SELECTION = {
-  provider: "codex" as const,
-  model: "gpt-5.4-mini",
-};
-
-const CodexTextGenerationTestLayer = CodexTextGenerationLive.pipe(
-  Layer.provideMerge(ServerSettingsService.layerTest()),
-  Layer.provideMerge(
-    ServerConfig.layerTest(process.cwd(), {
-      prefix: "t3code-codex-text-generation-test-",
-    }),
-  ),
-  Layer.provideMerge(NodeServices.layer),
+const DEFAULT_TEST_MODEL_SELECTION = createModelSelection(
+  ProviderInstanceId.make("codex"),
+  "gpt-5.4-mini",
 );
+
+const CodexTextGenerationTestLayer = ServerConfig.layerTest(process.cwd(), {
+  prefix: "t3code-codex-text-generation-test-",
+}).pipe(Layer.provideMerge(NodeServices.layer));
 
 function makeFakeCodexBinary(
   dir: string,
@@ -162,36 +156,16 @@ function withFakeCodexEnv<A, E, R>(
     stdinMustContain?: string;
     stdinMustNotContain?: string;
   },
-  effect: Effect.Effect<A, E, R>,
+  effectFn: (textGeneration: TextGenerationShape) => Effect.Effect<A, E, R>,
 ) {
-  return Effect.acquireUseRelease(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
-      const codexPath = yield* makeFakeCodexBinary(tempDir, input);
-      const serverSettings = yield* ServerSettingsService;
-      const previousSettings = yield* serverSettings.getSettings;
-      yield* serverSettings.updateSettings({
-        providers: {
-          codex: {
-            binaryPath: codexPath,
-          },
-        },
-      });
-      return { serverSettings, previousBinaryPath: previousSettings.providers.codex.binaryPath };
-    }),
-    () => effect,
-    ({ serverSettings, previousBinaryPath }) =>
-      serverSettings
-        .updateSettings({
-          providers: {
-            codex: {
-              binaryPath: previousBinaryPath,
-            },
-          },
-        })
-        .pipe(Effect.asVoid),
-  );
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-codex-text-" });
+    const codexPath = yield* makeFakeCodexBinary(tempDir, input);
+    const config = Schema.decodeSync(CodexSettings)({ binaryPath: codexPath });
+    const textGeneration = yield* makeCodexTextGeneration(config);
+    return yield* effectFn(textGeneration);
+  }).pipe(Effect.scoped);
 }
 
 it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
@@ -205,22 +179,21 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         }),
         stdinMustNotContain: "branch must be a short semantic git branch fragment",
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/codex-effect",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
 
-        const generated = yield* textGeneration.generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/codex-effect",
-          stagedSummary: "M README.md",
-          stagedPatch: "diff --git a/README.md b/README.md",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-        });
-
-        expect(generated.subject.length).toBeLessThanOrEqual(72);
-        expect(generated.subject.endsWith(".")).toBe(false);
-        expect(generated.body).toBe("- added migration\n- updated tests");
-        expect(generated.branch).toBeUndefined();
-      }),
+          expect(generated.subject.length).toBeLessThanOrEqual(72);
+          expect(generated.subject.endsWith(".")).toBe(false);
+          expect(generated.body).toBe("- added migration\n- updated tests");
+          expect(generated.branch).toBeUndefined();
+        }),
     ),
   );
 
@@ -237,20 +210,17 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
           requireReasoningEffort: "xhigh",
           stdinMustNotContain: "branch must be a short semantic git branch fragment",
         },
-        Effect.gen(function* () {
-          const textGeneration = yield* TextGeneration;
-
-          yield* textGeneration.generateCommitMessage({
+        (textGeneration) =>
+          textGeneration.generateCommitMessage({
             cwd: process.cwd(),
             branch: "feature/codex-effect",
             stagedSummary: "M README.md",
             stagedPatch: "diff --git a/README.md b/README.md",
-            modelSelection: createModelSelection("codex", "gpt-5.4", [
+            modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
               { id: "reasoningEffort", value: "xhigh" },
               { id: "fastMode", value: true },
             ]),
-          });
-        }),
+          }),
       ),
   );
 
@@ -263,17 +233,14 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         }),
         requireReasoningEffort: "low",
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
-
-        yield* textGeneration.generateCommitMessage({
+      (textGeneration) =>
+        textGeneration.generateCommitMessage({
           cwd: process.cwd(),
           branch: "feature/codex-effect",
           stagedSummary: "M README.md",
           stagedPatch: "diff --git a/README.md b/README.md",
           modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-        });
-      }),
+        }),
     ),
   );
 
@@ -287,21 +254,20 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         }),
         stdinMustContain: "branch must be a short semantic git branch fragment",
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateCommitMessage({
+            cwd: process.cwd(),
+            branch: "feature/codex-effect",
+            stagedSummary: "M README.md",
+            stagedPatch: "diff --git a/README.md b/README.md",
+            includeBranch: true,
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
 
-        const generated = yield* textGeneration.generateCommitMessage({
-          cwd: process.cwd(),
-          branch: "feature/codex-effect",
-          stagedSummary: "M README.md",
-          stagedPatch: "diff --git a/README.md b/README.md",
-          includeBranch: true,
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-        });
-
-        expect(generated.subject).toBe("Add important change");
-        expect(generated.branch).toBe("feature/fix/important-system-change");
-      }),
+          expect(generated.subject).toBe("Add important change");
+          expect(generated.branch).toBe("feature/fix/important-system-change");
+        }),
     ),
   );
 
@@ -313,23 +279,22 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
           body: "\n## Summary\n- improve flow\n\n## Testing\n- bun test\n\n",
         }),
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generatePrContent({
+            cwd: process.cwd(),
+            baseBranch: "main",
+            headBranch: "feature/codex-effect",
+            commitSummary: "feat: improve orchestration flow",
+            diffSummary: "2 files changed",
+            diffPatch: "diff --git a/a.ts b/a.ts",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
 
-        const generated = yield* textGeneration.generatePrContent({
-          cwd: process.cwd(),
-          baseBranch: "main",
-          headBranch: "feature/codex-effect",
-          commitSummary: "feat: improve orchestration flow",
-          diffSummary: "2 files changed",
-          diffPatch: "diff --git a/a.ts b/a.ts",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-        });
-
-        expect(generated.title).toBe("Improve orchestration flow");
-        expect(generated.body.startsWith("## Summary")).toBe(true);
-        expect(generated.body.endsWith("\n\n")).toBe(false);
-      }),
+          expect(generated.title).toBe("Improve orchestration flow");
+          expect(generated.body.startsWith("## Summary")).toBe(true);
+          expect(generated.body.endsWith("\n\n")).toBe(false);
+        }),
     ),
   );
 
@@ -341,17 +306,16 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         }),
         stdinMustNotContain: "Image attachments supplied to the model",
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateBranchName({
+            cwd: process.cwd(),
+            message: "Please update session handling.",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
 
-        const generated = yield* textGeneration.generateBranchName({
-          cwd: process.cwd(),
-          message: "Please update session handling.",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-        });
-
-        expect(generated.branch).toBe("feat/session");
-      }),
+          expect(generated.branch).toBe("feat/session");
+        }),
     ),
   );
 
@@ -363,17 +327,16 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
             '  "Investigate websocket reconnect regressions after worktree restore"  \nignored line',
         }),
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Please investigate websocket reconnect regressions after a worktree restore.",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
 
-        const generated = yield* textGeneration.generateThreadTitle({
-          cwd: process.cwd(),
-          message: "Please investigate websocket reconnect regressions after a worktree restore.",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-        });
-
-        expect(generated.title).toBe("Investigate websocket reconnect regressions aft...");
-      }),
+          expect(generated.title).toBe("Investigate websocket reconnect regressions aft...");
+        }),
     ),
   );
 
@@ -384,17 +347,16 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
           title: '  """   """  ',
         }),
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread.",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
 
-        const generated = yield* textGeneration.generateThreadTitle({
-          cwd: process.cwd(),
-          message: "Name this thread.",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-        });
-
-        expect(generated.title).toBe("New thread");
-      }),
+          expect(generated.title).toBe("New thread");
+        }),
     ),
   );
 
@@ -405,17 +367,16 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
           title: `  "' hello world '"  `,
         }),
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Name this thread.",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
 
-        const generated = yield* textGeneration.generateThreadTitle({
-          cwd: process.cwd(),
-          message: "Name this thread.",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-        });
-
-        expect(generated.title).toBe("hello world");
-      }),
+          expect(generated.title).toBe("hello world");
+        }),
     ),
   );
 
@@ -427,17 +388,16 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         }),
         stdinMustNotContain: "Attachment metadata:",
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const generated = yield* textGeneration.generateBranchName({
+            cwd: process.cwd(),
+            message: "Fix timeout behavior.",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
 
-        const generated = yield* textGeneration.generateBranchName({
-          cwd: process.cwd(),
-          message: "Fix timeout behavior.",
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-        });
-
-        expect(generated.branch).toBe("fix/session-timeout");
-      }),
+          expect(generated.branch).toBe("fix/session-timeout");
+        }),
     ),
   );
 
@@ -450,56 +410,17 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         requireImage: true,
         stdinMustContain: "Attachment metadata:",
       },
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const { attachmentsDir } = yield* ServerConfig;
-        const attachmentId = `thread-branch-image-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-        const attachmentPath = path.join(attachmentsDir, `${attachmentId}.png`);
-        yield* fs.makeDirectory(attachmentsDir, { recursive: true });
-        yield* fs.writeFile(attachmentPath, Buffer.from("hello"));
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { attachmentsDir } = yield* ServerConfig;
+          const attachmentId = `thread-branch-image-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+          const attachmentPath = path.join(attachmentsDir, `${attachmentId}.png`);
+          yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+          yield* fs.writeFile(attachmentPath, Buffer.from("hello"));
 
-        const textGeneration = yield* TextGeneration;
-        const generated = yield* textGeneration.generateBranchName({
-          modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-          cwd: process.cwd(),
-          message: "Fix layout bug from screenshot.",
-          attachments: [
-            {
-              type: "image",
-              id: attachmentId,
-              name: "bug.png",
-              mimeType: "image/png",
-              sizeBytes: 5,
-            },
-          ],
-        });
-
-        expect(generated.branch).toBe("fix/ui-regression");
-      }),
-    ),
-  );
-
-  it.effect("resolves persisted attachment ids to files for codex image inputs", () =>
-    withFakeCodexEnv(
-      {
-        output: JSON.stringify({
-          branch: "fix/ui-regression",
-        }),
-        requireImage: true,
-      },
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const { attachmentsDir } = yield* ServerConfig;
-        const attachmentId = `thread-1-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-        const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
-        yield* fs.makeDirectory(attachmentsDir, { recursive: true });
-        yield* fs.writeFile(imagePath, Buffer.from("hello"));
-
-        const textGeneration = yield* TextGeneration;
-        const generated = yield* textGeneration
-          .generateBranchName({
+          const generated = yield* textGeneration.generateBranchName({
             modelSelection: DEFAULT_TEST_MODEL_SELECTION,
             cwd: process.cwd(),
             message: "Fix layout bug from screenshot.",
@@ -512,20 +433,59 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
                 sizeBytes: 5,
               },
             ],
-          })
-          .pipe(
-            Effect.tap(() =>
-              fs.stat(imagePath).pipe(
-                Effect.map((fileInfo) => {
-                  expect(fileInfo.type).toBe("File");
-                }),
-              ),
-            ),
-            Effect.ensuring(fs.remove(imagePath).pipe(Effect.catch(() => Effect.void))),
-          );
+          });
 
-        expect(generated.branch).toBe("fix/ui-regression");
-      }),
+          expect(generated.branch).toBe("fix/ui-regression");
+        }),
+    ),
+  );
+
+  it.effect("resolves persisted attachment ids to files for codex image inputs", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({
+          branch: "fix/ui-regression",
+        }),
+        requireImage: true,
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { attachmentsDir } = yield* ServerConfig;
+          const attachmentId = `thread-1-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+          const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
+          yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+          yield* fs.writeFile(imagePath, Buffer.from("hello"));
+
+          const generated = yield* textGeneration
+            .generateBranchName({
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+              cwd: process.cwd(),
+              message: "Fix layout bug from screenshot.",
+              attachments: [
+                {
+                  type: "image",
+                  id: attachmentId,
+                  name: "bug.png",
+                  mimeType: "image/png",
+                  sizeBytes: 5,
+                },
+              ],
+            })
+            .pipe(
+              Effect.tap(() =>
+                fs.stat(imagePath).pipe(
+                  Effect.map((fileInfo) => {
+                    expect(fileInfo.type).toBe("File");
+                  }),
+                ),
+              ),
+              Effect.ensuring(fs.remove(imagePath).pipe(Effect.catch(() => Effect.void))),
+            );
+
+          expect(generated.branch).toBe("fix/ui-regression");
+        }),
     ),
   );
 
@@ -537,38 +497,38 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         }),
         requireImage: true,
       },
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const { attachmentsDir } = yield* ServerConfig;
-        const missingAttachmentId = `thread-missing-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-        const missingPath = path.join(attachmentsDir, `${missingAttachmentId}.png`);
-        yield* fs.remove(missingPath).pipe(Effect.catch(() => Effect.void));
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { attachmentsDir } = yield* ServerConfig;
+          const missingAttachmentId = `thread-missing-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+          const missingPath = path.join(attachmentsDir, `${missingAttachmentId}.png`);
+          yield* fs.remove(missingPath).pipe(Effect.catch(() => Effect.void));
 
-        const textGeneration = yield* TextGeneration;
-        const result = yield* textGeneration
-          .generateBranchName({
-            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-            cwd: process.cwd(),
-            message: "Fix layout bug from screenshot.",
-            attachments: [
-              {
-                type: "image",
-                id: missingAttachmentId,
-                name: "outside.png",
-                mimeType: "image/png",
-                sizeBytes: 5,
-              },
-            ],
-          })
-          .pipe(Effect.result);
+          const result = yield* textGeneration
+            .generateBranchName({
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+              cwd: process.cwd(),
+              message: "Fix layout bug from screenshot.",
+              attachments: [
+                {
+                  type: "image",
+                  id: missingAttachmentId,
+                  name: "outside.png",
+                  mimeType: "image/png",
+                  sizeBytes: 5,
+                },
+              ],
+            })
+            .pipe(Effect.result);
 
-        expect(Result.isFailure(result)).toBe(true);
-        if (Result.isFailure(result)) {
-          expect(result.failure).toBeInstanceOf(TextGenerationError);
-          expect(result.failure.message).toContain("missing --image input");
-        }
-      }),
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) {
+            expect(result.failure).toBeInstanceOf(TextGenerationError);
+            expect(result.failure.message).toContain("missing --image input");
+          }
+        }),
     ),
   );
 
@@ -581,23 +541,22 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
             title: "This is not a branch payload",
           }),
         },
-        Effect.gen(function* () {
-          const textGeneration = yield* TextGeneration;
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const result = yield* textGeneration
+              .generateBranchName({
+                cwd: process.cwd(),
+                message: "Fix websocket reconnect flake",
+                modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+              })
+              .pipe(Effect.result);
 
-          const result = yield* textGeneration
-            .generateBranchName({
-              cwd: process.cwd(),
-              message: "Fix websocket reconnect flake",
-              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-            })
-            .pipe(Effect.result);
-
-          expect(Result.isFailure(result)).toBe(true);
-          if (Result.isFailure(result)) {
-            expect(result.failure).toBeInstanceOf(TextGenerationError);
-            expect(result.failure.message).toContain("Codex returned invalid structured output");
-          }
-        }),
+            expect(Result.isFailure(result)).toBe(true);
+            if (Result.isFailure(result)) {
+              expect(result.failure).toBeInstanceOf(TextGenerationError);
+              expect(result.failure.message).toContain("Codex returned invalid structured output");
+            }
+          }),
       ),
   );
 
@@ -608,27 +567,26 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGenerationLive", (it) => {
         exitCode: 1,
         stderr: "codex execution failed",
       },
-      Effect.gen(function* () {
-        const textGeneration = yield* TextGeneration;
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const result = yield* textGeneration
+            .generateCommitMessage({
+              cwd: process.cwd(),
+              branch: "feature/codex-error",
+              stagedSummary: "M README.md",
+              stagedPatch: "diff --git a/README.md b/README.md",
+              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+            })
+            .pipe(Effect.result);
 
-        const result = yield* textGeneration
-          .generateCommitMessage({
-            cwd: process.cwd(),
-            branch: "feature/codex-error",
-            stagedSummary: "M README.md",
-            stagedPatch: "diff --git a/README.md b/README.md",
-            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-          })
-          .pipe(Effect.result);
-
-        expect(Result.isFailure(result)).toBe(true);
-        if (Result.isFailure(result)) {
-          expect(result.failure).toBeInstanceOf(TextGenerationError);
-          expect(result.failure.message).toContain(
-            "Codex CLI command failed: codex execution failed",
-          );
-        }
-      }),
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) {
+            expect(result.failure).toBeInstanceOf(TextGenerationError);
+            expect(result.failure.message).toContain(
+              "Codex CLI command failed: codex execution failed",
+            );
+          }
+        }),
     ),
   );
 });

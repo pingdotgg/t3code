@@ -16,22 +16,20 @@ import { OpenLive } from "./open.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import { ServerLifecycleEventsLive } from "./serverLifecycleEvents.ts";
 import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService.ts";
-import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger.ts";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime.ts";
-import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter.ts";
-import { makeClaudeAdapterLive } from "./provider/Layers/ClaudeAdapter.ts";
-import { makeCursorAdapterLive } from "./provider/Layers/CursorAdapter.ts";
-import { makeOpenCodeAdapterLive } from "./provider/Layers/OpenCodeAdapter.ts";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
-import { makeProviderServiceLive } from "./provider/Layers/ProviderService.ts";
+import { ProviderEventLoggersLive } from "./provider/Layers/ProviderEventLoggers.ts";
+import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
+import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime.ts";
 import { CheckpointDiffQueryLive } from "./checkpointing/Layers/CheckpointDiffQuery.ts";
 import { CheckpointStoreLive } from "./checkpointing/Layers/CheckpointStore.ts";
 import { GitCoreLive } from "./git/Layers/GitCore.ts";
 import { GitHubCliLive } from "./git/Layers/GitHubCli.ts";
 import { GitStatusBroadcasterLive } from "./git/Layers/GitStatusBroadcaster.ts";
-import { RoutingTextGenerationLive } from "./git/Layers/RoutingTextGeneration.ts";
+import { TextGenerationLive } from "./git/Layers/TextGenerationLive.ts";
+import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import { TerminalManagerLive } from "./terminal/Layers/Manager.ts";
 import { GitManagerLive } from "./git/Layers/GitManager.ts";
 import { KeybindingsLive } from "./keybindings.ts";
@@ -144,41 +142,15 @@ const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
   Layer.provide(ProviderSessionRuntimeRepositoryLive),
 );
 
-const ProviderLayerLive = Layer.unwrap(
-  Effect.gen(function* () {
-    const { providerEventLogPath } = yield* ServerConfig;
-    const nativeEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
-      stream: "native",
-    });
-    const canonicalEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
-      stream: "canonical",
-    });
-    const codexAdapterLayer = makeCodexAdapterLive(
-      nativeEventLogger ? { nativeEventLogger } : undefined,
-    );
-    const claudeAdapterLayer = makeClaudeAdapterLive(
-      nativeEventLogger ? { nativeEventLogger } : undefined,
-    );
-    const openCodeAdapterLayer = makeOpenCodeAdapterLive(
-      nativeEventLogger ? { nativeEventLogger } : undefined,
-    );
-    const cursorAdapterLayer = makeCursorAdapterLive(
-      nativeEventLogger ? { nativeEventLogger } : undefined,
-    );
-    const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
-      Layer.provide(codexAdapterLayer),
-      Layer.provide(claudeAdapterLayer),
-      Layer.provide(openCodeAdapterLayer),
-      Layer.provide(cursorAdapterLayer),
-      Layer.provideMerge(ProviderSessionDirectoryLayerLive),
-    );
-    return makeProviderServiceLive(
-      canonicalEventLogger ? { canonicalEventLogger } : undefined,
-    ).pipe(
-      Layer.provide(adapterRegistryLayer),
-      Layer.provideMerge(ProviderSessionDirectoryLayerLive),
-    );
-  }),
+// `ProviderAdapterRegistryLive` is now a facade that resolves kind → adapter
+// by looking up the default `ProviderInstance` per driver in the instance
+// registry. Adapter construction itself moved inside each driver's
+// `create()`; `ProviderEventLoggersLive` owns the shared native/canonical
+// NDJSON writers and is provided at the outer runtime layer so both
+// `ProviderService` and the per-instance drivers read the same logger pair.
+const ProviderLayerLive = ProviderServiceLive.pipe(
+  Layer.provide(ProviderAdapterRegistryLive),
+  Layer.provideMerge(ProviderSessionDirectoryLayerLive),
 );
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
@@ -187,7 +159,7 @@ const GitManagerLayerLive = GitManagerLive.pipe(
   Layer.provideMerge(ProjectSetupScriptRunnerLive),
   Layer.provideMerge(GitCoreLive),
   Layer.provideMerge(GitHubCliLive),
-  Layer.provideMerge(RoutingTextGenerationLive),
+  Layer.provideMerge(TextGenerationLive),
 );
 
 const GitLayerLive = Layer.empty.pipe(
@@ -233,6 +205,24 @@ const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provideMerge(KeybindingsLive),
   Layer.provideMerge(ProviderRegistryLive),
+  // The instance registry is the new routing keystone — text generation,
+  // adapter lookup, and runtime ingestion all resolve `ProviderInstanceId`
+  // through this layer. Built-in drivers come from `BUILT_IN_DRIVERS`;
+  // `providerInstances` hydration merges `settings.providers.<kind>`
+  // with explicit `providerInstances` entries on boot.
+  Layer.provideMerge(ProviderInstanceRegistryHydrationLive),
+  // Shared native/canonical NDJSON writers used by both the per-instance
+  // drivers (native stream, written from inside each `<X>Adapter`) and
+  // `ProviderService` (canonical stream, written after event normalization).
+  // Provided once at the runtime level so every consumer sees the same
+  // logger instances.
+  Layer.provideMerge(ProviderEventLoggersLive),
+  // `OpenCodeDriver.create()` yields `OpenCodeRuntime`; previously the old
+  // `ProviderRegistryLive` pulled `OpenCodeRuntimeLive` in for itself, but
+  // the rewritten registry reads snapshots off the instance registry and
+  // no longer transitively provides it. Exposing it at the runtime level
+  // keeps a single Live for all opencode consumers.
+  Layer.provideMerge(OpenCodeRuntimeLive),
   Layer.provideMerge(ServerSettingsLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLive),

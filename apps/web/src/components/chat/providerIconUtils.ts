@@ -1,16 +1,16 @@
-import { type ProviderKind, PROVIDER_DISPLAY_NAMES } from "@t3tools/contracts";
+import { ProviderDriverKind } from "@t3tools/contracts";
 import { ClaudeAI, CursorIcon, Icon, OpenAI, OpenCodeIcon } from "../Icons";
 import { PROVIDER_OPTIONS } from "../../session-logic";
 
-export const PROVIDER_ICON_BY_PROVIDER: Record<ProviderKind, Icon> = {
-  codex: OpenAI,
-  claudeAgent: ClaudeAI,
-  opencode: OpenCodeIcon,
-  cursor: CursorIcon,
+export const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
+  [ProviderDriverKind.make("codex")]: OpenAI,
+  [ProviderDriverKind.make("claudeAgent")]: ClaudeAI,
+  [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
+  [ProviderDriverKind.make("cursor")]: CursorIcon,
 };
 
 function isAvailableProviderOption(option: (typeof PROVIDER_OPTIONS)[number]): option is {
-  value: ProviderKind;
+  value: ProviderDriverKind;
   label: string;
   available: true;
   pickerSidebarBadge?: "new" | "soon";
@@ -26,11 +26,6 @@ export type ModelEsque = {
   shortName?: string | undefined;
   subProvider?: string | undefined;
 };
-
-export function getProviderLabel(provider: ProviderKind, model: ModelEsque): string {
-  const providerLabel = PROVIDER_DISPLAY_NAMES[provider];
-  return model.subProvider ? `${providerLabel} · ${model.subProvider}` : providerLabel;
-}
 
 export function getDisplayModelName(
   model: ModelEsque,

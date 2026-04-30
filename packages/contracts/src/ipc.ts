@@ -25,6 +25,7 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project.ts";
+import type { ProviderInstanceId } from "./providerInstance.ts";
 import type {
   ServerConfig,
   ServerProviderUpdatedPayload,
@@ -215,7 +216,14 @@ export interface LocalApi {
   };
   server: {
     getConfig: () => Promise<ServerConfig>;
-    refreshProviders: () => Promise<ServerProviderUpdatedPayload>;
+    /**
+     * Refresh provider snapshots. When `input.instanceId` is supplied only that
+     * configured instance is probed; otherwise every configured instance is
+     * refreshed (legacy untargeted refresh).
+     */
+    refreshProviders: (input?: {
+      readonly instanceId?: ProviderInstanceId;
+    }) => Promise<ServerProviderUpdatedPayload>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;

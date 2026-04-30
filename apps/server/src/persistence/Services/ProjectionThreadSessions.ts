@@ -10,6 +10,7 @@ import {
   RuntimeMode,
   IsoDateTime,
   OrchestrationSessionStatus,
+  ProviderInstanceId,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
@@ -22,6 +23,7 @@ export const ProjectionThreadSession = Schema.Struct({
   threadId: ThreadId,
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(Schema.String),
+  providerInstanceId: Schema.NullOr(ProviderInstanceId),
   runtimeMode: RuntimeMode,
   activeTurnId: Schema.NullOr(TurnId),
   lastError: Schema.NullOr(Schema.String),

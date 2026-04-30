@@ -1,14 +1,13 @@
-import { Effect, Layer, Option, Ref, Schema } from "effect";
+import { Effect, Option, Ref, Schema } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { CursorModelSelection } from "@t3tools/contracts";
+import { type CursorSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
 
 import { TextGenerationError } from "@t3tools/contracts";
 import {
   type ThreadTitleGenerationResult,
   type TextGenerationShape,
-  TextGeneration,
 } from "../Services/TextGeneration.ts";
 import {
   buildBranchNamePrompt,
@@ -26,7 +25,6 @@ import {
   applyCursorAcpModelSelection,
   makeCursorAcpRuntime,
 } from "../../provider/acp/CursorAcpSupport.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
 
 const CURSOR_TIMEOUT_MS = 180_000;
 
@@ -55,9 +53,15 @@ function isTextGenerationError(error: unknown): error is TextGenerationError {
   );
 }
 
-const makeCursorTextGeneration = Effect.gen(function* () {
+/**
+ * Build a Cursor text-generation closure bound to a specific `CursorSettings`
+ * payload. See `makeCodexAdapter` for the overall per-instance rationale.
+ */
+export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(function* (
+  cursorSettings: CursorSettings,
+  environment: NodeJS.ProcessEnv = process.env,
+) {
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const serverSettingsService = yield* Effect.service(ServerSettingsService);
 
   const runCursorJson = <S extends Schema.Top>({
     operation,
@@ -74,17 +78,13 @@ const makeCursorTextGeneration = Effect.gen(function* () {
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
-    modelSelection: CursorModelSelection;
+    modelSelection: ModelSelection;
   }): Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]> =>
     Effect.gen(function* () {
-      const cursorSettings = yield* Effect.map(
-        serverSettingsService.getSettings,
-        (settings) => settings.providers.cursor,
-      ).pipe(Effect.catch(() => Effect.undefined));
-
       const outputRef = yield* Ref.make("");
       const runtime = yield* makeCursorAcpRuntime({
         cursorSettings,
+        environment,
         childProcessSpawner: commandSpawner,
         cwd,
         clientInfo: { name: "t3-code-git-text", version: "0.0.0" },
@@ -186,13 +186,6 @@ const makeCursorTextGeneration = Effect.gen(function* () {
       includeBranch: input.includeBranch === true,
     });
 
-    if (input.modelSelection.provider !== "cursor") {
-      return yield* new TextGenerationError({
-        operation: "generateCommitMessage",
-        detail: "Invalid model selection.",
-      });
-    }
-
     const generated = yield* runCursorJson({
       operation: "generateCommitMessage",
       cwd: input.cwd,
@@ -221,13 +214,6 @@ const makeCursorTextGeneration = Effect.gen(function* () {
       diffPatch: input.diffPatch,
     });
 
-    if (input.modelSelection.provider !== "cursor") {
-      return yield* new TextGenerationError({
-        operation: "generatePrContent",
-        detail: "Invalid model selection.",
-      });
-    }
-
     const generated = yield* runCursorJson({
       operation: "generatePrContent",
       cwd: input.cwd,
@@ -250,13 +236,6 @@ const makeCursorTextGeneration = Effect.gen(function* () {
       attachments: input.attachments,
     });
 
-    if (input.modelSelection.provider !== "cursor") {
-      return yield* new TextGenerationError({
-        operation: "generateBranchName",
-        detail: "Invalid model selection.",
-      });
-    }
-
     const generated = yield* runCursorJson({
       operation: "generateBranchName",
       cwd: input.cwd,
@@ -277,13 +256,6 @@ const makeCursorTextGeneration = Effect.gen(function* () {
       message: input.message,
       attachments: input.attachments,
     });
-
-    if (input.modelSelection.provider !== "cursor") {
-      return yield* new TextGenerationError({
-        operation: "generateThreadTitle",
-        detail: "Invalid model selection.",
-      });
-    }
 
     const generated = yield* runCursorJson({
       operation: "generateThreadTitle",
@@ -306,4 +278,6 @@ const makeCursorTextGeneration = Effect.gen(function* () {
   } satisfies TextGenerationShape;
 });
 
-export const CursorTextGenerationLive = Layer.effect(TextGeneration, makeCursorTextGeneration);
+// NOTE: `CursorTextGenerationLive` (the singleton Layer) has been removed.
+// `makeCursorTextGeneration(cursorConfig)` is now invoked directly by
+// `CursorDriver.create()` so each provider instance owns its own closure.
