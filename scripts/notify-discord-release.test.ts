@@ -10,7 +10,9 @@ it("builds a prerelease Discord announcement for nightly subscribers", () => {
       releaseName: "T3 Code Nightly 1.2.4-nightly.20260501.17 (abcdef123456)",
       version: "1.2.4-nightly.20260501.17",
       tag: "v1.2.4-nightly.20260501.17",
-      releaseUrl: "https://github.com/t3dotgg/t3-code/releases/tag/v1.2.4-nightly.20260501.17",
+      releaseUrl: new URL(
+        "https://github.com/t3dotgg/t3-code/releases/tag/v1.2.4-nightly.20260501.17",
+      ),
       timestamp: "2026-05-01T01:41:00.000Z",
     }),
     {
@@ -52,7 +54,7 @@ it("builds a latest Discord announcement for stable subscribers", () => {
       releaseName: "T3 Code v1.2.3",
       version: "1.2.3",
       tag: "v1.2.3",
-      releaseUrl: "https://github.com/t3dotgg/t3-code/releases/tag/v1.2.3",
+      releaseUrl: new URL("https://github.com/t3dotgg/t3-code/releases/tag/v1.2.3"),
       timestamp: "2026-05-01T01:41:00.000Z",
     }),
     {
