@@ -148,6 +148,11 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ProviderUsageStateLive),
 );
 
+const CheckpointingLayerLive = Layer.empty.pipe(
+  Layer.provideMerge(CheckpointDiffQueryLive),
+  Layer.provideMerge(CheckpointStoreLive.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
+);
+
 const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(
   Layer.provide(ProviderSessionRuntimeRepositoryLive),
 );
