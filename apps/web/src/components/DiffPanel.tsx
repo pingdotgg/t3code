@@ -471,7 +471,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         >
           <button
             type="button"
-            className="shrink-0 rounded-md"
+            className="shrink-0 cursor-pointer rounded-md"
             onClick={selectWholeConversation}
             data-turn-chip-selected={selectedTurnId === null}
           >
@@ -490,7 +490,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             <button
               key={summary.turnId}
               type="button"
-              className="shrink-0 rounded-md"
+              className="shrink-0 cursor-pointer rounded-md"
               onClick={() => selectTurn(summary.turnId)}
               title={summary.turnId}
               data-turn-chip-selected={summary.turnId === selectedTurn?.turnId}
