@@ -20,6 +20,7 @@ const mockReadSavedEnvironmentBearerToken = vi.fn();
 const mockSavedEnvironmentRegistrySubscribe = vi.fn();
 const mockGetPrimaryKnownEnvironment = vi.hoisted(() => vi.fn());
 const mockFetchRemoteSessionState = vi.fn();
+const mockConnectionReconnects: Array<ReturnType<typeof vi.fn>> = [];
 let savedEnvironmentRegistryListener: (() => void) | null = null;
 
 function MockWsTransport() {
@@ -179,15 +180,19 @@ describe("retainThreadDetailSubscription", () => {
         subscribeThread: mockSubscribeThread,
       },
     });
-    mockCreateEnvironmentConnection.mockImplementation((input) => ({
-      kind: input.kind,
-      environmentId: input.knownEnvironment.environmentId,
-      knownEnvironment: input.knownEnvironment,
-      client: input.client,
-      ensureBootstrapped: vi.fn(async () => undefined),
-      reconnect: vi.fn(async () => undefined),
-      dispose: vi.fn(async () => undefined),
-    }));
+    mockCreateEnvironmentConnection.mockImplementation((input) => {
+      const reconnect = vi.fn(async () => undefined);
+      mockConnectionReconnects.push(reconnect);
+      return {
+        kind: input.kind,
+        environmentId: input.knownEnvironment.environmentId,
+        knownEnvironment: input.knownEnvironment,
+        client: input.client,
+        ensureBootstrapped: vi.fn(async () => undefined),
+        reconnect,
+        dispose: vi.fn(async () => undefined),
+      };
+    });
     savedEnvironmentRegistryListener = null;
     mockSavedEnvironmentRegistrySubscribe.mockImplementation((listener: () => void) => {
       savedEnvironmentRegistryListener = listener;
@@ -205,11 +210,13 @@ describe("retainThreadDetailSubscription", () => {
       authenticated: true,
       role: "client",
     });
+    mockConnectionReconnects.length = 0;
   });
 
   afterEach(async () => {
     const { resetEnvironmentServiceForTests } = await import("./service");
     await resetEnvironmentServiceForTests();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
@@ -369,6 +376,40 @@ describe("retainThreadDetailSubscription", () => {
     });
 
     release();
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("reconnects environment streams when the browser resumes from the background", async () => {
+    let visibilityState: DocumentVisibilityState = "visible";
+    const documentTarget = new EventTarget();
+    const windowTarget = new EventTarget();
+    vi.stubGlobal("document", {
+      addEventListener: documentTarget.addEventListener.bind(documentTarget),
+      removeEventListener: documentTarget.removeEventListener.bind(documentTarget),
+      get visibilityState() {
+        return visibilityState;
+      },
+    });
+    vi.stubGlobal("window", {
+      addEventListener: windowTarget.addEventListener.bind(windowTarget),
+      removeEventListener: windowTarget.removeEventListener.bind(windowTarget),
+    });
+
+    const { resetEnvironmentServiceForTests, startEnvironmentConnectionService } =
+      await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    expect(mockConnectionReconnects).toHaveLength(1);
+
+    visibilityState = "hidden";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+
+    visibilityState = "visible";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+    expect(mockConnectionReconnects[0]).toHaveBeenCalledTimes(1);
+
     stop();
     await resetEnvironmentServiceForTests();
   });

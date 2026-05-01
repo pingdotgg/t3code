@@ -126,6 +126,8 @@ const lastAppliedProjectionVersionByEnvironment = new Map<
 
 let activeService: EnvironmentServiceState | null = null;
 let needsProviderInvalidation = false;
+let lastBrowserHiddenAt: number | null = null;
+let lastBrowserResumeReconnectAt = Number.NEGATIVE_INFINITY;
 
 // Thread detail subscription cache policy:
 // - Active consumers keep a subscription retained via refCount.
@@ -136,6 +138,7 @@ let needsProviderInvalidation = false;
 // - Capacity eviction only targets idle cached subscriptions.
 const THREAD_DETAIL_SUBSCRIPTION_IDLE_EVICTION_MS = 15 * 60 * 1000;
 const MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS = 32;
+const BROWSER_RESUME_RECONNECT_COOLDOWN_MS = 2_000;
 const NOOP = () => undefined;
 const SSH_HTTP_STATUS_RE = /^\[ssh_http:(\d+)\]\s/u;
 
@@ -1406,6 +1409,55 @@ function stopActiveService() {
   activeService = null;
 }
 
+function reconnectEnvironmentConnectionsAfterBrowserResume(reason: string): void {
+  const now = Date.now();
+  if (now - lastBrowserResumeReconnectAt < BROWSER_RESUME_RECONNECT_COOLDOWN_MS) {
+    return;
+  }
+  lastBrowserResumeReconnectAt = now;
+
+  for (const connection of environmentConnections.values()) {
+    void connection.reconnect().catch((error) => {
+      console.warn("Environment reconnect after browser resume failed", {
+        environmentId: connection.environmentId,
+        reason,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }
+}
+
+function subscribeBrowserResumeReconnects(): () => void {
+  if (typeof document === "undefined" || typeof window === "undefined") {
+    return NOOP;
+  }
+
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === "hidden") {
+      lastBrowserHiddenAt = Date.now();
+      return;
+    }
+    if (document.visibilityState === "visible" && lastBrowserHiddenAt !== null) {
+      lastBrowserHiddenAt = null;
+      reconnectEnvironmentConnectionsAfterBrowserResume("visibilitychange");
+    }
+  };
+
+  const handlePageShow = (event: PageTransitionEvent) => {
+    if (event.persisted || lastBrowserHiddenAt !== null) {
+      lastBrowserHiddenAt = null;
+      reconnectEnvironmentConnectionsAfterBrowserResume("pageshow");
+    }
+  };
+
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+  window.addEventListener("pageshow", handlePageShow);
+  return () => {
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
+    window.removeEventListener("pageshow", handlePageShow);
+  };
+}
+
 export function subscribeEnvironmentConnections(listener: () => void): () => void {
   environmentConnectionListeners.add(listener);
   return () => {
@@ -1661,12 +1713,15 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
     .then(() => syncSavedEnvironmentConnections(listSavedEnvironmentRecords()))
     .catch(() => undefined);
 
+  const unsubscribeBrowserResumeReconnects = subscribeBrowserResumeReconnects();
+
   activeService = {
     queryClient,
     queryInvalidationThrottler,
     refCount: 1,
     stop: () => {
       unsubscribeSavedEnvironments();
+      unsubscribeBrowserResumeReconnects();
       queryInvalidationThrottler.cancel();
     },
   };
@@ -1684,6 +1739,8 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
 
 export async function resetEnvironmentServiceForTests(): Promise<void> {
   stopActiveService();
+  lastBrowserHiddenAt = null;
+  lastBrowserResumeReconnectAt = Number.NEGATIVE_INFINITY;
   lastAppliedProjectionVersionByEnvironment.clear();
   pendingSavedEnvironmentConnections.clear();
   for (const key of Array.from(threadDetailSubscriptions.keys())) {
