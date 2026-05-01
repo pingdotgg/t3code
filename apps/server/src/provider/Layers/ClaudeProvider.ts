@@ -649,6 +649,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const usageLimits = yield* Effect.tryPromise(() =>
     probeClaudeUsageLimits({
       binaryPath: claudeSettings.binaryPath,
+      launchArgs: claudeSettings.launchArgs,
       cwd: process.cwd(),
       checkedAt,
       environment: claudeEnvironment,

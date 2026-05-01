@@ -31,10 +31,12 @@ import {
   type ProviderStatusKey,
 } from "./providerStatus";
 
+import { formatRelativeTimeUntil } from "../../timestampFormat";
+
 function usageBarColor(percent: number): string {
   if (percent >= 90) return "bg-destructive";
   if (percent >= 75) return "bg-warning";
-  return "bg-success";
+  return "bg-foreground";
 }
 
 function ProviderUsageBars(props: {
@@ -56,20 +58,33 @@ function ProviderUsageBars(props: {
   if (usageLimits.windows.length === 0) return null;
 
   return (
-    <div className="mt-2 grid gap-1.5">
+    <div className="mt-4 grid gap-3">
       {usageLimits.windows.map((window) => {
         const color = usageBarColor(window.usedPercent);
+        const roundedPercent = Math.round(window.usedPercent);
+        const remainingPercent = 100 - roundedPercent;
+        
+        const resetDateStr = window.resetsAt
+          ? new Date(window.resetsAt).toLocaleString("en-GB", {
+              day: "numeric",
+              month: "short",
+              year: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          : null;
+
         return (
-          <div key={window.label} className="grid gap-0.5">
-            <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>{window.label}</span>
-              <span>{Math.round(window.usedPercent)}%</span>
+          <div key={window.label} className="grid gap-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-medium text-foreground">{window.label}</span>
+              <span className="text-muted-foreground">{remainingPercent}% remaining</span>
             </div>
             <div
               className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
               role="progressbar"
-              aria-label={`${window.label} usage ${Math.round(window.usedPercent)}%`}
-              aria-valuenow={Math.round(window.usedPercent)}
+              aria-label={`${window.label} usage ${roundedPercent}% used`}
+              aria-valuenow={roundedPercent}
               aria-valuemin={0}
               aria-valuemax={100}
             >
@@ -78,6 +93,11 @@ function ProviderUsageBars(props: {
                 style={{ width: `${Math.max(2, Math.min(100, window.usedPercent))}%` }}
               />
             </div>
+            {resetDateStr && (
+              <div className="text-[11px] text-muted-foreground">
+                Resets {resetDateStr}
+              </div>
+            )}
           </div>
         );
       })}
