@@ -2,9 +2,14 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Config, Data, Effect, Layer, Schema } from "effect";
+import { Config, Data, Effect, Layer, Logger, Schema } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 
 export type DiscordReleaseTarget = "prerelease" | "latest";
 
@@ -14,7 +19,7 @@ interface DiscordReleaseAnnouncementOptions {
   readonly releaseName: string;
   readonly version: string;
   readonly tag: string;
-  readonly releaseUrl: string;
+  readonly releaseUrl: URL;
   readonly timestamp: string;
 }
 
@@ -39,8 +44,7 @@ interface DiscordWebhookPayload {
 
 const DISCORD_RELEASE_TARGETS = ["prerelease", "latest"] as const;
 const DiscordRoleIdSchema = Schema.String.check(Schema.isPattern(/^\d+$/));
-const WebUrlSchema = Schema.String.check(Schema.isPattern(/^https?:\/\/\S+$/));
-const DiscordWebhookUrl = Config.nonEmptyString("DISCORD_WEBHOOK_URL");
+const DiscordWebhookUrl = Config.url("DISCORD_WEBHOOK_URL");
 
 class DiscordReleaseAnnouncementError extends Data.TaggedError("DiscordReleaseAnnouncementError")<{
   readonly message: string;
@@ -57,6 +61,23 @@ const targetColors = {
   latest: 0x2ecc71,
 } as const satisfies Record<DiscordReleaseTarget, number>;
 
+function describeWebhookUrl(webhookUrl: URL) {
+  return {
+    configured: true,
+    origin: webhookUrl.origin,
+    pathnameSegmentCount: webhookUrl.pathname.split("/").filter(Boolean).length,
+  } as const;
+}
+
+function summarizePayload(payload: DiscordWebhookPayload) {
+  return {
+    contentLength: payload.content.length,
+    embedCount: payload.embeds.length,
+    allowedRoleMentionCount: payload.allowed_mentions.roles.length,
+    hasRoleMentionSyntax: payload.content.includes("<@&"),
+  } as const;
+}
+
 export const buildDiscordReleaseAnnouncement = (
   options: DiscordReleaseAnnouncementOptions,
 ): DiscordWebhookPayload => ({
@@ -67,7 +88,7 @@ export const buildDiscordReleaseAnnouncement = (
   embeds: [
     {
       title: options.releaseName,
-      url: options.releaseUrl,
+      url: options.releaseUrl.href,
       description:
         options.target === "prerelease"
           ? "A new T3 Code prerelease is available for nightly testers."
@@ -91,7 +112,7 @@ export const buildDiscordReleaseAnnouncement = (
 });
 
 const postDiscordWebhook = Effect.fn("postDiscordWebhook")(function* (
-  webhookUrl: string,
+  webhookUrl: URL,
   payload: DiscordWebhookPayload,
 ) {
   const httpClient = (yield* HttpClient.HttpClient).pipe(
@@ -99,10 +120,16 @@ const postDiscordWebhook = Effect.fn("postDiscordWebhook")(function* (
       retryOn: "errors-and-responses",
       times: 3,
     }),
-    HttpClient.filterStatusOk,
   );
 
-  yield* HttpClientRequest.post(webhookUrl).pipe(
+  yield* Effect.logInfo("discord webhook request dispatching").pipe(
+    Effect.annotateLogs({
+      ...describeWebhookUrl(webhookUrl),
+      ...summarizePayload(payload),
+    }),
+  );
+
+  const response = yield* HttpClientRequest.post(webhookUrl).pipe(
     HttpClientRequest.bodyJson(payload),
     Effect.flatMap(httpClient.execute),
     Effect.mapError(
@@ -113,9 +140,24 @@ const postDiscordWebhook = Effect.fn("postDiscordWebhook")(function* (
         }),
     ),
   );
-});
 
-const runtimeLayer = Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer);
+  yield* Effect.logInfo("discord webhook response received").pipe(
+    Effect.annotateLogs({
+      status: response.status,
+      ok: response.status >= 200 && response.status < 300,
+    }),
+  );
+
+  yield* HttpClientResponse.filterStatusOk(response).pipe(
+    Effect.mapError(
+      (cause) =>
+        new DiscordReleaseAnnouncementError({
+          message: `Discord webhook returned status ${response.status}.`,
+          cause,
+        }),
+    ),
+  );
+});
 
 export const notifyDiscordReleaseCommand = Command.make(
   "notify-discord-release",
@@ -140,31 +182,52 @@ export const notifyDiscordReleaseCommand = Command.make(
       Flag.withDescription("Git tag for the release."),
     ),
     releaseUrl: Flag.string("release-url").pipe(
-      Flag.withSchema(WebUrlSchema),
+      Flag.withSchema(Schema.URLFromString),
       Flag.withDescription("Public GitHub release URL."),
     ),
   },
   ({ target, roleId, releaseName, version, tag, releaseUrl }) =>
     Effect.gen(function* () {
-      const webhookUrl = yield* DiscordWebhookUrl;
-      yield* postDiscordWebhook(
-        webhookUrl,
-        buildDiscordReleaseAnnouncement({
+      yield* Effect.logInfo("discord release announcement starting").pipe(
+        Effect.annotateLogs({
           target,
-          roleId,
+          roleIdProvided: roleId.length > 0,
+          roleIdLength: roleId.length,
           releaseName,
           version,
           tag,
           releaseUrl,
-          timestamp: new Date().toISOString(),
         }),
       );
+
+      const webhookUrl = yield* DiscordWebhookUrl;
+      const payload = buildDiscordReleaseAnnouncement({
+        target,
+        roleId,
+        releaseName,
+        version,
+        tag,
+        releaseUrl,
+        timestamp: new Date().toISOString(),
+      });
+
+      yield* Effect.logInfo("discord release announcement payload built").pipe(
+        Effect.annotateLogs(summarizePayload(payload)),
+      );
+      yield* postDiscordWebhook(webhookUrl, payload);
+      yield* Effect.logInfo("discord release announcement completed");
     }),
 ).pipe(Command.withDescription("Post a T3 Code release announcement to Discord."));
 
 if (import.meta.main) {
   Command.run(notifyDiscordReleaseCommand, { version: "0.0.0" }).pipe(
-    Effect.provide(runtimeLayer),
+    Effect.provide(
+      Layer.mergeAll(
+        Logger.layer([Logger.consolePretty()]),
+        NodeServices.layer,
+        FetchHttpClient.layer,
+      ),
+    ),
     NodeRuntime.runMain,
   );
 }
