@@ -656,12 +656,15 @@ export function GeneralSettingsPanel() {
           description="Tint each project with its own muted color and show a color dot you can click to change it."
           resetAction={
             settings.sidebarProjectColorizing !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarProjectColorizing ? (
+              DEFAULT_UNIFIED_SETTINGS.sidebarProjectColorizing ||
+            Object.keys(settings.sidebarProjectColorOverrides).length > 0 ? (
               <SettingResetButton
                 label="sidebar project colors"
                 onClick={() =>
                   updateSettings({
                     sidebarProjectColorizing: DEFAULT_UNIFIED_SETTINGS.sidebarProjectColorizing,
+                    sidebarProjectColorOverrides:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarProjectColorOverrides,
                   })
                 }
               />
