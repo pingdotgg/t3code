@@ -131,11 +131,29 @@ describe("ssh tunnel scripts", () => {
     assert.include(buildRemoteLaunchScript({ packageSpec: "t3@nightly" }), "t3@nightly");
     assert.include(
       buildRemotePairingScript(target),
-      '"$RUNNER_FILE" auth pairing create --base-dir "$SERVER_HOME" --json',
+      '"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json',
     );
+    assert.include(buildRemotePairingScript(target), 'BASE_DIR_FILE="$STATE_DIR/base-dir"');
     assert.include(buildRemotePairingScript(target, { packageSpec: "t3@nightly" }), "t3@nightly");
+    assert.include(
+      buildRemoteStopScript(target),
+      'if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ]',
+    );
     assert.include(buildRemoteStopScript(target), 'kill "$REMOTE_PID" 2>/dev/null || true');
-    assert.include(buildRemoteStopScript(target), 'rm -f "$PID_FILE" "$PORT_FILE"');
+    assert.include(
+      buildRemoteStopScript(target),
+      'rm -f "$PID_FILE" "$PORT_FILE" "$BASE_DIR_FILE" "$MANAGED_FILE"',
+    );
+    assert.include(
+      buildRemoteLaunchScript(),
+      'DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"',
+    );
+    assert.include(buildRemoteLaunchScript(), "resolve_default_runtime_port()");
+    assert.include(buildRemoteLaunchScript(), "printf 'external\\n' >\"$MANAGED_FILE\"");
+    assert.isBelow(
+      buildRemoteLaunchScript().indexOf('DEFAULT_REMOTE_PORT="$(resolve_default_runtime_port'),
+      buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PID" ]'),
+    );
   });
 
   it("allows the remote port picker to run without a state file path", () => {

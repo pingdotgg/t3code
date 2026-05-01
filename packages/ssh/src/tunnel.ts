@@ -324,8 +324,12 @@ export const REMOTE_LAUNCH_SCRIPT = `set -eu
 STATE_KEY="$1"
 STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
 SERVER_HOME="$STATE_DIR/server-home"
+DEFAULT_SERVER_HOME="$HOME/.t3"
+DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
 PORT_FILE="$STATE_DIR/port"
 PID_FILE="$STATE_DIR/pid"
+BASE_DIR_FILE="$STATE_DIR/base-dir"
+MANAGED_FILE="$STATE_DIR/managed"
 LOG_FILE="$STATE_DIR/server.log"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
@@ -361,23 +365,70 @@ wait_for_pid_exit() {
     sleep 0.1
   done
 }
+resolve_default_runtime_port() {
+  node - "$DEFAULT_RUNTIME_FILE" <<'NODE'
+const fs = require("node:fs");
+const runtimePath = process.argv[2] ?? "";
+try {
+  const runtime = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
+  const pid = Number(runtime.pid);
+  const port = Number(runtime.port);
+  if (!Number.isInteger(pid) || !Number.isInteger(port)) {
+    process.exit(1);
+  }
+  const origin = new URL(String(runtime.origin ?? ""));
+  if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
+    process.exit(1);
+  }
+  process.kill(pid, 0);
+  process.stdout.write(String(port));
+} catch {
+  process.exit(1);
+}
+NODE
+}
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
-if [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+DEFAULT_REMOTE_PORT="$(resolve_default_runtime_port 2>/dev/null || true)"
+if [ -n "$DEFAULT_REMOTE_PORT" ]; then
+  REMOTE_PORT="$DEFAULT_REMOTE_PORT"
+  if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+    printf '%s\\n' "$DEFAULT_SERVER_HOME" >"$BASE_DIR_FILE"
+    printf 'external\\n' >"$MANAGED_FILE"
+    REMOTE_PID=""
+    REMOTE_MANAGED="external"
+  else
+    REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+    REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
+    REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+  fi
+fi
+if [ "$REMOTE_MANAGED" = "external" ]; then
+  if [ -z "$REMOTE_PORT" ] || ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    REMOTE_PID=""
+    REMOTE_PORT=""
+    REMOTE_MANAGED=""
+  fi
+elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
   if [ "$RUNNER_CHANGED" -eq 1 ]; then
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
     REMOTE_PID=""
     REMOTE_PORT=""
+    REMOTE_MANAGED=""
   elif ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
     REMOTE_PID=""
     REMOTE_PORT=""
+    REMOTE_MANAGED=""
   fi
 else
   REMOTE_PID=""
   REMOTE_PORT=""
+  REMOTE_MANAGED=""
 fi
 if [ -z "$REMOTE_PID" ] || [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
@@ -389,12 +440,14 @@ if [ -z "$REMOTE_PID" ] || [ -z "$REMOTE_PORT" ]; then
   REMOTE_PID="$!"
   printf '%s\\n' "$REMOTE_PID" >"$PID_FILE"
   printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+  printf '%s\\n' "$SERVER_HOME" >"$BASE_DIR_FILE"
+  printf 'managed\\n' >"$MANAGED_FILE"
   if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
     printf 'Remote T3 server did not become ready on 127.0.0.1:%s.\\n' "$REMOTE_PORT" >&2
     tail -n 80 "$LOG_FILE" >&2 2>/dev/null || true
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
-    rm -f "$PID_FILE" "$PORT_FILE"
+    rm -f "$PID_FILE" "$PORT_FILE" "$BASE_DIR_FILE" "$MANAGED_FILE"
     exit 1
   fi
 fi
@@ -404,21 +457,29 @@ printf '{"remotePort":%s}\\n' "$REMOTE_PORT"
 export const REMOTE_PAIRING_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 SERVER_HOME="$STATE_DIR/server-home"
+BASE_DIR_FILE="$STATE_DIR/base-dir"
 RUNNER_FILE="$STATE_DIR/run-t3.sh"
 mkdir -p "$STATE_DIR" "$SERVER_HOME"
 cat >"$RUNNER_FILE" <<'SH'
 @@T3_RUNNER_SCRIPT@@
 SH
 chmod 700 "$RUNNER_FILE"
-"$RUNNER_FILE" auth pairing create --base-dir "$SERVER_HOME" --json
+PAIRING_BASE_DIR="$(cat "$BASE_DIR_FILE" 2>/dev/null || true)"
+if [ -z "$PAIRING_BASE_DIR" ]; then
+  PAIRING_BASE_DIR="$SERVER_HOME"
+fi
+"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
 `;
 
 export const REMOTE_STOP_SCRIPT = `set -eu
 STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
 PID_FILE="$STATE_DIR/pid"
 PORT_FILE="$STATE_DIR/port"
+BASE_DIR_FILE="$STATE_DIR/base-dir"
+MANAGED_FILE="$STATE_DIR/managed"
+REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
-if [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
   kill "$REMOTE_PID" 2>/dev/null || true
   WAIT_COUNT=0
   while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
@@ -426,7 +487,7 @@ if [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
     sleep 0.1
   done
 fi
-rm -f "$PID_FILE" "$PORT_FILE"
+rm -f "$PID_FILE" "$PORT_FILE" "$BASE_DIR_FILE" "$MANAGED_FILE"
 printf '{"stopped":true}\\n'
 `;
 
