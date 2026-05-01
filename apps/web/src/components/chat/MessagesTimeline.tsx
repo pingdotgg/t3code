@@ -417,7 +417,6 @@ function TimelineUserSection({
         >
           <TimelineUserMessageCard
             message={userRow.message}
-            timestampFormat={ctx.timestampFormat}
             onImageExpand={ctx.onImageExpand}
             onRevertUserMessage={ctx.onRevertUserMessage}
             revertDisabled={ctx.isRevertingCheckpoint || ctx.isWorking}
@@ -946,7 +945,6 @@ const UserMessageBody = memo(function UserMessageBody(props: {
 
 const TimelineUserMessageCard = memo(function TimelineUserMessageCard(props: {
   message: Extract<TimelineRow, { kind: "message" }>["message"];
-  timestampFormat: TimestampFormat;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onRevertUserMessage: (messageId: MessageId) => void;
   revertDisabled: boolean;
@@ -958,6 +956,8 @@ const TimelineUserMessageCard = memo(function TimelineUserMessageCard(props: {
   const displayedUserMessage = deriveDisplayedUserMessageState(props.message.text);
   const terminalContexts = displayedUserMessage.terminalContexts;
   const codeContexts = displayedUserMessage.codeContexts;
+  const hasCopyAction = Boolean(displayedUserMessage.copyText);
+  const hasFooter = canCollapseMessageBody || hasCopyAction || props.showRevertAction;
 
   useEffect(() => {
     if (!canCollapseMessageBody && messageBodyExpanded) {
@@ -969,7 +969,7 @@ const TimelineUserMessageCard = memo(function TimelineUserMessageCard(props: {
     <div className="flex justify-end">
       <div
         data-user-message-card="true"
-        className="group relative w-full rounded-xl border border-border bg-secondary px-4 py-3"
+        className="relative w-full rounded-xl border border-border bg-secondary px-4 py-3"
       >
         {userImages.length > 0 ? (
           <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
@@ -1017,25 +1017,20 @@ const TimelineUserMessageCard = memo(function TimelineUserMessageCard(props: {
           />
         ) : null}
 
-        <div className="mt-1.5 flex items-center gap-2">
-          {canCollapseMessageBody ? (
-            <Button
-              type="button"
-              size="xs"
-              variant="outline"
-              data-scroll-anchor-ignore
-              onClick={() => setMessageBodyExpanded((value) => !value)}
-            >
-              {messageBodyExpanded ? "Collapse message" : "Expand message"}
-            </Button>
-          ) : null}
-          <div className="ml-auto flex items-center gap-2">
-            <div
-              className={cn(
-                "flex items-center gap-1.5 opacity-0 focus-within:opacity-100 group-hover:opacity-100",
-                MICRO_FADE_MOTION_CLASS_NAME,
-              )}
-            >
+        {hasFooter ? (
+          <div className="mt-1.5 flex items-center gap-2">
+            {canCollapseMessageBody ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                data-scroll-anchor-ignore
+                onClick={() => setMessageBodyExpanded((value) => !value)}
+              >
+                {messageBodyExpanded ? "Collapse message" : "Expand message"}
+              </Button>
+            ) : null}
+            <div className={cn("ml-auto flex items-center gap-1.5", MICRO_FADE_MOTION_CLASS_NAME)}>
               {displayedUserMessage.copyText ? (
                 <MessageCopyButton text={displayedUserMessage.copyText} />
               ) : null}
@@ -1052,11 +1047,8 @@ const TimelineUserMessageCard = memo(function TimelineUserMessageCard(props: {
                 </Button>
               ) : null}
             </div>
-            <p className="text-right text-xs text-muted-foreground/50">
-              {formatTimestamp(props.message.createdAt, props.timestampFormat)}
-            </p>
           </div>
-        </div>
+        ) : null}
       </div>
     </div>
   );
