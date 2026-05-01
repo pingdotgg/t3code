@@ -1,4 +1,4 @@
-import Editor, { type OnMount } from "@monaco-editor/react";
+import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
 import type { EnvironmentId, ProjectReadFileResult } from "@forma/contracts";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import {
@@ -9,7 +9,7 @@ import {
   IconSquareAndArrowDown as SaveIcon,
   IconSquareAndArrowUp as OpenInIDEIcon,
 } from "symbols-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readEnvironmentApi } from "../environmentApi";
 import {
   reconstructPreTurnFileContents,
@@ -74,9 +74,12 @@ interface DiffFileEditorPaneProps {
   resolvedTheme: ResolvedThemeMode;
   onRequestBack: () => void;
   onRequestFilePathChange: (filePath: string) => void;
+  requestedFilePathChange?: string | null | undefined;
+  onHandledRequestedFilePathChange?: (() => void) | undefined;
   onOpenInEditor: (filePath: string) => void;
   onOpenPreview: (filePath: string) => void;
   previewDisabledReason: string | null;
+  reuseMonacoModels?: boolean | undefined;
   onPersisted: (input: {
     filePath: string;
     savedContents: string;
@@ -88,6 +91,7 @@ interface DiffFileEditorPaneProps {
 const SELECTION_ACTION_OFFSET_PX = 8;
 const SELECTION_ACTION_HEIGHT_PX = 28;
 const SELECTION_ACTION_MIN_EDGE_PX = 8;
+const MAX_WARM_EDITOR_MODELS = 20;
 
 interface CachedEditorSessionState {
   filePath: string;
@@ -100,33 +104,214 @@ interface CachedEditorSessionState {
 }
 
 const editorSessionStateByKey = new Map<string, CachedEditorSessionState>();
+const warmEditorModelUsageBySessionKey = new Map<
+  string,
+  ReadonlyArray<{ cwd: string; filePath: string }>
+>();
+
+function normalizePathValue(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
+function encodePathSegments(path: string): string {
+  return normalizePathValue(path)
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+function buildEditorSessionStateCacheKey(input: {
+  sessionKey: string | undefined;
+  cwd: string;
+  filePath: string;
+}): string | null {
+  if (!input.sessionKey) {
+    return null;
+  }
+  return `${input.sessionKey}:${normalizePathValue(input.cwd)}:${normalizePathValue(input.filePath)}`;
+}
+
+function buildWarmEditorModelPath(input: {
+  sessionKey: string | undefined;
+  cwd: string;
+  filePath: string;
+}): string {
+  if (!input.sessionKey) {
+    return input.filePath;
+  }
+  return `inmemory://forma-workspace/${encodeURIComponent(input.sessionKey)}/${encodePathSegments(input.cwd)}/${encodePathSegments(input.filePath)}`;
+}
+
+function buildWarmEditorUsageKey(input: { cwd: string; filePath: string }): string {
+  return `${normalizePathValue(input.cwd)}:${normalizePathValue(input.filePath)}`;
+}
+
+function readWarmEditorModelUsage(sessionKey: string | undefined) {
+  if (!sessionKey) {
+    return [];
+  }
+  return [...(warmEditorModelUsageBySessionKey.get(sessionKey) ?? [])];
+}
+
+function writeWarmEditorModelUsage(
+  sessionKey: string | undefined,
+  usage: ReadonlyArray<{ cwd: string; filePath: string }>,
+): void {
+  if (!sessionKey) {
+    return;
+  }
+  if (usage.length === 0) {
+    warmEditorModelUsageBySessionKey.delete(sessionKey);
+    return;
+  }
+  warmEditorModelUsageBySessionKey.set(sessionKey, usage);
+}
+
+function markWarmEditorModelUsed(input: {
+  sessionKey: string | undefined;
+  cwd: string;
+  filePath: string;
+}) {
+  const usage = readWarmEditorModelUsage(input.sessionKey);
+  const nextKey = buildWarmEditorUsageKey({ cwd: input.cwd, filePath: input.filePath });
+  const nextUsage = usage.filter((entry) => buildWarmEditorUsageKey(entry) !== nextKey);
+  nextUsage.push({
+    cwd: input.cwd,
+    filePath: input.filePath,
+  });
+  writeWarmEditorModelUsage(input.sessionKey, nextUsage);
+  return nextUsage;
+}
+
+function forgetWarmEditorModel(input: {
+  sessionKey: string | undefined;
+  cwd: string;
+  filePath: string;
+}): void {
+  if (!input.sessionKey) {
+    return;
+  }
+
+  const targetKey = buildWarmEditorUsageKey({
+    cwd: input.cwd,
+    filePath: input.filePath,
+  });
+  writeWarmEditorModelUsage(
+    input.sessionKey,
+    readWarmEditorModelUsage(input.sessionKey).filter(
+      (entry) => buildWarmEditorUsageKey(entry) !== targetKey,
+    ),
+  );
+}
+
+function evictWarmEditorModels(input: {
+  sessionKey: string | undefined;
+  currentCwd: string;
+  currentFilePath: string;
+  monaco: Monaco;
+}): void {
+  if (!input.sessionKey) {
+    return;
+  }
+
+  const usage = readWarmEditorModelUsage(input.sessionKey);
+  if (usage.length <= MAX_WARM_EDITOR_MODELS) {
+    return;
+  }
+
+  const nextUsage = [...usage];
+  const currentUsageKey = buildWarmEditorUsageKey({
+    cwd: input.currentCwd,
+    filePath: input.currentFilePath,
+  });
+  let index = 0;
+  while (nextUsage.length > MAX_WARM_EDITOR_MODELS && index < nextUsage.length) {
+    const candidate = nextUsage[index];
+    if (!candidate) {
+      index += 1;
+      continue;
+    }
+
+    if (buildWarmEditorUsageKey(candidate) === currentUsageKey) {
+      index += 1;
+      continue;
+    }
+
+    const cachedState = readCachedEditorSessionState(
+      input.sessionKey,
+      candidate.cwd,
+      candidate.filePath,
+    );
+    if (cachedState && cachedState.draftContents !== cachedState.baseContents) {
+      index += 1;
+      continue;
+    }
+
+    input.monaco.editor
+      .getModel(
+        input.monaco.Uri.parse(
+          buildWarmEditorModelPath({
+            sessionKey: input.sessionKey,
+            cwd: candidate.cwd,
+            filePath: candidate.filePath,
+          }),
+        ),
+      )
+      ?.dispose();
+    nextUsage.splice(index, 1);
+  }
+
+  writeWarmEditorModelUsage(input.sessionKey, nextUsage);
+}
 
 function readCachedEditorSessionState(
   sessionKey: string | undefined,
+  cwd: string,
   filePath: string,
 ): CachedEditorSessionState | null {
-  if (!sessionKey) {
+  const cacheKey = buildEditorSessionStateCacheKey({
+    sessionKey,
+    cwd,
+    filePath,
+  });
+  if (!cacheKey) {
     return null;
   }
-  const state = editorSessionStateByKey.get(sessionKey) ?? null;
+  const state = editorSessionStateByKey.get(cacheKey) ?? null;
   return state?.filePath === filePath ? state : null;
 }
 
 function writeCachedEditorSessionState(
   sessionKey: string | undefined,
+  cwd: string,
+  filePath: string,
   state: CachedEditorSessionState,
 ): void {
-  if (!sessionKey) {
+  const cacheKey = buildEditorSessionStateCacheKey({
+    sessionKey,
+    cwd,
+    filePath,
+  });
+  if (!cacheKey) {
     return;
   }
-  editorSessionStateByKey.set(sessionKey, state);
+  editorSessionStateByKey.set(cacheKey, state);
 }
 
-function clearCachedEditorSessionState(sessionKey: string | undefined): void {
-  if (!sessionKey) {
+function clearCachedEditorSessionState(
+  sessionKey: string | undefined,
+  cwd: string,
+  filePath: string,
+): void {
+  const cacheKey = buildEditorSessionStateCacheKey({
+    sessionKey,
+    cwd,
+    filePath,
+  });
+  if (!cacheKey) {
     return;
   }
-  editorSessionStateByKey.delete(sessionKey);
+  editorSessionStateByKey.delete(cacheKey);
 }
 
 function canReuseCachedEditorSessionState(
@@ -156,6 +341,7 @@ function buildCachedEditorSessionStateFromProjectFile(input: {
 
 export function __resetDiffFileEditorPaneSessionCacheForTests(): void {
   editorSessionStateByKey.clear();
+  warmEditorModelUsageBySessionKey.clear();
 }
 
 function buildUnavailableMessage(status: ProjectFileEditorStatus): string {
@@ -234,14 +420,17 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     onOpenInEditor,
     onOpenPreview,
     previewDisabledReason,
+    reuseMonacoModels = false,
     onPersisted,
+    onHandledRequestedFilePathChange,
     onAddCodeContext,
+    requestedFilePathChange,
     sessionKey,
     onRequestBack,
     onRequestFilePathChange,
     resolvedTheme,
   } = props;
-  const cachedSessionState = readCachedEditorSessionState(sessionKey, filePath);
+  const cachedSessionState = readCachedEditorSessionState(sessionKey, cwd, filePath);
   const cachedProjectFile = peekProjectFileForEditor({
     environmentId,
     cwd,
@@ -258,7 +447,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
         })
       : null);
   const [status, setStatus] = useState<ProjectFileEditorStatus>(
-    initialSessionState?.status ?? "idle",
+    initialSessionState?.status ?? "loading",
   );
   const [message, setMessage] = useState<string | null>(initialSessionState?.message ?? null);
   const [baseContents, setBaseContents] = useState(initialSessionState?.baseContents ?? "");
@@ -276,6 +465,8 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   );
   const saveHandlerRef = useRef<() => Promise<boolean>>(async () => false);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const monacoRef = useRef<Monaco | null>(null);
+  const [monacoReadyGeneration, setMonacoReadyGeneration] = useState(0);
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const editorSubscriptionsRef = useRef<Array<{ dispose: () => void }>>([]);
   const updateSelectionActionRef = useRef<() => void>(() => undefined);
@@ -286,6 +477,18 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     left: number;
   } | null>(null);
   const codeFontScale = useSettings((settings) => settings.codeFontScale);
+  const renderedEditorFilePath = reuseMonacoModels ? stateFilePath : filePath;
+  const renderedEditorModelPath = useMemo(
+    () =>
+      reuseMonacoModels
+        ? buildWarmEditorModelPath({
+            sessionKey,
+            cwd,
+            filePath: renderedEditorFilePath,
+          })
+        : renderedEditorFilePath,
+    [cwd, renderedEditorFilePath, reuseMonacoModels, sessionKey],
+  );
 
   const isDirty = draftContents !== baseContents;
   const canSave =
@@ -320,8 +523,8 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     [isDirty, performNavigation],
   );
 
-  useEffect(() => {
-    const nextCachedState = readCachedEditorSessionState(sessionKey, filePath);
+  useLayoutEffect(() => {
+    const nextCachedState = readCachedEditorSessionState(sessionKey, cwd, filePath);
     if (nextCachedState) {
       setStateSessionKey(sessionKey);
       setStateFilePath(filePath);
@@ -359,7 +562,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
 
     setStateSessionKey(sessionKey);
     setStateFilePath(filePath);
-    setStatus("idle");
+    setStatus("loading");
     setMessage(null);
     setBaseContents("");
     setDraftContents("");
@@ -372,7 +575,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
       return;
     }
 
-    writeCachedEditorSessionState(sessionKey, {
+    writeCachedEditorSessionState(sessionKey, cwd, filePath, {
       filePath,
       status,
       message,
@@ -387,6 +590,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     draftContents,
     filePath,
     message,
+    cwd,
     sessionKey,
     stateFilePath,
     stateSessionKey,
@@ -395,7 +599,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
 
   const loadFile = useCallback(
     async (options?: { force?: boolean }) => {
-      const cachedState = readCachedEditorSessionState(sessionKey, filePath);
+      const cachedState = readCachedEditorSessionState(sessionKey, cwd, filePath);
       if (canReuseCachedEditorSessionState(cachedState) && !options?.force) {
         setStateSessionKey(sessionKey);
         setStateFilePath(filePath);
@@ -580,8 +784,51 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   }, [initialOverride?.preTurnContents]);
 
   useEffect(() => {
+    if (!requestedFilePathChange) {
+      return;
+    }
+
+    if (requestedFilePathChange === filePath) {
+      onHandledRequestedFilePathChange?.();
+      return;
+    }
+
+    requestNavigation({
+      type: "switch-file",
+      filePath: requestedFilePathChange,
+    });
+    onHandledRequestedFilePathChange?.();
+  }, [filePath, onHandledRequestedFilePathChange, requestNavigation, requestedFilePathChange]);
+
+  useEffect(() => {
     saveHandlerRef.current = handleSave;
   }, [handleSave]);
+
+  useEffect(() => {
+    if (!reuseMonacoModels || !sessionKey || monacoRef.current === null) {
+      return;
+    }
+    if (
+      status === "loading" ||
+      status === "missing" ||
+      status === "unsupported" ||
+      status === "error"
+    ) {
+      return;
+    }
+
+    markWarmEditorModelUsed({
+      sessionKey,
+      cwd,
+      filePath: stateFilePath,
+    });
+    evictWarmEditorModels({
+      sessionKey,
+      currentCwd: cwd,
+      currentFilePath: stateFilePath,
+      monaco: monacoRef.current,
+    });
+  }, [cwd, monacoReadyGeneration, reuseMonacoModels, sessionKey, stateFilePath, status]);
 
   const clearEditorSubscriptions = useCallback(() => {
     for (const subscription of editorSubscriptionsRef.current) {
@@ -674,6 +921,8 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   const handleEditorMount = useCallback<OnMount>(
     (editor, monaco) => {
       editorRef.current = editor;
+      monacoRef.current = monaco;
+      setMonacoReadyGeneration((current) => current + 1);
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
         void saveHandlerRef.current();
       });
@@ -701,6 +950,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   useEffect(() => {
     return () => {
       clearEditorSubscriptions();
+      monacoRef.current = null;
     };
   }, [clearEditorSubscriptions]);
 
@@ -729,7 +979,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [filePath, initialColumn, initialLine, status]);
+  }, [renderedEditorFilePath, initialColumn, initialLine, status]);
 
   const editorOptions = useMemo(
     () => ({
@@ -744,7 +994,13 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     [codeFontScale, status],
   );
   const monacoTheme = useMemo(() => ensureAppMonacoTheme(resolvedTheme), [resolvedTheme]);
-  const monacoLanguage = useMemo(() => resolveMonacoLanguage(filePath), [filePath]);
+  const monacoLanguage = useMemo(
+    () => resolveMonacoLanguage(renderedEditorFilePath),
+    [renderedEditorFilePath],
+  );
+  const showUnavailableState =
+    status === "missing" || status === "unsupported" || status === "error";
+  const showPersistentEditor = reuseMonacoModels || status !== "loading";
 
   return (
     <>
@@ -851,7 +1107,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                   </div>
                 </div>
               ) : null}
-              {status === "missing" || status === "unsupported" || status === "error" ? (
+              {showUnavailableState ? (
                 <StatePanel
                   filePath={filePath}
                   message={message ?? "Unable to load this file."}
@@ -861,13 +1117,19 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                   onOpenInEditor={() => onOpenInEditor(filePath)}
                   onReload={() => void loadFile({ force: true })}
                 />
-              ) : status === "loading" ? (
+              ) : !showPersistentEditor ? (
                 <div className="flex min-h-0 flex-1 items-center justify-center gap-2 px-4 py-6 text-sm text-muted-foreground">
                   <LoaderIcon className="size-4 animate-spin" />
                   Loading file…
                 </div>
               ) : (
                 <div ref={editorContainerRef} className="relative min-h-0 flex-1 overflow-hidden">
+                  {status === "loading" ? (
+                    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center gap-2 bg-background/80 px-4 py-6 text-sm text-muted-foreground backdrop-blur-[1px]">
+                      <LoaderIcon className="size-4 animate-spin" />
+                      Loading file…
+                    </div>
+                  ) : null}
                   {selectionAction ? (
                     <Button
                       type="button"
@@ -891,23 +1153,44 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                       Add to chat
                     </Button>
                   ) : null}
-                  <Editor
-                    key={filePath}
-                    height="100%"
-                    keepCurrentModel={false}
-                    loading={
-                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                        Loading editor…
-                      </div>
-                    }
-                    onChange={(value) => setDraftContents(value ?? "")}
-                    onMount={handleEditorMount}
-                    options={editorOptions}
-                    path={filePath}
-                    theme={monacoTheme}
-                    value={draftContents}
-                    {...(monacoLanguage ? { language: monacoLanguage } : {})}
-                  />
+                  {reuseMonacoModels ? (
+                    <Editor
+                      height="100%"
+                      keepCurrentModel={true}
+                      loading={
+                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                          Loading editor…
+                        </div>
+                      }
+                      onChange={(value) => setDraftContents(value ?? "")}
+                      onMount={handleEditorMount}
+                      options={editorOptions}
+                      path={renderedEditorModelPath}
+                      saveViewState={true}
+                      theme={monacoTheme}
+                      value={draftContents}
+                      {...(monacoLanguage ? { language: monacoLanguage } : {})}
+                    />
+                  ) : (
+                    <Editor
+                      key={filePath}
+                      height="100%"
+                      keepCurrentModel={false}
+                      loading={
+                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                          Loading editor…
+                        </div>
+                      }
+                      onChange={(value) => setDraftContents(value ?? "")}
+                      onMount={handleEditorMount}
+                      options={editorOptions}
+                      path={renderedEditorModelPath}
+                      saveViewState={false}
+                      theme={monacoTheme}
+                      value={draftContents}
+                      {...(monacoLanguage ? { language: monacoLanguage } : {})}
+                    />
+                  )}
                 </div>
               )}
             </div>
@@ -932,7 +1215,25 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
             <Button
               variant="ghost"
               onClick={() => {
-                clearCachedEditorSessionState(sessionKey);
+                if (reuseMonacoModels && sessionKey && monacoRef.current?.editor) {
+                  monacoRef.current.editor
+                    .getModel?.(
+                      monacoRef.current.Uri.parse(
+                        buildWarmEditorModelPath({
+                          sessionKey,
+                          cwd,
+                          filePath,
+                        }),
+                      ),
+                    )
+                    ?.dispose?.();
+                  forgetWarmEditorModel({
+                    sessionKey,
+                    cwd,
+                    filePath,
+                  });
+                }
+                clearCachedEditorSessionState(sessionKey, cwd, filePath);
                 if (pendingNavigation) {
                   performNavigation(pendingNavigation);
                 }

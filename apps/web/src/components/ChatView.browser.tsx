@@ -8750,7 +8750,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(mounted.router.state.location.search).toMatchObject({
             diff: "1",
             diffView: "editor",
-            editorFilePath: "src/other.ts",
+            editorFilePath: "src/linked.ts",
             editorBackToView: "files",
           });
           expect(readFile).toHaveBeenCalledWith({

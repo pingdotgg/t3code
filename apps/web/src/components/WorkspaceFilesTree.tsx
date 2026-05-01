@@ -11,6 +11,7 @@ import { memo, useCallback, useEffect, useState } from "react";
 import { prefetchProjectFileForEditor } from "../lib/projectFileReadCache";
 import { projectListEntriesQueryOptions } from "../lib/projectReactQuery";
 import { cn } from "../lib/utils";
+import { scheduleWorkspaceDirectoryPrefetch } from "../lib/workspaceFilePrefetch";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 
 const expandedDirectoryPathsBySessionKey = new Map<string, readonly string[]>();
@@ -105,6 +106,19 @@ const WorkspaceDirectoryEntries = memo(function WorkspaceDirectoryEntries(props:
       ...(props.parentPath !== null ? { relativePath: props.parentPath } : {}),
     }),
   );
+  const entries = entriesQuery.data?.entries;
+
+  useEffect(() => {
+    if (!entries || entries.length === 0) {
+      return;
+    }
+
+    return scheduleWorkspaceDirectoryPrefetch({
+      environmentId: props.environmentId,
+      cwd: props.cwd,
+      entries,
+    });
+  }, [entries, props.cwd, props.environmentId]);
 
   if (entriesQuery.isLoading) {
     return (
@@ -130,7 +144,7 @@ const WorkspaceDirectoryEntries = memo(function WorkspaceDirectoryEntries(props:
     );
   }
 
-  if ((entriesQuery.data?.entries.length ?? 0) === 0) {
+  if (!entries || entries.length === 0) {
     return props.depth === 0 ? (
       <div className="px-2 py-2 text-xs text-muted-foreground">No files in this workspace.</div>
     ) : (
@@ -140,7 +154,7 @@ const WorkspaceDirectoryEntries = memo(function WorkspaceDirectoryEntries(props:
 
   return (
     <div className="space-y-0.5">
-      {entriesQuery.data?.entries.map((entry) =>
+      {entries.map((entry) =>
         entry.kind === "directory" ? (
           <WorkspaceDirectoryNode
             key={entry.path}

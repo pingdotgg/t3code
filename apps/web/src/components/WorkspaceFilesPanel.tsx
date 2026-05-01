@@ -6,7 +6,7 @@ import {
   IconChevronLeft as ChevronLeftIcon,
   IconSidebarTrailing as PanelRightCloseIcon,
 } from "symbols-react";
-import { useCallback } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useComposerHandleContext } from "../composerHandleContext";
 import {
@@ -39,6 +39,12 @@ import { toastManager } from "./ui/toast";
 const WORKSPACE_PANEL_TREE_COLLAPSED_KEY = "forma:workspace-panel-tree-collapsed:v1";
 const WorkspacePanelTreeCollapsedSchema = Schema.Record(Schema.String, Schema.Boolean);
 
+interface EditorTarget {
+  filePath: string;
+  line?: number | undefined;
+  column?: number | undefined;
+}
+
 interface WorkspaceFilesPanelProps {
   mode?: DiffPanelMode;
   routeTarget: ThreadRouteTarget;
@@ -46,6 +52,29 @@ interface WorkspaceFilesPanelProps {
   panelKey: string;
   workspaceRoot: string | null;
   activeProjectRef: ScopedProjectRef | null;
+}
+
+function buildEditorTargetKey(target: EditorTarget | null): string | null {
+  if (!target) {
+    return null;
+  }
+  return `${target.filePath}:${target.line ?? ""}:${target.column ?? ""}`;
+}
+
+function resolveRouteEditorTarget(input: {
+  editorFilePath?: string | null | undefined;
+  editorLine?: number | undefined;
+  editorColumn?: number | undefined;
+}): EditorTarget | null {
+  if (!input.editorFilePath) {
+    return null;
+  }
+
+  return {
+    filePath: input.editorFilePath,
+    ...(typeof input.editorLine === "number" ? { line: input.editorLine } : {}),
+    ...(typeof input.editorColumn === "number" ? { column: input.editorColumn } : {}),
+  };
 }
 
 export function WorkspaceFilesPanel({
@@ -61,15 +90,61 @@ export function WorkspaceFilesPanel({
   const composerRef = useComposerHandleContext();
   const { resolvedTheme } = useTheme();
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
-  const editorFilePath = diffSearch.editorFilePath ?? null;
-  const editorLine = diffSearch.editorLine;
-  const editorColumn = diffSearch.editorColumn;
+  const panelOpen = diffSearch.diff === "1";
+  const routeEditorTarget = useMemo(
+    () =>
+      resolveRouteEditorTarget({
+        editorFilePath: diffSearch.editorFilePath,
+        editorLine: diffSearch.editorLine,
+        editorColumn: diffSearch.editorColumn,
+      }),
+    [diffSearch.editorColumn, diffSearch.editorFilePath, diffSearch.editorLine],
+  );
+  const routeEditorTargetKey = useMemo(
+    () => buildEditorTargetKey(routeEditorTarget),
+    [routeEditorTarget],
+  );
+  const [activeEditorTarget, setActiveEditorTarget] = useState<EditorTarget | null>(
+    () => routeEditorTarget,
+  );
+  const [pendingRequestedFilePathChange, setPendingRequestedFilePathChange] = useState<
+    string | null
+  >(null);
+  const lastAppliedRouteTargetRef = useRef<string | null>(routeEditorTargetKey);
+  const wasPanelOpenRef = useRef(panelOpen);
+  const editorFilePath = activeEditorTarget?.filePath ?? null;
+  const editorLine = activeEditorTarget?.line;
+  const editorColumn = activeEditorTarget?.column;
   const [treeCollapsedByWorkspace, setTreeCollapsedByWorkspace] = useLocalStorage(
     WORKSPACE_PANEL_TREE_COLLAPSED_KEY,
     {},
     WorkspacePanelTreeCollapsedSchema,
   );
   const treeCollapsed = workspaceRoot ? (treeCollapsedByWorkspace[workspaceRoot] ?? false) : false;
+
+  useLayoutEffect(() => {
+    const openedIntoFilesView =
+      panelOpen && !wasPanelOpenRef.current && diffSearch.diffView === "files";
+    wasPanelOpenRef.current = panelOpen;
+
+    if (openedIntoFilesView) {
+      lastAppliedRouteTargetRef.current = null;
+      setPendingRequestedFilePathChange(null);
+      setActiveEditorTarget(null);
+      return;
+    }
+
+    if (
+      routeEditorTargetKey === null ||
+      routeEditorTargetKey === lastAppliedRouteTargetRef.current
+    ) {
+      return;
+    }
+
+    lastAppliedRouteTargetRef.current = routeEditorTargetKey;
+    setPendingRequestedFilePathChange(null);
+    setActiveEditorTarget(routeEditorTarget);
+  }, [diffSearch.diffView, panelOpen, routeEditorTarget, routeEditorTargetKey]);
 
   const navigateToCurrentRoute = useCallback(
     (updateSearch: (previous: Record<string, unknown>) => Record<string, unknown>) => {
@@ -176,6 +251,17 @@ export function WorkspaceFilesPanel({
 
   const selectFile = useCallback(
     (filePath: string) => {
+      const nextTarget = { filePath } satisfies EditorTarget;
+      if (diffSearch.diffView === "editor") {
+        if (activeEditorTarget?.filePath === filePath) {
+          return;
+        }
+        setPendingRequestedFilePathChange(filePath);
+        return;
+      }
+
+      setPendingRequestedFilePathChange(null);
+      setActiveEditorTarget(nextTarget);
       navigateToCurrentRoute((previous) =>
         buildDiffEditorSearch(previous, {
           filePath,
@@ -183,12 +269,33 @@ export function WorkspaceFilesPanel({
         }),
       );
     },
-    [navigateToCurrentRoute],
+    [activeEditorTarget?.filePath, diffSearch.diffView, navigateToCurrentRoute],
   );
 
-  const editorSessionKey = editorFilePath
-    ? `workspace-files:${panelKey}:${editorFilePath}`
+  const openEditorTarget = useCallback(
+    (target: EditorTarget) => {
+      setPendingRequestedFilePathChange(null);
+      setActiveEditorTarget(target);
+      if (diffSearch.diffView === "editor") {
+        return;
+      }
+
+      navigateToCurrentRoute((previous) =>
+        buildDiffEditorSearch(previous, {
+          filePath: target.filePath,
+          ...(typeof target.line === "number" ? { line: target.line } : {}),
+          ...(typeof target.column === "number" ? { column: target.column } : {}),
+          backToView: "files",
+        }),
+      );
+    },
+    [diffSearch.diffView, navigateToCurrentRoute],
+  );
+
+  const editorSessionKey = workspaceRoot
+    ? `workspace-files:${panelKey}:${workspaceRoot}`
     : undefined;
+  const editorVisible = diffSearch.diffView === "editor" && activeEditorTarget !== null;
 
   return (
     <DiffPanelShell mode={mode}>
@@ -231,16 +338,15 @@ export function WorkspaceFilesPanel({
                   environmentId={environmentId}
                   sessionKey={`${panelKey}:${workspaceRoot}`}
                   resolvedTheme={resolvedTheme}
-                  selectedFilePath={editorFilePath}
+                  selectedFilePath={activeEditorTarget?.filePath ?? null}
                   onSelectFile={selectFile}
                 />
               </ScrollArea>
             )}
           </div>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-            {editorFilePath ? (
+            {editorVisible && editorFilePath ? (
               <DiffFileEditorPane
-                key={editorSessionKey ?? editorFilePath}
                 cwd={workspaceRoot}
                 environmentId={environmentId}
                 sessionKey={editorSessionKey}
@@ -250,6 +356,7 @@ export function WorkspaceFilesPanel({
                 initialColumn={editorColumn}
                 initialLine={editorLine}
                 initialOverride={undefined}
+                reuseMonacoModels={true}
                 navigationLabel={
                   diffSearch.editorBackToView === "files" ? "Back to files" : "Close editor"
                 }
@@ -259,6 +366,9 @@ export function WorkspaceFilesPanel({
                 onOpenPreview={openPreviewForFile}
                 previewDisabledReason={previewDisabledReasonForFile(editorFilePath)}
                 onPersisted={persistSavedWorkspaceFile}
+                onHandledRequestedFilePathChange={() => {
+                  setPendingRequestedFilePathChange(null);
+                }}
                 onRequestBack={() => {
                   if (diffSearch.editorBackToView === "files") {
                     navigateToCurrentRoute((previous) => buildDiffFilesSearch(previous));
@@ -267,13 +377,9 @@ export function WorkspaceFilesPanel({
                   navigateToCurrentRoute((previous) => buildDiffClosedSearch(previous));
                 }}
                 onRequestFilePathChange={(filePath) => {
-                  navigateToCurrentRoute((previous) =>
-                    buildDiffEditorSearch(previous, {
-                      filePath,
-                      backToView: diffSearch.editorBackToView ?? "files",
-                    }),
-                  );
+                  openEditorTarget({ filePath });
                 }}
+                requestedFilePathChange={pendingRequestedFilePathChange}
               />
             ) : (
               <div className="flex h-full items-center justify-center px-6 text-center">
