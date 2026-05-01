@@ -1,5 +1,10 @@
 import { parseScopedThreadKey, scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
-import { type ScopedProjectRef, type ScopedThreadRef, ThreadId } from "@forma/contracts";
+import {
+  type OrchestrationThreadShell,
+  type ScopedProjectRef,
+  type ScopedThreadRef,
+  ThreadId,
+} from "@forma/contracts";
 import type { ThreadCleanupInactiveDays } from "@forma/contracts/settings";
 import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
@@ -9,11 +14,13 @@ import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { ensureEnvironmentApi, readEnvironmentApi } from "../environmentApi";
+import { stageOptimisticThreadShell } from "../environments/runtime/service";
 import { invalidateGitQueries } from "../lib/gitReactQuery";
-import { newCommandId } from "../lib/utils";
+import { newCommandId, newThreadId } from "../lib/utils";
 import { readLocalApi } from "../localApi";
 import {
   selectProjectByRef,
+  selectSidebarThreadSummaryByRef,
   selectSidebarThreadsForProjectRefs,
   selectThreadByRef,
   selectThreadsForEnvironment,
@@ -25,6 +32,7 @@ import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { bucketThreadsForCleanup } from "../lib/threadCleanup";
 import { useSettings } from "./useSettings";
+import { buildForkedThreadTitle } from "../threadForking";
 
 type ArchiveDispatchResult =
   | { status: "archived"; projectRef: ScopedProjectRef; threadRef: ScopedThreadRef }
@@ -266,6 +274,61 @@ export function useThreadActions() {
     });
   }, []);
 
+  const forkThread = useCallback(
+    async (target: ScopedThreadRef) => {
+      const api = readEnvironmentApi(target.environmentId);
+      if (!api) {
+        throw new Error("Environment API not found.");
+      }
+      const resolved = resolveThreadTarget(target);
+      if (!resolved) {
+        throw new Error("Source thread not found.");
+      }
+
+      const nextThreadId = newThreadId();
+      const nextThreadRef = scopeThreadRef(target.environmentId, nextThreadId);
+      const createdAt = new Date().toISOString();
+      await api.orchestration.dispatchCommand({
+        type: "thread.fork",
+        commandId: newCommandId(),
+        threadId: nextThreadId,
+        sourceThreadId: target.threadId,
+        createdAt,
+      });
+
+      const sourceSummary = selectSidebarThreadSummaryByRef(useStore.getState(), target);
+      const placeholderThreadShell: OrchestrationThreadShell = {
+        id: nextThreadId,
+        projectId: resolved.thread.projectId,
+        title: buildForkedThreadTitle(resolved.thread.title),
+        modelSelection: resolved.thread.modelSelection,
+        runtimeMode: resolved.thread.runtimeMode,
+        interactionMode: resolved.thread.interactionMode,
+        branch: resolved.thread.branch,
+        worktreePath: resolved.thread.worktreePath,
+        latestTurn: null,
+        createdAt,
+        updatedAt: createdAt,
+        archivedAt: null,
+        session: null,
+        latestUserMessageAt: sourceSummary?.latestUserMessageAt ?? null,
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        hasActionableProposedPlan: false,
+        queuedTurnCount: 0,
+        turnQueueStatus: "idle",
+      };
+
+      stageOptimisticThreadShell(placeholderThreadShell, target.environmentId);
+
+      await router.navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(nextThreadRef),
+      });
+    },
+    [resolveThreadTarget, router],
+  );
+
   const deleteThread = useCallback(
     async (target: ScopedThreadRef, opts: { deletedThreadKeys?: ReadonlySet<string> } = {}) => {
       const api = readEnvironmentApi(target.environmentId);
@@ -447,6 +510,7 @@ export function useThreadActions() {
     archiveThread,
     cleanupInactiveThreads,
     unarchiveThread,
+    forkThread,
     deleteThread,
     confirmAndDeleteThread,
   };

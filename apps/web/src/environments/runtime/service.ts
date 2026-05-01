@@ -4,6 +4,7 @@ import {
   type OrchestrationEvent,
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamEvent,
+  type OrchestrationThreadShell,
   type ServerConfig,
   type TerminalEvent,
   ThreadId,
@@ -93,6 +94,7 @@ type ThreadDetailSubscriptionEntry = {
 const environmentConnections = new Map<EnvironmentId, EnvironmentConnection>();
 const environmentConnectionListeners = new Set<() => void>();
 const threadDetailSubscriptions = new Map<string, ThreadDetailSubscriptionEntry>();
+const optimisticThreadShells = new Map<string, OrchestrationThreadShell>();
 
 let activeService: EnvironmentServiceState | null = null;
 let needsProviderInvalidation = false;
@@ -110,6 +112,63 @@ const NOOP = () => undefined;
 
 function getThreadDetailSubscriptionKey(environmentId: EnvironmentId, threadId: ThreadId): string {
   return scopedThreadKey(scopeThreadRef(environmentId, threadId));
+}
+
+function getOptimisticThreadShellKey(environmentId: EnvironmentId, threadId: ThreadId): string {
+  return scopedThreadKey(scopeThreadRef(environmentId, threadId));
+}
+
+function rememberOptimisticThreadShell(
+  environmentId: EnvironmentId,
+  thread: OrchestrationThreadShell,
+): void {
+  optimisticThreadShells.set(getOptimisticThreadShellKey(environmentId, thread.id), thread);
+}
+
+function forgetOptimisticThreadShell(environmentId: EnvironmentId, threadId: ThreadId): void {
+  optimisticThreadShells.delete(getOptimisticThreadShellKey(environmentId, threadId));
+}
+
+function forgetOptimisticThreadShellsForEnvironment(environmentId: EnvironmentId): void {
+  for (const key of optimisticThreadShells.keys()) {
+    if (key.startsWith(`${environmentId}:`)) {
+      optimisticThreadShells.delete(key);
+    }
+  }
+}
+
+function mergeOptimisticThreadShells(
+  snapshot: OrchestrationShellSnapshot,
+  environmentId: EnvironmentId,
+): OrchestrationShellSnapshot {
+  if (optimisticThreadShells.size === 0) {
+    return snapshot;
+  }
+
+  const serverThreadIds = new Set(snapshot.threads.map((thread) => thread.id));
+  const optimisticThreads: OrchestrationThreadShell[] = [];
+
+  for (const [key, thread] of optimisticThreadShells) {
+    if (!key.startsWith(`${environmentId}:`)) {
+      continue;
+    }
+
+    if (serverThreadIds.has(thread.id)) {
+      optimisticThreadShells.delete(key);
+      continue;
+    }
+
+    optimisticThreads.push(thread);
+  }
+
+  if (optimisticThreads.length === 0) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    threads: [...snapshot.threads, ...optimisticThreads],
+  };
 }
 
 function clearThreadDetailSubscriptionEviction(
@@ -605,13 +664,20 @@ export function applyEnvironmentThreadDetailEvent(
   applyRecoveredEventBatch([event], environmentId);
 }
 
-function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: EnvironmentId) {
+function applyEnvironmentShellEventWithOrigin(
+  event: OrchestrationShellStreamEvent,
+  environmentId: EnvironmentId,
+  origin: "server" | "optimistic",
+) {
   const threadId =
     event.kind === "thread-upserted"
       ? event.thread.id
       : event.kind === "thread-removed"
         ? event.threadId
         : null;
+  if (origin === "server" && threadId) {
+    forgetOptimisticThreadShell(environmentId, threadId);
+  }
   const threadRef = threadId ? scopeThreadRef(environmentId, threadId) : null;
   const previousThread = threadRef ? selectThreadByRef(useStore.getState(), threadRef) : undefined;
   const clientSettings = getClientSettings();
@@ -657,14 +723,38 @@ function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: En
   }
 }
 
+export function applyEnvironmentShellEvent(
+  event: OrchestrationShellStreamEvent,
+  environmentId: EnvironmentId,
+) {
+  applyEnvironmentShellEventWithOrigin(event, environmentId, "server");
+}
+
+export function stageOptimisticThreadShell(
+  thread: OrchestrationThreadShell,
+  environmentId: EnvironmentId,
+) {
+  rememberOptimisticThreadShell(environmentId, thread);
+  applyEnvironmentShellEventWithOrigin(
+    {
+      kind: "thread-upserted",
+      sequence: 0,
+      thread,
+    },
+    environmentId,
+    "optimistic",
+  );
+}
+
 function createEnvironmentConnectionHandlers() {
   return {
-    applyShellEvent,
+    applyShellEvent: applyEnvironmentShellEvent,
     syncShellSnapshot: (snapshot: OrchestrationShellSnapshot, environmentId: EnvironmentId) => {
-      useStore.getState().syncServerShellSnapshot(snapshot, environmentId);
+      const mergedSnapshot = mergeOptimisticThreadShells(snapshot, environmentId);
+      useStore.getState().syncServerShellSnapshot(mergedSnapshot, environmentId);
       reconcileThreadAttentionShellSnapshot(
         environmentId,
-        snapshot.threads.map((thread) => ({
+        mergedSnapshot.threads.map((thread) => ({
           environmentId,
           threadId: thread.id,
           threadTitle: thread.title,
@@ -675,7 +765,7 @@ function createEnvironmentConnectionHandlers() {
       );
       reconcileThreadDetailSubscriptionsForEnvironment(
         environmentId,
-        snapshot.threads.map((thread) => thread.id),
+        mergedSnapshot.threads.map((thread) => thread.id),
       );
       reconcileThreadDetailSubscriptionEvictionForEnvironment(environmentId);
       reconcileSnapshotDerivedState();
@@ -787,6 +877,7 @@ async function removeConnection(environmentId: EnvironmentId): Promise<boolean> 
   }
 
   clearThreadAttentionTrackingForEnvironment(environmentId);
+  forgetOptimisticThreadShellsForEnvironment(environmentId);
   disposeThreadDetailSubscriptionsForEnvironment(environmentId);
   environmentConnections.delete(environmentId);
   emitEnvironmentConnectionRegistryChange();
@@ -1116,6 +1207,7 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
 
 export async function resetEnvironmentServiceForTests(): Promise<void> {
   stopActiveService();
+  optimisticThreadShells.clear();
   for (const key of Array.from(threadDetailSubscriptions.keys())) {
     disposeThreadDetailSubscriptionByKey(key);
   }

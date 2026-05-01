@@ -32,6 +32,7 @@ import {
   useStore,
 } from "../store";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { canForkSidebarThread } from "../threadForking";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { Project, SidebarThreadSummary } from "../types";
 import { useUiStateStore } from "../uiStateStore";
@@ -158,6 +159,7 @@ function ThreadListRow({
   confirmThreadArchive,
   onOpen,
   archiveNow,
+  forkNow,
   copyThreadId,
   copyWorkspacePath,
   deleteWithConfirmation,
@@ -167,6 +169,7 @@ function ThreadListRow({
   confirmThreadArchive: boolean;
   onOpen: () => void;
   archiveNow: (threadRef: ScopedThreadRef) => Promise<void>;
+  forkNow: (threadRef: ScopedThreadRef) => Promise<void>;
   copyThreadId: ReturnType<typeof useThreadRowActions>["copyThreadId"];
   copyWorkspacePath: ReturnType<typeof useThreadRowActions>["copyWorkspacePath"];
   deleteWithConfirmation: ReturnType<typeof useThreadRowActions>["deleteWithConfirmation"];
@@ -177,6 +180,7 @@ function ThreadListRow({
   const isThreadRunning =
     item.thread.session?.status === "running" && item.thread.session.activeTurnId != null;
   const canArchive = !isThreadRunning;
+  const canFork = canForkSidebarThread(item.thread);
   const workspacePath = resolveThreadWorkspacePath(item);
   const defaultChevronClassName = cn(
     "pointer-coarse:opacity-0 transition-opacity [transition-duration:var(--motion-duration-micro)] [transition-timing-function:var(--motion-ease-out)] group-hover/recent-thread:opacity-0 group-focus-within/recent-thread:opacity-0",
@@ -254,6 +258,11 @@ function ThreadListRow({
     clearArchiveConfirmation();
     void deleteWithConfirmation(threadRef);
   }, [clearArchiveConfirmation, deleteWithConfirmation, threadRef]);
+
+  const handleFork = useCallback(() => {
+    clearArchiveConfirmation();
+    void forkNow(threadRef);
+  }, [clearArchiveConfirmation, forkNow, threadRef]);
 
   const handleMarkUnread = useCallback(() => {
     markUnread({
@@ -395,6 +404,7 @@ function ThreadListRow({
                   </MenuItem>
                   <MenuItem onClick={handleCopyThreadId}>Copy thread ID</MenuItem>
                   {canArchive ? <MenuItem onClick={handleArchiveFromMenu}>Archive</MenuItem> : null}
+                  {canFork ? <MenuItem onClick={handleFork}>Fork thread</MenuItem> : null}
                   <MenuSeparator />
                   <MenuItem variant="destructive" onClick={handleDelete}>
                     Delete
@@ -432,6 +442,7 @@ function ThreadListRow({
                 </MenuItem>
                 <MenuItem onClick={handleCopyThreadId}>Copy thread ID</MenuItem>
                 {canArchive ? <MenuItem onClick={handleArchiveFromMenu}>Archive</MenuItem> : null}
+                {canFork ? <MenuItem onClick={handleFork}>Fork thread</MenuItem> : null}
                 <MenuSeparator />
                 <MenuItem variant="destructive" onClick={handleDelete}>
                   Delete
@@ -504,8 +515,14 @@ export function NoActiveThreadState() {
     sidebarThreadSortOrder: state.sidebarThreadSortOrder,
   }));
   const { handleNewThread } = useHandleNewThread();
-  const { archiveNow, copyThreadId, copyWorkspacePath, deleteWithConfirmation, markUnread } =
-    useThreadRowActions();
+  const {
+    archiveNow,
+    copyThreadId,
+    copyWorkspacePath,
+    deleteWithConfirmation,
+    forkNow,
+    markUnread,
+  } = useThreadRowActions();
   const setCommandPaletteOpen = useCommandPaletteStore((store) => store.setOpen);
   const openAddProject = useCommandPaletteStore((store) => store.openAddProject);
   const openNewThreadIn = useCommandPaletteStore((store) => store.openNewThreadIn);
@@ -734,6 +751,7 @@ export function NoActiveThreadState() {
                           confirmThreadArchive={settings.confirmThreadArchive}
                           onOpen={() => void openThread(item.thread)}
                           archiveNow={archiveNow}
+                          forkNow={forkNow}
                           copyThreadId={copyThreadId}
                           copyWorkspacePath={copyWorkspacePath}
                           deleteWithConfirmation={deleteWithConfirmation}

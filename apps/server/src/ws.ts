@@ -67,6 +67,7 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
 import { respondToAuthError } from "./auth/http.ts";
+import { waitForThreadDetailSnapshot } from "./orchestration/threadSnapshots.ts";
 
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
@@ -703,27 +704,23 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
             Effect.gen(function* () {
-              const [threadDetail, snapshotSequence] = yield* Effect.all([
-                projectionSnapshotQuery.getThreadDetailById(input.threadId).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new OrchestrationGetSnapshotError({
-                        message: `Failed to load thread ${input.threadId}`,
-                        cause,
-                      }),
+              const snapshot = yield* waitForThreadDetailSnapshot({
+                threadId: input.threadId,
+                getThreadDetailById: () =>
+                  projectionSnapshotQuery.getThreadDetailById(input.threadId).pipe(
+                    Effect.mapError(
+                      (cause) =>
+                        new OrchestrationGetSnapshotError({
+                          message: `Failed to load thread ${input.threadId}`,
+                          cause,
+                        }),
+                    ),
                   ),
-                ),
-                orchestrationEngine
-                  .getReadModel()
-                  .pipe(Effect.map((readModel) => readModel.snapshotSequence)),
-              ]);
-
-              if (Option.isNone(threadDetail)) {
-                return yield* new OrchestrationGetSnapshotError({
-                  message: `Thread ${input.threadId} was not found`,
-                  cause: input.threadId,
-                });
-              }
+                getSnapshotSequence: () =>
+                  orchestrationEngine
+                    .getReadModel()
+                    .pipe(Effect.map((readModel) => readModel.snapshotSequence)),
+              });
 
               const liveStream = orchestrationEngine.streamDomainEvents.pipe(
                 Stream.filter(
@@ -742,8 +739,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 Stream.make({
                   kind: "snapshot" as const,
                   snapshot: {
-                    snapshotSequence,
-                    thread: threadDetail.value,
+                    snapshotSequence: snapshot.snapshotSequence,
+                    thread: snapshot.thread,
                   },
                 }),
                 liveStream,

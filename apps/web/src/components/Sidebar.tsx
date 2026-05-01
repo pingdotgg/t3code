@@ -97,6 +97,7 @@ import {
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
+import { canForkSidebarThread } from "../threadForking";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
@@ -993,8 +994,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
   const router = useRouter();
   const { cleanupInactiveThreads } = useThreadActions();
-  const { archiveNow, copyThreadId, copyWorkspacePath, deleteWithConfirmation, markUnread } =
-    useThreadRowActions();
+  const {
+    archiveNow,
+    copyThreadId,
+    copyWorkspacePath,
+    deleteWithConfirmation,
+    forkNow,
+    markUnread,
+  } = useThreadRowActions();
   const toggleProject = useUiStateStore((state) => state.toggleProject);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((state) => state.rangeSelectTo);
@@ -1964,6 +1971,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId)),
       );
       const threadWorkspacePath = thread.worktreePath ?? threadProject?.cwd ?? project.cwd ?? null;
+      const canFork = canForkSidebarThread(thread);
       const clicked = await api.contextMenu.show(
         [
           { id: "rename", label: "Rename thread" },
@@ -1978,6 +1986,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             ...(threadWorkspacePath ? {} : { disabled: true }),
           },
           { id: "copy-thread-id", label: "Copy Thread ID" },
+          ...(canFork ? [{ id: "fork", label: "Fork thread" as const }] : []),
           { id: "delete", label: "Delete", destructive: true },
         ],
         position,
@@ -2005,6 +2014,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         copyThreadId(thread.id);
         return;
       }
+      if (clicked === "fork") {
+        await forkNow(threadRef);
+        return;
+      }
       if (clicked !== "delete") return;
       await deleteWithConfirmation(threadRef);
     },
@@ -2012,6 +2025,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       copyThreadId,
       copyWorkspacePath,
       deleteWithConfirmation,
+      forkNow,
       markUnread,
       memberProjectByScopedKey,
       project.cwd,

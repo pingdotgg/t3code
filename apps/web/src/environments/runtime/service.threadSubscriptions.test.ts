@@ -1,3 +1,4 @@
+import { scopeThreadRef } from "@forma/client-runtime";
 import { QueryClient } from "@tanstack/react-query";
 import {
   EnvironmentId,
@@ -151,6 +152,15 @@ function makeThreadShellSnapshot(params: {
         turnQueueStatus: "idle",
       },
     ],
+  };
+}
+
+function makeEmptyShellSnapshot(): OrchestrationShellSnapshot {
+  return {
+    snapshotSequence: 1,
+    projects: [],
+    updatedAt: "2026-04-13T00:00:00.000Z",
+    threads: [],
   };
 }
 
@@ -317,6 +327,35 @@ describe("retainThreadDetailSubscription", () => {
         desktopNotifyOnApprovalRequests: false,
         desktopNotifyOnUserInputRequests: false,
       }),
+    );
+
+    stop();
+  });
+
+  it("preserves optimistic fork shells across shell snapshot refreshes", async () => {
+    const stop = serviceModule.startEnvironmentConnectionService(new QueryClient());
+    const environmentId = EnvironmentId.make("env-1");
+    const threadId = ThreadId.make("thread-fork");
+    const threadRef = scopeThreadRef(environmentId, threadId);
+    const connectionInput = mockCreateEnvironmentConnection.mock.calls[0]?.[0];
+    expect(connectionInput).toBeDefined();
+
+    serviceModule.stageOptimisticThreadShell(
+      makeThreadShellSnapshot({
+        threadId,
+      }).threads[0]!,
+      environmentId,
+    );
+
+    const storeModule = await import("~/store");
+    expect(storeModule.selectThreadExistsByRef(storeModule.useStore.getState(), threadRef)).toBe(
+      true,
+    );
+
+    connectionInput.syncShellSnapshot(makeEmptyShellSnapshot(), environmentId);
+
+    expect(storeModule.selectThreadExistsByRef(storeModule.useStore.getState(), threadRef)).toBe(
+      true,
     );
 
     stop();

@@ -4,6 +4,7 @@ import {
   CorrelationId,
   EventId,
   MessageId,
+  type OrchestrationProposedPlanId,
   ProjectId,
   ThreadId,
   TurnId,
@@ -30,6 +31,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQu
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ServerConfig } from "../../config.ts";
+import { forkedActivityId, forkedMessageId, forkedPlanId, forkedTurnId } from "../threadForking.ts";
 
 const makeProjectionPipelinePrefixedTestLayer = (prefix: string) =>
   OrchestrationProjectionPipelineLive.pipe(
@@ -230,6 +232,325 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("forma-base-")))(
             name: "example.png",
             mimeType: "image/png",
             sizeBytes: 5,
+          },
+        ]);
+      }),
+    );
+  },
+);
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("forma-thread-fork-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("clones forked thread projection rows with lineage and no runtime carry-over", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const now = new Date().toISOString();
+        const sourceThreadId = ThreadId.make("thread-source");
+        const forkThreadId = ThreadId.make("thread-fork");
+        const turnId = TurnId.make("turn-source");
+        const userMessageId = MessageId.make("message-user");
+        const assistantMessageId = MessageId.make("message-assistant");
+        const planId = "plan-source" as OrchestrationProposedPlanId;
+        const activityId = EventId.make("activity-source");
+        const userMessageAt = new Date(Date.parse(now) - 1_000).toISOString();
+        const assistantMessageAt = now;
+
+        yield* eventStore.append({
+          type: "project.created",
+          eventId: EventId.make("evt-fork-project"),
+          aggregateKind: "project",
+          aggregateId: ProjectId.make("project-1"),
+          occurredAt: now,
+          commandId: CommandId.make("cmd-fork-project"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-fork-project"),
+          metadata: {},
+          payload: {
+            projectId: ProjectId.make("project-1"),
+            title: "Project 1",
+            workspaceRoot: "/tmp/project-1",
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make("evt-fork-thread-created"),
+          aggregateKind: "thread",
+          aggregateId: sourceThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-fork-thread-created"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-fork-thread-created"),
+          metadata: {},
+          payload: {
+            threadId: sourceThreadId,
+            projectId: ProjectId.make("project-1"),
+            title: "Source thread",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: "feature/source",
+            worktreePath: "/tmp/project-1",
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.message-sent",
+          eventId: EventId.make("evt-fork-message-user"),
+          aggregateKind: "thread",
+          aggregateId: sourceThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-fork-message-user"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-fork-message-user"),
+          metadata: {},
+          payload: {
+            threadId: sourceThreadId,
+            messageId: userMessageId,
+            role: "user",
+            text: "hello",
+            turnId: null,
+            streaming: false,
+            createdAt: userMessageAt,
+            updatedAt: userMessageAt,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.message-sent",
+          eventId: EventId.make("evt-fork-message-assistant"),
+          aggregateKind: "thread",
+          aggregateId: sourceThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-fork-message-assistant"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-fork-message-assistant"),
+          metadata: {},
+          payload: {
+            threadId: sourceThreadId,
+            messageId: assistantMessageId,
+            role: "assistant",
+            text: "world",
+            turnId,
+            streaming: false,
+            createdAt: assistantMessageAt,
+            updatedAt: assistantMessageAt,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.proposed-plan-upserted",
+          eventId: EventId.make("evt-fork-plan"),
+          aggregateKind: "thread",
+          aggregateId: sourceThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-fork-plan"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-fork-plan"),
+          metadata: {},
+          payload: {
+            threadId: sourceThreadId,
+            proposedPlan: {
+              id: planId,
+              turnId,
+              planMarkdown: "# Ship it",
+              implementedAt: null,
+              implementationThreadId: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.activity-appended",
+          eventId: EventId.make("evt-fork-activity"),
+          aggregateKind: "thread",
+          aggregateId: sourceThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-fork-activity"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-fork-activity"),
+          metadata: {},
+          payload: {
+            threadId: sourceThreadId,
+            activity: {
+              id: activityId,
+              tone: "info",
+              kind: "runtime.note",
+              summary: "note",
+              payload: { ok: true },
+              turnId,
+              sequence: 1,
+              createdAt: now,
+            },
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.turn-diff-completed",
+          eventId: EventId.make("evt-fork-diff"),
+          aggregateKind: "thread",
+          aggregateId: sourceThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-fork-diff"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-fork-diff"),
+          metadata: {},
+          payload: {
+            threadId: sourceThreadId,
+            turnId,
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("checkpoint/source/1"),
+            status: "ready",
+            files: [],
+            assistantMessageId,
+            completedAt: now,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.forked",
+          eventId: EventId.make("evt-forked"),
+          aggregateKind: "thread",
+          aggregateId: forkThreadId,
+          occurredAt: now,
+          commandId: CommandId.make("cmd-forked"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-forked"),
+          metadata: {},
+          payload: {
+            threadId: forkThreadId,
+            sourceThreadId,
+            projectId: ProjectId.make("project-1"),
+            title: "Source thread (fork)",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: "feature/source",
+            worktreePath: "/tmp/project-1",
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const threadRows = yield* sql<{
+          readonly threadId: string;
+          readonly forkedFromThreadId: string | null;
+          readonly forkedAt: string | null;
+          readonly latestTurnId: string | null;
+          readonly pendingApprovalCount: number;
+          readonly pendingUserInputCount: number;
+          readonly queuedTurnCount: number;
+        }>`
+          SELECT
+            thread_id AS "threadId",
+            forked_from_thread_id AS "forkedFromThreadId",
+            forked_at AS "forkedAt",
+            latest_turn_id AS "latestTurnId",
+            pending_approval_count AS "pendingApprovalCount",
+            pending_user_input_count AS "pendingUserInputCount",
+            queued_turn_count AS "queuedTurnCount"
+          FROM projection_threads
+          WHERE thread_id = ${forkThreadId}
+        `;
+        assert.deepEqual(threadRows, [
+          {
+            threadId: forkThreadId,
+            forkedFromThreadId: sourceThreadId,
+            forkedAt: now,
+            latestTurnId: forkedTurnId(forkThreadId, turnId),
+            pendingApprovalCount: 0,
+            pendingUserInputCount: 0,
+            queuedTurnCount: 0,
+          },
+        ]);
+
+        const messageRows = yield* sql<{
+          readonly messageId: string;
+          readonly turnId: string | null;
+        }>`
+          SELECT
+            message_id AS "messageId",
+            turn_id AS "turnId"
+          FROM projection_thread_messages
+          WHERE thread_id = ${forkThreadId}
+          ORDER BY created_at ASC, message_id ASC
+        `;
+        assert.deepEqual(messageRows, [
+          {
+            messageId: forkedMessageId(forkThreadId, userMessageId),
+            turnId: null,
+          },
+          {
+            messageId: forkedMessageId(forkThreadId, assistantMessageId),
+            turnId: forkedTurnId(forkThreadId, turnId),
+          },
+        ]);
+
+        const planRows = yield* sql<{
+          readonly planId: string;
+        }>`
+          SELECT plan_id AS "planId"
+          FROM projection_thread_proposed_plans
+          WHERE thread_id = ${forkThreadId}
+        `;
+        assert.deepEqual(planRows, [{ planId: forkedPlanId(forkThreadId, planId) }]);
+
+        const activityRows = yield* sql<{
+          readonly activityId: string;
+        }>`
+          SELECT activity_id AS "activityId"
+          FROM projection_thread_activities
+          WHERE thread_id = ${forkThreadId}
+        `;
+        assert.deepEqual(activityRows, [
+          { activityId: forkedActivityId(forkThreadId, activityId) },
+        ]);
+
+        const turnRows = yield* sql<{
+          readonly turnId: string | null;
+          readonly assistantMessageId: string | null;
+          readonly checkpointTurnCount: number | null;
+          readonly checkpointRef: string | null;
+          readonly checkpointStatus: string | null;
+          readonly checkpointFilesJson: string;
+        }>`
+          SELECT
+            turn_id AS "turnId",
+            assistant_message_id AS "assistantMessageId",
+            checkpoint_turn_count AS "checkpointTurnCount",
+            checkpoint_ref AS "checkpointRef",
+            checkpoint_status AS "checkpointStatus",
+            checkpoint_files_json AS "checkpointFilesJson"
+          FROM projection_turns
+          WHERE thread_id = ${forkThreadId}
+        `;
+        assert.deepEqual(turnRows, [
+          {
+            turnId: forkedTurnId(forkThreadId, turnId),
+            assistantMessageId: forkedMessageId(forkThreadId, assistantMessageId),
+            checkpointTurnCount: null,
+            checkpointRef: null,
+            checkpointStatus: null,
+            checkpointFilesJson: "[]",
           },
         ]);
       }),

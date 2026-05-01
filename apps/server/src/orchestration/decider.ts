@@ -25,6 +25,11 @@ import {
   resolveQueuedTurnSnapshot,
   validateSourceProposedPlanReference,
 } from "./turnQueue.ts";
+import {
+  buildForkedThreadTitle,
+  forkSourceThreadHasRunningTurn,
+  forkThreadHasStarted,
+} from "./threadForking.ts";
 
 const nowIso = () => new Date().toISOString();
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
@@ -242,6 +247,69 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.fork": {
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const sourceThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.sourceThreadId,
+      });
+      if (sourceThread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.sourceThreadId}' is deleted and cannot be forked.`,
+        });
+      }
+      if (!forkThreadHasStarted(sourceThread)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.sourceThreadId}' has no history and cannot be forked.`,
+        });
+      }
+      if (
+        forkSourceThreadHasRunningTurn(sourceThread) ||
+        sourceThread.session?.activeTurnId != null
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.sourceThreadId}' is running and cannot be forked.`,
+        });
+      }
+      if (sourceThread.turnQueue.items.length > 0) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.sourceThreadId}' has queued turns and cannot be forked.`,
+        });
+      }
+
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.forked",
+        payload: {
+          threadId: command.threadId,
+          sourceThreadId: command.sourceThreadId,
+          projectId: sourceThread.projectId,
+          title: buildForkedThreadTitle(sourceThread.title),
+          modelSelection: sourceThread.modelSelection,
+          runtimeMode: sourceThread.runtimeMode,
+          interactionMode: sourceThread.interactionMode,
+          branch: sourceThread.branch,
+          worktreePath: sourceThread.worktreePath,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },

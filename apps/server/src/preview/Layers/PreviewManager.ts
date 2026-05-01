@@ -23,7 +23,7 @@ import {
   type ProjectPreviewWorkspaceRecord,
   ProjectRelativePath,
 } from "@forma/contracts";
-import { Cause, Effect, Exit, Layer, PubSub, Ref, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Layer, PubSub, Ref, Stream } from "effect";
 
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import {
@@ -89,6 +89,10 @@ interface PreviewAccessTokenRecord {
 
 interface PreviewManagerState {
   readonly runtimes: Map<ProjectId, RuntimeRecord>;
+  readonly runtimeStarts: Map<
+    ProjectId,
+    Deferred.Deferred<PreviewEnsureRuntimeResult, PreviewRpcError>
+  >;
   readonly projectPubSubs: Map<ProjectId, PubSub.PubSub<PreviewProjectEvent>>;
   readonly accessTokens: Map<string, PreviewAccessTokenRecord>;
 }
@@ -414,6 +418,19 @@ function withConfiguredHost(command: string, host: string): string {
     return appendScriptRunnerArgs(command, [`--host ${host}`]);
   }
   return `${command} --host ${host}`;
+}
+
+function withConfiguredCi(command: string): string {
+  if (/(^|\s)--ci(?:\s|$)/.test(command)) {
+    return command;
+  }
+  if (/^(npm|pnpm|bun)\b[\s\S]*\bexec\b[\s\S]*\bstorybook\b/.test(command)) {
+    return `${command} --ci`;
+  }
+  if (isScriptRunnerCommand(command)) {
+    return appendScriptRunnerArgs(command, ["--ci"]);
+  }
+  return `${command} --ci`;
 }
 
 async function allocatePort(): Promise<number> {
@@ -1137,6 +1154,7 @@ const makePreviewManager = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const stateRef = yield* Ref.make<PreviewManagerState>({
     runtimes: new Map(),
+    runtimeStarts: new Map(),
     projectPubSubs: new Map(),
     accessTokens: new Map(),
   });

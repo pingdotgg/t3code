@@ -16,6 +16,8 @@ import {
   OrchestrationThread,
   OrchestrationThreadShell,
   ProjectCreateCommand,
+  ThreadForkCommand,
+  ThreadForkedPayload,
   ThreadMetaUpdatedPayload,
   ThreadTurnEnqueuedPayload,
   ThreadTurnQueueItemRemovedPayload,
@@ -42,6 +44,8 @@ const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(Orchestration
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeOrchestrationThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
+const decodeThreadForkCommand = Schema.decodeUnknownEffect(ThreadForkCommand);
+const decodeThreadForkedPayload = Schema.decodeUnknownEffect(ThreadForkedPayload);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
@@ -312,6 +316,85 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
 
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.modelSelection.provider, "codex");
+  }),
+);
+
+it.effect("decodes thread.fork commands", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadForkCommand({
+      type: "thread.fork",
+      commandId: "cmd-fork-1",
+      threadId: "thread-2",
+      sourceThreadId: "thread-1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    const unionParsed = yield* decodeOrchestrationCommand({
+      type: "thread.fork",
+      commandId: "cmd-fork-1",
+      threadId: "thread-2",
+      sourceThreadId: "thread-1",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.threadId, "thread-2");
+    assert.strictEqual(parsed.sourceThreadId, "thread-1");
+    assert.strictEqual(unionParsed.type, "thread.fork");
+  }),
+);
+
+it.effect("decodes thread.forked payloads with runtime defaults", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadForkedPayload({
+      threadId: "thread-2",
+      sourceThreadId: "thread-1",
+      projectId: "project-1",
+      title: "Thread title (fork)",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+  }),
+);
+
+it.effect("decodes thread.forked events", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-forked-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-2",
+      type: "thread.forked",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-fork-1",
+      causationEventId: null,
+      correlationId: "cmd-fork-1",
+      metadata: {},
+      payload: {
+        threadId: "thread-2",
+        sourceThreadId: "thread-1",
+        projectId: "project-1",
+        title: "Thread title (fork)",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+        branch: null,
+        worktreePath: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+
+    assert.strictEqual(parsed.type, "thread.forked");
+    assert.strictEqual(parsed.payload.sourceThreadId, "thread-1");
   }),
 );
 

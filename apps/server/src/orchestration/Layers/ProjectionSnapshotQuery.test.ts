@@ -1,6 +1,14 @@
-import { CheckpointRef, EventId, MessageId, ProjectId, ThreadId, TurnId } from "@forma/contracts";
+import {
+  CheckpointRef,
+  EventId,
+  MessageId,
+  type OrchestrationProposedPlanId,
+  ProjectId,
+  ThreadId,
+  TurnId,
+} from "@forma/contracts";
 import { assert, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -8,6 +16,7 @@ import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryI
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { forkedActivityId, forkedMessageId, forkedPlanId, forkedTurnId } from "../threadForking.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
@@ -265,6 +274,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               runOnWorktreeCreate: false,
             },
           ],
+          previewConfig: null,
+          previewWorkspaceRecords: [],
           createdAt: "2026-02-24T00:00:00.000Z",
           updatedAt: "2026-02-24T00:00:01.000Z",
           deletedAt: null,
@@ -381,6 +392,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               runOnWorktreeCreate: false,
             },
           ],
+          previewConfig: null,
+          previewWorkspaceRecords: [],
           createdAt: "2026-02-24T00:00:00.000Z",
           updatedAt: "2026-02-24T00:00:01.000Z",
         },
@@ -436,6 +449,313 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       if (threadDetail._tag === "Some") {
         assert.deepEqual(threadDetail.value, snapshot.threads[0]);
       }
+    }),
+  );
+
+  it.effect("hydrates a forked thread detail snapshot without exposing internal lineage", () =>
+    Effect.gen(function* () {
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+      const sql = yield* SqlClient.SqlClient;
+      const sourceThreadId = ThreadId.make("thread-source");
+      const forkThreadId = ThreadId.make("thread-fork");
+      const turnId = TurnId.make("turn-source");
+      const userMessageId = MessageId.make("message-user");
+      const assistantMessageId = MessageId.make("message-assistant");
+      const planId = "plan-source" as OrchestrationProposedPlanId;
+      const activityId = EventId.make("activity-source");
+
+      yield* sql`DELETE FROM projection_thread_messages`;
+      yield* sql`DELETE FROM projection_thread_proposed_plans`;
+      yield* sql`DELETE FROM projection_thread_activities`;
+      yield* sql`DELETE FROM projection_thread_sessions`;
+      yield* sql`DELETE FROM projection_thread_turn_queue`;
+      yield* sql`DELETE FROM projection_turns`;
+      yield* sql`DELETE FROM projection_threads`;
+      yield* sql`DELETE FROM projection_projects`;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model_selection_json,
+          scripts_json,
+          preview_config_json,
+          preview_workspace_records_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'project-1',
+          'Project 1',
+          '/tmp/project-1',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          '[]',
+          NULL,
+          '[]',
+          '2026-05-01T00:00:00.000Z',
+          '2026-05-01T00:00:00.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          forked_from_thread_id,
+          forked_at,
+          latest_turn_id,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          queued_turn_count,
+          turn_queue_status,
+          turn_queue_pause_reason,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES (
+          ${forkThreadId},
+          'project-1',
+          'Source thread (fork)',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
+          'feature/source',
+          '/tmp/project-1',
+          ${sourceThreadId},
+          '2026-05-01T00:00:10.000Z',
+          ${forkedTurnId(forkThreadId, turnId)},
+          '2026-05-01T00:00:01.000Z',
+          0,
+          0,
+          0,
+          0,
+          'idle',
+          NULL,
+          '2026-05-01T00:00:10.000Z',
+          '2026-05-01T00:00:10.000Z',
+          NULL,
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id,
+          thread_id,
+          turn_id,
+          role,
+          text,
+          attachments_json,
+          is_streaming,
+          created_at,
+          updated_at
+        )
+        VALUES
+        (
+          ${forkedMessageId(forkThreadId, userMessageId)},
+          ${forkThreadId},
+          NULL,
+          'user',
+          'hello',
+          NULL,
+          0,
+          '2026-05-01T00:00:01.000Z',
+          '2026-05-01T00:00:01.000Z'
+        ),
+        (
+          ${forkedMessageId(forkThreadId, assistantMessageId)},
+          ${forkThreadId},
+          ${forkedTurnId(forkThreadId, turnId)},
+          'assistant',
+          'world',
+          NULL,
+          0,
+          '2026-05-01T00:00:02.000Z',
+          '2026-05-01T00:00:02.000Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_proposed_plans (
+          plan_id,
+          thread_id,
+          turn_id,
+          plan_markdown,
+          implemented_at,
+          implementation_thread_id,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          ${forkedPlanId(forkThreadId, planId)},
+          ${forkThreadId},
+          ${forkedTurnId(forkThreadId, turnId)},
+          '# Ship it',
+          NULL,
+          NULL,
+          '2026-05-01T00:00:03.000Z',
+          '2026-05-01T00:00:03.000Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        )
+        VALUES (
+          ${forkedActivityId(forkThreadId, activityId)},
+          ${forkThreadId},
+          ${forkedTurnId(forkThreadId, turnId)},
+          'info',
+          'runtime.note',
+          'note',
+          '{"ok":true}',
+          1,
+          '2026-05-01T00:00:04.000Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_turns (
+          thread_id,
+          turn_id,
+          pending_message_id,
+          source_proposed_plan_thread_id,
+          source_proposed_plan_id,
+          assistant_message_id,
+          state,
+          requested_at,
+          started_at,
+          completed_at,
+          checkpoint_turn_count,
+          checkpoint_ref,
+          checkpoint_status,
+          checkpoint_files_json
+        )
+        VALUES (
+          ${forkThreadId},
+          ${forkedTurnId(forkThreadId, turnId)},
+          NULL,
+          ${forkThreadId},
+          ${forkedPlanId(forkThreadId, planId)},
+          ${forkedMessageId(forkThreadId, assistantMessageId)},
+          'completed',
+          '2026-05-01T00:00:02.000Z',
+          '2026-05-01T00:00:02.000Z',
+          '2026-05-01T00:00:02.000Z',
+          NULL,
+          NULL,
+          NULL,
+          '[]'
+        )
+      `;
+
+      const threadDetail = yield* snapshotQuery.getThreadDetailById(forkThreadId);
+      assert.equal(Option.isSome(threadDetail), true);
+      if (Option.isNone(threadDetail)) {
+        return;
+      }
+
+      assert.deepEqual(threadDetail.value, {
+        id: forkThreadId,
+        projectId: asProjectId("project-1"),
+        title: "Source thread (fork)",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "feature/source",
+        worktreePath: "/tmp/project-1",
+        latestTurn: {
+          turnId: forkedTurnId(forkThreadId, turnId),
+          state: "completed",
+          requestedAt: "2026-05-01T00:00:02.000Z",
+          startedAt: "2026-05-01T00:00:02.000Z",
+          completedAt: "2026-05-01T00:00:02.000Z",
+          assistantMessageId: forkedMessageId(forkThreadId, assistantMessageId),
+          sourceProposedPlan: {
+            threadId: forkThreadId,
+            planId: forkedPlanId(forkThreadId, planId),
+          },
+        },
+        createdAt: "2026-05-01T00:00:10.000Z",
+        updatedAt: "2026-05-01T00:00:10.000Z",
+        archivedAt: null,
+        deletedAt: null,
+        messages: [
+          {
+            id: forkedMessageId(forkThreadId, userMessageId),
+            role: "user",
+            text: "hello",
+            turnId: null,
+            streaming: false,
+            createdAt: "2026-05-01T00:00:01.000Z",
+            updatedAt: "2026-05-01T00:00:01.000Z",
+          },
+          {
+            id: forkedMessageId(forkThreadId, assistantMessageId),
+            role: "assistant",
+            text: "world",
+            turnId: forkedTurnId(forkThreadId, turnId),
+            streaming: false,
+            createdAt: "2026-05-01T00:00:02.000Z",
+            updatedAt: "2026-05-01T00:00:02.000Z",
+          },
+        ],
+        proposedPlans: [
+          {
+            id: forkedPlanId(forkThreadId, planId),
+            turnId: forkedTurnId(forkThreadId, turnId),
+            planMarkdown: "# Ship it",
+            implementedAt: null,
+            implementationThreadId: null,
+            createdAt: "2026-05-01T00:00:03.000Z",
+            updatedAt: "2026-05-01T00:00:03.000Z",
+          },
+        ],
+        activities: [
+          {
+            id: forkedActivityId(forkThreadId, activityId),
+            tone: "info",
+            kind: "runtime.note",
+            summary: "note",
+            payload: { ok: true },
+            turnId: forkedTurnId(forkThreadId, turnId),
+            sequence: 1,
+            createdAt: "2026-05-01T00:00:04.000Z",
+          },
+        ],
+        checkpoints: [],
+        turnQueue: {
+          items: [],
+          status: "idle",
+          pauseReason: null,
+        },
+        session: null,
+      });
     }),
   );
 

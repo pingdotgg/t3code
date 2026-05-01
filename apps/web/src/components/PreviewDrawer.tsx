@@ -6,7 +6,7 @@ import type {
   ThreadId,
 } from "@forma/contracts";
 import { DEFAULT_MODEL_BY_PROVIDER } from "@forma/contracts";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   IconArrowClockwise as RefreshIcon,
   IconChevronDown as ChevronDownIcon,
@@ -29,7 +29,8 @@ import { newCommandId, newMessageId, newThreadId } from "../lib/utils";
 import { openPreviewTarget } from "../previewTargets";
 import { type PreviewControlDescriptor, usePreviewWorkspaceStore } from "../previewWorkspaceStore";
 import { selectProjectsAcrossEnvironments, useStore } from "../store";
-import { buildThreadRouteParams } from "../threadRoutes";
+import { createThreadSelectorByRef } from "../storeSelectors";
+import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import type { Project } from "../types";
 import { waitForStartedServerThread } from "./ChatView.logic";
 import { Button } from "./ui/button";
@@ -292,11 +293,24 @@ function PreviewControlsRail(props: {
 
 export function PreviewDrawer() {
   const navigate = useNavigate();
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
   const sharedHeight = useBottomDrawerUiStore((state) => state.sharedHeight);
   const setSharedHeight = useBottomDrawerUiStore((state) => state.setSharedHeight);
   const fullHeight = useBottomDrawerUiStore((state) => state.isFullHeight);
   const setFullHeight = useBottomDrawerUiStore((state) => state.setFullHeight);
   const closePreviewDrawer = useBottomDrawerUiStore((state) => state.closeVisibleMode);
+  const activeRouteThread = useStore(
+    useMemo(
+      () =>
+        routeTarget?.kind === "server"
+          ? createThreadSelectorByRef(routeTarget.threadRef)
+          : () => undefined,
+      [routeTarget],
+    ),
+  );
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const { activeProjectRef, patchProjectState, projectStateByKey, resetProjectState } =
     usePreviewWorkspaceStore(
@@ -348,6 +362,8 @@ export function PreviewDrawer() {
     projectStateByKey[`${activeProjectRef.environmentId}:${activeProjectRef.projectId}`]
       ? projectStateByKey[`${activeProjectRef.environmentId}:${activeProjectRef.projectId}`]!
       : null;
+  const activeRouteLatestTurn = activeRouteThread?.latestTurn ?? null;
+  const handledStoryWorkTurnKeyRef = useRef<string | null>(null);
   const api = activeProjectRef ? readEnvironmentApi(activeProjectRef.environmentId) : undefined;
 
   const refreshInspection = useCallback(async () => {
@@ -505,6 +521,39 @@ export function PreviewDrawer() {
     activeProjectState?.currentTargetKind,
     api,
     resolveCurrentTarget,
+  ]);
+
+  useEffect(() => {
+    const nextTurnKey =
+      activeRouteLatestTurn && activeRouteLatestTurn.state !== "running"
+        ? `${activeRouteLatestTurn.turnId}:${activeRouteLatestTurn.state}:${activeRouteLatestTurn.completedAt ?? ""}`
+        : null;
+    if (
+      !activeProjectRef ||
+      activeProjectState?.resolution?.status !== "needsStoryWork" ||
+      routeTarget?.kind !== "server" ||
+      routeTarget.threadRef.environmentId !== activeProjectRef.environmentId ||
+      activeRouteThread?.projectId !== activeProjectRef.projectId ||
+      !nextTurnKey
+    ) {
+      handledStoryWorkTurnKeyRef.current = null;
+      return;
+    }
+    if (handledStoryWorkTurnKeyRef.current === nextTurnKey) {
+      return;
+    }
+    handledStoryWorkTurnKeyRef.current = nextTurnKey;
+    void resolveCurrentTarget();
+  }, [
+    activeProjectRef,
+    activeProjectState?.resolution?.status,
+    activeRouteLatestTurn?.completedAt,
+    activeRouteLatestTurn?.state,
+    activeRouteLatestTurn?.turnId,
+    activeRouteThread?.projectId,
+    resolveCurrentTarget,
+    routeTarget?.kind,
+    routeTarget?.kind === "server" ? routeTarget.threadRef.environmentId : null,
   ]);
 
   useEffect(() => {

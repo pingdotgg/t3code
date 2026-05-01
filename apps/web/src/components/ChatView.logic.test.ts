@@ -13,6 +13,7 @@ import {
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
+  waitForServerThreadExists,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 
@@ -445,6 +446,40 @@ describe("waitForStartedServerThread", () => {
     const threadId = ThreadId.make("thread-timeout");
     setStoreThreads([makeThread({ id: threadId })]);
     const promise = waitForStartedServerThread(scopeThreadRef(localEnvironmentId, threadId), 500);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await expect(promise).resolves.toBe(false);
+  });
+});
+
+describe("waitForServerThreadExists", () => {
+  it("resolves immediately when the thread already exists", async () => {
+    const threadId = ThreadId.make("thread-existing");
+    setStoreThreads([makeThread({ id: threadId })]);
+
+    await expect(
+      waitForServerThreadExists(scopeThreadRef(localEnvironmentId, threadId)),
+    ).resolves.toBe(true);
+  });
+
+  it("waits for the thread shell to appear via subscription updates", async () => {
+    const threadId = ThreadId.make("thread-appearing");
+    setStoreThreads([]);
+
+    const promise = waitForServerThreadExists(scopeThreadRef(localEnvironmentId, threadId), 500);
+    setStoreThreads([makeThread({ id: threadId })]);
+
+    await expect(promise).resolves.toBe(true);
+  });
+
+  it("returns false after the timeout when the thread never appears", async () => {
+    vi.useFakeTimers();
+
+    const promise = waitForServerThreadExists(
+      scopeThreadRef(localEnvironmentId, ThreadId.make("thread-missing")),
+      500,
+    );
 
     await vi.advanceTimersByTimeAsync(500);
 

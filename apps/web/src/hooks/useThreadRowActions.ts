@@ -13,7 +13,7 @@ interface MarkUnreadInput {
 
 export function useThreadRowActions() {
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
-  const { archiveThread, confirmAndDeleteThread } = useThreadActions();
+  const { archiveThread, confirmAndDeleteThread, forkThread } = useThreadActions();
   const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
     threadId: ThreadId;
   }>({
@@ -104,6 +104,23 @@ export function useThreadRowActions() {
     [archiveThread],
   );
 
+  const forkNow = useCallback(
+    async (threadRef: ScopedThreadRef) => {
+      try {
+        await forkThread(threadRef);
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Failed to fork thread",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [forkThread],
+  );
+
   const deleteWithConfirmation = useCallback(
     async (threadRef: ScopedThreadRef) => {
       try {
@@ -126,6 +143,7 @@ export function useThreadRowActions() {
     copyWorkspacePath,
     copyThreadId,
     archiveNow,
+    forkNow,
     deleteWithConfirmation,
   };
 }

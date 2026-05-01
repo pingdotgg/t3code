@@ -210,6 +210,7 @@ function createMockEnvironmentApi(input: {
   getTurnDiff?: EnvironmentApi["orchestration"]["getTurnDiff"];
   readFile?: EnvironmentApi["projects"]["readFile"];
   searchEntries?: EnvironmentApi["projects"]["searchEntries"];
+  subscribeThread?: EnvironmentApi["orchestration"]["subscribeThread"];
   writeFile?: EnvironmentApi["projects"]["writeFile"];
 }): EnvironmentApi {
   return {
@@ -319,8 +320,9 @@ function createMockEnvironmentApi(input: {
           throw new Error("Not implemented in browser test.");
         }) as EnvironmentApi["orchestration"]["getFullThreadDiff"]),
       subscribeShell: (() => () => undefined) as EnvironmentApi["orchestration"]["subscribeShell"],
-      subscribeThread: (() => () =>
-        undefined) as EnvironmentApi["orchestration"]["subscribeThread"],
+      subscribeThread:
+        input.subscribeThread ??
+        ((() => () => undefined) as EnvironmentApi["orchestration"]["subscribeThread"]),
     },
   };
 }
@@ -2619,6 +2621,115 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
       expect(mounted.router.state.location.pathname).toBe("/");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("forks a recent thread from the no-active-thread menu and opens the copied history", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-no-active-thread-fork" as MessageId,
+      targetText: "fork source history",
+    });
+    const desktopBridge = createDesktopBridgeMenuActionStub();
+    window.desktopBridge = desktopBridge.bridge;
+    let forkedThreadId: ThreadId | null = null;
+    const dispatchCommand = vi.fn(
+      async (command: Parameters<EnvironmentApi["orchestration"]["dispatchCommand"]>[0]) => {
+        if (command.type !== "thread.fork") {
+          return { sequence: fixture.snapshot.snapshotSequence };
+        }
+
+        forkedThreadId = command.threadId;
+        const sourceThread = fixture.snapshot.threads.find(
+          (thread) => thread.id === command.sourceThreadId,
+        );
+        if (!sourceThread) {
+          throw new Error("Missing source thread.");
+        }
+
+        fixture.snapshot = {
+          ...fixture.snapshot,
+          snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+          updatedAt: NOW_ISO,
+          threads: [
+            ...fixture.snapshot.threads,
+            {
+              ...sourceThread,
+              id: command.threadId,
+              title: `${sourceThread.title} (fork)`,
+              createdAt: NOW_ISO,
+              updatedAt: NOW_ISO,
+              session: null,
+              turnQueue: {
+                items: [],
+                status: "idle",
+                pauseReason: null,
+              },
+              checkpoints: [],
+            },
+          ],
+        };
+        return { sequence: fixture.snapshot.snapshotSequence };
+      },
+    );
+
+    __setEnvironmentApiOverrideForTests(
+      LOCAL_ENVIRONMENT_ID,
+      createMockEnvironmentApi({
+        browse: vi.fn(async () => ({ parentPath: "~/", entries: [] })),
+        dispatchCommand,
+        subscribeThread: ((input, callback) => {
+          const timer = window.setTimeout(() => {
+            const thread = fixture.snapshot.threads.find((entry) => entry.id === input.threadId);
+            if (!thread) {
+              return;
+            }
+            callback({
+              kind: "snapshot",
+              snapshot: {
+                snapshotSequence: fixture.snapshot.snapshotSequence,
+                thread,
+              },
+            });
+          }, 0);
+          return () => {
+            window.clearTimeout(timer);
+          };
+        }) as EnvironmentApi["orchestration"]["subscribeThread"],
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot,
+      initialPath: "/",
+      configureFixture: clearWelcomeBootstrapTargets,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const threadRow = page.getByTestId(`no-active-thread-thread-row-${THREAD_ID}`);
+      await threadRow.hover();
+      await page.getByTestId(`no-active-thread-thread-menu-trigger-${THREAD_ID}`).click();
+
+      await expect.element(page.getByRole("menuitem", { name: "Fork thread" })).toBeVisible();
+      await page.getByRole("menuitem", { name: "Fork thread" }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(dispatchCommand).toHaveBeenCalledWith(
+            expect.objectContaining({
+              type: "thread.fork",
+              sourceThreadId: THREAD_ID,
+            }),
+          );
+          expect(forkedThreadId).not.toBeNull();
+          expect(mounted.router.state.location.pathname).toBe(serverThreadPath(forkedThreadId!));
+          expect(document.body.textContent).toContain("filler user message 21");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
@@ -8153,6 +8264,154 @@ describe("ChatView timeline estimator parity (full app)", () => {
             scopeProjectRef(LOCAL_ENVIRONMENT_ID, SECOND_PROJECT_ID),
           );
           expect(document.body.textContent).toContain("Docs Portal");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("launches the component preview after story creation completes", async () => {
+    let storyCreated = false;
+
+    __setEnvironmentApiOverrideForTests(
+      LOCAL_ENVIRONMENT_ID,
+      createMockEnvironmentApi({
+        browse: vi.fn(async () => ({ parentPath: "~/", entries: [] })),
+        dispatchCommand: vi.fn(async () => ({ sequence: fixture.snapshot.snapshotSequence + 1 })),
+        preview: {
+          inspectProject: vi.fn(async ({ projectId }) => ({
+            projectId,
+            provider: "storybook" as const,
+            status: "configured" as const,
+            framework: "React",
+            detectedStartCommands: [],
+            storybookConfigPaths: [],
+            packageManager: "bun" as const,
+            controlsBridgeStatus: "missing" as const,
+            summary: "Storybook is configured.",
+          })),
+          resolveTarget: vi.fn(async ({ relativePath, targetKind }) =>
+            storyCreated
+              ? {
+                  status: "resolved" as const,
+                  targetKind,
+                  relativePath,
+                  componentRelativePath: "src/Button.tsx",
+                  storyRelativePath: "src/Button.stories.tsx",
+                  initialStoryId: "button--default",
+                  iframePath: "/iframe.html?id=button--default&viewMode=story",
+                  directIframeUrl:
+                    "http://127.0.0.1:6006/iframe.html?id=button--default&viewMode=story",
+                  variants: [
+                    {
+                      storyId: "button--default",
+                      exportName: "Default",
+                      name: "Default",
+                    },
+                  ],
+                }
+              : {
+                  status: "needsStoryWork" as const,
+                  componentRelativePath: "src/Button.tsx",
+                  storyRelativePath: null,
+                  action: "create" as const,
+                  workspaceRootRelativePath: "",
+                  threadId: THREAD_ID,
+                },
+          ),
+          prepareStoryWorkTurn: vi.fn(async () => ({
+            workspaceRootRelativePath: "",
+            threadId: THREAD_ID,
+            turnPrompt: "Create a Storybook story for src/Button.tsx.",
+            storyRelativePath: null,
+          })),
+        },
+      }),
+    );
+
+    useBottomDrawerUiStore.setState({
+      visibleMode: "preview",
+      previousVisibleMode: null,
+      sharedHeight: 320,
+    });
+    usePreviewWorkspaceStore.setState({
+      activeProjectRef: scopeProjectRef(LOCAL_ENVIRONMENT_ID, PROJECT_ID),
+      projectStateByKey: {
+        [`${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`]: {
+          currentTargetKind: "component",
+          currentRelativePath: "src/Button.tsx",
+          currentComponentRelativePath: "src/Button.tsx",
+          currentStoryRelativePath: null,
+          currentStoryId: null,
+          currentVariantIndex: 0,
+          ephemeralArgs: {},
+          runtimeState: null,
+          storyChoices: [],
+          resolution: null,
+          inspection: null,
+          controlsBridgeStatus: null,
+          controls: [],
+          accessToken: null,
+        },
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-preview-story-create" as MessageId,
+        targetText: "preview story create thread",
+      }),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Create story");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByRole("button", { name: "Create story in setup thread" }).click();
+
+      storyCreated = true;
+      fixture.snapshot = {
+        ...fixture.snapshot,
+        snapshotSequence: fixture.snapshot.snapshotSequence + 1,
+        threads: fixture.snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? {
+                ...thread,
+                latestTurn: {
+                  turnId: "turn-preview-story-created" as TurnId,
+                  state: "completed",
+                  requestedAt: isoAt(80),
+                  startedAt: isoAt(81),
+                  completedAt: isoAt(82),
+                  assistantMessageId: null,
+                },
+                session: {
+                  ...thread.session!,
+                  status: "ready",
+                  activeTurnId: null,
+                  updatedAt: isoAt(82),
+                },
+                updatedAt: isoAt(82),
+              }
+            : thread,
+        ),
+        updatedAt: isoAt(82),
+      };
+      emitThreadSnapshot();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).not.toContain("Create story in setup thread");
+          const iframe = document.querySelector<HTMLIFrameElement>("iframe");
+          expect(iframe).not.toBeNull();
+          expect(iframe?.src).toContain("button--default");
         },
         { timeout: 8_000, interval: 16 },
       );

@@ -108,6 +108,167 @@ function makeReadModel(input?: {
 }
 
 describe("decider queue commands", () => {
+  it("forks a started idle thread into a new thread", async () => {
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        readModel: makeReadModel({
+          threads: [
+            makeThread(asThreadId("thread-source"), asProjectId("project-1"), {
+              title: "Source thread",
+              messages: [
+                {
+                  id: asMessageId("message-source"),
+                  role: "user",
+                  text: "hello",
+                  turnId: null,
+                  streaming: false,
+                  createdAt: NOW,
+                  updatedAt: NOW,
+                },
+              ],
+            }),
+          ],
+        }),
+        command: {
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-thread-fork"),
+          threadId: asThreadId("thread-fork"),
+          sourceThreadId: asThreadId("thread-source"),
+          createdAt: NOW,
+        },
+      }),
+    );
+
+    expect(Array.isArray(result)).toBe(false);
+    if (Array.isArray(result)) {
+      throw new Error("Expected a single thread.forked event.");
+    }
+    const forkedEvent = result as Exclude<typeof result, ReadonlyArray<unknown>>;
+    expect(forkedEvent.type).toBe("thread.forked");
+    expect(forkedEvent.aggregateId).toBe(asThreadId("thread-fork"));
+    expect(forkedEvent.payload).toMatchObject({
+      threadId: asThreadId("thread-fork"),
+      sourceThreadId: asThreadId("thread-source"),
+      projectId: asProjectId("project-1"),
+      title: "Source thread (fork)",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5-codex",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdAt: NOW,
+      updatedAt: NOW,
+    });
+  });
+
+  it("rejects forking an empty thread", async () => {
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          readModel: makeReadModel({
+            threads: [makeThread(asThreadId("thread-empty"), asProjectId("project-1"))],
+          }),
+          command: {
+            type: "thread.fork",
+            commandId: CommandId.make("cmd-thread-fork-empty"),
+            threadId: asThreadId("thread-fork-empty"),
+            sourceThreadId: asThreadId("thread-empty"),
+            createdAt: NOW,
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      commandType: "thread.fork",
+    });
+  });
+
+  it("rejects forking a running thread", async () => {
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          readModel: makeReadModel({
+            threads: [
+              makeThread(asThreadId("thread-running"), asProjectId("project-1"), {
+                messages: [
+                  {
+                    id: asMessageId("message-running"),
+                    role: "user",
+                    text: "hello",
+                    turnId: null,
+                    streaming: false,
+                    createdAt: NOW,
+                    updatedAt: NOW,
+                  },
+                ],
+                session: {
+                  threadId: asThreadId("thread-running"),
+                  status: "running",
+                  providerName: "codex",
+                  runtimeMode: "full-access",
+                  activeTurnId: asTurnId("turn-running"),
+                  lastError: null,
+                  updatedAt: NOW,
+                },
+              }),
+            ],
+          }),
+          command: {
+            type: "thread.fork",
+            commandId: CommandId.make("cmd-thread-fork-running"),
+            threadId: asThreadId("thread-fork-running"),
+            sourceThreadId: asThreadId("thread-running"),
+            createdAt: NOW,
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      commandType: "thread.fork",
+    });
+  });
+
+  it("rejects forking a queued thread", async () => {
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          readModel: makeReadModel({
+            threads: [
+              makeThread(asThreadId("thread-queued"), asProjectId("project-1"), {
+                messages: [
+                  {
+                    id: asMessageId("message-queued-source"),
+                    role: "user",
+                    text: "hello",
+                    turnId: null,
+                    streaming: false,
+                    createdAt: NOW,
+                    updatedAt: NOW,
+                  },
+                ],
+                turnQueue: {
+                  items: [makeQueuedTurn("message-queued-turn")],
+                  status: "queued",
+                  pauseReason: null,
+                },
+              }),
+            ],
+          }),
+          command: {
+            type: "thread.fork",
+            commandId: CommandId.make("cmd-thread-fork-queued"),
+            threadId: asThreadId("thread-fork-queued"),
+            sourceThreadId: asThreadId("thread-queued"),
+            createdAt: NOW,
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({
+      commandType: "thread.fork",
+    });
+  });
+
   it("starts immediately when the thread is idle and enqueues when the session is busy", async () => {
     const immediateResult = await Effect.runPromise(
       decideOrchestrationCommand({

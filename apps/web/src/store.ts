@@ -1465,6 +1465,39 @@ function applyEnvironmentOrchestrationEvent(
       return writeThreadState(state, nextThread, previousThread);
     }
 
+    case "thread.forked": {
+      const previousThread = getThreadFromEnvironmentState(state, event.payload.threadId);
+      const nextThread = mapThread(
+        {
+          id: event.payload.threadId,
+          projectId: event.payload.projectId,
+          title: event.payload.title,
+          modelSelection: event.payload.modelSelection,
+          runtimeMode: event.payload.runtimeMode,
+          interactionMode: event.payload.interactionMode,
+          branch: event.payload.branch,
+          worktreePath: event.payload.worktreePath,
+          latestTurn: null,
+          createdAt: event.payload.createdAt,
+          updatedAt: event.payload.updatedAt,
+          archivedAt: null,
+          deletedAt: null,
+          messages: [],
+          proposedPlans: [],
+          activities: [],
+          checkpoints: [],
+          session: null,
+          turnQueue: {
+            items: [],
+            status: "idle",
+            pauseReason: null,
+          },
+        },
+        environmentId,
+      );
+      return writeThreadState(state, nextThread, previousThread);
+    }
+
     case "thread.deleted":
       return removeThreadState(state, event.payload.threadId);
 

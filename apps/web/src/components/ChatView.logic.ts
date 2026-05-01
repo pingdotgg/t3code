@@ -10,7 +10,7 @@ import {
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
-import { selectThreadByRef, useStore } from "../store";
+import { selectThreadByRef, selectThreadExistsByRef, useStore } from "../store";
 import {
   filterCodeContextsWithText,
   stripInlineCodeContextPlaceholders,
@@ -22,6 +22,8 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
+import { threadHasStarted } from "../threadForking";
+export { threadHasStarted } from "../threadForking";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "forma:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -289,12 +291,6 @@ export function buildExpiredTerminalContextToastCopy(
   };
 }
 
-export function threadHasStarted(thread: Thread | null | undefined): boolean {
-  return Boolean(
-    thread && (thread.latestTurn !== null || thread.messages.length > 0 || thread.session !== null),
-  );
-}
-
 export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
   selectedProvider: ProviderKind | null;
@@ -306,14 +302,11 @@ export function deriveLockedProvider(input: {
   return input.thread?.session?.provider ?? input.threadProvider ?? input.selectedProvider ?? null;
 }
 
-export async function waitForStartedServerThread(
-  threadRef: ScopedThreadRef,
-  timeoutMs = 1_000,
+async function waitForThreadState(
+  predicate: (state: ReturnType<typeof useStore.getState>) => boolean,
+  timeoutMs: number,
 ): Promise<boolean> {
-  const getThread = () => selectThreadByRef(useStore.getState(), threadRef);
-  const thread = getThread();
-
-  if (threadHasStarted(thread)) {
+  if (predicate(useStore.getState())) {
     return true;
   }
 
@@ -333,13 +326,13 @@ export async function waitForStartedServerThread(
     };
 
     const unsubscribe = useStore.subscribe((state) => {
-      if (!threadHasStarted(selectThreadByRef(state, threadRef))) {
+      if (!predicate(state)) {
         return;
       }
       finish(true);
     });
 
-    if (threadHasStarted(getThread())) {
+    if (predicate(useStore.getState())) {
       finish(true);
       return;
     }
@@ -348,6 +341,23 @@ export async function waitForStartedServerThread(
       finish(false);
     }, timeoutMs);
   });
+}
+
+export async function waitForServerThreadExists(
+  threadRef: ScopedThreadRef,
+  timeoutMs = 1_000,
+): Promise<boolean> {
+  return await waitForThreadState((state) => selectThreadExistsByRef(state, threadRef), timeoutMs);
+}
+
+export async function waitForStartedServerThread(
+  threadRef: ScopedThreadRef,
+  timeoutMs = 1_000,
+): Promise<boolean> {
+  return await waitForThreadState(
+    (state) => threadHasStarted(selectThreadByRef(state, threadRef) ?? null),
+    timeoutMs,
+  );
 }
 
 export interface LocalDispatchSnapshot {
