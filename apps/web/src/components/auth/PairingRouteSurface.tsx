@@ -163,8 +163,14 @@ export function PairingRouteSurface({
 
 export function HostedPairingRouteSurface() {
   const hostedPairingRequestRef = useRef(readHostedPairingRequest());
-  const [status, setStatus] = useState<"pairing" | "paired" | "error">("pairing");
-  const [message, setMessage] = useState("Connecting to this backend.");
+  const [status, setStatus] = useState<"pairing" | "paired" | "error">(() =>
+    hostedPairingRequestRef.current ? "pairing" : "error",
+  );
+  const [message, setMessage] = useState(() =>
+    hostedPairingRequestRef.current
+      ? "Connecting to this backend."
+      : "This pairing link is missing its backend host or token.",
+  );
   const submitAttemptedRef = useRef(false);
   const tokenSubmittedRef = useRef(false);
 

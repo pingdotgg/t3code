@@ -127,21 +127,14 @@ describe("tailscale", () => {
     const layer = mockSpawnerLayer((command, args) => {
       commands.push({ command, args });
       assert.equal(command, "tailscale");
-      if (args[0] === "status") {
-        assert.deepEqual(args, ["status", "--json"]);
-        return {
-          stdout: tailscaleStatusJson,
-        };
-      }
-      assert.deepEqual(args, ["serve", "clear", "desktop.tail.ts.net:8443"]);
+      assert.deepEqual(args, ["serve", "--https=8443", "off"]);
       return {};
     });
 
     return Effect.gen(function* () {
       yield* disableTailscaleServe({ servePort: 8443 }).pipe(Effect.provide(layer));
       assert.deepEqual(commands, [
-        { command: "tailscale", args: ["status", "--json"] },
-        { command: "tailscale", args: ["serve", "clear", "desktop.tail.ts.net:8443"] },
+        { command: "tailscale", args: ["serve", "--https=8443", "off"] },
       ]);
     });
   });

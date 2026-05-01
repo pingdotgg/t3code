@@ -272,33 +272,11 @@ export const disableTailscaleServe = (
 ): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.gen(function* () {
     const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
-    const status = yield* readTailscaleStatus.pipe(
-      Effect.mapError((error) =>
-        tailscaleCommandError(
-          ["status", "--json"],
-          "Cannot clear Tailscale Serve because status could not be read.",
-          null,
-          error instanceof Error ? error.message : String(error),
-        ),
-      ),
-    );
-    if (!status.magicDnsName) {
-      return yield* tailscaleCommandError(
-        ["serve", "clear"],
-        "Cannot clear Tailscale Serve because MagicDNS name is unavailable.",
-        null,
-      );
-    }
-
-    const service =
-      servePort === DEFAULT_TAILSCALE_SERVE_PORT
-        ? status.magicDnsName
-        : `${status.magicDnsName}:${servePort}`;
-    return yield* runTailscaleCommand(["serve", "clear", service], {
-      spawnMessage: "Failed to spawn tailscale serve clear.",
-      runMessage: "Failed to run tailscale serve clear.",
-      exitMessage: (exitCode) => `Tailscale serve clear exited with code ${exitCode}.`,
-      timeoutMessage: "Tailscale serve clear timed out.",
+    return yield* runTailscaleCommand(["serve", `--https=${servePort}`, "off"], {
+      spawnMessage: "Failed to spawn tailscale serve off.",
+      runMessage: "Failed to run tailscale serve off.",
+      exitMessage: (exitCode) => `Tailscale serve off exited with code ${exitCode}.`,
+      timeoutMessage: "Tailscale serve off timed out.",
       timeoutMs: TAILSCALE_SERVE_TIMEOUT_MS,
     });
   });
