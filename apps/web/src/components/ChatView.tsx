@@ -3281,6 +3281,7 @@ export default function ChatView(props: ChatViewProps) {
 
       const displayedMessage = deriveDisplayedUserMessageState(text);
       const draftText = displayedMessage.visibleText || text;
+      clearComposerDraftContent(composerDraftTarget);
       setComposerDraftPrompt(composerDraftTarget, draftText);
       promptRef.current = draftText;
       composerRef.current?.resetCursorState({
@@ -3291,7 +3292,7 @@ export default function ChatView(props: ChatViewProps) {
       composerRef.current?.focusAtEnd();
       await onRevertToTurnCountRef.current(targetTurnCount);
     },
-    [composerDraftTarget, composerRef, setComposerDraftPrompt],
+    [clearComposerDraftContent, composerDraftTarget, composerRef, setComposerDraftPrompt],
   );
 
   // Empty state: no active thread
