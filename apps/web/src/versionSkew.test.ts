@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 import { APP_VERSION } from "./branding";
 import {
   appendVersionMismatchHint,
+  buildVersionMismatchDismissalKey,
+  dismissVersionMismatch,
+  isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
   resolveVersionMismatch,
 } from "./versionSkew";
@@ -40,6 +43,29 @@ describe("versionSkew", () => {
     ).toMatchObject({
       serverVersion: "9.9.9",
     });
+  });
+
+  it("keys dismissals by environment, client version, and server version", () => {
+    const environmentId = EnvironmentId.make("environment-dismissal");
+    const key = buildVersionMismatchDismissalKey(environmentId, {
+      clientVersion: APP_VERSION,
+      serverVersion: "9.9.9",
+    });
+
+    expect(key).toBe(`${environmentId}:${APP_VERSION}:9.9.9`);
+    expect(isVersionMismatchDismissed(key)).toBe(false);
+
+    dismissVersionMismatch(key);
+
+    expect(isVersionMismatchDismissed(key)).toBe(true);
+    expect(
+      isVersionMismatchDismissed(
+        buildVersionMismatchDismissalKey(environmentId, {
+          clientVersion: APP_VERSION,
+          serverVersion: "9.9.10",
+        }),
+      ),
+    ).toBe(false);
   });
 
   it("appends a hint to connection errors when versions differ", () => {
