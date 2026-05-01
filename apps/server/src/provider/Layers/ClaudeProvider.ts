@@ -589,11 +589,13 @@ const probeClaudeCapabilities = (
     });
   }).pipe(
     Effect.ensuring(
-      Effect.gen(function* () {
-        yield* Effect.sync(() => {
+      Effect.sync(() => {
+        try {
           if (!abort.signal.aborted) abort.abort();
-        }).pipe(Effect.ignoreCause({ log: false }));
-        yield* Effect.sync(() => q?.close()).pipe(Effect.ignoreCause({ log: false }));
+        } catch {}
+        try {
+          q?.close();
+        } catch {}
       }),
     ),
     Effect.timeoutOption(CAPABILITIES_PROBE_TIMEOUT_MS),
