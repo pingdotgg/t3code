@@ -30,7 +30,7 @@ jobs:
   check_changes:
     name: Check for changes since last nightly
     if: github.event_name == 'schedule'
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     outputs:
       has_changes: ${{ steps.check.outputs.has_changes }}
     steps:
@@ -376,13 +376,16 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --filter=t3 --filter=@t3tools/web --filter=@t3tools/scripts
 
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
 
+      - name: Build web package
+        run: bun --filter=@t3tools/web run build
+
       - name: Build CLI package
-        run: bun run build --filter=@t3tools/web --filter=t3
+        run: bun --filter=t3 run build
 
       - name: Publish CLI package
         run: node apps/server/scripts/cli.ts publish --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --app-version "${{ needs.preflight.outputs.version }}" --verbose
@@ -391,7 +394,7 @@ jobs:
     name: Publish GitHub Release
     needs: [preflight, build, publish_cli]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
-    runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - id: app_token
@@ -418,7 +421,7 @@ jobs:
           node-version-file: package.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --filter=@t3tools/scripts
 
       - name: Download all desktop artifacts
         uses: actions/download-artifact@v8
@@ -552,7 +555,7 @@ jobs:
           node-version-file: package.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --filter=@t3tools/scripts
 
       - id: update_versions
         name: Update version strings
@@ -562,7 +565,7 @@ jobs:
 
       - name: Format package.json files
         if: steps.update_versions.outputs.changed == 'true'
-        run: bunx oxfmt apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
+        run: bunx oxfmt@0.40.0 apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
 
       - name: Refresh lockfile
         if: steps.update_versions.outputs.changed == 'true'
@@ -594,7 +597,7 @@ jobs:
       needs.release.result == 'success' &&
       (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
     needs: [preflight, release, finalize]
-    runs-on: ubuntu-24.04
+    runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -613,7 +616,7 @@ jobs:
           node-version-file: package.json
 
       - name: Install dependencies
-        run: bun install --frozen-lockfile
+        run: bun install --frozen-lockfile --filter=@t3tools/scripts
 
       - name: Announce prerelease on Discord
         if: needs.preflight.outputs.is_prerelease == 'true'
