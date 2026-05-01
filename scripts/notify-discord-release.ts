@@ -197,7 +197,6 @@ export const notifyDiscordReleaseCommand = Command.make(
           version,
           tag,
           releaseUrl,
-          discordWebhookConfigured: Boolean(process.env.DISCORD_WEBHOOK_URL?.trim()),
         }),
       );
 
