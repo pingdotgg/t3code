@@ -12,6 +12,7 @@ import { type DraftId } from "~/composerDraftStore";
 import {
   IconChevronRight as ChevronRightIcon,
   IconCube as CubeIcon,
+  IconFolder as FilesIcon,
   IconPlusminus as DiffIcon,
 } from "symbols-react";
 import { PreviewTriggerIcon, TerminalToggleIcon } from "../icons/custom";
@@ -47,6 +48,9 @@ interface ChatHeaderProps {
   previewOpen: boolean;
   diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
+  filesAvailable: boolean;
+  filesOpen: boolean;
+  diffAvailable: boolean;
   diffOpen: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
@@ -55,6 +59,7 @@ interface ChatHeaderProps {
   onOpenProjectSwitcher: () => void;
   onToggleTerminal: () => void;
   onTogglePreview: () => void;
+  onToggleFiles: () => void;
   onToggleDiff: () => void;
 }
 
@@ -76,6 +81,9 @@ export const ChatHeader = memo(function ChatHeader({
   previewOpen,
   diffToggleShortcutLabel,
   gitCwd,
+  filesAvailable,
+  filesOpen,
+  diffAvailable,
   diffOpen,
   onRunProjectScript,
   onAddProjectScript,
@@ -84,6 +92,7 @@ export const ChatHeader = memo(function ChatHeader({
   onOpenProjectSwitcher,
   onToggleTerminal,
   onTogglePreview,
+  onToggleFiles,
   onToggleDiff,
 }: ChatHeaderProps) {
   return (
@@ -165,6 +174,28 @@ export const ChatHeader = memo(function ChatHeader({
             render={
               <Toggle
                 className="shrink-0 [&_svg]:fill-current"
+                pressed={filesOpen}
+                onClick={onToggleFiles}
+                aria-label="Toggle files panel"
+                variant="outline"
+                size="xs"
+                disabled={!filesAvailable}
+              >
+                <FilesIcon className="size-3" />
+              </Toggle>
+            }
+          />
+          <TooltipPopup side="bottom">
+            {!filesAvailable
+              ? "Files panel is unavailable until this thread has an active project."
+              : "Toggle files panel"}
+          </TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Toggle
+                className="shrink-0 [&_svg]:fill-current"
                 pressed={previewOpen}
                 onClick={onTogglePreview}
                 aria-label="Toggle preview drawer"
@@ -216,15 +247,17 @@ export const ChatHeader = memo(function ChatHeader({
                 aria-label="Toggle diff panel"
                 variant="outline"
                 size="xs"
-                disabled={!isGitRepo}
+                disabled={!diffAvailable}
               >
                 <DiffIcon className="size-3 fill-current" />
               </Toggle>
             }
           />
           <TooltipPopup side="bottom">
-            {!isGitRepo
-              ? "Diff panel is unavailable because this project is not a git repository."
+            {!diffAvailable
+              ? isGitRepo
+                ? "Diff panel is unavailable for draft threads."
+                : "Diff panel is unavailable because this project is not a git repository."
               : diffToggleShortcutLabel
                 ? `Toggle diff panel (${diffToggleShortcutLabel})`
                 : "Toggle diff panel"}

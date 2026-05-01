@@ -4,12 +4,20 @@ export interface DiffRouteSearch {
   diff?: "1" | undefined;
   diffTurnId?: TurnId | undefined;
   diffFilePath?: string | undefined;
-  diffView?: "editor" | undefined;
+  diffView?: "files" | "editor" | undefined;
   editorFilePath?: string | undefined;
   editorLine?: number | undefined;
   editorColumn?: number | undefined;
-  editorBackToDiff?: "1" | undefined;
+  editorBackToView?: "diff" | "files" | undefined;
 }
+
+export type WorkspacePanelDisplayMode =
+  | "closed"
+  | "diff"
+  | "files"
+  | "editor-diff"
+  | "editor-files"
+  | "editor-standalone";
 
 function isDiffOpenValue(value: unknown): boolean {
   return value === "1" || value === 1 || value === true;
@@ -49,6 +57,7 @@ export function stripDiffSearchParams<T extends Record<string, unknown>>(
   | "editorFilePath"
   | "editorLine"
   | "editorColumn"
+  | "editorBackToView"
   | "editorBackToDiff"
 > {
   const {
@@ -59,6 +68,7 @@ export function stripDiffSearchParams<T extends Record<string, unknown>>(
     editorFilePath: _editorFilePath,
     editorLine: _editorLine,
     editorColumn: _editorColumn,
+    editorBackToView: _editorBackToView,
     editorBackToDiff: _editorBackToDiff,
     ...rest
   } = params;
@@ -71,6 +81,7 @@ export function stripDiffSearchParams<T extends Record<string, unknown>>(
     | "editorFilePath"
     | "editorLine"
     | "editorColumn"
+    | "editorBackToView"
     | "editorBackToDiff"
   >;
 }
@@ -84,6 +95,16 @@ function buildBaseDiffSearch(previous: Record<string, unknown>) {
 
 export function buildDiffOpenSearch(previous: Record<string, unknown>) {
   return buildBaseDiffSearch(previous);
+}
+
+export function buildDiffFilesSearch(previous: Record<string, unknown>) {
+  const parsedPrevious = parseDiffRouteSearch(previous);
+  return {
+    ...buildBaseDiffSearch(previous),
+    ...(parsedPrevious.diffTurnId ? { diffTurnId: parsedPrevious.diffTurnId } : {}),
+    ...(parsedPrevious.diffFilePath ? { diffFilePath: parsedPrevious.diffFilePath } : {}),
+    diffView: "files" as const,
+  };
 }
 
 export function buildDiffTurnSearch(
@@ -105,18 +126,24 @@ export function buildDiffEditorSearch(
     column?: number | undefined;
     turnId?: TurnId | undefined;
     diffFilePath?: string | undefined;
-    backToDiff?: boolean | undefined;
+    backToView?: "diff" | "files" | undefined;
   },
 ) {
+  const parsedPrevious = parseDiffRouteSearch(previous);
+  const turnId = input.turnId ?? parsedPrevious.diffTurnId;
+  const diffFilePath =
+    input.turnId !== undefined
+      ? input.diffFilePath
+      : (input.diffFilePath ?? parsedPrevious.diffFilePath);
   return {
     ...buildBaseDiffSearch(previous),
-    ...(input.turnId ? { diffTurnId: input.turnId } : {}),
-    ...(input.turnId && input.diffFilePath ? { diffFilePath: input.diffFilePath } : {}),
+    ...(turnId ? { diffTurnId: turnId } : {}),
+    ...(turnId && diffFilePath ? { diffFilePath } : {}),
     diffView: "editor" as const,
     editorFilePath: input.filePath,
     ...(typeof input.line === "number" ? { editorLine: input.line } : {}),
     ...(typeof input.column === "number" ? { editorColumn: input.column } : {}),
-    ...(input.backToDiff ? { editorBackToDiff: "1" as const } : {}),
+    ...(input.backToView ? { editorBackToView: input.backToView } : {}),
   };
 }
 
@@ -130,6 +157,7 @@ export function buildDiffClosedSearch(previous: Record<string, unknown>) {
     editorFilePath: undefined,
     editorLine: undefined,
     editorColumn: undefined,
+    editorBackToView: undefined,
     editorBackToDiff: undefined,
   };
 }
@@ -142,13 +170,25 @@ export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRoute
   const diffViewRaw = diff ? normalizeSearchString(search.diffView) : undefined;
   const editorFilePathRaw = diff ? normalizeSearchString(search.editorFilePath) : undefined;
   const diffView =
-    diffViewRaw === "editor" && editorFilePathRaw !== undefined ? ("editor" as const) : undefined;
+    diffViewRaw === "files"
+      ? ("files" as const)
+      : diffViewRaw === "editor" && editorFilePathRaw !== undefined
+        ? ("editor" as const)
+        : undefined;
   const editorFilePath = diffView === "editor" ? editorFilePathRaw : undefined;
   const editorLine = editorFilePath ? normalizePositiveInteger(search.editorLine) : undefined;
   const editorColumn =
     editorLine !== undefined ? normalizePositiveInteger(search.editorColumn) : undefined;
-  const editorBackToDiff =
-    diffView === "editor" && isDiffOpenValue(search.editorBackToDiff) ? ("1" as const) : undefined;
+  const editorBackToViewRaw =
+    diffView === "editor" ? normalizeSearchString(search.editorBackToView) : undefined;
+  const editorBackToView =
+    diffView === "editor"
+      ? editorBackToViewRaw === "diff" || editorBackToViewRaw === "files"
+        ? editorBackToViewRaw
+        : isDiffOpenValue(search.editorBackToDiff)
+          ? ("diff" as const)
+          : undefined
+      : undefined;
 
   return {
     ...(diff ? { diff } : {}),
@@ -158,6 +198,27 @@ export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRoute
     ...(editorFilePath ? { editorFilePath } : {}),
     ...(editorLine !== undefined ? { editorLine } : {}),
     ...(editorColumn !== undefined ? { editorColumn } : {}),
-    ...(editorBackToDiff ? { editorBackToDiff } : {}),
+    ...(editorBackToView ? { editorBackToView } : {}),
   };
+}
+
+export function resolveWorkspacePanelDisplayMode(
+  search: DiffRouteSearch,
+): WorkspacePanelDisplayMode {
+  if (search.diff !== "1") {
+    return "closed";
+  }
+  if (search.diffView === "files") {
+    return "files";
+  }
+  if (search.diffView === "editor") {
+    if (search.editorBackToView === "files") {
+      return "editor-files";
+    }
+    if (search.editorBackToView === "diff" || search.diffTurnId) {
+      return "editor-diff";
+    }
+    return "editor-standalone";
+  }
+  return "diff";
 }

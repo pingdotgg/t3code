@@ -20,6 +20,8 @@ import type {
 } from "./git.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type {
+  ProjectListEntriesInput,
+  ProjectListEntriesResult,
   ProjectLocalAgentInventoryInput,
   ProjectLocalAgentInventoryResult,
   ProjectReadFileInput,
@@ -289,6 +291,7 @@ export interface EnvironmentApi {
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
   };
   projects: {
+    listEntries: (input: ProjectListEntriesInput) => Promise<ProjectListEntriesResult>;
     getLocalAgentInventory: (
       input: ProjectLocalAgentInventoryInput,
     ) => Promise<ProjectLocalAgentInventoryResult>;

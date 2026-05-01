@@ -255,7 +255,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const editorFilePath = diffSearch.editorFilePath ?? null;
   const editorLine = diffSearch.editorLine;
   const editorColumn = diffSearch.editorColumn;
-  const editorBackToDiff = diffSearch.editorBackToDiff === "1";
+  const editorBackToView = diffSearch.editorBackToView;
   const viewMode: DiffViewMode =
     diffSearch.diffView === "editor" && editorFilePath !== null ? "editor" : "diff";
   const selectedTurn =
@@ -527,7 +527,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
             filePath,
             turnId: selectedTurn.turnId,
             diffFilePath: filePath,
-            backToDiff: true,
+            backToView: "diff",
           }),
       });
     },
@@ -779,6 +779,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         </div>
       ) : viewMode === "editor" && activeCwd && editorFilePath ? (
         <DiffFileEditorPane
+          key={`${selectedTurn?.turnId ?? "standalone"}:${editorFilePath}`}
           cwd={activeCwd}
           environmentId={activeThread.environmentId}
           fileDiff={isSelectedTurnEditorFile ? editorFileDiff : null}
@@ -795,7 +796,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           previewDisabledReason={previewDisabledReasonForFile(editorFilePath)}
           onPersisted={persistSavedDiffOverride}
           onRequestBack={() => {
-            if (editorBackToDiff && selectedTurn) {
+            if (editorBackToView === "diff" && selectedTurn) {
               void navigate({
                 to: "/$environmentId/$threadId",
                 params: buildThreadRouteParams(
@@ -809,7 +810,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
               });
               return;
             }
-            if (editorBackToDiff) {
+            if (editorBackToView === "diff") {
               void navigate({
                 to: "/$environmentId/$threadId",
                 params: buildThreadRouteParams(
@@ -838,7 +839,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                   filePath,
                   turnId: selectedTurn?.turnId,
                   diffFilePath: selectedTurn ? filePath : undefined,
-                  backToDiff: editorBackToDiff,
+                  backToView: editorBackToView,
                 }),
             });
           }}

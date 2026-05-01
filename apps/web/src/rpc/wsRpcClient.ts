@@ -65,6 +65,7 @@ export interface WsRpcClient {
     readonly onEvent: RpcStreamMethod<typeof WS_METHODS.subscribeTerminalEvents>;
   };
   readonly projects: {
+    readonly listEntries: RpcUnaryMethod<typeof WS_METHODS.projectsListEntries>;
     readonly getLocalAgentInventory: RpcUnaryMethod<
       typeof WS_METHODS.projectsGetLocalAgentInventory
     >;
@@ -164,6 +165,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         ),
     },
     projects: {
+      listEntries: (input) =>
+        transport.request((client) => client[WS_METHODS.projectsListEntries](input)),
       getLocalAgentInventory: (input) =>
         transport.request((client) => client[WS_METHODS.projectsGetLocalAgentInventory](input)),
       readFile: (input) =>

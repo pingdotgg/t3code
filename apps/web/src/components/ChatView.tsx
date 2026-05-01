@@ -38,9 +38,11 @@ import { readLocalApi } from "../localApi";
 import {
   buildDiffClosedSearch,
   buildDiffEditorSearch,
+  buildDiffFilesSearch,
   buildDiffOpenSearch,
   buildDiffTurnSearch,
   parseDiffRouteSearch,
+  resolveWorkspacePanelDisplayMode,
 } from "../diffRouteSearch";
 import {
   collapseExpandedComposerCursor,
@@ -121,7 +123,7 @@ import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
+import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -334,7 +336,6 @@ type ChatViewProps =
   | {
       environmentId: EnvironmentId;
       threadId: ThreadId;
-      onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
       routeKind: "server";
       draftId?: never;
@@ -342,7 +343,6 @@ type ChatViewProps =
   | {
       environmentId: EnvironmentId;
       threadId: ThreadId;
-      onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
       routeKind: "draft";
       draftId: DraftId;
@@ -422,13 +422,7 @@ const EMPTY_TURN_QUEUE: Thread["turnQueue"] = {
 };
 
 export default function ChatView(props: ChatViewProps) {
-  const {
-    environmentId,
-    threadId,
-    routeKind,
-    onDiffPanelOpen,
-    reserveTitleBarControlInset = true,
-  } = props;
+  const { environmentId, threadId, routeKind, reserveTitleBarControlInset = true } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -607,7 +601,15 @@ export default function ChatView(props: ChatViewProps) {
     : undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
-  const diffOpen = rawSearch.diff === "1";
+  const workspacePanelDisplayMode = resolveWorkspacePanelDisplayMode(rawSearch);
+  const filesOpen =
+    workspacePanelDisplayMode === "files" ||
+    workspacePanelDisplayMode === "editor-files" ||
+    (routeKind === "draft" && workspacePanelDisplayMode === "editor-standalone");
+  const diffOpen =
+    workspacePanelDisplayMode === "diff" ||
+    workspacePanelDisplayMode === "editor-diff" ||
+    (routeKind === "server" && workspacePanelDisplayMode === "editor-standalone");
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadRef = useMemo(
     () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
@@ -1291,6 +1293,7 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelOpen = planSidebarOpen;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const diffAvailable = isServerThread && isGitRepo;
   const nonTerminalShortcutLabelOptions = useMemo(
     () => ({
       context: {
@@ -1308,24 +1311,51 @@ export default function ChatView(props: ChatViewProps) {
     () => shortcutLabelForCommand(keybindings, "diff.toggle", nonTerminalShortcutLabelOptions),
     [keybindings, nonTerminalShortcutLabelOptions],
   );
+  const navigateCurrentThreadPanel = useCallback(
+    (updateSearch: (previous: Record<string, unknown>) => Record<string, unknown>) => {
+      if (routeKind === "draft") {
+        if (!draftId) {
+          return;
+        }
+        void navigate({
+          to: "/draft/$draftId",
+          params: buildDraftThreadRouteParams(draftId),
+          replace: true,
+          search: updateSearch,
+        });
+        return;
+      }
+
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
+        replace: true,
+        search: updateSearch,
+      });
+    },
+    [draftId, environmentId, navigate, routeKind, threadId],
+  );
+  const onToggleFiles = useCallback(() => {
+    if (!activeWorkspaceRoot) {
+      return;
+    }
+    if (!filesOpen) {
+      navigateCurrentThreadPanel((previous) => buildDiffFilesSearch(previous));
+      return;
+    }
+    navigateCurrentThreadPanel((previous) => buildDiffClosedSearch(previous));
+  }, [activeWorkspaceRoot, filesOpen, navigateCurrentThreadPanel]);
   const onToggleDiff = useCallback(() => {
     if (!isServerThread) {
       return;
     }
-    if (!diffOpen) {
-      onDiffPanelOpen?.();
-    }
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: {
-        environmentId,
-        threadId,
-      },
-      replace: true,
-      search: (previous) =>
-        diffOpen ? buildDiffClosedSearch(previous) : buildDiffOpenSearch(previous),
+    navigateCurrentThreadPanel((previous) => {
+      if (diffOpen) {
+        return buildDiffClosedSearch(previous);
+      }
+      return buildDiffOpenSearch(previous);
     });
-  }, [diffOpen, environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
+  }, [diffOpen, isServerThread, navigateCurrentThreadPanel]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -3203,7 +3233,7 @@ export default function ChatView(props: ChatViewProps) {
   }, []);
   const onOpenFileInPanel = useCallback(
     (meta: MarkdownFileLinkMeta, turnId: TurnId | null | undefined) => {
-      if (!isServerThread || !activeWorkspaceRoot) {
+      if (!activeWorkspaceRoot) {
         return false;
       }
 
@@ -3213,40 +3243,30 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       const effectiveTurnId = turnId ?? rawSearch.diffTurnId ?? undefined;
-      const backToDiff =
+      const backToView =
         rawSearch.diffView === "editor"
-          ? rawSearch.editorBackToDiff === "1"
-          : rawSearch.diff === "1";
-      onDiffPanelOpen?.();
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: {
-          environmentId,
-          threadId,
-        },
-        search: (previous) =>
-          buildDiffEditorSearch(previous, {
-            filePath: editorTarget.relativePath,
-            line: editorTarget.line,
-            column: editorTarget.column,
-            turnId: effectiveTurnId,
-            diffFilePath: effectiveTurnId ? editorTarget.relativePath : undefined,
-            backToDiff,
-          }),
-      });
+          ? rawSearch.editorBackToView
+          : effectiveTurnId
+            ? ("diff" as const)
+            : undefined;
+      navigateCurrentThreadPanel((previous) =>
+        buildDiffEditorSearch(previous, {
+          filePath: editorTarget.relativePath,
+          line: editorTarget.line,
+          column: editorTarget.column,
+          turnId: effectiveTurnId,
+          diffFilePath: effectiveTurnId ? editorTarget.relativePath : undefined,
+          ...(backToView ? { backToView } : {}),
+        }),
+      );
       return true;
     },
     [
       activeWorkspaceRoot,
-      environmentId,
-      isServerThread,
-      navigate,
-      onDiffPanelOpen,
-      rawSearch.diff,
+      navigateCurrentThreadPanel,
       rawSearch.diffView,
       rawSearch.diffTurnId,
-      rawSearch.editorBackToDiff,
-      threadId,
+      rawSearch.editorBackToView,
     ],
   );
   const onOpenFilePreview = useCallback(
@@ -3275,17 +3295,9 @@ export default function ChatView(props: ChatViewProps) {
       if (!isServerThread) {
         return;
       }
-      onDiffPanelOpen?.();
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: {
-          environmentId,
-          threadId,
-        },
-        search: (previous) => buildDiffTurnSearch(previous, { turnId, filePath }),
-      });
+      navigateCurrentThreadPanel((previous) => buildDiffTurnSearch(previous, { turnId, filePath }));
     },
-    [environmentId, isServerThread, navigate, onDiffPanelOpen, threadId],
+    [isServerThread, navigateCurrentThreadPanel],
   );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
@@ -3341,6 +3353,9 @@ export default function ChatView(props: ChatViewProps) {
           previewOpen={bottomDrawerMode === "preview"}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
+          filesAvailable={activeWorkspaceRoot !== undefined}
+          filesOpen={filesOpen}
+          diffAvailable={diffAvailable}
           diffOpen={diffOpen}
           onRunProjectScript={runProjectScript}
           onAddProjectScript={saveProjectScript}
@@ -3349,6 +3364,7 @@ export default function ChatView(props: ChatViewProps) {
           onOpenProjectSwitcher={openProjectSwitcher}
           onToggleTerminal={toggleTerminalVisibility}
           onTogglePreview={togglePreviewVisibility}
+          onToggleFiles={onToggleFiles}
           onToggleDiff={onToggleDiff}
         />
       </header>

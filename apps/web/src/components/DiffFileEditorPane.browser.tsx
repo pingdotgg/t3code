@@ -5,13 +5,17 @@ import { parsePatchFiles } from "@pierre/diffs";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   __resetEnvironmentApiOverridesForTests,
   __setEnvironmentApiOverrideForTests,
 } from "../environmentApi";
 import { __resetClientSettingsPersistenceForTests, useUpdateSettings } from "../hooks/useSettings";
-import { DiffFileEditorPane } from "./DiffFileEditorPane";
+import { __resetProjectFileReadCacheForTests } from "../lib/projectFileReadCache";
+import {
+  __resetDiffFileEditorPaneSessionCacheForTests,
+  DiffFileEditorPane,
+} from "./DiffFileEditorPane";
 
 const { focusMock, revealPositionInCenterMock, setPositionMock } = vi.hoisted(() => ({
   focusMock: vi.fn(),
@@ -183,6 +187,7 @@ function setEnvironmentApiOverride(input: {
 }) {
   __setEnvironmentApiOverrideForTests(environmentId, {
     projects: {
+      listEntries: vi.fn(),
       readFile: input.readFile,
       searchEntries: vi.fn(),
       writeFile: input.writeFile,
@@ -215,6 +220,8 @@ describe("DiffFileEditorPane", () => {
   afterEach(() => {
     __resetEnvironmentApiOverridesForTests();
     __resetClientSettingsPersistenceForTests();
+    __resetProjectFileReadCacheForTests();
+    __resetDiffFileEditorPaneSessionCacheForTests();
     vi.restoreAllMocks();
     focusMock.mockReset();
     revealPositionInCenterMock.mockReset();
@@ -377,6 +384,65 @@ index 1111111..2222222 100644
       await expect
         .element(page.getByLabelText("Monaco editor"))
         .toHaveAttribute("data-language", "typescript");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("updates the editor contents when switching files", async () => {
+    const readFile = vi.fn(async ({ relativePath }: { relativePath: string }) => ({
+      relativePath,
+      contents:
+        relativePath === "src/other.ts"
+          ? "export const other = true;\n"
+          : "export const example = true;\n",
+      version: relativePath === "src/other.ts" ? versionB : versionA,
+    }));
+    const writeFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.ts",
+      version: versionB,
+    });
+    setEnvironmentApiOverride({ readFile, writeFile });
+
+    function FileSwitchHarness() {
+      const [currentFilePath, setCurrentFilePath] = useState("src/example.ts");
+
+      return (
+        <div className="h-[640px] w-[960px]">
+          <DiffFileEditorPane
+            cwd="/repo"
+            environmentId={environmentId}
+            sessionKey={currentFilePath}
+            fileDiff={null}
+            filePath={currentFilePath}
+            filePaths={["src/example.ts", "src/other.ts"]}
+            navigationLabel="Back to diff"
+            initialOverride={undefined}
+            resolvedTheme="dark"
+            onAddCodeContext={vi.fn()}
+            onOpenInEditor={vi.fn()}
+            onOpenPreview={vi.fn()}
+            previewDisabledReason={null}
+            onPersisted={vi.fn()}
+            onRequestBack={vi.fn()}
+            onRequestFilePathChange={setCurrentFilePath}
+          />
+        </div>
+      );
+    }
+
+    const screen = await render(<FileSwitchHarness />);
+
+    try {
+      await expect
+        .element(page.getByLabelText("Monaco editor"))
+        .toHaveValue("export const example = true;\n");
+
+      await page.getByRole("button", { name: "other.ts" }).click();
+
+      await expect
+        .element(page.getByLabelText("Monaco editor"))
+        .toHaveValue("export const other = true;\n");
     } finally {
       await screen.unmount();
     }

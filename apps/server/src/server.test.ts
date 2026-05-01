@@ -2205,6 +2205,65 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc projects.listEntries", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "forma-ws-project-list-entries-",
+      });
+      yield* fs.makeDirectory(path.join(workspaceDir, "src", "components"), { recursive: true });
+      yield* fs.writeFileString(path.join(workspaceDir, "src", "App.tsx"), "export {};\n");
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsListEntries]({
+            cwd: workspaceDir,
+            relativePath: "src",
+          }),
+        ),
+      );
+
+      assert.deepEqual(response.entries, [
+        { path: "src/components", kind: "directory", parentPath: "src" },
+        { path: "src/App.tsx", kind: "file", parentPath: "src" },
+      ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect(
+    "routes websocket rpc projects.listEntries rejects traversal outside the workspace root",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const workspaceDir = yield* fs.makeTempDirectoryScoped({
+          prefix: "forma-ws-project-list-entries-outside-",
+        });
+
+        yield* buildAppUnderTest();
+
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const result = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.projectsListEntries]({
+              cwd: workspaceDir,
+              relativePath: "../outside",
+            }),
+          ).pipe(Effect.result),
+        );
+
+        assertTrue(result._tag === "Failure");
+        assertTrue(result.failure._tag === "ProjectListEntriesError");
+        assertInclude(
+          result.failure.message,
+          "Workspace file path must be relative to the project root: ../outside",
+        );
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc projects.writeFile", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

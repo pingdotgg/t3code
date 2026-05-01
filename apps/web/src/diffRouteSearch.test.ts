@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildDiffClosedSearch,
   buildDiffEditorSearch,
+  buildDiffFilesSearch,
   buildDiffOpenSearch,
   buildDiffTurnSearch,
   parseDiffRouteSearch,
@@ -89,7 +90,7 @@ describe("parseDiffRouteSearch", () => {
         editorFilePath: "src/app.ts",
         editorLine: "12",
         editorColumn: 4,
-        editorBackToDiff: true,
+        editorBackToView: "diff",
       }),
     ).toEqual({
       diff: "1",
@@ -99,7 +100,34 @@ describe("parseDiffRouteSearch", () => {
       editorFilePath: "src/app.ts",
       editorLine: 12,
       editorColumn: 4,
-      editorBackToDiff: "1",
+      editorBackToView: "diff",
+    });
+  });
+
+  it("parses files view and normalizes legacy back-to-diff state", () => {
+    expect(
+      parseDiffRouteSearch({
+        diff: "1",
+        diffView: "files",
+        editorFilePath: "ignored.ts",
+      }),
+    ).toEqual({
+      diff: "1",
+      diffView: "files",
+    });
+
+    expect(
+      parseDiffRouteSearch({
+        diff: "1",
+        diffView: "editor",
+        editorFilePath: "src/app.ts",
+        editorBackToDiff: true,
+      }),
+    ).toEqual({
+      diff: "1",
+      diffView: "editor",
+      editorFilePath: "src/app.ts",
+      editorBackToView: "diff",
     });
   });
 
@@ -141,7 +169,7 @@ describe("parseDiffRouteSearch", () => {
 });
 
 describe("diff route builders", () => {
-  it("builds diff open, turn, editor, and close search objects", () => {
+  it("builds diff open, files, turn, editor, and close search objects", () => {
     const previous = {
       tab: "activity",
       diff: "1",
@@ -150,11 +178,19 @@ describe("diff route builders", () => {
       diffView: "editor",
       editorFilePath: "old.ts",
       editorLine: 2,
+      editorBackToView: "diff",
     };
 
     expect(buildDiffOpenSearch(previous)).toEqual({
       tab: "activity",
       diff: "1",
+    });
+    expect(buildDiffFilesSearch(previous)).toEqual({
+      tab: "activity",
+      diff: "1",
+      diffTurnId: "turn-old",
+      diffFilePath: "old.ts",
+      diffView: "files",
     });
     expect(
       buildDiffTurnSearch(previous, {
@@ -174,7 +210,7 @@ describe("diff route builders", () => {
         column: 8,
         turnId: TurnId.make("turn-1"),
         diffFilePath: "src/app.ts",
-        backToDiff: true,
+        backToView: "diff",
       }),
     ).toEqual({
       tab: "activity",
@@ -185,7 +221,7 @@ describe("diff route builders", () => {
       editorFilePath: "src/app.ts",
       editorLine: 4,
       editorColumn: 8,
-      editorBackToDiff: "1",
+      editorBackToView: "diff",
     });
     expect(buildDiffClosedSearch(previous)).toEqual({
       tab: "activity",
@@ -196,6 +232,7 @@ describe("diff route builders", () => {
       editorFilePath: undefined,
       editorLine: undefined,
       editorColumn: undefined,
+      editorBackToView: undefined,
       editorBackToDiff: undefined,
     });
   });

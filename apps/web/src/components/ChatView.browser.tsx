@@ -55,9 +55,12 @@ import { getRouter } from "../router";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { useBottomDrawerUiStore } from "../bottomDrawerUiStore";
 import { usePreviewWorkspaceStore } from "../previewWorkspaceStore";
+import { __resetProjectFileReadCacheForTests } from "../lib/projectFileReadCache";
 import { selectBootstrapCompleteForActiveEnvironment, useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
+import { __resetDiffFileEditorPaneSessionCacheForTests } from "./DiffFileEditorPane";
+import { __resetWorkspaceFilesTreeSessionStateForTests } from "./WorkspaceFilesTree";
 import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers";
 import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
 
@@ -206,6 +209,7 @@ function createMockEnvironmentApi(input: {
   dispatchCommand: EnvironmentApi["orchestration"]["dispatchCommand"];
   getFullThreadDiff?: EnvironmentApi["orchestration"]["getFullThreadDiff"];
   getLocalAgentInventory?: EnvironmentApi["projects"]["getLocalAgentInventory"];
+  listEntries?: EnvironmentApi["projects"]["listEntries"];
   preview?: Partial<EnvironmentApi["preview"]>;
   getTurnDiff?: EnvironmentApi["orchestration"]["getTurnDiff"];
   readFile?: EnvironmentApi["projects"]["readFile"];
@@ -216,6 +220,11 @@ function createMockEnvironmentApi(input: {
   return {
     terminal: {} as EnvironmentApi["terminal"],
     projects: {
+      listEntries:
+        input.listEntries ??
+        ((async () => ({
+          entries: [],
+        })) as EnvironmentApi["projects"]["listEntries"]),
       getLocalAgentInventory:
         input.getLocalAgentInventory ??
         ((async () => ({
@@ -2339,6 +2348,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
       activeProjectRef: null,
       projectStateByKey: {},
     });
+    __resetProjectFileReadCacheForTests();
+    __resetDiffFileEditorPaneSessionCacheForTests();
+    __resetWorkspaceFilesTreeSessionStateForTests();
   });
 
   afterEach(() => {
@@ -7466,8 +7478,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
           editorFilePath: "src/linked.ts",
           editorLine: 4,
           editorColumn: 2,
+          editorBackToView: "diff",
         });
-        expect(mounted.router.state.location.search.editorBackToDiff).toBeUndefined();
       });
       await expect.element(page.getByRole("button", { name: "Exit edit" })).toBeVisible();
     } finally {
@@ -7481,7 +7493,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotWithAssistantFileLink(),
-      initialPath: `/${LOCAL_ENVIRONMENT_ID}/${THREAD_ID}?diff=1&diffTurnId=turn-linked-editor&diffFilePath=src%2Flinked.ts&diffView=editor&editorFilePath=src%2Flinked.ts&editorLine=4&editorColumn=2&editorBackToDiff=1`,
+      initialPath: `/${LOCAL_ENVIRONMENT_ID}/${THREAD_ID}?diff=1&diffTurnId=turn-linked-editor&diffFilePath=src%2Flinked.ts&diffView=editor&editorFilePath=src%2Flinked.ts&editorLine=4&editorColumn=2&editorBackToView=diff`,
     });
 
     try {
@@ -7494,7 +7506,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           diffFilePath: "src/linked.ts",
           diffView: "editor",
           editorFilePath: "src/linked.ts",
-          editorBackToDiff: "1",
+          editorBackToView: "diff",
         });
       });
 
@@ -7558,7 +7570,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           editorColumn: 2,
         });
         expect(mounted.router.state.location.search.diffTurnId).toBeUndefined();
-        expect(mounted.router.state.location.search.editorBackToDiff).toBeUndefined();
+        expect(mounted.router.state.location.search.editorBackToView).toBeUndefined();
       });
       await expect.element(page.getByRole("button", { name: "Exit edit" })).toBeVisible();
 
@@ -8444,6 +8456,340 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await vi.waitFor(
         () => {
           expect(mounted.router.state.location.search.diff).toBeUndefined();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the files panel from the header and renders the workspace tree", async () => {
+    const listEntries = vi.fn(
+      async ({
+        relativePath,
+      }: {
+        readonly cwd: string;
+        readonly relativePath?: string | null | undefined;
+      }) => {
+        if (relativePath === "src") {
+          return {
+            entries: [
+              {
+                path: "src/linked.ts",
+                kind: "file" as const,
+                parentPath: "src",
+              },
+            ],
+          };
+        }
+
+        return {
+          entries: [
+            {
+              path: "src",
+              kind: "directory" as const,
+              parentPath: undefined,
+            },
+            {
+              path: "README.md",
+              kind: "file" as const,
+              parentPath: undefined,
+            },
+          ],
+        };
+      },
+    );
+
+    __setEnvironmentApiOverrideForTests(
+      LOCAL_ENVIRONMENT_ID,
+      createMockEnvironmentApi({
+        browse: vi.fn(async () => ({ parentPath: "~/", entries: [] })),
+        dispatchCommand: vi.fn(async () => ({ sequence: fixture.snapshot.snapshotSequence + 1 })),
+        listEntries,
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-files-toggle" as MessageId,
+        targetText: "files toggle thread",
+      }),
+    });
+
+    try {
+      await page.getByLabelText("Toggle files panel").click();
+
+      await vi.waitFor(
+        () => {
+          expect(mounted.router.state.location.search).toMatchObject({
+            diff: "1",
+            diffView: "files",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await expect.element(page.getByText("Select a file to open it.")).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "src" })).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "README.md" })).toBeVisible();
+      await vi.waitFor(
+        () => {
+          expect(listEntries).toHaveBeenCalledWith({
+            cwd: "/repo/project",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens a workspace file from the files tree in the editor", async () => {
+    const listEntries = vi.fn(
+      async ({
+        relativePath,
+      }: {
+        readonly cwd: string;
+        readonly relativePath?: string | null | undefined;
+      }) => {
+        if (relativePath === "src") {
+          return {
+            entries: [
+              {
+                path: "src/linked.ts",
+                kind: "file" as const,
+                parentPath: "src",
+              },
+            ],
+          };
+        }
+
+        return {
+          entries: [
+            {
+              path: "src",
+              kind: "directory" as const,
+              parentPath: undefined,
+            },
+          ],
+        };
+      },
+    );
+    const readFile = vi.fn(async () => ({
+      relativePath: "src/linked.ts",
+      contents: "export const linked = true;\n",
+      version: FILE_VERSION_A,
+    }));
+
+    __setEnvironmentApiOverrideForTests(
+      LOCAL_ENVIRONMENT_ID,
+      createMockEnvironmentApi({
+        browse: vi.fn(async () => ({ parentPath: "~/", entries: [] })),
+        dispatchCommand: vi.fn(async () => ({ sequence: fixture.snapshot.snapshotSequence + 1 })),
+        listEntries,
+        readFile,
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-files-open-editor" as MessageId,
+        targetText: "open files editor",
+      }),
+    });
+
+    try {
+      await page.getByLabelText("Toggle files panel").click();
+      await page.getByRole("button", { name: "src" }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(listEntries).toHaveBeenCalledWith({
+            cwd: "/repo/project",
+            relativePath: "src",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByRole("button", { name: "linked.ts" }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(mounted.router.state.location.search).toMatchObject({
+            diff: "1",
+            diffView: "editor",
+            editorFilePath: "src/linked.ts",
+            editorBackToView: "files",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await expect.element(page.getByLabelText("Back to files")).toBeVisible();
+
+      await vi.waitFor(
+        () => {
+          expect(readFile).toHaveBeenCalledWith({
+            cwd: "/repo/project",
+            relativePath: "src/linked.ts",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await vi.waitFor(
+        () => {
+          const popupHeights = [
+            ...document.querySelectorAll<HTMLElement>("[data-slot='sheet-popup']"),
+          ]
+            .map((popup) => popup.getBoundingClientRect().height)
+            .toSorted((left, right) => right - left);
+          expect(popupHeights.length).toBeGreaterThan(0);
+          expect(popupHeights[0] ?? 0).toBeGreaterThan(400);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("switches the editor contents when selecting a different workspace file", async () => {
+    const listEntries = vi.fn(
+      async ({
+        relativePath,
+      }: {
+        readonly cwd: string;
+        readonly relativePath?: string | null | undefined;
+      }) => {
+        if (relativePath === "src") {
+          return {
+            entries: [
+              {
+                path: "src/linked.ts",
+                kind: "file" as const,
+                parentPath: "src",
+              },
+              {
+                path: "src/other.ts",
+                kind: "file" as const,
+                parentPath: "src",
+              },
+            ],
+          };
+        }
+
+        return {
+          entries: [
+            {
+              path: "src",
+              kind: "directory" as const,
+              parentPath: undefined,
+            },
+          ],
+        };
+      },
+    );
+    const readFile = vi.fn(async ({ relativePath }: { relativePath: string }) => ({
+      relativePath,
+      contents:
+        relativePath === "src/other.ts"
+          ? "export const other = true;\n"
+          : "export const linked = true;\n",
+      version: relativePath === "src/other.ts" ? FILE_VERSION_B : FILE_VERSION_A,
+    }));
+
+    __setEnvironmentApiOverrideForTests(
+      LOCAL_ENVIRONMENT_ID,
+      createMockEnvironmentApi({
+        browse: vi.fn(async () => ({ parentPath: "~/", entries: [] })),
+        dispatchCommand: vi.fn(async () => ({ sequence: fixture.snapshot.snapshotSequence + 1 })),
+        listEntries,
+        readFile,
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-files-switch-editor" as MessageId,
+        targetText: "switch files editor",
+      }),
+    });
+
+    try {
+      await page.getByLabelText("Toggle files panel").click();
+      await page.getByRole("button", { name: "src" }).click();
+      await page.getByRole("button", { name: "linked.ts" }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(mounted.router.state.location.search).toMatchObject({
+            diff: "1",
+            diffView: "editor",
+            editorFilePath: "src/linked.ts",
+            editorBackToView: "files",
+          });
+          expect(readFile).toHaveBeenCalledWith({
+            cwd: "/repo/project",
+            relativePath: "src/linked.ts",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByRole("button", { name: "other.ts" }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(mounted.router.state.location.search).toMatchObject({
+            diff: "1",
+            diffView: "editor",
+            editorFilePath: "src/other.ts",
+            editorBackToView: "files",
+          });
+          expect(readFile).toHaveBeenCalledWith({
+            cwd: "/repo/project",
+            relativePath: "src/other.ts",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("disables diff on draft threads while keeping files available", async () => {
+    setDraftThreadWithoutWorktree();
+    const draftId = DraftId.make(THREAD_KEY);
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialPath: `/draft/${draftId}`,
+    });
+
+    try {
+      await expect.element(page.getByLabelText("Toggle diff panel")).toBeDisabled();
+      await expect.element(page.getByLabelText("Toggle files panel")).toBeEnabled();
+
+      await page.getByLabelText("Toggle files panel").click();
+
+      await vi.waitFor(
+        () => {
+          expect(decodeURIComponent(mounted.router.state.location.pathname)).toBe(
+            `/draft/${draftId}`,
+          );
+          expect(mounted.router.state.location.search).toMatchObject({
+            diff: "1",
+            diffView: "files",
+          });
         },
         { timeout: 8_000, interval: 16 },
       );

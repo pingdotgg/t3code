@@ -1,5 +1,5 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
-import type { EnvironmentId } from "@forma/contracts";
+import type { EnvironmentId, ProjectReadFileResult } from "@forma/contracts";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import {
   IconExclamationmarkTriangle as AlertTriangleIcon,
@@ -27,6 +27,12 @@ import {
   resolveProjectFileEditorError,
   type ProjectFileEditorStatus,
 } from "../lib/projectFileEditing";
+import {
+  invalidateProjectFileForEditor,
+  loadProjectFileForEditor,
+  peekProjectFileForEditor,
+  storeProjectFileForEditor,
+} from "../lib/projectFileReadCache";
 import { useSettings } from "../hooks/useSettings";
 import { getCodeEditorFontSize } from "../interfaceAppearance";
 import { cn } from "../lib/utils";
@@ -57,6 +63,7 @@ type PendingNavigation =
 interface DiffFileEditorPaneProps {
   environmentId: EnvironmentId;
   cwd: string;
+  sessionKey?: string | undefined;
   filePath: string;
   filePaths: readonly string[];
   fileDiff: FileDiffMetadata | null;
@@ -81,6 +88,75 @@ interface DiffFileEditorPaneProps {
 const SELECTION_ACTION_OFFSET_PX = 8;
 const SELECTION_ACTION_HEIGHT_PX = 28;
 const SELECTION_ACTION_MIN_EDGE_PX = 8;
+
+interface CachedEditorSessionState {
+  filePath: string;
+  status: ProjectFileEditorStatus;
+  message: string | null;
+  baseContents: string;
+  draftContents: string;
+  baseVersion: string | null;
+  preTurnContents: string | null;
+}
+
+const editorSessionStateByKey = new Map<string, CachedEditorSessionState>();
+
+function readCachedEditorSessionState(
+  sessionKey: string | undefined,
+  filePath: string,
+): CachedEditorSessionState | null {
+  if (!sessionKey) {
+    return null;
+  }
+  const state = editorSessionStateByKey.get(sessionKey) ?? null;
+  return state?.filePath === filePath ? state : null;
+}
+
+function writeCachedEditorSessionState(
+  sessionKey: string | undefined,
+  state: CachedEditorSessionState,
+): void {
+  if (!sessionKey) {
+    return;
+  }
+  editorSessionStateByKey.set(sessionKey, state);
+}
+
+function clearCachedEditorSessionState(sessionKey: string | undefined): void {
+  if (!sessionKey) {
+    return;
+  }
+  editorSessionStateByKey.delete(sessionKey);
+}
+
+function canReuseCachedEditorSessionState(
+  state: CachedEditorSessionState | null,
+): state is CachedEditorSessionState {
+  return state !== null && state.status !== "idle" && state.status !== "loading";
+}
+
+function buildCachedEditorSessionStateFromProjectFile(input: {
+  filePath: string;
+  file: ProjectReadFileResult;
+  fileDiff: FileDiffMetadata | null;
+  preTurnContents: string | null | undefined;
+}): CachedEditorSessionState {
+  return {
+    filePath: input.filePath,
+    status: "ready",
+    message: null,
+    baseContents: input.file.contents,
+    draftContents: input.file.contents,
+    baseVersion: input.file.version,
+    preTurnContents:
+      input.preTurnContents ??
+      (input.fileDiff ? reconstructPreTurnFileContents(input.fileDiff, input.file.contents) : null),
+  };
+}
+
+export function __resetDiffFileEditorPaneSessionCacheForTests(): void {
+  editorSessionStateByKey.clear();
+}
 
 function buildUnavailableMessage(status: ProjectFileEditorStatus): string {
   switch (status) {
@@ -160,19 +236,44 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     previewDisabledReason,
     onPersisted,
     onAddCodeContext,
+    sessionKey,
     onRequestBack,
     onRequestFilePathChange,
     resolvedTheme,
   } = props;
-  const [status, setStatus] = useState<ProjectFileEditorStatus>("idle");
-  const [message, setMessage] = useState<string | null>(null);
-  const [baseContents, setBaseContents] = useState("");
-  const [draftContents, setDraftContents] = useState("");
-  const [baseVersion, setBaseVersion] = useState<string | null>(null);
+  const cachedSessionState = readCachedEditorSessionState(sessionKey, filePath);
+  const cachedProjectFile = peekProjectFileForEditor({
+    environmentId,
+    cwd,
+    relativePath: filePath,
+  });
+  const initialSessionState =
+    cachedSessionState ??
+    (cachedProjectFile
+      ? buildCachedEditorSessionStateFromProjectFile({
+          filePath,
+          file: cachedProjectFile,
+          fileDiff,
+          preTurnContents: initialOverride?.preTurnContents,
+        })
+      : null);
+  const [status, setStatus] = useState<ProjectFileEditorStatus>(
+    initialSessionState?.status ?? "idle",
+  );
+  const [message, setMessage] = useState<string | null>(initialSessionState?.message ?? null);
+  const [baseContents, setBaseContents] = useState(initialSessionState?.baseContents ?? "");
+  const [draftContents, setDraftContents] = useState(initialSessionState?.draftContents ?? "");
+  const [baseVersion, setBaseVersion] = useState<string | null>(
+    initialSessionState?.baseVersion ?? null,
+  );
+  const [stateSessionKey, setStateSessionKey] = useState<string | undefined>(sessionKey);
+  const [stateFilePath, setStateFilePath] = useState(initialSessionState?.filePath ?? filePath);
   const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation | null>(null);
   const loadRequestIdRef = useRef(0);
   const pendingNavigationRef = useRef<PendingNavigation | null>(null);
-  const preTurnContentsRef = useRef<string | null>(initialOverride?.preTurnContents ?? null);
+  const preTurnContentsRef = useRef<string | null>(
+    initialSessionState?.preTurnContents ?? initialOverride?.preTurnContents ?? null,
+  );
   const saveHandlerRef = useRef<() => Promise<boolean>>(async () => false);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
@@ -219,55 +320,171 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     [isDirty, performNavigation],
   );
 
-  const loadFile = useCallback(async () => {
-    const requestId = ++loadRequestIdRef.current;
-    const api = readEnvironmentApi(environmentId);
-    if (!api) {
-      setStatus("error");
-      setMessage("Environment connection is unavailable.");
+  useEffect(() => {
+    const nextCachedState = readCachedEditorSessionState(sessionKey, filePath);
+    if (nextCachedState) {
+      setStateSessionKey(sessionKey);
+      setStateFilePath(filePath);
+      setStatus(nextCachedState.status);
+      setMessage(nextCachedState.message);
+      setBaseContents(nextCachedState.baseContents);
+      setDraftContents(nextCachedState.draftContents);
+      setBaseVersion(nextCachedState.baseVersion);
+      preTurnContentsRef.current = nextCachedState.preTurnContents;
       return;
     }
 
-    setStatus("loading");
+    const nextCachedProjectFile = peekProjectFileForEditor({
+      environmentId,
+      cwd,
+      relativePath: filePath,
+    });
+    if (nextCachedProjectFile) {
+      const nextProjectState = buildCachedEditorSessionStateFromProjectFile({
+        filePath,
+        file: nextCachedProjectFile,
+        fileDiff,
+        preTurnContents: initialOverride?.preTurnContents,
+      });
+      setStateSessionKey(sessionKey);
+      setStateFilePath(filePath);
+      setStatus(nextProjectState.status);
+      setMessage(nextProjectState.message);
+      setBaseContents(nextProjectState.baseContents);
+      setDraftContents(nextProjectState.draftContents);
+      setBaseVersion(nextProjectState.baseVersion);
+      preTurnContentsRef.current = nextProjectState.preTurnContents;
+      return;
+    }
+
+    setStateSessionKey(sessionKey);
+    setStateFilePath(filePath);
+    setStatus("idle");
     setMessage(null);
     setBaseContents("");
     setDraftContents("");
     setBaseVersion(null);
+    preTurnContentsRef.current = initialOverride?.preTurnContents ?? null;
+  }, [cwd, environmentId, fileDiff, filePath, initialOverride?.preTurnContents, sessionKey]);
 
-    try {
-      const file = await api.projects.readFile({
-        cwd,
-        relativePath: filePath,
-      });
-
-      if (requestId !== loadRequestIdRef.current) {
-        return;
-      }
-
-      preTurnContentsRef.current =
-        initialOverride?.preTurnContents ??
-        (fileDiff ? reconstructPreTurnFileContents(fileDiff, file.contents) : null);
-      setBaseContents(file.contents);
-      setDraftContents(file.contents);
-      setBaseVersion(file.version);
-      setStatus("ready");
-      setMessage(null);
-    } catch (error) {
-      if (requestId !== loadRequestIdRef.current) {
-        return;
-      }
-
-      const resolved = resolveProjectFileEditorError(error);
-      setStatus(resolved.status);
-      setMessage(resolved.message);
+  useEffect(() => {
+    if (status === "idle" || stateFilePath !== filePath || stateSessionKey !== sessionKey) {
+      return;
     }
-  }, [cwd, environmentId, fileDiff, filePath, initialOverride?.preTurnContents]);
+
+    writeCachedEditorSessionState(sessionKey, {
+      filePath,
+      status,
+      message,
+      baseContents,
+      draftContents,
+      baseVersion,
+      preTurnContents: preTurnContentsRef.current,
+    });
+  }, [
+    baseContents,
+    baseVersion,
+    draftContents,
+    filePath,
+    message,
+    sessionKey,
+    stateFilePath,
+    stateSessionKey,
+    status,
+  ]);
+
+  const loadFile = useCallback(
+    async (options?: { force?: boolean }) => {
+      const cachedState = readCachedEditorSessionState(sessionKey, filePath);
+      if (canReuseCachedEditorSessionState(cachedState) && !options?.force) {
+        setStateSessionKey(sessionKey);
+        setStateFilePath(filePath);
+        setStatus(cachedState.status);
+        setMessage(cachedState.message);
+        setBaseContents(cachedState.baseContents);
+        setDraftContents(cachedState.draftContents);
+        setBaseVersion(cachedState.baseVersion);
+        preTurnContentsRef.current = cachedState.preTurnContents;
+        return;
+      }
+
+      const cachedProjectFile = !options?.force
+        ? peekProjectFileForEditor({
+            environmentId,
+            cwd,
+            relativePath: filePath,
+          })
+        : null;
+      if (cachedProjectFile) {
+        const nextProjectState = buildCachedEditorSessionStateFromProjectFile({
+          filePath,
+          file: cachedProjectFile,
+          fileDiff,
+          preTurnContents: initialOverride?.preTurnContents,
+        });
+        setStateSessionKey(sessionKey);
+        setStateFilePath(filePath);
+        setStatus(nextProjectState.status);
+        setMessage(nextProjectState.message);
+        setBaseContents(nextProjectState.baseContents);
+        setDraftContents(nextProjectState.draftContents);
+        setBaseVersion(nextProjectState.baseVersion);
+        preTurnContentsRef.current = nextProjectState.preTurnContents;
+        return;
+      }
+
+      const requestId = ++loadRequestIdRef.current;
+      setStateSessionKey(sessionKey);
+      setStateFilePath(filePath);
+      setStatus("loading");
+      setMessage(null);
+      setBaseContents("");
+      setDraftContents("");
+      setBaseVersion(null);
+
+      try {
+        const file = await loadProjectFileForEditor(
+          {
+            environmentId,
+            cwd,
+            relativePath: filePath,
+          },
+          options,
+        );
+
+        if (requestId !== loadRequestIdRef.current) {
+          return;
+        }
+
+        preTurnContentsRef.current =
+          initialOverride?.preTurnContents ??
+          (fileDiff ? reconstructPreTurnFileContents(fileDiff, file.contents) : null);
+        setStateSessionKey(sessionKey);
+        setStateFilePath(filePath);
+        setBaseContents(file.contents);
+        setDraftContents(file.contents);
+        setBaseVersion(file.version);
+        setStatus("ready");
+        setMessage(null);
+      } catch (error) {
+        if (requestId !== loadRequestIdRef.current) {
+          return;
+        }
+
+        const resolved = resolveProjectFileEditorError(error);
+        setStateSessionKey(sessionKey);
+        setStateFilePath(filePath);
+        setStatus(resolved.status);
+        setMessage(resolved.message);
+      }
+    },
+    [cwd, environmentId, fileDiff, filePath, initialOverride?.preTurnContents, sessionKey],
+  );
 
   const handleSave = useCallback(async () => {
     if (!canSave || baseVersion === null) {
       return false;
     }
-
     const api = readEnvironmentApi(environmentId);
     if (!api) {
       const nextMessage = "Environment connection is unavailable.";
@@ -296,6 +513,16 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
       setBaseVersion(result.version);
       setStatus("ready");
       setMessage(null);
+      storeProjectFileForEditor({
+        environmentId,
+        cwd,
+        relativePath: filePath,
+        result: {
+          relativePath: filePath,
+          contents: draftContents,
+          version: result.version,
+        },
+      });
 
       await onPersisted({
         filePath,
@@ -316,6 +543,11 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
 
       return true;
     } catch (error) {
+      invalidateProjectFileForEditor({
+        environmentId,
+        cwd,
+        relativePath: filePath,
+      });
       const resolved = resolveProjectFileEditorError(error);
       setStatus(resolved.status === "conflict" ? "conflict" : "error");
       setMessage(resolved.message);
@@ -604,7 +836,11 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                       {message ?? "Reload from disk to pick up the latest file contents."}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <Button size="xs" variant="outline" onClick={() => void loadFile()}>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => void loadFile({ force: true })}
+                      >
                         <RefreshCwIcon className="size-3.5" />
                         Reload from disk
                       </Button>
@@ -623,7 +859,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                   status={status}
                   onBack={() => requestNavigation({ type: "back" })}
                   onOpenInEditor={() => onOpenInEditor(filePath)}
-                  onReload={() => void loadFile()}
+                  onReload={() => void loadFile({ force: true })}
                 />
               ) : status === "loading" ? (
                 <div className="flex min-h-0 flex-1 items-center justify-center gap-2 px-4 py-6 text-sm text-muted-foreground">
@@ -656,6 +892,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                     </Button>
                   ) : null}
                   <Editor
+                    key={filePath}
                     height="100%"
                     keepCurrentModel={false}
                     loading={
@@ -695,6 +932,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
             <Button
               variant="ghost"
               onClick={() => {
+                clearCachedEditorSessionState(sessionKey);
                 if (pendingNavigation) {
                   performNavigation(pendingNavigation);
                 }
