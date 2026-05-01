@@ -31,8 +31,6 @@ import {
   type ProviderStatusKey,
 } from "./providerStatus";
 
-import { formatRelativeTimeUntil } from "../../timestampFormat";
-
 function usageBarColor(percent: number): string {
   if (percent >= 90) return "bg-destructive";
   if (percent >= 75) return "bg-warning";
@@ -63,7 +61,7 @@ function ProviderUsageBars(props: {
         const color = usageBarColor(window.usedPercent);
         const roundedPercent = Math.round(window.usedPercent);
         const remainingPercent = 100 - roundedPercent;
-        
+
         const resetDateStr = window.resetsAt
           ? new Date(window.resetsAt).toLocaleString("en-GB", {
               day: "numeric",
@@ -90,13 +88,11 @@ function ProviderUsageBars(props: {
             >
               <div
                 className={cn("h-full rounded-full transition-all", color)}
-                style={{ width: `${Math.max(2, Math.min(100, window.usedPercent))}%` }}
+                style={{ width: `${Math.max(0, Math.min(100, window.usedPercent))}%` }}
               />
             </div>
             {resetDateStr && (
-              <div className="text-[11px] text-muted-foreground">
-                Resets {resetDateStr}
-              </div>
+              <div className="text-[11px] text-muted-foreground">Resets {resetDateStr}</div>
             )}
           </div>
         );

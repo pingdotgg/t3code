@@ -637,7 +637,8 @@ describe("GeneralSettingsPanel observability", () => {
 
     const warningBar = page.getByLabelText("Session usage 88%");
     await expect.element(warningBar).toBeInTheDocument();
-    await expect.element(warningBar).toHaveClass(/bg-warning/);
+    const warningInnerBar = warningBar.element().querySelector("div");
+    expect(warningInnerBar).toHaveClass(/bg-warning/);
 
     setServerConfigSnapshot({
       ...createBaseServerConfig(),
@@ -661,7 +662,8 @@ describe("GeneralSettingsPanel observability", () => {
 
     const dangerBar = page.getByLabelText("Session usage 93%");
     await expect.element(dangerBar).toBeInTheDocument();
-    await expect.element(dangerBar).toHaveClass(/bg-destructive/);
+    const dangerInnerBar = dangerBar.element().querySelector("div");
+    expect(dangerInnerBar).toHaveClass(/bg-destructive/);
   });
 
   it("creates and shows a pairing link when network access is enabled", async () => {
