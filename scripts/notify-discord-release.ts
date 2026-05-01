@@ -122,10 +122,12 @@ const postDiscordWebhook = Effect.fn("postDiscordWebhook")(function* (
     }),
   );
 
-  yield* Effect.logInfo("discord webhook request dispatching", {
-    ...describeWebhookUrl(webhookUrl),
-    ...summarizePayload(payload),
-  });
+  yield* Effect.logInfo("discord webhook request dispatching").pipe(
+    Effect.annotateLogs({
+      ...describeWebhookUrl(webhookUrl),
+      ...summarizePayload(payload),
+    }),
+  );
 
   const response = yield* HttpClientRequest.post(webhookUrl).pipe(
     HttpClientRequest.bodyJson(payload),
@@ -139,10 +141,12 @@ const postDiscordWebhook = Effect.fn("postDiscordWebhook")(function* (
     ),
   );
 
-  yield* Effect.logInfo("discord webhook response received", {
-    status: response.status,
-    ok: response.status >= 200 && response.status < 300,
-  });
+  yield* Effect.logInfo("discord webhook response received").pipe(
+    Effect.annotateLogs({
+      status: response.status,
+      ok: response.status >= 200 && response.status < 300,
+    }),
+  );
 
   yield* HttpClientResponse.filterStatusOk(response).pipe(
     Effect.mapError(
@@ -154,12 +158,6 @@ const postDiscordWebhook = Effect.fn("postDiscordWebhook")(function* (
     ),
   );
 });
-
-const runtimeLayer = Layer.mergeAll(
-  Logger.layer([Logger.consolePretty()]),
-  NodeServices.layer,
-  FetchHttpClient.layer,
-);
 
 export const notifyDiscordReleaseCommand = Command.make(
   "notify-discord-release",
@@ -190,16 +188,18 @@ export const notifyDiscordReleaseCommand = Command.make(
   },
   ({ target, roleId, releaseName, version, tag, releaseUrl }) =>
     Effect.gen(function* () {
-      yield* Effect.logInfo("discord release announcement starting", {
-        target,
-        roleIdProvided: roleId.length > 0,
-        roleIdLength: roleId.length,
-        releaseName,
-        version,
-        tag,
-        releaseUrl,
-        discordWebhookConfigured: Boolean(process.env.DISCORD_WEBHOOK_URL?.trim()),
-      });
+      yield* Effect.logInfo("discord release announcement starting").pipe(
+        Effect.annotateLogs({
+          target,
+          roleIdProvided: roleId.length > 0,
+          roleIdLength: roleId.length,
+          releaseName,
+          version,
+          tag,
+          releaseUrl,
+          discordWebhookConfigured: Boolean(process.env.DISCORD_WEBHOOK_URL?.trim()),
+        }),
+      );
 
       const webhookUrl = yield* DiscordWebhookUrl;
       const payload = buildDiscordReleaseAnnouncement({
@@ -212,9 +212,8 @@ export const notifyDiscordReleaseCommand = Command.make(
         timestamp: new Date().toISOString(),
       });
 
-      yield* Effect.logInfo(
-        "discord release announcement payload built",
-        summarizePayload(payload),
+      yield* Effect.logInfo("discord release announcement payload built").pipe(
+        Effect.annotateLogs(summarizePayload(payload)),
       );
       yield* postDiscordWebhook(webhookUrl, payload);
       yield* Effect.logInfo("discord release announcement completed");
@@ -223,7 +222,13 @@ export const notifyDiscordReleaseCommand = Command.make(
 
 if (import.meta.main) {
   Command.run(notifyDiscordReleaseCommand, { version: "0.0.0" }).pipe(
-    Effect.provide(runtimeLayer),
+    Effect.provide(
+      Layer.mergeAll(
+        Logger.layer([Logger.consolePretty()]),
+        NodeServices.layer,
+        FetchHttpClient.layer,
+      ),
+    ),
     NodeRuntime.runMain,
   );
 }
