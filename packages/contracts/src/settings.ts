@@ -84,6 +84,29 @@ export const DEFAULT_CLIENT_SETTINGS: ClientSettings = Schema.decodeSync(ClientS
 export const ThreadEnvMode = Schema.Literals(["local", "worktree"]);
 export type ThreadEnvMode = typeof ThreadEnvMode.Type;
 
+export const WorktreeLocationMode = Schema.Literals([
+  "default",
+  "project-subdirectory",
+  "project-sibling",
+  "custom",
+]);
+export type WorktreeLocationMode = typeof WorktreeLocationMode.Type;
+export const DEFAULT_WORKTREE_LOCATION_MODE: WorktreeLocationMode = "default";
+export const DEFAULT_WORKTREE_LOCATION_TEMPLATE = "$PROJECT_DIRNAME/$PROJECT_NAME.$WORKTREE_NAME";
+
+export const WorktreeLocationTemplate = TrimmedString.pipe(
+  Schema.withDecodingDefault(Effect.succeed(DEFAULT_WORKTREE_LOCATION_TEMPLATE)),
+);
+export type WorktreeLocationTemplate = typeof WorktreeLocationTemplate.Type;
+
+export const WorktreeLocationSettings = Schema.Struct({
+  mode: WorktreeLocationMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_WORKTREE_LOCATION_MODE)),
+  ),
+  template: WorktreeLocationTemplate,
+}).pipe(Schema.withDecodingDefault(Effect.succeed({})));
+export type WorktreeLocationSettings = typeof WorktreeLocationSettings.Type;
+
 const makeBinaryPathSetting = (fallback: string) =>
   TrimmedString.pipe(
     Schema.decodeTo(
@@ -141,6 +164,7 @@ export const ServerSettings = Schema.Struct({
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
   ),
+  worktreeLocation: WorktreeLocationSettings,
   addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
@@ -237,10 +261,16 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const WorktreeLocationSettingsPatch = Schema.Struct({
+  mode: Schema.optionalKey(WorktreeLocationMode),
+  template: Schema.optionalKey(Schema.String),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
+  worktreeLocation: Schema.optionalKey(WorktreeLocationSettingsPatch),
   addProjectBaseDirectory: Schema.optionalKey(Schema.String),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   observability: Schema.optionalKey(

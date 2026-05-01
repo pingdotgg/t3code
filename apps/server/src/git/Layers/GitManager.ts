@@ -46,6 +46,7 @@ import { ProjectSetupScriptRunner } from "../../project/Services/ProjectSetupScr
 import { extractBranchNameFromRemoteRef } from "../remoteRefs.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
+import { WorktreeLocationResolver } from "../../project/Services/WorktreeLocationResolver.ts";
 import {
   decodeGitHubPullRequestListJson,
   formatGitHubJsonDecodeError,
@@ -496,6 +497,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
   const textGeneration = yield* TextGeneration;
   const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
   const serverSettingsService = yield* ServerSettingsService;
+  const worktreeLocationResolver = yield* WorktreeLocationResolver;
 
   const createProgressEmitter = (
     input: { cwd: string; action: GitStackedAction },
@@ -613,6 +615,15 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         branch: localBranch,
         remoteName,
         remoteBranch: pullRequest.headBranch,
+      });
+    },
+  );
+
+  const resolveCreateWorktreePath = Effect.fn("GitManager.resolveCreateWorktreePath")(
+    function* (input: { projectRoot: string; branch: string; newBranch?: string }) {
+      return yield* worktreeLocationResolver.resolveCreateWorktreePath({
+        projectRoot: input.projectRoot,
+        name: input.newBranch ?? input.branch,
       });
     },
   );
@@ -1493,10 +1504,14 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         );
       }
 
+      const worktreePath = yield* resolveCreateWorktreePath({
+        projectRoot: input.cwd,
+        branch: localPullRequestBranch,
+      });
       const worktree = yield* gitCore.createWorktree({
         cwd: input.cwd,
         branch: localPullRequestBranch,
-        path: null,
+        path: worktreePath,
       });
       yield* ensureExistingWorktreeUpstream(worktree.worktree.path);
       yield* maybeRunSetupScript(worktree.worktree.path);

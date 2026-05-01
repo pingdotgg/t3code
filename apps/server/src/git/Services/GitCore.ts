@@ -13,7 +13,6 @@ import type {
   GitCheckoutResult,
   GitCreateBranchInput,
   GitCreateBranchResult,
-  GitCreateWorktreeInput,
   GitCreateWorktreeResult,
   GitInitInput,
   GitListBranchesInput,
@@ -25,6 +24,13 @@ import type {
 } from "@t3tools/contracts";
 
 import type { GitCommandError } from "@t3tools/contracts";
+
+export interface GitCoreCreateWorktreeInput {
+  readonly cwd: string;
+  readonly branch: string;
+  readonly newBranch?: string;
+  readonly path: string;
+}
 
 export interface ExecuteGitInput {
   readonly operation: string;
@@ -241,7 +247,7 @@ export interface GitCoreShape {
    * Create a worktree and branch from a base branch.
    */
   readonly createWorktree: (
-    input: GitCreateWorktreeInput,
+    input: GitCoreCreateWorktreeInput,
   ) => Effect.Effect<GitCreateWorktreeResult, GitCommandError>;
 
   /**

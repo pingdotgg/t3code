@@ -27,6 +27,7 @@ import {
   GitPullInput,
   GitPullRequestRefInput,
   GitPullResult,
+  WorktreeLocationResolverError,
   GitRemoveWorktreeInput,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
@@ -235,7 +236,7 @@ export const WsGitListBranchesRpc = Rpc.make(WS_METHODS.gitListBranches, {
 export const WsGitCreateWorktreeRpc = Rpc.make(WS_METHODS.gitCreateWorktree, {
   payload: GitCreateWorktreeInput,
   success: GitCreateWorktreeResult,
-  error: GitCommandError,
+  error: Schema.Union([GitCommandError, WorktreeLocationResolverError]),
 });
 
 export const WsGitRemoveWorktreeRpc = Rpc.make(WS_METHODS.gitRemoveWorktree, {

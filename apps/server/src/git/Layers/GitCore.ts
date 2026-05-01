@@ -36,7 +36,6 @@ import {
   parseRemoteNamesInGitOrder,
   parseRemoteRefWithRemoteNames,
 } from "../remoteRefs.ts";
-import { ServerConfig } from "../../config.ts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -658,7 +657,6 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const { worktreesDir } = yield* ServerConfig;
 
   let executeRaw: GitCoreShape["execute"];
 
@@ -1946,9 +1944,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
   const createWorktree: GitCoreShape["createWorktree"] = Effect.fn("createWorktree")(
     function* (input) {
       const targetBranch = input.newBranch ?? input.branch;
-      const sanitizedBranch = targetBranch.replace(/\//g, "-");
-      const repoName = path.basename(input.cwd);
-      const worktreePath = input.path ?? path.join(worktreesDir, repoName, sanitizedBranch);
+      const worktreePath = input.path;
       const args = input.newBranch
         ? ["worktree", "add", "-b", input.newBranch, worktreePath, input.branch]
         : ["worktree", "add", worktreePath, input.branch];

@@ -20,11 +20,11 @@ import {
   type GitHubPullRequestSummary,
   GitHubCli,
 } from "../Services/GitHubCli.ts";
+import { WorktreeLocationResolver } from "../../project/Services/WorktreeLocationResolver.ts";
 import { type TextGenerationShape, TextGeneration } from "../Services/TextGeneration.ts";
 import { GitCoreLive } from "./GitCore.ts";
 import { GitCore } from "../Services/GitCore.ts";
 import { makeGitManager } from "./GitManager.ts";
-import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   ProjectSetupScriptRunner,
@@ -630,19 +630,15 @@ function makeManager(input?: {
   ghScenario?: FakeGhScenario;
   textGeneration?: Partial<FakeGitTextGeneration>;
   setupScriptRunner?: ProjectSetupScriptRunnerShape;
+  serverSettings?: Parameters<typeof ServerSettingsService.layerTest>[0];
 }) {
   const { service: gitHubCli, ghCalls } = createGitHubCliWithFakeGh(input?.ghScenario);
   const textGeneration = createTextGeneration(input?.textGeneration);
-  const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
-    prefix: "t3-git-manager-test-",
-  });
 
-  const serverSettingsLayer = ServerSettingsService.layerTest();
+  const serverSettingsLayer = ServerSettingsService.layerTest(input?.serverSettings);
+  const worktreeLocationResolverLayer = WorktreeLocationResolver.layerTest();
 
-  const gitCoreLayer = GitCoreLive.pipe(
-    Layer.provideMerge(NodeServices.layer),
-    Layer.provideMerge(ServerConfigLayer),
-  );
+  const gitCoreLayer = GitCoreLive.pipe(Layer.provideMerge(NodeServices.layer));
 
   const managerLayer = Layer.mergeAll(
     Layer.succeed(GitHubCli, gitHubCli),
@@ -655,6 +651,7 @@ function makeManager(input?: {
     ),
     gitCoreLayer,
     serverSettingsLayer,
+    worktreeLocationResolverLayer,
   ).pipe(Layer.provideMerge(NodeServices.layer));
 
   return makeGitManager().pipe(
@@ -665,10 +662,7 @@ function makeManager(input?: {
 
 const asThreadId = (threadId: string) => threadId as ThreadId;
 
-const GitManagerTestLayer = GitCoreLive.pipe(
-  Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-git-manager-test-" })),
-  Layer.provideMerge(NodeServices.layer),
-);
+const GitManagerTestLayer = GitCoreLive.pipe(Layer.provideMerge(NodeServices.layer));
 
 it.layer(GitManagerTestLayer)("GitManager", (it) => {
   it.effect("status includes PR metadata when branch already has an open PR", () =>

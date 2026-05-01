@@ -62,6 +62,10 @@ import { GitCore, type GitCoreShape } from "./git/Services/GitCore.ts";
 import { GitManager, type GitManagerShape } from "./git/Services/GitManager.ts";
 import { GitStatusBroadcasterLive } from "./git/Layers/GitStatusBroadcaster.ts";
 import {
+  WorktreeLocationResolver,
+  type WorktreeLocationResolverShape,
+} from "./project/Services/WorktreeLocationResolver.ts";
+import {
   GitStatusBroadcaster,
   type GitStatusBroadcasterShape,
 } from "./git/Services/GitStatusBroadcaster.ts";
@@ -326,6 +330,7 @@ const buildAppUnderTest = (options?: {
     open?: Partial<OpenShape>;
     gitCore?: Partial<GitCoreShape>;
     gitManager?: Partial<GitManagerShape>;
+    worktreeLocationResolver?: Partial<WorktreeLocationResolverShape>;
     gitStatusBroadcaster?: Partial<GitStatusBroadcasterShape>;
     projectSetupScriptRunner?: Partial<ProjectSetupScriptRunnerShape>;
     terminalManager?: Partial<TerminalManagerShape>;
@@ -441,6 +446,14 @@ const buildAppUnderTest = (options?: {
           ...options?.layers?.open,
         }),
       ),
+      Layer.provide(
+        Layer.mock(WorktreeLocationResolver)({
+          resolveCreateWorktreePath: (input) =>
+            Effect.succeed(`/tmp/worktrees/${input.name.replace(/\//g, "-")}`),
+          ...options?.layers?.worktreeLocationResolver,
+        }),
+      ),
+      Layer.provide(gitCoreLayer),
       Layer.provide(gitCoreLayer),
       Layer.provide(gitManagerLayer),
       Layer.provideMerge(gitStatusBroadcasterLayer),
@@ -3590,7 +3603,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           cwd: "/tmp/project",
           branch: "main",
           newBranch: "t3code/bootstrap-branch",
-          path: null,
+          path: "/tmp/worktrees/t3code-bootstrap-branch",
         });
         assert.deepEqual(runForThread.mock.calls[0]?.[0], {
           threadId: ThreadId.make("thread-bootstrap"),

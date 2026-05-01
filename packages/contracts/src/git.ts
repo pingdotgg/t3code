@@ -366,11 +366,25 @@ export class GitManagerError extends Schema.TaggedErrorClass<GitManagerError>()(
   }
 }
 
+export class WorktreeLocationResolverError extends Schema.TaggedErrorClass<WorktreeLocationResolverError>()(
+  "WorktreeLocationResolverError",
+  {
+    projectRoot: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Worktree location resolution failed for ${this.projectRoot}: ${this.detail}`;
+  }
+}
+
 export const GitManagerServiceError = Schema.Union([
   GitManagerError,
   GitCommandError,
   GitHubCliError,
   TextGenerationError,
+  WorktreeLocationResolverError,
 ]);
 export type GitManagerServiceError = typeof GitManagerServiceError.Type;
 

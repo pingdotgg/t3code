@@ -11,16 +11,9 @@ import { CheckpointStore } from "../Services/CheckpointStore.ts";
 import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
 import { GitCommandError } from "@t3tools/contracts";
-import { ServerConfig } from "../../config.ts";
 import { ThreadId } from "@t3tools/contracts";
 
-const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
-  prefix: "t3-checkpoint-store-test-",
-});
-const GitCoreTestLayer = GitCoreLive.pipe(
-  Layer.provide(ServerConfigLayer),
-  Layer.provide(NodeServices.layer),
-);
+const GitCoreTestLayer = GitCoreLive.pipe(Layer.provide(NodeServices.layer));
 const CheckpointStoreTestLayer = CheckpointStoreLive.pipe(
   Layer.provide(GitCoreTestLayer),
   Layer.provide(NodeServices.layer),

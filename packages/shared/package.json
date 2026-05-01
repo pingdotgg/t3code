@@ -48,6 +48,10 @@
       "types": "./src/serverSettings.ts",
       "import": "./src/serverSettings.ts"
     },
+    "./worktreeLocation": {
+      "types": "./src/worktreeLocation.ts",
+      "import": "./src/worktreeLocation.ts"
+    },
     "./String": {
       "types": "./src/String.ts",
       "import": "./src/String.ts"
