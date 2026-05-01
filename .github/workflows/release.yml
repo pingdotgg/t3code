@@ -622,11 +622,11 @@ jobs:
         if: needs.preflight.outputs.is_prerelease == 'true'
         continue-on-error: true
         env:
-          DISCORD_RELEASE_NIGHTLY_ROLE_ID: ${{ vars.DISCORD_RELEASE_NIGHTLY_ROLE_ID }}
+          DISCORD_MENTION_ROLE_ID: ${{ secrets.DISCORD_RELEASE_NIGHTLY_ROLE_ID }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
         run: |
           node scripts/notify-discord-release.ts prerelease \
-            --role-id "$DISCORD_RELEASE_NIGHTLY_ROLE_ID" \
+            --role-id "$DISCORD_MENTION_ROLE_ID" \
             --release-name "${{ needs.preflight.outputs.release_name }}" \
             --version "${{ needs.preflight.outputs.version }}" \
             --tag "${{ needs.preflight.outputs.tag }}" \
@@ -636,11 +636,11 @@ jobs:
         if: needs.preflight.outputs.make_latest == 'true'
         continue-on-error: true
         env:
-          DISCORD_RELEASE_LATEST_ROLE_ID: ${{ vars.DISCORD_RELEASE_LATEST_ROLE_ID }}
+          DISCORD_MENTION_ROLE_ID: ${{ secrets.DISCORD_RELEASE_LATEST_ROLE_ID }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_RELEASE_WEBHOOK_URL }}
         run: |
           node scripts/notify-discord-release.ts latest \
-            --role-id "$DISCORD_RELEASE_LATEST_ROLE_ID" \
+            --role-id "$DISCORD_MENTION_ROLE_ID" \
             --release-name "${{ needs.preflight.outputs.release_name }}" \
             --version "${{ needs.preflight.outputs.version }}" \
             --tag "${{ needs.preflight.outputs.tag }}" \
