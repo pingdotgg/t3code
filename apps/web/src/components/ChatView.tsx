@@ -180,6 +180,7 @@ import {
   openPreviewDrawer,
   openPreviewTarget,
 } from "../previewTargets";
+import { usePreviewWorkspaceStore } from "../previewWorkspaceStore";
 import {
   useServerAvailableEditors,
   useServerConfig,
@@ -1426,6 +1427,12 @@ export default function ChatView(props: ChatViewProps) {
     }
     openPreviewDrawer(activeProjectRef);
   }, [activeProjectRef, bottomDrawerMode, closeBottomDrawer]);
+  useEffect(() => {
+    if (bottomDrawerMode !== "preview") {
+      return;
+    }
+    usePreviewWorkspaceStore.getState().setActiveProjectRef(activeProjectRef);
+  }, [activeProjectRef, bottomDrawerMode]);
   const splitTerminal = useCallback(() => {
     if (!activeThreadRef || hasReachedSplitLimit) return;
     const terminalId = `terminal-${randomUUID()}`;

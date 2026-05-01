@@ -21,7 +21,7 @@ import {
   type DesktopBridge,
   CheckpointRef,
 } from "@forma/contracts";
-import { scopedThreadKey, scopeThreadRef } from "@forma/client-runtime";
+import { scopedThreadKey, scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
@@ -206,6 +206,7 @@ function createMockEnvironmentApi(input: {
   dispatchCommand: EnvironmentApi["orchestration"]["dispatchCommand"];
   getFullThreadDiff?: EnvironmentApi["orchestration"]["getFullThreadDiff"];
   getLocalAgentInventory?: EnvironmentApi["projects"]["getLocalAgentInventory"];
+  preview?: Partial<EnvironmentApi["preview"]>;
   getTurnDiff?: EnvironmentApi["orchestration"]["getTurnDiff"];
   readFile?: EnvironmentApi["projects"]["readFile"];
   searchEntries?: EnvironmentApi["projects"]["searchEntries"];
@@ -237,7 +238,70 @@ function createMockEnvironmentApi(input: {
           throw new Error("Not implemented in browser test.");
         }) as EnvironmentApi["projects"]["writeFile"]),
     },
-    preview: {} as EnvironmentApi["preview"],
+    preview: {
+      inspectProject:
+        input.preview?.inspectProject ??
+        ((async ({ projectId }) => ({
+          projectId,
+          provider: "storybook",
+          status: "configured",
+          framework: "React",
+          detectedStartCommands: [],
+          storybookConfigPaths: [],
+          packageManager: "bun",
+          controlsBridgeStatus: "missing",
+          summary: "Storybook is configured.",
+        })) as EnvironmentApi["preview"]["inspectProject"]),
+      searchComponents:
+        input.preview?.searchComponents ??
+        ((async () => ({
+          components: [],
+          truncated: false,
+        })) as EnvironmentApi["preview"]["searchComponents"]),
+      resolveTarget:
+        input.preview?.resolveTarget ??
+        ((async ({ relativePath, targetKind }) => ({
+          status: "notFound",
+          relativePath,
+          targetKind,
+        })) as EnvironmentApi["preview"]["resolveTarget"]),
+      chooseStoryMapping:
+        input.preview?.chooseStoryMapping ??
+        ((async () => undefined) as EnvironmentApi["preview"]["chooseStoryMapping"]),
+      setStartCommandOverride:
+        input.preview?.setStartCommandOverride ??
+        ((async () => undefined) as EnvironmentApi["preview"]["setStartCommandOverride"]),
+      prepareWorkspaceSetupThread:
+        input.preview?.prepareWorkspaceSetupThread ??
+        ((async () => {
+          throw new Error("Not implemented in browser test.");
+        }) as EnvironmentApi["preview"]["prepareWorkspaceSetupThread"]),
+      prepareStoryWorkTurn:
+        input.preview?.prepareStoryWorkTurn ??
+        ((async () => {
+          throw new Error("Not implemented in browser test.");
+        }) as EnvironmentApi["preview"]["prepareStoryWorkTurn"]),
+      ensureRuntime:
+        input.preview?.ensureRuntime ??
+        ((async ({ projectId }) => ({
+          projectId,
+          provider: "storybook",
+          started: true,
+          iframeBasePath: "/iframe.html",
+        })) as EnvironmentApi["preview"]["ensureRuntime"]),
+      issueAccessToken:
+        input.preview?.issueAccessToken ??
+        ((async ({ projectId }) => ({
+          projectId,
+          accessToken: "preview-token",
+        })) as EnvironmentApi["preview"]["issueAccessToken"]),
+      stopRuntime:
+        input.preview?.stopRuntime ??
+        ((async () => undefined) as EnvironmentApi["preview"]["stopRuntime"]),
+      subscribeProject:
+        input.preview?.subscribeProject ??
+        ((() => () => undefined) as EnvironmentApi["preview"]["subscribeProject"]),
+    },
     filesystem: {
       browse: input.browse,
     },
@@ -8013,6 +8077,82 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(document.body.textContent).not.toContain(
             "Search for a component or open preview from a file.",
           );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("updates the preview drawer project scope when the active project changes", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      __setEnvironmentApiOverrideForTests(
+        LOCAL_ENVIRONMENT_ID,
+        createMockEnvironmentApi({
+          browse: vi.fn(async () => ({ parentPath: "~/", entries: [] })),
+          dispatchCommand: vi.fn(async () => ({ sequence: fixture.snapshot.snapshotSequence + 1 })),
+        }),
+      );
+
+      await waitForServerConfigToApply();
+      await waitForCommandPaletteShortcutLabel();
+
+      await page.getByLabelText("Toggle preview drawer").click();
+
+      await vi.waitFor(
+        () => {
+          expect(usePreviewWorkspaceStore.getState().activeProjectRef).toEqual(
+            scopeProjectRef(LOCAL_ENVIRONMENT_ID, PROJECT_ID),
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await openCommandPaletteFromTrigger();
+      const palette = page.getByTestId("command-palette");
+      await page.getByPlaceholder("Search commands, projects, and threads...").fill("clients/docs");
+      await palette.getByText("Docs Portal", { exact: true }).click();
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath("thread-secondary-project" as ThreadId),
+        "Route should have changed to the selected project's thread.",
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(usePreviewWorkspaceStore.getState().activeProjectRef).toEqual(
+            scopeProjectRef(LOCAL_ENVIRONMENT_ID, SECOND_PROJECT_ID),
+          );
+          expect(document.body.textContent).toContain("Docs Portal");
         },
         { timeout: 8_000, interval: 16 },
       );

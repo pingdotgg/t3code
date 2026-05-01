@@ -26,7 +26,6 @@ import { useThreadRowActions } from "../hooks/useThreadRowActions";
 import { openProjectOrCreateThread } from "../lib/chatThreadActions";
 import { MICRO_FADE_MOTION_CLASS_NAME } from "../lib/motion";
 import { cn } from "../lib/utils";
-import { openPreviewDrawer } from "../previewTargets";
 import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsAcrossEnvironments,
@@ -35,7 +34,6 @@ import {
 import { buildThreadRouteParams } from "../threadRoutes";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import type { Project, SidebarThreadSummary } from "../types";
-import { useBottomDrawerUiStore } from "../bottomDrawerUiStore";
 import { useUiStateStore } from "../uiStateStore";
 import {
   getNoActiveThreadProjectItems,
@@ -43,7 +41,6 @@ import {
   resolveNoActiveThreadStateVariant,
 } from "./NoActiveThreadState.logic";
 import { LogomarkForma } from "./LogomarkForma";
-import { BottomDrawerHost } from "./BottomDrawerHost";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { DesktopSidebarReopenButton } from "./sidebar/DesktopSidebarReopenButton";
 import {
@@ -52,18 +49,11 @@ import {
   THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME,
 } from "./ThreadBreadcrumb";
 import { ThreadRowLeadingStatus } from "./ThreadStatusIndicators";
-import {
-  AddProjectIcon,
-  NewThreadIcon,
-  PreviewTriggerIcon,
-  SettingsHexIcon,
-  SidebarArchiveIcon,
-} from "./icons/custom";
+import { AddProjectIcon, NewThreadIcon, SettingsHexIcon, SidebarArchiveIcon } from "./icons/custom";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./ui/menu";
 import { SidebarInset, SidebarTrigger, useSidebar } from "./ui/sidebar";
-import { Toggle } from "./ui/toggle";
 
 const ACTION_CARD_CLASS_NAME =
   "relative isolate h-auto min-h-[11.5rem] w-full overflow-hidden rounded-[20px] border-border/60 bg-background px-5 py-5 text-left whitespace-normal shadow-sm shadow-black/5 transition-all duration-150 ease-out before:rounded-[19px] hover:-translate-y-0.5 hover:border-border/85 hover:bg-accent/16 hover:shadow-md hover:ring-4 hover:ring-foreground/5 hover:ring-offset-4 hover:ring-offset-background active:translate-y-0 active:scale-[0.985] active:shadow-sm";
@@ -519,8 +509,6 @@ export function NoActiveThreadState() {
   const setCommandPaletteOpen = useCommandPaletteStore((store) => store.setOpen);
   const openAddProject = useCommandPaletteStore((store) => store.openAddProject);
   const openNewThreadIn = useCommandPaletteStore((store) => store.openNewThreadIn);
-  const bottomDrawerMode = useBottomDrawerUiStore((state) => state.visibleMode);
-  const closeBottomDrawer = useBottomDrawerUiStore((state) => state.closeVisibleMode);
 
   const variant = useMemo(
     () =>
@@ -558,17 +546,6 @@ export function NoActiveThreadState() {
   );
   const singleProject = projects.length === 1 ? (projects[0] ?? null) : null;
   const showSidebarControls = isElectron || isMobile || !open;
-  const previewOpen = bottomDrawerMode === "preview";
-
-  const togglePreviewVisibility = useCallback(() => {
-    if (previewOpen) {
-      closeBottomDrawer();
-      return;
-    }
-    openPreviewDrawer(
-      singleProject ? scopeProjectRef(singleProject.environmentId, singleProject.id) : null,
-    );
-  }, [closeBottomDrawer, previewOpen, singleProject]);
 
   const openThread = useCallback(
     async (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => {
@@ -655,18 +632,6 @@ export function NoActiveThreadState() {
         },
       },
       {
-        title: "Open preview",
-        description: singleProject
-          ? "Browse live component previews in this project."
-          : "Open the preview drawer and choose a project.",
-        icon: <PreviewTriggerIcon className="size-5" />,
-        testId: "no-active-thread-action-open-preview",
-        onClick: () =>
-          openPreviewDrawer(
-            singleProject ? scopeProjectRef(singleProject.environmentId, singleProject.id) : null,
-          ),
-      },
-      {
         title: "Search",
         description: "Jump straight to a project or thread.",
         icon: <SearchIcon className="size-5 fill-current" />,
@@ -693,7 +658,7 @@ export function NoActiveThreadState() {
 
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
         <header
           className={cn(
             "px-3 sm:px-5",
@@ -703,57 +668,27 @@ export function NoActiveThreadState() {
           )}
         >
           {isElectron ? (
-            <div className="flex min-w-0 flex-1 items-center justify-between gap-2 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
-              <div className="flex min-w-0 items-center gap-2">
-                {showSidebarControls ? (
-                  <>
-                    <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-                    <DesktopSidebarReopenButton />
-                  </>
-                ) : null}
-              </div>
-              <Toggle
-                className="shrink-0 [-webkit-app-region:no-drag] [&_svg]:fill-current"
-                pressed={previewOpen}
-                onClick={togglePreviewVisibility}
-                aria-label="Toggle preview drawer"
-                variant="outline"
-                size="xs"
-                title={previewOpen ? "Close preview drawer" : "Open preview drawer"}
-              >
-                <PreviewTriggerIcon className="size-3" />
-              </Toggle>
+            <div className="flex min-w-0 flex-1 items-center gap-2 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]">
+              {showSidebarControls ? (
+                <>
+                  <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+                  <DesktopSidebarReopenButton />
+                </>
+              ) : null}
             </div>
           ) : (
-            <div className="flex min-h-7 items-center justify-between gap-2 sm:min-h-6">
-              <div className="flex items-center gap-2">
-                {showSidebarControls ? (
-                  <>
-                    <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-                    <DesktopSidebarReopenButton />
-                  </>
-                ) : null}
-              </div>
-              <Toggle
-                className="shrink-0 [&_svg]:fill-current"
-                pressed={previewOpen}
-                onClick={togglePreviewVisibility}
-                aria-label="Toggle preview drawer"
-                variant="outline"
-                size="xs"
-                title={previewOpen ? "Close preview drawer" : "Open preview drawer"}
-              >
-                <PreviewTriggerIcon className="size-3" />
-              </Toggle>
+            <div className="flex min-h-7 items-center gap-2 sm:min-h-6">
+              {showSidebarControls ? (
+                <>
+                  <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+                  <DesktopSidebarReopenButton />
+                </>
+              ) : null}
             </div>
           )}
         </header>
 
-        <div
-          data-bottom-drawer-anchor="true"
-          className="min-h-0 flex-1 overflow-y-auto"
-          data-testid="no-active-thread-state"
-        >
+        <div className="min-h-0 flex-1 overflow-y-auto" data-testid="no-active-thread-state">
           <div className="mx-auto flex w-full max-w-2xl flex-col gap-8 px-6 py-8 sm:px-8 sm:py-10 lg:px-10 lg:py-14">
             <section className="flex items-start">
               <div className="inline-flex size-12 items-center justify-center text-foreground sm:size-14">
@@ -838,7 +773,6 @@ export function NoActiveThreadState() {
             ) : null}
           </div>
         </div>
-        <BottomDrawerHost />
       </div>
     </SidebarInset>
   );
