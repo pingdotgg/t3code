@@ -9,7 +9,7 @@ export type DiscordReleaseTarget = "prerelease" | "latest";
 
 interface DiscordReleaseAnnouncementOptions {
   readonly target: DiscordReleaseTarget;
-  readonly mention: string;
+  readonly roleId: string;
   readonly releaseName: string;
   readonly version: string;
   readonly tag: string;
@@ -20,7 +20,7 @@ interface DiscordReleaseAnnouncementOptions {
 interface DiscordWebhookPayload {
   readonly content: string;
   readonly allowed_mentions: {
-    readonly parse: ReadonlyArray<"roles">;
+    readonly roles: ReadonlyArray<string>;
   };
   readonly embeds: ReadonlyArray<{
     readonly title: string;
@@ -37,6 +37,7 @@ interface DiscordWebhookPayload {
 }
 
 const DISCORD_RELEASE_TARGETS = ["prerelease", "latest"] as const;
+const DiscordRoleIdSchema = Schema.String.check(Schema.isPattern(/^\d+$/));
 const WebUrlSchema = Schema.String.check(Schema.isPattern(/^https?:\/\/\S+$/));
 const DiscordWebhookUrl = Config.nonEmptyString("DISCORD_WEBHOOK_URL");
 
@@ -58,9 +59,9 @@ const targetColors = {
 export const buildDiscordReleaseAnnouncement = (
   options: DiscordReleaseAnnouncementOptions,
 ): DiscordWebhookPayload => ({
-  content: `${options.mention} ${targetLabels[options.target]} published: ${options.releaseName}`,
+  content: `<@&${options.roleId}> ${targetLabels[options.target]} published: ${options.releaseName}`,
   allowed_mentions: {
-    parse: ["roles"],
+    roles: [options.roleId],
   },
   embeds: [
     {
@@ -124,9 +125,9 @@ export const notifyDiscordReleaseCommand = Command.make(
     target: Argument.choice("target", DISCORD_RELEASE_TARGETS).pipe(
       Argument.withDescription("Discord announcement target: prerelease or latest."),
     ),
-    mention: Flag.string("mention").pipe(
-      Flag.withSchema(Schema.NonEmptyString),
-      Flag.withDescription("Discord mention text included at the start of the message."),
+    roleId: Flag.string("role-id").pipe(
+      Flag.withSchema(DiscordRoleIdSchema),
+      Flag.withDescription("Discord role ID to mention in the release announcement."),
     ),
     releaseName: Flag.string("release-name").pipe(
       Flag.withSchema(Schema.NonEmptyString),
@@ -145,14 +146,14 @@ export const notifyDiscordReleaseCommand = Command.make(
       Flag.withDescription("Public GitHub release URL."),
     ),
   },
-  ({ target, mention, releaseName, version, tag, releaseUrl }) =>
+  ({ target, roleId, releaseName, version, tag, releaseUrl }) =>
     Effect.gen(function* () {
       const webhookUrl = yield* DiscordWebhookUrl;
       yield* postDiscordWebhook(
         webhookUrl,
         buildDiscordReleaseAnnouncement({
           target,
-          mention,
+          roleId,
           releaseName,
           version,
           tag,

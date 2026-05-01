@@ -6,7 +6,7 @@ it("builds a prerelease Discord announcement for nightly subscribers", () => {
   assert.deepStrictEqual(
     buildDiscordReleaseAnnouncement({
       target: "prerelease",
-      mention: "@t3-code-nightly-announcements",
+      roleId: "111111111111111111",
       releaseName: "T3 Code Nightly 1.2.4-nightly.20260501.17 (abcdef123456)",
       version: "1.2.4-nightly.20260501.17",
       tag: "v1.2.4-nightly.20260501.17",
@@ -15,9 +15,9 @@ it("builds a prerelease Discord announcement for nightly subscribers", () => {
     }),
     {
       content:
-        "@t3-code-nightly-announcements Prerelease published: T3 Code Nightly 1.2.4-nightly.20260501.17 (abcdef123456)",
+        "<@&111111111111111111> Prerelease published: T3 Code Nightly 1.2.4-nightly.20260501.17 (abcdef123456)",
       allowed_mentions: {
-        parse: ["roles"],
+        roles: ["111111111111111111"],
       },
       embeds: [
         {
@@ -48,7 +48,7 @@ it("builds a latest Discord announcement for stable subscribers", () => {
   assert.deepStrictEqual(
     buildDiscordReleaseAnnouncement({
       target: "latest",
-      mention: "@t3-code-announcements",
+      roleId: "222222222222222222",
       releaseName: "T3 Code v1.2.3",
       version: "1.2.3",
       tag: "v1.2.3",
@@ -56,9 +56,9 @@ it("builds a latest Discord announcement for stable subscribers", () => {
       timestamp: "2026-05-01T01:41:00.000Z",
     }),
     {
-      content: "@t3-code-announcements Latest published: T3 Code v1.2.3",
+      content: "<@&222222222222222222> Latest published: T3 Code v1.2.3",
       allowed_mentions: {
-        parse: ["roles"],
+        roles: ["222222222222222222"],
       },
       embeds: [
         {
