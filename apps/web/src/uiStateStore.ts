@@ -21,6 +21,8 @@ export interface PersistedUiState {
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
+  threadDiffFullWidthById?: Record<string, boolean>;
+  threadDiffOpenById?: Record<string, boolean>;
 }
 
 export interface UiProjectState {
@@ -31,13 +33,33 @@ export interface UiProjectState {
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
+  threadDiffFullWidthById: Record<string, boolean>;
+  threadDiffOpenById: Record<string, boolean>;
 }
 
 export interface UiEndpointState {
   defaultAdvertisedEndpointKey: string | null;
 }
 
-export interface UiState extends UiProjectState, UiThreadState, UiEndpointState {}
+export type DiffRenderMode = "stacked" | "split";
+
+export interface UiDiffViewState {
+  diffRenderMode: DiffRenderMode;
+  // Session-scoped overrides for the diff toolbar toggles. `undefined` means
+  // "no override — follow the corresponding settings.* default". Storing
+  // overrides instead of materialized booleans avoids a render-vs-effect
+  // initial-state mismatch (queries that read these values on first paint
+  // would otherwise fire with the store's hardcoded default and refetch
+  // once a hydration effect catches up to the user's settings).
+  diffWordWrapOverride: boolean | undefined;
+  diffIgnoreWhitespaceOverride: boolean | undefined;
+}
+
+export interface UiState
+  extends UiProjectState,
+    UiThreadState,
+    UiEndpointState,
+    UiDiffViewState {}
 
 export interface SyncProjectInput {
   /** Physical project key (env + cwd). Used for manual sort order. */
@@ -58,6 +80,11 @@ const initialState: UiState = {
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
   defaultAdvertisedEndpointKey: null,
+  threadDiffFullWidthById: {},
+  threadDiffOpenById: {},
+  diffRenderMode: "stacked",
+  diffWordWrapOverride: undefined,
+  diffIgnoreWhitespaceOverride: undefined,
 };
 
 const persistedCollapsedProjectCwds = new Set<string>();
@@ -103,10 +130,27 @@ function readPersistedState(): UiState {
       threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
         parsed.threadChangedFilesExpandedById,
       ),
+      threadDiffFullWidthById: sanitizePersistedThreadBooleanMap(parsed.threadDiffFullWidthById),
+      threadDiffOpenById: sanitizePersistedThreadBooleanMap(parsed.threadDiffOpenById),
     };
   } catch {
     return initialState;
   }
+}
+
+function sanitizePersistedThreadBooleanMap(
+  value: Record<string, boolean> | undefined,
+): Record<string, boolean> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const next: Record<string, boolean> = {};
+  for (const [threadId, flag] of Object.entries(value)) {
+    if (threadId && flag === true) {
+      next[threadId] = true;
+    }
+  }
+  return next;
 }
 
 function sanitizePersistedThreadChangedFilesExpanded(
@@ -187,6 +231,12 @@ export function persistState(state: UiState): void {
         return Object.keys(nextTurns).length > 0 ? [[threadId, nextTurns]] : [];
       }),
     );
+    const threadDiffFullWidthById = Object.fromEntries(
+      Object.entries(state.threadDiffFullWidthById).filter(([, fullWidth]) => fullWidth === true),
+    );
+    const threadDiffOpenById = Object.fromEntries(
+      Object.entries(state.threadDiffOpenById).filter(([, open]) => open === true),
+    );
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
@@ -195,6 +245,8 @@ export function persistState(state: UiState): void {
         projectOrderCwds,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
+        threadDiffFullWidthById,
+        threadDiffOpenById,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -427,12 +479,24 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
       retainedThreadIds.has(threadId),
     ),
   );
+  const nextThreadDiffFullWidthById = Object.fromEntries(
+    Object.entries(state.threadDiffFullWidthById).filter(([threadId]) =>
+      retainedThreadIds.has(threadId),
+    ),
+  );
+  const nextThreadDiffOpenById = Object.fromEntries(
+    Object.entries(state.threadDiffOpenById).filter(([threadId]) =>
+      retainedThreadIds.has(threadId),
+    ),
+  );
   if (
     recordsEqual(state.threadLastVisitedAtById, nextThreadLastVisitedAtById) &&
     nestedBooleanRecordsEqual(
       state.threadChangedFilesExpandedById,
       nextThreadChangedFilesExpandedById,
-    )
+    ) &&
+    recordsEqual(state.threadDiffFullWidthById, nextThreadDiffFullWidthById) &&
+    recordsEqual(state.threadDiffOpenById, nextThreadDiffOpenById)
   ) {
     return state;
   }
@@ -440,6 +504,8 @@ export function syncThreads(state: UiState, threads: readonly SyncThreadInput[])
     ...state,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
+    threadDiffFullWidthById: nextThreadDiffFullWidthById,
+    threadDiffOpenById: nextThreadDiffOpenById,
   };
 }
 
@@ -492,17 +558,30 @@ export function markThreadUnread(
 export function clearThreadUi(state: UiState, threadId: string): UiState {
   const hasVisitedState = threadId in state.threadLastVisitedAtById;
   const hasChangedFilesState = threadId in state.threadChangedFilesExpandedById;
-  if (!hasVisitedState && !hasChangedFilesState) {
+  const hasDiffFullWidthState = threadId in state.threadDiffFullWidthById;
+  const hasDiffOpenState = threadId in state.threadDiffOpenById;
+  if (
+    !hasVisitedState &&
+    !hasChangedFilesState &&
+    !hasDiffFullWidthState &&
+    !hasDiffOpenState
+  ) {
     return state;
   }
   const nextThreadLastVisitedAtById = { ...state.threadLastVisitedAtById };
   const nextThreadChangedFilesExpandedById = { ...state.threadChangedFilesExpandedById };
+  const nextThreadDiffFullWidthById = { ...state.threadDiffFullWidthById };
+  const nextThreadDiffOpenById = { ...state.threadDiffOpenById };
   delete nextThreadLastVisitedAtById[threadId];
   delete nextThreadChangedFilesExpandedById[threadId];
+  delete nextThreadDiffFullWidthById[threadId];
+  delete nextThreadDiffOpenById[threadId];
   return {
     ...state,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
+    threadDiffFullWidthById: nextThreadDiffFullWidthById,
+    threadDiffOpenById: nextThreadDiffOpenById,
   };
 }
 
@@ -563,6 +642,65 @@ export function setDefaultAdvertisedEndpointKey(state: UiState, key: string | nu
   return {
     ...state,
     defaultAdvertisedEndpointKey: nextKey,
+  };
+}
+
+export function setDiffRenderMode(state: UiState, mode: DiffRenderMode): UiState {
+  if (state.diffRenderMode === mode) {
+    return state;
+  }
+  return { ...state, diffRenderMode: mode };
+}
+
+export function setDiffWordWrap(state: UiState, wrap: boolean): UiState {
+  if (state.diffWordWrapOverride === wrap) {
+    return state;
+  }
+  return { ...state, diffWordWrapOverride: wrap };
+}
+
+export function setDiffIgnoreWhitespace(state: UiState, ignore: boolean): UiState {
+  if (state.diffIgnoreWhitespaceOverride === ignore) {
+    return state;
+  }
+  return { ...state, diffIgnoreWhitespaceOverride: ignore };
+}
+
+export function setThreadDiffFullWidth(
+  state: UiState,
+  threadKey: string,
+  fullWidth: boolean,
+): UiState {
+  const current = state.threadDiffFullWidthById[threadKey] === true;
+  if (current === fullWidth) {
+    return state;
+  }
+  const next = { ...state.threadDiffFullWidthById };
+  if (fullWidth) {
+    next[threadKey] = true;
+  } else {
+    delete next[threadKey];
+  }
+  return {
+    ...state,
+    threadDiffFullWidthById: next,
+  };
+}
+
+export function setThreadDiffOpen(state: UiState, threadKey: string, open: boolean): UiState {
+  const current = state.threadDiffOpenById[threadKey] === true;
+  if (current === open) {
+    return state;
+  }
+  const next = { ...state.threadDiffOpenById };
+  if (open) {
+    next[threadKey] = true;
+  } else {
+    delete next[threadKey];
+  }
+  return {
+    ...state,
+    threadDiffOpenById: next,
   };
 }
 
@@ -641,6 +779,11 @@ interface UiStateStore extends UiState {
   clearThreadUi: (threadId: string) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
+  setThreadDiffFullWidth: (threadKey: string, fullWidth: boolean) => void;
+  setThreadDiffOpen: (threadKey: string, open: boolean) => void;
+  setDiffRenderMode: (mode: DiffRenderMode) => void;
+  setDiffWordWrap: (wrap: boolean) => void;
+  setDiffIgnoreWhitespace: (ignore: boolean) => void;
   toggleProject: (projectId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
   reorderProjects: (
@@ -662,6 +805,12 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
+  setThreadDiffFullWidth: (threadKey, fullWidth) =>
+    set((state) => setThreadDiffFullWidth(state, threadKey, fullWidth)),
+  setThreadDiffOpen: (threadKey, open) => set((state) => setThreadDiffOpen(state, threadKey, open)),
+  setDiffRenderMode: (mode) => set((state) => setDiffRenderMode(state, mode)),
+  setDiffWordWrap: (wrap) => set((state) => setDiffWordWrap(state, wrap)),
+  setDiffIgnoreWhitespace: (ignore) => set((state) => setDiffIgnoreWhitespace(state, ignore)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),

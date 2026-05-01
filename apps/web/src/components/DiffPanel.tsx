@@ -1,11 +1,13 @@
 import { FileDiff, Virtualizer } from "@pierre/diffs/react";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { scopeThreadRef } from "@t3tools/client-runtime";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import type { TurnId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ChevronsLeftRightIcon,
+  ChevronsRightLeftIcon,
   Columns2Icon,
   PilcrowIcon,
   Rows3Icon,
@@ -36,6 +38,7 @@ import {
 } from "../lib/diffRendering";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { selectProjectByRef, useStore } from "../store";
+import { useUiStateStore } from "../uiStateStore";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
@@ -43,7 +46,6 @@ import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
-type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
 
 const DIFF_PANEL_UNSAFE_CSS = `
@@ -120,15 +122,24 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
   const settings = useSettings();
-  const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
-  const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
-  const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
-  const [collapsedDiffFileKeys, setCollapsedDiffFileKeys] = useState<ReadonlySet<string>>(
-    () => new Set(),
+  const diffRenderMode = useUiStateStore((store) => store.diffRenderMode);
+  const setDiffRenderMode = useUiStateStore((store) => store.setDiffRenderMode);
+  // diffWordWrap / diffIgnoreWhitespace use an override pattern: the store
+  // holds the user's in-session toggle (or `undefined` for "no override")
+  // and we fall back to the settings.* default on first render. This avoids
+  // a render-vs-effect race that would otherwise dispatch the first
+  // checkpoint diff query with the store's hardcoded default before any
+  // hydration effect catches up.
+  const diffWordWrapOverride = useUiStateStore((store) => store.diffWordWrapOverride);
+  const setDiffWordWrap = useUiStateStore((store) => store.setDiffWordWrap);
+  const diffWordWrap = diffWordWrapOverride ?? settings.diffWordWrap;
+  const diffIgnoreWhitespaceOverride = useUiStateStore(
+    (store) => store.diffIgnoreWhitespaceOverride,
   );
+  const setDiffIgnoreWhitespace = useUiStateStore((store) => store.setDiffIgnoreWhitespace);
+  const diffIgnoreWhitespace = diffIgnoreWhitespaceOverride ?? settings.diffIgnoreWhitespace;
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
-  const previousDiffOpenRef = useRef(false);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
   const [canScrollTurnStripRight, setCanScrollTurnStripRight] = useState(false);
   const routeThreadRef = useParams({
@@ -136,11 +147,32 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     select: (params) => resolveThreadRouteRef(params),
   });
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
-  const diffOpen = diffSearch.diff === "1";
   const activeThreadId = routeThreadRef?.threadId ?? null;
   const activeThread = useStore(
     useMemo(() => createThreadSelectorByRef(routeThreadRef), [routeThreadRef]),
   );
+  const activeThreadKey = useMemo(
+    () => (routeThreadRef ? scopedThreadKey(routeThreadRef) : null),
+    [routeThreadRef],
+  );
+  const diffFullWidth = useUiStateStore((store) =>
+    activeThreadKey ? store.threadDiffFullWidthById[activeThreadKey] === true : false,
+  );
+  const setThreadDiffFullWidth = useUiStateStore((store) => store.setThreadDiffFullWidth);
+  const [collapsedDiffFileKeys, setCollapsedDiffFileKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const toggleDiffFileCollapsed = useCallback((fileKey: string) => {
+    setCollapsedDiffFileKeys((current) => {
+      const next = new Set(current);
+      if (next.has(fileKey)) {
+        next.delete(fileKey);
+      } else {
+        next.add(fileKey);
+      }
+      return next;
+    });
+  }, []);
   const activeProjectId = activeThread?.projectId ?? null;
   const activeProject = useStore((store) =>
     activeThread && activeProjectId
@@ -262,26 +294,19 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     );
   }, [renderablePatch]);
 
+  // Drop collapsed-file keys for files that are no longer in the current
+  // patch so the set doesn't keep growing forever as turns come and go.
   useEffect(() => {
     if (renderableFiles.length === 0) {
       setCollapsedDiffFileKeys((current) => (current.size === 0 ? current : new Set()));
       return;
     }
-
     const visibleFileKeys = new Set(renderableFiles.map(buildFileDiffRenderKey));
     setCollapsedDiffFileKeys((current) => {
       const next = new Set([...current].filter((fileKey) => visibleFileKeys.has(fileKey)));
       return next.size === current.size ? current : next;
     });
   }, [renderableFiles]);
-
-  useEffect(() => {
-    if (diffOpen && !previousDiffOpenRef.current) {
-      setDiffWordWrap(settings.diffWordWrap);
-      setDiffIgnoreWhitespace(settings.diffIgnoreWhitespace);
-    }
-    previousDiffOpenRef.current = diffOpen;
-  }, [diffOpen, settings.diffIgnoreWhitespace, settings.diffWordWrap]);
 
   useEffect(() => {
     if (!selectedFilePath || !patchViewportRef.current) {
@@ -304,17 +329,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     },
     [activeCwd],
   );
-  const toggleDiffFileCollapsed = useCallback((fileKey: string) => {
-    setCollapsedDiffFileKeys((current) => {
-      const next = new Set(current);
-      if (next.has(fileKey)) {
-        next.delete(fileKey);
-      } else {
-        next.add(fileKey);
-      }
-      return next;
-    });
-  }, []);
 
   const selectTurn = (turnId: TurnId) => {
     if (!activeThread) return;
@@ -323,7 +337,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1", diffTurnId: turnId };
+        return { ...rest, diffTurnId: turnId };
       },
     });
   };
@@ -333,10 +347,13 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
       search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1" };
+        return stripDiffSearchParams(previous);
       },
     });
+  };
+  const toggleDiffFullWidth = () => {
+    if (!activeThreadKey) return;
+    setThreadDiffFullWidth(activeThreadKey, !diffFullWidth);
   };
   const updateTurnStripScrollState = useCallback(() => {
     const element = turnStripRef.current;
@@ -536,6 +553,26 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         >
           <PilcrowIcon className="size-3" />
         </Toggle>
+        {mode !== "sheet" ? (
+          <Toggle
+            aria-label={
+              diffFullWidth ? "Restore split pane diff view" : "Expand diff view to full width"
+            }
+            title={diffFullWidth ? "Restore split pane" : "Expand to full width"}
+            variant="outline"
+            size="xs"
+            pressed={diffFullWidth}
+            onPressedChange={() => {
+              toggleDiffFullWidth();
+            }}
+          >
+            {diffFullWidth ? (
+              <ChevronsRightLeftIcon className="size-3" />
+            ) : (
+              <ChevronsLeftRightIcon className="size-3" />
+            )}
+          </Toggle>
+        ) : null}
       </div>
     </>
   );
