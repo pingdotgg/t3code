@@ -628,7 +628,7 @@ jobs:
           node scripts/notify-discord-release.ts prerelease \
             --role-id "$DISCORD_MENTION_ROLE_ID" \
             --release-name "${{ needs.preflight.outputs.release_name }}" \
-            --version "${{ needs.preflight.outputs.version }}" \
+            --release-version "${{ needs.preflight.outputs.version }}" \
             --tag "${{ needs.preflight.outputs.tag }}" \
             --release-url "https://github.com/${{ github.repository }}/releases/tag/${{ needs.preflight.outputs.tag }}"
 
@@ -642,6 +642,6 @@ jobs:
           node scripts/notify-discord-release.ts latest \
             --role-id "$DISCORD_MENTION_ROLE_ID" \
             --release-name "${{ needs.preflight.outputs.release_name }}" \
-            --version "${{ needs.preflight.outputs.version }}" \
+            --release-version "${{ needs.preflight.outputs.version }}" \
             --tag "${{ needs.preflight.outputs.tag }}" \
             --release-url "https://github.com/${{ github.repository }}/releases/tag/${{ needs.preflight.outputs.tag }}"
