@@ -738,6 +738,61 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("projects a proposed plan from assistant message text tagged with proposed_plan", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-plan-1"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-assistant-plan"),
+      itemId: asItemId("item-assistant-plan"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "<proposed_plan>\n# Streamed fallback plan\n\n- one\n</proposed_plan>",
+      },
+    });
+    harness.emit({
+      type: "item.completed",
+      eventId: asEventId("evt-message-completed-plan"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-assistant-plan"),
+      itemId: asItemId("item-assistant-plan"),
+      payload: {
+        itemType: "assistant_message",
+        status: "completed",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.proposedPlans.some(
+        (proposedPlan: ProviderRuntimeTestProposedPlan) =>
+          proposedPlan.id === "plan:thread-1:turn:turn-assistant-plan",
+      ),
+    );
+
+    expect(
+      thread.messages.find(
+        (entry: ProviderRuntimeTestMessage) => entry.id === "assistant:item-assistant-plan",
+      ),
+    ).toMatchObject({
+      text: "",
+      streaming: false,
+      turnId: "turn-assistant-plan",
+    });
+    expect(
+      thread.proposedPlans.find(
+        (entry: ProviderRuntimeTestProposedPlan) =>
+          entry.id === "plan:thread-1:turn:turn-assistant-plan",
+      )?.planMarkdown,
+    ).toBe("# Streamed fallback plan\n\n- one");
+  });
+
   it("preserves completed tool metadata on projected tool activities", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
