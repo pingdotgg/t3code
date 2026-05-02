@@ -166,7 +166,7 @@ Keep the narrow T3 bridge that turns a Task into one Worktree and one Primary Th
 - [x] Lifecycle callbacks update Work Session state.
 - [ ] Lifecycle callback handling has idempotency tests.
 - [x] Failed materialization records a Task Event and leaves the Task in `failed` or `needs_input`.
-- [ ] `bun fmt`, `bun lint`, and `bun typecheck` pass.
+- [x] `bun fmt`, `bun lint`, and `bun typecheck` pass.
 
 **Implementation Notes**:
 
@@ -174,6 +174,8 @@ Keep the narrow T3 bridge that turns a Task into one Worktree and one Primary Th
 - Restart/replacement behavior is intentionally deferred.
 - Live Linear smoke tests confirmed T3 materialization records `t3ThreadId`, branch, and worktree path in Convex on `basic-porcupine-321`.
 - Failed Task Intake starts now mark the Task `failed` and record a `task-intake.start-failed` event.
+- Live Slack smoke testing confirmed T3 materialization records `t3ThreadId`, branch, and worktree path in Convex on `scrupulous-fly-947` when the T3 bridge URL points at a live local tunnel.
+- The temporary live bridge used for Slack E2E was intentionally stopped after testing, and `T3_EXECUTION_BRIDGE_BASE_URL` was unset so the dev deployment is not left pointing at a stale ngrok URL.
 
 **Implementation Footprint**:
 
@@ -208,7 +210,7 @@ Create the shared Slack/Linear Task Intake module around Chat SDK. This phase sh
 
 **Acceptance Criteria**:
 
-- [ ] Slack and Linear inbound messages enter the same `taskIntake` handler after source verification.
+- [x] Slack and Linear inbound messages enter the same `taskIntake` handler after source verification.
 - [x] The shared handler creates a Task for a clear new request.
 - [x] The shared handler routes follow-up messages to an existing Task by External Link.
 - [x] Ambiguous messages produce a simple clarification reply and do not start coding.
@@ -223,9 +225,12 @@ Create the shared Slack/Linear Task Intake module around Chat SDK. This phase sh
 - Installed the real Chat SDK transport packages: `chat`, `@chat-adapter/linear`, and `@chat-adapter/slack`. The package named `chat-sdk` is unpublished; the current SDK package is `chat`.
 - Added a minimal Task Intake port layer (`TaskIntakeStore`, `TaskIntakeRuntime`, `TaskIntakeReplyTransport`) so the shared handler stays pure and testable without a source-adapter abstraction.
 - Added shared prompt and reply builders. Linear now delegates into `handleTaskIntakeMessage` instead of creating/materializing/posting inline.
-- Added Slack and Linear normalizers into the shared `TaskIntakeMessage` contract. Linear now enters through Chat SDK. Slack remains intentionally not configured because this environment does not have Slack bot/signing env vars, and the Slack adapter has an `exactOptionalPropertyTypes` incompatibility with `chat` that should be fixed upstream or wrapped deliberately later.
+- Added Slack and Linear normalizers into the shared `TaskIntakeMessage` contract. Linear and Slack both enter through Chat SDK.
 - The Linear Chat SDK webhook action passes `waitUntil` tasks through Convex and awaits them, so intake mutations/runtime materialization complete before the webhook action returns.
 - Linear client credentials are passed explicitly to the Chat SDK adapter instead of relying on zero-config `LINEAR_CLIENT_ID`/`LINEAR_CLIENT_SECRET`, which the adapter treats as multi-tenant OAuth.
+- Slack adapter/env construction now lives in `chatSdkAdapters.ts`, keeping `chatSdk.ts` focused on Chat SDK event handling and normalized message conversion.
+- The Slack adapter has a narrow compatibility wrapper for its `botUserId` getter under `exactOptionalPropertyTypes`; this is isolated at the Chat SDK adapter boundary instead of leaking casts into the intake handler.
+- `chatSdkSourceFromThreadId` centralizes Chat SDK thread-id source routing so adding future Intake Sources has one obvious routing point.
 
 **Implementation Footprint**:
 
@@ -235,6 +240,7 @@ Create the shared Slack/Linear Task Intake module around Chat SDK. This phase sh
 - Added `apps/orchestrator/src/taskIntake/prompts.ts`
 - Added `apps/orchestrator/src/taskIntake/replies.ts`
 - Added `apps/orchestrator/src/taskIntake/chatSdk.ts`
+- Added `apps/orchestrator/src/taskIntake/chatSdkAdapters.ts`
 - Added `apps/orchestrator/src/taskIntake/linear.ts`
 - Added `apps/orchestrator/src/taskIntake/slack.ts`
 - Added `apps/orchestrator/src/taskIntake/ingress.test.ts`
@@ -280,14 +286,14 @@ Wire the shared Task Intake module into real Slack and Linear webhook paths and 
 
 - [x] Linear comments can create a Task and receive a simple acknowledgement.
 - [x] Linear follow-up comments route to the same Task.
-- [ ] Slack mentions can create a Task and receive a simple acknowledgement.
+- [x] Slack mentions can create a Task and receive a simple acknowledgement.
 - [ ] Slack thread replies route to the same Task.
 - [ ] Duplicate webhooks do not duplicate Tasks or acknowledgements.
 - [ ] T3 runtime completion posts one simple completion comment/message.
 - [ ] T3 runtime failure posts one simple failure comment/message.
 - [x] No Coding Agent stream/activity is posted to Slack or Linear.
 - [ ] Focused integration tests cover Slack create/follow-up and Linear create/follow-up with fake Chat SDK adapters.
-- [ ] `bun fmt`, `bun lint`, and `bun typecheck` pass.
+- [x] `bun fmt`, `bun lint`, and `bun typecheck` pass.
 
 **Implementation Notes**:
 
@@ -295,7 +301,11 @@ Wire the shared Task Intake module into real Slack and Linear webhook paths and 
 - Follow-up/routing E2E: `AFF-1718` routed later comments to Task `kn7bn2v37at62ejhh6x7v7pdpd85zynz` and completed the Work Session.
 - Completion/failure source replies are wired in code, but live Linear completion reply posting still needs one more auth pass against the Chat SDK Linear adapter. Chat SDK receives client-credentials tokens, but `thread.post` returned Linear auth errors in the live deployment for follow-up/lifecycle posts.
 - Reply posting is best-effort after runtime materialization. A source reply failure no longer marks an already materialized Task as start-failed, and lifecycle callback HTTP responses no longer fail solely because Linear reply posting failed.
-- Slack was not live-tested; no Slack bot/signing env vars were present in the repository env.
+- Slack live E2E on `scrupulous-fly-947`: a mention in `#testing` created Task `kn748gnqhfeek68w38rc0tst0d85z3jq`, T3 Thread `5e834b12-7dcd-4a95-9423-0141e33c48b5`, branch `task/u0b0t56ay7r-slack-intake-e2e-final-retry-create-0tst0d85z3jq`, and worktree `/Users/vivek/.t3code-slack-e2e/worktrees/t3code/task-u0b0t56ay7r-slack-intake-e2e-final-retry-create-0tst0d85z3jq`.
+- Slack bot env vars were configured on the Convex dev deployment: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `SLACK_BOT_USERNAME=engineering`, and `SLACK_BOT_USER_ID=U0B0T56AY7R`.
+- Slack live E2E required seeding a `t3code` Project in Convex dev because the deployment initially had zero Projects and could not route Slack team `T079X906D6U`.
+- A stale T3 bridge URL first produced a failed Slack Task and a failure reply, which confirmed failure replies work for materialization failures. A fresh local T3 server plus ngrok tunnel then confirmed successful Task runtime materialization.
+- Slack completion replies were not observed in the live test because the test Task remained `working` after runtime materialization; completion/failure reply idempotency still needs focused hardening.
 
 **Implementation Footprint**:
 
@@ -303,6 +313,7 @@ Wire the shared Task Intake module into real Slack and Linear webhook paths and 
 - Added `apps/orchestrator/convex/taskIntake.ts`
 - Updated `apps/orchestrator/convex/tasks.ts`
 - Updated `apps/orchestrator/src/taskIntake/chatSdk.ts`
+- Added `apps/orchestrator/src/taskIntake/chatSdkAdapters.ts`
 - Updated `apps/orchestrator/src/taskIntake/ports.ts`
 - Deleted `apps/orchestrator/src/taskIntake/sourceAdapters.ts`
 
