@@ -558,7 +558,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
                     onClick={handlePrClick}
                   >
-                    <ChangeRequestStatusIcon icon={prStatus.icon} className="size-3" />
+                    <ChangeRequestStatusIcon className="size-3" />
                   </button>
                 }
               />

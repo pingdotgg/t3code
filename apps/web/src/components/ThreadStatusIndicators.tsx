@@ -2,7 +2,6 @@ import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/clien
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { CloudIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
-import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import {
   useSavedEnvironmentRegistryStore,
@@ -12,17 +11,13 @@ import { useGitStatus } from "../lib/gitStatusState";
 import { type AppState, selectProjectByRef, useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
-import {
-  resolveChangeRequestPresentation,
-  type ChangeRequestPresentation,
-} from "../sourceControlPresentation";
+import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export interface PrStatusIndicator {
   label: string;
-  icon: ChangeRequestPresentation["icon"];
   colorClass: string;
   tooltip: string;
   url: string;
@@ -46,7 +41,6 @@ export function prStatusIndicator(
   if (pr.state === "open") {
     return {
       label: `${presentation.shortName} open`,
-      icon: presentation.icon,
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
       tooltip: `#${pr.number} ${presentation.shortName} open: ${pr.title}`,
       url: pr.url,
@@ -55,7 +49,6 @@ export function prStatusIndicator(
   if (pr.state === "closed") {
     return {
       label: `${presentation.shortName} closed`,
-      icon: presentation.icon,
       colorClass: "text-zinc-500 dark:text-zinc-400/80",
       tooltip: `#${pr.number} ${presentation.shortName} closed: ${pr.title}`,
       url: pr.url,
@@ -64,7 +57,6 @@ export function prStatusIndicator(
   if (pr.state === "merged") {
     return {
       label: `${presentation.shortName} merged`,
-      icon: presentation.icon,
       colorClass: "text-violet-600 dark:text-violet-300/90",
       tooltip: `#${pr.number} ${presentation.shortName} merged: ${pr.title}`,
       url: pr.url,
@@ -73,17 +65,7 @@ export function prStatusIndicator(
   return null;
 }
 
-export function ChangeRequestStatusIcon({
-  icon,
-  className,
-}: {
-  icon: PrStatusIndicator["icon"];
-  className?: string;
-}) {
-  if (icon === "github") return <GitHubIcon className={className} />;
-  if (icon === "gitlab") return <GitLabIcon className={className} />;
-  if (icon === "azure-devops") return <AzureDevOpsIcon className={className} />;
-  if (icon === "bitbucket") return <BitbucketIcon className={className} />;
+export function ChangeRequestStatusIcon({ className }: { className?: string }) {
   return <GitPullRequestIcon className={className} />;
 }
 
@@ -197,7 +179,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
               />
             }
           >
-            <ChangeRequestStatusIcon icon={prStatus.icon} className="size-3" />
+            <ChangeRequestStatusIcon className="size-3" />
           </TooltipTrigger>
           <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
         </Tooltip>
