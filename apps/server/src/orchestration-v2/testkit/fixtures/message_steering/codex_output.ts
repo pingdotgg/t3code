@@ -9,7 +9,9 @@ import {
   assertRuntimeRequestKinds,
   assertSemanticProjectionIntegrity,
   assertTurnItemTypes,
+  assertUserMessageInputIntents,
   assertUserMessagesInclude,
+  assertVisibleTurnItemsMirrorLocalTurnItems,
   projectionFor,
   TOOL_CALL_WRITE_PROMPT,
 } from "../shared.ts";
@@ -22,6 +24,7 @@ export function assertMessageSteeringOutput(
 
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
+  assertVisibleTurnItemsMirrorLocalTurnItems(projection);
   assertTurnItemTypes(projection, [
     "user_message",
     "command_execution",
@@ -35,6 +38,7 @@ export function assertMessageSteeringOutput(
     TOOL_CALL_WRITE_PROMPT,
     "Actually, respond with exactly: steering fixture observed",
   ]);
+  assertUserMessageInputIntents(projection, ["turn_start", "steer"]);
   assert.equal(projection.runs.length, 1, "steering must attach to the active run");
   assert.equal(
     projection.providerTurns.length,
