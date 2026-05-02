@@ -10,6 +10,7 @@ import {
   assertSemanticProjectionIntegrity,
   assertTurnItemTypes,
   assertUserMessagesInclude,
+  assertVisibleTurnItemsMirrorLocalTurnItems,
   projectionFor,
   TODO_LIST_PROMPT,
 } from "../shared.ts";
@@ -22,6 +23,7 @@ export function assertTodoListOutput(
 
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
+  assertVisibleTurnItemsMirrorLocalTurnItems(projection);
   assertRunOrdinals(projection, [1]);
   assertExecutionNodeKinds(projection, ["root_turn", "todo_list", "tool_call"]);
   assertTurnItemTypes(projection, ["user_message", "todo_list", "command_execution"]);

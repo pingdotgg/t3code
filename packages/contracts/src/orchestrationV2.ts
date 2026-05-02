@@ -95,6 +95,10 @@ export const OrchestrationV2ContextTransferResolution = Schema.Union([
     contextHandoffId: ContextHandoffId,
   }),
   Schema.Struct({
+    strategy: Schema.Literal("fork_delta_context"),
+    contextHandoffId: ContextHandoffId,
+  }),
+  Schema.Struct({
     strategy: Schema.Literal("checkpoint_context"),
     contextHandoffId: ContextHandoffId,
   }),
@@ -450,6 +454,7 @@ export const OrchestrationV2ContextHandoff = Schema.Struct({
   }),
   strategy: Schema.Literals([
     "delta_since_target_last_seen",
+    "fork_delta_summary",
     "full_thread_summary",
     "checkpoint_summary",
     "manual_context",
@@ -594,6 +599,15 @@ export const OrchestrationV2TurnItemStatus = Schema.Literals([
 ]);
 export type OrchestrationV2TurnItemStatus = typeof OrchestrationV2TurnItemStatus.Type;
 
+export const OrchestrationV2UserMessageInputIntent = Schema.Literals([
+  "turn_start",
+  "queued_turn",
+  "steer",
+  "promoted_queued_to_steer",
+]);
+export type OrchestrationV2UserMessageInputIntent =
+  typeof OrchestrationV2UserMessageInputIntent.Type;
+
 const OrchestrationV2TurnItemBaseFields = {
   id: TurnItemId,
   threadId: ThreadId,
@@ -631,6 +645,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("user_message"),
     messageId: MessageId,
+    inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
   }),
@@ -738,6 +753,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     toProvider: ProviderKind,
     strategy: Schema.Literals([
       "delta_since_target_last_seen",
+      "fork_delta_summary",
       "full_thread_summary",
       "checkpoint_summary",
       "manual_context",
@@ -768,6 +784,15 @@ export const OrchestrationV2TurnItem = Schema.Union([
   }),
 ]);
 export type OrchestrationV2TurnItem = typeof OrchestrationV2TurnItem.Type;
+
+export const OrchestrationV2ProjectedTurnItem = Schema.Struct({
+  position: NonNegativeInt,
+  visibility: Schema.Literals(["local", "inherited", "synthetic"]),
+  sourceThreadId: ThreadId,
+  sourceItemId: TurnItemId,
+  item: OrchestrationV2TurnItem,
+});
+export type OrchestrationV2ProjectedTurnItem = typeof OrchestrationV2ProjectedTurnItem.Type;
 
 export const OrchestrationV2RawProviderEvent = Schema.Struct({
   id: RawEventId,
@@ -903,9 +928,53 @@ export const OrchestrationV2ThreadProjection = Schema.Struct({
   checkpoints: Schema.Array(OrchestrationV2Checkpoint),
   contextHandoffs: Schema.Array(OrchestrationV2ContextHandoff),
   contextTransfers: Schema.Array(OrchestrationV2ContextTransfer),
+  visibleTurnItems: Schema.Array(OrchestrationV2ProjectedTurnItem),
   updatedAt: Schema.DateTimeUtc,
 });
 export type OrchestrationV2ThreadProjection = typeof OrchestrationV2ThreadProjection.Type;
+
+export const OrchestrationV2ShellThreadStatus = Schema.Union([
+  Schema.Literal("idle"),
+  OrchestrationV2RunStatus,
+]);
+export type OrchestrationV2ShellThreadStatus = typeof OrchestrationV2ShellThreadStatus.Type;
+
+export const OrchestrationV2ThreadShell = Schema.Struct({
+  id: ThreadId,
+  projectId: ProjectId,
+  title: Schema.String,
+  defaultProvider: ProviderKind,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  lineage: OrchestrationV2AppThreadLineage,
+  forkedFrom: Schema.NullOr(OrchestrationV2AppThread.fields.forkedFrom),
+  activeProviderThreadId: Schema.NullOr(ProviderThreadId),
+  latestRunId: Schema.NullOr(RunId),
+  status: OrchestrationV2ShellThreadStatus,
+  itemCount: NonNegativeInt,
+  visibleItemCount: NonNegativeInt,
+  createdAt: Schema.DateTimeUtc,
+  updatedAt: Schema.DateTimeUtc,
+});
+export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
+
+export const OrchestrationV2ShellSnapshot = Schema.Struct({
+  threads: Schema.Array(OrchestrationV2ThreadShell),
+});
+export type OrchestrationV2ShellSnapshot = typeof OrchestrationV2ShellSnapshot.Type;
+
+export const OrchestrationV2ShellStreamItem = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("snapshot"),
+    snapshot: OrchestrationV2ShellSnapshot,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("thread.updated"),
+    thread: OrchestrationV2ThreadShell,
+  }),
+]);
+export type OrchestrationV2ShellStreamItem = typeof OrchestrationV2ShellStreamItem.Type;
 
 export const OrchestrationV2StoredEvent = Schema.Struct({
   sequence: NonNegativeInt,
@@ -1036,6 +1105,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("user_message"),
     messageId: MessageId,
+    inputIntent: OrchestrationV2UserMessageInputIntent,
     text: Schema.String,
     attachments: Schema.Array(ChatAttachment),
   }),
@@ -1143,6 +1213,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     toProvider: ProviderKind,
     strategy: Schema.Literals([
       "delta_since_target_last_seen",
+      "fork_delta_summary",
       "full_thread_summary",
       "checkpoint_summary",
       "manual_context",
@@ -1361,6 +1432,14 @@ export const OrchestrationV2Command = Schema.Union([
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
   Schema.Struct({
+    type: Schema.Literal("thread.merge_back"),
+    commandId: CommandId,
+    sourceThreadId: ThreadId,
+    targetThreadId: ThreadId,
+    sourcePoint: OrchestrationV2ThreadForkSourcePoint,
+    createdAt: Schema.optional(Schema.DateTimeUtc),
+  }),
+  Schema.Struct({
     type: Schema.Literal("provider.switch"),
     commandId: CommandId,
     threadId: ThreadId,
@@ -1373,6 +1452,7 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestrationV2.dispatchCommand",
   getThreadProjection: "orchestrationV2.getThreadProjection",
+  subscribeShell: "orchestrationV2.subscribeShell",
   subscribeThread: "orchestrationV2.subscribeThread",
 } as const;
 
@@ -1420,9 +1500,18 @@ export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedErrorC
   },
 ) {}
 
+export class OrchestrationV2GetShellSnapshotError extends Schema.TaggedErrorClass<OrchestrationV2GetShellSnapshotError>()(
+  "OrchestrationV2GetShellSnapshotError",
+  {
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
 export const OrchestrationV2RpcError = Schema.Union([
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetThreadProjectionError,
+  OrchestrationV2GetShellSnapshotError,
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
 
@@ -1434,6 +1523,10 @@ export const OrchestrationV2RpcSchemas = {
   getThreadProjection: {
     input: OrchestrationV2GetThreadProjectionInput,
     output: OrchestrationV2ThreadProjection,
+  },
+  subscribeShell: {
+    input: Schema.Struct({}),
+    output: OrchestrationV2ShellStreamItem,
   },
   subscribeThread: {
     input: OrchestrationV2GetThreadProjectionInput,

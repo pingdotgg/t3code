@@ -7,6 +7,7 @@ import {
   assertSemanticProjectionIntegrity,
   assertTurnItemTypes,
   assertUserMessagesInclude,
+  assertVisibleTurnItemsMirrorLocalTurnItems,
   projectionFor,
   TURN_INTERRUPT_PROMPT,
 } from "../shared.ts";
@@ -19,6 +20,7 @@ export function assertTurnInterruptOutput(
 
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
+  assertVisibleTurnItemsMirrorLocalTurnItems(projection);
   assertTurnItemTypes(projection, [
     "user_message",
     "run_interrupt_request",

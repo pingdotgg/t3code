@@ -1,6 +1,10 @@
 import type {
   OrchestrationV2ConversationMessage,
   OrchestrationV2DomainEvent,
+  OrchestrationV2ProjectedTurnItem,
+  OrchestrationV2ShellSnapshot,
+  OrchestrationV2ShellThreadStatus,
+  OrchestrationV2ThreadShell,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
@@ -20,7 +24,9 @@ import {
   OrchestrationV2RunJson as OrchestrationV2RunJsonSchema,
   OrchestrationV2RuntimeRequestJson as OrchestrationV2RuntimeRequestJsonSchema,
   OrchestrationV2TurnItemJson as OrchestrationV2TurnItemJsonSchema,
+  RunId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import { Context, DateTime, Effect, Layer, Ref, Schema } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -83,6 +89,10 @@ export interface ProjectionStoreV2Shape {
   readonly apply: (
     event: OrchestrationV2DomainEvent,
   ) => Effect.Effect<void, ProjectionStoreV2Error>;
+  readonly getShellSnapshot: () => Effect.Effect<
+    OrchestrationV2ShellSnapshot,
+    ProjectionStoreV2Error
+  >;
   readonly getThreadProjection: (
     threadId: ThreadId,
   ) => Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error>;
@@ -122,6 +132,7 @@ export function emptyProjection(
     checkpoints: [],
     contextHandoffs: [],
     contextTransfers: [],
+    visibleTurnItems: [],
     updatedAt: event.occurredAt,
   };
 }
@@ -184,10 +195,10 @@ export function applyToProjection(
         messages: upsertById(base.messages, event.payload),
       };
     case "turn-item.updated":
-      return {
+      return withLocalVisibleTurnItems({
         ...base,
         turnItems: upsertById(base.turnItems, event.payload),
-      };
+      });
     case "plan.updated":
       return {
         ...base,
@@ -219,6 +230,26 @@ export function applyToProjection(
 
 type PayloadRow = {
   readonly payload_json: string;
+};
+
+type ShellThreadRow = {
+  readonly thread_id: string;
+  readonly payload_json: string;
+  readonly latest_run_id: string | null;
+  readonly latest_run_status: string | null;
+  readonly item_count: number;
+};
+
+type ShellRunRow = {
+  readonly thread_id: string;
+  readonly run_id: string;
+  readonly ordinal: number;
+};
+
+type ShellRunItemCountRow = {
+  readonly thread_id: string;
+  readonly run_id: string;
+  readonly item_count: number;
 };
 
 const encodeThreadPayload = Schema.encodeEffect(
@@ -373,6 +404,268 @@ function sortMessagesByTurnItemOrder(
 
     return left.id.localeCompare(right.id);
   });
+}
+
+function localVisibleTurnItems(
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+): Array<OrchestrationV2ProjectedTurnItem> {
+  return turnItems.map((item, position) => ({
+    position,
+    visibility: "local",
+    sourceThreadId: item.threadId,
+    sourceItemId: item.id,
+    item,
+  }));
+}
+
+function withLocalVisibleTurnItems(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadProjection {
+  return {
+    ...projection,
+    visibleTurnItems: localVisibleTurnItems(projection.turnItems),
+  };
+}
+
+function renumberVisibleTurnItems(
+  rows: ReadonlyArray<Omit<OrchestrationV2ProjectedTurnItem, "position">>,
+): Array<OrchestrationV2ProjectedTurnItem> {
+  return rows.map((row, position) => ({ ...row, position }));
+}
+
+function makeForkMarkerTurnItem(input: {
+  readonly targetProjection: OrchestrationV2ThreadProjection;
+  readonly sourceThreadId: ThreadId;
+  readonly sourceRunId: NonNullable<OrchestrationV2TurnItem["runId"]>;
+}): OrchestrationV2TurnItem {
+  const createdAt = input.targetProjection.thread.createdAt;
+  return {
+    id: TurnItemId.make(`turn-item:fork:${input.targetProjection.thread.id}`),
+    threadId: input.targetProjection.thread.id,
+    runId: null,
+    nodeId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 0,
+    status: "completed",
+    title: "Forked from conversation",
+    startedAt: null,
+    completedAt: createdAt,
+    updatedAt: createdAt,
+    type: "fork",
+    source: { type: "run", threadId: input.sourceThreadId, runId: input.sourceRunId },
+    targetThreadId: input.targetProjection.thread.id,
+  };
+}
+
+function visibleTurnItemsThroughRun(input: {
+  readonly sourceProjection: OrchestrationV2ThreadProjection;
+  readonly sourceRunId: NonNullable<OrchestrationV2TurnItem["runId"]>;
+}): Array<Omit<OrchestrationV2ProjectedTurnItem, "position">> {
+  const sourceRun = input.sourceProjection.runs.find((run) => run.id === input.sourceRunId);
+  if (sourceRun === undefined) {
+    return [];
+  }
+
+  const runOrdinalById = new Map(input.sourceProjection.runs.map((run) => [run.id, run.ordinal]));
+  return input.sourceProjection.visibleTurnItems
+    .filter((row) => {
+      const item = row.item;
+      if (item.threadId !== input.sourceProjection.thread.id) {
+        return true;
+      }
+      if (item.type === "fork") {
+        return true;
+      }
+      if (item.runId === null) {
+        return false;
+      }
+      const ordinal = runOrdinalById.get(item.runId);
+      return ordinal !== undefined && ordinal <= sourceRun.ordinal;
+    })
+    .map((row) => ({
+      visibility: "inherited",
+      sourceThreadId: row.sourceThreadId,
+      sourceItemId: row.sourceItemId,
+      item: row.item,
+    }));
+}
+
+function buildVisibleTurnItems(input: {
+  readonly projection: OrchestrationV2ThreadProjection;
+  readonly sourceProjection: OrchestrationV2ThreadProjection | null;
+}): Array<OrchestrationV2ProjectedTurnItem> {
+  const forkedFrom = input.projection.thread.forkedFrom;
+  if (forkedFrom?.type !== "run" || input.sourceProjection === null) {
+    return localVisibleTurnItems(input.projection.turnItems);
+  }
+
+  const inherited = visibleTurnItemsThroughRun({
+    sourceProjection: input.sourceProjection,
+    sourceRunId: forkedFrom.runId,
+  });
+  const markerItem = makeForkMarkerTurnItem({
+    targetProjection: input.projection,
+    sourceThreadId: forkedFrom.threadId,
+    sourceRunId: forkedFrom.runId,
+  });
+  const local = input.projection.turnItems.map((item) => ({
+    visibility: "local" as const,
+    sourceThreadId: item.threadId,
+    sourceItemId: item.id,
+    item,
+  }));
+
+  return renumberVisibleTurnItems([
+    ...inherited,
+    {
+      visibility: "synthetic",
+      sourceThreadId: forkedFrom.threadId,
+      sourceItemId: markerItem.id,
+      item: markerItem,
+    },
+    ...local,
+  ]);
+}
+
+export function threadShellFromProjection(
+  projection: OrchestrationV2ThreadProjection,
+): OrchestrationV2ThreadShell {
+  const latestRun = projection.runs.at(-1) ?? null;
+  return {
+    id: projection.thread.id,
+    projectId: projection.thread.projectId,
+    title: projection.thread.title,
+    defaultProvider: projection.thread.defaultProvider,
+    modelSelection: projection.thread.modelSelection,
+    runtimeMode: projection.thread.runtimeMode,
+    interactionMode: projection.thread.interactionMode,
+    lineage: projection.thread.lineage,
+    forkedFrom: projection.thread.forkedFrom,
+    activeProviderThreadId: projection.thread.activeProviderThreadId,
+    latestRunId: latestRun?.id ?? null,
+    status: latestRun?.status ?? "idle",
+    itemCount: projection.turnItems.length,
+    visibleItemCount: projection.visibleTurnItems.length,
+    createdAt: projection.thread.createdAt,
+    updatedAt: projection.updatedAt,
+  };
+}
+
+type ShellThreadState = {
+  readonly thread: OrchestrationV2ThreadProjection["thread"];
+  readonly latestRunId: RunId | null;
+  readonly latestRunStatus: OrchestrationV2ShellThreadStatus;
+  readonly itemCount: number;
+  readonly updatedAt: OrchestrationV2ThreadProjection["updatedAt"];
+  readonly runOrdinalById: ReadonlyMap<RunId, number>;
+  readonly itemCountByRunId: ReadonlyMap<RunId, number>;
+};
+
+function shellStatusFromStoredRunStatus(status: string | null): OrchestrationV2ShellThreadStatus {
+  switch (status) {
+    case null:
+      return "idle";
+    case "queued":
+    case "starting":
+    case "running":
+    case "waiting":
+    case "completed":
+    case "interrupted":
+    case "failed":
+    case "cancelled":
+    case "rolled_back":
+      return status;
+    default:
+      return "failed";
+  }
+}
+
+function itemCountThroughRun(input: {
+  readonly state: ShellThreadState;
+  readonly runId: RunId;
+}): number {
+  const runOrdinal = input.state.runOrdinalById.get(input.runId);
+  if (runOrdinal === undefined) {
+    return 0;
+  }
+
+  let count = 0;
+  for (const [runId, itemCount] of input.state.itemCountByRunId) {
+    const itemRunOrdinal = input.state.runOrdinalById.get(runId);
+    if (itemRunOrdinal !== undefined && itemRunOrdinal <= runOrdinal) {
+      count += itemCount;
+    }
+  }
+  return count;
+}
+
+function visibleItemCountForShell(input: {
+  readonly threadId: ThreadId;
+  readonly statesByThreadId: ReadonlyMap<ThreadId, ShellThreadState>;
+  readonly seenThreadIds?: ReadonlySet<ThreadId>;
+}): number {
+  const state = input.statesByThreadId.get(input.threadId);
+  if (state === undefined) {
+    return 0;
+  }
+
+  const forkedFrom = state.thread.forkedFrom;
+  if (forkedFrom?.type !== "run") {
+    return state.itemCount;
+  }
+
+  const seenThreadIds = input.seenThreadIds ?? new Set<ThreadId>();
+  if (seenThreadIds.has(state.thread.id)) {
+    return state.itemCount;
+  }
+
+  const sourceState = input.statesByThreadId.get(forkedFrom.threadId);
+  if (sourceState === undefined) {
+    return state.itemCount;
+  }
+
+  const sourceForkedFrom = sourceState.thread.forkedFrom;
+  const inheritedPrefixCount =
+    sourceForkedFrom?.type === "run"
+      ? visibleItemCountForShell({
+          threadId: sourceState.thread.id,
+          statesByThreadId: input.statesByThreadId,
+          seenThreadIds: new Set([...seenThreadIds, state.thread.id]),
+        }) - sourceState.itemCount
+      : 0;
+
+  return (
+    inheritedPrefixCount +
+    itemCountThroughRun({ state: sourceState, runId: forkedFrom.runId }) +
+    1 +
+    state.itemCount
+  );
+}
+
+function shellFromState(input: {
+  readonly state: ShellThreadState;
+  readonly visibleItemCount: number;
+}): OrchestrationV2ThreadShell {
+  return {
+    id: input.state.thread.id,
+    projectId: input.state.thread.projectId,
+    title: input.state.thread.title,
+    defaultProvider: input.state.thread.defaultProvider,
+    modelSelection: input.state.thread.modelSelection,
+    runtimeMode: input.state.thread.runtimeMode,
+    interactionMode: input.state.thread.interactionMode,
+    lineage: input.state.thread.lineage,
+    forkedFrom: input.state.thread.forkedFrom,
+    activeProviderThreadId: input.state.thread.activeProviderThreadId,
+    latestRunId: input.state.latestRunId,
+    status: input.state.latestRunStatus,
+    itemCount: input.state.itemCount,
+    visibleItemCount: input.visibleItemCount,
+    createdAt: input.state.thread.createdAt,
+    updatedAt: input.state.updatedAt,
+  };
 }
 
 export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> = Layer.effect(
@@ -1048,7 +1341,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
 
-    const getThreadProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
+    const readCanonicalProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
       Effect.gen(function* () {
         const threadRows = yield* sql<PayloadRow>`
           SELECT payload_json
@@ -1214,6 +1507,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           checkpoints,
           contextHandoffs,
           contextTransfers,
+          visibleTurnItems: localVisibleTurnItems(turnItems),
           updatedAt: thread.updatedAt,
         } satisfies OrchestrationV2ThreadProjection;
       }).pipe(
@@ -1227,8 +1521,136 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
       );
 
+    const readProjection = (
+      threadId: ThreadId,
+      seenThreadIds: ReadonlySet<ThreadId>,
+    ): Effect.Effect<OrchestrationV2ThreadProjection, ProjectionStoreV2Error> =>
+      Effect.gen(function* () {
+        const projection = yield* readCanonicalProjection(threadId);
+        const forkedFrom = projection.thread.forkedFrom;
+        if (forkedFrom?.type !== "run" || seenThreadIds.has(forkedFrom.threadId)) {
+          return withLocalVisibleTurnItems(projection);
+        }
+
+        const sourceProjection = yield* readProjection(
+          forkedFrom.threadId,
+          new Set([...seenThreadIds, threadId]),
+        );
+        return {
+          ...projection,
+          visibleTurnItems: buildVisibleTurnItems({
+            projection,
+            sourceProjection,
+          }),
+        };
+      });
+
+    const getThreadProjection: ProjectionStoreV2Shape["getThreadProjection"] = (threadId) =>
+      readProjection(threadId, new Set());
+
+    const getShellSnapshot: ProjectionStoreV2Shape["getShellSnapshot"] = () =>
+      Effect.gen(function* () {
+        const [threadRows, runRows, itemCountRows] = yield* Effect.all([
+          sql<ShellThreadRow>`
+            SELECT
+              t.thread_id,
+              t.payload_json,
+              (
+                SELECT r.run_id
+                FROM orchestration_v2_projection_runs r
+                WHERE r.thread_id = t.thread_id
+                ORDER BY r.ordinal DESC, r.run_id DESC
+                LIMIT 1
+              ) AS latest_run_id,
+              (
+                SELECT r.status
+                FROM orchestration_v2_projection_runs r
+                WHERE r.thread_id = t.thread_id
+                ORDER BY r.ordinal DESC, r.run_id DESC
+                LIMIT 1
+              ) AS latest_run_status,
+              (
+                SELECT COUNT(*)
+                FROM orchestration_v2_projection_turn_items i
+                WHERE i.thread_id = t.thread_id
+              ) AS item_count
+            FROM orchestration_v2_projection_threads t
+            WHERE t.deleted_at IS NULL
+            ORDER BY t.updated_at ASC, t.thread_id ASC
+          `,
+          sql<ShellRunRow>`
+            SELECT thread_id, run_id, ordinal
+            FROM orchestration_v2_projection_runs
+          `,
+          sql<ShellRunItemCountRow>`
+            SELECT thread_id, run_id, COUNT(*) AS item_count
+            FROM orchestration_v2_projection_turn_items
+            WHERE run_id IS NOT NULL
+            GROUP BY thread_id, run_id
+          `,
+        ]);
+
+        const runOrdinalsByThreadId = new Map<ThreadId, Map<RunId, number>>();
+        for (const row of runRows) {
+          const threadId = ThreadId.make(row.thread_id);
+          const runId = RunId.make(row.run_id);
+          const existing = runOrdinalsByThreadId.get(threadId) ?? new Map<RunId, number>();
+          existing.set(runId, row.ordinal);
+          runOrdinalsByThreadId.set(threadId, existing);
+        }
+
+        const itemCountsByThreadId = new Map<ThreadId, Map<RunId, number>>();
+        for (const row of itemCountRows) {
+          const threadId = ThreadId.make(row.thread_id);
+          const runId = RunId.make(row.run_id);
+          const existing = itemCountsByThreadId.get(threadId) ?? new Map<RunId, number>();
+          existing.set(runId, row.item_count);
+          itemCountsByThreadId.set(threadId, existing);
+        }
+
+        const states = yield* Effect.forEach(threadRows, (row) =>
+          decodeThreadPayload(row.payload_json).pipe(
+            Effect.map(
+              (thread): ShellThreadState => ({
+                thread,
+                latestRunId: row.latest_run_id === null ? null : RunId.make(row.latest_run_id),
+                latestRunStatus: shellStatusFromStoredRunStatus(row.latest_run_status),
+                itemCount: row.item_count,
+                updatedAt: thread.updatedAt,
+                runOrdinalById:
+                  runOrdinalsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),
+                itemCountByRunId:
+                  itemCountsByThreadId.get(ThreadId.make(row.thread_id)) ?? new Map(),
+              }),
+            ),
+          ),
+        );
+        const statesByThreadId = new Map(states.map((state) => [state.thread.id, state]));
+
+        return {
+          threads: states.map((state) =>
+            shellFromState({
+              state,
+              visibleItemCount: visibleItemCountForShell({
+                threadId: state.thread.id,
+                statesByThreadId,
+              }),
+            }),
+          ),
+        };
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectionStoreReadError({
+              threadId: ThreadId.make("thread:shell"),
+              cause,
+            }),
+        ),
+      );
+
     return {
       apply,
+      getShellSnapshot,
       getThreadProjection,
     } satisfies ProjectionStoreV2Shape;
   }),
@@ -1266,10 +1688,46 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             return yield* result;
           }
         }),
+      getShellSnapshot: () =>
+        Effect.gen(function* () {
+          const existing = yield* Ref.get(projections);
+          const shells = yield* Effect.forEach(
+            [...existing.keys()].toSorted((left, right) =>
+              String(left).localeCompare(String(right)),
+            ),
+            (threadId) =>
+              service.getThreadProjection(threadId).pipe(Effect.map(threadShellFromProjection)),
+          );
+          return { threads: shells };
+        }),
       getThreadProjection: (threadId) =>
         Effect.gen(function* () {
           const existing = yield* Ref.get(projections);
-          const projection = existing.get(threadId);
+          const readProjection = (
+            targetThreadId: ThreadId,
+            seenThreadIds: ReadonlySet<ThreadId>,
+          ): OrchestrationV2ThreadProjection | null => {
+            const projection = existing.get(targetThreadId);
+            if (!projection) {
+              return null;
+            }
+            const forkedFrom = projection.thread.forkedFrom;
+            if (forkedFrom?.type !== "run" || seenThreadIds.has(forkedFrom.threadId)) {
+              return withLocalVisibleTurnItems(projection);
+            }
+            const sourceProjection = readProjection(
+              forkedFrom.threadId,
+              new Set([...seenThreadIds, targetThreadId]),
+            );
+            return {
+              ...projection,
+              visibleTurnItems: buildVisibleTurnItems({
+                projection,
+                sourceProjection,
+              }),
+            };
+          };
+          const projection = readProjection(threadId, new Set());
           if (!projection) {
             return yield* new ProjectionStoreThreadNotFoundError({ threadId });
           }

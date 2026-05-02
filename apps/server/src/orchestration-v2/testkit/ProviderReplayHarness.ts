@@ -14,6 +14,7 @@ import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { layer as checkpointServiceLayer } from "../CheckpointService.ts";
 import { layer as commandReceiptStoreLayer } from "../CommandReceiptStore.ts";
+import { layer as contextHandoffServiceLayer } from "../ContextHandoffService.ts";
 import { layer as eventSinkLayer } from "../EventSink.ts";
 import { layer as eventStoreLayer } from "../EventStore.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
@@ -192,6 +193,9 @@ export function makeOrchestratorV2ProviderReplayLayer<
   const checkpointServiceProvided = checkpointServiceLayer.pipe(
     Layer.provide(Layer.mergeAll(checkpointStoreLayer, idAllocatorLayer)),
   );
+  const contextHandoffServiceProvided = contextHandoffServiceLayer.pipe(
+    Layer.provide(idAllocatorLayer),
+  );
   const persistenceLayer = Layer.mergeAll(
     storesLayer,
     eventSinkProvided,
@@ -216,6 +220,7 @@ export function makeOrchestratorV2ProviderReplayLayer<
     Layer.provide(
       Layer.mergeAll(
         checkpointServiceProvided,
+        contextHandoffServiceProvided,
         persistenceLayer,
         runtimeLayer,
         providerSessionManagerProvided,
