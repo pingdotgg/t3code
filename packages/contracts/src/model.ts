@@ -120,6 +120,14 @@ function canonicalSelectionsToLegacyObject(
   return out;
 }
 
+/** Legacy per-provider options map kept for older callers/tests. */
+export type ProviderModelOptions = Readonly<
+  Record<
+    string,
+    Readonly<Record<string, string | boolean>> | ReadonlyArray<ProviderOptionSelection>
+  >
+>;
+
 export const ModelCapabilities = Schema.Struct({
   optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
 });

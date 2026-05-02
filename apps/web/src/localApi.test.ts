@@ -85,6 +85,14 @@ const rpcClientMock = {
     subscribeLifecycle: vi.fn(),
     subscribeAuthAccess: vi.fn(),
   },
+  codexImport: {
+    listSessions: vi.fn(),
+    peekSession: vi.fn(),
+    importSessions: vi.fn(),
+  },
+  skills: {
+    search: vi.fn(),
+  },
   orchestration: {
     dispatchCommand: vi.fn(),
     getTurnDiff: vi.fn(),
@@ -180,6 +188,13 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
       mode: "local-only",
       endpointUrl: null,
       advertisedHost: null,
+    }),
+    getTailnetInfo: async () => ({
+      available: false,
+      connected: false,
+      hostname: null,
+      ipv4: null,
+      error: null,
     }),
     pickFolder: async () => null,
     confirm: async () => true,
@@ -491,6 +506,124 @@ describe("wsApi", () => {
     );
     expect(rpcClientMock.server.updateSettings).toHaveBeenCalledWith({
       enableAssistantStreaming: true,
+    });
+  });
+
+  it("forwards Codex import requests directly to the RPC client", async () => {
+    const sessionSummary = {
+      sessionId: "session-1",
+      title: "Imported thread",
+      cwd: null,
+      createdAt: "2026-04-01T00:00:00.000Z",
+      updatedAt: "2026-04-01T00:00:00.000Z",
+      model: "gpt-5-codex",
+      kind: "direct" as const,
+      transcriptAvailable: true,
+      transcriptError: null,
+      alreadyImported: false,
+      importedThreadId: null,
+      lastUserMessage: "hello",
+      lastAssistantMessage: "world",
+    };
+    rpcClientMock.codexImport.listSessions.mockResolvedValue([sessionSummary]);
+    rpcClientMock.codexImport.peekSession.mockResolvedValue({
+      ...sessionSummary,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      messages: [
+        {
+          role: "user",
+          text: "hello",
+          createdAt: "2026-04-01T00:00:00.000Z",
+        },
+      ],
+    });
+    rpcClientMock.codexImport.importSessions.mockResolvedValue({
+      results: [
+        {
+          sessionId: "session-1",
+          status: "imported",
+          threadId: ThreadId.make("thread-imported"),
+          projectId: ProjectId.make("project-1"),
+          error: null,
+        },
+      ],
+    });
+    const { createLocalApi } = await import("./localApi");
+
+    const api = createLocalApi(rpcClientMock as never);
+
+    await expect(api.codexImport.listSessions({ kind: "all" })).resolves.toEqual([sessionSummary]);
+    await expect(api.codexImport.peekSession({ sessionId: "session-1" })).resolves.toMatchObject({
+      sessionId: "session-1",
+      messages: [{ text: "hello" }],
+    });
+    await expect(
+      api.codexImport.importSessions({
+        targetProjectId: ProjectId.make("project-1"),
+        sessionIds: ["session-1"],
+      }),
+    ).resolves.toEqual({
+      results: [
+        {
+          sessionId: "session-1",
+          status: "imported",
+          threadId: ThreadId.make("thread-imported"),
+          projectId: ProjectId.make("project-1"),
+          error: null,
+        },
+      ],
+    });
+
+    expect(rpcClientMock.codexImport.listSessions).toHaveBeenCalledWith({ kind: "all" });
+    expect(rpcClientMock.codexImport.peekSession).toHaveBeenCalledWith({
+      sessionId: "session-1",
+    });
+    expect(rpcClientMock.codexImport.importSessions).toHaveBeenCalledWith({
+      targetProjectId: ProjectId.make("project-1"),
+      sessionIds: ["session-1"],
+    });
+  });
+
+  it("forwards skill search requests directly to the RPC client", async () => {
+    rpcClientMock.skills.search.mockResolvedValue({
+      skills: [
+        {
+          name: "agent-browser",
+          description: "Inspect pages",
+          skillPath: "/Users/test/.codex/skills/agent-browser/SKILL.md",
+          rootPath: "/Users/test/.codex/skills",
+          source: "codex-home",
+        },
+      ],
+      truncated: false,
+    });
+    const { createLocalApi } = await import("./localApi");
+
+    const api = createLocalApi(rpcClientMock as never);
+
+    await expect(
+      api.skills.search({
+        cwd: "/tmp/project",
+        query: "$agent-browser",
+        limit: 25,
+      }),
+    ).resolves.toEqual({
+      skills: [
+        {
+          name: "agent-browser",
+          description: "Inspect pages",
+          skillPath: "/Users/test/.codex/skills/agent-browser/SKILL.md",
+          rootPath: "/Users/test/.codex/skills",
+          source: "codex-home",
+        },
+      ],
+      truncated: false,
+    });
+    expect(rpcClientMock.skills.search).toHaveBeenCalledWith({
+      cwd: "/tmp/project",
+      query: "$agent-browser",
+      limit: 25,
     });
   });
 

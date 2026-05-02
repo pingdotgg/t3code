@@ -260,6 +260,7 @@ const createDesktopBridgeStub = (overrides?: {
   readonly serverExposureState?: Awaited<ReturnType<DesktopBridge["getServerExposureState"]>>;
   readonly setServerExposureMode?: DesktopBridge["setServerExposureMode"];
   readonly setUpdateChannel?: DesktopBridge["setUpdateChannel"];
+  readonly tailnetInfo?: Awaited<ReturnType<DesktopBridge["getTailnetInfo"]>>;
 }): DesktopBridge => {
   const idleUpdateState: DesktopUpdateState = {
     enabled: false,
@@ -307,6 +308,15 @@ const createDesktopBridgeStub = (overrides?: {
         endpointUrl: mode === "network-accessible" ? "http://192.168.1.44:3773" : null,
         advertisedHost: mode === "network-accessible" ? "192.168.1.44" : null,
       })),
+    getTailnetInfo: vi.fn().mockResolvedValue(
+      overrides?.tailnetInfo ?? {
+        available: false,
+        connected: false,
+        hostname: null,
+        ipv4: null,
+        error: null,
+      },
+    ),
     pickFolder: vi.fn().mockResolvedValue(null),
     confirm: vi.fn().mockResolvedValue(false),
     setTheme: vi.fn().mockResolvedValue(undefined),
@@ -669,7 +679,7 @@ describe("GeneralSettingsPanel observability", () => {
     await networkAccessToggle.click();
     await expect.element(page.getByText("Enable network access?")).toBeInTheDocument();
     await expect
-      .element(page.getByText("T3 Code will restart to expose this environment over the network."))
+      .element(page.getByText("ClayCode will restart to expose this environment over the network."))
       .toBeInTheDocument();
     await page.getByRole("button", { name: "Restart and enable", exact: true }).click();
     await vi.waitFor(() => {
@@ -678,6 +688,40 @@ describe("GeneralSettingsPanel observability", () => {
     await expect
       .element(page.getByText("Reachable at http://192.168.1.44:3773"))
       .toBeInTheDocument();
+  });
+
+  it("shows a Tailnet URL when Tailscale is connected and network access is enabled", async () => {
+    const desktopBridge = createDesktopBridgeStub({
+      serverExposureState: {
+        mode: "network-accessible",
+        endpointUrl: "http://192.168.1.44:3773",
+        advertisedHost: "192.168.1.44",
+      },
+      tailnetInfo: {
+        available: true,
+        connected: true,
+        hostname: "clays-macbook-pro.tail744884.ts.net",
+        ipv4: "100.97.126.33",
+        error: null,
+      },
+    });
+    window.desktopBridge = desktopBridge;
+
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    const tailnetUrl = "http://clays-macbook-pro.tail744884.ts.net:3773/";
+    await expect.element(page.getByText("Tailnet access")).toBeInTheDocument();
+    await expect.element(page.getByLabelText("Tailnet URL")).toHaveValue(tailnetUrl);
+    await page.getByRole("button", { name: "Open URL", exact: true }).click();
+    await vi.waitFor(() => {
+      expect(desktopBridge.openExternal).toHaveBeenCalledWith(tailnetUrl);
+    });
   });
 
   it("opens the logs folder in the preferred editor", async () => {

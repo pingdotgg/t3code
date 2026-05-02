@@ -12,6 +12,10 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_INTERVAL_MS = 100;
 const DEFAULT_REQUEST_TIMEOUT_MS = 1_000;
 
+function isDefaultReadyResponse(response: Response): boolean {
+  return response.ok || (response.status >= 300 && response.status < 400);
+}
+
 export class BackendReadinessAbortedError extends Error {
   constructor() {
     super("Backend readiness wait was aborted.");
@@ -60,7 +64,7 @@ export async function waitForHttpReady(
   const intervalMs = options?.intervalMs ?? DEFAULT_INTERVAL_MS;
   const requestTimeoutMs = options?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const readinessPath = options?.path ?? "/";
-  const isReady = options?.isReady ?? ((response: Response) => response.ok);
+  const isReady = options?.isReady ?? isDefaultReadyResponse;
   const deadline = Date.now() + timeoutMs;
 
   for (;;) {

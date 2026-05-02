@@ -113,6 +113,9 @@ export const ServerProvider = Schema.Struct({
   // Routing key for the configured instance this snapshot represents. This
   // is the only stable identity consumers may use for provider routing.
   instanceId: ProviderInstanceId,
+  // Legacy alias accepted for older tests and fork clients during the
+  // provider-instance migration.
+  provider: Schema.optional(ProviderDriverKind),
   // Open driver kind slug that selects the implementation handling this
   // instance. It is metadata/capability context, not a routing key.
   driver: ProviderDriverKind,

@@ -1,15 +1,18 @@
 import {
   type ProjectEntry,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerProviderSkill,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import { BotIcon } from "lucide-react";
+import { BotIcon, FileTextIcon } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
+import type { ComposerSnippet } from "./composerSnippets";
 import { formatProviderSkillInstallSource } from "~/providerSkillPresentation";
 import { cn } from "~/lib/utils";
+import { Badge } from "../ui/badge";
 import {
   Command,
   CommandGroup,
@@ -46,9 +49,24 @@ export type ComposerCommandItem =
     }
   | {
       id: string;
+      type: "model";
+      provider: ProviderInstanceId;
+      model: string;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
       type: "skill";
       provider: ProviderDriverKind;
       skill: ServerProviderSkill;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "snippet";
+      snippet: ComposerSnippet;
       label: string;
       description: string;
     };
@@ -85,6 +103,9 @@ function groupCommandItems(
 ): ComposerCommandGroup[] {
   if (triggerKind === "skill") {
     return items.length > 0 ? [{ id: "skills", label: "Skills", items }] : [];
+  }
+  if (triggerKind === "snippet") {
+    return items.length > 0 ? [{ id: "snippets", label: "Snippets", items }] : [];
   }
   if (triggerKind !== "slash-command" || !groupSlashCommandSections) {
     return [{ id: "default", label: null, items }];
@@ -245,6 +266,14 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         <span className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground/80">
           <SkillGlyph className="size-3.5" />
         </span>
+      ) : null}
+      {props.item.type === "snippet" ? (
+        <FileTextIcon className="size-4 shrink-0 text-muted-foreground/80" />
+      ) : null}
+      {props.item.type === "model" ? (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          model
+        </Badge>
       ) : null}
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <span className="shrink-0">{props.item.label}</span>

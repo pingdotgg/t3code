@@ -27,6 +27,25 @@ describe("waitForHttpReady", () => {
     );
   });
 
+  it("treats redirect responses as ready by default", async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      new Response(null, {
+        status: 302,
+        headers: {
+          location: "http://127.0.0.1:5734/",
+        },
+      }),
+    );
+
+    await waitForHttpReady("http://127.0.0.1:3773", {
+      fetchImpl,
+      timeoutMs: 1_000,
+      intervalMs: 0,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
   it("retries after a readiness request stalls past the per-request timeout", async () => {
     const fetchImpl = vi
       .fn<typeof fetch>()

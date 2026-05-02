@@ -18,6 +18,7 @@ import {
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  SkillSearchError,
   ThreadId,
   type TerminalEvent,
   WS_METHODS,
@@ -63,6 +64,8 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
 import { respondToAuthError } from "./auth/http.ts";
+import { CodexImport } from "./codexImport/Services/CodexImport.ts";
+import { searchSkills } from "./skills.ts";
 
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
@@ -147,6 +150,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const startup = yield* ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries;
       const workspaceFileSystem = yield* WorkspaceFileSystem;
+      const codexImport = yield* CodexImport;
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
       const serverEnvironment = yield* ServerEnvironment;
@@ -782,6 +786,36 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             {
               "rpc.aggregate": "server",
             },
+          ),
+        [WS_METHODS.codexImportListSessions]: (input) =>
+          observeRpcEffect(WS_METHODS.codexImportListSessions, codexImport.listSessions(input), {
+            "rpc.aggregate": "codexImport",
+          }),
+        [WS_METHODS.codexImportPeekSession]: (input) =>
+          observeRpcEffect(WS_METHODS.codexImportPeekSession, codexImport.peekSession(input), {
+            "rpc.aggregate": "codexImport",
+          }),
+        [WS_METHODS.codexImportImportSessions]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.codexImportImportSessions,
+            codexImport.importSessions(input),
+            {
+              "rpc.aggregate": "codexImport",
+            },
+          ),
+        [WS_METHODS.skillsSearch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.skillsSearch,
+            Effect.tryPromise({
+              try: () => searchSkills(input),
+              catch: (cause) =>
+                new SkillSearchError({
+                  message:
+                    cause instanceof Error ? cause.message : "Failed to search local skills.",
+                  cause,
+                }),
+            }),
+            { "rpc.aggregate": "skills" },
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(

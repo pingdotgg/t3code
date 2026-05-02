@@ -1,5 +1,10 @@
 import * as React from "react";
+import type { ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
+import {
+  buildGitHubPullRequestUrl,
+  parseGitHubPullRequestUrl,
+} from "@t3tools/shared/githubPullRequest";
 import {
   getThreadSortTimestamp,
   sortThreads,
@@ -16,6 +21,8 @@ export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
 // nearby thread usually reuses an already-hot subscription.
 export const SIDEBAR_THREAD_PREWARM_LIMIT = 10;
 export type SidebarNewThreadEnvMode = "local" | "worktree";
+export type SidebarThreadListMode = "grouped" | "recent";
+export type RecentSidebarBucketId = "today" | "yesterday" | "week" | "earlier";
 type SidebarProject = {
   id: string;
   name: string;
@@ -38,6 +45,22 @@ export interface ThreadStatusPill {
   pulse: boolean;
 }
 
+export interface SidebarPullRequestReference {
+  url: string;
+  owner: string;
+  repo: string;
+  number: string;
+}
+
+export type SidebarReferencedPullRequestState = "open" | "closed" | "merged" | null;
+export interface RecentSidebarBucket<T> {
+  id: RecentSidebarBucketId;
+  label: string;
+  threads: readonly T[];
+}
+
+type ThreadPullRequestReferenceInput = Pick<Thread, "messages">;
+
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
   "Awaiting Input": 4,
@@ -58,6 +81,8 @@ type ThreadStatusInput = Pick<
 > & {
   lastVisitedAt?: string | undefined;
 };
+
+const GITHUB_PULL_REQUEST_URL_GLOBAL_PATTERN = /https:\/\/github\.com\/[^\s)\]}>]+/gi;
 
 export interface ThreadJumpHintVisibilityController {
   sync: (shouldShow: boolean) => void;
@@ -167,6 +192,66 @@ export function resolveSidebarNewThreadEnvMode(input: {
   return input.requestedEnvMode ?? input.defaultEnvMode;
 }
 
+export function resolveThreadSidebarRepositoryCwds(input: {
+  worktreePath?: string | null;
+  projectCwd?: string | null;
+}): string[] {
+  const candidates = [input.worktreePath, input.projectCwd];
+  return [
+    ...new Set(
+      candidates.filter((cwd): cwd is string => typeof cwd === "string" && cwd.length > 0),
+    ),
+  ];
+}
+
+export function deriveThreadSidebarPullRequestReferences(
+  thread: ThreadPullRequestReferenceInput,
+): SidebarPullRequestReference[] {
+  const references = new Map<string, SidebarPullRequestReference>();
+
+  for (const message of thread.messages) {
+    for (const match of message.text.matchAll(GITHUB_PULL_REQUEST_URL_GLOBAL_PATTERN)) {
+      const rawUrl = match[0];
+      if (!rawUrl) {
+        continue;
+      }
+      const parsed = parseGitHubPullRequestUrl(rawUrl);
+      if (!parsed) {
+        continue;
+      }
+      const normalizedUrl = buildGitHubPullRequestUrl(parsed);
+      if (references.has(normalizedUrl)) {
+        continue;
+      }
+      references.set(normalizedUrl, {
+        url: normalizedUrl,
+        owner: parsed.owner,
+        repo: parsed.repo,
+        number: parsed.number,
+      });
+    }
+  }
+
+  return [...references.values()];
+}
+
+export function formatSidebarPullRequestBadgeLabel(input: { number: string }): string {
+  return `#${input.number}`;
+}
+
+export function referencedPrPillClassName(state: SidebarReferencedPullRequestState): string {
+  if (state === "open") {
+    return "border-emerald-200/90 bg-emerald-50 text-emerald-700 hover:bg-emerald-100/90 hover:text-emerald-800 dark:border-emerald-500/25 dark:bg-emerald-500/12 dark:text-emerald-300";
+  }
+  if (state === "merged") {
+    return "border-violet-200/90 bg-violet-50 text-violet-700 hover:bg-violet-100/90 hover:text-violet-800 dark:border-violet-500/25 dark:bg-violet-500/12 dark:text-violet-300";
+  }
+  if (state === "closed") {
+    return "border-rose-200/90 bg-rose-50 text-rose-700 hover:bg-rose-100/90 hover:text-rose-800 dark:border-rose-500/25 dark:bg-rose-500/12 dark:text-rose-300";
+  }
+  return "border-border/70 bg-secondary/75 text-muted-foreground/88 hover:bg-accent hover:text-foreground";
+}
+
 export function resolveSidebarNewThreadSeedContext(input: {
   projectId: string;
   defaultEnvMode: SidebarNewThreadEnvMode;
@@ -252,6 +337,96 @@ export function getVisibleSidebarThreadIds<TThreadId>(
   );
 }
 
+export function sortThreadsForRecentSidebar<T extends Pick<Thread, "id"> & ThreadSortInput>(
+  threads: readonly T[],
+): T[] {
+  return sortThreads(threads, "updated_at");
+}
+
+const RECENT_SIDEBAR_DAY_MS = 24 * 60 * 60 * 1000;
+const RECENT_SIDEBAR_BUCKET_LABELS: Record<RecentSidebarBucketId, string> = {
+  today: "Today",
+  yesterday: "Yesterday",
+  week: "Earlier this week",
+  earlier: "Older",
+};
+
+function resolveRecentSidebarBucketId(timestampMs: number, nowMs: number): RecentSidebarBucketId {
+  if (!Number.isFinite(timestampMs)) {
+    return "earlier";
+  }
+  const diffMs = nowMs - timestampMs;
+  if (diffMs < RECENT_SIDEBAR_DAY_MS) {
+    return "today";
+  }
+  if (diffMs < 2 * RECENT_SIDEBAR_DAY_MS) {
+    return "yesterday";
+  }
+  if (diffMs < 7 * RECENT_SIDEBAR_DAY_MS) {
+    return "week";
+  }
+  return "earlier";
+}
+
+export function bucketRecentThreadsForSidebar<T extends Pick<Thread, "id"> & ThreadSortInput>(
+  threads: readonly T[],
+  nowMs = Date.now(),
+): RecentSidebarBucket<T>[] {
+  const buckets = new Map<RecentSidebarBucketId, T[]>([
+    ["today", []],
+    ["yesterday", []],
+    ["week", []],
+    ["earlier", []],
+  ]);
+
+  for (const thread of sortThreadsForRecentSidebar(threads)) {
+    const bucketId = resolveRecentSidebarBucketId(
+      getThreadSortTimestamp(thread, "updated_at"),
+      nowMs,
+    );
+    buckets.get(bucketId)?.push(thread);
+  }
+
+  return (["today", "yesterday", "week", "earlier"] as const).reduce<RecentSidebarBucket<T>[]>(
+    (result, bucketId) => {
+      const bucketThreads = buckets.get(bucketId) ?? [];
+      if (bucketThreads.length === 0) {
+        return result;
+      }
+      result.push({
+        id: bucketId,
+        label: RECENT_SIDEBAR_BUCKET_LABELS[bucketId],
+        threads: bucketThreads,
+      });
+      return result;
+    },
+    [],
+  );
+}
+
+export function visibleRecentThreadsForSidebar<
+  T extends Pick<Thread, "id"> & ThreadSortInput,
+>(input: { threads: readonly T[]; isExpanded: boolean; threadPreviewLimit: number }): T[] {
+  const orderedThreads = sortThreadsForRecentSidebar(input.threads);
+  if (orderedThreads.length <= input.threadPreviewLimit || input.isExpanded) {
+    return orderedThreads;
+  }
+  return orderedThreads.slice(0, input.threadPreviewLimit);
+}
+
+export function visibleThreadIdsForRecentSidebar<
+  T extends Pick<Thread, "id"> & ThreadSortInput,
+>(input: { threads: readonly T[]; isExpanded: boolean; threadPreviewLimit: number }): ThreadId[] {
+  return visibleRecentThreadsForSidebar(input).map((thread) => thread.id);
+}
+
+export function deriveSidebarThreadProjectName(input: {
+  thread: Pick<SidebarThreadSummary, "projectId">;
+  projects: readonly Pick<SidebarProject, "id" | "name">[];
+}): string | null {
+  return input.projects.find((project) => project.id === input.thread.projectId)?.name ?? null;
+}
+
 export function getSidebarThreadIdsToPrewarm<TThreadId>(
   visibleThreadIds: readonly TThreadId[],
   limit = SIDEBAR_THREAD_PREWARM_LIMIT,
@@ -284,6 +459,52 @@ export function resolveAdjacentThreadId<T>(input: {
   }
 
   return currentIndex < threadIds.length - 1 ? (threadIds[currentIndex + 1] ?? null) : null;
+}
+
+export function resolveSidebarProjectNavigationTarget<TProjectKey, TThreadKey>(input: {
+  projects: readonly {
+    projectKey: TProjectKey;
+    threadKeys: readonly TThreadKey[];
+  }[];
+  currentProjectKey: TProjectKey | null;
+  currentThreadKey: TThreadKey | null;
+  direction: ThreadTraversalDirection;
+}): { projectKey: TProjectKey; threadKey: TThreadKey } | null {
+  const navigableProjects = input.projects.filter((project) => project.threadKeys.length > 0);
+  if (navigableProjects.length === 0) {
+    return null;
+  }
+
+  const inferredCurrentProjectKey =
+    input.currentProjectKey ??
+    navigableProjects.find((project) =>
+      input.currentThreadKey === null ? false : project.threadKeys.includes(input.currentThreadKey),
+    )?.projectKey ??
+    null;
+
+  if (inferredCurrentProjectKey === null) {
+    const fallbackProject =
+      input.direction === "previous" ? navigableProjects.at(-1) : navigableProjects[0];
+    const fallbackThreadKey = fallbackProject?.threadKeys[0];
+    return fallbackProject && fallbackThreadKey
+      ? { projectKey: fallbackProject.projectKey, threadKey: fallbackThreadKey }
+      : null;
+  }
+
+  const currentProjectIndex = navigableProjects.findIndex(
+    (project) => project.projectKey === inferredCurrentProjectKey,
+  );
+  if (currentProjectIndex === -1) {
+    return null;
+  }
+
+  const targetProjectIndex =
+    input.direction === "previous" ? currentProjectIndex - 1 : currentProjectIndex + 1;
+  const targetProject = navigableProjects[targetProjectIndex];
+  const targetThreadKey = targetProject?.threadKeys[0];
+  return targetProject && targetThreadKey
+    ? { projectKey: targetProject.projectKey, threadKey: targetThreadKey }
+    : null;
 }
 
 export function isContextMenuPointerDown(input: {

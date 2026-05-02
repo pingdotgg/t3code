@@ -53,6 +53,42 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
 
+    const parsedThreadSearch = yield* decode(KeybindingRule, {
+      key: "mod+shift+f",
+      command: "threads.search",
+    });
+    assert.strictEqual(parsedThreadSearch.command, "threads.search");
+
+    const parsedDeepThreadSearch = yield* decode(KeybindingRule, {
+      key: "mod+alt+f",
+      command: "threads.searchAll",
+    });
+    assert.strictEqual(parsedDeepThreadSearch.command, "threads.searchAll");
+
+    const parsedProjectSearch = yield* decode(KeybindingRule, {
+      key: "mod+alt+p",
+      command: "projects.search",
+    });
+    assert.strictEqual(parsedProjectSearch.command, "projects.search");
+
+    const parsedSnippetsOpen = yield* decode(KeybindingRule, {
+      key: "mod+shift+s",
+      command: "snippets.open",
+    });
+    assert.strictEqual(parsedSnippetsOpen.command, "snippets.open");
+
+    const parsedSidebarThreadNext = yield* decode(KeybindingRule, {
+      key: "alt+arrowdown",
+      command: "sidebar.thread.next",
+    });
+    assert.strictEqual(parsedSidebarThreadNext.command, "sidebar.thread.next");
+
+    const parsedSidebarProjectPrevious = yield* decode(KeybindingRule, {
+      key: "alt+shift+arrowup",
+      command: "sidebar.project.previous",
+    });
+    assert.strictEqual(parsedSidebarProjectPrevious.command, "sidebar.project.previous");
+
     const parsedModelPickerToggle = yield* decode(KeybindingRule, {
       key: "mod+shift+m",
       command: "modelPicker.toggle",

@@ -27,6 +27,15 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
   { "key": "mod+n", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
+  { "key": "mod+shift+f", "command": "threads.search", "when": "!terminalFocus" },
+  { "key": "mod+alt+f", "command": "threads.searchAll", "when": "!terminalFocus" },
+  { "key": "mod+alt+p", "command": "projects.search", "when": "!terminalFocus" },
+  { "key": "mod+shift+s", "command": "snippets.open", "when": "!terminalFocus" },
+  { "key": "mod+shift+k", "command": "skills.open", "when": "!terminalFocus" },
+  { "key": "mod+shift+[", "command": "thread.previous" },
+  { "key": "mod+shift+]", "command": "thread.next" },
+  { "key": "mod+[", "command": "sidebar.history.previous", "when": "!terminalFocus" },
+  { "key": "mod+]", "command": "sidebar.history.next", "when": "!terminalFocus" },
   { "key": "mod+o", "command": "editor.openFavorite" }
 ]
 ```
@@ -54,8 +63,34 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `commandPalette.toggle`: open or close the global command palette
 - `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
+- `threads.search`: open quick recent-thread search
+- `threads.searchAll`: deep-search all loaded threads including titles, messages, and plans
+- `projects.search`: open the project folder search dialog
+- `snippets.open`: open the snippet picker
+- `skills.open`: open the workspace skill picker
+- `thread.previous`: move to the previous visible thread in the sidebar
+- `thread.next`: move to the next visible thread in the sidebar
+- `sidebar.history.previous`: move backward through sidebar thread history
+- `sidebar.history.next`: move forward through sidebar thread history
 - `editor.openFavorite`: open current project/worktree in the last-used editor
 - `script.{id}.run`: run a project script by id (for example `script.test.run`)
+
+## Composer Shortcuts
+
+These composer shortcuts are built in and are not currently configurable through
+`~/.t3/keybindings.json`:
+
+- `Enter`: send the current composer content
+- `Shift+Enter`: insert a newline
+- `Shift+Tab`: toggle between Build and Plan mode
+- While a thread is actively running and the composer has sendable content:
+  - `Enter`: steer the active turn immediately
+  - `Cmd/Ctrl+Enter`: steer the active turn immediately
+  - `Cmd/Ctrl+Shift+Enter`: queue the current follow-up as the next queued row
+  - `Tab`: queue the follow-up to run after the current turn settles
+- While a queued follow-up row is focused:
+  - `Alt+Up` / `Alt+Down`: move focus between queued rows
+  - `Alt+Shift+Up` / `Alt+Shift+Down`: reorder the focused queued row
 
 ### Key Syntax
 

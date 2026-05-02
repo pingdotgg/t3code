@@ -70,6 +70,10 @@ function normalizeEventKey(key: string): string {
 
 function resolveEventKeys(event: ShortcutEventLike): Set<string> {
   const keys = new Set([normalizeEventKey(event.key)]);
+  if (event.code?.startsWith("Key") && event.code.length === 4) {
+    keys.add(event.code.slice(3).toLowerCase());
+  }
+
   const aliases = event.code ? EVENT_CODE_KEY_ALIASES[event.code] : undefined;
   if (!aliases) return keys;
 
@@ -270,7 +274,17 @@ export function threadTraversalDirectionFromCommand(
   command: string | null,
 ): "previous" | "next" | null {
   if (command === "thread.previous") return "previous";
+  if (command === "sidebar.thread.previous") return "previous";
   if (command === "thread.next") return "next";
+  if (command === "sidebar.thread.next") return "next";
+  return null;
+}
+
+export function sidebarProjectTraversalDirectionFromCommand(
+  command: string | null,
+): "previous" | "next" | null {
+  if (command === "sidebar.project.previous") return "previous";
+  if (command === "sidebar.project.next") return "next";
   return null;
 }
 
@@ -401,6 +415,22 @@ export function isOpenFavoriteEditorShortcut(
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "editor.openFavorite", options);
+}
+
+export function isSidebarHistoryPreviousShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.history.previous", options);
+}
+
+export function isSidebarHistoryNextShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "sidebar.history.next", options);
 }
 
 export function isTerminalClearShortcut(

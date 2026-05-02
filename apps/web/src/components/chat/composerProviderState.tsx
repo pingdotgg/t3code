@@ -21,7 +21,11 @@ export type ComposerProviderStateInput = {
   model: string;
   models: ReadonlyArray<ServerProviderModel>;
   prompt: string;
-  modelOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+  modelOptions:
+    | ReadonlyArray<ProviderOptionSelection>
+    | Readonly<Record<string, unknown>>
+    | null
+    | undefined;
 };
 
 export type ComposerProviderState = {
@@ -39,7 +43,10 @@ type TraitsRenderInput = {
   draftId?: DraftId;
   model: string;
   models: ReadonlyArray<ServerProviderModel>;
-  modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
+  modelOptions:
+    | ReadonlyArray<ProviderOptionSelection>
+    | Readonly<Record<string, unknown>>
+    | undefined;
   prompt: string;
   onPromptChange: (prompt: string) => void;
 };

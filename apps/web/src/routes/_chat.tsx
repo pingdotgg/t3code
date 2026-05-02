@@ -1,5 +1,6 @@
-import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
 import { useEffect } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -9,11 +10,32 @@ import {
 } from "../lib/chatThreadActions";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
+import { QuickThreadSearchDialog } from "../components/QuickThreadSearchDialog";
+import { GlobalThreadSearchDialog } from "../components/GlobalThreadSearchDialog";
+import { ProjectFolderSearchDialog } from "../components/ProjectFolderSearchDialog";
+import { useGlobalThreadSearchStore } from "../globalThreadSearchStore";
+import { useQuickThreadSearchStore } from "../quickThreadSearchStore";
+import { useProjectFolderSearchStore } from "../projectFolderSearchStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
+import {
+  selectProjectsAcrossEnvironments,
+  selectThreadsAcrossEnvironments,
+  useStore,
+} from "../store";
+import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "~/rpc/serverState";
+import { useSkillPickerStore } from "~/skillPickerStore";
+import { useSnippetPickerStore } from "~/snippetPickerStore";
+
+function isBlockingDialogOpen(): boolean {
+  return (
+    document.querySelector('[data-slot="dialog-popup"], [data-slot="command-dialog-popup"]') !==
+    null
+  );
+}
 
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
@@ -39,6 +61,10 @@ function ChatRouteGlobalShortcuts() {
       });
 
       if (useCommandPaletteStore.getState().open) {
+        return;
+      }
+
+      if (isBlockingDialogOpen()) {
         return;
       }
 
@@ -75,6 +101,41 @@ function ChatRouteGlobalShortcuts() {
           }),
           handleNewThread,
         });
+        return;
+      }
+
+      if (command === "snippets.open") {
+        event.preventDefault();
+        event.stopPropagation();
+        useSnippetPickerStore.getState().openPicker();
+        return;
+      }
+
+      if (command === "skills.open") {
+        event.preventDefault();
+        event.stopPropagation();
+        useSkillPickerStore.getState().openPicker();
+        return;
+      }
+
+      if (command === "threads.search") {
+        event.preventDefault();
+        event.stopPropagation();
+        useQuickThreadSearchStore.getState().openDialog();
+        return;
+      }
+
+      if (command === "threads.searchAll") {
+        event.preventDefault();
+        event.stopPropagation();
+        useGlobalThreadSearchStore.getState().openDialog();
+        return;
+      }
+
+      if (command === "projects.search") {
+        event.preventDefault();
+        event.stopPropagation();
+        useProjectFolderSearchStore.getState().openDialog();
       }
     };
 
@@ -97,10 +158,110 @@ function ChatRouteGlobalShortcuts() {
   return null;
 }
 
+function ChatRouteQuickThreadSearch() {
+  const open = useQuickThreadSearchStore((state) => state.open);
+  const focusRequestId = useQuickThreadSearchStore((state) => state.focusRequestId);
+  const closeDialog = useQuickThreadSearchStore((state) => state.closeDialog);
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const threads = useStore(useShallow(selectThreadsAcrossEnvironments));
+  const activeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <QuickThreadSearchDialog
+      open={open}
+      focusRequestId={focusRequestId}
+      threads={threads}
+      projects={projects}
+      activeThreadRef={activeThreadRef}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          closeDialog();
+        }
+      }}
+    />
+  );
+}
+
+function ChatRouteGlobalThreadSearch() {
+  const open = useGlobalThreadSearchStore((state) => state.open);
+  const focusRequestId = useGlobalThreadSearchStore((state) => state.focusRequestId);
+  const closeDialog = useGlobalThreadSearchStore((state) => state.closeDialog);
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const threads = useStore(useShallow(selectThreadsAcrossEnvironments));
+  const activeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <GlobalThreadSearchDialog
+      open={open}
+      focusRequestId={focusRequestId}
+      threads={threads}
+      projects={projects}
+      activeThreadRef={activeThreadRef}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          closeDialog();
+        }
+      }}
+    />
+  );
+}
+
+function ChatRouteProjectFolderSearch() {
+  const open = useProjectFolderSearchStore((state) => state.open);
+  const focusRequestId = useProjectFolderSearchStore((state) => state.focusRequestId);
+  const closeDialog = useProjectFolderSearchStore((state) => state.closeDialog);
+  const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const { handleNewThread } = useHandleNewThread();
+  const appSettings = useSettings();
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <ProjectFolderSearchDialog
+      open={open}
+      focusRequestId={focusRequestId}
+      projects={projects}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          closeDialog();
+        }
+      }}
+      onSelectProject={async (projectRef) => {
+        await handleNewThread(projectRef, {
+          envMode: resolveSidebarNewThreadEnvMode({
+            defaultEnvMode: appSettings.defaultThreadEnvMode,
+          }),
+        });
+      }}
+    />
+  );
+}
+
 function ChatRouteLayout() {
   return (
     <>
       <ChatRouteGlobalShortcuts />
+      <ChatRouteQuickThreadSearch />
+      <ChatRouteGlobalThreadSearch />
+      <ChatRouteProjectFolderSearch />
       <Outlet />
     </>
   );

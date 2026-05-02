@@ -57,6 +57,7 @@ import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness.
 import { showDesktopConfirmDialog } from "./confirmDialog.ts";
 import { resolveDesktopServerExposure } from "./serverExposure.ts";
 import { syncShellEnvironment } from "./syncShellEnvironment.ts";
+import { readTailnetInfo } from "./tailnetInfo.ts";
 import { waitForBackendStartupReady } from "./backendStartupReadiness.ts";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState.ts";
 import { doesVersionMatchDesktopUpdateChannel } from "./updateChannels.ts";
@@ -102,6 +103,7 @@ const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secr
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
+const GET_TAILNET_INFO_CHANNEL = "desktop:get-tailnet-info";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
@@ -792,7 +794,10 @@ function handleFatalStartupError(stage: string, error: unknown): void {
   console.error(`[desktop] fatal startup error (${stage})`, error);
   if (!isQuitting) {
     isQuitting = true;
-    dialog.showErrorBox("T3 Code failed to start", `Stage: ${stage}\n${message}${detail}`);
+    dialog.showErrorBox(
+      `${desktopAppBranding.baseName} failed to start`,
+      `Stage: ${stage}\n${message}${detail}`,
+    );
   }
   stopBackend();
   restoreStdIoCapture?.();
@@ -897,7 +902,7 @@ async function checkForUpdatesFromMenu(): Promise<void> {
     void dialog.showMessageBox({
       type: "info",
       title: "You're up to date!",
-      message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
+      message: `${desktopAppBranding.baseName} ${updateState.currentVersion} is currently the newest version available.`,
       buttons: ["OK"],
     });
   } else if (updateState.status === "error") {
@@ -1417,6 +1422,10 @@ function startBackend(): void {
     return;
   }
   const listeningDetector = new ServerListeningDetector();
+  // Dev-mode restarts can intentionally stop the child before anything awaits this
+  // readiness promise. Mark it as observed so expected shutdowns do not surface as
+  // unhandled rejections.
+  void listeningDetector.promise.catch(() => undefined);
   backendListeningDetector = listeningDetector;
   backendProcess = child;
   let backendSessionClosed = false;
@@ -1668,6 +1677,9 @@ function registerIpcHandlers(): void {
     relaunchDesktopApp(`serverExposureMode=${nextMode}`);
     return nextState;
   });
+
+  ipcMain.removeHandler(GET_TAILNET_INFO_CHANNEL);
+  ipcMain.handle(GET_TAILNET_INFO_CHANNEL, async () => readTailnetInfo());
 
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
   ipcMain.handle(PICK_FOLDER_CHANNEL, async (_event, rawOptions: unknown) => {

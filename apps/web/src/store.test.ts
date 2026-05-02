@@ -55,6 +55,7 @@ function withActiveEnvironmentState(
   return {
     activeEnvironmentId,
     environmentStateById,
+    sidebarThreadListMode: "grouped",
   };
 }
 
@@ -177,6 +178,7 @@ function makeState(thread: Thread): AppState {
   };
   return withActiveEnvironmentState(environmentState, {
     activeEnvironmentId: thread.environmentId,
+    sidebarThreadListMode: "grouped",
   });
 }
 
@@ -319,6 +321,7 @@ describe("thread selection memoization", () => {
     const wrappedState: AppState = {
       ...state,
       environmentStateById: { ...state.environmentStateById },
+      sidebarThreadListMode: state.sidebarThreadListMode,
     };
 
     const first = selectThreadByRef(state, ref);
@@ -387,6 +390,7 @@ describe("setThreadBranch", () => {
         [localEnvironmentId]: environmentStateOf(makeState(localThread), localEnvironmentId),
         [remoteEnvironmentId]: environmentStateOf(makeState(remoteThread), remoteEnvironmentId),
       },
+      sidebarThreadListMode: "grouped",
     };
 
     const next = setThreadBranch(

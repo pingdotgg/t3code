@@ -10,7 +10,7 @@ function readInjectedDesktopAppBranding(): DesktopAppBranding | null {
 
 const injectedDesktopAppBranding = readInjectedDesktopAppBranding();
 
-export const APP_BASE_NAME = injectedDesktopAppBranding?.baseName ?? "T3 Code";
+export const APP_BASE_NAME = injectedDesktopAppBranding?.baseName ?? "ClayCode";
 export const APP_STAGE_LABEL =
   injectedDesktopAppBranding?.stageLabel ?? (import.meta.env.DEV ? "Dev" : "Alpha");
 export const APP_DISPLAY_NAME =

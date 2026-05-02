@@ -140,6 +140,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
       planSidebarLabel="Plan"
       planSidebarOpen={false}
       runtimeMode="approval-required"
+      showSnippetPicker={true}
       showInteractionModeToggle
       traitsMenuContent={
         <TraitsMenuContent
@@ -152,6 +153,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
           onPromptChange={onPromptChange}
         />
       }
+      onOpenSnippetPicker={vi.fn()}
       onToggleInteractionMode={vi.fn()}
       onTogglePlanSidebar={vi.fn()}
       onRuntimeModeChange={vi.fn()}
@@ -303,6 +305,8 @@ describe("CompactComposerControlsMenu", () => {
         planSidebarOpen={false}
         runtimeMode="approval-required"
         showInteractionModeToggle={false}
+        showSnippetPicker={false}
+        onOpenSnippetPicker={vi.fn()}
         onToggleInteractionMode={vi.fn()}
         onTogglePlanSidebar={vi.fn()}
         onRuntimeModeChange={vi.fn()}

@@ -742,8 +742,16 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       };
     }
 
-    const remoteUrl = yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`);
-    const repositoryNameWithOwner = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
+    const [remotePushUrl, remoteUrl] = yield* Effect.all(
+      [
+        readConfigValueNullable(cwd, `remote.${remoteName}.pushurl`),
+        readConfigValueNullable(cwd, `remote.${remoteName}.url`),
+      ],
+      { concurrency: "unbounded" },
+    );
+    const repositoryNameWithOwner =
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remotePushUrl) ??
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
     return {
       repositoryNameWithOwner,
       ownerLogin: parseRepositoryOwnerLogin(repositoryNameWithOwner),

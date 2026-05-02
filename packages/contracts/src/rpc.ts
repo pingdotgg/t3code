@@ -5,6 +5,16 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { OpenError, OpenInEditorInput } from "./editor.ts";
 import { AuthAccessStreamEvent } from "./auth.ts";
 import {
+  CodexImportError,
+  CodexImportImportSessionsInput,
+  CodexImportImportSessionsResult,
+  CodexImportListSessionsInput,
+  CodexImportPeekSessionInput,
+  CodexImportPeekSessionResult,
+  CodexImportSessionSummary,
+} from "./codexImport.ts";
+import { SkillSearchError, SkillSearchInput, SkillSearchResult } from "./skills.ts";
+import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
@@ -120,6 +130,14 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
 
+  // Codex transcript import
+  codexImportListSessions: "codexImport.listSessions",
+  codexImportPeekSession: "codexImport.peekSession",
+  codexImportImportSessions: "codexImport.importSessions",
+
+  // Skills
+  skillsSearch: "skills.search",
+
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
@@ -163,6 +181,30 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   payload: Schema.Struct({ patch: ServerSettingsPatch }),
   success: ServerSettings,
   error: ServerSettingsError,
+});
+
+export const WsCodexImportListSessionsRpc = Rpc.make(WS_METHODS.codexImportListSessions, {
+  payload: CodexImportListSessionsInput,
+  success: Schema.Array(CodexImportSessionSummary),
+  error: CodexImportError,
+});
+
+export const WsCodexImportPeekSessionRpc = Rpc.make(WS_METHODS.codexImportPeekSession, {
+  payload: CodexImportPeekSessionInput,
+  success: CodexImportPeekSessionResult,
+  error: CodexImportError,
+});
+
+export const WsCodexImportImportSessionsRpc = Rpc.make(WS_METHODS.codexImportImportSessions, {
+  payload: CodexImportImportSessionsInput,
+  success: CodexImportImportSessionsResult,
+  error: CodexImportError,
+});
+
+export const WsSkillsSearchRpc = Rpc.make(WS_METHODS.skillsSearch, {
+  payload: SkillSearchInput,
+  success: SkillSearchResult,
+  error: SkillSearchError,
 });
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -370,6 +412,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsCodexImportListSessionsRpc,
+  WsCodexImportPeekSessionRpc,
+  WsCodexImportImportSessionsRpc,
+  WsSkillsSearchRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,

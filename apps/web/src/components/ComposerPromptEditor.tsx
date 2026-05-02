@@ -873,6 +873,7 @@ export interface ComposerPromptEditorHandle {
   focus: () => void;
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
+  replaceValue: (value: string, cursor: number) => void;
   readSnapshot: () => {
     value: string;
     cursor: number;
@@ -1560,9 +1561,26 @@ function ComposerPromptEditorInner({
           ),
         );
       },
+      replaceValue: (value: string, cursor: number) => {
+        const normalizedCursor = clampCollapsedComposerCursor(value, cursor);
+        snapshotRef.current = {
+          value,
+          cursor: normalizedCursor,
+          expandedCursor: expandCollapsedComposerCursor(value, normalizedCursor),
+          terminalContextIds: terminalContexts.map((context) => context.id),
+        };
+        isApplyingControlledUpdateRef.current = true;
+        editor.update(() => {
+          $setComposerEditorPrompt(value, terminalContexts, skillMetadataRef.current);
+          $setSelectionAtComposerOffset(normalizedCursor);
+        });
+        queueMicrotask(() => {
+          isApplyingControlledUpdateRef.current = false;
+        });
+      },
       readSnapshot,
     }),
-    [focusAt, readSnapshot],
+    [editor, focusAt, readSnapshot, terminalContexts],
   );
 
   const handleEditorChange = useCallback((editorState: EditorState) => {

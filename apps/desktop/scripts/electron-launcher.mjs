@@ -1,4 +1,4 @@
-// This file mostly exists because we want dev mode to say "T3 Code (Dev)" instead of "electron"
+// This file mostly exists because we want dev mode to say "ClayCode (Dev)" instead of "electron"
 
 import { spawnSync } from "node:child_process";
 import {
@@ -17,7 +17,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+const APP_DISPLAY_NAME = isDevelopment ? "ClayCode (Dev)" : "ClayCode (Alpha)";
 const APP_BUNDLE_ID = isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code";
 const LAUNCHER_VERSION = 2;
 
@@ -170,9 +170,11 @@ export function resolveElectronPath() {
     return electronBinaryPath;
   }
 
-  // Dev launches do not need a renamed app bundle badly enough to risk breaking
-  // Electron helper resource lookup on macOS.
-  if (isDevelopment) {
+  // The renamed wrapper is useful for checking macOS menu/app labels, but
+  // copying Electron.app out of package-manager storage can break helper
+  // resource lookup. Keep local dev launches on Electron's raw binary unless
+  // we explicitly need to exercise the wrapper.
+  if (isDevelopment && process.env.T3CODE_USE_RENAMED_ELECTRON_LAUNCHER !== "1") {
     return electronBinaryPath;
   }
 

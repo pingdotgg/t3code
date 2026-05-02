@@ -1,9 +1,10 @@
-import { PlusIcon, QrCodeIcon } from "lucide-react";
+import { CopyIcon, ExternalLinkIcon, PlusIcon, QrCodeIcon } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   type AuthClientSession,
   type AuthPairingLink,
   type DesktopServerExposureState,
+  type DesktopTailnetInfo,
   type EnvironmentId,
 } from "@t3tools/contracts";
 import { DateTime } from "effect";
@@ -11,12 +12,14 @@ import { DateTime } from "effect";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
 import { formatElapsedDurationLabel, formatExpiresInLabel } from "../../timestampFormat";
+import { APP_BASE_NAME } from "../../branding";
 import {
   SettingsPageContainer,
   SettingsRow,
   SettingsSection,
   useRelativeTimeTick,
 } from "./settingsLayout";
+import { resolveDesktopTailnetUrl } from "./ConnectionsSettings.logic";
 import { Input } from "../ui/input";
 import {
   Dialog,
@@ -775,6 +778,8 @@ export function ConnectionsSettings() {
   const [desktopServerExposureState, setDesktopServerExposureState] =
     useState<DesktopServerExposureState | null>(null);
   const [desktopServerExposureError, setDesktopServerExposureError] = useState<string | null>(null);
+  const [desktopTailnetInfo, setDesktopTailnetInfo] = useState<DesktopTailnetInfo | null>(null);
+  const [desktopTailnetInfoError, setDesktopTailnetInfoError] = useState<string | null>(null);
   const [desktopPairingLinks, setDesktopPairingLinks] = useState<
     ReadonlyArray<ServerPairingLinkRecord>
   >([]);
@@ -814,6 +819,27 @@ export function ConnectionsSettings() {
   const isLocalBackendNetworkAccessible = desktopBridge
     ? desktopServerExposureState?.mode === "network-accessible"
     : currentAuthPolicy === "remote-reachable";
+  const desktopTailnetUrl = useMemo(
+    () => resolveDesktopTailnetUrl(desktopServerExposureState, desktopTailnetInfo),
+    [desktopServerExposureState, desktopTailnetInfo],
+  );
+  const { copyToClipboard: copyTailnetUrlToClipboard, isCopied: isTailnetUrlCopied } =
+    useCopyToClipboard({
+      onCopy: () => {
+        toastManager.add({
+          type: "success",
+          title: "Tailnet URL copied",
+          description: "Open it from another device on the same tailnet.",
+        });
+      },
+      onError: (error) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not copy Tailnet URL",
+          description: error.message,
+        });
+      },
+    });
 
   const handleDesktopServerExposureChange = useCallback(
     async (checked: boolean) => {
@@ -850,6 +876,23 @@ export function ConnectionsSettings() {
     const checked = pendingDesktopServerExposureMode === "network-accessible";
     void handleDesktopServerExposureChange(checked);
   }, [handleDesktopServerExposureChange, pendingDesktopServerExposureMode]);
+
+  const handleCopyTailnetUrl = useCallback(() => {
+    if (!desktopTailnetUrl) return;
+    copyTailnetUrlToClipboard(desktopTailnetUrl, undefined);
+  }, [copyTailnetUrlToClipboard, desktopTailnetUrl]);
+
+  const handleOpenTailnetUrl = useCallback(() => {
+    if (!desktopBridge || !desktopTailnetUrl) return;
+    void desktopBridge.openExternal(desktopTailnetUrl).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Failed to open Tailnet URL.";
+      toastManager.add({
+        type: "error",
+        title: "Could not open Tailnet URL",
+        description: message,
+      });
+    });
+  }, [desktopBridge, desktopTailnetUrl]);
 
   const handleRevokeDesktopPairingLink = useCallback(async (id: string) => {
     setRevokingDesktopPairingLinkId(id);
@@ -1124,7 +1167,60 @@ export function ConnectionsSettings() {
     setDesktopAccessManagementError(null);
     setDesktopServerExposureState(null);
     setDesktopServerExposureError(null);
+    setDesktopTailnetInfo(null);
+    setDesktopTailnetInfoError(null);
   }, [canManageLocalBackend]);
+
+  useEffect(() => {
+    if (!(canManageLocalBackend && desktopBridge)) {
+      setDesktopTailnetInfo(null);
+      setDesktopTailnetInfoError(null);
+      return;
+    }
+
+    let cancelled = false;
+    setDesktopTailnetInfoError(null);
+    void desktopBridge
+      .getTailnetInfo()
+      .then((info) => {
+        if (cancelled) return;
+        setDesktopTailnetInfo(info);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        const message = error instanceof Error ? error.message : "Failed to load Tailscale status.";
+        setDesktopTailnetInfoError(message);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canManageLocalBackend, desktopBridge]);
+
+  const desktopTailnetDescription =
+    desktopTailnetInfoError != null
+      ? "Could not load the local Tailscale status."
+      : desktopTailnetInfo == null
+        ? "Checking whether Tailscale is available on this Mac."
+        : !desktopTailnetInfo.available
+          ? "Install Tailscale to create a private Tailnet URL for this desktop."
+          : desktopTailnetInfo.error
+            ? "Tailscale is installed, but its status could not be read cleanly."
+            : !desktopTailnetInfo.connected
+              ? "Tailscale is installed but not currently connected."
+              : desktopTailnetUrl
+                ? "Reach this install privately from another device on the same tailnet."
+                : "Enable network access to generate a Tailnet URL for this install.";
+  const desktopTailnetStatus = desktopTailnetInfoError ? (
+    <span className="block text-destructive">{desktopTailnetInfoError}</span>
+  ) : desktopTailnetInfo?.error ? (
+    <span className="block text-destructive">{desktopTailnetInfo.error}</span>
+  ) : desktopTailnetInfo?.hostname ? (
+    <span className="block">
+      {desktopTailnetInfo.hostname}
+      {desktopTailnetInfo.ipv4 ? ` · ${desktopTailnetInfo.ipv4}` : ""}
+    </span>
+  ) : null;
   const visibleDesktopPairingLinks = useMemo(
     () => desktopPairingLinks.filter((pairingLink) => pairingLink.role === "client"),
     [desktopPairingLinks],
@@ -1135,87 +1231,122 @@ export function ConnectionsSettings() {
         <>
           <SettingsSection title="Manage local backend">
             {desktopBridge ? (
-              <SettingsRow
-                title="Network access"
-                description={
-                  desktopServerExposureState?.endpointUrl
-                    ? `Reachable at ${desktopServerExposureState.endpointUrl}`
-                    : desktopServerExposureState?.mode === "network-accessible"
-                      ? desktopServerExposureState.advertisedHost
-                        ? `Exposed on all interfaces. Pairing links use ${desktopServerExposureState.advertisedHost}.`
-                        : "Exposed on all interfaces."
-                      : desktopServerExposureState
-                        ? "Limited to this machine."
-                        : "Loading…"
-                }
-                status={
-                  desktopServerExposureError ? (
-                    <span className="block text-destructive">{desktopServerExposureError}</span>
-                  ) : null
-                }
-                control={
-                  <AlertDialog
-                    open={pendingDesktopServerExposureMode !== null}
-                    onOpenChange={(open) => {
-                      if (isUpdatingDesktopServerExposure) return;
-                      if (!open) setPendingDesktopServerExposureMode(null);
-                    }}
-                  >
-                    <Switch
-                      checked={desktopServerExposureState?.mode === "network-accessible"}
-                      disabled={!desktopServerExposureState || isUpdatingDesktopServerExposure}
-                      onCheckedChange={(checked) => {
-                        setPendingDesktopServerExposureMode(
-                          checked ? "network-accessible" : "local-only",
-                        );
+              <>
+                <SettingsRow
+                  title="Network access"
+                  description={
+                    desktopServerExposureState?.endpointUrl
+                      ? `Reachable at ${desktopServerExposureState.endpointUrl}`
+                      : desktopServerExposureState?.mode === "network-accessible"
+                        ? desktopServerExposureState.advertisedHost
+                          ? `Exposed on all interfaces. Pairing links use ${desktopServerExposureState.advertisedHost}.`
+                          : "Exposed on all interfaces."
+                        : desktopServerExposureState
+                          ? "Limited to this machine."
+                          : "Loading…"
+                  }
+                  status={
+                    desktopServerExposureError ? (
+                      <span className="block text-destructive">{desktopServerExposureError}</span>
+                    ) : null
+                  }
+                  control={
+                    <AlertDialog
+                      open={pendingDesktopServerExposureMode !== null}
+                      onOpenChange={(open) => {
+                        if (isUpdatingDesktopServerExposure) return;
+                        if (!open) setPendingDesktopServerExposureMode(null);
                       }}
-                      aria-label="Enable network access"
-                    />
-                    <AlertDialogPopup>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>
-                          {pendingDesktopServerExposureMode === "network-accessible"
-                            ? "Enable network access?"
-                            : "Disable network access?"}
-                        </AlertDialogTitle>
-                        <AlertDialogDescription>
-                          {pendingDesktopServerExposureMode === "network-accessible"
-                            ? "T3 Code will restart to expose this environment over the network."
-                            : "T3 Code will restart and limit this environment back to this machine."}
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogClose
-                          disabled={isUpdatingDesktopServerExposure}
-                          render={
-                            <Button variant="outline" disabled={isUpdatingDesktopServerExposure} />
-                          }
-                        >
-                          Cancel
-                        </AlertDialogClose>
-                        <Button
-                          onClick={handleConfirmDesktopServerExposureChange}
-                          disabled={
-                            pendingDesktopServerExposureMode === null ||
-                            isUpdatingDesktopServerExposure
-                          }
-                        >
-                          {isUpdatingDesktopServerExposure ? (
-                            <>
-                              <Spinner className="size-3.5" />
-                              Restarting…
-                            </>
-                          ) : pendingDesktopServerExposureMode === "network-accessible" ? (
-                            "Restart and enable"
-                          ) : (
-                            "Restart and disable"
-                          )}
+                    >
+                      <Switch
+                        checked={desktopServerExposureState?.mode === "network-accessible"}
+                        disabled={!desktopServerExposureState || isUpdatingDesktopServerExposure}
+                        onCheckedChange={(checked) => {
+                          setPendingDesktopServerExposureMode(
+                            checked ? "network-accessible" : "local-only",
+                          );
+                        }}
+                        aria-label="Enable network access"
+                      />
+                      <AlertDialogPopup>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>
+                            {pendingDesktopServerExposureMode === "network-accessible"
+                              ? "Enable network access?"
+                              : "Disable network access?"}
+                          </AlertDialogTitle>
+                          <AlertDialogDescription>
+                            {pendingDesktopServerExposureMode === "network-accessible"
+                              ? `${APP_BASE_NAME} will restart to expose this environment over the network.`
+                              : `${APP_BASE_NAME} will restart and limit this environment back to this machine.`}
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogClose
+                            disabled={isUpdatingDesktopServerExposure}
+                            render={
+                              <Button
+                                variant="outline"
+                                disabled={isUpdatingDesktopServerExposure}
+                              />
+                            }
+                          >
+                            Cancel
+                          </AlertDialogClose>
+                          <Button
+                            onClick={handleConfirmDesktopServerExposureChange}
+                            disabled={
+                              pendingDesktopServerExposureMode === null ||
+                              isUpdatingDesktopServerExposure
+                            }
+                          >
+                            {isUpdatingDesktopServerExposure ? (
+                              <>
+                                <Spinner className="size-3.5" />
+                                Restarting…
+                              </>
+                            ) : pendingDesktopServerExposureMode === "network-accessible" ? (
+                              "Restart and enable"
+                            ) : (
+                              "Restart and disable"
+                            )}
+                          </Button>
+                        </AlertDialogFooter>
+                      </AlertDialogPopup>
+                    </AlertDialog>
+                  }
+                />
+                <SettingsRow
+                  title="Tailnet access"
+                  description={desktopTailnetDescription}
+                  status={desktopTailnetStatus}
+                  control={
+                    desktopTailnetUrl ? (
+                      <>
+                        <Button size="xs" variant="outline" onClick={handleCopyTailnetUrl}>
+                          <CopyIcon className="size-3" />
+                          {isTailnetUrlCopied ? "Copied" : "Copy URL"}
                         </Button>
-                      </AlertDialogFooter>
-                    </AlertDialogPopup>
-                  </AlertDialog>
-                }
-              />
+                        <Button size="xs" variant="outline" onClick={handleOpenTailnetUrl}>
+                          <ExternalLinkIcon className="size-3" />
+                          Open URL
+                        </Button>
+                      </>
+                    ) : null
+                  }
+                >
+                  {desktopTailnetUrl ? (
+                    <div className="mt-4">
+                      <Input
+                        aria-label="Tailnet URL"
+                        readOnly
+                        value={desktopTailnetUrl}
+                        className="font-mono text-xs"
+                      />
+                    </div>
+                  ) : null}
+                </SettingsRow>
+              </>
             ) : (
               <SettingsRow
                 title="Network access"

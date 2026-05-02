@@ -23,6 +23,7 @@ import type { ThreadId, TurnId } from "@t3tools/contracts";
 import { Schema } from "effect";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
+import type { SidebarThreadListMode } from "./components/Sidebar.logic";
 import {
   type ChatMessage,
   type Project,
@@ -92,6 +93,7 @@ export interface EnvironmentState {
 export interface AppState {
   activeEnvironmentId: EnvironmentId | null;
   environmentStateById: Record<string, EnvironmentState>;
+  sidebarThreadListMode: SidebarThreadListMode;
 }
 
 const initialEnvironmentState: EnvironmentState = {
@@ -114,9 +116,31 @@ const initialEnvironmentState: EnvironmentState = {
   bootstrapComplete: false,
 };
 
+const SIDEBAR_THREAD_LIST_MODE_STORAGE_KEY = "t3code:sidebar-thread-list-mode:v1";
+
+function readPersistedSidebarThreadListMode(): SidebarThreadListMode {
+  if (typeof window === "undefined") return "grouped";
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_THREAD_LIST_MODE_STORAGE_KEY);
+    return raw === "recent" ? "recent" : "grouped";
+  } catch {
+    return "grouped";
+  }
+}
+
+function persistSidebarThreadListMode(mode: SidebarThreadListMode): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SIDEBAR_THREAD_LIST_MODE_STORAGE_KEY, mode);
+  } catch {
+    // Ignore storage errors so UI state doesn't break sidebar rendering.
+  }
+}
+
 const initialState: AppState = {
   activeEnvironmentId: null,
   environmentStateById: {},
+  sidebarThreadListMode: readPersistedSidebarThreadListMode(),
 };
 
 const MAX_THREAD_MESSAGES = 2_000;
@@ -132,13 +156,17 @@ function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
 // Accepts the open `instanceId` string carried on `ModelSelection`; malformed
 // values pass through unchanged, while valid slugs use any registered alias
 // table for model normalization.
-function normalizeModelSelection<T extends { instanceId: string; model: string }>(selection: T): T {
-  if (!isProviderDriverKind(selection.instanceId)) {
+function normalizeModelSelection<
+  T extends { instanceId?: string | undefined; provider?: string | undefined; model: string },
+>(selection: T): T {
+  const provider = selection.instanceId ?? selection.provider;
+  if (!provider || !isProviderDriverKind(provider)) {
     return selection;
   }
   return {
     ...selection,
-    model: resolveModelSlugForProvider(selection.instanceId, selection.model),
+    instanceId: selection.instanceId ?? provider,
+    model: resolveModelSlugForProvider(provider, selection.model),
   };
 }
 
@@ -1930,6 +1958,7 @@ export function setThreadBranch(
 
 interface AppStore extends AppState {
   setActiveEnvironmentId: (environmentId: EnvironmentId) => void;
+  setSidebarThreadListMode: (mode: SidebarThreadListMode) => void;
   syncServerShellSnapshot: (
     snapshot: OrchestrationShellSnapshot,
     environmentId: EnvironmentId,
@@ -1953,6 +1982,17 @@ export const useStore = create<AppStore>((set) => ({
   ...initialState,
   setActiveEnvironmentId: (environmentId) =>
     set((state) => setActiveEnvironmentId(state, environmentId)),
+  setSidebarThreadListMode: (mode) =>
+    set((state) => {
+      if (state.sidebarThreadListMode === mode) {
+        return state;
+      }
+      persistSidebarThreadListMode(mode);
+      return {
+        ...state,
+        sidebarThreadListMode: mode,
+      };
+    }),
   syncServerShellSnapshot: (snapshot, environmentId) =>
     set((state) => syncServerShellSnapshot(state, snapshot, environmentId)),
   syncServerThreadDetail: (thread, environmentId) =>

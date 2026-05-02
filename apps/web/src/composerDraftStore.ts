@@ -106,8 +106,8 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   // key set, and `Schema.Record(<branded string>, …)` produces an index
   // signature at runtime (Schema rejects the combination). Absence of
   // an entry already encodes "no selection for this instance".
-  modelSelectionByProvider: Schema.optionalKey(Schema.Record(ProviderInstanceId, ModelSelection)),
-  activeProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
+  modelSelectionByProvider: Schema.optionalKey(Schema.Record(Schema.String, ModelSelection)),
+  activeProvider: Schema.optionalKey(Schema.NullOr(Schema.String)),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
 });
@@ -119,8 +119,18 @@ type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftStat
  * deriving per-provider option bundles for downstream consumers.
  */
 type ProviderOptionSelectionsByProvider = Partial<
-  Record<string, ReadonlyArray<ProviderOptionSelection>>
+  Record<string, ReadonlyArray<ProviderOptionSelection> | Readonly<Record<string, unknown>>>
 >;
+
+function hasProviderOptionSelections(
+  options:
+    | ReadonlyArray<ProviderOptionSelection>
+    | Readonly<Record<string, unknown>>
+    | null
+    | undefined,
+): boolean {
+  return Array.isArray(options) ? options.length > 0 : Object.keys(options ?? {}).length > 0;
+}
 
 type LegacyCodexFields = {
   effort?: unknown;
@@ -193,10 +203,8 @@ const PersistedComposerDraftStoreState = Schema.Struct({
   draftsByThreadKey: Schema.Record(Schema.String, PersistedComposerThreadDraftState),
   draftThreadsByThreadKey: Schema.Record(Schema.String, PersistedDraftThreadState),
   logicalProjectDraftThreadKeyByLogicalProjectKey: Schema.Record(Schema.String, Schema.String),
-  stickyModelSelectionByProvider: Schema.optionalKey(
-    Schema.Record(ProviderInstanceId, ModelSelection),
-  ),
-  stickyActiveProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
+  stickyModelSelectionByProvider: Schema.optionalKey(Schema.Record(Schema.String, ModelSelection)),
+  stickyActiveProvider: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 type PersistedComposerDraftStoreState = typeof PersistedComposerDraftStoreState.Type;
 
@@ -223,9 +231,9 @@ export interface ComposerThreadDraftState {
    * `opencode`) also satisfies the `ProviderInstanceId` slug pattern, so
    * legacy kind-keyed drafts round-trip unchanged.
    */
-  modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
+  modelSelectionByProvider: Partial<Record<string, ModelSelection>>;
   /** Routing key of the last picked instance (see `modelSelectionByProvider`). */
-  activeProvider: ProviderInstanceId | null;
+  activeProvider: string | null;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
 }
@@ -280,8 +288,8 @@ interface ComposerDraftStoreState {
   draftsByThreadKey: Record<string, ComposerThreadDraftState>;
   draftThreadsByThreadKey: Record<string, DraftThreadState>;
   logicalProjectDraftThreadKeyByLogicalProjectKey: Record<string, string>;
-  stickyModelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
-  stickyActiveProvider: ProviderInstanceId | null;
+  stickyModelSelectionByProvider: Partial<Record<string, ModelSelection>>;
+  stickyActiveProvider: string | null;
   /** Returns the editable composer content for a draft session or server thread. */
   getComposerDraft: (target: ComposerThreadTarget) => ComposerThreadDraftState | null;
   /** Looks up the active draft session for a logical project identity. */
@@ -359,16 +367,17 @@ interface ComposerDraftStoreState {
   /** Replace the model options for one or more providers in the draft. */
   setModelOptions: (
     threadRef: ComposerThreadTarget,
-    modelOptions:
-      | Partial<Record<string, ReadonlyArray<ProviderOptionSelection>>>
-      | null
-      | undefined,
+    modelOptions: ProviderOptionSelectionsByProvider | null | undefined,
   ) => void;
   applyStickyState: (threadRef: ComposerThreadTarget) => void;
   setProviderModelOptions: (
     threadRef: ComposerThreadTarget,
-    provider: ProviderDriverKind,
-    nextProviderOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+    provider: ProviderDriverKind | string,
+    nextProviderOptions:
+      | ReadonlyArray<ProviderOptionSelection>
+      | Readonly<Record<string, unknown>>
+      | null
+      | undefined,
     options?: {
       model?: string | null | undefined;
       persistSticky?: boolean;
@@ -409,8 +418,8 @@ export interface EffectiveComposerModelState {
 }
 
 interface ComposerDraftModelState {
-  activeProvider: ProviderInstanceId | null;
-  modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>>;
+  activeProvider: string | null;
+  modelSelectionByProvider: Partial<Record<string, ModelSelection>>;
 }
 
 function providerSelectionsFromModelSelection(
@@ -420,7 +429,7 @@ function providerSelectionsFromModelSelection(
     return null;
   }
   const options = modelSelection.options;
-  if (!options || options.length === 0) {
+  if (!hasProviderOptionSelections(options)) {
     return null;
   }
   return { [modelSelection.instanceId]: options };
@@ -432,28 +441,33 @@ function modelSelectionByProviderToOptions(
   if (!map) return null;
   const result: ProviderOptionSelectionsByProvider = {};
   for (const [provider, selection] of Object.entries(map)) {
-    if (selection?.options && selection.options.length > 0) {
-      result[provider] = selection.options;
+    if (hasProviderOptionSelections(selection?.options)) {
+      result[provider] = selection!.options;
     }
   }
   return Object.keys(result).length > 0 ? result : null;
 }
 
 function cloneModelSelection(selection: ModelSelection): DeepMutable<ModelSelection> {
+  const options = selection.options
+    ? Array.isArray(selection.options)
+      ? selection.options.map((option) => ({ ...option }))
+      : Object.entries(selection.options).map(([id, value]) => ({ id, value }))
+    : undefined;
   return {
     ...selection,
-    ...(selection.options ? { options: selection.options.map((option) => ({ ...option })) } : {}),
+    ...(options ? { options } : {}),
   } as DeepMutable<ModelSelection>;
 }
 
 function compactModelSelectionByProvider(
-  selections: Partial<Record<ProviderInstanceId, ModelSelection>>,
-): DeepMutable<Record<ProviderInstanceId, ModelSelection>> {
+  selections: Partial<Record<string, ModelSelection>>,
+): DeepMutable<Record<string, ModelSelection>> {
   return Object.fromEntries(
     Object.entries(selections)
       .filter((entry): entry is [string, ModelSelection] => entry[1] !== undefined)
       .map(([provider, selection]) => [provider, cloneModelSelection(selection)]),
-  ) as DeepMutable<Record<ProviderInstanceId, ModelSelection>>;
+  ) as DeepMutable<Record<string, ModelSelection>>;
 }
 
 const EMPTY_PERSISTED_DRAFT_STORE_STATE = Object.freeze<PersistedComposerDraftStoreState>({
@@ -673,7 +687,7 @@ function normalizeProviderModelOptions(
       codexExtras.push({ id: "fastMode", value: true });
     }
     if (codexExtras.length > 0) {
-      const existing = result.codex ?? [];
+      const existing = coerceProviderOptionSelections(result.codex) ?? [];
       const existingIds = new Set(existing.map((entry) => entry.id));
       const merged = [...existing];
       for (const extra of codexExtras) {
@@ -776,30 +790,39 @@ function legacyMergeModelSelectionIntoProviderModelOptions(
   modelSelection: NormalizedModelSelection | null,
   currentModelOptions: ProviderOptionSelectionsByProvider | null | undefined,
 ): ProviderOptionSelectionsByProvider | null {
-  if (!modelSelection?.options || modelSelection.options.length === 0) {
+  if (!hasProviderOptionSelections(modelSelection?.options)) {
     return normalizeProviderModelOptions(currentModelOptions);
   }
-  const kind = normalizeProviderDriverKind(modelSelection.instanceId);
+  const selection = modelSelection;
+  if (!selection) {
+    return normalizeProviderModelOptions(currentModelOptions);
+  }
+  const kind = normalizeProviderDriverKind(selection.instanceId);
   if (!kind) {
     return normalizeProviderModelOptions(currentModelOptions);
   }
   return legacyReplaceProviderModelOptions(
     normalizeProviderModelOptions(currentModelOptions),
     kind,
-    modelSelection.options,
+    selection.options,
   );
 }
 
 function legacyReplaceProviderModelOptions(
   currentModelOptions: ProviderOptionSelectionsByProvider | null | undefined,
   provider: ProviderDriverKind,
-  nextProviderOptions: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  nextProviderOptions:
+    | ReadonlyArray<ProviderOptionSelection>
+    | Readonly<Record<string, unknown>>
+    | null
+    | undefined,
 ): ProviderOptionSelectionsByProvider | null {
   const { [provider]: _discardedProviderModelOptions, ...otherProviderModelOptions } =
     currentModelOptions ?? {};
   const merged: ProviderOptionSelectionsByProvider = { ...otherProviderModelOptions };
-  if (nextProviderOptions && nextProviderOptions.length > 0) {
-    merged[provider] = nextProviderOptions;
+  const normalizedOptions = coerceProviderOptionSelections(nextProviderOptions);
+  if (normalizedOptions && normalizedOptions.length > 0) {
+    merged[provider] = normalizedOptions;
   }
   return Object.keys(merged).length > 0 ? merged : null;
 }
@@ -809,12 +832,12 @@ function legacyReplaceProviderModelOptions(
 function legacyToModelSelectionByProvider(
   modelSelection: NormalizedModelSelection | null,
   modelOptions: ProviderOptionSelectionsByProvider | null | undefined,
-): Partial<Record<ProviderInstanceId, ModelSelection>> {
-  const result: Partial<Record<ProviderInstanceId, ModelSelection>> = {};
+): Partial<Record<string, ModelSelection>> {
+  const result: Partial<Record<string, ModelSelection>> = {};
   if (modelOptions) {
     for (const provider of ["codex", "claudeAgent", "cursor", "opencode"] as const) {
       const options = modelOptions[provider];
-      if (options && options.length > 0) {
+      if (hasProviderOptionSelections(options)) {
         const driverKind = ProviderDriverKind.make(provider);
         const instanceKey = defaultInstanceIdForDriver(driverKind);
         result[instanceKey] = createModelSelection(
@@ -1127,10 +1150,6 @@ function getComposerDraftState(
     return null;
   }
   return state.draftsByThreadKey[threadKey] ?? null;
-}
-
-function isComposerThreadKeyInUse(mappings: Record<string, string>, threadKey: string): boolean {
-  return Object.values(mappings).includes(threadKey);
 }
 
 function toProjectDraftSession(
@@ -1487,8 +1506,8 @@ function normalizePersistedDraftsByThreadId(
     );
     // If the draft already has the v3 shape, use it directly
     const legacyDraftCandidate = draftValue as LegacyPersistedComposerThreadDraftState;
-    let modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>> = {};
-    let activeProvider: ProviderInstanceId | null = null;
+    let modelSelectionByProvider: Partial<Record<string, ModelSelection>> = {};
+    let activeProvider: string | null = null;
 
     if (
       draftCandidate.modelSelectionByProvider &&
@@ -1496,7 +1515,7 @@ function normalizePersistedDraftsByThreadId(
     ) {
       // v3 format
       modelSelectionByProvider = draftCandidate.modelSelectionByProvider as Partial<
-        Record<ProviderInstanceId, ModelSelection>
+        Record<string, ModelSelection>
       >;
       activeProvider = normalizeProviderInstanceId(draftCandidate.activeProvider);
     } else {
@@ -1706,15 +1725,15 @@ function normalizeCurrentPersistedComposerDraftStoreState(
     );
 
   // Handle both v3 (modelSelectionByProvider) and v2/legacy formats
-  let stickyModelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>> = {};
-  let stickyActiveProvider: ProviderInstanceId | null = null;
+  let stickyModelSelectionByProvider: Partial<Record<string, ModelSelection>> = {};
+  let stickyActiveProvider: string | null = null;
   if (
     normalizedPersistedState.stickyModelSelectionByProvider &&
     typeof normalizedPersistedState.stickyModelSelectionByProvider === "object"
   ) {
     stickyModelSelectionByProvider =
       normalizedPersistedState.stickyModelSelectionByProvider as Partial<
-        Record<ProviderInstanceId, ModelSelection>
+        Record<string, ModelSelection>
       >;
     stickyActiveProvider = normalizeProviderInstanceId(
       normalizedPersistedState.stickyActiveProvider,
@@ -1882,7 +1901,7 @@ function toHydratedThreadDraft(
   persistedDraft: PersistedComposerThreadDraftState,
 ): ComposerThreadDraftState {
   // The persisted draft is already in v3 shape (migration handles older formats)
-  const modelSelectionByProvider: Partial<Record<ProviderInstanceId, ModelSelection>> =
+  const modelSelectionByProvider: Partial<Record<string, ModelSelection>> =
     persistedDraft.modelSelectionByProvider ?? {};
   const activeProvider = normalizeProviderInstanceId(persistedDraft.activeProvider) ?? null;
 
@@ -1968,6 +1987,12 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
           return get().getDraftSessionByProjectRef(projectRef);
         },
         getDraftSessionByProjectRef: (projectRef) => {
+          const activeDraftSession = get().getDraftSessionByLogicalProjectKey(
+            projectDraftKey(projectRef),
+          );
+          if (activeDraftSession) {
+            return activeDraftSession;
+          }
           for (const [draftId, draftThread] of Object.entries(get().draftThreadsByThreadKey)) {
             if (isDraftThreadPromoting(draftThread)) {
               continue;
@@ -2038,28 +2063,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               ...state.draftThreadsByThreadKey,
               [draftId]: nextDraftThread,
             };
-            let nextDraftsByThreadKey = state.draftsByThreadKey;
-            const previousDraftThread =
-              previousThreadKeyForLogicalProject === undefined
-                ? undefined
-                : nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
-            if (
-              previousThreadKeyForLogicalProject &&
-              previousThreadKeyForLogicalProject !== draftId &&
-              !isComposerThreadKeyInUse(
-                nextLogicalProjectDraftThreadKeyByLogicalProjectKey,
-                previousThreadKeyForLogicalProject,
-              ) &&
-              !isDraftThreadPromoting(previousDraftThread)
-            ) {
-              delete nextDraftThreadsByThreadKey[previousThreadKeyForLogicalProject];
-              if (state.draftsByThreadKey[previousThreadKeyForLogicalProject] !== undefined) {
-                nextDraftsByThreadKey = { ...state.draftsByThreadKey };
-                delete nextDraftsByThreadKey[previousThreadKeyForLogicalProject];
-              }
-            }
             return {
-              draftsByThreadKey: nextDraftsByThreadKey,
+              draftsByThreadKey: state.draftsByThreadKey,
               draftThreadsByThreadKey: nextDraftThreadsByThreadKey,
               logicalProjectDraftThreadKeyByLogicalProjectKey:
                 nextLogicalProjectDraftThreadKeyByLogicalProjectKey,
@@ -2245,7 +2250,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (!normalized) {
               return state;
             }
-            const nextMap: Partial<Record<ProviderInstanceId, ModelSelection>> = {
+            const nextMap: Partial<Record<string, ModelSelection>> = {
               ...state.stickyModelSelectionByProvider,
               [normalized.instanceId]: normalized,
             };
@@ -2419,7 +2424,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               const driverKind = ProviderDriverKind.make(provider);
               const instanceKey = defaultInstanceIdForDriver(driverKind);
               const current = nextMap[instanceKey];
-              if (opts && opts.length > 0) {
+              if (hasProviderOptionSelections(opts)) {
                 nextMap[instanceKey] = createModelSelection(
                   instanceKey,
                   current?.model ?? DEFAULT_MODEL_BY_PROVIDER[driverKind] ?? DEFAULT_MODEL,
@@ -2460,8 +2465,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             normalizeModelSlug(options?.model, normalizedProvider) ??
             DEFAULT_MODEL_BY_PROVIDER[normalizedProvider] ??
             DEFAULT_MODEL;
-          const providerOpts =
-            nextProviderOptions && nextProviderOptions.length > 0 ? nextProviderOptions : undefined;
+          const providerOpts = coerceProviderOptionSelections(nextProviderOptions);
 
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey];
@@ -2476,7 +2480,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 currentForProvider?.model ?? fallbackModel,
                 providerOpts,
               );
-            } else if (currentForProvider && (currentForProvider.options?.length ?? 0) > 0) {
+            } else if (
+              currentForProvider &&
+              hasProviderOptionSelections(currentForProvider.options)
+            ) {
               const { options: _, ...rest } = currentForProvider;
               nextMap[instanceKey] = rest as ModelSelection;
             }
@@ -2496,7 +2503,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   stickyBase.model,
                   providerOpts,
                 );
-              } else if ((stickyBase.options?.length ?? 0) > 0) {
+              } else if (hasProviderOptionSelections(stickyBase.options)) {
                 const { options: _, ...rest } = stickyBase;
                 nextStickyMap[instanceKey] = rest as ModelSelection;
               }

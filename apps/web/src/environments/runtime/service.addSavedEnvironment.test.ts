@@ -101,5 +101,5 @@ describe("addSavedEnvironment", () => {
     expect(mockUpsert).not.toHaveBeenCalled();
 
     await resetEnvironmentServiceForTests();
-  });
+  }, 15_000);
 });

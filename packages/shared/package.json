@@ -12,6 +12,10 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./githubPullRequest": {
+      "types": "./src/githubPullRequest.ts",
+      "import": "./src/githubPullRequest.ts"
+    },
     "./logging": {
       "types": "./src/logging.ts",
       "import": "./src/logging.ts"

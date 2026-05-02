@@ -9,18 +9,20 @@ import {
   type MessageId,
   type OrchestrationReadModel,
   type ProjectId,
-  ProviderDriverKind,
-  ProviderInstanceId,
   type ServerConfig,
   type ServerLifecycleWelcomePayload,
-  type ThreadId,
+  ThreadId,
   type TurnId,
   WS_METHODS,
   OrchestrationSessionStatus,
   DEFAULT_SERVER_SETTINGS,
 } from "@t3tools/contracts";
-import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
-import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
+import {
+  scopedProjectKey,
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
@@ -30,6 +32,11 @@ import { render } from "vitest-browser-react";
 
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
+import { useGlobalThreadSearchStore } from "../globalThreadSearchStore";
+import { useQuickThreadSearchStore } from "../quickThreadSearchStore";
+import { useProjectFolderSearchStore } from "../projectFolderSearchStore";
+import { useSkillPickerStore } from "../skillPickerStore";
+import { useSnippetPickerStore } from "../snippetPickerStore";
 import {
   __resetEnvironmentApiOverridesForTests,
   __setEnvironmentApiOverrideForTests,
@@ -50,12 +57,13 @@ import { __resetLocalApiForTests } from "../localApi";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
 import { getServerConfig } from "../rpc/serverState";
 import { getRouter } from "../router";
-import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
+import { useQueuedTurnStore } from "../queuedTurnStore";
 import { selectBootstrapCompleteForActiveEnvironment, useStore } from "../store";
 import { useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
 import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers";
 import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test/wsRpcHarness";
+import { COMPOSER_SNIPPETS, SAVED_COMPOSER_SNIPPETS_STORAGE_KEY } from "./chat/composerSnippets";
 
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
@@ -77,18 +85,7 @@ const THREAD_REF = scopeThreadRef(LOCAL_ENVIRONMENT_ID, THREAD_ID);
 const THREAD_KEY = scopedThreadKey(THREAD_REF);
 const UUID_ROUTE_RE = /^\/draft\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_DRAFT_KEY = `${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`;
-const PROJECT_LOGICAL_KEY = deriveLogicalProjectKeyFromSettings(
-  {
-    environmentId: LOCAL_ENVIRONMENT_ID,
-    id: PROJECT_ID,
-    cwd: "/repo/project",
-    repositoryIdentity: null,
-  },
-  {
-    sidebarProjectGroupingMode: DEFAULT_CLIENT_SETTINGS.sidebarProjectGroupingMode,
-    sidebarProjectGroupingOverrides: DEFAULT_CLIENT_SETTINGS.sidebarProjectGroupingOverrides,
-  },
-);
+const PROJECT_KEY = scopedProjectKey(scopeProjectRef(LOCAL_ENVIRONMENT_ID, PROJECT_ID));
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'></svg>";
@@ -169,8 +166,9 @@ function createBaseServerConfig(): ServerConfig {
     issues: [],
     providers: [
       {
-        driver: ProviderDriverKind.make("codex"),
-        instanceId: ProviderInstanceId.make("codex"),
+        instanceId: "codex" as any,
+        driver: "codex" as any,
+        provider: "codex" as any,
         enabled: true,
         installed: true,
         version: "0.116.0",
@@ -326,7 +324,7 @@ function createSnapshotForTargetUser(options: {
         title: "Project",
         workspaceRoot: "/repo/project",
         defaultModelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
+          instanceId: "codex" as any,
           model: "gpt-5",
         },
         scripts: [],
@@ -341,7 +339,7 @@ function createSnapshotForTargetUser(options: {
         projectId: PROJECT_ID,
         title: THREAD_TITLE,
         modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
+          instanceId: "codex" as any,
           model: "gpt-5",
         },
         interactionMode: "default",
@@ -406,7 +404,7 @@ function addThreadToSnapshot(
         projectId: PROJECT_ID,
         title: "New thread",
         modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
+          instanceId: "codex" as any,
           model: "gpt-5",
         },
         interactionMode: "default",
@@ -743,7 +741,7 @@ function createSnapshotWithSecondaryProject(options?: {
           id: "thread-secondary-project" as ThreadId,
           projectId: SECOND_PROJECT_ID,
           title: "Release checklist",
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          modelSelection: { instanceId: "codex" as any, model: "gpt-5" },
           interactionMode: "default",
           runtimeMode: "full-access",
           branch: "release/docs-portal",
@@ -775,7 +773,7 @@ function createSnapshotWithSecondaryProject(options?: {
           id: ARCHIVED_SECONDARY_THREAD_ID,
           projectId: SECOND_PROJECT_ID,
           title: "Archived Docs Notes",
-          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+          modelSelection: { instanceId: "codex" as any, model: "gpt-5" },
           interactionMode: "default",
           runtimeMode: "full-access",
           branch: "release/docs-archive",
@@ -810,7 +808,7 @@ function createSnapshotWithSecondaryProject(options?: {
         id: SECOND_PROJECT_ID,
         title: "Docs Portal",
         workspaceRoot: "/repo/clients/docs-portal",
-        defaultModelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+        defaultModelSelection: { instanceId: "codex" as any, model: "gpt-5" },
         scripts: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -887,7 +885,7 @@ function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
 }
 
 function createSnapshotWithPlanFollowUpPrompt(options?: {
-  modelSelection?: { instanceId: ProviderInstanceId; model: string };
+  modelSelection?: { instanceId: any; model: string };
   planMarkdown?: string;
 }): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
@@ -895,7 +893,7 @@ function createSnapshotWithPlanFollowUpPrompt(options?: {
     targetText: "plan follow-up thread",
   });
   const modelSelection = options?.modelSelection ?? {
-    instanceId: ProviderInstanceId.make("codex"),
+    instanceId: "codex" as any,
     model: "gpt-5",
   };
   const planMarkdown =
@@ -942,6 +940,23 @@ function createSnapshotWithPlanFollowUpPrompt(options?: {
   };
 }
 
+function createRunningSnapshot(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-running-target" as MessageId,
+    targetText: "running queue thread",
+  });
+
+  return updateThreadSessionInSnapshot(snapshot, THREAD_ID, {
+    threadId: THREAD_ID,
+    status: "running",
+    providerName: "codex",
+    runtimeMode: "full-access",
+    activeTurnId: "turn-running-queue" as TurnId,
+    lastError: null,
+    updatedAt: isoAt(60),
+  });
+}
+
 function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
   const customResult = customWsRpcResolver?.(body);
   if (customResult !== undefined) {
@@ -970,6 +985,12 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
   if (tag === WS_METHODS.projectsSearchEntries) {
     return {
       entries: [],
+      truncated: false,
+    };
+  }
+  if (tag === WS_METHODS.skillsSearch) {
+    return {
+      skills: [],
       truncated: false,
     };
   }
@@ -1388,12 +1409,98 @@ function dispatchChatNewShortcut(): void {
   );
 }
 
-function releaseModShortcut(key?: string): void {
+function dispatchOpenSnippetsShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
   window.dispatchEvent(
-    new KeyboardEvent("keyup", {
-      key: key ?? (isMacPlatform(navigator.platform) ? "Meta" : "Control"),
-      metaKey: false,
-      ctrlKey: false,
+    new KeyboardEvent("keydown", {
+      key: "s",
+      shiftKey: true,
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function dispatchOpenSkillPickerShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "k",
+      shiftKey: true,
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function dispatchOpenQuickThreadSearchShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "f",
+      shiftKey: true,
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function dispatchOpenGlobalThreadSearchShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "f",
+      altKey: true,
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function dispatchOpenProjectFolderSearchShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "p",
+      altKey: true,
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function dispatchOpenCodexImportShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "i",
+      shiftKey: true,
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function dispatchRenameSidebarThreadShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "r",
+      shiftKey: true,
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
       bubbles: true,
       cancelable: true,
     }),
@@ -1481,6 +1588,16 @@ async function dispatchInputKey(
     }),
   );
   await waitForLayout();
+}
+
+function modShortcutModifiers(init?: Pick<KeyboardEventInit, "shiftKey" | "altKey">) {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  return {
+    metaKey: useMetaForMod,
+    ctrlKey: !useMetaForMod,
+    shiftKey: init?.shiftKey ?? false,
+    altKey: init?.altKey ?? false,
+  } satisfies Pick<KeyboardEventInit, "metaKey" | "ctrlKey" | "shiftKey" | "altKey">;
 }
 
 async function mountChatView(options: {
@@ -1639,6 +1756,29 @@ describe("ChatView timeline estimator parity (full app)", () => {
       open: false,
       openIntent: null,
     });
+    useQueuedTurnStore.setState({
+      threadsByThreadKey: {},
+    });
+    useSnippetPickerStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
+    useSkillPickerStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
+    useQuickThreadSearchStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
+    useGlobalThreadSearchStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
+    useProjectFolderSearchStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
     useStore.setState({
       activeEnvironmentId: null,
       environmentStateById: {},
@@ -1659,14 +1799,37 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
   afterEach(() => {
     customWsRpcResolver = null;
+    useSnippetPickerStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
+    useSkillPickerStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
+    useQuickThreadSearchStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
+    useGlobalThreadSearchStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
+    useProjectFolderSearchStore.setState({
+      open: false,
+      focusRequestId: 0,
+    });
+    useQueuedTurnStore.setState({
+      threadsByThreadKey: {},
+    });
     document.body.innerHTML = "";
   });
-  it("re-expands the bootstrap project using its logical key", async () => {
+  it("re-expands the bootstrap project using its scoped key", async () => {
     useUiStateStore.setState({
       projectExpandedById: {
-        [PROJECT_LOGICAL_KEY]: false,
+        [PROJECT_KEY]: false,
       },
-      projectOrder: [PROJECT_LOGICAL_KEY],
+      projectOrder: [PROJECT_KEY],
       threadLastVisitedAtById: {},
     });
 
@@ -1681,7 +1844,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       await vi.waitFor(
         () => {
-          expect(useUiStateStore.getState().projectExpandedById[PROJECT_LOGICAL_KEY]).toBe(true);
+          expect(useUiStateStore.getState().projectExpandedById[PROJECT_KEY]).toBe(true);
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -2436,126 +2599,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
             request.data === "bun install\r",
         ),
       ).toBe(false);
-    } finally {
-      await mounted.cleanup();
-    }
-  });
-
-  it("keeps custom provider instance ids when bootstrapping a local draft thread", async () => {
-    setDraftThreadWithoutWorktree();
-    const openRouterInstanceId = ProviderInstanceId.make("claude_openrouter");
-    const openRouterSelection = createModelSelection(openRouterInstanceId, "openai/gpt-5.5");
-    useComposerDraftStore.getState().setModelSelection(THREAD_REF, openRouterSelection);
-
-    const mounted = await mountChatView({
-      viewport: DEFAULT_VIEWPORT,
-      snapshot: createDraftOnlySnapshot(),
-      configureFixture: (nextFixture) => {
-        nextFixture.serverConfig = {
-          ...nextFixture.serverConfig,
-          providers: [
-            ...nextFixture.serverConfig.providers,
-            {
-              driver: ProviderDriverKind.make("claudeAgent"),
-              instanceId: ProviderInstanceId.make("claudeAgent"),
-              enabled: true,
-              installed: true,
-              version: "2.1.117",
-              status: "ready",
-              auth: { status: "authenticated" },
-              checkedAt: NOW_ISO,
-              models: [
-                {
-                  slug: "claude-opus-4-7",
-                  name: "Claude Opus 4.7",
-                  isCustom: false,
-                  capabilities: createModelCapabilities({ optionDescriptors: [] }),
-                },
-              ],
-              slashCommands: [],
-              skills: [],
-            },
-            {
-              driver: ProviderDriverKind.make("claudeAgent"),
-              instanceId: openRouterInstanceId,
-              displayName: "Claude OpenRouter",
-              enabled: true,
-              installed: true,
-              version: "2.1.117",
-              status: "ready",
-              auth: { status: "authenticated" },
-              checkedAt: NOW_ISO,
-              models: [
-                {
-                  slug: "claude-opus-4-7",
-                  name: "Claude Opus 4.7",
-                  isCustom: false,
-                  capabilities: createModelCapabilities({ optionDescriptors: [] }),
-                },
-              ],
-              slashCommands: [],
-              skills: [],
-            },
-          ],
-          settings: {
-            ...nextFixture.serverConfig.settings,
-            providerInstances: {
-              ...nextFixture.serverConfig.settings.providerInstances,
-              [openRouterInstanceId]: {
-                driver: ProviderDriverKind.make("claudeAgent"),
-                displayName: "Claude OpenRouter",
-                config: { customModels: ["openai/gpt-5.5"] },
-              },
-            },
-          },
-        };
-      },
-      resolveRpc: (body) => {
-        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
-          return {
-            sequence: fixture.snapshot.snapshotSequence + 1,
-          };
-        }
-        return undefined;
-      },
-    });
-
-    try {
-      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Hello there");
-      await waitForLayout();
-
-      const sendButton = await waitForSendButton();
-      expect(sendButton.disabled).toBe(false);
-      sendButton.click();
-
-      await vi.waitFor(
-        () => {
-          const turnStartRequest = wsRequests.find(
-            (request) =>
-              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
-              request.type === "thread.turn.start",
-          ) as
-            | {
-                modelSelection?: { instanceId?: string; model?: string };
-                bootstrap?: {
-                  createThread?: {
-                    modelSelection?: { instanceId?: string; model?: string };
-                  };
-                };
-              }
-            | undefined;
-
-          expect(turnStartRequest?.modelSelection).toMatchObject({
-            instanceId: openRouterInstanceId,
-            model: "openai/gpt-5.5",
-          });
-          expect(turnStartRequest?.bootstrap?.createThread?.modelSelection).toMatchObject({
-            instanceId: openRouterInstanceId,
-            model: "openai/gpt-5.5",
-          });
-        },
-        { timeout: 8_000, interval: 16 },
-      );
     } finally {
       await mounted.cleanup();
     }
@@ -3901,16 +3944,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
   it("snapshots sticky codex settings into a new draft thread", async () => {
     useComposerDraftStore.setState({
       stickyModelSelectionByProvider: {
-        [ProviderInstanceId.make("codex")]: createModelSelection(
-          ProviderInstanceId.make("codex"),
-          "gpt-5.3-codex",
-          [
+        codex: {
+          instanceId: "codex" as any,
+          model: "gpt-5.3-codex",
+          options: [
             { id: "reasoningEffort", value: "medium" },
             { id: "fastMode", value: true },
           ],
-        ),
+        },
       },
-      stickyActiveProvider: ProviderInstanceId.make("codex"),
+      stickyActiveProvider: "codex",
     });
 
     const mounted = await mountChatView({
@@ -3934,16 +3977,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       const newDraftId = draftIdFromPath(newThreadPath);
 
-      // `toMatchObject` matches objects loosely (extras ignored) but compares
-      // arrays strictly, so wrap `options` in `arrayContaining` to keep the
-      // assertion focused on sticky `fastMode` carrying over without asserting
-      // on exactly which other options are preserved.
       expect(composerDraftFor(newDraftId)).toMatchObject({
         modelSelectionByProvider: {
           codex: {
-            instanceId: ProviderInstanceId.make("codex"),
+            instanceId: "codex" as any,
             model: "gpt-5.3-codex",
-            options: expect.arrayContaining([{ id: "fastMode", value: true }]),
+            options: [{ id: "fastMode", value: true }],
           },
         },
         activeProvider: "codex",
@@ -3956,16 +3995,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
   it("hydrates the provider alongside a sticky claude model", async () => {
     useComposerDraftStore.setState({
       stickyModelSelectionByProvider: {
-        [ProviderInstanceId.make("claudeAgent")]: createModelSelection(
-          ProviderInstanceId.make("claudeAgent"),
-          "claude-opus-4-6",
-          [
+        claudeAgent: {
+          instanceId: "claudeAgent" as any,
+          model: "claude-opus-4-6",
+          options: [
             { id: "effort", value: "max" },
             { id: "fastMode", value: true },
           ],
-        ),
+        },
       },
-      stickyActiveProvider: ProviderInstanceId.make("claudeAgent"),
+      stickyActiveProvider: "claudeAgent",
     });
 
     const mounted = await mountChatView({
@@ -3991,14 +4030,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       expect(composerDraftFor(newDraftId)).toMatchObject({
         modelSelectionByProvider: {
-          claudeAgent: createModelSelection(
-            ProviderInstanceId.make("claudeAgent"),
-            "claude-opus-4-6",
-            [
+          claudeAgent: {
+            instanceId: "claudeAgent" as any,
+            model: "claude-opus-4-6",
+            options: [
               { id: "effort", value: "max" },
               { id: "fastMode", value: true },
             ],
-          ),
+          },
         },
         activeProvider: "claudeAgent",
       });
@@ -4035,19 +4074,19 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("prefers draft state over sticky composer settings and defaults", async () => {
+  it("creates a fresh draft instead of reusing the existing project draft thread", async () => {
     useComposerDraftStore.setState({
       stickyModelSelectionByProvider: {
-        [ProviderInstanceId.make("codex")]: createModelSelection(
-          ProviderInstanceId.make("codex"),
-          "gpt-5.3-codex",
-          [
+        codex: {
+          instanceId: "codex" as any,
+          model: "gpt-5.3-codex",
+          options: [
             { id: "reasoningEffort", value: "medium" },
             { id: "fastMode", value: true },
           ],
-        ),
+        },
       },
-      stickyActiveProvider: ProviderInstanceId.make("codex"),
+      stickyActiveProvider: "codex",
     });
 
     const mounted = await mountChatView({
@@ -4071,44 +4110,551 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       const draftId = draftIdFromPath(threadPath);
 
-      // See the note on the sibling sticky-codex test: arrays match strictly
-      // under `toMatchObject`, so use `arrayContaining` to keep the assertion
-      // scoped to the sticky trait (`fastMode`) that must carry over.
       expect(composerDraftFor(draftId)).toMatchObject({
         modelSelectionByProvider: {
           codex: {
-            instanceId: ProviderInstanceId.make("codex"),
+            instanceId: "codex" as any,
             model: "gpt-5.3-codex",
-            options: expect.arrayContaining([{ id: "fastMode", value: true }]),
+            options: [{ id: "fastMode", value: true }],
           },
         },
         activeProvider: "codex",
       });
 
-      useComposerDraftStore.getState().setModelSelection(
-        draftId,
-        createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
+      useComposerDraftStore.getState().setModelSelection(draftId, {
+        instanceId: "codex" as any,
+        model: "gpt-5.4",
+        options: [
           { id: "reasoningEffort", value: "low" },
           { id: "fastMode", value: true },
-        ]),
-      );
+        ],
+      });
 
       await newThreadButton.click();
 
-      await waitForURL(
+      const secondThreadPath = await waitForURL(
         mounted.router,
-        (path) => path === threadPath,
-        "New-thread should reuse the existing project draft thread.",
+        (path) => UUID_ROUTE_RE.test(path) && path !== threadPath,
+        "New-thread should create a fresh draft thread.",
       );
+      const secondDraftId = draftIdFromPath(secondThreadPath);
+
       expect(composerDraftFor(draftId)).toMatchObject({
         modelSelectionByProvider: {
-          codex: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.4", [
-            { id: "reasoningEffort", value: "low" },
-            { id: "fastMode", value: true },
-          ]),
+          codex: {
+            instanceId: "codex" as any,
+            model: "gpt-5.4",
+            options: {
+              reasoningEffort: "low",
+              fastMode: true,
+            },
+          },
         },
         activeProvider: "codex",
       });
+      expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject({
+        projectId: PROJECT_ID,
+      });
+      expect(composerDraftFor(secondDraftId)).toMatchObject({
+        modelSelectionByProvider: {
+          codex: {
+            instanceId: "codex" as any,
+            model: "gpt-5.3-codex",
+            options: {
+              fastMode: true,
+            },
+          },
+        },
+        activeProvider: "codex",
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("disables send when the thread project is unavailable", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...createSnapshotForTargetUser({
+          targetMessageId: "msg-user-missing-project-send-target" as MessageId,
+          targetText: "missing project send target",
+        }),
+        projects: [],
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Blocked without active project");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(true);
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await new Promise((resolve) => window.setTimeout(resolve, 150));
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.turn.start",
+        ),
+      ).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("queues with Tab during a running turn and auto-dispatches when the thread settles", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Queue this when ready");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Tab",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(
+            useQueuedTurnStore.getState().threadsByThreadKey[threadKeyFor(THREAD_ID)]?.items,
+          ).toHaveLength(1);
+          expect(composerDraftFor(THREAD_KEY)?.prompt ?? "").toBe("");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      fixture.snapshot = updateThreadSessionInSnapshot(createRunningSnapshot(), THREAD_ID, {
+        threadId: THREAD_ID,
+        status: "ready",
+        providerName: "codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: isoAt(61),
+      });
+      sendShellThreadUpsert(THREAD_ID);
+
+      await vi.waitFor(
+        () => {
+          const turnStartRequest = [...wsRequests]
+            .toReversed()
+            .find(
+              (request) =>
+                request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+                request.type === "thread.turn.start",
+            ) as
+            | {
+                command?: { message?: { text?: string } };
+                message?: { text?: string };
+              }
+            | undefined;
+
+          const messageText =
+            turnStartRequest && "message" in turnStartRequest
+              ? turnStartRequest.message?.text
+              : undefined;
+          expect(messageText).toBe("Queue this when ready");
+          expect(useQueuedTurnStore.getState().threadsByThreadKey[threadKeyFor(THREAD_ID)]).toBe(
+            undefined,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("steers immediately with Enter during a running turn", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Steer this right now");
+      await waitForLayout();
+
+      const beforeCount = wsRequests.filter(
+        (request) =>
+          request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          request.type === "thread.turn.start",
+      ).length;
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const turnStarts = wsRequests.filter(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start",
+          ) as Array<{ message?: { text?: string } }>;
+          expect(turnStarts.length).toBeGreaterThan(beforeCount);
+          expect(turnStarts.at(-1)?.message?.text).toBe("Steer this right now");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(useQueuedTurnStore.getState().threadsByThreadKey[threadKeyFor(THREAD_ID)]).toBe(
+        undefined,
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("steers immediately with mod+Enter during a running turn", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Steer with shortcut");
+      await waitForLayout();
+
+      const beforeCount = wsRequests.filter(
+        (request) =>
+          request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          request.type === "thread.turn.start",
+      ).length;
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          ...modShortcutModifiers(),
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          const turnStarts = wsRequests.filter(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start",
+          ) as Array<{ message?: { text?: string } }>;
+          expect(turnStarts.length).toBeGreaterThan(beforeCount);
+          expect(turnStarts.at(-1)?.message?.text).toBe("Steer with shortcut");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(useQueuedTurnStore.getState().threadsByThreadKey[threadKeyFor(THREAD_ID)]).toBe(
+        undefined,
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("queues a follow-up to the front with mod+Shift+Enter during a running turn", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      useQueuedTurnStore.getState().enqueue(THREAD_REF, {
+        id: "queued-existing",
+        text: "Queued follow-up",
+        createdAt: isoAt(160),
+        images: [],
+        persistedAttachments: [],
+        terminalContexts: [],
+        modelSelection: { instanceId: "codex" as any, model: "gpt-5" },
+        promptEffort: null,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Put this next");
+      await waitForLayout();
+
+      const composerEditor = await waitForComposerEditor();
+      composerEditor.focus();
+      composerEditor.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Enter",
+          bubbles: true,
+          cancelable: true,
+          ...modShortcutModifiers({ shiftKey: true }),
+        }),
+      );
+
+      await vi.waitFor(
+        () => {
+          expect(
+            useQueuedTurnStore
+              .getState()
+              .getQueue(THREAD_REF)
+              .map((entry) => entry.text),
+          ).toEqual(["Put this next", "Queued follow-up"]);
+          expect(
+            useComposerDraftStore.getState().draftsByThreadKey[threadKeyFor(THREAD_ID)]?.prompt ??
+              "",
+          ).toBe("");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows queue controls during a running turn and removes queued follow-ups from the panel", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Queue from button");
+      await waitForLayout();
+
+      await page.getByRole("button", { name: "Queue", exact: true }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            useQueuedTurnStore.getState().threadsByThreadKey[threadKeyFor(THREAD_ID)]?.items,
+          ).toHaveLength(1);
+          expect(document.body.textContent ?? "").toContain("1 queued follow-up");
+          expect(document.body.textContent ?? "").toContain(
+            "Waiting for the current turn to settle.",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await expect
+        .element(page.getByRole("button", { name: "Send queued follow-up now" }))
+        .toBeDisabled();
+
+      await page.getByRole("button", { name: "Remove queued follow-up" }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(useQueuedTurnStore.getState().threadsByThreadKey[threadKeyFor(THREAD_ID)]).toBe(
+            undefined,
+          );
+          expect(document.body.textContent ?? "").not.toContain("queued follow-up");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("clears queued follow-ups during a running turn without dispatching after settle", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useQueuedTurnStore.getState().enqueue(THREAD_REF, {
+        id: "queued-clear-first",
+        text: "This cleared queue item should not dispatch",
+        createdAt: isoAt(170),
+        images: [],
+        persistedAttachments: [],
+        terminalContexts: [],
+        modelSelection: { instanceId: "codex" as any, model: "gpt-5" },
+        promptEffort: null,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      useQueuedTurnStore.getState().enqueue(THREAD_REF, {
+        id: "queued-clear-second",
+        text: "This second cleared queue item should not dispatch",
+        createdAt: isoAt(171),
+        images: [],
+        persistedAttachments: [],
+        terminalContexts: [],
+        modelSelection: { instanceId: "codex" as any, model: "gpt-5" },
+        promptEffort: null,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+      await waitForLayout();
+
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent ?? "").toContain("2 queued follow-ups");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByRole("button", { name: "Clear all" }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(useQueuedTurnStore.getState().threadsByThreadKey[threadKeyFor(THREAD_ID)]).toBe(
+            undefined,
+          );
+          expect(document.body.textContent ?? "").not.toContain("queued follow-up");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const beforeSettledTurnStarts = wsRequests.filter(
+        (request) =>
+          request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+          request.type === "thread.turn.start",
+      ).length;
+
+      fixture.snapshot = updateThreadSessionInSnapshot(createRunningSnapshot(), THREAD_ID, {
+        threadId: THREAD_ID,
+        status: "ready",
+        providerName: "codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: isoAt(172),
+      });
+      sendShellThreadUpsert(THREAD_ID);
+      await waitForLayout();
+
+      expect(
+        wsRequests.filter(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.turn.start",
+        ),
+      ).toHaveLength(beforeSettledTurnStarts);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("saves a queued follow-up into the shortcut-opened snippet picker", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "snippets.open",
+              shortcut: {
+                key: "s",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Queued snippet from queue panel");
+      await waitForLayout();
+
+      await page.getByRole("button", { name: "Queue", exact: true }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            useQueuedTurnStore.getState().threadsByThreadKey[threadKeyFor(THREAD_ID)]?.items,
+          ).toHaveLength(1);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByRole("button", { name: "Save queued follow-up as snippet" }).click();
+
+      await vi.waitFor(
+        () => {
+          const raw = localStorage.getItem(SAVED_COMPOSER_SNIPPETS_STORAGE_KEY);
+          expect(raw).toBeTruthy();
+          expect(raw).toContain("Queued snippet from queue panel");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      dispatchOpenSnippetsShortcut();
+      await waitForElement(
+        () => document.querySelector<HTMLInputElement>('[data-testid="snippet-picker-input"]'),
+        "Unable to find snippet picker input.",
+      );
+      await expect
+        .element(page.getByRole("button", { name: /Queued snippet from queue panel/i }))
+        .toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }
@@ -4139,29 +4685,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
                 type: "not",
                 node: { type: "identifier", name: "terminalFocus" },
               },
-            },
-            {
-              command: "thread.jump.1",
-              shortcut: {
-                key: "1",
-                metaKey: true,
-                ctrlKey: false,
-                shiftKey: false,
-                altKey: false,
-                modKey: false,
-              },
-            },
-            {
-              command: "modelPicker.jump.1",
-              shortcut: {
-                key: "1",
-                metaKey: true,
-                ctrlKey: false,
-                shiftKey: false,
-                altKey: false,
-                modKey: false,
-              },
-              whenAst: { type: "identifier", name: "modelPickerOpen" },
             },
           ],
         };
@@ -5574,10 +6097,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,
       snapshot: createSnapshotWithPlanFollowUpPrompt({
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.3-codex-spark",
-        },
+        modelSelection: { instanceId: "codex" as any, model: "gpt-5.3-codex-spark" },
         planMarkdown:
           "# Imaginary Long-Range Plan: T3 Code Adaptive Orchestration and Safe-Delay Execution Initiative",
       }),
@@ -5607,10 +6127,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,
       snapshot: createSnapshotWithPlanFollowUpPrompt({
-        modelSelection: {
-          instanceId: ProviderInstanceId.make("codex"),
-          model: "gpt-5.3-codex-spark",
-        },
+        modelSelection: { instanceId: "codex" as any, model: "gpt-5.3-codex-spark" },
         planMarkdown:
           "# Imaginary Long-Range Plan: T3 Code Adaptive Orchestration and Safe-Delay Execution Initiative",
       }),
@@ -5683,150 +6200,96 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("opens the model picker when selecting /model", async () => {
+  it("shows /snippet in the built-in slash command menu", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotForTargetUser({
-        targetMessageId: "msg-user-model-command-target" as MessageId,
-        targetText: "model command thread",
+        targetMessageId: "msg-user-snippet-command-target" as MessageId,
+        targetText: "snippet command thread",
       }),
     });
 
     try {
       await waitForComposerEditor();
-      await page.getByTestId("composer-editor").fill("/mod");
+      await page.getByTestId("composer-editor").fill("/");
 
-      const menuItem = await waitForComposerMenuItem("slash:model");
-      await menuItem.click();
-
-      await vi.waitFor(() => {
-        expect(document.querySelector(".model-picker-list")).not.toBeNull();
-        expect(findComposerProviderModelPicker()?.textContent).not.toContain("/model");
-      });
-
-      await new Promise<void>((resolve) => {
-        requestAnimationFrame(() => {
-          requestAnimationFrame(() => resolve());
-        });
-      });
-
-      await vi.waitFor(() => {
-        const searchInput = document.querySelector<HTMLInputElement>(
-          'input[placeholder="Search models..."]',
-        );
-        expect(searchInput).not.toBeNull();
-        expect(document.activeElement).toBe(searchInput);
-      });
+      const menuItem = await waitForComposerMenuItem("slash:snippet");
+      await expect.element(menuItem).toBeInTheDocument();
+      expect(menuItem.textContent).toContain("/snippet");
     } finally {
       await mounted.cleanup();
     }
   });
 
-  it("toggles the model picker and shows jump keys immediately from the shortcut", async () => {
-    const snapshot = createSnapshotForTargetUser({
-      targetMessageId: "msg-user-model-picker-shortcut-target" as MessageId,
-      targetText: "model picker shortcut thread",
-    });
+  it("opens the snippet picker from the composer button and inserts a snippet after existing text", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
-      snapshot: {
-        ...snapshot,
-        projects: snapshot.projects.map((project) =>
-          project.id === PROJECT_ID
-            ? Object.assign({}, project, {
-                defaultModelSelection: {
-                  instanceId: ProviderInstanceId.make("codex"),
-                  model: "gpt-5.4",
-                },
-              })
-            : project,
-        ),
-        threads: snapshot.threads.map((thread) =>
-          thread.id === THREAD_ID
-            ? Object.assign({}, thread, {
-                modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
-              })
-            : thread,
-        ),
-      },
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-snippet-insert-target" as MessageId,
+        targetText: "snippet insert thread",
+      }),
+    });
+
+    try {
+      const debugSnippet = COMPOSER_SNIPPETS.find((snippet) => snippet.id === "debug-issue");
+      if (!debugSnippet) {
+        throw new Error("Expected debug-issue snippet to exist.");
+      }
+
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Existing context");
+      await waitForComposerText("Existing context");
+
+      await page.getByLabelText("Open snippet picker").click();
+      await waitForElement(
+        () => document.querySelector<HTMLInputElement>('[data-testid="snippet-picker-input"]'),
+        "Unable to find snippet picker input.",
+      );
+      await page.getByTestId("snippet-picker-input").fill("debug");
+      await page.getByRole("button", { name: /Debug Issue/i }).click();
+
+      await waitForComposerText(`Existing context${debugSnippet.body}`);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the snippet picker from the global shortcut and inserts a saved snippet", async () => {
+    localStorage.setItem(
+      SAVED_COMPOSER_SNIPPETS_STORAGE_KEY,
+      JSON.stringify([
+        {
+          id: "saved-snippet-1",
+          body: "Saved reusable snippet",
+          createdAt: "2026-04-16T10:00:00.000Z",
+          updatedAt: "2026-04-16T10:00:00.000Z",
+        },
+      ]),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-snippet-shortcut-target" as MessageId,
+        targetText: "snippet shortcut thread",
+      }),
       configureFixture: (nextFixture) => {
         nextFixture.serverConfig = {
           ...nextFixture.serverConfig,
           keybindings: [
             {
-              command: "modelPicker.toggle",
+              command: "snippets.open",
               shortcut: {
-                key: "m",
+                key: "s",
                 metaKey: false,
-                ctrlKey: true,
+                ctrlKey: false,
                 shiftKey: true,
                 altKey: false,
-                modKey: false,
+                modKey: true,
               },
               whenAst: {
                 type: "not",
                 node: { type: "identifier", name: "terminalFocus" },
               },
-            },
-            {
-              command: "thread.jump.1",
-              shortcut: {
-                key: "1",
-                metaKey: false,
-                ctrlKey: true,
-                shiftKey: false,
-                altKey: false,
-                modKey: false,
-              },
-            },
-            {
-              command: "modelPicker.jump.1",
-              shortcut: {
-                key: "1",
-                metaKey: false,
-                ctrlKey: true,
-                shiftKey: false,
-                altKey: false,
-                modKey: false,
-              },
-              whenAst: { type: "identifier", name: "modelPickerOpen" },
-            },
-          ],
-          providers: [
-            {
-              ...nextFixture.serverConfig.providers[0]!,
-              models: [
-                {
-                  slug: "gpt-5.1-codex-max",
-                  name: "GPT-5.1 Codex Max",
-                  isCustom: false,
-                  capabilities: createModelCapabilities({
-                    optionDescriptors: [
-                      { id: "fastMode", label: "Fast Mode", type: "boolean" as const },
-                    ],
-                  }),
-                },
-                {
-                  slug: "gpt-5.3-codex",
-                  name: "GPT-5.3 Codex",
-                  isCustom: false,
-                  capabilities: createModelCapabilities({
-                    optionDescriptors: [
-                      { id: "fastMode", label: "Fast Mode", type: "boolean" as const },
-                    ],
-                  }),
-                },
-                {
-                  slug: "gpt-5.4",
-                  name: "GPT-5.4",
-                  isCustom: false,
-                  capabilities: createModelCapabilities({
-                    optionDescriptors: [
-                      { id: "fastMode", label: "Fast Mode", type: "boolean" as const },
-                    ],
-                  }),
-                },
-              ],
             },
           ],
         };
@@ -5834,49 +6297,595 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      await waitForServerConfigToApply();
       await waitForComposerEditor();
-
-      const initialPath = mounted.router.state.location.pathname;
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "m",
-          ctrlKey: true,
-          shiftKey: true,
-          bubbles: true,
-          cancelable: true,
-        }),
+      dispatchOpenSnippetsShortcut();
+      await waitForElement(
+        () => document.querySelector<HTMLInputElement>('[data-testid="snippet-picker-input"]'),
+        "Unable to find snippet picker input.",
       );
+      await page.getByRole("button", { name: /Saved reusable snippet/i }).click();
+      await waitForComposerText("Saved reusable snippet");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 
-      await vi.waitFor(() => {
-        expect(document.querySelector(".model-picker-list")).not.toBeNull();
-      });
+  it("opens the skill picker from the global shortcut and inserts a skill reference block", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-skill-shortcut-target" as MessageId,
+        targetText: "skill picker thread",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "skills.open",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.skillsSearch) {
+          return {
+            skills: [
+              {
+                name: "agent-browser",
+                description: "Open pages, click around, and inspect web apps.",
+                skillPath: "/Users/test/.codex/skills/agent-browser/SKILL.md",
+                rootPath: "/Users/test/.codex/skills",
+                source: "workspace",
+              },
+            ],
+            truncated: false,
+          };
+        }
+        return undefined;
+      },
+    });
 
-      const jumpLabel = isMacPlatform(navigator.platform) ? "⌃1" : "Ctrl+1";
-      await vi.waitFor(() => {
-        expect(
-          Array.from(
-            document.querySelectorAll<HTMLElement>('.model-picker-list [data-slot="kbd"]'),
-          ).some((element) => element.textContent?.trim() === jumpLabel),
-        ).toBe(true);
-      });
-      expect(mounted.router.state.location.pathname).toBe(initialPath);
-
-      window.dispatchEvent(
-        new KeyboardEvent("keydown", {
-          key: "m",
-          ctrlKey: true,
-          shiftKey: true,
-          bubbles: true,
-          cancelable: true,
-        }),
+    try {
+      await waitForComposerEditor();
+      dispatchOpenSkillPickerShortcut();
+      await waitForElement(
+        () => document.querySelector<HTMLInputElement>('[data-testid="skill-picker-input"]'),
+        "Unable to find skill picker input.",
       );
+      await page.getByRole("button", { name: /agent-browser/i }).click();
+      await waitForComposerText(
+        [
+          "## Use skill: agent-browser",
+          "Open pages, click around, and inspect web apps.",
+          "",
+          "Read the full instructions from: /Users/test/.codex/skills/agent-browser/SKILL.md",
+        ].join("\n"),
+      );
+      expect(wsRequests.some((request) => request._tag === WS_METHODS.skillsSearch)).toBe(true);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
 
+  it("opens sidebar rename from the global shortcut and submits the rename", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-sidebar-rename-target" as MessageId,
+        targetText: "sidebar rename thread",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "sidebar.rename",
+              shortcut: {
+                key: "r",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await page.getByTestId(`thread-row-${THREAD_ID}`).click();
+      dispatchRenameSidebarThreadShortcut();
+      const renameInput = await waitForElement(
+        () =>
+          document.querySelector<HTMLInputElement>(
+            `[data-testid="thread-rename-input-${THREAD_ID}"]`,
+          ),
+        "Unable to find sidebar rename input.",
+      );
+      expect(renameInput.value).toBe(THREAD_TITLE);
+      await page.getByTestId(`thread-rename-input-${THREAD_ID}`).fill("Renamed browser thread");
+      await dispatchInputKey(renameInput, {
+        key: "Enter",
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+      });
+      await vi.waitFor(
+        () => {
+          const dispatchRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.meta.update",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                threadId?: string;
+                title?: string;
+              }
+            | undefined;
+
+          expect(dispatchRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.meta.update",
+            threadId: THREAD_ID,
+            title: "Renamed browser thread",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens quick thread search from the global shortcut and navigates to a recent match", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject({ includeArchivedSecondaryThread: false }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "threads.search",
+              shortcut: {
+                key: "f",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+        nextFixture.snapshot = {
+          ...nextFixture.snapshot,
+          threads: nextFixture.snapshot.threads.map((thread) =>
+            thread.id === THREAD_ID
+              ? {
+                  ...thread,
+                  title: "Local coding notes",
+                  messages: [
+                    createUserMessage({
+                      id: "msg-user-quick-thread-current" as MessageId,
+                      text: "capture notes for later",
+                      offsetSeconds: 3,
+                    }),
+                  ],
+                  updatedAt: isoAt(3),
+                }
+              : thread.id === ("thread-secondary-project" as ThreadId)
+                ? {
+                    ...thread,
+                    messages: [
+                      createUserMessage({
+                        id: "msg-user-quick-thread-secondary" as MessageId,
+                        text: "please debug the release checklist before launch",
+                        offsetSeconds: 45,
+                      }),
+                    ],
+                    updatedAt: isoAt(45),
+                  }
+                : thread,
+          ),
+        };
+      },
+    });
+
+    try {
+      dispatchOpenQuickThreadSearchShortcut();
+      await waitForElement(
+        () => document.querySelector<HTMLInputElement>('[data-testid="quick-thread-search-input"]'),
+        "Unable to find quick thread search input.",
+      );
+      await page.getByTestId("quick-thread-search-input").fill("release");
+      await page.getByRole("button", { name: /Release checklist/i }).click();
       await vi.waitFor(() => {
-        expect(document.querySelector(".model-picker-list")).toBeNull();
+        expect(mounted.router.state.location.pathname).toBe(
+          serverThreadPath("thread-secondary-project" as ThreadId),
+        );
       });
     } finally {
-      releaseModShortcut("Control");
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens global thread search from the global shortcut and navigates to a deep content match", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject({ includeArchivedSecondaryThread: false }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "threads.searchAll",
+              shortcut: {
+                key: "f",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: true,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+        nextFixture.snapshot = {
+          ...nextFixture.snapshot,
+          threads: nextFixture.snapshot.threads.map((thread) =>
+            thread.id === ("thread-secondary-project" as ThreadId)
+              ? {
+                  ...thread,
+                  messages: [
+                    createAssistantMessage({
+                      id: "msg-assistant-global-thread-secondary" as MessageId,
+                      text: "The queue recovery checklist is ready for launch.",
+                      offsetSeconds: 52,
+                    }),
+                  ],
+                  updatedAt: isoAt(52),
+                }
+              : thread,
+          ),
+        };
+      },
+    });
+
+    try {
+      dispatchOpenGlobalThreadSearchShortcut();
+      await waitForElement(
+        () =>
+          document.querySelector<HTMLInputElement>('[data-testid="global-thread-search-input"]'),
+        "Unable to find global thread search input.",
+      );
+      await page.getByTestId("global-thread-search-input").fill("queue recovery");
+      await page.getByRole("button", { name: /Release checklist/i }).click();
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.pathname).toBe(
+          serverThreadPath("thread-secondary-project" as ThreadId),
+        );
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens project folder search from the global shortcut and starts a new thread in the selected project", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProject(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "projects.search",
+              shortcut: {
+                key: "p",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: true,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      dispatchOpenProjectFolderSearchShortcut();
+      await waitForElement(
+        () =>
+          document.querySelector<HTMLInputElement>('[data-testid="project-folder-search-input"]'),
+        "Unable to find project folder search input.",
+      );
+      await page.getByTestId("project-folder-search-input").fill("docs");
+      await page.getByRole("button", { name: /Docs Portal/i }).click();
+      await vi.waitFor(() => {
+        expect(mounted.router.state.location.pathname).toMatch(UUID_ROUTE_RE);
+      });
+      await vi.waitFor(() => {
+        const draftThread = useComposerDraftStore
+          .getState()
+          .getDraftSession(draftIdFromPath(mounted.router.state.location.pathname));
+        expect(draftThread?.projectId).toBe(SECOND_PROJECT_ID);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("imports a Codex transcript into a durable thread from the global shortcut", async () => {
+    const importedThreadId = ThreadId.make("thread-codex-imported");
+    let sessionAlreadyImported = false;
+    const baseSnapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-codex-import-target" as MessageId,
+      targetText: "codex import thread",
+    });
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...baseSnapshot,
+        threads: [
+          ...baseSnapshot.threads,
+          {
+            id: importedThreadId,
+            projectId: PROJECT_ID,
+            title: "Fix the flaky release checklist",
+            modelSelection: {
+              instanceId: "codex" as any,
+              model: "gpt-5-codex",
+            },
+            interactionMode: "default",
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            latestTurn: null,
+            createdAt: isoAt(80),
+            updatedAt: isoAt(120),
+            archivedAt: null,
+            deletedAt: null,
+            messages: [
+              createUserMessage({
+                id: "msg-user-codex-imported" as MessageId,
+                text: "please debug the release checklist before launch",
+                offsetSeconds: 81,
+              }),
+              createAssistantMessage({
+                id: "msg-assistant-codex-imported" as MessageId,
+                text: "I found the flaky step in the release checklist.",
+                offsetSeconds: 82,
+              }),
+            ],
+            activities: [
+              {
+                id: EventId.make("activity-codex-imported"),
+                tone: "info",
+                kind: "codex-import.imported",
+                summary: "Imported from Codex session Fix the flaky release checklist",
+                payload: {
+                  sessionId: "codex-session-1",
+                },
+                turnId: null,
+                createdAt: isoAt(120),
+              },
+            ],
+            proposedPlans: [],
+            checkpoints: [],
+            session: null,
+          },
+        ],
+      },
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.codexImportListSessions) {
+          return [
+            {
+              sessionId: "codex-session-1",
+              title: "Fix the flaky release checklist",
+              cwd: null,
+              createdAt: isoAt(80),
+              updatedAt: isoAt(90),
+              model: "gpt-5-codex",
+              kind: "direct",
+              transcriptAvailable: true,
+              transcriptError: null,
+              alreadyImported: sessionAlreadyImported,
+              importedThreadId: sessionAlreadyImported ? importedThreadId : null,
+              lastUserMessage: "please debug the release checklist before launch",
+              lastAssistantMessage: "I found the flaky step in the release checklist.",
+            },
+          ];
+        }
+        if (body._tag === WS_METHODS.codexImportPeekSession) {
+          return {
+            sessionId: "codex-session-1",
+            title: "Fix the flaky release checklist",
+            cwd: null,
+            createdAt: isoAt(80),
+            updatedAt: isoAt(90),
+            model: "gpt-5-codex",
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            kind: "direct",
+            transcriptAvailable: true,
+            transcriptError: null,
+            alreadyImported: sessionAlreadyImported,
+            importedThreadId: sessionAlreadyImported ? importedThreadId : null,
+            messages: [
+              {
+                role: "user",
+                text: "please debug the release checklist before launch",
+                createdAt: isoAt(81),
+              },
+              {
+                role: "assistant",
+                text: "I found the flaky step in the release checklist.",
+                createdAt: isoAt(82),
+              },
+            ],
+          };
+        }
+        if (body._tag === WS_METHODS.codexImportImportSessions) {
+          sessionAlreadyImported = true;
+          return {
+            results: [
+              {
+                sessionId: "codex-session-1",
+                status: "imported",
+                threadId: importedThreadId,
+                projectId: PROJECT_ID,
+                error: null,
+              },
+            ],
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      dispatchOpenCodexImportShortcut();
+      await waitForElement(
+        () => document.querySelector<HTMLInputElement>('[data-testid="codex-import-query"]'),
+        "Unable to find Codex import input.",
+      );
+      await expect.element(page.getByTestId("codex-import-confirm")).toBeInTheDocument();
+      await waitForElement(
+        () =>
+          document.querySelector(
+            '[data-codex-import-session="codex-session-1"]',
+          ) as HTMLElement | null,
+        "Unable to find the Codex session row.",
+      );
+      await page.getByTestId("codex-import-confirm").click();
+
+      await vi.waitFor(
+        () => {
+          const pathname = mounted.router.state.location.pathname;
+          expect(pathname).toBe(`/${LOCAL_ENVIRONMENT_ID}/${importedThreadId}`);
+          expect(document.body.textContent ?? "").toContain("Fix the flaky release checklist");
+          expect(document.body.textContent ?? "").toContain(
+            "I found the flaky step in the release checklist.",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(
+        wsRequests.some((request) => request._tag === WS_METHODS.codexImportListSessions),
+      ).toBe(true);
+      expect(wsRequests.some((request) => request._tag === WS_METHODS.codexImportPeekSession)).toBe(
+        true,
+      );
+      expect(
+        wsRequests.some((request) => request._tag === WS_METHODS.codexImportImportSessions),
+      ).toBe(true);
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === WS_METHODS.codexImportImportSessions &&
+            request.targetProjectId === PROJECT_ID,
+        ),
+      ).toBe(true);
+
+      dispatchOpenCodexImportShortcut();
+      await waitForElement(
+        () => document.querySelector<HTMLInputElement>('[data-testid="codex-import-query"]'),
+        "Unable to re-open Codex import input.",
+      );
+      await vi.waitFor(() => {
+        expect(document.body.textContent ?? "").toContain("Imported");
+        expect(document.body.textContent ?? "").toContain("Already imported");
+        expect(document.body.textContent ?? "").toContain("Open imported thread");
+      });
+
+      await page.getByTestId("codex-import-confirm").click();
+      await vi.waitFor(
+        () => {
+          const pathname = mounted.router.state.location.pathname;
+          expect(pathname).toBe(`/${LOCAL_ENVIRONMENT_ID}/${importedThreadId}`);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("saves and deletes a draft snippet from the picker", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-snippet-save-target" as MessageId,
+        targetText: "snippet save thread",
+      }),
+    });
+
+    try {
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "Save this useful draft");
+      await waitForComposerText("Save this useful draft");
+
+      await page.getByLabelText("Open snippet picker").click();
+      await expect.element(page.getByTestId("snippet-picker-input")).toBeVisible();
+      await page.getByTestId("snippet-picker-save-draft").click();
+      const deleteButton = await waitForElement(
+        () =>
+          document.querySelector<HTMLButtonElement>(
+            '[data-testid^="snippet-picker-delete-saved:"]',
+          ),
+        "Unable to find saved snippet delete button.",
+      );
+
+      deleteButton.click();
+      await expect
+        .element(page.getByTestId(/^snippet-picker-delete-saved:/))
+        .not.toBeInTheDocument();
+    } finally {
       await mounted.cleanup();
     }
   });

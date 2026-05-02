@@ -37,9 +37,15 @@ const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(Orchestration
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 
 function getOptionValue(
-  options: ReadonlyArray<{ id: string; value: unknown }> | undefined,
+  options:
+    | ReadonlyArray<{ id: string; value: unknown }>
+    | Readonly<Record<string, unknown>>
+    | undefined,
   id: string,
 ): unknown {
+  if (options && !Array.isArray(options)) {
+    return (options as Readonly<Record<string, unknown>>)[id];
+  }
   return options?.find((option) => option.id === id)?.value;
 }
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);

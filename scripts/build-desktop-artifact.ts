@@ -553,9 +553,11 @@ export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefi
 }
 
 export function resolveDesktopProductName(version: string): string {
+  const baseProductName = desktopPackageJson.productName ?? "ClayCode";
+  const stableProductName = baseProductName.replace(/\s+\(Alpha\)$/, "");
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "T3 Code (Nightly)"
-    : (desktopPackageJson.productName ?? "T3 Code");
+    ? `${stableProductName} (Nightly)`
+    : baseProductName;
 }
 
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (

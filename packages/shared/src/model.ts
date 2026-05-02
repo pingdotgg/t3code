@@ -12,6 +12,12 @@ import {
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
 
+type ProviderOptionSelectionInput =
+  | ReadonlyArray<ProviderOptionSelection>
+  | Readonly<Record<string, unknown>>
+  | null
+  | undefined;
+
 export interface SelectableModelOption {
   slug: string;
   name: string;
@@ -26,22 +32,26 @@ export function createModelCapabilities(input: {
 }
 
 function getRawSelectionValueById(
-  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  selections: ProviderOptionSelectionInput,
   id: string,
 ): string | boolean | undefined {
+  if (selections && !Array.isArray(selections)) {
+    const value = (selections as Readonly<Record<string, unknown>>)[id];
+    return typeof value === "string" || typeof value === "boolean" ? value : undefined;
+  }
   const selection = selections?.find((candidate) => candidate.id === id);
   return selection?.value;
 }
 
 export function getProviderOptionSelectionValue(
-  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  selections: ProviderOptionSelectionInput,
   id: string,
 ): string | boolean | undefined {
   return getRawSelectionValueById(selections, id);
 }
 
 export function getProviderOptionStringSelectionValue(
-  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  selections: ProviderOptionSelectionInput,
   id: string,
 ): string | undefined {
   const value = getProviderOptionSelectionValue(selections, id);
@@ -49,7 +59,7 @@ export function getProviderOptionStringSelectionValue(
 }
 
 export function getProviderOptionBooleanSelectionValue(
-  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  selections: ProviderOptionSelectionInput,
   id: string,
 ): boolean | undefined {
   const value = getProviderOptionSelectionValue(selections, id);
@@ -145,7 +155,7 @@ function withDescriptorCurrentValue(
 
 export function getProviderOptionDescriptors(input: {
   caps: ModelCapabilities;
-  selections?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+  selections?: ProviderOptionSelectionInput;
 }): ReadonlyArray<ProviderOptionDescriptor> {
   const { caps, selections } = input;
   const baseDescriptors = (caps.optionDescriptors ?? []).map(cloneDescriptor);
@@ -308,15 +318,20 @@ export function trimOrNull<T extends string>(value: T | null | undefined): T | n
 }
 
 function cloneSelections(
-  selections: ReadonlyArray<ProviderOptionSelection>,
+  selections: ReadonlyArray<ProviderOptionSelection> | Readonly<Record<string, unknown>>,
 ): Array<ProviderOptionSelection> {
-  return selections.map(cloneSelection);
+  if (Array.isArray(selections)) {
+    return selections.map(cloneSelection);
+  }
+  return Object.entries(selections).flatMap(([id, value]) =>
+    typeof value === "string" || typeof value === "boolean" ? [{ id, value }] : [],
+  );
 }
 
 export function createModelSelection(
   instanceId: ProviderInstanceId,
   model: string,
-  options?: ReadonlyArray<ProviderOptionSelection> | null,
+  options?: ReadonlyArray<ProviderOptionSelection> | Readonly<Record<string, unknown>> | null,
 ): ModelSelection {
   const selections = options ? cloneSelections(options) : [];
   const base: ModelSelection = {

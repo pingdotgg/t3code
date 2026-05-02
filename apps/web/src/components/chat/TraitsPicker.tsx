@@ -30,7 +30,7 @@ import { useComposerDraftStore, DraftId } from "../../composerDraftStore";
 import { getProviderModelCapabilities } from "../../providerModels";
 import { cn } from "~/lib/utils";
 
-type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
+type ProviderOptions = ReadonlyArray<ProviderOptionSelection> | Readonly<Record<string, unknown>>;
 
 type TraitsPersistence =
   | {

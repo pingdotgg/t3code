@@ -22,8 +22,9 @@ If you are already running the desktop app and want to make it reachable from ot
 
 1. Open **Settings** → **Connections**.
 2. Under **Manage Local Backend**, toggle **Network access** on. This will restart the app and run the backend on all network interfaces.
-3. The settings panel will show the address the server is reachable at (e.g. `http://192.168.x.y:3773`).
-4. Use **Create Link** to generate a pairing link you can share with another device.
+3. If Tailscale is installed and connected on this Mac, the same panel also shows a **Tailnet access** section with the Tailnet hostname and a private Tailnet URL for the install.
+4. The settings panel will show the address the server is reachable at (e.g. `http://192.168.x.y:3773`).
+5. Use **Create Link** to generate a pairing link you can share with another device.
 
 ### Option 2: Headless Server (CLI)
 

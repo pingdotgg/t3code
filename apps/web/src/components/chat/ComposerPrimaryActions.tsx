@@ -20,10 +20,12 @@ interface ComposerPrimaryActionsProps {
   promptHasText: boolean;
   isSendBusy: boolean;
   isConnecting: boolean;
+  canSubmit: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onQueue: () => void;
   onImplementPlanInNewThread: () => void;
 }
 
@@ -53,10 +55,12 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   promptHasText,
   isSendBusy,
   isConnecting,
+  canSubmit,
   isPreparingWorktree,
   hasSendableContent,
   onPreviousPendingQuestion,
   onInterrupt,
+  onQueue,
   onImplementPlanInNewThread,
 }: ComposerPrimaryActionsProps) {
   if (pendingAction) {
@@ -108,16 +112,40 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
 
   if (isRunning) {
     return (
-      <button
-        type="button"
-        className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
-        onClick={onInterrupt}
-        aria-label="Stop generation"
-      >
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
-          <rect x="2" y="2" width="8" height="8" rx="1.5" />
-        </svg>
-      </button>
+      <div className={cn("flex items-center justify-end", compact ? "gap-1.5" : "gap-2")}>
+        {hasSendableContent ? (
+          <>
+            <Button
+              type="submit"
+              size="sm"
+              className={cn("rounded-full", compact ? "px-3" : "px-4")}
+              disabled={isSendBusy || isConnecting || !canSubmit}
+            >
+              Steer
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className={cn("rounded-full", compact ? "px-3" : "px-4")}
+              disabled={isSendBusy || isConnecting || !canSubmit}
+              onClick={onQueue}
+            >
+              Queue
+            </Button>
+          </>
+        ) : null}
+        <button
+          type="button"
+          className="flex size-8 cursor-pointer items-center justify-center rounded-full bg-rose-500/90 text-white transition-all duration-150 hover:bg-rose-500 hover:scale-105 sm:h-8 sm:w-8"
+          onClick={onInterrupt}
+          aria-label="Stop generation"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+            <rect x="2" y="2" width="8" height="8" rx="1.5" />
+          </svg>
+        </button>
+      </div>
     );
   }
 
@@ -128,7 +156,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           type="submit"
           size="sm"
           className={cn("rounded-full", compact ? "h-9 px-3 sm:h-8" : "h-9 px-4 sm:h-8")}
-          disabled={isSendBusy || isConnecting}
+          disabled={isSendBusy || isConnecting || !canSubmit}
         >
           {isConnecting || isSendBusy ? "Sending..." : "Refine"}
         </Button>
@@ -141,7 +169,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           type="submit"
           size="sm"
           className="h-9 rounded-l-full rounded-r-none px-4 sm:h-8"
-          disabled={isSendBusy || isConnecting}
+          disabled={isSendBusy || isConnecting || !canSubmit}
         >
           {isConnecting || isSendBusy ? "Sending..." : "Implement"}
         </Button>
@@ -153,7 +181,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
                 variant="default"
                 className="h-9 rounded-l-none rounded-r-full border-l-white/12 px-2 sm:h-8"
                 aria-label="Implementation actions"
-                disabled={isSendBusy || isConnecting}
+                disabled={isSendBusy || isConnecting || !canSubmit}
               />
             }
           >
@@ -161,7 +189,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           </MenuTrigger>
           <MenuPopup align="end" side="top">
             <MenuItem
-              disabled={isSendBusy || isConnecting}
+              disabled={isSendBusy || isConnecting || !canSubmit}
               onClick={() => void onImplementPlanInNewThread()}
             >
               Implement in a new thread
@@ -176,7 +204,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     <button
       type="submit"
       className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-full bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
-      disabled={isSendBusy || isConnecting || !hasSendableContent}
+      disabled={isSendBusy || isConnecting || !hasSendableContent || !canSubmit}
       aria-label={
         isConnecting
           ? "Connecting"

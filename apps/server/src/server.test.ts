@@ -10,6 +10,7 @@ import {
   GitCommandError,
   KeybindingRule,
   MessageId,
+  CodexImportError,
   OpenError,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
@@ -53,6 +54,7 @@ import { vi } from "vitest";
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
+import { CodexImport } from "./codexImport/Services/CodexImport.ts";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
 import {
   CheckpointDiffQuery,
@@ -539,6 +541,18 @@ const buildAppUnderTest = (options?: {
         Layer.mock(RepositoryIdentityResolver)({
           resolve: () => Effect.succeed(null),
           ...options?.layers?.repositoryIdentityResolver,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(CodexImport)({
+          listSessions: () => Effect.succeed([]),
+          peekSession: () =>
+            Effect.fail(
+              new CodexImportError({
+                message: "Codex import peek was not configured for this test",
+              }),
+            ),
+          importSessions: () => Effect.succeed({ results: [] }),
         }),
       ),
       Layer.provideMerge(authTestLayer),
