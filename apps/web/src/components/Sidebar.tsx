@@ -2196,7 +2196,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         )}
         {colorIdentity ? (
           <ProjectColorDot
-            className="absolute top-1 right-7"
+            className={cn(
+              "absolute top-1 right-7",
+              // On narrow viewports the cloud badge for remote-only projects
+              // moves from right-1.5 to right-7 (where it stays visible even on
+              // hover), so shift the color dot one slot further left to avoid
+              // overlapping it.
+              project.environmentPresence === "remote-only" && "max-sm:right-12",
+            )}
             identity={colorIdentity}
             projectName={project.displayName}
             onSelect={handleColorSelect}
