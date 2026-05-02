@@ -1,16 +1,13 @@
-import { readFile } from "node:fs/promises";
-
 import { Context, Effect, Layer, Option, Result, Schema, SchemaIssue, type DateTime } from "effect";
 
 import { GitLabCliError, TrimmedNonEmptyString } from "@t3tools/contracts";
 
-import type { ProcessRunResult } from "../processRunner.ts";
-import { runProcess } from "../processRunner.ts";
 import {
   decodeGitLabMergeRequestJson,
   decodeGitLabMergeRequestListJson,
   formatGitLabJsonDecodeError,
 } from "../git/gitlabMergeRequests.ts";
+import { VcsProcess, type VcsProcessOutput } from "../vcs/VcsProcess.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -38,7 +35,7 @@ export interface GitLabCliShape {
     readonly cwd: string;
     readonly args: ReadonlyArray<string>;
     readonly timeoutMs?: number;
-  }) => Effect.Effect<ProcessRunResult, GitLabCliError>;
+  }) => Effect.Effect<VcsProcessOutput, GitLabCliError>;
 
   readonly listMergeRequests: (input: {
     readonly cwd: string;
@@ -80,9 +77,18 @@ export class GitLabCli extends Context.Service<GitLabCli, GitLabCliShape>()(
   "t3/source-control/GitLabCli",
 ) {}
 
+function isVcsProcessSpawnError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "VcsProcessSpawnError"
+  );
+}
+
 function normalizeGitLabCliError(operation: "execute" | "stdout", error: unknown): GitLabCliError {
   if (error instanceof Error) {
-    if (error.message.includes("Command not found: glab")) {
+    if (error.message.includes("Command not found: glab") || isVcsProcessSpawnError(error)) {
       return new GitLabCliError({
         operation,
         detail: "GitLab CLI (`glab`) is required but not available on PATH.",
@@ -197,16 +203,19 @@ function toSummaryWithOptionalUpdatedAt(
   return Option.isSome(updatedAt) ? { ...summary, updatedAt } : summary;
 }
 
-export const make = Effect.sync(() => {
+export const make = Effect.fn("makeGitLabCli")(function* () {
+  const process = yield* VcsProcess;
+
   const execute: GitLabCliShape["execute"] = (input) =>
-    Effect.tryPromise({
-      try: () =>
-        runProcess("glab", input.args, {
-          cwd: input.cwd,
-          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        }),
-      catch: (error) => normalizeGitLabCliError("execute", error),
-    });
+    process
+      .run({
+        operation: "GitLabCli.execute",
+        command: "glab",
+        args: input.args,
+        cwd: input.cwd,
+        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      })
+      .pipe(Effect.mapError((error) => normalizeGitLabCliError("execute", error)));
 
   return GitLabCli.of({
     execute,
@@ -287,35 +296,23 @@ export const make = Effect.sync(() => {
         Effect.map(normalizeRepositoryCloneUrls),
       ),
     createMergeRequest: (input) =>
-      Effect.tryPromise({
-        try: () => readFile(input.bodyFile, "utf8"),
-        catch: (error) =>
-          new GitLabCliError({
-            operation: "createMergeRequest",
-            detail: "Failed to read merge request body file.",
-            cause: error,
-          }),
-      }).pipe(
-        Effect.flatMap((body) =>
-          execute({
-            cwd: input.cwd,
-            args: [
-              "mr",
-              "create",
-              "--target-branch",
-              input.baseBranch,
-              "--source-branch",
-              normalizeHeadSelector(input.headSelector),
-              "--title",
-              input.title,
-              "--description",
-              body,
-              "--yes",
-            ],
-          }),
-        ),
-        Effect.asVoid,
-      ),
+      execute({
+        cwd: input.cwd,
+        args: [
+          "api",
+          "--method",
+          "POST",
+          "projects/:fullpath/merge_requests",
+          "--raw-field",
+          `source_branch=${normalizeHeadSelector(input.headSelector)}`,
+          "--raw-field",
+          `target_branch=${input.baseBranch}`,
+          "--raw-field",
+          `title=${input.title}`,
+          "--field",
+          `description=@${input.bodyFile}`,
+        ],
+      }).pipe(Effect.asVoid),
     getDefaultBranch: (input) =>
       execute({
         cwd: input.cwd,
@@ -335,9 +332,9 @@ export const make = Effect.sync(() => {
     checkoutMergeRequest: (input) =>
       execute({
         cwd: input.cwd,
-        args: ["mr", "checkout", input.reference],
+        args: ["mr", "checkout", input.reference, ...(input.force ? ["--force"] : [])],
       }).pipe(Effect.asVoid),
   });
 });
 
-export const layer = Layer.effect(GitLabCli, make);
+export const layer = Layer.effect(GitLabCli, make());
