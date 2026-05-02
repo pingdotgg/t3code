@@ -151,7 +151,9 @@ http.route({
       try {
         intakeReply = await ctx.runAction(internal.taskIntake.postTaskRuntimeLifecycleReply, {
           taskId: payload.taskId as Id<"tasks">,
+          workSessionId: payload.workSessionId as Id<"workSessions">,
           status: payload.type,
+          occurredAt: payload.occurredAt,
           ...(payload.t3ThreadId !== undefined ? { t3ThreadId: String(payload.t3ThreadId) } : {}),
           ...(payload.failureSummary !== undefined
             ? { failureSummary: payload.failureSummary }

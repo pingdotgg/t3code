@@ -65,9 +65,16 @@ export function chatUserName() {
   return envValue("LINEAR_BOT_USERNAME") ?? envValue("SLACK_BOT_USERNAME") ?? "engineering";
 }
 
-export function createTaskIntakeChatSdkAdapters() {
+export type TaskIntakeChatSdkSource = "linear" | "slack";
+
+export function createTaskIntakeChatSdkAdapters(input?: {
+  readonly sources?: ReadonlySet<TaskIntakeChatSdkSource>;
+}) {
+  const sources = input?.sources ?? new Set<TaskIntakeChatSdkSource>(["linear", "slack"]);
   return {
-    linear: createLinearAdapter(linearAdapterConfig()),
-    slack: createChatCompatibleSlackAdapter(slackAdapterConfig()),
+    ...(sources.has("linear") ? { linear: createLinearAdapter(linearAdapterConfig()) } : {}),
+    ...(sources.has("slack")
+      ? { slack: createChatCompatibleSlackAdapter(slackAdapterConfig()) }
+      : {}),
   };
 }

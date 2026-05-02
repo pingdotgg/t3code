@@ -3,12 +3,17 @@ import type { LinearRawMessage } from "@chat-adapter/linear";
 import type { SlackEvent } from "@chat-adapter/slack";
 import { createMemoryState } from "@chat-adapter/state-memory";
 
-import { chatUserName, createTaskIntakeChatSdkAdapters } from "./chatSdkAdapters.ts";
+import {
+  chatUserName,
+  createTaskIntakeChatSdkAdapters,
+  type TaskIntakeChatSdkSource,
+} from "./chatSdkAdapters.ts";
 import type { TaskIntakeMessage } from "./contracts.ts";
 
 const taskIntakeChatSdkState = createMemoryState();
 
 export interface TaskIntakeChatSdkOptions {
+  readonly sources?: ReadonlySet<TaskIntakeChatSdkSource>;
   readonly onMessage: (input: {
     readonly source: "linear" | "slack";
     readonly thread: Thread;
@@ -114,7 +119,9 @@ export function chatSdkSourceFromThreadId(threadId: string): "linear" | "slack" 
 export function createTaskIntakeChatSdkBot(options: TaskIntakeChatSdkOptions) {
   const bot = new Chat({
     userName: chatUserName(),
-    adapters: createTaskIntakeChatSdkAdapters(),
+    adapters: createTaskIntakeChatSdkAdapters(
+      options.sources === undefined ? undefined : { sources: options.sources },
+    ),
     state: taskIntakeChatSdkState,
     dedupeTtlMs: 10 * 60 * 1000,
     logger: "info",

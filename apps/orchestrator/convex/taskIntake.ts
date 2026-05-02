@@ -3,8 +3,8 @@
 import { v } from "convex/values";
 
 import { createTaskIntakeChatSdkBot } from "../src/taskIntake/chatSdk.ts";
-import { buildTaskIntakeLifecycleReply } from "../src/taskIntake/replies.ts";
 import { handleTaskIntakeMessage } from "../src/taskIntake/ingress.ts";
+import { chatSdkThreadIdForLifecycleReply } from "../src/taskIntake/lifecycleReplies.ts";
 import { api, internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
 import { internalAction } from "./_generated/server.js";
@@ -28,6 +28,7 @@ export const handleChatSdkWebhook = internalAction({
   }),
   handler: async (ctx, args) => {
     const bot = createTaskIntakeChatSdkBot({
+      sources: new Set([args.source]),
       async onMessage({ thread, intakeMessage }) {
         await handleTaskIntakeMessage(intakeMessage, {
           store: {
@@ -130,7 +131,9 @@ export const handleChatSdkWebhook = internalAction({
 export const postTaskRuntimeLifecycleReply = internalAction({
   args: {
     taskId: v.id("tasks"),
+    workSessionId: v.id("workSessions"),
     status: v.union(v.literal("completed"), v.literal("failed")),
+    occurredAt: v.string(),
     t3ThreadId: v.optional(v.string()),
     failureSummary: v.optional(v.string()),
   },
@@ -147,71 +150,60 @@ export const postTaskRuntimeLifecycleReply = internalAction({
     readonly reason?: string;
     readonly externalMessageId?: string;
   }> => {
-    const seed = (await ctx.runQuery(internal.tasks.getTaskIntakeLifecycleReplySeed, {
+    const claims = await ctx.runMutation(internal.taskEvents.claimTaskLifecycleReplies, {
       taskId: args.taskId,
-    })) as null | {
-      readonly taskId: Id<"tasks">;
-      readonly source: "linear" | "slack" | "support_email" | "webhook";
-      readonly externalLinkKind:
-        | "linear_issue"
-        | "slack_thread"
-        | "support_email_thread"
-        | "webhook_event"
-        | "github_pr";
-      readonly externalId: string;
-      readonly muted: boolean;
-      readonly t3ThreadId?: string;
-    };
-    if (seed === null) {
-      return { posted: false, reason: "no_intake_link" };
-    }
-    if (seed.muted) {
-      return { posted: false, reason: "muted" };
-    }
-    if (seed.source !== "linear" || seed.externalLinkKind !== "linear_issue") {
-      return { posted: false, reason: "source_not_configured" };
-    }
-
-    const message = {
-      eventId: `task-runtime:${String(args.taskId)}:${args.status}`,
-      source: "linear" as const,
-      conversation: {
-        source: "linear" as const,
-        externalLinkKind: "linear_issue" as const,
-        externalId: seed.externalId,
-        issueId: seed.externalId,
-      },
-      messageId: `task-runtime:${String(args.taskId)}:${args.status}`,
-      text: "",
-      receivedAt: new Date().toISOString(),
-    };
-    const reply = buildTaskIntakeLifecycleReply({
-      message,
+      workSessionId: args.workSessionId,
       status: args.status,
-      taskId: String(args.taskId),
-      ...((args.t3ThreadId ?? seed.t3ThreadId) !== undefined
-        ? { t3ThreadId: args.t3ThreadId ?? seed.t3ThreadId }
-        : {}),
+      occurredAt: args.occurredAt,
+      ...(args.t3ThreadId !== undefined ? { t3ThreadId: args.t3ThreadId } : {}),
       ...(args.failureSummary !== undefined ? { failureSummary: args.failureSummary } : {}),
     });
+    if (claims.length === 0) {
+      return { posted: false, reason: "no_unclaimed_intake_links" };
+    }
 
     const bot = createTaskIntakeChatSdkBot({
+      sources: new Set(claims.map((claim) => (claim.kind === "linear_issue" ? "linear" : "slack"))),
       async onMessage() {},
     });
     await bot.initialize();
-    const posted: { readonly id: string } = await bot
-      .thread(`linear:${seed.externalId}`)
-      .post(reply.body);
-    await ctx.runMutation(internal.tasks.recordTaskIntakeLifecycleReplyPosted, {
-      taskId: args.taskId,
-      eventKey: reply.idempotencyKey,
-      status: args.status,
-      externalMessageId: posted.id,
-    });
 
+    const postedIds: string[] = [];
+    for (const claim of claims) {
+      try {
+        const posted: { readonly id: string } = await bot
+          .thread(
+            chatSdkThreadIdForLifecycleReply({
+              kind: claim.kind,
+              externalId: claim.externalId,
+            }),
+          )
+          .post(claim.body);
+        postedIds.push(posted.id);
+        await ctx.runMutation(internal.taskEvents.recordTaskLifecycleReplyDelivered, {
+          taskId: claim.taskId,
+          claimEventKey: claim.claimEventKey,
+          linkId: claim.linkId,
+          status: args.status,
+          externalMessageId: posted.id,
+        });
+      } catch (error) {
+        await ctx.runMutation(internal.taskEvents.recordTaskLifecycleReplyFailed, {
+          taskId: claim.taskId,
+          claimEventKey: claim.claimEventKey,
+          linkId: claim.linkId,
+          status: args.status,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (postedIds.length === 0) {
+      return { posted: false, reason: "all_lifecycle_replies_failed" };
+    }
     return {
       posted: true,
-      externalMessageId: posted.id,
+      ...(postedIds[0] !== undefined ? { externalMessageId: postedIds[0] } : {}),
     };
   },
 });

@@ -289,10 +289,10 @@ Wire the shared Task Intake module into real Slack and Linear webhook paths and 
 - [x] Slack mentions can create a Task and receive a simple acknowledgement.
 - [x] Slack thread replies route to the same Task.
 - [x] Duplicate webhooks do not duplicate Tasks or acknowledgements.
-- [ ] T3 runtime completion posts one simple completion comment/message.
-- [ ] T3 runtime failure posts one simple failure comment/message.
+- [x] T3 runtime completion posts one simple completion comment/message.
+- [x] T3 runtime failure posts one simple failure comment/message.
 - [x] No Coding Agent stream/activity is posted to Slack or Linear.
-- [ ] Focused integration tests cover Slack create/follow-up and Linear create/follow-up with fake Chat SDK adapters.
+- [x] Focused integration tests cover Slack create/follow-up and Linear create/follow-up with fake Chat SDK adapters.
 - [x] `bun fmt`, `bun lint`, and `bun typecheck` pass.
 
 **Implementation Notes**:
@@ -310,6 +310,11 @@ Wire the shared Task Intake module into real Slack and Linear webhook paths and 
 - Follow-up continuation records an idempotency key after the bridge accepts the continuation. If a follow-up event is recorded but the bridge continuation fails before acceptance, a platform retry can route the same event back into the existing Task instead of being permanently swallowed by intake dedupe.
 - Slack live E2E on `scrupulous-fly-947`: a mention in `#testing` created Task `kn78v559yg2hpz14wf8p8pp6xs85yfn1`, T3 Thread `ee3d4e05-06d0-4eb8-a138-0119d2ab8de3`, branch `task/u0b0t56ay7r-live-mvp-follow-up-retry-safe-test-f-8pp6xs85yfn1`, and worktree `/Users/vivek/.t3code-slack-e2e/worktrees/t3code/task-u0b0t56ay7r-live-mvp-follow-up-retry-safe-test-f-8pp6xs85yfn1`. A Slack thread reply queued onto the same Task/T3 Thread and the worktree file `tmp/slack-intake-e2e-followup.md` contained both the initial requested line and the follow-up line.
 - The temporary live bridge used for the follow-up E2E was stopped after testing, and `T3_EXECUTION_BRIDGE_BASE_URL` was unset so the dev deployment is not left pointing at a stale ngrok URL.
+- Lifecycle replies now claim all unmuted Slack/Linear Task External Links for a terminal Work Session event and post one coarse completion/failure reply through Chat SDK. The reply claim is idempotent by `(workSessionId, status, externalLinkId)`, so duplicate terminal callbacks do not post duplicate source replies.
+- Chat SDK adapter construction is now source-scoped. Linear webhooks do not require Slack credentials, Slack webhooks do not require Linear-only paths to be initialized, and lifecycle replies initialize only the adapter sources needed by the claimed links.
+- Final Slack E2E on `scrupulous-fly-947`: `#testing` created Task `kn73xd9xk3x6vsvf3bm67g3x8x85y20q`, T3 Thread `9069ee99-d3b9-4df7-83e2-a09df0b88a83`, branch `task/u0b0t56ay7r-final-mvp-slack-e2e-from-codex-at-20-7g3x8x85y20q`, and worktree `/Users/vivek/.t3code-slack-e2e/worktrees/t3code/task-u0b0t56ay7r-final-mvp-slack-e2e-from-codex-at-20-7g3x8x85y20q`. The Slack thread follow-up queued onto the same Task/T3 Thread, the worktree file `tmp/slack-final-e2e.md` contained both requested lines, and a manual completed lifecycle callback posted one completion reply to the Slack thread.
+- Final Linear E2E on `basic-porcupine-321`: `AFF-1725` created Task `kn7dy6rw99w9rst4y7s2az573h85y014`, T3 Thread `6b4c0f90-fa64-40bd-8562-8309a5cb293a`, branch `task/engineering-agent-final-mvp-linear-e2e-after-loc-az573h85y014`, and worktree `/Users/vivek/.t3code-slack-e2e/worktrees/t3code/task-engineering-agent-final-mvp-linear-e2e-after-loc-az573h85y014`. Linear follow-up comments queued onto the same Task/T3 Thread and a manual failed lifecycle callback posted one failure reply to the Linear issue.
+- The final E2E required temporarily deploying current Convex functions to production because the Linear webhook is configured against `basic-porcupine-321`. The temporary bridge URL was removed from both dev and prod after testing, and the production Project workspace root was restored to `/home/ubuntu/t3code`.
 
 **Implementation Footprint**:
 
@@ -325,6 +330,12 @@ Wire the shared Task Intake module into real Slack and Linear webhook paths and 
 - Updated `apps/orchestrator/src/taskIntake/replies.ts`
 - Updated `apps/orchestrator/convex/linear.ts`
 - Updated `apps/orchestrator/convex/t3Runtime.ts`
+- Updated `apps/orchestrator/convex/http.ts`
+- Updated `apps/orchestrator/convex/taskIntake.ts`
+- Updated `apps/orchestrator/src/taskIntake/chatSdk.ts`
+- Updated `apps/orchestrator/src/taskIntake/chatSdkAdapters.ts`
+- Added `apps/orchestrator/src/taskIntake/lifecycleReplies.ts`
+- Added `apps/orchestrator/src/taskIntake/lifecycleReplies.test.ts`
 - Deleted `apps/orchestrator/src/taskIntake/sourceAdapters.ts`
 
 ## Verification
