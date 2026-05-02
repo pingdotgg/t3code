@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDownIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   type ProviderInstanceConfig,
@@ -24,6 +24,7 @@ import type { DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import {
   PROVIDER_STATUS_STYLES,
   getProviderSummary,
@@ -41,8 +42,6 @@ const PROVIDER_ACCENT_SWATCHES = [
 ] as const;
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-
-const REDACTED_EMAIL_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 
 let environmentVariableDraftId = 0;
 const nextEnvironmentVariableDraftId = () => `provider-env-${environmentVariableDraftId++}`;
@@ -66,25 +65,6 @@ function makeEnvironmentDraftRow(
     sensitive: variable.sensitive,
     ...(variable.valueRedacted !== undefined ? { valueRedacted: variable.valueRedacted } : {}),
   };
-}
-
-function redactedEmailPlaceholder(email: string): string {
-  let state = 0x811c9dc5;
-  for (let index = 0; index < email.length; index += 1) {
-    state ^= email.charCodeAt(index);
-    state = Math.imul(state, 0x01000193);
-  }
-
-  const nextChar = () => {
-    state = Math.imul(state ^ (state >>> 13), 0x85ebca6b);
-    state = Math.imul(state ^ (state >>> 16), 0xc2b2ae35);
-    return REDACTED_EMAIL_ALPHABET[Math.abs(state) % REDACTED_EMAIL_ALPHABET.length] ?? "x";
-  };
-
-  return Array.from(email, (char) => {
-    if (char === "@" || char === "." || char === "-" || char === "_") return char;
-    return nextChar();
-  }).join("");
 }
 
 /**
@@ -146,35 +126,19 @@ function ProviderAuthEmail(props: {
   readonly prefix?: string;
   readonly separator?: boolean;
 }) {
-  const [revealed, setRevealed] = useState(false);
   const trimmed = props.email?.trim();
-  const redacted = useMemo(() => (trimmed ? redactedEmailPlaceholder(trimmed) : ""), [trimmed]);
   if (!trimmed) return null;
 
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5">
       {props.separator ? <span aria-hidden>·</span> : null}
       {props.prefix ? <span className="text-muted-foreground/80">{props.prefix}</span> : null}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              className={cn(
-                "min-w-0 cursor-pointer rounded-sm font-mono text-[11px] leading-none transition hover:text-foreground",
-                revealed ? "text-muted-foreground" : "select-none text-muted-foreground blur-[2px]",
-              )}
-              onClick={() => setRevealed((value) => !value)}
-              aria-label={revealed ? "Hide account email" : "Reveal account email"}
-            >
-              {revealed ? trimmed : redacted}
-            </button>
-          }
-        />
-        <TooltipPopup side="top">
-          {revealed ? "Click to hide email" : "Click to reveal email"}
-        </TooltipPopup>
-      </Tooltip>
+      <RedactedSensitiveText
+        value={trimmed}
+        ariaLabel="Toggle account email visibility"
+        revealTooltip="Click to reveal email"
+        hideTooltip="Click to hide email"
+      />
     </span>
   );
 }

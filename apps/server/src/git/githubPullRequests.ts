@@ -1,4 +1,4 @@
-import { Cause, Exit, Result, Schema } from "effect";
+import { Cause, DateTime, Exit, Option, Result, Schema } from "effect";
 import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
 import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
 
@@ -9,7 +9,7 @@ export interface NormalizedGitHubPullRequestRecord {
   readonly baseRefName: string;
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
-  readonly updatedAt: string | null;
+  readonly updatedAt: Option.Option<DateTime.Utc>;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
   readonly headRepositoryOwnerLogin?: string | null;
@@ -23,7 +23,7 @@ const GitHubPullRequestSchema = Schema.Struct({
   headRefName: TrimmedNonEmptyString,
   state: Schema.optional(Schema.NullOr(Schema.String)),
   mergedAt: Schema.optional(Schema.NullOr(Schema.String)),
-  updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
+  updatedAt: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
   isCrossRepository: Schema.optional(Schema.Boolean),
   headRepository: Schema.optional(
     Schema.NullOr(
@@ -80,8 +80,7 @@ function normalizeGitHubPullRequestRecord(
     baseRefName: raw.baseRefName,
     headRefName: raw.headRefName,
     state: normalizeGitHubPullRequestState(raw),
-    updatedAt:
-      typeof raw.updatedAt === "string" && raw.updatedAt.trim().length > 0 ? raw.updatedAt : null,
+    updatedAt: raw.updatedAt ?? Option.none(),
     ...(typeof raw.isCrossRepository === "boolean"
       ? { isCrossRepository: raw.isCrossRepository }
       : {}),

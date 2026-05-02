@@ -209,7 +209,7 @@ export function useThreadActions() {
       }
 
       try {
-        await ensureEnvironmentApi(threadRef.environmentId).git.removeWorktree({
+        await ensureEnvironmentApi(threadRef.environmentId).vcs.removeWorktree({
           cwd: threadProject.cwd,
           path: orphanedWorktreePath,
           force: true,

@@ -16,12 +16,10 @@ import { Cache, Cause, Duration, Effect, Equal, Layer, Option, Schema, Stream } 
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
-import { GitCore } from "../../git/Services/GitCore.ts";
-import { GitStatusBroadcaster } from "../../git/Services/GitStatusBroadcaster.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
 import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
-import { TextGeneration } from "../../git/Services/TextGeneration.ts";
+import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -29,6 +27,8 @@ import {
   type ProviderCommandReactorShape,
 } from "../Services/ProviderCommandReactor.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
+import { GitWorkflowService } from "../../git/GitWorkflowService.ts";
 
 type ProviderIntentEvent = Extract<
   OrchestrationEvent,
@@ -168,8 +168,8 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
-  const git = yield* GitCore;
-  const gitStatusBroadcaster = yield* GitStatusBroadcaster;
+  const gitWorkflow = yield* GitWorkflowService;
+  const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
   const handledTurnStartKeys = yield* Cache.make<string, true>({
@@ -587,7 +587,7 @@ const make = Effect.gen(function* () {
       const targetBranch = buildGeneratedWorktreeBranchName(generated.branch);
       if (targetBranch === oldBranch) return;
 
-      const renamed = yield* git.renameBranch({ cwd, oldBranch, newBranch: targetBranch });
+      const renamed = yield* gitWorkflow.renameBranch({ cwd, oldBranch, newBranch: targetBranch });
       yield* orchestrationEngine.dispatch({
         type: "thread.meta.update",
         commandId: serverCommandId("worktree-branch-rename"),
@@ -595,7 +595,7 @@ const make = Effect.gen(function* () {
         branch: renamed.branch,
         worktreePath: cwd,
       });
-      yield* gitStatusBroadcaster.refreshStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
+      yield* vcsStatusBroadcaster.refreshStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("provider command reactor failed to generate or rename worktree branch", {

@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
-import { GitCommandError } from "@t3tools/contracts";
+import type { VcsError } from "@t3tools/contracts";
 
 /**
  * CheckpointUnavailableError - Expected checkpoint does not exist.
@@ -35,9 +35,6 @@ export class CheckpointInvariantError extends Schema.TaggedErrorClass<Checkpoint
   }
 }
 
-export type CheckpointStoreError =
-  | GitCommandError
-  | CheckpointInvariantError
-  | CheckpointUnavailableError;
+export type CheckpointStoreError = VcsError | CheckpointInvariantError | CheckpointUnavailableError;
 
 export type CheckpointServiceError = CheckpointStoreError | ProjectionRepositoryError;

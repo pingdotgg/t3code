@@ -17,7 +17,7 @@ import { Duration, Effect, FileSystem, Path, Schema, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config.ts";
-import { makeCursorTextGeneration } from "../../git/Layers/CursorTextGeneration.ts";
+import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
 import {

@@ -131,6 +131,7 @@
       "version": "0.0.0-alpha.1",
       "dependencies": {
         "@t3tools/contracts": "workspace:*",
+        "effect": "catalog:",
       },
       "devDependencies": {
         "@effect/language-service": "catalog:",

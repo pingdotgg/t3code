@@ -5,8 +5,8 @@ import { it, afterEach, describe, expect, vi } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path, PlatformError } from "effect";
 
 import { ServerConfig } from "../../config.ts";
-import { GitCoreLive } from "../../git/Layers/GitCore.ts";
-import { GitCore } from "../../git/Services/GitCore.ts";
+import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { WorkspaceEntries } from "../Services/WorkspaceEntries.ts";
 import { WorkspaceEntriesLive } from "./WorkspaceEntries.ts";
 import { WorkspacePathsLive } from "./WorkspacePaths.ts";
@@ -14,7 +14,8 @@ import { WorkspacePathsLive } from "./WorkspacePaths.ts";
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
   Layer.provideMerge(WorkspacePathsLive),
-  Layer.provideMerge(GitCoreLive),
+  Layer.provideMerge(VcsProcess.layer),
+  Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-workspace-entries-test-",
@@ -25,12 +26,11 @@ const TestLayer = Layer.empty.pipe(
 
 const makeTempDir = Effect.fn(function* (opts?: { prefix?: string; git?: boolean }) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const gitCore = yield* GitCore;
   const dir = yield* fileSystem.makeTempDirectoryScoped({
     prefix: opts?.prefix ?? "t3code-workspace-entries-",
   });
   if (opts?.git) {
-    yield* gitCore.initRepo({ cwd: dir });
+    yield* git(dir, ["init"]);
   }
   return dir;
 });
@@ -51,9 +51,10 @@ function writeTextFile(
 
 const git = (cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
   Effect.gen(function* () {
-    const gitCore = yield* GitCore;
-    const result = yield* gitCore.execute({
+    const process = yield* VcsProcess.VcsProcess;
+    const result = yield* process.run({
       operation: "WorkspaceEntries.test.git",
+      command: "git",
       cwd,
       args,
       ...(env ? { env } : {}),

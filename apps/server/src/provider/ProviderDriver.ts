@@ -28,7 +28,7 @@ import type {
 } from "@t3tools/contracts";
 import type { Effect, Schema, Scope } from "effect";
 
-import type { TextGenerationShape } from "../git/Services/TextGeneration.ts";
+import type { TextGenerationShape } from "../textGeneration/TextGeneration.ts";
 import type { ProviderAdapterError, ProviderDriverError } from "./Errors.ts";
 import type { ProviderAdapterShape } from "./Services/ProviderAdapter.ts";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";

@@ -1,4 +1,4 @@
-import type { GitStatusRemoteResult, GitStatusResult } from "@t3tools/contracts";
+import type { VcsStatusRemoteResult, VcsStatusResult } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -54,17 +54,17 @@ describe("parseGitHubRepositoryNameWithOwnerFromRemoteUrl", () => {
 });
 
 describe("isTemporaryWorktreeBranch", () => {
-  it("matches the generated temporary worktree branch format", () => {
+  it("matches the generated temporary worktree refName format", () => {
     expect(isTemporaryWorktreeBranch(buildTemporaryWorktreeBranchName())).toBe(true);
   });
 
-  it("matches generated temporary worktree branches", () => {
+  it("matches generated temporary worktree refs", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef`)).toBe(true);
     expect(isTemporaryWorktreeBranch(` ${WORKTREE_BRANCH_PREFIX}/deadbeef `)).toBe(true);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/DEADBEEF`)).toBe(true);
   });
 
-  it("rejects non-temporary branch names", () => {
+  it("rejects non-temporary refName names", () => {
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/feature/demo`)).toBe(false);
     expect(isTemporaryWorktreeBranch("main")).toBe(false);
     expect(isTemporaryWorktreeBranch(`${WORKTREE_BRANCH_PREFIX}/deadbeef-extra`)).toBe(false);
@@ -73,7 +73,7 @@ describe("isTemporaryWorktreeBranch", () => {
 
 describe("applyGitStatusStreamEvent", () => {
   it("treats a remote-only update as a repository when local state is missing", () => {
-    const remote: GitStatusRemoteResult = {
+    const remote: VcsStatusRemoteResult = {
       hasUpstream: true,
       aheadCount: 2,
       behindCount: 1,
@@ -82,9 +82,9 @@ describe("applyGitStatusStreamEvent", () => {
 
     expect(applyGitStatusStreamEvent(null, { _tag: "remoteUpdated", remote })).toEqual({
       isRepo: true,
-      hasOriginRemote: false,
-      isDefaultBranch: false,
-      branch: null,
+      hasPrimaryRemote: false,
+      isDefaultRef: false,
+      refName: null,
       hasWorkingTreeChanges: false,
       workingTree: { files: [], insertions: 0, deletions: 0 },
       hasUpstream: true,
@@ -95,16 +95,16 @@ describe("applyGitStatusStreamEvent", () => {
   });
 
   it("preserves local-only fields when applying a remote update", () => {
-    const current: GitStatusResult = {
+    const current: VcsStatusResult = {
       isRepo: true,
-      hostingProvider: {
+      sourceControlProvider: {
         kind: "github",
         name: "GitHub",
         baseUrl: "https://github.com",
       },
-      hasOriginRemote: true,
-      isDefaultBranch: false,
-      branch: "feature/demo",
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: "feature/demo",
       hasWorkingTreeChanges: true,
       workingTree: {
         files: [{ path: "src/demo.ts", insertions: 1, deletions: 0 }],
@@ -117,7 +117,7 @@ describe("applyGitStatusStreamEvent", () => {
       pr: null,
     };
 
-    const remote: GitStatusRemoteResult = {
+    const remote: VcsStatusRemoteResult = {
       hasUpstream: true,
       aheadCount: 2,
       behindCount: 1,

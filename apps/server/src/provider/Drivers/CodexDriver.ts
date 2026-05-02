@@ -25,7 +25,7 @@ import { CodexSettings, ProviderDriverKind, type ServerProvider } from "@t3tools
 import { Duration, Effect, FileSystem, Path, Schema, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { makeCodexTextGeneration } from "../../git/Layers/CodexTextGeneration.ts";
+import { makeCodexTextGeneration } from "../../textGeneration/CodexTextGeneration.ts";
 import { ServerConfig } from "../../config.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCodexAdapter } from "../Layers/CodexAdapter.ts";

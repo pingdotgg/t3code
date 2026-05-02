@@ -25,10 +25,7 @@ import {
 
 import { CheckpointStoreLive } from "../src/checkpointing/Layers/CheckpointStore.ts";
 import { CheckpointStore } from "../src/checkpointing/Services/CheckpointStore.ts";
-import { GitCoreLive } from "../src/git/Layers/GitCore.ts";
-import { GitCore, type GitCoreShape } from "../src/git/Services/GitCore.ts";
-import { GitStatusBroadcaster } from "../src/git/Services/GitStatusBroadcaster.ts";
-import { TextGeneration, type TextGenerationShape } from "../src/git/Services/TextGeneration.ts";
+import { TextGeneration, type TextGenerationShape } from "../src/textGeneration/TextGeneration.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../src/persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../src/persistence/Layers/OrchestrationEventStore.ts";
 import { ProjectionCheckpointRepositoryLive } from "../src/persistence/Layers/ProjectionCheckpoints.ts";
@@ -77,6 +74,11 @@ import {
 import { deriveServerPaths, ServerConfig } from "../src/config.ts";
 import { WorkspaceEntriesLive } from "../src/workspace/Layers/WorkspaceEntries.ts";
 import { WorkspacePathsLive } from "../src/workspace/Layers/WorkspacePaths.ts";
+import * as GitVcsDriver from "../src/vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "../src/vcs/VcsDriverRegistry.ts";
+import { VcsStatusBroadcaster } from "../src/vcs/VcsStatusBroadcaster.ts";
+import { GitWorkflowService } from "../src/git/GitWorkflowService.ts";
+import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 
 function runGit(cwd: string, args: ReadonlyArray<string>) {
   return execFileSync("git", args, {
@@ -291,7 +293,7 @@ export const makeOrchestrationIntegrationHarness = (
           Layer.provide(providerEventLoggersLayer),
         );
 
-    const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(GitCoreLive));
+    const checkpointStoreLayer = CheckpointStoreLive.pipe(Layer.provide(VcsDriverRegistry.layer));
     const projectionSnapshotQueryLayer = OrchestrationProjectionSnapshotQueryLive;
     const runtimeServicesLayer = Layer.mergeAll(
       projectionSnapshotQueryLayer,
@@ -307,31 +309,31 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(serverSettingsLayer),
     );
-    const gitCoreLayer = Layer.succeed(GitCore, {
-      renameBranch: (input: Parameters<GitCoreShape["renameBranch"]>[0]) =>
+    const gitWorkflowLayer = Layer.mock(GitWorkflowService)({
+      renameBranch: (input: Parameters<GitVcsDriver.GitVcsDriverShape["renameBranch"]>[0]) =>
         Effect.succeed({ branch: input.newBranch }),
-    } as unknown as GitCoreShape);
+    });
     const textGenerationLayer = Layer.succeed(TextGeneration, {
       generateBranchName: () => Effect.succeed({ branch: "update" }),
       generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
     } as unknown as TextGenerationShape);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
-      Layer.provideMerge(gitCoreLayer),
+      Layer.provideMerge(gitWorkflowLayer),
       Layer.provideMerge(textGenerationLayer),
       Layer.provideMerge(serverSettingsLayer),
     );
     const checkpointReactorLayer = CheckpointReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(
-        Layer.succeed(GitStatusBroadcaster, {
+        Layer.succeed(VcsStatusBroadcaster, {
           getStatus: () => Effect.die("getStatus should not be called in this test"),
           refreshLocalStatus: () =>
             Effect.succeed({
               isRepo: true,
-              hasOriginRemote: false,
-              isDefaultBranch: true,
-              branch: "main",
+              hasPrimaryRemote: false,
+              isDefaultRef: true,
+              refName: "main",
               hasWorkingTreeChanges: false,
               workingTree: { files: [], insertions: 0, deletions: 0 },
             }),
@@ -342,11 +344,12 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(
         WorkspaceEntriesLive.pipe(
           Layer.provide(WorkspacePathsLive),
-          Layer.provideMerge(gitCoreLayer),
+          Layer.provideMerge(VcsDriverRegistry.layer),
           Layer.provide(NodeServices.layer),
         ),
       ),
       Layer.provideMerge(WorkspacePathsLive),
+      Layer.provideMerge(VcsProcess.layer),
     );
     const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
       Layer.provideMerge(runtimeIngestionLayer),
