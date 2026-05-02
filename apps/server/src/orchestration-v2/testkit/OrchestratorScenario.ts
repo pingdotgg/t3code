@@ -2,6 +2,7 @@ import type {
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2RuntimeRequest,
+  OrchestrationV2ShellSnapshot,
   OrchestrationV2StoredEvent,
   OrchestrationV2ThreadProjection,
   ProviderApprovalDecision,
@@ -55,6 +56,7 @@ export interface OrchestratorV2ScenarioResult {
   readonly storedEvents: ReadonlyArray<OrchestrationV2StoredEvent>;
   readonly domainEvents: ReadonlyArray<OrchestrationV2DomainEvent>;
   readonly projections: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
+  readonly shellSnapshot: OrchestrationV2ShellSnapshot;
 }
 
 export class OrchestratorV2ScenarioStepError extends Schema.TaggedErrorClass<OrchestratorV2ScenarioStepError>()(
@@ -81,6 +83,7 @@ function commandThreadIds(command: OrchestrationV2Command): ReadonlyArray<Thread
     case "provider.switch":
       return [command.threadId];
     case "thread.fork":
+    case "thread.merge_back":
       return [command.sourceThreadId, command.targetThreadId];
   }
 }
@@ -263,6 +266,7 @@ export function runOrchestratorV2Scenario(
       for (const threadId of collectProjectionThreadIds(scenario)) {
         projections.set(threadId, yield* orchestrator.getThreadProjection(threadId));
       }
+      const shellSnapshot = yield* orchestrator.getShellSnapshot();
 
       yield* Effect.yieldNow;
 
@@ -274,6 +278,7 @@ export function runOrchestratorV2Scenario(
         storedEvents,
         domainEvents: storedEvents.map((stored) => stored.event),
         projections,
+        shellSnapshot,
       };
     }),
   );

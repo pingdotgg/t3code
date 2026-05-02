@@ -9,6 +9,7 @@ import {
   assertSemanticProjectionIntegrity,
   assertTurnItemTypes,
   assertUserMessagesInclude,
+  assertVisibleTurnItemsMirrorLocalTurnItems,
   projectionFor,
   TOOL_CALL_WRITE_PROMPT,
 } from "../shared.ts";
@@ -21,6 +22,7 @@ export function assertToolCallReadOnlyOnRequestOutput(
 
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
+  assertVisibleTurnItemsMirrorLocalTurnItems(projection);
   assertTurnItemTypes(projection, [
     "user_message",
     "command_execution",

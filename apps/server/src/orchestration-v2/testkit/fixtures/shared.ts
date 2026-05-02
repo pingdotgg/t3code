@@ -11,6 +11,7 @@ import {
   type OrchestrationV2RunStatus,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2UserMessageInputIntent,
   type ProviderKind,
   type ProviderInteractionMode,
   type ProviderReplayTranscript,
@@ -532,6 +533,26 @@ export function assertTurnItemsReferenceProjection(projection: OrchestrationV2Th
   }
 }
 
+export function assertVisibleTurnItemsMirrorLocalTurnItems(
+  projection: OrchestrationV2ThreadProjection,
+) {
+  assert.lengthOf(
+    projection.visibleTurnItems,
+    projection.turnItems.length,
+    "non-fork visible turn items must mirror local canonical turn items",
+  );
+
+  for (const [index, item] of projection.turnItems.entries()) {
+    const visibleItem = projection.visibleTurnItems[index];
+    assert.isDefined(visibleItem, `missing visible turn item at position ${index}`);
+    assert.equal(visibleItem.position, index);
+    assert.equal(visibleItem.visibility, "local");
+    assert.equal(visibleItem.sourceThreadId, item.threadId);
+    assert.equal(visibleItem.sourceItemId, item.id);
+    assert.deepEqual(visibleItem.item, item);
+  }
+}
+
 export function assertMessagesReferenceProjection(projection: OrchestrationV2ThreadProjection) {
   for (const message of projection.messages) {
     if (message.runId !== null) {
@@ -694,4 +715,16 @@ export function assertUserMessagesInclude(
       `expected user input to include ${JSON.stringify(expectedText)}`,
     );
   }
+}
+
+export function assertUserMessageInputIntents(
+  projection: OrchestrationV2ThreadProjection,
+  expectedIntents: ReadonlyArray<OrchestrationV2UserMessageInputIntent>,
+) {
+  assert.deepEqual(
+    projection.turnItems
+      .filter((item) => item.type === "user_message")
+      .map((item) => item.inputIntent),
+    expectedIntents,
+  );
 }

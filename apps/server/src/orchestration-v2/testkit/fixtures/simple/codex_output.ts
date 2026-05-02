@@ -10,6 +10,7 @@ import {
   assertSemanticProjectionIntegrity,
   assertTurnItemTypes,
   assertUserMessagesInclude,
+  assertVisibleTurnItemsMirrorLocalTurnItems,
   projectionFor,
   SIMPLE_PROMPT,
 } from "../shared.ts";
@@ -22,6 +23,7 @@ export function assertSimpleOutput(
 
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
+  assertVisibleTurnItemsMirrorLocalTurnItems(projection);
   assertRunOrdinals(projection, [1]);
   assertExecutionNodeKinds(projection, ["root_turn", "assistant_message"]);
   assertConversationMessageRoles(projection, ["user", "assistant"]);
