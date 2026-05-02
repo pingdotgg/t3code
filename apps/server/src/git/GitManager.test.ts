@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vitest";
 import type {
   GitActionProgressEvent,
@@ -53,6 +54,16 @@ interface FakeGhScenario {
   };
   repositoryCloneUrls?: Record<string, { url: string; sshUrl: string }>;
   failWith?: GitHubCliError;
+}
+
+function fakeGhOutput(stdout: string): VcsProcess.VcsProcessOutput {
+  return {
+    exitCode: ChildProcessSpawner.ExitCode(0),
+    stdout,
+    stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+  };
 }
 
 interface FakeGitTextGeneration {
@@ -390,24 +401,15 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
           ? scenario.prListByHeadSelector?.[headSelector]
           : undefined;
       const stdout = (mappedQueue ?? mappedStdout ?? prListQueue.shift() ?? "[]") + "\n";
-      return Effect.succeed({
-        stdout,
-        stderr: "",
-        code: 0,
-        signal: null,
-        timedOut: false,
-      });
+      return Effect.succeed(fakeGhOutput(stdout));
     }
 
     if (args[0] === "pr" && args[1] === "create") {
-      return Effect.succeed({
-        stdout:
+      return Effect.succeed(
+        fakeGhOutput(
           (scenario.createdPrUrl ?? "https://github.com/pingdotgg/codething-mvp/pull/101") + "\n",
-        stderr: "",
-        code: 0,
-        signal: null,
-        timedOut: false,
-      });
+        ),
+      );
     }
 
     if (args[0] === "pr" && args[1] === "view") {
@@ -419,8 +421,8 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
         headRefName: "feature/pull-request",
         state: "open",
       };
-      return Effect.succeed({
-        stdout:
+      return Effect.succeed(
+        fakeGhOutput(
           JSON.stringify({
             ...pullRequest,
             ...(pullRequest.headRepositoryNameWithOwner
@@ -438,11 +440,8 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
                 }
               : {}),
           }) + "\n",
-        stderr: "",
-        code: 0,
-        signal: null,
-        timedOut: false,
-      });
+        ),
+      );
     }
 
     if (args[0] === "pr" && args[1] === "checkout") {
@@ -464,13 +463,7 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
               runGitSyncForFakeGh(input.cwd, ["checkout", "-b", headBranch]);
             }
           }
-          return {
-            stdout: "",
-            stderr: "",
-            code: 0,
-            signal: null,
-            timedOut: false,
-          };
+          return fakeGhOutput("");
         },
         catch: (error) =>
           isGitHubCliError(error)
@@ -497,26 +490,17 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
             }),
           );
         }
-        return Effect.succeed({
-          stdout:
+        return Effect.succeed(
+          fakeGhOutput(
             JSON.stringify({
               nameWithOwner: repository,
               url: cloneUrls.url,
               sshUrl: cloneUrls.sshUrl,
             }) + "\n",
-          stderr: "",
-          code: 0,
-          signal: null,
-          timedOut: false,
-        });
+          ),
+        );
       }
-      return Effect.succeed({
-        stdout: `${scenario.defaultBranch ?? "main"}\n`,
-        stderr: "",
-        code: 0,
-        signal: null,
-        timedOut: false,
-      });
+      return Effect.succeed(fakeGhOutput(`${scenario.defaultBranch ?? "main"}\n`));
     }
 
     return Effect.fail(

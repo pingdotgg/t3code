@@ -15,6 +15,21 @@ export const GitHubIcon: Icon = (props) => (
   </svg>
 );
 
+export const GitLabIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M22.6 9.3 20.9 4c-.2-.7-1.2-.7-1.5-.1l-2 5.4H6.6l-2-5.4c-.2-.6-1.2-.6-1.5.1L1.4 9.3c-.2.6 0 1.2.5 1.6L12 18.7l10.1-7.8c.5-.4.7-1 .5-1.6Z" />
+    <path d="m12 18.7 4.1-9.4H7.9L12 18.7Z" opacity=".72" />
+    <path d="M7.9 9.3H1.5L12 18.7 7.9 9.3ZM16.1 9.3 12 18.7l10.5-9.4h-6.4Z" opacity=".88" />
+  </svg>
+);
+
+export const AzureDevOpsIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M21 5.2v12.7L16 22l-8-2.8V22l-4.9-6.4 4.9.4V4.8L16 2l5 3.2ZM16 6.4l-5 1.4v8.4l5 1.4V6.4Z" />
+    <path d="m8 8.4-5 .8v5.6l5 .8V8.4Z" opacity=".72" />
+  </svg>
+);
+
 export const CursorIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}

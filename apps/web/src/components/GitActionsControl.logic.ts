@@ -4,6 +4,11 @@ import type {
   VcsStatusResult,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import {
+  DEFAULT_CHANGE_REQUEST_TERMINOLOGY,
+  getChangeRequestTerminology,
+  type ChangeRequestTerminology,
+} from "../sourceControlPresentation";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
@@ -38,6 +43,14 @@ export type DefaultBranchConfirmableAction =
   | "commit_push"
   | "commit_push_pr";
 
+function resolveChangeRequestTerminology(
+  gitStatus: VcsStatusResult | null,
+): ChangeRequestTerminology {
+  return gitStatus?.sourceControlProvider
+    ? getChangeRequestTerminology(gitStatus.sourceControlProvider)
+    : DEFAULT_CHANGE_REQUEST_TERMINOLOGY;
+}
+
 export function buildGitActionProgressStages(input: {
   action: GitStackedAction;
   hasCustomCommitMessage: boolean;
@@ -45,13 +58,15 @@ export function buildGitActionProgressStages(input: {
   pushTarget?: string;
   featureBranch?: boolean;
   shouldPushBeforePr?: boolean;
+  terminology?: ChangeRequestTerminology;
 }): string[] {
+  const terminology = input.terminology ?? DEFAULT_CHANGE_REQUEST_TERMINOLOGY;
   const branchStages = input.featureBranch ? ["Preparing feature ref..."] : [];
   const pushStage = input.pushTarget ? `Pushing to ${input.pushTarget}...` : "Pushing...";
   const prStages = [
-    "Preparing PR...",
-    "Generating PR content...",
-    "Creating GitHub pull request...",
+    `Preparing ${terminology.shortLabel}...`,
+    `Generating ${terminology.shortLabel} content...`,
+    `Creating ${terminology.singular}...`,
   ];
 
   if (input.action === "push") {
@@ -82,6 +97,7 @@ export function buildMenuItems(
   hasPrimaryRemote = true,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
+  const terminology = resolveChangeRequestTerminology(gitStatus);
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
@@ -126,14 +142,14 @@ export function buildMenuItems(
     hasOpenPr
       ? {
           id: "pr",
-          label: "View PR",
+          label: `View ${terminology.shortLabel}`,
           disabled: !canOpenPr,
           icon: "pr",
           kind: "open_pr",
         }
       : {
           id: "pr",
-          label: "Create PR",
+          label: `Create ${terminology.shortLabel}`,
           disabled: !canCreatePr,
           icon: "pr",
           kind: "open_dialog",
@@ -167,13 +183,14 @@ export function resolveQuickAction(
   const isAhead = gitStatus.aheadCount > 0;
   const isBehind = gitStatus.behindCount > 0;
   const isDiverged = isAhead && isBehind;
+  const terminology = resolveChangeRequestTerminology(gitStatus);
 
   if (!hasBranch) {
     return {
       label: "Commit",
       disabled: true,
       kind: "show_hint",
-      hint: "Create and checkout a ref before pushing or opening a PR.",
+      hint: `Create and checkout a ref before pushing or opening a ${terminology.singular}.`,
     };
   }
 
@@ -185,7 +202,7 @@ export function resolveQuickAction(
       return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
     }
     return {
-      label: "Commit, push & PR",
+      label: `Commit, push & ${terminology.shortLabel}`,
       disabled: false,
       kind: "run_action",
       action: "commit_push_pr",
@@ -195,18 +212,18 @@ export function resolveQuickAction(
   if (!gitStatus.hasUpstream) {
     if (!hasPrimaryRemote) {
       if (hasOpenPr && !isAhead) {
-        return { label: "View PR", disabled: false, kind: "open_pr" };
+        return { label: `View ${terminology.shortLabel}`, disabled: false, kind: "open_pr" };
       }
       return {
         label: "Push",
         disabled: true,
         kind: "show_hint",
-        hint: 'Add an "origin" remote before pushing or creating a PR.',
+        hint: `Add an "origin" remote before pushing or creating a ${terminology.singular}.`,
       };
     }
     if (!isAhead) {
       if (hasOpenPr) {
-        return { label: "View PR", disabled: false, kind: "open_pr" };
+        return { label: `View ${terminology.shortLabel}`, disabled: false, kind: "open_pr" };
       }
       return {
         label: "Push",
@@ -224,7 +241,7 @@ export function resolveQuickAction(
       };
     }
     return {
-      label: "Push & create PR",
+      label: `Push & create ${terminology.shortLabel}`,
       disabled: false,
       kind: "run_action",
       action: "create_pr",
@@ -258,7 +275,7 @@ export function resolveQuickAction(
       };
     }
     return {
-      label: "Push & create PR",
+      label: `Push & create ${terminology.shortLabel}`,
       disabled: false,
       kind: "run_action",
       action: "create_pr",
@@ -266,7 +283,7 @@ export function resolveQuickAction(
   }
 
   if (hasOpenPr && gitStatus.hasUpstream) {
-    return { label: "View PR", disabled: false, kind: "open_pr" };
+    return { label: `View ${terminology.shortLabel}`, disabled: false, kind: "open_pr" };
   }
 
   return {
@@ -294,9 +311,11 @@ export function resolveDefaultBranchActionDialogCopy(input: {
   action: DefaultBranchConfirmableAction;
   branchName: string;
   includesCommit: boolean;
+  terminology?: ChangeRequestTerminology;
 }): DefaultBranchActionDialogCopy {
   const branchLabel = input.branchName;
   const suffix = ` on "${branchLabel}". You can continue on this ref or create a feature ref and run the same action there.`;
+  const terminology = input.terminology ?? DEFAULT_CHANGE_REQUEST_TERMINOLOGY;
 
   if (input.action === "push" || input.action === "commit_push") {
     if (input.includesCommit) {
@@ -315,15 +334,15 @@ export function resolveDefaultBranchActionDialogCopy(input: {
 
   if (input.includesCommit) {
     return {
-      title: "Commit, push & create PR from default ref?",
-      description: `This action will commit, push, and create a PR${suffix}`,
-      continueLabel: `Commit, push & create PR`,
+      title: `Commit, push & create ${terminology.shortLabel} from default ref?`,
+      description: `This action will commit, push, and create a ${terminology.singular}${suffix}`,
+      continueLabel: `Commit, push & create ${terminology.shortLabel}`,
     };
   }
   return {
-    title: "Push & create PR from default ref?",
-    description: `This action will push local commits and create a PR${suffix}`,
-    continueLabel: "Push & create PR",
+    title: `Push & create ${terminology.shortLabel} from default ref?`,
+    description: `This action will push local commits and create a ${terminology.singular}${suffix}`,
+    continueLabel: `Push & create ${terminology.shortLabel}`,
   };
 }
 

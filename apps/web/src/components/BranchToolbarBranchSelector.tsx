@@ -21,6 +21,7 @@ import { useGitStatus } from "../lib/gitStatusState";
 import { newCommandId } from "../lib/utils";
 import { cn } from "../lib/utils";
 import { parsePullRequestReference } from "../pullRequestReference";
+import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useStore } from "../store";
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import {
@@ -230,6 +231,11 @@ export function BranchToolbarBranchSelector({
   );
   const currentGitBranch =
     branchStatusQuery.data?.refName ?? refs.find((refName) => refName.current)?.name ?? null;
+  const sourceControlPresentation = useMemo(
+    () => getSourceControlPresentation(branchStatusQuery.data?.sourceControlProvider),
+    [branchStatusQuery.data?.sourceControlProvider],
+  );
+  const SourceControlIcon = sourceControlPresentation.Icon;
   const canonicalActiveBranch = resolveBranchToolbarValue({
     envMode: effectiveEnvMode,
     activeWorktreePath,
@@ -508,9 +514,14 @@ export function BranchToolbarBranchSelector({
             onCheckoutPullRequestRequest(prReference);
           }}
         >
-          <div className="flex min-w-0 flex-col items-start py-1">
-            <span className="truncate font-medium">Checkout Pull Request</span>
-            <span className="truncate text-muted-foreground text-xs">{prReference}</span>
+          <div className="flex min-w-0 items-center gap-2 py-1">
+            <SourceControlIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="flex min-w-0 flex-col items-start">
+              <span className="truncate font-medium">
+                Checkout {sourceControlPresentation.terminology.singular}
+              </span>
+              <span className="truncate text-muted-foreground text-xs">{prReference}</span>
+            </span>
           </div>
         </ComboboxItem>
       );

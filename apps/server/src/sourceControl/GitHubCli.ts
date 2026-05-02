@@ -1,9 +1,8 @@
 import { Context, Effect, Layer, Result, Schema, SchemaIssue } from "effect";
 
-import { GitHubCliError, TrimmedNonEmptyString } from "@t3tools/contracts";
+import { GitHubCliError, TrimmedNonEmptyString, type VcsError } from "@t3tools/contracts";
 
-import type { ProcessRunResult } from "../processRunner.ts";
-import { runProcess } from "../processRunner.ts";
+import { VcsProcess, type VcsProcessOutput } from "../vcs/VcsProcess.ts";
 import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
@@ -35,7 +34,7 @@ export interface GitHubCliShape {
     readonly cwd: string;
     readonly args: ReadonlyArray<string>;
     readonly timeoutMs?: number;
-  }) => Effect.Effect<ProcessRunResult, GitHubCliError>;
+  }) => Effect.Effect<VcsProcessOutput, GitHubCliError>;
 
   readonly listOpenPullRequests: (input: {
     readonly cwd: string;
@@ -76,53 +75,61 @@ export class GitHubCli extends Context.Service<GitHubCli, GitHubCliShape>()(
   "t3/source-control/GitHubCli",
 ) {}
 
-function normalizeGitHubCliError(operation: "execute" | "stdout", error: unknown): GitHubCliError {
-  if (error instanceof Error) {
-    if (error.message.includes("Command not found: gh")) {
-      return new GitHubCliError({
-        operation,
-        detail: "GitHub CLI (`gh`) is required but not available on PATH.",
-        cause: error,
-      });
-    }
+function errorText(error: VcsError | unknown): string {
+  if (typeof error === "object" && error !== null) {
+    const tag = "_tag" in error && typeof error._tag === "string" ? error._tag : "";
+    const detail = "detail" in error && typeof error.detail === "string" ? error.detail : "";
+    const message = "message" in error && typeof error.message === "string" ? error.message : "";
+    return [tag, detail, message].filter(Boolean).join("\n");
+  }
 
-    const lower = error.message.toLowerCase();
-    if (
-      lower.includes("authentication failed") ||
-      lower.includes("not logged in") ||
-      lower.includes("gh auth login") ||
-      lower.includes("no oauth token")
-    ) {
-      return new GitHubCliError({
-        operation,
-        detail: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
-        cause: error,
-      });
-    }
+  return String(error);
+}
 
-    if (
-      lower.includes("could not resolve to a pullrequest") ||
-      lower.includes("repository.pullrequest") ||
-      lower.includes("no pull requests found for branch") ||
-      lower.includes("pull request not found")
-    ) {
-      return new GitHubCliError({
-        operation,
-        detail: "Pull request not found. Check the PR number or URL and try again.",
-        cause: error,
-      });
-    }
+function normalizeGitHubCliError(
+  operation: "execute" | "stdout",
+  error: VcsError | unknown,
+): GitHubCliError {
+  const text = errorText(error);
+  const lower = text.toLowerCase();
 
+  if (lower.includes("command not found: gh") || lower.includes("enoent")) {
     return new GitHubCliError({
       operation,
-      detail: `GitHub CLI command failed: ${error.message}`,
+      detail: "GitHub CLI (`gh`) is required but not available on PATH.",
+      cause: error,
+    });
+  }
+
+  if (
+    lower.includes("authentication failed") ||
+    lower.includes("not logged in") ||
+    lower.includes("gh auth login") ||
+    lower.includes("no oauth token")
+  ) {
+    return new GitHubCliError({
+      operation,
+      detail: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
+      cause: error,
+    });
+  }
+
+  if (
+    lower.includes("could not resolve to a pullrequest") ||
+    lower.includes("repository.pullrequest") ||
+    lower.includes("no pull requests found for branch") ||
+    lower.includes("pull request not found")
+  ) {
+    return new GitHubCliError({
+      operation,
+      detail: "Pull request not found. Check the PR number or URL and try again.",
       cause: error,
     });
   }
 
   return new GitHubCliError({
     operation,
-    detail: "GitHub CLI command failed.",
+    detail: text,
     cause: error,
   });
 }
@@ -161,16 +168,19 @@ function decodeGitHubJson<S extends Schema.Top>(
   );
 }
 
-export const make = Effect.sync(() => {
+export const make = Effect.fn("makeGitHubCli")(function* () {
+  const process = yield* VcsProcess;
+
   const execute: GitHubCliShape["execute"] = (input) =>
-    Effect.tryPromise({
-      try: () =>
-        runProcess("gh", input.args, {
-          cwd: input.cwd,
-          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        }),
-      catch: (error) => normalizeGitHubCliError("execute", error),
-    });
+    process
+      .run({
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: input.args,
+        cwd: input.cwd,
+        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      })
+      .pipe(Effect.mapError((error) => normalizeGitHubCliError("execute", error)));
 
   return GitHubCli.of({
     execute,
@@ -295,4 +305,4 @@ export const make = Effect.sync(() => {
   });
 });
 
-export const layer = Layer.effect(GitHubCli, make);
+export const layer = Layer.effect(GitHubCli, make());

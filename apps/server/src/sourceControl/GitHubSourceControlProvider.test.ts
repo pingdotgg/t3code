@@ -1,15 +1,17 @@
 import { assert, it } from "@effect/vitest";
 import { DateTime, Effect, Layer, Option } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitHubCli, type GitHubCliShape } from "./GitHubCli.ts";
+import type { VcsProcessOutput } from "../vcs/VcsProcess.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 
-const processResult = (stdout: string) => ({
+const processResult = (stdout: string): VcsProcessOutput => ({
+  exitCode: ChildProcessSpawner.ExitCode(0),
   stdout,
   stderr: "",
-  code: 0,
-  signal: null,
-  timedOut: false,
+  stdoutTruncated: false,
+  stderrTruncated: false,
 });
 
 function makeProvider(github: Partial<GitHubCliShape>) {

@@ -253,6 +253,32 @@ describe("when: ref is clean, ahead, and has no open PR", () => {
   });
 });
 
+describe("when: source control provider uses merge requests", () => {
+  it("uses GitLab MR terminology in quick actions and menu items", () => {
+    const gitlabStatus = status({
+      aheadCount: 2,
+      sourceControlProvider: {
+        kind: "gitlab",
+        name: "GitLab",
+        baseUrl: "https://gitlab.com",
+      },
+    });
+
+    const quick = resolveQuickAction(gitlabStatus, false);
+    const items = buildMenuItems(gitlabStatus, false);
+
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "create_pr",
+      label: "Push & create MR",
+    });
+    assert.deepInclude(items[2], {
+      id: "pr",
+      label: "Create MR",
+    });
+  });
+});
+
 describe("when: ref is clean, up to date, and has no open PR", () => {
   it("resolveQuickAction returns disabled no-action state", () => {
     const quick = resolveQuickAction(
@@ -656,7 +682,7 @@ describe("when: ref has no upstream configured", () => {
     assert.deepEqual(quick, {
       kind: "show_hint",
       label: "Push",
-      hint: 'Add an "origin" remote before pushing or creating a PR.',
+      hint: 'Add an "origin" remote before pushing or creating a pull request.',
       disabled: true,
     });
   });
@@ -840,7 +866,7 @@ describe("resolveDefaultBranchActionDialogCopy", () => {
     assert.deepEqual(copy, {
       title: "Push & create PR from default ref?",
       description:
-        'This action will push local commits and create a PR on "main". You can continue on this ref or create a feature ref and run the same action there.',
+        'This action will push local commits and create a pull request on "main". You can continue on this ref or create a feature ref and run the same action there.',
       continueLabel: "Push & create PR",
     });
   });
@@ -855,7 +881,7 @@ describe("resolveDefaultBranchActionDialogCopy", () => {
     assert.deepEqual(copy, {
       title: "Commit, push & create PR from default ref?",
       description:
-        'This action will commit, push, and create a PR on "main". You can continue on this ref or create a feature ref and run the same action there.',
+        'This action will commit, push, and create a pull request on "main". You can continue on this ref or create a feature ref and run the same action there.',
       continueLabel: "Commit, push & create PR",
     });
   });
@@ -884,7 +910,7 @@ describe("buildGitActionProgressStages", () => {
       "Pushing to origin/feature/test...",
       "Preparing PR...",
       "Generating PR content...",
-      "Creating GitHub pull request...",
+      "Creating pull request...",
     ]);
   });
 
@@ -898,7 +924,7 @@ describe("buildGitActionProgressStages", () => {
     assert.deepEqual(stages, [
       "Preparing PR...",
       "Generating PR content...",
-      "Creating GitHub pull request...",
+      "Creating pull request...",
     ]);
   });
 
@@ -928,7 +954,7 @@ describe("buildGitActionProgressStages", () => {
       "Pushing to origin/feature/test...",
       "Preparing PR...",
       "Generating PR content...",
-      "Creating GitHub pull request...",
+      "Creating pull request...",
     ]);
   });
 });

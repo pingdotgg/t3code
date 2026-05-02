@@ -2297,7 +2297,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const checkoutItem = await waitForElement(
         () =>
           Array.from(document.querySelectorAll("span")).find(
-            (element) => element.textContent?.trim() === "Checkout Pull Request",
+            (element) => element.textContent?.trim() === "Checkout pull request",
           ) as HTMLSpanElement | null,
         "Unable to find checkout pull request option.",
       );
