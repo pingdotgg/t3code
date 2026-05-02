@@ -222,6 +222,8 @@ function createMockEnvironmentApi(input: {
       getThreadProjection: (() => {
         throw new Error("Not implemented in browser test.");
       }) as EnvironmentApi["orchestrationV2"]["getThreadProjection"],
+      subscribeShell: (() => () =>
+        undefined) as EnvironmentApi["orchestrationV2"]["subscribeShell"],
       subscribeThread: (() => () =>
         undefined) as EnvironmentApi["orchestrationV2"]["subscribeThread"],
     },
