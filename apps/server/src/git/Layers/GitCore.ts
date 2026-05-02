@@ -1392,7 +1392,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
     const stagedPatch = yield* runGitStdoutWithOptions(
       "GitCore.prepareCommitContext.stagedPatch",
       cwd,
-      ["diff", "--cached", "--patch", "--minimal"],
+      ["diff", "--no-ext-diff", "--cached", "--patch", "--minimal"],
       {
         maxOutputBytes: PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES,
         truncateOutputAtMaxBytes: true,
@@ -1610,7 +1610,7 @@ export const makeGitCore = Effect.fn("makeGitCore")(function* (options?: {
           runGitStdoutWithOptions(
             "GitCore.readRangeContext.diffPatch",
             cwd,
-            ["diff", "--patch", "--minimal", range],
+            ["diff", "--no-ext-diff", "--patch", "--minimal", range],
             {
               maxOutputBytes: RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES,
               truncateOutputAtMaxBytes: true,
