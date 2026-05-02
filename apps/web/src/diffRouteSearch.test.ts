@@ -6,6 +6,7 @@ import {
   buildDiffEditorSearch,
   buildDiffFilesSearch,
   buildDiffOpenSearch,
+  buildDiffSearchFromSnapshot,
   buildDiffTurnSearch,
   parseDiffRouteSearch,
 } from "./diffRouteSearch";
@@ -224,6 +225,63 @@ describe("diff route builders", () => {
       editorBackToView: "diff",
     });
     expect(buildDiffClosedSearch(previous)).toEqual({
+      tab: "activity",
+      diff: undefined,
+      diffTurnId: undefined,
+      diffFilePath: undefined,
+      diffView: undefined,
+      editorFilePath: undefined,
+      editorLine: undefined,
+      editorColumn: undefined,
+      editorBackToView: undefined,
+      editorBackToDiff: undefined,
+    });
+  });
+
+  it("restores a files or editor snapshot without leaking current diff state", () => {
+    const previous = {
+      tab: "activity",
+      diff: "1",
+      diffTurnId: "turn-current",
+      diffFilePath: "current.ts",
+      diffView: undefined,
+    };
+
+    expect(
+      buildDiffSearchFromSnapshot(previous, {
+        diff: "1",
+        diffView: "files",
+      }),
+    ).toEqual({
+      tab: "activity",
+      diff: "1",
+      diffView: "files",
+    });
+
+    expect(
+      buildDiffSearchFromSnapshot(previous, {
+        diff: "1",
+        diffView: "editor",
+        diffTurnId: TurnId.make("turn-1"),
+        diffFilePath: "src/app.ts",
+        editorFilePath: "src/app.ts",
+        editorLine: 4,
+        editorColumn: 8,
+        editorBackToView: "diff",
+      }),
+    ).toEqual({
+      tab: "activity",
+      diff: "1",
+      diffTurnId: "turn-1",
+      diffFilePath: "src/app.ts",
+      diffView: "editor",
+      editorFilePath: "src/app.ts",
+      editorLine: 4,
+      editorColumn: 8,
+      editorBackToView: "diff",
+    });
+
+    expect(buildDiffSearchFromSnapshot(previous, {})).toEqual({
       tab: "activity",
       diff: undefined,
       diffTurnId: undefined,

@@ -1,7 +1,5 @@
-import { useSearch } from "@tanstack/react-router";
 import type { EnvironmentId, ScopedProjectRef } from "@forma/contracts";
 
-import { parseDiffRouteSearch, resolveWorkspacePanelDisplayMode } from "../diffRouteSearch";
 import { type ThreadRouteTarget } from "../threadRoutes";
 import DiffPanel, { DiffWorkerPoolProvider } from "./DiffPanel";
 import { type DiffPanelMode } from "./DiffPanelShell";
@@ -15,31 +13,24 @@ interface WorkspacePanelProps {
   workspaceRoot: string | null;
   activeProjectRef: ScopedProjectRef | null;
   supportsDiff: boolean;
+  requestedDiffToggleNonce?: number | undefined;
 }
 
 export default function WorkspacePanel(props: WorkspacePanelProps) {
-  const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
-  const displayMode = resolveWorkspacePanelDisplayMode(diffSearch);
-  const shouldRenderFilesPanel =
-    !props.supportsDiff || displayMode === "files" || displayMode === "editor-files";
   const modeProps = props.mode ? { mode: props.mode } : {};
-
-  if (shouldRenderFilesPanel) {
-    return (
-      <WorkspaceFilesPanel
-        {...modeProps}
-        routeTarget={props.routeTarget}
-        environmentId={props.environmentId}
-        panelKey={props.panelKey}
-        workspaceRoot={props.workspaceRoot}
-        activeProjectRef={props.activeProjectRef}
-      />
-    );
-  }
-
-  return (
-    <DiffWorkerPoolProvider>
-      <DiffPanel {...modeProps} />
-    </DiffWorkerPoolProvider>
+  const content = (
+    <WorkspaceFilesPanel
+      {...modeProps}
+      routeTarget={props.routeTarget}
+      environmentId={props.environmentId}
+      panelKey={props.panelKey}
+      workspaceRoot={props.workspaceRoot}
+      activeProjectRef={props.activeProjectRef}
+      supportsDiff={props.supportsDiff}
+      requestedDiffToggleNonce={props.requestedDiffToggleNonce}
+      DiffBrowserComponent={DiffPanel}
+    />
   );
+
+  return props.supportsDiff ? <DiffWorkerPoolProvider>{content}</DiffWorkerPoolProvider> : content;
 }

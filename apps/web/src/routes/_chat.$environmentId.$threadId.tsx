@@ -21,7 +21,7 @@ import { WorkspacePanelHost } from "../components/WorkspacePanelHost";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import {
   buildDiffClosedSearch,
-  buildDiffOpenSearch,
+  buildDiffFilesSearch,
   type DiffRouteSearch,
   parseDiffRouteSearch,
 } from "../diffRouteSearch";
@@ -96,6 +96,7 @@ function ChatThreadRouteView() {
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
   const panelOpen = search.diff === "1";
   const currentThreadKey = threadRef ? `${threadRef.environmentId}:${threadRef.threadId}` : null;
+  const [workspaceDiffToggleRequestNonce, setWorkspaceDiffToggleRequestNonce] = useState(0);
   const [workspacePanelMountState, setWorkspacePanelMountState] = useState(() => ({
     threadKey: currentThreadKey,
     hasOpenedPanel: panelOpen,
@@ -133,9 +134,12 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
-      search: (previous) => buildDiffOpenSearch(previous),
+      search: (previous) => buildDiffFilesSearch(previous),
     });
   }, [markWorkspacePanelOpened, navigate, threadRef]);
+  const requestWorkspaceDiffToggle = useCallback(() => {
+    setWorkspaceDiffToggleRequestNonce((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {
@@ -177,6 +181,7 @@ function ChatThreadRouteView() {
             threadId={threadRef.threadId}
             reserveTitleBarControlInset={!panelOpen}
             routeKind="server"
+            onRequestWorkspaceDiffToggle={requestWorkspaceDiffToggle}
           />
           <BottomDrawerHost />
         </div>
@@ -196,6 +201,7 @@ function ChatThreadRouteView() {
             workspaceRoot={workspaceRoot}
             activeProjectRef={activeProjectRef}
             supportsDiff={true}
+            requestedDiffToggleNonce={workspaceDiffToggleRequestNonce}
           />
         )}
       </WorkspacePanelHost>

@@ -162,6 +162,27 @@ export function buildDiffClosedSearch(previous: Record<string, unknown>) {
   };
 }
 
+export function buildDiffSearchFromSnapshot(
+  previous: Record<string, unknown>,
+  snapshot: DiffRouteSearch,
+) {
+  if (snapshot.diff !== "1") {
+    return buildDiffClosedSearch(previous);
+  }
+
+  return {
+    ...stripDiffSearchParams(previous),
+    diff: "1" as const,
+    ...(snapshot.diffTurnId ? { diffTurnId: snapshot.diffTurnId } : {}),
+    ...(snapshot.diffFilePath ? { diffFilePath: snapshot.diffFilePath } : {}),
+    ...(snapshot.diffView ? { diffView: snapshot.diffView } : {}),
+    ...(snapshot.editorFilePath ? { editorFilePath: snapshot.editorFilePath } : {}),
+    ...(snapshot.editorLine !== undefined ? { editorLine: snapshot.editorLine } : {}),
+    ...(snapshot.editorColumn !== undefined ? { editorColumn: snapshot.editorColumn } : {}),
+    ...(snapshot.editorBackToView ? { editorBackToView: snapshot.editorBackToView } : {}),
+  };
+}
+
 export function parseDiffRouteSearch(search: Record<string, unknown>): DiffRouteSearch {
   const diff = isDiffOpenValue(search.diff) ? "1" : undefined;
   const diffTurnIdRaw = diff ? normalizeSearchString(search.diffTurnId) : undefined;

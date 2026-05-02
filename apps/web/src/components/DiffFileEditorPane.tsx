@@ -52,12 +52,21 @@ import { toastManager } from "./ui/toast";
 
 ensureMonacoConfigured();
 
+export interface DiffFileEditorRequestedNavigation {
+  nonce: number;
+  type: "back" | "close-panel" | "show-diff" | "switch-file";
+  filePath?: string | undefined;
+}
+
 type PendingNavigation =
   | {
       type: "back";
     }
   | {
       type: "close-panel";
+    }
+  | {
+      type: "show-diff";
     }
   | {
       type: "switch-file";
@@ -79,12 +88,10 @@ interface DiffFileEditorPaneProps {
   resolvedTheme: ResolvedThemeMode;
   onRequestBack: () => void;
   onRequestClosePanel?: (() => void) | undefined;
+  onRequestShowDiff?: (() => void) | undefined;
   onRequestFilePathChange: (filePath: string) => void;
-  requestedBackNonce?: number | undefined;
-  requestedClosePanelNonce?: number | undefined;
-  requestedFilePathChange?: string | null | undefined;
+  requestedNavigation?: DiffFileEditorRequestedNavigation | null | undefined;
   requestedSaveNonce?: number | undefined;
-  onHandledRequestedFilePathChange?: (() => void) | undefined;
   onEditorControlsStateChange?:
     | ((
         state: Readonly<{
@@ -432,16 +439,14 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     onOpenInEditor,
     onOpenPreview,
     onRequestClosePanel,
+    onRequestShowDiff,
     previewDisabledReason,
-    requestedBackNonce,
-    requestedClosePanelNonce,
+    requestedNavigation,
     reuseMonacoModels = false,
     requestedSaveNonce,
     showHeader = true,
     onPersisted,
-    onHandledRequestedFilePathChange,
     onAddCodeContext,
-    requestedFilePathChange,
     sessionKey,
     onRequestBack,
     onRequestFilePathChange,
@@ -483,9 +488,8 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   const saveHandlerRef = useRef<() => Promise<boolean>>(async () => false);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
-  const lastHandledRequestedBackNonceRef = useRef<number | undefined>(requestedBackNonce);
-  const lastHandledRequestedClosePanelNonceRef = useRef<number | undefined>(
-    requestedClosePanelNonce,
+  const lastHandledRequestedNavigationNonceRef = useRef<number | undefined>(
+    requestedNavigation?.nonce,
   );
   const lastHandledRequestedSaveNonceRef = useRef<number | undefined>(requestedSaveNonce);
   const [monacoReadyGeneration, setMonacoReadyGeneration] = useState(0);
@@ -508,7 +512,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
             filePath: renderedEditorFilePath,
           })
         : renderedEditorFilePath,
-    [cwd, renderedEditorFilePath, reuseMonacoModels, sessionKey],
+    [renderedEditorFilePath, reuseMonacoModels, sessionKey],
   );
 
   const isDirty = draftContents !== baseContents;
@@ -531,9 +535,13 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
         onRequestClosePanel?.();
         return;
       }
+      if (navigation.type === "show-diff") {
+        onRequestShowDiff?.();
+        return;
+      }
       onRequestFilePathChange(navigation.filePath);
     },
-    [onRequestBack, onRequestClosePanel, onRequestFilePathChange],
+    [onRequestBack, onRequestClosePanel, onRequestFilePathChange, onRequestShowDiff],
   );
 
   const requestNavigation = useCallback(
@@ -818,45 +826,38 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   }, [canSave, filePath, isDirty, onEditorControlsStateChange, status]);
 
   useEffect(() => {
-    if (!requestedFilePathChange) {
-      return;
-    }
-
-    if (requestedFilePathChange === filePath) {
-      onHandledRequestedFilePathChange?.();
-      return;
-    }
-
-    requestNavigation({
-      type: "switch-file",
-      filePath: requestedFilePathChange,
-    });
-    onHandledRequestedFilePathChange?.();
-  }, [filePath, onHandledRequestedFilePathChange, requestNavigation, requestedFilePathChange]);
-
-  useEffect(() => {
     if (
-      requestedBackNonce === undefined ||
-      requestedBackNonce === lastHandledRequestedBackNonceRef.current
+      requestedNavigation === undefined ||
+      requestedNavigation === null ||
+      requestedNavigation.nonce === lastHandledRequestedNavigationNonceRef.current
     ) {
       return;
     }
 
-    lastHandledRequestedBackNonceRef.current = requestedBackNonce;
+    lastHandledRequestedNavigationNonceRef.current = requestedNavigation.nonce;
+    if (requestedNavigation.type === "switch-file") {
+      if (!requestedNavigation.filePath || requestedNavigation.filePath === filePath) {
+        return;
+      }
+      requestNavigation({
+        type: "switch-file",
+        filePath: requestedNavigation.filePath,
+      });
+      return;
+    }
+
+    if (requestedNavigation.type === "show-diff") {
+      requestNavigation({ type: "show-diff" });
+      return;
+    }
+
+    if (requestedNavigation.type === "close-panel") {
+      requestNavigation({ type: "close-panel" });
+      return;
+    }
+
     requestNavigation({ type: "back" });
-  }, [requestNavigation, requestedBackNonce]);
-
-  useEffect(() => {
-    if (
-      requestedClosePanelNonce === undefined ||
-      requestedClosePanelNonce === lastHandledRequestedClosePanelNonceRef.current
-    ) {
-      return;
-    }
-
-    lastHandledRequestedClosePanelNonceRef.current = requestedClosePanelNonce;
-    requestNavigation({ type: "close-panel" });
-  }, [requestNavigation, requestedClosePanelNonce]);
+  }, [filePath, requestNavigation, requestedNavigation]);
 
   useEffect(() => {
     if (

@@ -21,7 +21,7 @@ import { WorkspacePanelHost } from "../components/WorkspacePanelHost";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import {
   buildDiffClosedSearch,
-  buildDiffOpenSearch,
+  buildDiffFilesSearch,
   type DiffRouteSearch,
   parseDiffRouteSearch,
 } from "../diffRouteSearch";
@@ -119,7 +119,7 @@ function DraftChatThreadRouteView() {
     void navigate({
       to: "/draft/$draftId",
       params: buildDraftThreadRouteParams(draftId),
-      search: (previous) => buildDiffOpenSearch(previous),
+      search: (previous) => buildDiffFilesSearch(previous),
     });
   }, [draftId, markWorkspacePanelOpened, navigate]);
 

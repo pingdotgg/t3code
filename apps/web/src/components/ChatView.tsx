@@ -39,7 +39,6 @@ import {
   buildDiffClosedSearch,
   buildDiffEditorSearch,
   buildDiffFilesSearch,
-  buildDiffOpenSearch,
   buildDiffTurnSearch,
   parseDiffRouteSearch,
   resolveWorkspacePanelDisplayMode,
@@ -98,7 +97,7 @@ import { buildTemporaryWorktreeBranchName } from "@forma/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { resolveShortcutCommand } from "../keybindings";
 import { ComposerMetaBar } from "./ComposerMetaBar";
 import PlanSidebar from "./PlanSidebar";
 import { IconChevronDown as ChevronDownIcon } from "symbols-react";
@@ -114,6 +113,7 @@ import {
 import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
+import { useThreadRowActions } from "../hooks/useThreadRowActions";
 import { resolveAppModelSelection } from "../modelSelection";
 import { type MarkdownFileLinkMeta } from "../markdown-links";
 import { resolveWorkspaceEditorTarget } from "../workspaceEditorTarget";
@@ -177,11 +177,7 @@ import {
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { useBottomDrawerUiStore } from "../bottomDrawerUiStore";
-import {
-  classifyPreviewRelativePath,
-  openPreviewDrawer,
-  openPreviewTarget,
-} from "../previewTargets";
+import { classifyPreviewRelativePath, openPreviewTarget } from "../previewTargets";
 import { usePreviewWorkspaceStore } from "../previewWorkspaceStore";
 import {
   useServerAvailableEditors,
@@ -191,6 +187,7 @@ import {
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { RightPanelSheet } from "./RightPanelSheet";
+import { buildThreadMarkdownExport } from "../lib/threadMarkdownExport";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -339,6 +336,7 @@ type ChatViewProps =
       reserveTitleBarControlInset?: boolean;
       routeKind: "server";
       draftId?: never;
+      onRequestWorkspaceDiffToggle?: (() => void) | undefined;
     }
   | {
       environmentId: EnvironmentId;
@@ -346,6 +344,7 @@ type ChatViewProps =
       reserveTitleBarControlInset?: boolean;
       routeKind: "draft";
       draftId: DraftId;
+      onRequestWorkspaceDiffToggle?: (() => void) | undefined;
     };
 
 function useLocalDispatchState(input: {
@@ -422,7 +421,13 @@ const EMPTY_TURN_QUEUE: Thread["turnQueue"] = {
 };
 
 export default function ChatView(props: ChatViewProps) {
-  const { environmentId, threadId, routeKind, reserveTitleBarControlInset = true } = props;
+  const {
+    environmentId,
+    threadId,
+    routeKind,
+    reserveTitleBarControlInset = true,
+    onRequestWorkspaceDiffToggle,
+  } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -602,14 +607,7 @@ export default function ChatView(props: ChatViewProps) {
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const workspacePanelDisplayMode = resolveWorkspacePanelDisplayMode(rawSearch);
-  const filesOpen =
-    workspacePanelDisplayMode === "files" ||
-    workspacePanelDisplayMode === "editor-files" ||
-    (routeKind === "draft" && workspacePanelDisplayMode === "editor-standalone");
-  const diffOpen =
-    workspacePanelDisplayMode === "diff" ||
-    workspacePanelDisplayMode === "editor-diff" ||
-    (routeKind === "server" && workspacePanelDisplayMode === "editor-standalone");
+  const filesOpen = workspacePanelDisplayMode !== "closed";
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadRef = useMemo(
     () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
@@ -1286,6 +1284,14 @@ export default function ChatView(props: ChatViewProps) {
     () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
     [selectedProvider, providerStatuses],
   );
+  const {
+    archiveNow,
+    copyThreadAsMarkdown,
+    copyThreadId,
+    copyWorkspacePath,
+    deleteWithConfirmation,
+    forkNow,
+  } = useThreadRowActions();
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -1294,23 +1300,61 @@ export default function ChatView(props: ChatViewProps) {
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
   const diffAvailable = isServerThread && isGitRepo;
-  const nonTerminalShortcutLabelOptions = useMemo(
-    () => ({
-      context: {
-        terminalFocus: false,
-        terminalOpen: Boolean(terminalState.terminalOpen),
-      },
-    }),
-    [terminalState.terminalOpen],
+  const threadMarkdownExport = useMemo(
+    () =>
+      activeThread
+        ? buildThreadMarkdownExport({
+            routeKind,
+            thread: activeThread,
+            environmentId: activeThread.environmentId,
+            ...(routeKind === "draft" && draftId ? { draftId } : {}),
+            ...(activeProject
+              ? {
+                  project: {
+                    id: activeProject.id,
+                    name: activeProject.name,
+                    cwd: activeProject.cwd,
+                  },
+                }
+              : {}),
+            workspaceRoot: activeWorkspaceRoot ?? null,
+          })
+        : "",
+    [activeProject, activeThread, activeWorkspaceRoot, draftId, routeKind],
   );
-  const terminalToggleShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "terminal.toggle"),
-    [keybindings],
-  );
-  const diffPanelShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "diff.toggle", nonTerminalShortcutLabelOptions),
-    [keybindings, nonTerminalShortcutLabelOptions],
-  );
+  const handleCopyThreadAsMarkdown = useCallback(() => {
+    if (!threadMarkdownExport) {
+      return;
+    }
+    copyThreadAsMarkdown(threadMarkdownExport);
+  }, [copyThreadAsMarkdown, threadMarkdownExport]);
+  const handleCopyWorkspacePath = useCallback(() => {
+    copyWorkspacePath(activeWorkspaceRoot ?? null);
+  }, [activeWorkspaceRoot, copyWorkspacePath]);
+  const handleCopyThreadId = useCallback(() => {
+    if (!activeThread) {
+      return;
+    }
+    copyThreadId(activeThread.id);
+  }, [activeThread, copyThreadId]);
+  const handleForkThread = useCallback(() => {
+    if (!activeThreadRef) {
+      return;
+    }
+    void forkNow(activeThreadRef);
+  }, [activeThreadRef, forkNow]);
+  const handleArchiveThread = useCallback(() => {
+    if (!activeThreadRef) {
+      return;
+    }
+    void archiveNow(activeThreadRef);
+  }, [activeThreadRef, archiveNow]);
+  const handleDeleteThread = useCallback(() => {
+    if (!activeThreadRef) {
+      return;
+    }
+    void deleteWithConfirmation(activeThreadRef);
+  }, [activeThreadRef, deleteWithConfirmation]);
   const navigateCurrentThreadPanel = useCallback(
     (updateSearch: (previous: Record<string, unknown>) => Record<string, unknown>) => {
       if (routeKind === "draft") {
@@ -1339,23 +1383,12 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeWorkspaceRoot) {
       return;
     }
-    if (!filesOpen) {
+    if (workspacePanelDisplayMode === "closed") {
       navigateCurrentThreadPanel((previous) => buildDiffFilesSearch(previous));
       return;
     }
     navigateCurrentThreadPanel((previous) => buildDiffClosedSearch(previous));
-  }, [activeWorkspaceRoot, filesOpen, navigateCurrentThreadPanel]);
-  const onToggleDiff = useCallback(() => {
-    if (!isServerThread) {
-      return;
-    }
-    navigateCurrentThreadPanel((previous) => {
-      if (diffOpen) {
-        return buildDiffClosedSearch(previous);
-      }
-      return buildDiffOpenSearch(previous);
-    });
-  }, [diffOpen, isServerThread, navigateCurrentThreadPanel]);
+  }, [activeWorkspaceRoot, navigateCurrentThreadPanel, workspacePanelDisplayMode]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -1450,13 +1483,6 @@ export default function ChatView(props: ChatViewProps) {
     showTerminalDrawer,
     terminalState.terminalOpen,
   ]);
-  const togglePreviewVisibility = useCallback(() => {
-    if (bottomDrawerMode === "preview") {
-      closeBottomDrawer();
-      return;
-    }
-    openPreviewDrawer(activeProjectRef);
-  }, [activeProjectRef, bottomDrawerMode, closeBottomDrawer]);
   useEffect(() => {
     if (bottomDrawerMode !== "preview") {
       return;
@@ -2167,7 +2193,10 @@ export default function ChatView(props: ChatViewProps) {
       if (command === "diff.toggle") {
         event.preventDefault();
         event.stopPropagation();
-        onToggleDiff();
+        if (!diffAvailable || workspacePanelDisplayMode === "closed") {
+          return;
+        }
+        onRequestWorkspaceDiffToggle?.();
         return;
       }
 
@@ -2199,7 +2228,9 @@ export default function ChatView(props: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     keybindings,
-    onToggleDiff,
+    onRequestWorkspaceDiffToggle,
+    diffAvailable,
+    workspacePanelDisplayMode,
     toggleTerminalVisibility,
   ]);
 
@@ -3323,17 +3354,18 @@ export default function ChatView(props: ChatViewProps) {
       {/* Top bar */}
       <header
         className={cn(
-          "border-b border-border px-3 sm:px-5",
+          "border-b border-border px-5",
           isElectron
             ? cn(
-                "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]",
+                "drag-region h-12 flex items-center wco:h-[env(titlebar-area-height)]",
                 reserveTitleBarControlInset &&
                   "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
               )
-            : "py-2 sm:py-3",
+            : "py-2",
         )}
       >
         <ChatHeader
+          routeKind={routeKind}
           activeThreadEnvironmentId={activeThread.environmentId}
           activeThreadId={activeThread.id}
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
@@ -3347,25 +3379,22 @@ export default function ChatView(props: ChatViewProps) {
           }
           keybindings={keybindings}
           availableEditors={availableEditors}
-          terminalAvailable={activeProject !== undefined}
-          terminalOpen={bottomDrawerMode === "terminal"}
-          terminalToggleShortcutLabel={terminalToggleShortcutLabel}
-          previewOpen={bottomDrawerMode === "preview"}
-          diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
+          workspaceRoot={activeWorkspaceRoot ?? null}
           filesAvailable={activeWorkspaceRoot !== undefined}
           filesOpen={filesOpen}
-          diffAvailable={diffAvailable}
-          diffOpen={diffOpen}
           onRunProjectScript={runProjectScript}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
           onOpenProjectSwitcher={openProjectSwitcher}
-          onToggleTerminal={toggleTerminalVisibility}
-          onTogglePreview={togglePreviewVisibility}
           onToggleFiles={onToggleFiles}
-          onToggleDiff={onToggleDiff}
+          onCopyThreadAsMarkdown={handleCopyThreadAsMarkdown}
+          onCopyWorkspacePath={handleCopyWorkspacePath}
+          {...(routeKind === "server" ? { onCopyThreadId: handleCopyThreadId } : {})}
+          {...(routeKind === "server" ? { onForkThread: handleForkThread } : {})}
+          {...(routeKind === "server" ? { onArchiveThread: handleArchiveThread } : {})}
+          {...(routeKind === "server" ? { onDeleteThread: handleDeleteThread } : {})}
         />
       </header>
 

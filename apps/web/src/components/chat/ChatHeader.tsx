@@ -5,20 +5,12 @@ import {
   type ResolvedKeybindingsConfig,
   type ThreadId,
 } from "@forma/contracts";
-import { scopeThreadRef } from "@forma/client-runtime";
 import { memo } from "react";
-import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import {
-  IconChevronRight as ChevronRightIcon,
-  IconCube as CubeIcon,
-  IconFolder as FilesIcon,
-  IconPlusminus as DiffIcon,
-} from "symbols-react";
-import { PreviewTriggerIcon, TerminalToggleIcon } from "../icons/custom";
+import { IconChevronRight as ChevronRightIcon, IconCube as CubeIcon } from "symbols-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
+import { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { DesktopSidebarReopenButton } from "../sidebar/DesktopSidebarReopenButton";
 import {
   ThreadBreadcrumbProjectChipContent,
@@ -26,11 +18,13 @@ import {
   THREAD_BREADCRUMB_PROJECT_CHIP_INTERACTIVE_CLASS_NAME,
   THREAD_BREADCRUMB_SEPARATOR_ICON_CLASS_NAME,
 } from "../ThreadBreadcrumb";
-import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
-import { OpenInPicker } from "./OpenInPicker";
+import { HeaderIconActionButton } from "../HeaderIconActionButton";
+import { SidebarPanelIcon } from "../icons/custom";
+import { ChatHeaderActionsMenu } from "./ChatHeaderActionsMenu";
 
 interface ChatHeaderProps {
+  routeKind: "server" | "draft";
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   draftId?: DraftId;
@@ -42,28 +36,26 @@ interface ChatHeaderProps {
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
-  terminalAvailable: boolean;
-  terminalOpen: boolean;
-  terminalToggleShortcutLabel: string | null;
-  previewOpen: boolean;
-  diffToggleShortcutLabel: string | null;
   gitCwd: string | null;
+  workspaceRoot: string | null;
   filesAvailable: boolean;
   filesOpen: boolean;
-  diffAvailable: boolean;
-  diffOpen: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onOpenProjectSwitcher: () => void;
-  onToggleTerminal: () => void;
-  onTogglePreview: () => void;
   onToggleFiles: () => void;
-  onToggleDiff: () => void;
+  onCopyThreadAsMarkdown: () => void;
+  onCopyWorkspacePath?: (() => void) | undefined;
+  onCopyThreadId?: (() => void) | undefined;
+  onForkThread?: (() => void) | undefined;
+  onArchiveThread?: (() => void) | undefined;
+  onDeleteThread?: (() => void) | undefined;
 }
 
 export const ChatHeader = memo(function ChatHeader({
+  routeKind,
   activeThreadEnvironmentId,
   activeThreadId,
   draftId,
@@ -75,28 +67,25 @@ export const ChatHeader = memo(function ChatHeader({
   preferredScriptId,
   keybindings,
   availableEditors,
-  terminalAvailable,
-  terminalOpen,
-  terminalToggleShortcutLabel,
-  previewOpen,
-  diffToggleShortcutLabel,
   gitCwd,
+  workspaceRoot,
   filesAvailable,
   filesOpen,
-  diffAvailable,
-  diffOpen,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
   onOpenProjectSwitcher,
-  onToggleTerminal,
-  onTogglePreview,
   onToggleFiles,
-  onToggleDiff,
+  onCopyThreadAsMarkdown,
+  onCopyWorkspacePath,
+  onCopyThreadId,
+  onForkThread,
+  onArchiveThread,
+  onDeleteThread,
 }: ChatHeaderProps) {
   return (
-    <div className="@container/header-actions flex min-h-4 min-w-0 flex-1 items-center gap-2 sm:min-h-4 h-4">
+    <div className="@container/header-actions flex flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden md:overflow-visible sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
         <DesktopSidebarReopenButton />
@@ -141,126 +130,46 @@ export const ChatHeader = memo(function ChatHeader({
         )}
       </div>
       <div className="flex shrink-0 items-center justify-end gap-2">
-        {activeProjectScripts && (
-          <ProjectScriptsControl
-            compact
-            scripts={activeProjectScripts}
-            keybindings={keybindings}
-            preferredScriptId={preferredScriptId}
-            onRunScript={onRunProjectScript}
-            onAddScript={onAddProjectScript}
-            onUpdateScript={onUpdateProjectScript}
-            onDeleteScript={onDeleteProjectScript}
-          />
-        )}
-        {activeProjectName && (
-          <OpenInPicker
-            compact
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            openInCwd={openInCwd}
-          />
-        )}
-        {activeProjectName && (
-          <GitActionsControl
-            compact
-            gitCwd={gitCwd}
-            activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
-            {...(draftId ? { draftId } : {})}
-          />
-        )}
+        <ChatHeaderActionsMenu
+          routeKind={routeKind}
+          activeThreadEnvironmentId={activeThreadEnvironmentId}
+          activeThreadId={activeThreadId}
+          {...(draftId ? { draftId } : {})}
+          openInCwd={openInCwd}
+          activeProjectScripts={activeProjectScripts}
+          preferredScriptId={preferredScriptId}
+          keybindings={keybindings}
+          availableEditors={availableEditors}
+          gitCwd={gitCwd}
+          workspaceRoot={workspaceRoot}
+          onRunProjectScript={onRunProjectScript}
+          onAddProjectScript={onAddProjectScript}
+          onUpdateProjectScript={onUpdateProjectScript}
+          onDeleteProjectScript={onDeleteProjectScript}
+          onCopyThreadAsMarkdown={onCopyThreadAsMarkdown}
+          onCopyWorkspacePath={onCopyWorkspacePath}
+          onCopyThreadId={onCopyThreadId}
+          onForkThread={onForkThread}
+          onArchiveThread={onArchiveThread}
+          onDeleteThread={onDeleteThread}
+        />
         <Tooltip>
           <TooltipTrigger
             render={
-              <Toggle
-                className="shrink-0 [&_svg]:fill-current"
+              <HeaderIconActionButton
                 pressed={filesOpen}
                 onClick={onToggleFiles}
                 aria-label="Toggle files panel"
-                variant="outline"
-                size="xs"
                 disabled={!filesAvailable}
               >
-                <FilesIcon className="size-3" />
-              </Toggle>
+                <SidebarPanelIcon className="size-3 rotate-180" />
+              </HeaderIconActionButton>
             }
           />
           <TooltipPopup side="bottom">
             {!filesAvailable
               ? "Files panel is unavailable until this thread has an active project."
               : "Toggle files panel"}
-          </TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0 [&_svg]:fill-current"
-                pressed={previewOpen}
-                onClick={onTogglePreview}
-                aria-label="Toggle preview drawer"
-                variant="outline"
-                size="xs"
-                disabled={!activeProjectName}
-              >
-                <PreviewTriggerIcon className="size-3" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {!activeProjectName
-              ? "Preview is unavailable until this thread has an active project."
-              : "Toggle component preview drawer"}
-          </TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0 [&_svg]:fill-current"
-                pressed={terminalOpen}
-                onClick={onToggleTerminal}
-                aria-label="Toggle terminal drawer"
-                variant="outline"
-                size="xs"
-                disabled={!terminalAvailable}
-              >
-                <TerminalToggleIcon className="size-3" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {!terminalAvailable
-              ? "Terminal is unavailable until this thread has an active project."
-              : terminalToggleShortcutLabel
-                ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
-                : "Toggle terminal drawer"}
-          </TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0 [&_svg]:fill-current"
-                pressed={diffOpen}
-                onClick={onToggleDiff}
-                aria-label="Toggle diff panel"
-                variant="outline"
-                size="xs"
-                disabled={!diffAvailable}
-              >
-                <DiffIcon className="size-3 fill-current" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {!diffAvailable
-              ? isGitRepo
-                ? "Diff panel is unavailable for draft threads."
-                : "Diff panel is unavailable because this project is not a git repository."
-              : diffToggleShortcutLabel
-                ? `Toggle diff panel (${diffToggleShortcutLabel})`
-                : "Toggle diff panel"}
           </TooltipPopup>
         </Tooltip>
       </div>
