@@ -54,6 +54,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
 
   return (
     <Select
+      modal={false}
       value={environmentId}
       onValueChange={(value) => onEnvironmentChange(value as EnvironmentId)}
       items={environmentItems}

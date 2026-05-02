@@ -1173,14 +1173,28 @@ export default function GitActionsControl({
             </DialogTitle>
             <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
           </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setPendingDefaultBranchAction(null)}>
+          <DialogFooter className="sm:flex-wrap sm:items-center">
+            <Button
+              className="w-full sm:mr-auto sm:w-auto"
+              variant="outline"
+              size="sm"
+              onClick={() => setPendingDefaultBranchAction(null)}
+            >
               Abort
             </Button>
-            <Button variant="outline" size="sm" onClick={continuePendingDefaultBranchAction}>
+            <Button
+              className="min-h-8 w-full max-w-full whitespace-normal py-1.5 leading-snug sm:min-h-7 sm:w-auto"
+              variant="outline"
+              size="sm"
+              onClick={continuePendingDefaultBranchAction}
+            >
               {pendingDefaultBranchActionCopy?.continueLabel ?? "Continue"}
             </Button>
-            <Button size="sm" onClick={checkoutFeatureBranchAndContinuePendingAction}>
+            <Button
+              className="min-h-8 w-full max-w-full whitespace-normal py-1.5 leading-snug sm:min-h-7 sm:w-auto"
+              size="sm"
+              onClick={checkoutFeatureBranchAndContinuePendingAction}
+            >
               Checkout feature branch & continue
             </Button>
           </DialogFooter>
