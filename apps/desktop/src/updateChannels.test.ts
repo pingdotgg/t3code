@@ -38,4 +38,8 @@ describe("doesVersionMatchDesktopUpdateChannel", () => {
   it("rejects nightly releases on the stable channel", () => {
     expect(doesVersionMatchDesktopUpdateChannel("0.0.17-nightly.20260416.1", "latest")).toBe(false);
   });
+
+  it("accepts stable releases on the stable channel", () => {
+    expect(doesVersionMatchDesktopUpdateChannel("0.0.17", "latest")).toBe(true);
+  });
 });
