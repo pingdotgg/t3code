@@ -613,6 +613,12 @@ The frontend should not reconstruct display order by merging `messages`, `plans`
 
 `turnItems` are projection records, not the canonical source of truth. The canonical graph remains normalized in runs, attempts, nodes, requests, messages, plans, and checkpoints. Provider-native item refs live directly on nodes and turn items where correlation is needed.
 
+Forked threads also expose a derived `visibleTurnItems` projection. `turnItems` remains the canonical
+items emitted on that app thread. `visibleTurnItems` is the user-visible ordered read model: it may
+reference inherited source items through the fork source point, include synthetic lifecycle markers
+such as "forked from conversation", and then continue with local target-thread items. This keeps
+storage normalized while giving thread detail views and tests one backend-owned surface to assert.
+
 Known common tools should have structured item variants so the frontend can render stable custom components without parsing provider text:
 
 ```ts

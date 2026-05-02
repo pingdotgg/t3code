@@ -32,6 +32,7 @@ import {
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2DispatchCommandError,
+  OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   ORCHESTRATION_WS_METHODS,
   type ProjectId,
@@ -54,8 +55,7 @@ import {
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
-  type TerminalAttachStreamEvent,
-  type TerminalError,
+  type OrchestrationV2ThreadShell,
   type TerminalEvent,
   type TerminalMetadataStreamEvent,
   WS_METHODS,
@@ -975,6 +975,58 @@ const makeWsRpcLayer = (
         },
       );
 
+      const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subscribeShell")(
+        function* () {
+          const snapshot = yield* orchestrationV2.getShellSnapshot().pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Failed to load orchestration V2 shell snapshot",
+                  cause,
+                }),
+            ),
+          );
+
+          const liveStream = orchestrationV2.streamDomainEvents.pipe(
+            Stream.mapEffect((event) =>
+              orchestrationV2.getShellSnapshot().pipe(
+                Effect.map(
+                  (nextSnapshot) =>
+                    nextSnapshot.threads.find((thread) => thread.id === event.threadId) ?? null,
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetShellSnapshotError({
+                      message: `Failed while streaming orchestration V2 shell thread ${event.threadId}`,
+                      cause,
+                    }),
+                ),
+              ),
+            ),
+            Stream.filter((thread): thread is OrchestrationV2ThreadShell => thread !== null),
+            Stream.map((thread) => ({
+              kind: "thread.updated" as const,
+              thread,
+            })),
+            Stream.mapError(
+              (cause) =>
+                new OrchestrationV2GetShellSnapshotError({
+                  message: "Failed while streaming orchestration V2 shell",
+                  cause,
+                }),
+            ),
+          );
+
+          return Stream.concat(
+            Stream.make({
+              kind: "snapshot" as const,
+              snapshot,
+            }),
+            liveStream,
+          );
+        },
+      );
+
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -1350,8 +1402,10 @@ const makeWsRpcLayer = (
               "orchestration_v2.command_id": command.commandId,
               "orchestration_v2.command_type": command.type,
               "orchestration_v2.thread_id":
-                command.type === "thread.fork" ? command.targetThreadId : command.threadId,
-              ...(command.type === "thread.fork"
+                command.type === "thread.fork" || command.type === "thread.merge_back"
+                  ? command.targetThreadId
+                  : command.threadId,
+              ...(command.type === "thread.fork" || command.type === "thread.merge_back"
                 ? { "orchestration_v2.source_thread_id": command.sourceThreadId }
                 : {}),
             },
@@ -1372,6 +1426,14 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "orchestrationV2",
               "orchestration_v2.thread_id": input.threadId,
+            },
+          ),
+        [ORCHESTRATION_V2_WS_METHODS.subscribeShell]: (_input) =>
+          observeRpcStreamEffect(
+            ORCHESTRATION_V2_WS_METHODS.subscribeShell,
+            subscribeOrchestrationV2Shell(),
+            {
+              "rpc.aggregate": "orchestrationV2",
             },
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribeThread]: (input) =>

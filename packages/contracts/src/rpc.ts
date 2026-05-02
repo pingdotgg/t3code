@@ -67,6 +67,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   ORCHESTRATION_V2_WS_METHODS,
   OrchestrationV2DispatchCommandError,
+  OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2RpcSchemas,
 } from "./orchestrationV2.ts";
@@ -744,6 +745,16 @@ export const WsOrchestrationV2GetThreadProjectionRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationV2SubscribeShellRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.subscribeShell,
+  {
+    payload: OrchestrationV2RpcSchemas.subscribeShell.input,
+    success: OrchestrationV2RpcSchemas.subscribeShell.output,
+    error: OrchestrationV2GetShellSnapshotError,
+    stream: true,
+  },
+);
+
 export const WsOrchestrationV2SubscribeThreadRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.subscribeThread,
   {
@@ -885,5 +896,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationSubscribeThreadRpc,
   WsOrchestrationV2DispatchCommandRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
+  WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
 );

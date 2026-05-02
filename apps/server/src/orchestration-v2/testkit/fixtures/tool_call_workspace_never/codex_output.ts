@@ -8,6 +8,7 @@ import {
   assertSemanticProjectionIntegrity,
   assertTurnItemTypes,
   assertUserMessagesInclude,
+  assertVisibleTurnItemsMirrorLocalTurnItems,
   projectionFor,
   TOOL_CALL_WRITE_PROMPT,
 } from "../shared.ts";
@@ -20,6 +21,7 @@ export function assertToolCallWorkspaceNeverOutput(
 
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
+  assertVisibleTurnItemsMirrorLocalTurnItems(projection);
   assertTurnItemTypes(projection, ["user_message", "command_execution", "assistant_message"]);
   assertUserMessagesInclude(projection, [TOOL_CALL_WRITE_PROMPT]);
   assertRuntimeRequestCounts(projection, { total: 0 });

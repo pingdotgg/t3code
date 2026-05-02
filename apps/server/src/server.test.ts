@@ -21,6 +21,7 @@ import {
   TerminalNotRunningError,
   type OrchestrationCommand,
   type OrchestrationEvent,
+  type OrchestrationV2ShellStreamItem,
   type OrchestrationV2ThreadStreamItem,
   ORCHESTRATION_WS_METHODS,
   type ProviderKind,
@@ -5973,6 +5974,22 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](createThreadCommand);
             assert.equal(duplicateCreateResult.sequence, createResult.sequence);
 
+            const shellItems = yield* Queue.unbounded<OrchestrationV2ShellStreamItem>();
+            const shellFiber = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({}).pipe(
+              Stream.runForEach((item) => Queue.offer(shellItems, item)),
+              Effect.forkDetach,
+            );
+            const shellSnapshot = yield* takeWsItem(shellItems, "orchestration V2 shell snapshot");
+            assert.equal(shellSnapshot.kind, "snapshot");
+            if (shellSnapshot.kind === "snapshot") {
+              const thread = shellSnapshot.snapshot.threads.find(
+                (candidate) => candidate.id === createThreadCommand.threadId,
+              );
+              assert.isDefined(thread);
+              assert.equal(thread.itemCount, 0);
+              assert.equal(thread.status, "idle");
+            }
+
             const streamItems = yield* Queue.unbounded<OrchestrationV2ThreadStreamItem>();
             const streamFiber = yield* client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
               threadId: createThreadCommand.threadId,
@@ -5995,6 +6012,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             yield* client[ORCHESTRATION_V2_WS_METHODS.dispatchCommand](dispatchMessageCommand);
 
             const items: Array<OrchestrationV2ThreadStreamItem> = [];
+            const shellUpdates: Array<OrchestrationV2ShellStreamItem> = [];
             const turnItemTypes = new Set<string>();
             for (let index = 0; index < 20; index += 1) {
               const item = yield* takeWsItem(streamItems, `orchestration V2 event ${index + 1}`);
@@ -6009,13 +6027,28 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 break;
               }
             }
+            for (let index = 0; index < 20; index += 1) {
+              const item = yield* takeWsItem(
+                shellItems,
+                `orchestration V2 shell update ${index + 1}`,
+              );
+              shellUpdates.push(item);
+              if (
+                item.kind === "thread.updated" &&
+                item.thread.id === createThreadCommand.threadId &&
+                item.thread.visibleItemCount >= 2
+              ) {
+                break;
+              }
+            }
 
             const projection = yield* client[ORCHESTRATION_V2_WS_METHODS.getThreadProjection]({
               threadId: createThreadCommand.threadId,
             });
             yield* Fiber.interrupt(streamFiber);
+            yield* Fiber.interrupt(shellFiber);
 
-            return { items, projection };
+            return { items, shellUpdates, projection };
           }),
         ),
       );
@@ -6032,6 +6065,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.deepEqual(
         received.projection.turnItems.map((item) => item.type),
         ["user_message", "assistant_message"],
+      );
+      assert.isTrue(
+        received.shellUpdates.some(
+          (item) =>
+            item.kind === "thread.updated" &&
+            item.thread.visibleItemCount === received.projection.visibleTurnItems.length,
+        ),
       );
       assert.equal(
         received.projection.turnItems.find((item) => item.type === "assistant_message")?.text,

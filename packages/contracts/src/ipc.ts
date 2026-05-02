@@ -86,6 +86,7 @@ import type {
   OrchestrationV2Command,
   OrchestrationV2DispatchCommandResult,
   OrchestrationV2GetThreadProjectionInput,
+  OrchestrationV2ShellStreamItem,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
 } from "./orchestrationV2.ts";
@@ -1189,6 +1190,7 @@ export interface EnvironmentApi {
       callback: (status: VcsStatusResult) => void,
       options?: {
         onResubscribe?: () => void;
+        onError?: (message: string) => void;
       },
     ) => () => void;
   };
@@ -1212,6 +1214,7 @@ export interface EnvironmentApi {
       callback: (event: OrchestrationShellStreamItem) => void,
       options?: {
         onResubscribe?: () => void;
+        onError?: (message: string) => void;
       },
     ) => () => void;
     subscribeThread: (
@@ -1219,6 +1222,7 @@ export interface EnvironmentApi {
       callback: (event: OrchestrationThreadStreamItem) => void,
       options?: {
         onResubscribe?: () => void;
+        onError?: (message: string) => void;
       },
     ) => () => void;
   };
@@ -1229,11 +1233,19 @@ export interface EnvironmentApi {
     getThreadProjection: (
       input: OrchestrationV2GetThreadProjectionInput,
     ) => Promise<OrchestrationV2ThreadProjection>;
+    subscribeShell: (
+      callback: (event: OrchestrationV2ShellStreamItem) => void,
+      options?: {
+        onResubscribe?: () => void;
+        onError?: (message: string) => void;
+      },
+    ) => () => void;
     subscribeThread: (
       input: OrchestrationV2GetThreadProjectionInput,
       callback: (event: OrchestrationV2ThreadStreamItem) => void,
       options?: {
         onResubscribe?: () => void;
+        onError?: (message: string) => void;
       },
     ) => () => void;
   };
