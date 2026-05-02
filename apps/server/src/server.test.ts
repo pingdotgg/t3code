@@ -115,6 +115,7 @@ import {
   type VcsDriverRegistryShape,
   type VcsDriverHandle,
 } from "./vcs/VcsDriverRegistry.ts";
+import { layer as VcsProvisioningServiceLayer } from "./vcs/VcsProvisioningService.ts";
 import { layer as GitWorkflowServiceLayer } from "./git/GitWorkflowService.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
@@ -414,9 +415,11 @@ const buildAppUnderTest = (options?: {
           },
         }),
       filterIgnoredPaths: (_cwd, relativePaths) => Effect.succeed(relativePaths),
+      initRepository: () => Effect.void,
       ...options?.layers?.vcsDriver,
     };
     const vcsDriverRegistryLayer = Layer.mock(VcsDriverRegistry)({
+      get: () => Effect.succeed(defaultVcsDriver),
       detect: (input) =>
         defaultVcsDriver.detectRepository(input.cwd).pipe(
           Effect.flatMap((repository) =>
@@ -492,6 +495,9 @@ const buildAppUnderTest = (options?: {
       Layer.provideMerge(gitVcsDriverLayer),
       Layer.provideMerge(gitManagerLayer),
     );
+    const vcsProvisioningLayer = VcsProvisioningServiceLayer.pipe(
+      Layer.provide(vcsDriverRegistryLayer),
+    );
     const vcsStatusBroadcasterLayer = options?.layers?.vcsStatusBroadcaster
       ? Layer.mock(VcsStatusBroadcaster)({
           ...options.layers.vcsStatusBroadcaster,
@@ -538,6 +544,7 @@ const buildAppUnderTest = (options?: {
       Layer.provide(gitManagerLayer),
       Layer.provide(gitVcsDriverLayer),
       Layer.provide(gitWorkflowLayer),
+      Layer.provide(vcsProvisioningLayer),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
       Layer.provide(
         Layer.mock(ProjectSetupScriptRunner)({
@@ -2501,7 +2508,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             removeWorktree: () => Effect.void,
             createRef: (input) => Effect.succeed({ refName: input.refName }),
             switchRef: (input) => Effect.succeed({ refName: input.refName }),
-            initRepo: () => Effect.void,
           },
         },
       });

@@ -25,6 +25,9 @@ export interface SourceControlProviderHandle {
 }
 
 export interface SourceControlProviderRegistryShape {
+  readonly get: (
+    kind: SourceControlProviderKind,
+  ) => Effect.Effect<SourceControlProviderShape, SourceControlProviderError>;
   readonly resolveHandle: (input: {
     readonly cwd: string;
   }) => Effect.Effect<SourceControlProviderHandle, SourceControlProviderError>;
@@ -102,6 +105,9 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       registrations.map((registration) => [registration.kind, registration.provider]),
     );
 
+    const get: SourceControlProviderRegistryShape["get"] = (kind) =>
+      Effect.succeed(providers.get(kind) ?? unsupportedProvider(kind));
+
     const detectProviderContext = Effect.fn("SourceControlProviderRegistry.detectProviderContext")(
       function* (cwd: string) {
         const handle = yield* vcsRegistry
@@ -136,6 +142,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       );
 
     return SourceControlProviderRegistry.of({
+      get,
       resolveHandle,
       resolve: (input) => resolveHandle(input).pipe(Effect.map((handle) => handle.provider)),
     });

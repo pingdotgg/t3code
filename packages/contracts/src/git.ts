@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
+import { VcsDriverKind } from "./vcs.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
@@ -179,6 +180,7 @@ export type VcsSwitchRefInput = typeof VcsSwitchRefInput.Type;
 
 export const VcsInitInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  kind: Schema.optional(VcsDriverKind),
 });
 export type VcsInitInput = typeof VcsInitInput.Type;
 

@@ -78,6 +78,7 @@ import {
 } from "./server.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
 import { SourceControlDiscoveryResult } from "./sourceControl.ts";
+import { VcsError } from "./vcs.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -266,7 +267,7 @@ export const WsVcsSwitchRefRpc = Rpc.make(WS_METHODS.vcsSwitchRef, {
 
 export const WsVcsInitRpc = Rpc.make(WS_METHODS.vcsInit, {
   payload: VcsInitInput,
-  error: GitCommandError,
+  error: VcsError,
 });
 
 export const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {

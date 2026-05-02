@@ -65,7 +65,6 @@ export interface GitWorkflowServiceShape {
   readonly switchRef: (
     input: VcsSwitchRefInput,
   ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
-  readonly initRepo: (input: { readonly cwd: string }) => Effect.Effect<void, GitCommandError>;
   readonly renameBranch: (input: {
     readonly cwd: string;
     readonly oldBranch: string;
@@ -196,7 +195,6 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
       ensureGitCommand("GitWorkflowService.switchRef", input.cwd).pipe(
         Effect.andThen(Effect.scoped(git.switchRef(input))),
       ),
-    initRepo: (input) => git.initRepo(input),
     renameBranch: (input) =>
       ensureGit("GitWorkflowService.renameBranch", input.cwd).pipe(
         Effect.andThen(git.renameBranch(input)),

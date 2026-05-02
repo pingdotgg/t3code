@@ -31,6 +31,7 @@ function makeRegistry(input: {
   } satisfies Partial<VcsDriverShape>;
 
   const registryLayer = Layer.mock(VcsDriverRegistry)({
+    get: () => Effect.succeed(driver as unknown as VcsDriverShape),
     resolve: () =>
       Effect.succeed({
         kind: "git",
@@ -60,6 +61,18 @@ it.effect("routes GitHub remotes to the GitHub provider", () =>
     });
 
     const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "github");
+  }),
+);
+
+it.effect("routes directly by provider kind for remote-first workflows", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [],
+    });
+
+    const provider = yield* registry.get("github");
 
     assert.strictEqual(provider.kind, "github");
   }),

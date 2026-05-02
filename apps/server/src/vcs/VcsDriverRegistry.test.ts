@@ -16,6 +16,28 @@ const processOutput = (stdout: string): VcsProcessOutput => ({
 });
 
 describe("VcsDriverRegistry", () => {
+  it.effect("routes directly by VCS driver kind for non-repository workflows", () => {
+    const layer = Layer.effect(VcsDriverRegistry, makeVcsDriverRegistry()).pipe(
+      Layer.provide(
+        Layer.mock(VcsProjectConfig)({
+          resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(VcsProcess)({
+          run: () => Effect.succeed(processOutput("")),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const registry = yield* VcsDriverRegistry;
+      const driver = yield* registry.get("git");
+
+      assert.strictEqual(driver.capabilities.kind, "git");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("caches repository detection for repeated resolves in the same cwd and kind", () => {
     const calls: VcsProcessInput[] = [];
     const layer = Layer.effect(VcsDriverRegistry, makeVcsDriverRegistry()).pipe(

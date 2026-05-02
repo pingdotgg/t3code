@@ -3,6 +3,7 @@ import { Context, type Effect } from "effect";
 import type {
   VcsDriverCapabilities,
   VcsError,
+  VcsInitInput,
   VcsListRemotesResult,
   VcsListWorkspaceFilesResult,
   VcsRepositoryIdentity,
@@ -24,6 +25,7 @@ export interface VcsDriverShape {
     cwd: string,
     relativePaths: ReadonlyArray<string>,
   ) => Effect.Effect<ReadonlyArray<string>, VcsError>;
+  readonly initRepository: (input: VcsInitInput) => Effect.Effect<void, VcsError>;
 }
 
 export class VcsDriver extends Context.Service<VcsDriver, VcsDriverShape>()("t3/vcs/VcsDriver") {}

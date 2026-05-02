@@ -21,6 +21,7 @@ export interface VcsDriverHandle {
 }
 
 export interface VcsDriverRegistryShape {
+  readonly get: (kind: VcsDriverKind) => Effect.Effect<VcsDriverShape, VcsError>;
   readonly detect: (
     input: VcsDriverResolveInput,
   ) => Effect.Effect<VcsDriverHandle | null, VcsError>;
@@ -69,6 +70,16 @@ export const make = Effect.fn("makeVcsDriverRegistry")(function* () {
     git,
   };
 
+  const get: VcsDriverRegistryShape["get"] = (kind) => {
+    const driver = drivers[kind];
+    if (!driver) {
+      return Effect.fail(
+        unsupported("VcsDriverRegistry.get", kind, `No ${kind} VCS driver is registered.`),
+      );
+    }
+    return Effect.succeed(driver);
+  };
+
   const detectWithDriver = Effect.fn("VcsDriverRegistry.detectWithDriver")(function* (
     kind: VcsDriverKind,
     driver: VcsDriverShape,
@@ -92,14 +103,7 @@ export const make = Effect.fn("makeVcsDriverRegistry")(function* () {
     const requestedKind = input.requestedKind;
 
     if (requestedKind !== "auto" && requestedKind !== "unknown") {
-      const driver = drivers[requestedKind];
-      if (!driver) {
-        return yield* unsupported(
-          "VcsDriverRegistry.detect",
-          requestedKind,
-          `No ${requestedKind} VCS driver is registered.`,
-        );
-      }
+      const driver = yield* get(requestedKind);
       return yield* detectWithDriver(requestedKind, driver, input.cwd);
     }
 
@@ -140,6 +144,7 @@ export const make = Effect.fn("makeVcsDriverRegistry")(function* () {
   );
 
   return VcsDriverRegistry.of({
+    get,
     detect,
     resolve,
   });

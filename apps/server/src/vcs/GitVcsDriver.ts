@@ -511,6 +511,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     },
   );
 
+  const initRepository: VcsDriverShape["initRepository"] = (input) =>
+    gitCommand(process, "GitVcsDriver.initRepository", input.cwd, ["init"], {
+      timeoutMs: 10_000,
+      maxOutputBytes: 64 * 1024,
+    }).pipe(Effect.asVoid);
+
   return {
     capabilities,
     execute,
@@ -519,6 +525,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     listWorkspaceFiles,
     listRemotes,
     filterIgnoredPaths,
+    initRepository,
   } satisfies VcsDriverShape;
 });
 
