@@ -13,7 +13,7 @@ import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
-import { ACPRegistryIcon, Gemini, GithubCopilotIcon, PiAgentIcon } from "../Icons";
+import { ACPRegistryIcon, Gemini, GithubCopilotIcon, PiAgentIcon, type Icon } from "../Icons";
 import {
   Dialog,
   DialogDescription,
@@ -26,7 +26,8 @@ import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
 import { RadioGroup } from "../ui/radio-group";
 import { toastManager } from "../ui/toast";
-import { DRIVER_OPTION_BY_VALUE, DRIVER_OPTIONS, type DriverOption } from "./providerDriverMeta";
+import { DRIVER_OPTION_BY_VALUE, DRIVER_OPTIONS } from "./providerDriverMeta";
+import { ProviderSettingsForm, deriveProviderSettingsFields } from "./ProviderSettingsForm";
 
 const PROVIDER_ACCENT_SWATCHES = [
   "#2563eb",
@@ -61,30 +62,33 @@ function deriveInstanceId(driver: ProviderDriverKind, label: string): string {
 const INSTANCE_ID_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 const DEFAULT_DRIVER_OPTION = DRIVER_OPTIONS[0]!;
-const COMING_SOON_DRIVER_OPTIONS: readonly DriverOption[] = [
+const EMPTY_CONFIG_DRAFT: Record<string, unknown> = {};
+interface ComingSoonDriverOption {
+  readonly value: ProviderDriverKind;
+  readonly label: string;
+  readonly icon: Icon;
+}
+
+const COMING_SOON_DRIVER_OPTIONS: readonly ComingSoonDriverOption[] = [
   {
     value: ProviderDriverKind.make("githubCopilot"),
     label: "Github Copilot",
     icon: GithubCopilotIcon,
-    fields: [],
   },
   {
     value: ProviderDriverKind.make("gemini"),
     label: "Gemini",
     icon: Gemini,
-    fields: [],
   },
   {
     value: ProviderDriverKind.make("acpRegistry"),
     label: "ACP Registry",
     icon: ACPRegistryIcon,
-    fields: [],
   },
   {
     value: ProviderDriverKind.make("piAgent"),
     label: "Pi Agent",
     icon: PiAgentIcon,
-    fields: [],
   },
 ];
 
@@ -118,10 +122,9 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
   const [accentColor, setAccentColor] = useState<string>("");
   const [instanceId, setInstanceId] = useState("");
   const [instanceIdDirty, setInstanceIdDirty] = useState(false);
-  // Driver-specific field values keyed by `${driver}:${fieldKey}` so toggling
-  // between drivers during the same dialog session doesn't lose in-progress
-  // input. Only the active driver's values are persisted on save.
-  const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
+  // Driver-specific config drafts keyed by driver so toggling between drivers
+  // during the same dialog session does not lose in-progress input.
+  const [configByDriver, setConfigByDriver] = useState<Record<string, Record<string, unknown>>>({});
   // Errors are suppressed until the user has tried to submit once. After that
   // they update live so fixing the problem clears the message in place.
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
@@ -141,7 +144,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     setInstanceId("");
     setWizardStep(0);
     setInstanceIdDirty(false);
-    setFieldValues({});
+    setConfigByDriver({});
     setHasAttemptedSubmit(false);
   }, [open]);
 
@@ -153,23 +156,28 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
   }, [driver, label, instanceIdDirty]);
 
   const driverOption = DRIVER_OPTION_BY_VALUE[driver] ?? DEFAULT_DRIVER_OPTION;
+  const driverSettingsFields = useMemo(
+    () => deriveProviderSettingsFields(driverOption),
+    [driverOption],
+  );
   const instanceIdError = validateInstanceId(instanceId, existingIds);
   const showInstanceIdError = hasAttemptedSubmit && instanceIdError !== null;
   const previewLabel = label.trim() || `${driverOption.label} Workspace`;
   const wizardSteps = ["Driver", "Identity", "Config"] as const;
   const wizardStepSummaries = [driverOption.label, previewLabel, null] as const;
 
-  const getFieldValue = useCallback(
-    (fieldKey: string) => fieldValues[`${driver}:${fieldKey}`] ?? "",
-    [driver, fieldValues],
-  );
-
-  const setFieldValue = useCallback(
-    (fieldKey: string, value: string) => {
-      setFieldValues((existing) => ({
-        ...existing,
-        [`${driver}:${fieldKey}`]: value,
-      }));
+  const configDraft = configByDriver[driver] ?? EMPTY_CONFIG_DRAFT;
+  const setConfigDraft = useCallback(
+    (config: Record<string, unknown> | undefined) => {
+      setConfigByDriver((existing) => {
+        const next = { ...existing };
+        if (config === undefined || Object.keys(config).length === 0) {
+          delete next[driver];
+        } else {
+          next[driver] = config;
+        }
+        return next;
+      });
     },
     [driver],
   );
@@ -178,13 +186,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     setHasAttemptedSubmit(true);
     if (instanceIdError !== null) return;
 
-    // Build the config blob from non-empty driver-specific field values.
-    // Empty strings are dropped so defaults remain in effect on the server.
-    const config: Record<string, string> = {};
-    for (const field of driverOption.fields) {
-      const value = (fieldValues[`${driver}:${field.key}`] ?? "").trim();
-      if (value.length > 0) config[field.key] = value;
-    }
+    const config = configByDriver[driver] ?? {};
     const hasConfig = Object.keys(config).length > 0;
     const normalizedAccentColor = normalizeProviderAccentColor(accentColor);
 
@@ -222,7 +224,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
   }, [
     driver,
     driverOption,
-    fieldValues,
+    configByDriver,
     instanceId,
     instanceIdError,
     label,
@@ -433,25 +435,15 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
               </span>
             </div>
 
-            {driverOption.fields.length > 0 ? (
+            {driverSettingsFields.length > 0 ? (
               <div className={cn("grid gap-4", wizardStep !== 2 && "hidden")}>
-                {driverOption.fields.map((field) => (
-                  <label key={field.key} className="grid gap-1.5">
-                    <span className="text-xs font-medium text-foreground">{field.label}</span>
-                    <Input
-                      className="bg-background"
-                      type={field.type === "password" ? "password" : undefined}
-                      autoComplete={field.type === "password" ? "off" : undefined}
-                      placeholder={field.placeholder}
-                      value={getFieldValue(field.key)}
-                      onChange={(event) => setFieldValue(field.key, event.target.value)}
-                      spellCheck={false}
-                    />
-                    {field.description ? (
-                      <span className="text-[11px] text-muted-foreground">{field.description}</span>
-                    ) : null}
-                  </label>
-                ))}
+                <ProviderSettingsForm
+                  definition={driverOption}
+                  value={configDraft}
+                  idPrefix={`add-provider-${driver}`}
+                  variant="dialog"
+                  onChange={setConfigDraft}
+                />
               </div>
             ) : wizardStep === 2 ? (
               <div className="grid gap-2">
