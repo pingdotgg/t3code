@@ -108,4 +108,25 @@ describe("GitWorkflowService", () => {
       assert.equal(status.mock.calls.length, 0);
     }).pipe(Effect.provide(testLayer));
   });
+
+  it.effect("returns an empty ref list when no VCS repository is detected", () =>
+    Effect.gen(function* () {
+      const workflow = yield* GitWorkflowService;
+      const refs = yield* workflow.listRefs({ cwd: "/not-a-repo" });
+
+      assert.deepStrictEqual(refs, {
+        refs: [],
+        isRepo: false,
+        hasPrimaryRemote: false,
+        nextCursor: null,
+        totalCount: 0,
+      });
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          detect: () => Effect.succeed(null),
+        }),
+      ),
+    ),
+  );
 });

@@ -116,6 +116,16 @@ function nonRepositoryStatus(): VcsStatusResult {
   };
 }
 
+function nonRepositoryListRefs(): VcsListRefsResult {
+  return {
+    refs: [],
+    isRepo: false,
+    hasPrimaryRemote: false,
+    nextCursor: null,
+    totalCount: 0,
+  };
+}
+
 export const make = Effect.fn("makeGitWorkflowService")(function* () {
   const registry = yield* VcsDriverRegistry;
   const git = yield* GitVcsDriver;
@@ -196,6 +206,33 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
     },
   );
 
+  const detectGitRepositoryForCommand = Effect.fn(
+    "GitWorkflowService.detectGitRepositoryForCommand",
+  )(function* (operation: string, cwd: string) {
+    const handle = yield* registry
+      .detect({ cwd })
+      .pipe(
+        Effect.mapError((error) =>
+          unsupportedGitCommand(
+            operation,
+            cwd,
+            error instanceof Error ? error.message : String(error),
+          ),
+        ),
+      );
+    if (!handle) {
+      return false;
+    }
+    if (handle.kind !== "git") {
+      return yield* unsupportedGitCommand(
+        operation,
+        cwd,
+        `The ${operation} command currently supports Git repositories only; detected ${handle.kind}.`,
+      );
+    }
+    return true;
+  });
+
   const routeGitManager =
     <Input extends { readonly cwd: string }, Output>(
       operation: string,
@@ -245,8 +282,10 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
       gitManager.preparePullRequestThread,
     ),
     listRefs: (input) =>
-      ensureGitCommand("GitWorkflowService.listRefs", input.cwd).pipe(
-        Effect.andThen(git.listRefs(input)),
+      detectGitRepositoryForCommand("GitWorkflowService.listRefs", input.cwd).pipe(
+        Effect.flatMap((isGitRepository) =>
+          isGitRepository ? git.listRefs(input) : Effect.succeed(nonRepositoryListRefs()),
+        ),
       ),
     createWorktree: (input) =>
       ensureGitCommand("GitWorkflowService.createWorktree", input.cwd).pipe(
