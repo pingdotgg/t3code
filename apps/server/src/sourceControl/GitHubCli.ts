@@ -1,15 +1,25 @@
 import { Context, Effect, Layer, Result, Schema, SchemaIssue } from "effect";
 
-import { GitHubCliError, TrimmedNonEmptyString, type VcsError } from "@t3tools/contracts";
+import { TrimmedNonEmptyString, type VcsError } from "@t3tools/contracts";
 
 import { VcsProcess, type VcsProcessOutput } from "../vcs/VcsProcess.ts";
 import {
   decodeGitHubPullRequestJson,
   decodeGitHubPullRequestListJson,
   formatGitHubJsonDecodeError,
-} from "../git/githubPullRequests.ts";
+} from "./gitHubPullRequests.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+export class GitHubCliError extends Schema.TaggedErrorClass<GitHubCliError>()("GitHubCliError", {
+  operation: Schema.String,
+  detail: Schema.String,
+  cause: Schema.optional(Schema.Defect),
+}) {
+  override get message(): string {
+    return `GitHub CLI failed in ${this.operation}: ${this.detail}`;
+  }
+}
 
 export interface GitHubPullRequestSummary {
   readonly number: number;

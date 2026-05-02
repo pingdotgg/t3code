@@ -328,16 +328,6 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
   }
 }
 
-export class GitHubCliError extends Schema.TaggedErrorClass<GitHubCliError>()("GitHubCliError", {
-  operation: Schema.String,
-  detail: Schema.String,
-  cause: Schema.optional(Schema.Defect),
-}) {
-  override get message(): string {
-    return `GitHub CLI failed in ${this.operation}: ${this.detail}`;
-  }
-}
-
 export class TextGenerationError extends Schema.TaggedErrorClass<TextGenerationError>()(
   "TextGenerationError",
   {
@@ -364,7 +354,6 @@ export class GitManagerError extends Schema.TaggedErrorClass<GitManagerError>()(
 export const GitManagerServiceError = Schema.Union([
   GitManagerError,
   GitCommandError,
-  GitHubCliError,
   SourceControlProviderError,
   TextGenerationError,
 ]);

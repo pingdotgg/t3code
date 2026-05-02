@@ -14,9 +14,10 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 
-import { GitCommandError, GitHubCliError, TextGenerationError } from "@t3tools/contracts";
+import { GitCommandError, TextGenerationError } from "@t3tools/contracts";
 import { type GitManagerShape } from "./GitManager.ts";
 import {
+  GitHubCliError,
   type GitHubCliShape,
   type GitHubPullRequestSummary,
   GitHubCli,

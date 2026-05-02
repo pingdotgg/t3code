@@ -3,11 +3,10 @@ import {
   SourceControlProviderError,
   type ChangeRequest,
   type ChangeRequestState,
-  type GitHubCliError,
 } from "@t3tools/contracts";
 
-import { GitHubCli, type GitHubPullRequestSummary } from "./GitHubCli.ts";
-import { decodeGitHubPullRequestListJson } from "../git/githubPullRequests.ts";
+import { GitHubCli, type GitHubCliError, type GitHubPullRequestSummary } from "./GitHubCli.ts";
+import { decodeGitHubPullRequestListJson } from "./gitHubPullRequests.ts";
 import { SourceControlProvider, type SourceControlProviderShape } from "./SourceControlProvider.ts";
 
 function providerError(operation: string, cause: GitHubCliError): SourceControlProviderError {
