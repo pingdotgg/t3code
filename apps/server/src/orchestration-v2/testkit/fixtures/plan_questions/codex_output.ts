@@ -13,6 +13,7 @@ import {
   assertSemanticProjectionIntegrity,
   assertTurnItemTypes,
   assertUserMessagesInclude,
+  assertVisibleTurnItemsMirrorLocalTurnItems,
   PLAN_QUESTIONS_PROMPT,
   projectionFor,
 } from "../shared.ts";
@@ -25,6 +26,7 @@ export function assertPlanQuestionsOutput(
 
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
+  assertVisibleTurnItemsMirrorLocalTurnItems(projection);
   assertRunOrdinals(projection, [1]);
   assertExecutionNodeKinds(projection, ["root_turn", "user_input_request", "assistant_message"]);
   assertRuntimeRequestCounts(projection, { total: 1, resolved: 1 });

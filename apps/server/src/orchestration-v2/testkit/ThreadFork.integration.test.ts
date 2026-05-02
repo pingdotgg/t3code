@@ -1,6 +1,13 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import { CommandId, MessageId, type OrchestrationV2Command, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  type OrchestrationV2Command,
+  type ProviderReplayEntry,
+  type ProviderReplayTranscript,
+  ThreadId,
+} from "@t3tools/contracts";
 import { Effect, FileSystem, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -51,6 +58,264 @@ function readTranscript(transcriptPath: string = TRANSCRIPT_PATH) {
     const text = yield* fs.readFileString(transcriptPath);
     return yield* decodeProviderReplayNdjson(text);
   });
+}
+
+function compactExpectedText(text: string, maxLength = 240): string {
+  const compacted = text.replace(/\s+/g, " ").trim();
+  if (compacted.length <= maxLength) {
+    return compacted;
+  }
+  return `${compacted.slice(0, maxLength - 3)}...`;
+}
+
+function findCompletedAgentMessageText(input: {
+  readonly transcript: ProviderReplayTranscript;
+  readonly threadId: string;
+  readonly turnId: string;
+}): string {
+  for (const entry of input.transcript.entries) {
+    if (entry.type !== "emit_inbound") {
+      continue;
+    }
+    const frame = entry.frame as {
+      readonly method?: unknown;
+      readonly params?: {
+        readonly threadId?: unknown;
+        readonly turnId?: unknown;
+        readonly item?: {
+          readonly type?: unknown;
+          readonly text?: unknown;
+        };
+      };
+    };
+    if (
+      frame.method === "item/completed" &&
+      frame.params?.threadId === input.threadId &&
+      frame.params.turnId === input.turnId &&
+      frame.params.item?.type === "agentMessage" &&
+      typeof frame.params.item.text === "string"
+    ) {
+      return frame.params.item.text;
+    }
+  }
+  throw new Error(`No completed agent message found for ${input.threadId}/${input.turnId}`);
+}
+
+function makeExpectedForkDeltaSummary(input: {
+  readonly sourceThreadId: string;
+  readonly targetThreadId: string;
+  readonly forkUserText: string;
+  readonly forkAssistantText: string;
+}): string {
+  return [
+    "Merge-back context from forked conversation.",
+    `Source thread: ${input.sourceThreadId}`,
+    `Target thread: ${input.targetThreadId}`,
+    "Covered fork runs: 1-1",
+    "",
+    "Fork delta:",
+    `- User: ${compactExpectedText(input.forkUserText)}`,
+    `- Assistant: ${compactExpectedText(input.forkAssistantText)}`,
+    "- Checkpoint: 0 files",
+  ].join("\n");
+}
+
+function transcriptWithMergeBackContinuation(input: {
+  readonly transcript: ProviderReplayTranscript;
+  readonly providerMessageText: string;
+  readonly projectedUserText: string;
+  readonly assistantText: string;
+}): ProviderReplayTranscript {
+  const sourceNativeThreadId = "019dd6ba-2681-7bf0-b051-141b0cbcbb27";
+  const mergeBackNativeTurnId = "019dd6ba-5000-7000-8000-000000000001";
+  const mergeBackUserItemId = "merge-back-user-message";
+  const mergeBackAgentItemId = "merge-back-agent-message";
+  const entriesWithoutExit = input.transcript.entries.filter(
+    (entry) => entry.type !== "runtime_exit",
+  );
+  const continuation = [
+    {
+      type: "expect_outbound",
+      label: "turn/start/merge-back-source",
+      frame: {
+        id: 9,
+        method: "turn/start",
+        params: {
+          threadId: sourceNativeThreadId,
+          input: [{ type: "text", text: input.providerMessageText }],
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "turn/start/merge-back-source",
+      frame: {
+        id: 9,
+        result: {
+          turn: {
+            id: mergeBackNativeTurnId,
+            items: [],
+            status: "inProgress",
+            error: null,
+            startedAt: 1777424041,
+            completedAt: null,
+            durationMs: null,
+          },
+        },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "thread/status/changed/merge-back-source",
+      frame: {
+        method: "thread/status/changed",
+        params: {
+          threadId: sourceNativeThreadId,
+          status: { type: "active", activeFlags: [] },
+        },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "turn/started/merge-back-source",
+      frame: {
+        method: "turn/started",
+        params: {
+          threadId: sourceNativeThreadId,
+          turn: {
+            id: mergeBackNativeTurnId,
+            items: [],
+            status: "inProgress",
+            error: null,
+            startedAt: 1777424041,
+            completedAt: null,
+            durationMs: null,
+          },
+        },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "item/userMessage/started/merge-back-source",
+      frame: {
+        method: "item/started",
+        params: {
+          item: {
+            type: "userMessage",
+            id: mergeBackUserItemId,
+            content: [{ type: "text", text: input.projectedUserText, text_elements: [] }],
+          },
+          threadId: sourceNativeThreadId,
+          turnId: mergeBackNativeTurnId,
+        },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "item/userMessage/completed/merge-back-source",
+      frame: {
+        method: "item/completed",
+        params: {
+          item: {
+            type: "userMessage",
+            id: mergeBackUserItemId,
+            content: [{ type: "text", text: input.projectedUserText, text_elements: [] }],
+          },
+          threadId: sourceNativeThreadId,
+          turnId: mergeBackNativeTurnId,
+        },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "item/agentMessage/started/merge-back-source",
+      frame: {
+        method: "item/started",
+        params: {
+          item: {
+            type: "agentMessage",
+            id: mergeBackAgentItemId,
+            text: "",
+            phase: "final_answer",
+            memoryCitation: null,
+          },
+          threadId: sourceNativeThreadId,
+          turnId: mergeBackNativeTurnId,
+        },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "item/agentMessage/delta/merge-back-source",
+      frame: {
+        method: "item/agentMessage/delta",
+        params: {
+          threadId: sourceNativeThreadId,
+          turnId: mergeBackNativeTurnId,
+          itemId: mergeBackAgentItemId,
+          delta: input.assistantText,
+        },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "item/agentMessage/completed/merge-back-source",
+      frame: {
+        method: "item/completed",
+        params: {
+          item: {
+            type: "agentMessage",
+            id: mergeBackAgentItemId,
+            text: input.assistantText,
+            phase: "final_answer",
+            memoryCitation: null,
+          },
+          threadId: sourceNativeThreadId,
+          turnId: mergeBackNativeTurnId,
+        },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "thread/status/changed/merge-back-source",
+      frame: {
+        method: "thread/status/changed",
+        params: { threadId: sourceNativeThreadId, status: { type: "idle" } },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "turn/completed/merge-back-source",
+      frame: {
+        method: "turn/completed",
+        params: {
+          threadId: sourceNativeThreadId,
+          turn: {
+            id: mergeBackNativeTurnId,
+            items: [],
+            status: "completed",
+            error: null,
+            startedAt: 1777424041,
+            completedAt: 1777424042,
+            durationMs: 1000,
+          },
+        },
+      },
+    },
+    { type: "runtime_exit", status: "success" },
+  ] satisfies ReadonlyArray<ProviderReplayEntry>;
+
+  return {
+    ...input.transcript,
+    scenario: `${input.transcript.scenario}_merge_back`,
+    entries: [...entriesWithoutExit, ...continuation],
+  };
 }
 
 describe("orchestration V2 thread fork", () => {
@@ -355,6 +620,341 @@ describe("orchestration V2 thread fork", () => {
           "forking from the first source run must not preserve later source turns in native Codex context",
         );
         assert.equal(targetProjection.contextTransfers[0]?.resolution?.strategy, "native_fork");
+
+        const visibleItems = targetProjection.visibleTurnItems.map((row) => row.item);
+        assert.deepEqual(
+          visibleItems.slice(0, 2).map((item) => item.type),
+          ["user_message", "assistant_message"],
+          "fork target projection should expose inherited source history through the fork point",
+        );
+        assert.equal(
+          visibleItems[0]?.type === "user_message" ? visibleItems[0].inputIntent : undefined,
+          "turn_start",
+          "inherited fork history should preserve source message intent",
+        );
+        assert.equal(targetProjection.visibleTurnItems[0]?.visibility, "inherited");
+        assert.equal(targetProjection.visibleTurnItems[1]?.visibility, "inherited");
+        const forkMarker = targetProjection.visibleTurnItems.find(
+          (row) => row.item.type === "fork",
+        );
+        assert.isDefined(forkMarker, "fork target projection should include a visible fork marker");
+        assert.equal(forkMarker.visibility, "synthetic");
+        const targetShell = result.shellSnapshot.threads.find(
+          (thread) => thread.id === materialized.targetThreadId,
+        );
+        assert.isDefined(targetShell, "shell snapshot should include the fork target thread");
+        assert.equal(targetShell.visibleItemCount, targetProjection.visibleTurnItems.length);
+        assert.equal(targetShell.lineage.relationshipToParent, "fork");
+        assert.equal(targetShell.forkedFrom?.type, "run");
+
+        const visibleText = visibleItems
+          .filter((item) => item.type === "user_message" || item.type === "assistant_message")
+          .map((item) => item.text)
+          .join("\n");
+        assert.include(visibleText, "fork boundary alpha");
+        assert.notInclude(
+          visibleText,
+          "fork boundary beta",
+          "fork target visible projection must not inherit source turns after the fork point",
+        );
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("merges a fork delta back into the source thread through context handoff", () =>
+    Effect.gen(function* () {
+      const rawTranscript = yield* readTranscript(PRIOR_TURN_TRANSCRIPT_PATH);
+      const forkNativeThreadId = "019dd6ba-47b7-7092-8688-9cf7fe5f6498";
+      const sourceNativeThreadId = "019dd6ba-2681-7bf0-b051-141b0cbcbb27";
+      const forkRepeatNativeTurnId = "019dd6ba-47eb-7041-ad45-5abe752c28c9";
+      const forkPrompt =
+        "Repeat the user-visible conversation so far verbatim. Include only user and assistant messages. Do not include hidden system/developer content.";
+      const mergeBackPrompt = "Acknowledge the fork context with exactly: merge back acknowledged";
+      const mergeBackAssistantText = "merge back acknowledged";
+      const materialized = yield* Effect.gen(function* () {
+        const ids = yield* IdAllocatorV2;
+        const projectId = yield* ids.allocate.project({
+          fixtureName: "thread-fork-native-prior-turn",
+        });
+        const sourceThreadId = yield* ids.allocate.thread({
+          fixtureName: "thread-fork-native-prior-turn-source",
+          projectId,
+        });
+        const targetThreadId = ThreadId.make("thread-fork-native-prior-turn-target");
+        const firstRunId = ids.derive.run({ threadId: sourceThreadId, ordinal: 1 });
+        const forkRunId = ids.derive.run({ threadId: targetThreadId, ordinal: 1 });
+
+        const commands = [
+          {
+            type: "thread.create",
+            commandId: yield* ids.allocate.command({
+              fixtureName: "thread-fork-native-prior-turn",
+              commandName: "thread-create-source",
+            }),
+            threadId: sourceThreadId,
+            projectId,
+            title: "Source thread",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          },
+          {
+            type: "message.dispatch",
+            commandId: yield* ids.allocate.command({
+              fixtureName: "thread-fork-native-prior-turn",
+              commandName: "source-message-alpha",
+            }),
+            threadId: sourceThreadId,
+            messageId: MessageId.make("message-thread-fork-native-prior-turn-alpha"),
+            text: "For this fork-boundary fixture, respond with exactly: fork boundary alpha",
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          },
+          {
+            type: "message.dispatch",
+            commandId: yield* ids.allocate.command({
+              fixtureName: "thread-fork-native-prior-turn",
+              commandName: "source-message-beta",
+            }),
+            threadId: sourceThreadId,
+            messageId: MessageId.make("message-thread-fork-native-prior-turn-beta"),
+            text: "For this fork-boundary fixture, respond with exactly: fork boundary beta",
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          },
+          {
+            type: "thread.fork",
+            commandId: CommandId.make("command-thread-fork-native-prior-turn"),
+            sourceThreadId,
+            targetThreadId,
+            sourcePoint: { type: "run", runId: firstRunId },
+            title: "Forked from first response",
+          },
+          {
+            type: "message.dispatch",
+            commandId: yield* ids.allocate.command({
+              fixtureName: "thread-fork-native-prior-turn",
+              commandName: "target-message-repeat",
+            }),
+            threadId: targetThreadId,
+            messageId: MessageId.make("message-thread-fork-native-prior-turn-repeat"),
+            text: forkPrompt,
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          },
+          {
+            type: "thread.merge_back",
+            commandId: CommandId.make("command-thread-merge-back-native-prior-turn-stale"),
+            sourceThreadId: targetThreadId,
+            targetThreadId: sourceThreadId,
+            sourcePoint: { type: "run", runId: forkRunId },
+          },
+          {
+            type: "thread.merge_back",
+            commandId: CommandId.make("command-thread-merge-back-native-prior-turn"),
+            sourceThreadId: targetThreadId,
+            targetThreadId: sourceThreadId,
+            sourcePoint: { type: "run", runId: forkRunId },
+          },
+          {
+            type: "message.dispatch",
+            commandId: yield* ids.allocate.command({
+              fixtureName: "thread-fork-native-prior-turn",
+              commandName: "source-message-merge-back",
+            }),
+            threadId: sourceThreadId,
+            messageId: MessageId.make("message-thread-fork-native-prior-turn-merge-back"),
+            text: mergeBackPrompt,
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          },
+        ] satisfies ReadonlyArray<OrchestrationV2Command>;
+
+        return {
+          sourceThreadId,
+          targetThreadId,
+          firstRunId,
+          forkRunId,
+          commands,
+        };
+      }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
+      const expectedSummary = makeExpectedForkDeltaSummary({
+        sourceThreadId: materialized.targetThreadId,
+        targetThreadId: materialized.sourceThreadId,
+        forkUserText: forkPrompt,
+        forkAssistantText: findCompletedAgentMessageText({
+          transcript: rawTranscript,
+          threadId: forkNativeThreadId,
+          turnId: forkRepeatNativeTurnId,
+        }),
+      });
+      const providerMessageText = [
+        "Context handoff (merge_back / fork_delta_summary):",
+        expectedSummary,
+        "",
+        "User message:",
+        mergeBackPrompt,
+      ].join("\n");
+      const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
+        transcriptWithMergeBackContinuation({
+          transcript: rawTranscript,
+          providerMessageText,
+          projectedUserText: mergeBackPrompt,
+          assistantText: mergeBackAssistantText,
+        }),
+      );
+      const cwd = yield* Effect.acquireRelease(makeCheckpointWorkspace, (directory) =>
+        Effect.service(FileSystem.FileSystem).pipe(
+          Effect.flatMap((fs) => fs.remove(directory, { recursive: true, force: true })),
+          Effect.orDie,
+        ),
+      );
+
+      const result = yield* runOrchestratorV2ProviderReplayScenario(
+        {
+          name: "thread_fork_native_prior_turn_merge_back/codex",
+          transcript,
+          commands: materialized.commands,
+          steps: [
+            { type: "dispatch", command: materialized.commands[0]!, await: true },
+            { type: "advance_clock", duration: "1 millis" },
+            { type: "dispatch", command: materialized.commands[1]!, await: true },
+            { type: "await_thread_idle", threadId: materialized.sourceThreadId },
+            { type: "dispatch", command: materialized.commands[2]!, await: true },
+            { type: "await_thread_idle", threadId: materialized.sourceThreadId },
+            { type: "dispatch", command: materialized.commands[3]!, await: true },
+            { type: "dispatch", command: materialized.commands[4]!, await: true },
+            { type: "await_thread_idle", threadId: materialized.targetThreadId },
+            { type: "dispatch", command: materialized.commands[5]!, await: true },
+            { type: "dispatch", command: materialized.commands[6]!, await: true },
+            { type: "dispatch", command: materialized.commands[7]!, await: true },
+            { type: "await_thread_idle", threadId: materialized.sourceThreadId },
+          ],
+          projectionThreadIds: [materialized.sourceThreadId, materialized.targetThreadId],
+          runtimePolicyOverride: { cwd, ...CODEX_READ_ONLY_NEVER_POLICY },
+        },
+        CodexOrchestratorReplayHarness,
+      ).pipe(provideDeterministicTestRuntime);
+
+      const sourceProjection = result.projections.get(materialized.sourceThreadId);
+      const forkProjection = result.projections.get(materialized.targetThreadId);
+      assert.isDefined(sourceProjection);
+      assert.isDefined(forkProjection);
+
+      assert.equal(
+        sourceProjection.providerThreads[0]?.nativeThreadRef?.nativeId,
+        sourceNativeThreadId,
+        "merge-back should continue the original source provider thread",
+      );
+      assert.lengthOf(sourceProjection.runs, 3);
+      assert.equal(
+        sourceProjection.runs[2]?.contextHandoffId,
+        sourceProjection.contextHandoffs[0]?.id,
+      );
+      assert.lengthOf(sourceProjection.contextHandoffs, 1);
+      const handoff = sourceProjection.contextHandoffs[0]!;
+      assert.equal(handoff.strategy, "fork_delta_summary");
+      assert.equal(handoff.status, "ready");
+      assert.equal(handoff.threadId, materialized.sourceThreadId);
+      assert.equal(handoff.targetRunId, sourceProjection.runs[2]?.id);
+      assert.deepEqual(handoff.coveredRunOrdinals, { from: 1, to: 1 });
+      assert.include(handoff.summaryText, "Merge-back context from forked conversation.");
+      assert.include(handoff.summaryText, "Repeat the user-visible conversation");
+      assert.notInclude(
+        handoff.summaryText,
+        "fork boundary beta",
+        "merge-back context should summarize only fork-local delta after the source point",
+      );
+      assert.equal(handoff.summaryText, expectedSummary);
+
+      const mergeBackTransfers = sourceProjection.contextTransfers.filter(
+        (transfer) => transfer.type === "merge_back",
+      );
+      assert.lengthOf(mergeBackTransfers, 2);
+      const supersededTransfer = mergeBackTransfers.find(
+        (transfer) => transfer.status === "superseded",
+      );
+      const mergeBackTransfer = mergeBackTransfers.find(
+        (transfer) => transfer.status === "consumed",
+      );
+      assert.isDefined(supersededTransfer);
+      assert.isDefined(mergeBackTransfer);
+      assert.include(
+        supersededTransfer.error ?? "",
+        mergeBackTransfer.id,
+        "newer merge-back preparation should supersede the previous pending transfer",
+      );
+      assert.equal(mergeBackTransfer.sourceThreadId, materialized.targetThreadId);
+      assert.equal(mergeBackTransfer.targetThreadId, materialized.sourceThreadId);
+      assert.equal(mergeBackTransfer.sourcePoint.runId, materialized.forkRunId);
+      assert.equal(mergeBackTransfer.basePoint?.runId, materialized.firstRunId);
+      assert.equal(mergeBackTransfer.status, "consumed");
+      assert.equal(mergeBackTransfer.targetRunId, sourceProjection.runs[2]?.id);
+      assert.equal(mergeBackTransfer.resolution?.strategy, "fork_delta_context");
+      assert.equal(
+        mergeBackTransfer.resolution?.strategy === "fork_delta_context"
+          ? mergeBackTransfer.resolution.contextHandoffId
+          : null,
+        handoff.id,
+      );
+
+      const mergeBackRunItems = sourceProjection.turnItems.filter(
+        (item) => item.runId === sourceProjection.runs[2]?.id,
+      );
+      assert.deepEqual(
+        mergeBackRunItems.map((item) => item.type),
+        ["handoff", "user_message", "assistant_message", "checkpoint"],
+      );
+      const handoffItem = mergeBackRunItems[0];
+      assert.equal(handoffItem?.type, "handoff");
+      assert.equal(
+        handoffItem?.type === "handoff" ? handoffItem.contextHandoffId : null,
+        handoff.id,
+      );
+      assert.equal(handoffItem?.ordinal, 299);
+      const mergeUserItem = mergeBackRunItems.find((item) => item.type === "user_message");
+      assert.equal(
+        mergeUserItem?.type === "user_message" ? mergeUserItem.text : null,
+        mergeBackPrompt,
+      );
+      assert.notInclude(
+        sourceProjection.turnItems
+          .filter((item) => item.type === "user_message")
+          .map((item) => item.text)
+          .join("\n"),
+        "Context handoff",
+        "context handoff text should be provider input only, not projected user-visible message text",
+      );
+      assert.include(
+        sourceProjection.turnItems
+          .filter((item) => item.type === "assistant_message")
+          .map((item) => item.text)
+          .join("\n"),
+        mergeBackAssistantText,
+      );
+
+      const visibleTypes = sourceProjection.visibleTurnItems.map((row) => row.item.type);
+      assert.includeMembers(visibleTypes, ["handoff", "user_message", "assistant_message"]);
+      const sourceShell = result.shellSnapshot.threads.find(
+        (thread) => thread.id === materialized.sourceThreadId,
+      );
+      assert.isDefined(sourceShell);
+      assert.equal(sourceShell.visibleItemCount, sourceProjection.visibleTurnItems.length);
+
+      assert.include(
+        forkProjection.turnItems
+          .filter((item) => item.type === "user_message")
+          .map((item) => item.text)
+          .join("\n"),
+        forkPrompt,
+        "merge-back should not remove fork-local history",
+      );
+      assert.equal(forkProjection.contextTransfers[0]?.resolution?.strategy, "native_fork");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });
