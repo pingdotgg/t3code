@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDownIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   type ProviderInstanceConfig,
@@ -21,6 +21,7 @@ import { DraftInput } from "../ui/draft-input";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { DriverOption } from "./providerDriverMeta";
+import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import {
@@ -87,20 +88,6 @@ function redactedEmailPlaceholder(email: string): string {
 }
 
 /**
- * Read a string value at `key` from the opaque per-driver config blob.
- * Returns an empty string when the key is missing or the stored value is
- * not a string. The permissive shape reflects that `config` is
- * `Schema.Unknown` at the contract boundary — forks may populate it with
- * non-string values that the built-in UI should round-trip without
- * throwing.
- */
-function readConfigString(config: unknown, key: string): string {
-  if (config === null || typeof config !== "object") return "";
-  const value = (config as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : "";
-}
-
-/**
  * Read a string[] at `key` from the opaque config blob, filtering out
  * non-string entries. Used for `customModels`, which is always typed as
  * `string[]` by the concrete driver schemas but arrives here as
@@ -114,34 +101,8 @@ function readConfigStringArray(config: unknown, key: string): ReadonlyArray<stri
 }
 
 /**
- * Produce the next config blob after setting `key` to `value`. Empty
- * strings drop the key so server defaults stay in effect, mirroring the
- * save-time normalization in `AddProviderInstanceDialog`. Returns
- * `undefined` when the resulting blob has no keys, which matches
- * `ProviderInstanceConfig.config` being optional.
- *
- * Non-string values already stored in the blob are carried through
- * verbatim so fork-owned fields survive edits made through this UI.
- */
-function nextConfigBlobWithString(
-  config: unknown,
-  key: string,
-  value: string,
-): Record<string, unknown> | undefined {
-  const base: Record<string, unknown> =
-    config !== null && typeof config === "object" ? { ...(config as Record<string, unknown>) } : {};
-  const trimmed = value.trim();
-  if (trimmed.length > 0) {
-    base[key] = value;
-  } else {
-    delete base[key];
-  }
-  return Object.keys(base).length > 0 ? base : undefined;
-}
-
-/**
  * Set `key` to an arbitrary value on the opaque config blob. Unlike
- * `nextConfigBlobWithString`, does not drop empty-looking values — the
+ * provider settings field updates, does not drop empty-looking values — the
  * caller is responsible for deciding whether an empty array / empty
  * object should be stored explicitly (e.g. `customModels: []` is a
  * meaningful "user cleared their custom list" state distinct from
@@ -473,7 +434,7 @@ interface ProviderInstanceCardProps {
    * default slots supply a reset-to-factory control here; custom instances
    * omit it.
    */
-  readonly headerAction?: React.ReactNode | undefined;
+  readonly headerAction?: ReactNode | undefined;
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
@@ -585,8 +546,7 @@ export function ProviderInstanceCard({
     );
   };
 
-  const updateConfigField = (key: string, value: string) => {
-    const nextConfig = nextConfigBlobWithString(instance.config, key, value);
+  const updateConfig = (nextConfig: Record<string, unknown> | undefined) => {
     const { config: _omit, ...rest } = instance;
     onUpdate(
       nextConfig !== undefined
@@ -759,28 +719,15 @@ export function ProviderInstanceCard({
               />
             </div>
 
-            {driverOption?.fields.map((field) => (
-              <div key={field.key} className="border-t border-border/60 px-4 py-3 sm:px-5">
-                <label htmlFor={`provider-instance-${instanceId}-${field.key}`} className="block">
-                  <span className="text-xs font-medium text-foreground">{field.label}</span>
-                  <DraftInput
-                    id={`provider-instance-${instanceId}-${field.key}`}
-                    className="mt-1.5"
-                    type={field.type === "password" ? "password" : undefined}
-                    autoComplete={field.type === "password" ? "off" : undefined}
-                    value={readConfigString(instance.config, field.key)}
-                    onCommit={(next) => updateConfigField(field.key, next)}
-                    placeholder={field.placeholder}
-                    spellCheck={false}
-                  />
-                  {field.description ? (
-                    <span className="mt-1 block text-xs text-muted-foreground">
-                      {field.description}
-                    </span>
-                  ) : null}
-                </label>
-              </div>
-            ))}
+            {driverOption ? (
+              <ProviderSettingsForm
+                definition={driverOption}
+                value={instance.config}
+                idPrefix={`provider-instance-${instanceId}`}
+                variant="card"
+                onChange={updateConfig}
+              />
+            ) : null}
 
             {driverOption !== undefined ? (
               <ProviderModelsSection
