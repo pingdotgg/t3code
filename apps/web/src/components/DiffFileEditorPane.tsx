@@ -15,6 +15,7 @@ import {
   reconstructPreTurnFileContents,
   type PersistedDiffFileEditOverride,
 } from "../lib/diffFileEditOverrides";
+import { resolveEditorFileLabel } from "../lib/editorFileLabel";
 import {
   getCodeContextSelectionLimitMessage,
   normalizeCodeContextSelection,
@@ -56,6 +57,9 @@ type PendingNavigation =
       type: "back";
     }
   | {
+      type: "close-panel";
+    }
+  | {
       type: "switch-file";
       filePath: string;
     };
@@ -64,6 +68,7 @@ interface DiffFileEditorPaneProps {
   environmentId: EnvironmentId;
   cwd: string;
   sessionKey?: string | undefined;
+  showHeader?: boolean | undefined;
   filePath: string;
   filePaths: readonly string[];
   fileDiff: FileDiffMetadata | null;
@@ -73,9 +78,23 @@ interface DiffFileEditorPaneProps {
   navigationLabel: string;
   resolvedTheme: ResolvedThemeMode;
   onRequestBack: () => void;
+  onRequestClosePanel?: (() => void) | undefined;
   onRequestFilePathChange: (filePath: string) => void;
+  requestedBackNonce?: number | undefined;
+  requestedClosePanelNonce?: number | undefined;
   requestedFilePathChange?: string | null | undefined;
+  requestedSaveNonce?: number | undefined;
   onHandledRequestedFilePathChange?: (() => void) | undefined;
+  onEditorControlsStateChange?:
+    | ((
+        state: Readonly<{
+          canSave: boolean;
+          filePath: string;
+          isDirty: boolean;
+          isSaving: boolean;
+        }>,
+      ) => void)
+    | undefined;
   onOpenInEditor: (filePath: string) => void;
   onOpenPreview: (filePath: string) => void;
   previewDisabledReason: string | null;
@@ -133,13 +152,12 @@ function buildEditorSessionStateCacheKey(input: {
 
 function buildWarmEditorModelPath(input: {
   sessionKey: string | undefined;
-  cwd: string;
   filePath: string;
 }): string {
   if (!input.sessionKey) {
     return input.filePath;
   }
-  return `inmemory://forma-workspace/${encodeURIComponent(input.sessionKey)}/${encodePathSegments(input.cwd)}/${encodePathSegments(input.filePath)}`;
+  return `file:///__forma-workspace/${encodeURIComponent(input.sessionKey)}/${encodePathSegments(input.filePath)}`;
 }
 
 function buildWarmEditorUsageKey(input: { cwd: string; filePath: string }): string {
@@ -252,7 +270,6 @@ function evictWarmEditorModels(input: {
         input.monaco.Uri.parse(
           buildWarmEditorModelPath({
             sessionKey: input.sessionKey,
-            cwd: candidate.cwd,
             filePath: candidate.filePath,
           }),
         ),
@@ -355,12 +372,6 @@ function buildUnavailableMessage(status: ProjectFileEditorStatus): string {
   }
 }
 
-function resolveFileTabLabel(filePath: string): string {
-  const normalizedPath = filePath.replaceAll("\\", "/");
-  const segments = normalizedPath.split("/");
-  return segments.at(-1) ?? filePath;
-}
-
 function StatePanel(props: {
   filePath: string;
   message: string;
@@ -417,10 +428,16 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     initialLine,
     initialOverride,
     navigationLabel,
+    onEditorControlsStateChange,
     onOpenInEditor,
     onOpenPreview,
+    onRequestClosePanel,
     previewDisabledReason,
+    requestedBackNonce,
+    requestedClosePanelNonce,
     reuseMonacoModels = false,
+    requestedSaveNonce,
+    showHeader = true,
     onPersisted,
     onHandledRequestedFilePathChange,
     onAddCodeContext,
@@ -466,6 +483,11 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   const saveHandlerRef = useRef<() => Promise<boolean>>(async () => false);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
+  const lastHandledRequestedBackNonceRef = useRef<number | undefined>(requestedBackNonce);
+  const lastHandledRequestedClosePanelNonceRef = useRef<number | undefined>(
+    requestedClosePanelNonce,
+  );
+  const lastHandledRequestedSaveNonceRef = useRef<number | undefined>(requestedSaveNonce);
   const [monacoReadyGeneration, setMonacoReadyGeneration] = useState(0);
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const editorSubscriptionsRef = useRef<Array<{ dispose: () => void }>>([]);
@@ -483,7 +505,6 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
       reuseMonacoModels
         ? buildWarmEditorModelPath({
             sessionKey,
-            cwd,
             filePath: renderedEditorFilePath,
           })
         : renderedEditorFilePath,
@@ -506,9 +527,13 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
         onRequestBack();
         return;
       }
+      if (navigation.type === "close-panel") {
+        onRequestClosePanel?.();
+        return;
+      }
       onRequestFilePathChange(navigation.filePath);
     },
-    [onRequestBack, onRequestFilePathChange],
+    [onRequestBack, onRequestClosePanel, onRequestFilePathChange],
   );
 
   const requestNavigation = useCallback(
@@ -784,6 +809,15 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   }, [initialOverride?.preTurnContents]);
 
   useEffect(() => {
+    onEditorControlsStateChange?.({
+      canSave,
+      filePath,
+      isDirty,
+      isSaving: status === "saving",
+    });
+  }, [canSave, filePath, isDirty, onEditorControlsStateChange, status]);
+
+  useEffect(() => {
     if (!requestedFilePathChange) {
       return;
     }
@@ -799,6 +833,42 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     });
     onHandledRequestedFilePathChange?.();
   }, [filePath, onHandledRequestedFilePathChange, requestNavigation, requestedFilePathChange]);
+
+  useEffect(() => {
+    if (
+      requestedBackNonce === undefined ||
+      requestedBackNonce === lastHandledRequestedBackNonceRef.current
+    ) {
+      return;
+    }
+
+    lastHandledRequestedBackNonceRef.current = requestedBackNonce;
+    requestNavigation({ type: "back" });
+  }, [requestNavigation, requestedBackNonce]);
+
+  useEffect(() => {
+    if (
+      requestedClosePanelNonce === undefined ||
+      requestedClosePanelNonce === lastHandledRequestedClosePanelNonceRef.current
+    ) {
+      return;
+    }
+
+    lastHandledRequestedClosePanelNonceRef.current = requestedClosePanelNonce;
+    requestNavigation({ type: "close-panel" });
+  }, [requestNavigation, requestedClosePanelNonce]);
+
+  useEffect(() => {
+    if (
+      requestedSaveNonce === undefined ||
+      requestedSaveNonce === lastHandledRequestedSaveNonceRef.current
+    ) {
+      return;
+    }
+
+    lastHandledRequestedSaveNonceRef.current = requestedSaveNonce;
+    void handleSave();
+  }, [handleSave, requestedSaveNonce]);
 
   useEffect(() => {
     saveHandlerRef.current = handleSave;
@@ -1005,64 +1075,26 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/70 px-3 py-2">
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={() => requestNavigation({ type: "back" })}
-            aria-label={navigationLabel}
-            title={navigationLabel}
-          >
-            <ArrowLeftIcon className="size-3.5" />
-            <span className="sr-only">{navigationLabel}</span>
-          </Button>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <Button
-              size="xs"
-              className="px-2"
-              onClick={() => void handleSave()}
-              disabled={!canSave || !isDirty}
-            >
-              {status === "saving" ? "Saving..." : "Save"}
-              <KbdGroup aria-hidden className="pointer-events-none inline-flex items-center gap-1">
-                <Kbd className="text-ui-2xs h-4 min-w-0 rounded-sm bg-primary-foreground/12 px-1 text-primary-foreground/80">
-                  ⌘
-                </Kbd>
-                <Kbd className="text-ui-2xs h-4 min-w-4 rounded-sm bg-primary-foreground/12 px-1 text-primary-foreground/80">
-                  S
-                </Kbd>
-              </KbdGroup>
-            </Button>
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => onOpenPreview(filePath)}
-              disabled={previewDisabledReason !== null}
-              title={previewDisabledReason ?? "Open Preview"}
-            >
-              Preview
-            </Button>
+        {showHeader ? (
+          <div className="flex shrink-0 items-center gap-2 border-b border-border/70 px-3 py-2">
             <Button
               size="icon-xs"
-              variant="outline"
-              onClick={() => onOpenInEditor(filePath)}
-              aria-label="Open in IDE"
-              title="Open in IDE"
+              variant="ghost"
+              onClick={() => requestNavigation({ type: "back" })}
+              aria-label={navigationLabel}
+              title={navigationLabel}
             >
-              <OpenInIDEIcon className="size-3.5" />
+              <ArrowLeftIcon className="size-3.5" />
+              <span className="sr-only">{navigationLabel}</span>
             </Button>
-          </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
-            <div className="shrink-0 border-b border-border/70 bg-background">
-              <div className="flex gap-1 overflow-x-auto px-2 py-1.5">
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1 overflow-x-auto py-0.5">
                 {filePaths.map((candidatePath) => (
                   <button
                     key={candidatePath}
                     type="button"
                     className={cn(
-                      "text-code-compact min-w-0 shrink-0 rounded-md border px-2 py-1 text-left font-mono transition-colors",
+                      "min-w-0 shrink-0 rounded-full border px-2.5 py-1 font-medium leading-none transition-colors",
                       candidatePath === filePath
                         ? "border-border bg-accent text-accent-foreground"
                         : "border-transparent text-muted-foreground hover:border-border/60 hover:bg-accent/40 hover:text-foreground",
@@ -1075,11 +1107,56 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                     }
                     title={candidatePath}
                   >
-                    <span className="block truncate">{resolveFileTabLabel(candidatePath)}</span>
+                    <span className="text-ui-xs block max-w-60 truncate">
+                      {resolveEditorFileLabel(candidatePath)}
+                    </span>
                   </button>
                 ))}
               </div>
             </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Button
+                size="xs"
+                className="px-2"
+                onClick={() => void handleSave()}
+                disabled={!canSave || !isDirty}
+              >
+                {status === "saving" ? "Saving..." : "Save"}
+                <KbdGroup
+                  aria-hidden
+                  className="pointer-events-none inline-flex items-center gap-1"
+                >
+                  <Kbd className="text-ui-2xs h-4 min-w-0 rounded-sm bg-primary-foreground/12 px-1 text-primary-foreground/80">
+                    ⌘
+                  </Kbd>
+                  <Kbd className="text-ui-2xs h-4 min-w-4 rounded-sm bg-primary-foreground/12 px-1 text-primary-foreground/80">
+                    S
+                  </Kbd>
+                </KbdGroup>
+              </Button>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => onOpenPreview(filePath)}
+                disabled={previewDisabledReason !== null}
+                title={previewDisabledReason ?? "Open Preview"}
+              >
+                Preview
+              </Button>
+              <Button
+                size="icon-xs"
+                variant="outline"
+                onClick={() => onOpenInEditor(filePath)}
+                aria-label="Open in IDE"
+                title="Open in IDE"
+              >
+                <OpenInIDEIcon className="size-3.5" />
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {status === "conflict" ? (
                 <div className="flex shrink-0 items-start gap-3 border-b border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
@@ -1221,7 +1298,6 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                       monacoRef.current.Uri.parse(
                         buildWarmEditorModelPath({
                           sessionKey,
-                          cwd,
                           filePath,
                         }),
                       ),

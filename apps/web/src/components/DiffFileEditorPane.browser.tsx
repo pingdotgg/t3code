@@ -621,8 +621,16 @@ index 1111111..2222222 100644
       await expect.element(page.getByRole("button", { name: "Exit edit" })).toBeVisible();
       await expect.element(page.getByRole("button", { name: "Open in IDE" })).toBeVisible();
       await expect.element(page.getByRole("button", { name: "Save" })).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "example.ts" })).toBeVisible();
       await expect.element(page.getByText("⌘", { exact: true })).toBeVisible();
       await expect.element(page.getByText("src/example.ts")).not.toBeInTheDocument();
+      await vi.waitFor(() => {
+        const filePillLabel = document.querySelector<HTMLSpanElement>(
+          'button[title="src/example.ts"] span',
+        );
+        expect(filePillLabel?.className).toContain("text-ui-xs");
+        expect(filePillLabel?.className).not.toContain("text-code-compact");
+      });
       await vi.waitFor(() => {
         expect(revealPositionInCenterMock).toHaveBeenCalledWith({ lineNumber: 2, column: 7 });
         expect(setPositionMock).toHaveBeenCalledWith({ lineNumber: 2, column: 7 });

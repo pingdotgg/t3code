@@ -8630,7 +8630,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      await expect.element(page.getByLabelText("Back to files")).toBeVisible();
+      await expect.element(page.getByLabelText("Close files panel")).toBeVisible();
 
       await vi.waitFor(
         () => {
@@ -8756,6 +8756,91 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(readFile).toHaveBeenCalledWith({
             cwd: "/repo/project",
             relativePath: "src/other.ts",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("searches workspace files from the files panel sidebar", async () => {
+    const listEntries = vi.fn(async () => ({
+      entries: [
+        {
+          path: "src",
+          kind: "directory" as const,
+          parentPath: undefined,
+        },
+      ],
+    }));
+    const searchEntries = vi.fn(async ({ query }: { readonly query: string }) => ({
+      entries:
+        query === "linked"
+          ? [
+              {
+                path: "src/linked.ts",
+                kind: "file" as const,
+                parentPath: "src",
+              },
+            ]
+          : [],
+      truncated: false,
+    }));
+    const readFile = vi.fn(async () => ({
+      relativePath: "src/linked.ts",
+      contents: "export const linked = true;\n",
+      version: FILE_VERSION_A,
+    }));
+
+    __setEnvironmentApiOverrideForTests(
+      LOCAL_ENVIRONMENT_ID,
+      createMockEnvironmentApi({
+        browse: vi.fn(async () => ({ parentPath: "~/", entries: [] })),
+        dispatchCommand: vi.fn(async () => ({ sequence: fixture.snapshot.snapshotSequence + 1 })),
+        listEntries,
+        readFile,
+        searchEntries,
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-files-search-editor" as MessageId,
+        targetText: "search files editor",
+      }),
+    });
+
+    try {
+      await page.getByLabelText("Toggle files panel").click();
+      await page.getByPlaceholder("Search files...").fill("linked");
+
+      await vi.waitFor(
+        () => {
+          expect(searchEntries).toHaveBeenCalledWith({
+            cwd: "/repo/project",
+            query: "linked",
+            limit: 80,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page.getByRole("button", { name: /linked\.ts/ }).click();
+
+      await vi.waitFor(
+        () => {
+          expect(mounted.router.state.location.search).toMatchObject({
+            diff: "1",
+            diffView: "editor",
+            editorFilePath: "src/linked.ts",
+            editorBackToView: "files",
+          });
+          expect(readFile).toHaveBeenCalledWith({
+            cwd: "/repo/project",
+            relativePath: "src/linked.ts",
           });
         },
         { timeout: 8_000, interval: 16 },
