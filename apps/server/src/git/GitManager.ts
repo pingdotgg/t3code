@@ -39,6 +39,10 @@ import {
   sanitizeBranchFragment,
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
+import {
+  getChangeRequestTerminologyForKind,
+  type ChangeRequestTerminology,
+} from "@t3tools/shared/sourceControl";
 
 import { GitManagerError } from "@t3tools/contracts";
 import { TextGeneration } from "../textGeneration/TextGeneration.ts";
@@ -48,7 +52,7 @@ import { ServerSettingsService } from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import { GitVcsDriver, type GitStatusDetails } from "../vcs/GitVcsDriver.ts";
 import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
-import type { ChangeRequest, SourceControlProviderKind } from "@t3tools/contracts";
+import type { ChangeRequest } from "@t3tools/contracts";
 
 export interface GitActionProgressReporter {
   readonly publish: (event: GitActionProgressEvent) => Effect.Effect<void, never>;
@@ -144,24 +148,6 @@ interface BranchHeadContext {
   headRepositoryNameWithOwner: string | null;
   headRepositoryOwnerLogin: string | null;
   isCrossRepository: boolean;
-}
-
-interface ChangeRequestTerms {
-  shortLabel: string;
-  singular: string;
-}
-
-function sourceControlChangeRequestTerms(kind: SourceControlProviderKind): ChangeRequestTerms {
-  if (kind === "gitlab") {
-    return {
-      shortLabel: "MR",
-      singular: "merge request",
-    };
-  }
-  return {
-    shortLabel: "PR",
-    singular: "pull request",
-  };
 }
 
 function parseRepositoryNameFromPullRequestUrl(url: string): string | null {
@@ -371,7 +357,7 @@ function withDescription(title: string, description: string | undefined) {
 
 function summarizeGitActionResult(
   result: Pick<GitRunStackedActionResult, "commit" | "push" | "pr">,
-  terms: ChangeRequestTerms,
+  terms: ChangeRequestTerminology,
 ): {
   title: string;
   description?: string;
@@ -958,8 +944,8 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     result: Pick<GitRunStackedActionResult, "action" | "branch" | "commit" | "push" | "pr">,
   ) {
     const terms = yield* sourceControlProvider(cwd).pipe(
-      Effect.map((provider) => sourceControlChangeRequestTerms(provider.kind)),
-      Effect.catch(() => Effect.succeed(sourceControlChangeRequestTerms("unknown"))),
+      Effect.map((provider) => getChangeRequestTerminologyForKind(provider.kind)),
+      Effect.catch(() => Effect.succeed(getChangeRequestTerminologyForKind("unknown"))),
     );
     const summary = summarizeGitActionResult(result, terms);
     let latestOpenPr: PullRequestInfo | null = null;
@@ -1243,7 +1229,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     emit: GitActionProgressEmitter,
   ) {
     const provider = yield* sourceControlProvider(cwd);
-    const terms = sourceControlChangeRequestTerms(provider.kind);
+    const terms = getChangeRequestTerminologyForKind(provider.kind);
     const details = yield* gitCore.statusDetails(cwd);
     const branch = details.branch ?? fallbackBranch;
     if (!branch) {
@@ -1677,7 +1663,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         const currentBranch = branchStep.name ?? initialStatus.branch;
         const commitAction = isCommitAction(input.action) ? input.action : null;
         const changeRequestTerms = wantsPr
-          ? sourceControlChangeRequestTerms((yield* sourceControlProvider(input.cwd)).kind)
+          ? getChangeRequestTerminologyForKind((yield* sourceControlProvider(input.cwd)).kind)
           : null;
 
         const commit = commitAction
