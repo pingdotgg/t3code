@@ -769,6 +769,10 @@ const make = Effect.gen(function* () {
       if (!hasRenderableAssistantText(bufferedText)) {
         return false;
       }
+      if (extractProposedPlanMarkdown(bufferedText)) {
+        yield* Cache.set(bufferedAssistantTextByMessageId, input.messageId, bufferedText);
+        return false;
+      }
 
       yield* orchestrationEngine.dispatch({
         type: "thread.message.assistant.delta",
@@ -867,6 +871,12 @@ const make = Effect.gen(function* () {
   const finalizeActiveAssistantSegmentForTurn = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
+    threadProposedPlans: ReadonlyArray<{
+      id: string;
+      createdAt: string;
+      implementedAt: string | null;
+      implementationThreadId: ThreadId | null;
+    }>;
     turnId: TurnId;
     createdAt: string;
     commandTag: string;
@@ -883,7 +893,7 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      yield* finalizeAssistantMessage({
+      const completedAssistantText = yield* finalizeAssistantMessage({
         event: input.event,
         threadId: input.threadId,
         messageId: activeMessageId.value,
@@ -895,6 +905,18 @@ const make = Effect.gen(function* () {
           input.hasProjectedMessage ||
           (input.flushedMessageIds?.has(activeMessageId.value) ?? false),
       });
+      const proposedPlanFromAssistantMessage = extractProposedPlanMarkdown(completedAssistantText);
+      if (proposedPlanFromAssistantMessage) {
+        yield* finalizeBufferedProposedPlan({
+          event: input.event,
+          threadId: input.threadId,
+          threadProposedPlans: input.threadProposedPlans,
+          planId: proposedPlanIdForTurn(input.threadId, input.turnId),
+          turnId: input.turnId,
+          fallbackMarkdown: proposedPlanFromAssistantMessage,
+          updatedAt: input.createdAt,
+        });
+      }
       yield* forgetAssistantMessageId(input.threadId, input.turnId, activeMessageId.value);
 
       const state = yield* getAssistantSegmentStateForTurn(input.threadId, input.turnId);
@@ -1307,6 +1329,7 @@ const make = Effect.gen(function* () {
         yield* finalizeActiveAssistantSegmentForTurn({
           event,
           threadId: thread.id,
+          threadProposedPlans: thread.proposedPlans,
           turnId: pauseForUserTurnId,
           createdAt: now,
           commandTag:

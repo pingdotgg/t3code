@@ -1716,6 +1716,77 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
+  it("projects a proposed plan when an approval request opens after buffered tagged assistant text", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-buffered-request-plan-flush"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-buffered-request-plan-flush"),
+    });
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-buffered-request-plan-flush",
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-message-delta-buffered-request-plan-flush"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-buffered-request-plan-flush"),
+      itemId: asItemId("item-buffered-request-plan-flush"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "<proposed_plan>\n# Approval boundary plan\n\n- one\n</proposed_plan>",
+      },
+    });
+    harness.emit({
+      type: "request.opened",
+      eventId: asEventId("evt-request-opened-buffered-request-plan-flush"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-buffered-request-plan-flush"),
+      requestId: ApprovalRequestId.make("req-buffered-request-plan-flush"),
+      payload: {
+        requestType: "command_execution_approval",
+        detail: "pwd",
+      },
+    });
+
+    const thread = await waitForThread(harness.engine, (entry) =>
+      entry.proposedPlans.some(
+        (proposedPlan: ProviderRuntimeTestProposedPlan) =>
+          proposedPlan.id === "plan:thread-1:turn:turn-buffered-request-plan-flush",
+      ),
+    );
+
+    expect(
+      thread.messages.find(
+        (entry: ProviderRuntimeTestMessage) =>
+          entry.id === "assistant:item-buffered-request-plan-flush",
+      ),
+    ).toMatchObject({
+      text: "",
+      streaming: false,
+      turnId: "turn-buffered-request-plan-flush",
+    });
+    expect(
+      thread.proposedPlans.find(
+        (entry: ProviderRuntimeTestProposedPlan) =>
+          entry.id === "plan:thread-1:turn:turn-buffered-request-plan-flush",
+      )?.planMarkdown,
+    ).toBe("# Approval boundary plan\n\n- one");
+  });
+
   it("flushes and completes buffered assistant text when user input is requested", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
