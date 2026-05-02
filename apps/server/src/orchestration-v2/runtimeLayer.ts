@@ -4,6 +4,7 @@ import { layer as codexAdapterLayer } from "./Adapters/CodexAdapterV2.ts";
 import { codexAppServerClientFactoryFromSettingsLayer } from "./Adapters/CodexAdapterV2.ts";
 import { layer as checkpointServiceLayer } from "./CheckpointService.ts";
 import { layer as commandReceiptStoreLayer } from "./CommandReceiptStore.ts";
+import { layer as contextHandoffServiceLayer } from "./ContextHandoffService.ts";
 import { layer as eventSinkLayer } from "./EventSink.ts";
 import { layer as eventStoreLayer } from "./EventStore.ts";
 import { layer as idAllocatorLayer } from "./IdAllocator.ts";
@@ -26,6 +27,9 @@ const providerEventIngestorProvided = providerEventIngestorLayer.pipe(
 );
 
 const checkpointServiceProvided = checkpointServiceLayer.pipe(Layer.provide(idAllocatorLayer));
+const contextHandoffServiceProvided = contextHandoffServiceLayer.pipe(
+  Layer.provide(idAllocatorLayer),
+);
 
 const codexAdapterProvided = codexAdapterLayer.pipe(
   Layer.provide(codexAppServerClientFactoryFromSettingsLayer),
@@ -65,6 +69,7 @@ export const OrchestrationV2LayerLive = orchestratorLayer.pipe(
       storesLayer,
       eventSinkProvided,
       commandReceiptStoreProvided,
+      contextHandoffServiceProvided,
       idAllocatorLayer,
       providerEventIngestorProvided,
       runtimePolicyLayer,

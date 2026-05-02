@@ -8,6 +8,7 @@ import {
   assertSemanticProjectionIntegrity,
   assertTurnItemTypes,
   assertUserMessagesInclude,
+  assertVisibleTurnItemsMirrorLocalTurnItems,
   projectionFor,
 } from "../shared.ts";
 
@@ -24,6 +25,7 @@ export function assertThreadRollbackOutput(
 
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
+  assertVisibleTurnItemsMirrorLocalTurnItems(projection);
   assertRunOrdinals(projection, [1, 2, 3]);
   assertTurnItemTypes(projection, ["user_message", "assistant_message", "checkpoint"]);
   assertUserMessagesInclude(projection, [

@@ -10,6 +10,7 @@ import {
   assertSemanticProjectionIntegrity,
   assertTurnItemTypes,
   assertUserMessagesInclude,
+  assertVisibleTurnItemsMirrorLocalTurnItems,
   projectionFor,
 } from "../shared.ts";
 
@@ -26,6 +27,7 @@ export function assertMultiTurnOutput(
 
   const projection = projectionFor(result, transcript.scenario);
   assertSemanticProjectionIntegrity(projection);
+  assertVisibleTurnItemsMirrorLocalTurnItems(projection);
   assertRunOrdinals(projection, [1, 2]);
   assertConversationMessageRoles(projection, ["user", "assistant", "user", "assistant"]);
   assertTurnItemTypes(projection, ["user_message", "assistant_message"]);
