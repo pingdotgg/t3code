@@ -34,6 +34,7 @@ import {
 } from "../providerSnapshot.ts";
 import { compareCliVersions } from "../cliVersion.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { claudeSlashCommandsAsProviderSkills } from "../claudeSlashCommandsAsProviderSkills.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -622,6 +623,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     : undefined;
   const slashCommands = capabilities?.slashCommands ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
+  const skillsFromSlashCommands = claudeSlashCommandsAsProviderSkills(dedupedSlashCommands);
 
   if (!capabilities) {
     return buildServerProvider({
@@ -630,6 +632,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       checkedAt,
       models,
       slashCommands: dedupedSlashCommands,
+      skills: skillsFromSlashCommands,
       probe: {
         installed: true,
         version: parsedVersion,
@@ -650,6 +653,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     checkedAt,
     models,
     slashCommands: dedupedSlashCommands,
+    skills: skillsFromSlashCommands,
     probe: {
       installed: true,
       version: parsedVersion,
