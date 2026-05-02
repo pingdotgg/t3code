@@ -8,18 +8,30 @@
  * @module
  */
 
-import type * as controlThreads from "../controlThreads.js";
-import type * as executionRuns from "../executionRuns.js";
 import type * as http from "../http.js";
-import type * as linearOrchestration from "../linearOrchestration.js";
+import type * as linear from "../linear.js";
+import type * as projects from "../projects.js";
+import type * as t3Runtime from "../t3Runtime.js";
+import type * as taskEvents from "../taskEvents.js";
+import type * as taskExternalLinks from "../taskExternalLinks.js";
+import type * as taskIntake from "../taskIntake.js";
+import type * as taskThreads from "../taskThreads.js";
+import type * as tasks from "../tasks.js";
+import type * as workSessions from "../workSessions.js";
 
 import type { ApiFromModules, FilterApi, FunctionReference } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  controlThreads: typeof controlThreads;
-  executionRuns: typeof executionRuns;
   http: typeof http;
-  linearOrchestration: typeof linearOrchestration;
+  linear: typeof linear;
+  projects: typeof projects;
+  t3Runtime: typeof t3Runtime;
+  taskEvents: typeof taskEvents;
+  taskExternalLinks: typeof taskExternalLinks;
+  taskIntake: typeof taskIntake;
+  taskThreads: typeof taskThreads;
+  tasks: typeof tasks;
+  workSessions: typeof workSessions;
 }>;
 
 /**

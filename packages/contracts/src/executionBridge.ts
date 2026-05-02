@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
 
-import { IsoDateTime, ThreadId, TrimmedNonEmptyString, TurnId } from "./baseSchemas.ts";
+import { IsoDateTime, ProjectId, ThreadId, TrimmedNonEmptyString, TurnId } from "./baseSchemas.ts";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -8,6 +8,14 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "./orchestration.ts";
+import {
+  SandboxDescriptor,
+  SandboxId,
+  SandboxRuntimeSelection,
+  SandboxServiceDescriptor,
+  SandboxServiceRequest,
+} from "./sandbox.ts";
+import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 
 export const ExecutionRunId = TrimmedNonEmptyString;
 export type ExecutionRunId = typeof ExecutionRunId.Type;
@@ -123,3 +131,103 @@ export const ExecutionRunActivityEvent = Schema.Struct({
   occurredAt: IsoDateTime,
 });
 export type ExecutionRunActivityEvent = typeof ExecutionRunActivityEvent.Type;
+
+export const TaskRuntimeMaterializationId = TrimmedNonEmptyString;
+export type TaskRuntimeMaterializationId = typeof TaskRuntimeMaterializationId.Type;
+
+export const TaskRuntimeMaterializeRequest = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  workSessionId: TaskRuntimeMaterializationId,
+  initialPrompt: Schema.String,
+  project: Schema.Struct({
+    repoName: TrimmedNonEmptyString,
+    workspaceRoot: TrimmedNonEmptyString,
+    defaultBranch: TrimmedNonEmptyString,
+    projectKey: Schema.optional(TrimmedNonEmptyString),
+  }),
+  title: TrimmedNonEmptyString,
+  modelSelection: Schema.optional(ModelSelection),
+  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+  ),
+  startCodingAgent: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sandbox: Schema.optional(SandboxRuntimeSelection),
+  services: Schema.optional(Schema.Array(SandboxServiceRequest)),
+  idempotencyKey: Schema.optional(TrimmedNonEmptyString),
+});
+export type TaskRuntimeMaterializeRequest = typeof TaskRuntimeMaterializeRequest.Type;
+
+export const TaskRuntimeMaterializeResponse = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  workSessionId: TaskRuntimeMaterializationId,
+  t3ProjectId: ProjectId,
+  t3ThreadId: ThreadId,
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  acceptedAt: IsoDateTime,
+  sandbox: Schema.optional(SandboxDescriptor),
+  environment: Schema.optional(ExecutionEnvironmentDescriptor),
+  services: Schema.optional(Schema.Array(SandboxServiceDescriptor)),
+});
+export type TaskRuntimeMaterializeResponse = typeof TaskRuntimeMaterializeResponse.Type;
+
+export const TaskRuntimeReconnectRequest = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  workSessionId: TaskRuntimeMaterializationId,
+  sandboxId: SandboxId,
+});
+export type TaskRuntimeReconnectRequest = typeof TaskRuntimeReconnectRequest.Type;
+
+export const TaskRuntimeReconnectResponse = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  workSessionId: TaskRuntimeMaterializationId,
+  sandbox: SandboxDescriptor,
+  environment: ExecutionEnvironmentDescriptor,
+  services: Schema.Array(SandboxServiceDescriptor),
+  acceptedAt: IsoDateTime,
+});
+export type TaskRuntimeReconnectResponse = typeof TaskRuntimeReconnectResponse.Type;
+
+export const TaskRuntimeArchiveRequest = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  workSessionId: TaskRuntimeMaterializationId,
+  sandboxId: SandboxId,
+});
+export type TaskRuntimeArchiveRequest = typeof TaskRuntimeArchiveRequest.Type;
+
+export const TaskRuntimeArchiveResponse = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  workSessionId: TaskRuntimeMaterializationId,
+  sandbox: SandboxDescriptor,
+  archivedAt: IsoDateTime,
+});
+export type TaskRuntimeArchiveResponse = typeof TaskRuntimeArchiveResponse.Type;
+
+export const TaskRuntimeSandboxStatusQuery = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  workSessionId: TaskRuntimeMaterializationId,
+  sandboxId: SandboxId,
+});
+export type TaskRuntimeSandboxStatusQuery = typeof TaskRuntimeSandboxStatusQuery.Type;
+
+export const TaskRuntimeSandboxStatusResponse = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  workSessionId: TaskRuntimeMaterializationId,
+  sandbox: SandboxDescriptor,
+  services: Schema.Array(SandboxServiceDescriptor),
+  refreshedAt: IsoDateTime,
+});
+export type TaskRuntimeSandboxStatusResponse = typeof TaskRuntimeSandboxStatusResponse.Type;
+
+export const TaskRuntimeLifecycleEvent = Schema.Struct({
+  eventId: TrimmedNonEmptyString,
+  taskId: TrimmedNonEmptyString,
+  workSessionId: TaskRuntimeMaterializationId,
+  type: ExecutionRunLifecycleType,
+  occurredAt: IsoDateTime,
+  t3ThreadId: Schema.optional(ThreadId),
+  t3TurnId: Schema.optional(TurnId),
+  failureSummary: Schema.optional(TrimmedNonEmptyString),
+});
+export type TaskRuntimeLifecycleEvent = typeof TaskRuntimeLifecycleEvent.Type;

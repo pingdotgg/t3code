@@ -5,8 +5,11 @@ import type { TrackedExecutionRun } from "./runStart.ts";
 
 function makeTrackedRun(overrides?: Partial<TrackedExecutionRun>): TrackedExecutionRun {
   return {
+    kind: "execution",
     controlThreadId: "control-thread-1",
     executionRunId: "execution-run-1",
+    taskId: null,
+    workSessionId: null,
     threadId: "thread-1" as TrackedExecutionRun["threadId"],
     startedEventId: null,
     completedEventId: null,

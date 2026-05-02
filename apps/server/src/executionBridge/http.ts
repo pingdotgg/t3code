@@ -5,6 +5,7 @@ import {
   ExecutionRunContinueRequest,
   ExecutionRunInterruptRequest,
   ExecutionRunStatusQuery,
+  TaskRuntimeMaterializeRequest,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
 import { Effect, Layer, Schema, Stream } from "effect";
@@ -13,12 +14,14 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import { authenticateExecutionBridgeRequest, ExecutionBridgeAuthError } from "./routeAuth.ts";
 import {
   buildLifecycleEvent,
+  buildTaskRuntimeLifecycleEvent,
   type ExecutionLifecycleCheckpoint,
   ExecutionBridgeRunRegistry,
   ExecutionBridgeRunStartError,
   startExecutionRun,
   continueExecutionRun,
   interruptExecutionRun,
+  materializeTaskRuntime,
   type TrackedExecutionRun,
 } from "./runStart.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
@@ -78,6 +81,9 @@ const postLifecycleEvent = (event: ExecutionRunLifecycleEvent) =>
 
 const postActivityEvent = (event: ExecutionRunActivityEvent) =>
   postToOrchestrator("/t3/execution-activities", event);
+
+const postTaskRuntimeLifecycleEvent = (event: ReturnType<typeof buildTaskRuntimeLifecycleEvent>) =>
+  postToOrchestrator("/t3/task-runtime-events", event);
 
 function toLifecycleCheckpoint(
   event: Extract<OrchestrationEvent, { type: "thread.session-set" }>,
@@ -155,6 +161,24 @@ export const executionBridgeRunCreateRouteLayer = HttpRouter.add(
     yield* authenticateExecutionBridgeRequest;
     const request = yield* HttpServerRequest.schemaBodyJson(ExecutionRunCreateRequest);
     const result = yield* startExecutionRun(request);
+    return HttpServerResponse.jsonUnsafe(result, { status: 202 });
+  }).pipe(
+    Effect.catchTag("ExecutionBridgeAuthError", (error) =>
+      Effect.succeed(respondToExecutionBridgeError(error)),
+    ),
+    Effect.catchTag("ExecutionBridgeRunStartError", (error) =>
+      Effect.succeed(respondToExecutionBridgeError(error)),
+    ),
+  ),
+);
+
+export const taskRuntimeMaterializeRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/tasks/materialize",
+  Effect.gen(function* () {
+    yield* authenticateExecutionBridgeRequest;
+    const request = yield* HttpServerRequest.schemaBodyJson(TaskRuntimeMaterializeRequest);
+    const result = yield* materializeTaskRuntime(request);
     return HttpServerResponse.jsonUnsafe(result, { status: 202 });
   }).pipe(
     Effect.catchTag("ExecutionBridgeAuthError", (error) =>
@@ -316,6 +340,9 @@ export const executionBridgeLifecycleCallbacksLive = Layer.effectDiscard(
             if (trackedRun === null) {
               return;
             }
+            if (trackedRun.kind !== "execution") {
+              return;
+            }
 
             const activityPayload = toActivityEvent(event, trackedRun);
             if (activityPayload === null) {
@@ -352,18 +379,31 @@ export const executionBridgeLifecycleCallbacksLive = Layer.effectDiscard(
             return;
           }
 
-          const payload = buildLifecycleEvent({
-            trackedRun,
-            type: lifecycle.type,
-            eventId: event.eventId,
-            occurredAt: event.occurredAt,
-            ...(lifecycle.turnId !== undefined ? { t3TurnId: lifecycle.turnId } : {}),
-            ...(lifecycle.failureSummary !== undefined
-              ? { failureSummary: lifecycle.failureSummary }
-              : {}),
-          });
-
-          yield* postLifecycleEvent(payload);
+          if (trackedRun.kind === "task") {
+            const payload = buildTaskRuntimeLifecycleEvent({
+              trackedRun,
+              type: lifecycle.type,
+              eventId: event.eventId,
+              occurredAt: event.occurredAt,
+              ...(lifecycle.turnId !== undefined ? { t3TurnId: lifecycle.turnId } : {}),
+              ...(lifecycle.failureSummary !== undefined
+                ? { failureSummary: lifecycle.failureSummary }
+                : {}),
+            });
+            yield* postTaskRuntimeLifecycleEvent(payload);
+          } else {
+            const payload = buildLifecycleEvent({
+              trackedRun,
+              type: lifecycle.type,
+              eventId: event.eventId,
+              occurredAt: event.occurredAt,
+              ...(lifecycle.turnId !== undefined ? { t3TurnId: lifecycle.turnId } : {}),
+              ...(lifecycle.failureSummary !== undefined
+                ? { failureSummary: lifecycle.failureSummary }
+                : {}),
+            });
+            yield* postLifecycleEvent(payload);
+          }
           // We only mark the lifecycle after a successful POST so retries can be
           // attempted on later session updates if the callback target is briefly down.
           yield* runRegistry.markLifecycleDelivered({

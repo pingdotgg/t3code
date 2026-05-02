@@ -4,7 +4,6 @@ import {
   canApplyLifecycleEvent,
   deriveNextStatus,
   isTerminalStatus,
-  type ExecutionLifecycleType,
   type ExecutionRunStatus,
 } from "./executionLifecycle.ts";
 

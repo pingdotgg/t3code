@@ -11,6 +11,9 @@ import {
   type ExecutionRunStatusQuery,
   ExecutionRunStatusResponse,
   type ExecutionRunStatusResponse as ExecutionRunStatusResponseType,
+  type TaskRuntimeMaterializeRequest,
+  TaskRuntimeMaterializeResponse,
+  type TaskRuntimeMaterializeResponse as TaskRuntimeMaterializeResponseType,
 } from "@t3tools/contracts";
 import { Schema } from "effect";
 
@@ -18,6 +21,9 @@ const decodeExecutionRunCreateResponse = Schema.decodeUnknownSync(ExecutionRunCr
 const decodeExecutionRunContinueResponse = Schema.decodeUnknownSync(ExecutionRunContinueResponse);
 const decodeExecutionRunInterruptResponse = Schema.decodeUnknownSync(ExecutionRunInterruptResponse);
 const decodeExecutionRunStatusResponse = Schema.decodeUnknownSync(ExecutionRunStatusResponse);
+const decodeTaskRuntimeMaterializeResponse = Schema.decodeUnknownSync(
+  TaskRuntimeMaterializeResponse,
+);
 
 function requiredEnv(name: "T3_EXECUTION_BRIDGE_BASE_URL" | "T3_EXECUTION_BRIDGE_SHARED_SECRET") {
   const value = process.env[name]?.trim();
@@ -40,6 +46,9 @@ export interface T3ExecutionBridgeClient {
   readonly queryRunStatus: (
     query: ExecutionRunStatusQuery,
   ) => Promise<ExecutionRunStatusResponseType>;
+  readonly materializeTaskRuntime: (
+    request: TaskRuntimeMaterializeRequest,
+  ) => Promise<TaskRuntimeMaterializeResponseType>;
 }
 
 export function createT3ExecutionBridgeClient(): T3ExecutionBridgeClient {
@@ -109,6 +118,19 @@ export function createT3ExecutionBridgeClient(): T3ExecutionBridgeClient {
       }
 
       return decodeExecutionRunInterruptResponse(await response.json());
+    },
+
+    async materializeTaskRuntime(request) {
+      const response = await authedPost("/api/tasks/materialize", request);
+
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(
+          `T3 task runtime bridge rejected materialization (${response.status}): ${detail || "Unknown error"}`,
+        );
+      }
+
+      return decodeTaskRuntimeMaterializeResponse(await response.json());
     },
   };
 }

@@ -1,102 +1,122 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
-const controlThreadState = v.union(
-  v.literal("open"),
-  v.literal("active"),
-  v.literal("waiting"),
-  v.literal("closed"),
+const taskStatus = v.union(
+  v.literal("ready"),
+  v.literal("working"),
+  v.literal("needs_input"),
+  v.literal("ready_for_review"),
+  v.literal("done"),
+  v.literal("blocked"),
+  v.literal("failed"),
+  v.literal("canceled"),
 );
-
-const linearThreadKind = v.union(v.literal("issue"), v.literal("comment"));
-const executionRunState = v.union(
+const taskCreatedFrom = v.union(
+  v.literal("workspace"),
+  v.literal("linear"),
+  v.literal("slack"),
+  v.literal("support_email"),
+  v.literal("webhook"),
+);
+const taskThreadRole = v.union(
+  v.literal("primary"),
+  v.literal("supporting"),
+  v.literal("historical_primary"),
+);
+const taskExternalLinkKind = v.union(
+  v.literal("linear_issue"),
+  v.literal("slack_thread"),
+  v.literal("support_email_thread"),
+  v.literal("webhook_event"),
+  v.literal("github_pr"),
+);
+const workSessionStatus = v.union(
   v.literal("requested"),
   v.literal("accepted"),
   v.literal("started"),
   v.literal("completed"),
   v.literal("failed"),
   v.literal("interrupted"),
-  v.literal("reconciling"),
-);
-const executionLifecycleType = v.union(
-  v.literal("started"),
-  v.literal("completed"),
-  v.literal("failed"),
-  v.literal("interrupted"),
+  v.literal("superseded"),
 );
 
 export default defineSchema({
-  controlThreads: defineTable({
-    source: v.literal("linear"),
-    linearThreadKey: v.string(),
-    linearThreadKind,
-    linearIssueId: v.string(),
-    linearCommentId: v.optional(v.string()),
+  projects: defineTable({
+    repoName: v.string(),
+    sandboxWorkspaceRoot: v.string(),
+    defaultBranch: v.string(),
+    githubOwner: v.string(),
+    githubRepo: v.string(),
     linearTeamId: v.optional(v.string()),
-    title: v.optional(v.string()),
-    summary: v.optional(v.string()),
-    linearAgentSessionId: v.optional(v.string()),
-    state: controlThreadState,
-    lastEventId: v.string(),
-    lastIngressAt: v.number(),
+    linearProjectId: v.optional(v.string()),
+    t3ProjectId: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_linear_thread_key", ["linearThreadKey"])
-    .index("by_updated_at", ["updatedAt"]),
-  controlThreadEvents: defineTable({
-    controlThreadId: v.id("controlThreads"),
-    eventKey: v.string(),
-    kind: v.string(),
-    payloadJson: v.string(),
-    createdAt: v.number(),
-  })
-    .index("by_control_thread_id", ["controlThreadId"])
-    .index("by_event_key", ["eventKey"]),
-  controlThreadMessages: defineTable({
-    controlThreadId: v.id("controlThreads"),
-    externalMessageKey: v.string(),
-    authorName: v.optional(v.string()),
-    bodyPreview: v.optional(v.string()),
+    .index("by_repo", ["githubOwner", "githubRepo"])
+    .index("by_workspace_root", ["sandboxWorkspaceRoot"])
+    .index("by_linear_team_project", ["linearTeamId", "linearProjectId"]),
+  tasks: defineTable({
+    projectId: v.id("projects"),
+    title: v.string(),
+    status: taskStatus,
+    statusReason: v.optional(v.string()),
+    currentPrimaryTaskThreadId: v.optional(v.id("taskThreads")),
+    archivedAt: v.optional(v.number()),
+    createdFrom: taskCreatedFrom,
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_control_thread_id", ["controlThreadId"])
-    .index("by_external_message_key", ["externalMessageKey"]),
-  executionRuns: defineTable({
-    executionRunId: v.string(),
-    controlThreadId: v.id("controlThreads"),
-    status: executionRunState,
-    initialPrompt: v.string(),
-    workspaceRoot: v.string(),
-    title: v.optional(v.string()),
-    runtimeMode: v.string(),
-    interactionMode: v.string(),
-    modelSelectionJson: v.optional(v.string()),
-    requestedAt: v.number(),
-    acceptedAt: v.optional(v.number()),
+    .index("by_project_status_updated", ["projectId", "status", "updatedAt"])
+    .index("by_project_updated", ["projectId", "updatedAt"]),
+  taskThreads: defineTable({
+    taskId: v.id("tasks"),
+    t3ThreadId: v.string(),
+    t3ProjectId: v.optional(v.string()),
+    branch: v.optional(v.string()),
+    worktreePath: v.optional(v.string()),
+    role: taskThreadRole,
+    codingAgent: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_task", ["taskId"])
+    .index("by_t3_thread", ["t3ThreadId"]),
+  taskExternalLinks: defineTable({
+    taskId: v.id("tasks"),
+    kind: taskExternalLinkKind,
+    externalId: v.string(),
+    url: v.optional(v.string()),
+    muted: v.boolean(),
+    syncCursor: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_task", ["taskId"])
+    .index("by_kind_external_id", ["kind", "externalId"]),
+  workSessions: defineTable({
+    taskId: v.id("tasks"),
+    taskThreadId: v.id("taskThreads"),
+    t3ThreadId: v.string(),
+    status: workSessionStatus,
     startedAt: v.optional(v.number()),
-    completedAt: v.optional(v.number()),
+    endedAt: v.optional(v.number()),
     updatedAt: v.number(),
-    t3ThreadId: v.optional(v.string()),
     t3TurnId: v.optional(v.string()),
     failureSummary: v.optional(v.string()),
-    lastEventId: v.optional(v.string()),
-    linearReplyCommentId: v.optional(v.string()),
-    linearReplyError: v.optional(v.string()),
-    linearReplyPostedAt: v.optional(v.number()),
+    bridgeRunId: v.optional(v.string()),
   })
-    .index("by_execution_run_id", ["executionRunId"])
-    .index("by_control_thread_id", ["controlThreadId"])
-    .index("by_updated_at", ["updatedAt"]),
-  executionRunEvents: defineTable({
-    eventId: v.string(),
-    executionRunId: v.string(),
-    controlThreadId: v.id("controlThreads"),
-    type: executionLifecycleType,
-    payloadJson: v.string(),
+    .index("by_task_updated", ["taskId", "updatedAt"])
+    .index("by_t3_thread", ["t3ThreadId"])
+    .index("by_bridge_run", ["bridgeRunId"]),
+  taskEvents: defineTable({
+    taskId: v.id("tasks"),
+    eventKey: v.optional(v.string()),
+    kind: v.string(),
+    summary: v.string(),
+    payloadJson: v.optional(v.string()),
     createdAt: v.number(),
   })
-    .index("by_event_id", ["eventId"])
-    .index("by_execution_run_id", ["executionRunId"]),
+    .index("by_task_created", ["taskId", "createdAt"])
+    .index("by_event_key", ["eventKey"]),
 });

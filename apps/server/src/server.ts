@@ -80,6 +80,7 @@ import {
   executionBridgeStatusQueryRouteLayer,
   executionBridgeContinueRouteLayer,
   executionBridgeInterruptRouteLayer,
+  taskRuntimeMaterializeRouteLayer,
 } from "./executionBridge/http.ts";
 import { ExecutionBridgeRunRegistryLive } from "./executionBridge/runStart.ts";
 import { NetService } from "@t3tools/shared/Net";
@@ -265,6 +266,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   executionBridgeStatusQueryRouteLayer,
   executionBridgeContinueRouteLayer,
   executionBridgeInterruptRouteLayer,
+  taskRuntimeMaterializeRouteLayer,
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
   otlpTracesProxyRouteLayer,

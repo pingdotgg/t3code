@@ -184,6 +184,7 @@ function normalizeAgentSessionPrompted(
   const activityId = asTrimmedString(payload.agentActivity?.id) ?? crypto.randomUUID();
   const sessionId = asTrimmedString(payload.agentSession?.id);
   const issueIdentifier = asTrimmedString(payload.agentSession?.issue?.identifier);
+  const title = asTrimmedString(payload.agentSession?.issue?.title);
   const eventTimestamp = asTrimmedString(payload.createdAt) ?? "unknown";
   const eventId = `linear:agent-session:prompted:${activityId}:${eventTimestamp}`;
 
@@ -195,6 +196,7 @@ function normalizeAgentSessionPrompted(
     body: signal === "stop" ? "__stop__" : body,
     receivedAt: Date.now(),
     shouldStartRun: signal !== "stop",
+    ...(title !== undefined ? { title } : {}),
     ...(issueIdentifier !== undefined ? { issueIdentifier } : {}),
     ...(sessionId !== undefined ? { messageId: activityId } : {}),
     ...(signal === "stop" ? { summary: "User requested stop via agent session" } : {}),

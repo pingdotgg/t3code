@@ -12,9 +12,13 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@chat-adapter/linear": "4.27.0",
+    "@chat-adapter/slack": "4.27.0",
+    "@chat-adapter/state-memory": "4.27.0",
     "@convex-dev/agent": "^0.6.1",
     "@linear/sdk": "^81.0.0",
     "@t3tools/contracts": "workspace:*",
+    "chat": "4.27.0",
     "convex": "^1.35.1",
     "effect": "catalog:"
   },

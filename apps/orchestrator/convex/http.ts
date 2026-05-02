@@ -1,5 +1,6 @@
 import { httpRouter } from "convex/server";
 import { Schema } from "effect";
+import { TaskRuntimeLifecycleEvent } from "@t3tools/contracts";
 
 import {
   buildLinearInstallUrl,
@@ -7,16 +8,12 @@ import {
   exchangeLinearOAuthCode,
   renderLinearOAuthPage,
 } from "../src/linear/oauth.ts";
-import { normalizeLinearWebhookInput } from "../src/linear/ingress.ts";
-import { hasValidLinearSignature } from "../src/linear/webhookVerification.ts";
-import { httpAction } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
-import { ExecutionRunLifecycleEvent, ExecutionRunActivityEvent } from "@t3tools/contracts";
+import type { Id } from "./_generated/dataModel.js";
+import { httpAction } from "./_generated/server.js";
 
 const http = httpRouter();
-const decodeExecutionRunLifecycleEvent = Schema.decodeUnknownSync(ExecutionRunLifecycleEvent);
-const decodeExecutionRunActivityEvent = Schema.decodeUnknownSync(ExecutionRunActivityEvent);
-const FIVE_MINUTES_MS = 5 * 60 * 1000;
+const decodeTaskRuntimeLifecycleEvent = Schema.decodeUnknownSync(TaskRuntimeLifecycleEvent);
 
 function requireBridgeAuthorization(request: Request) {
   const secret = process.env.T3_EXECUTION_BRIDGE_SHARED_SECRET?.trim();
@@ -40,34 +37,6 @@ function requireBridgeAuthorization(request: Request) {
   return { ok: true as const };
 }
 
-function requireLinearWebhookSecret() {
-  const secret = process.env.LINEAR_WEBHOOK_SECRET?.trim();
-  if (!secret) {
-    return {
-      ok: false as const,
-      status: 503,
-      message: "Missing Linear webhook secret",
-    };
-  }
-
-  return {
-    ok: true as const,
-    secret,
-  };
-}
-
-function hasFreshLinearTimestamp(payload: unknown) {
-  if (payload === null || typeof payload !== "object") {
-    return true;
-  }
-
-  const webhookTimestamp = (payload as { readonly webhookTimestamp?: unknown }).webhookTimestamp;
-  return (
-    typeof webhookTimestamp !== "number" ||
-    Math.abs(Date.now() - webhookTimestamp) <= FIVE_MINUTES_MS
-  );
-}
-
 http.route({
   path: "/health",
   method: "GET",
@@ -77,7 +46,7 @@ http.route({
 http.route({
   path: "/linear/oauth/install",
   method: "GET",
-  handler: httpAction(async (_ctx, request) => {
+  handler: httpAction(async (ctx, request) => {
     try {
       return Response.redirect(buildLinearInstallUrl(new URL(request.url).origin), 302);
     } catch (error) {
@@ -93,7 +62,7 @@ http.route({
 http.route({
   path: "/linear/oauth/callback",
   method: "GET",
-  handler: httpAction(async (_ctx, request) => {
+  handler: httpAction(async (ctx, request) => {
     const url = new URL(request.url);
     const error = url.searchParams.get("error");
     if (error) {
@@ -138,60 +107,20 @@ http.route({
   path: "/linear/webhook",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
-    const secret = requireLinearWebhookSecret();
-    if (!secret.ok) {
-      return Response.json({ error: secret.message }, { status: secret.status });
-    }
-
-    const rawBody = await request.text();
-    if (
-      !(await hasValidLinearSignature({
-        body: rawBody,
-        request,
-        secret: secret.secret,
-      }))
-    ) {
-      return Response.json({ error: "Invalid Linear signature" }, { status: 401 });
-    }
-
-    let payload: unknown;
-    try {
-      payload = JSON.parse(rawBody);
-    } catch {
-      return Response.json({ error: "Invalid JSON" }, { status: 400 });
-    }
-
-    if (!hasFreshLinearTimestamp(payload)) {
-      return Response.json({ error: "Linear webhook expired" }, { status: 401 });
-    }
-
-    const botUserName = process.env.LINEAR_BOT_USERNAME?.trim();
-    const ingress =
-      botUserName !== undefined
-        ? normalizeLinearWebhookInput(payload, { botUserName })
-        : normalizeLinearWebhookInput(payload);
-    if (ingress === null) {
-      return Response.json({
-        accepted: true,
-        ignored: true,
-      });
-    }
-
-    const result = await ctx.runAction(
-      internal.linearOrchestration.handleLinearWebhookIngress,
-      ingress,
-    );
-
-    return Response.json({
-      accepted: true,
-      ignored: false,
-      ...result,
-    });
+    return forwardChatSdkWebhook(ctx, request, "linear");
   }),
 });
 
 http.route({
-  path: "/t3/execution-events",
+  path: "/slack/webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    return forwardChatSdkWebhook(ctx, request, "slack");
+  }),
+});
+
+http.route({
+  path: "/t3/task-runtime-events",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     const auth = requireBridgeAuthorization(request);
@@ -199,11 +128,11 @@ http.route({
       return Response.json({ error: auth.message }, { status: auth.status });
     }
 
-    const payload = decodeExecutionRunLifecycleEvent(await request.json());
-    const result = await ctx.runMutation(internal.executionRuns.applyLifecycleEvent, {
+    const payload = decodeTaskRuntimeLifecycleEvent(await request.json());
+    const result = await ctx.runMutation(internal.t3Runtime.applyTaskRuntimeLifecycleEvent, {
       eventId: payload.eventId,
-      controlThreadId: payload.controlThreadId,
-      executionRunId: payload.executionRunId,
+      taskId: payload.taskId as Id<"tasks">,
+      workSessionId: payload.workSessionId as Id<"workSessions">,
       type: payload.type,
       occurredAt: payload.occurredAt,
       ...(payload.t3ThreadId !== undefined ? { t3ThreadId: String(payload.t3ThreadId) } : {}),
@@ -211,30 +140,27 @@ http.route({
       ...(payload.failureSummary !== undefined ? { failureSummary: payload.failureSummary } : {}),
     });
 
-    let linearReply:
+    let intakeReply:
       | {
-          readonly error?: string;
           readonly posted: boolean;
-          readonly reason: string;
-          readonly replyCommentId?: string;
+          readonly reason?: string;
+          readonly externalMessageId?: string;
         }
       | undefined;
     if (payload.type === "completed" || payload.type === "failed") {
       try {
-        linearReply = await ctx.runAction(internal.linearOrchestration.postExecutionReplyIfNeeded, {
-          executionRunId: payload.executionRunId,
+        intakeReply = await ctx.runAction(internal.taskIntake.postTaskRuntimeLifecycleReply, {
+          taskId: payload.taskId as Id<"tasks">,
+          status: payload.type,
+          ...(payload.t3ThreadId !== undefined ? { t3ThreadId: String(payload.t3ThreadId) } : {}),
+          ...(payload.failureSummary !== undefined
+            ? { failureSummary: payload.failureSummary }
+            : {}),
         });
-      } catch (replyError) {
-        const errorMessage = replyError instanceof Error ? replyError.message : String(replyError);
-        await ctx.runMutation(internal.executionRuns.recordLinearReplyError, {
-          executionRunId: payload.executionRunId,
-          errorMessage,
-          updatedAt: Date.now(),
-        });
-        linearReply = {
+      } catch (error) {
+        intakeReply = {
           posted: false,
-          reason: "reply_post_failed",
-          error: errorMessage,
+          reason: error instanceof Error ? error.message : String(error),
         };
       }
     }
@@ -242,49 +168,31 @@ http.route({
     return Response.json({
       accepted: true,
       ...result,
-      ...(linearReply !== undefined ? { linearReply } : {}),
+      ...(intakeReply !== undefined ? { intakeReply } : {}),
     });
   }),
 });
 
-http.route({
-  path: "/t3/execution-activities",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    const auth = requireBridgeAuthorization(request);
-    if (!auth.ok) {
-      return Response.json({ error: auth.message }, { status: auth.status });
-    }
-
-    let payload: typeof ExecutionRunActivityEvent.Type;
-    try {
-      payload = decodeExecutionRunActivityEvent(await request.json());
-    } catch {
-      return Response.json({ error: "Invalid activity event payload" }, { status: 400 });
-    }
-
-    try {
-      await ctx.runAction(internal.linearOrchestration.forwardActivityToLinear, {
-        controlThreadId: payload.controlThreadId,
-        activity: {
-          type: payload.activity.type,
-          ...(payload.activity.body !== undefined ? { body: payload.activity.body } : {}),
-          ...(payload.activity.action !== undefined ? { action: payload.activity.action } : {}),
-          ...(payload.activity.parameter !== undefined
-            ? { parameter: payload.activity.parameter }
-            : {}),
-          ...(payload.activity.ephemeral !== undefined
-            ? { ephemeral: payload.activity.ephemeral }
-            : {}),
-        },
-      });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.warn(`Failed to forward activity to Linear: ${errorMessage}`);
-    }
-
-    return Response.json({ accepted: true });
-  }),
-});
-
 export default http;
+
+async function forwardChatSdkWebhook(
+  ctx: Parameters<Parameters<typeof httpAction>[0]>[0],
+  request: Request,
+  source: "linear" | "slack",
+) {
+  const result = await ctx.runAction(internal.taskIntake.handleChatSdkWebhook, {
+    source,
+    url: request.url,
+    headers: Array.from(request.headers.entries()).map(([name, value]) => ({ name, value })),
+    body: await request.text(),
+  });
+
+  const init =
+    result.contentType === undefined
+      ? { status: result.status }
+      : { status: result.status, headers: { "content-type": result.contentType } };
+
+  return new Response(result.body, {
+    ...init,
+  });
+}
