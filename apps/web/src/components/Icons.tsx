@@ -30,6 +30,16 @@ export const AzureDevOpsIcon: Icon = (props) => (
   </svg>
 );
 
+export const BitbucketIcon: Icon = (props) => (
+  <svg {...props} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M2.4 3.5c-.4 0-.7.3-.6.8L4.3 20c.1.4.4.7.8.7h13.7c.4 0 .7-.3.8-.7l2.6-15.7c.1-.5-.2-.8-.7-.8H2.4Zm12.5 11.1H9.4L8.5 8.7h7.4l-1 5.9Z" />
+    <path
+      d="M21 8.7h-5.1l-1 5.9H9.4l-4.2 5c.2.6.5 1.1 1.2 1.1h12.4c.4 0 .7-.3.8-.7L21 8.7Z"
+      opacity=".72"
+    />
+  </svg>
+);
+
 export const CursorIcon: Icon = ({ className, ...props }) => (
   <svg
     {...props}

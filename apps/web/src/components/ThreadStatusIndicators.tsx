@@ -2,7 +2,7 @@ import { scopeProjectRef, scopedThreadKey, scopeThreadRef } from "@t3tools/clien
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { CloudIcon, GitPullRequestIcon, TerminalIcon } from "lucide-react";
 import { useMemo } from "react";
-import { AzureDevOpsIcon, GitHubIcon, GitLabIcon } from "./Icons";
+import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./Icons";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import {
   useSavedEnvironmentRegistryStore,
@@ -83,6 +83,7 @@ export function ChangeRequestStatusIcon({
   if (icon === "github") return <GitHubIcon className={className} />;
   if (icon === "gitlab") return <GitLabIcon className={className} />;
   if (icon === "azure-devops") return <AzureDevOpsIcon className={className} />;
+  if (icon === "bitbucket") return <BitbucketIcon className={className} />;
   return <GitPullRequestIcon className={className} />;
 }
 
