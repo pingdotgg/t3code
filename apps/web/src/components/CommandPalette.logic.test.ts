@@ -4,6 +4,7 @@ import type { Thread } from "../types";
 import {
   buildThreadActionItems,
   filterCommandPaletteGroups,
+  getBrowsePrefetchPaths,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
@@ -162,5 +163,30 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(items.map((item) => item.value)).toEqual(["thread:thread-active"]);
+  });
+});
+
+describe("getBrowsePrefetchPaths", () => {
+  it("prefetches the parent path and an exact typed child path", () => {
+    expect(
+      getBrowsePrefetchPaths({
+        browseQuery: "~/Downloads",
+        canBrowseUp: true,
+        exactEntry: {
+          name: "Downloads",
+          fullPath: "/Users/test/Downloads",
+        },
+      }),
+    ).toEqual(["~/", "~/Downloads/"]);
+  });
+
+  it("does not prefetch a child path when the user only has a highlighted browse row", () => {
+    expect(
+      getBrowsePrefetchPaths({
+        browseQuery: "~/Do",
+        canBrowseUp: true,
+        exactEntry: null,
+      }),
+    ).toEqual(["~/"]);
   });
 });

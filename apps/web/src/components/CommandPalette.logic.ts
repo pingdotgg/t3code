@@ -1,6 +1,7 @@
 import { type KeybindingCommand, type FilesystemBrowseEntry } from "@t3tools/contracts";
 import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import { type ReactNode } from "react";
+import { appendBrowsePathSegment, getBrowseParentPath } from "../lib/projectPaths";
 import { sortThreads } from "../lib/threadSort";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
@@ -81,6 +82,27 @@ export function filterBrowseEntries(input: {
       : null;
 
   return { filteredEntries, highlightedEntry, exactEntry };
+}
+
+export function getBrowsePrefetchPaths(input: {
+  browseQuery: string;
+  canBrowseUp: boolean;
+  exactEntry: FilesystemBrowseEntry | null;
+}): string[] {
+  const paths: string[] = [];
+
+  if (input.canBrowseUp) {
+    const parentPath = getBrowseParentPath(input.browseQuery);
+    if (parentPath !== null) {
+      paths.push(parentPath);
+    }
+  }
+
+  if (input.exactEntry) {
+    paths.push(appendBrowsePathSegment(input.browseQuery, input.exactEntry.name));
+  }
+
+  return paths;
 }
 
 export function normalizeSearchText(value: string): string {
@@ -285,8 +307,8 @@ export function buildBrowseGroups(input: {
   canBrowseUp: boolean;
   upIcon: ReactNode;
   directoryIcon: ReactNode;
-  browseUp: () => void;
-  browseTo: (name: string) => void;
+  browseUp: () => void | Promise<void>;
+  browseTo: (name: string) => void | Promise<void>;
 }): CommandPaletteGroup[] {
   const items: CommandPaletteActionItem[] = [];
 
