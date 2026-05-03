@@ -10,6 +10,7 @@ import {
 import {
   buildSandboxName,
   buildSandboxTags,
+  buildTaskBranchName,
   normalizeSandboxServiceRequests,
   sandboxErrorFromUnknown,
   type SandboxMaterializationResult,
@@ -112,14 +113,21 @@ function resolveRuntimeConfig(input: {
 function toSandboxCreateParams(input: {
   readonly config: ModalSandboxRuntimeConfig;
   readonly resources?: SandboxResourceSpec | undefined;
+  readonly taskBranch: string;
+  readonly baseBranch: string;
 }): SandboxCreateParams {
   const sharedSecret = process.env.T3_EXECUTION_BRIDGE_SHARED_SECRET?.trim();
+  const orchestratorBaseUrl = process.env.ORCHESTRATOR_BASE_URL?.trim();
   return {
     command: [...input.config.command],
     workdir: input.config.workdir,
     env: {
       T3_RUNTIME_PORT: String(input.config.runtimePort),
+      T3_RUNTIME_WORKSPACE: input.config.workdir,
+      T3_TASK_BRANCH: input.taskBranch,
+      T3_TASK_BASE_BRANCH: input.baseBranch,
       ...(sharedSecret ? { T3_EXECUTION_BRIDGE_SHARED_SECRET: sharedSecret } : {}),
+      ...(orchestratorBaseUrl ? { ORCHESTRATOR_BASE_URL: orchestratorBaseUrl } : {}),
     },
     encryptedPorts: [input.config.runtimePort],
     readinessProbe: Probe.withTcp(input.config.runtimePort),
@@ -275,6 +283,13 @@ export function makeModalSandboxProvider(
             resources: input.resources,
             providerConfig: input.providerConfig,
           });
+          const branch = buildTaskBranchName({ taskId: input.taskId, title: input.title });
+          const worktree = {
+            workspaceRoot: config.workdir,
+            worktreePath: config.workdir,
+            branch,
+            baseBranch: input.project.defaultBranch,
+          };
           const sandboxName = buildSandboxName({
             providerKind: "modal",
             taskId: `${input.taskId}-${input.workSessionId}`,
@@ -292,6 +307,8 @@ export function makeModalSandboxProvider(
           const params = toSandboxCreateParams({
             config,
             resources: input.resources,
+            taskBranch: branch,
+            baseBranch: input.project.defaultBranch,
           });
           const created = await client.createOrReconnectSandbox({
             appName: config.appName,
@@ -338,6 +355,7 @@ export function makeModalSandboxProvider(
             },
             resources: input.resources ?? {},
             ...(config.environment !== undefined ? { environment: config.environment } : {}),
+            worktree,
             services,
             artifacts: [],
             idempotencyKey: input.idempotencyKey,
@@ -349,6 +367,7 @@ export function makeModalSandboxProvider(
             sandbox,
             environment,
             services,
+            worktree,
           } satisfies SandboxMaterializationResult;
         },
         catch: (error) =>

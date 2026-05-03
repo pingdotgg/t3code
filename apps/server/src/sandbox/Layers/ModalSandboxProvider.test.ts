@@ -58,6 +58,11 @@ describe("ModalSandboxProvider", () => {
         imageDockerfileCommands: ["RUN echo building-runtime"],
         params: expect.objectContaining({
           command: ["/app/apps/server/scripts/modal-runtime-entrypoint.sh"],
+          env: expect.objectContaining({
+            T3_RUNTIME_WORKSPACE: "/workspace/t3code",
+            T3_TASK_BRANCH: "task/fix-checkout-task-1",
+            T3_TASK_BASE_BRANCH: "main",
+          }),
         }),
         tags: expect.objectContaining({
           "t3.sandbox.provider": "modal",
@@ -68,6 +73,8 @@ describe("ModalSandboxProvider", () => {
     );
     expect(result.sandbox.providerKind).toBe("modal");
     expect(result.sandbox.providerRef.externalId).toBe("sb-123");
+    expect(result.sandbox.worktree?.branch).toBe("task/fix-checkout-task-1");
+    expect(result.sandbox.worktree?.worktreePath).toBe("/workspace/t3code");
     expect(result.environment.platform.os).toBe("linux");
     expect(result.services[0]?.endpointUrl).toBe("https://runtime.modal.run");
     expect(result.services[0]?.endpoints?.[0]?.auth?.kind).toBe("bridge-shared-secret");

@@ -1,8 +1,10 @@
 import {
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  ExecutionRunCreateResponse,
   MessageId,
   ProjectId,
+  type SandboxServiceDescriptor,
   ThreadId,
   type TaskRuntimeMaterializeRequest,
   type TaskRuntimeMaterializeResponse,
@@ -11,7 +13,7 @@ import {
   buildTaskMaterializationIdempotencyKey,
   type SandboxMaterializationResult,
 } from "@t3tools/sandbox";
-import { Deferred, Effect, Exit, Layer, Option, SynchronizedRef } from "effect";
+import { Deferred, Effect, Exit, Layer, Option, Schema, SynchronizedRef } from "effect";
 
 import { modelSelectionFromOptionalProject } from "../../executionBridge/requestDefaults.ts";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
@@ -85,6 +87,63 @@ function materializationResponse(input: {
   };
 }
 
+function extractT3RuntimeEndpoint(
+  services: ReadonlyArray<SandboxServiceDescriptor> | undefined,
+): string | undefined {
+  const runtimeService = services?.find((service) => service.kind === "t3-runtime");
+  const endpoint = runtimeService?.endpoints?.find(
+    (candidate) =>
+      (candidate.protocol === "http" || candidate.protocol === "https") &&
+      (candidate.accessMode === "server" || candidate.accessMode === "private"),
+  );
+  return endpoint?.url ?? runtimeService?.endpointUrl;
+}
+
+const decodeExecutionRunCreateResponse = Schema.decodeUnknownSync(ExecutionRunCreateResponse);
+
+function startRemoteRuntime(input: {
+  readonly endpointUrl: string;
+  readonly request: TaskRuntimeMaterializeRequest;
+  readonly providerResult: SandboxMaterializationResult;
+}) {
+  return Effect.tryPromise({
+    try: async () => {
+      const sharedSecret = process.env.T3_EXECUTION_BRIDGE_SHARED_SECRET?.trim();
+      if (!sharedSecret) {
+        throw new Error("Missing T3_EXECUTION_BRIDGE_SHARED_SECRET for remote task runtime start.");
+      }
+      const response = await fetch(`${input.endpointUrl.replace(/\/$/, "")}/api/execution/runs`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${sharedSecret}`,
+        },
+        body: JSON.stringify({
+          controlThreadId: input.request.taskId,
+          executionRunId: input.request.workSessionId,
+          initialPrompt: input.request.initialPrompt,
+          workspaceRoot:
+            input.providerResult.worktree?.worktreePath ?? input.request.project.workspaceRoot,
+          title: input.request.title,
+          ...(input.request.modelSelection !== undefined
+            ? { modelSelection: input.request.modelSelection }
+            : {}),
+          runtimeMode: input.request.runtimeMode,
+          interactionMode: input.request.interactionMode,
+        }),
+      });
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(
+          `Remote task runtime rejected start (${response.status}): ${detail || "Unknown error"}`,
+        );
+      }
+      return decodeExecutionRunCreateResponse(await response.json());
+    },
+    catch: (error) => sandboxRuntimeErrorFromUnknown(error, "materialize"),
+  });
+}
+
 function settleDeferred(
   deferred: Deferred.Deferred<TaskRuntimeMaterializeResponse, SandboxRuntimeError>,
   exit: Exit.Exit<TaskRuntimeMaterializeResponse, SandboxRuntimeError>,
@@ -152,6 +211,32 @@ export const makeSandboxRuntime = Effect.gen(function* () {
         idempotencyKey,
         startCodingAgent: request.startCodingAgent,
       });
+
+      const remoteRuntimeEndpoint = extractT3RuntimeEndpoint(providerResult.services);
+      if (providerKind !== "local" && remoteRuntimeEndpoint !== undefined) {
+        if (!request.startCodingAgent) {
+          return materializationResponse({
+            request,
+            projectId,
+            threadId: ThreadId.make(crypto.randomUUID()),
+            providerResult,
+            acceptedAt: now,
+          });
+        }
+
+        const remoteRun = yield* startRemoteRuntime({
+          endpointUrl: remoteRuntimeEndpoint,
+          request,
+          providerResult,
+        });
+        return materializationResponse({
+          request,
+          projectId,
+          threadId: remoteRun.t3ThreadId,
+          providerResult,
+          acceptedAt: remoteRun.acceptedAt,
+        });
+      }
 
       const threadId = ThreadId.make(crypto.randomUUID());
       yield* orchestrationEngine.dispatch({

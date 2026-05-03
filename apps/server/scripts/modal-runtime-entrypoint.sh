@@ -42,6 +42,16 @@ fi
 
 git config --global --add safe.directory "$T3_RUNTIME_WORKSPACE" || true
 
+if [ -n "${T3_TASK_BRANCH:-}" ] && [ -d "$T3_RUNTIME_WORKSPACE/.git" ]; then
+  (
+    cd "$T3_RUNTIME_WORKSPACE"
+    git checkout -B "$T3_TASK_BRANCH"
+    if [ -n "${T3_TASK_BASE_BRANCH:-}" ]; then
+      git config "branch.$T3_TASK_BRANCH.gh-merge-base" "$T3_TASK_BASE_BRANCH" || true
+    fi
+  )
+fi
+
 if [ -n "${T3_OPENCODE_MODEL:-}" ] && [ "${T3_DISABLE_RUNTIME_SETTINGS_BOOTSTRAP:-}" != "1" ]; then
   settings_path="$T3CODE_HOME/userdata/settings.json"
   if [ ! -f "$settings_path" ]; then
