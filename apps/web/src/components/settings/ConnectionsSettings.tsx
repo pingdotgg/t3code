@@ -17,6 +17,7 @@ import {
   SettingsSection,
   useRelativeTimeTick,
 } from "./settingsLayout";
+import { resolveDesktopNetworkEndpointUrl } from "./networkEndpointOverride";
 import { Input } from "../ui/input";
 import {
   Dialog,
@@ -810,10 +811,24 @@ export function ConnectionsSettings() {
   const [pendingDesktopServerExposureMode, setPendingDesktopServerExposureMode] = useState<
     DesktopServerExposureState["mode"] | null
   >(null);
+  const [customNetworkHostnameOrUrl, setCustomNetworkHostnameOrUrl] = useState("");
   const canManageLocalBackend = currentSessionRole === "owner";
   const isLocalBackendNetworkAccessible = desktopBridge
     ? desktopServerExposureState?.mode === "network-accessible"
     : currentAuthPolicy === "remote-reachable";
+  const desktopNetworkEndpointResolution = useMemo(
+    () =>
+      resolveDesktopNetworkEndpointUrl({
+        endpointUrl: desktopServerExposureState?.endpointUrl,
+        customHostnameOrUrl: customNetworkHostnameOrUrl,
+      }),
+    [customNetworkHostnameOrUrl, desktopServerExposureState?.endpointUrl],
+  );
+  const showCustomNetworkHostnameInput = desktopServerExposureState?.mode === "network-accessible";
+  const effectiveDesktopEndpointUrl =
+    desktopServerExposureState?.mode === "network-accessible"
+      ? desktopNetworkEndpointResolution.endpointUrl
+      : (desktopServerExposureState?.endpointUrl ?? null);
 
   const handleDesktopServerExposureChange = useCallback(
     async (checked: boolean) => {
@@ -1138,8 +1153,8 @@ export function ConnectionsSettings() {
               <SettingsRow
                 title="Network access"
                 description={
-                  desktopServerExposureState?.endpointUrl
-                    ? `Reachable at ${desktopServerExposureState.endpointUrl}`
+                  effectiveDesktopEndpointUrl
+                    ? `Reachable at ${effectiveDesktopEndpointUrl}`
                     : desktopServerExposureState?.mode === "network-accessible"
                       ? desktopServerExposureState.advertisedHost
                         ? `Exposed on all interfaces. Pairing links use ${desktopServerExposureState.advertisedHost}.`
@@ -1151,6 +1166,10 @@ export function ConnectionsSettings() {
                 status={
                   desktopServerExposureError ? (
                     <span className="block text-destructive">{desktopServerExposureError}</span>
+                  ) : showCustomNetworkHostnameInput && desktopNetworkEndpointResolution.error ? (
+                    <span className="block text-destructive">
+                      {desktopNetworkEndpointResolution.error}
+                    </span>
                   ) : null
                 }
                 control={
@@ -1215,7 +1234,26 @@ export function ConnectionsSettings() {
                     </AlertDialogPopup>
                   </AlertDialog>
                 }
-              />
+              >
+                {showCustomNetworkHostnameInput ? (
+                  <div className="grid gap-1.5 pt-2 pb-4">
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-medium text-foreground">
+                        Custom hostname or URL
+                      </span>
+                      <Input
+                        value={customNetworkHostnameOrUrl}
+                        onChange={(event) => setCustomNetworkHostnameOrUrl(event.target.value)}
+                        placeholder="e.g. 10.0.0.42 or devbox.local"
+                      />
+                    </label>
+                    <p className="text-[11px] text-muted-foreground/80">
+                      Optional override for this app session. Used for the reachable URL and copied
+                      pairing links.
+                    </p>
+                  </div>
+                ) : null}
+              </SettingsRow>
             ) : (
               <SettingsRow
                 title="Network access"
@@ -1264,7 +1302,7 @@ export function ConnectionsSettings() {
                 </div>
               ) : null}
               <PairingClientsList
-                endpointUrl={desktopServerExposureState?.endpointUrl}
+                endpointUrl={effectiveDesktopEndpointUrl}
                 isLoading={isLoadingDesktopAccessManagement}
                 pairingLinks={visibleDesktopPairingLinks}
                 clientSessions={desktopClientSessions}

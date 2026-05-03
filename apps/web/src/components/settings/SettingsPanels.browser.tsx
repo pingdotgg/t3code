@@ -571,6 +571,57 @@ describe("GeneralSettingsPanel observability", () => {
     await expect.element(page.getByText("Revoke others")).toBeInTheDocument();
   });
 
+  it("uses a custom hostname override for reachable and copied pairing URLs", async () => {
+    window.desktopBridge = createDesktopBridgeStub({
+      serverExposureState: {
+        mode: "network-accessible",
+        endpointUrl: "http://192.168.1.44:3773",
+        advertisedHost: "192.168.1.44",
+      },
+    });
+    authAccessHarness.setSnapshot({
+      pairingLinks: [
+        makePairingLink({
+          id: "pairing-link-1",
+          credential: "pairing-token",
+          role: "client",
+          subject: "one-time-token",
+          label: "Julius iPhone",
+          createdAt: "2036-04-07T00:00:00.000Z",
+          expiresAt: "2036-04-10T00:05:00.000Z",
+        }),
+      ],
+      clientSessions: [],
+    });
+
+    const writeText = vi.fn<(value: string) => Promise<void>>().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    vi.stubGlobal("isSecureContext", true);
+
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect
+      .element(page.getByText("Reachable at http://192.168.1.44:3773"))
+      .toBeInTheDocument();
+
+    await page.getByLabelText("Custom hostname or URL").fill("devbox.lan");
+    await expect.element(page.getByText("Reachable at http://devbox.lan:3773")).toBeInTheDocument();
+
+    await page.getByRole("button", { name: "Copy", exact: true }).click();
+    await vi.waitFor(() => {
+      expect(writeText).toHaveBeenCalledWith("http://devbox.lan:3773/pair#token=pairing-token");
+    });
+  });
+
   it("revokes all other paired clients from settings", async () => {
     window.desktopBridge = createDesktopBridgeStub({
       serverExposureState: {
