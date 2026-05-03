@@ -11,17 +11,19 @@ import {
   type DesktopUpdateState,
   type LocalApi,
   type ServerConfig,
+  type SourceControlDiscoveryResult,
 } from "@t3tools/contracts";
-import { DateTime } from "effect";
+import { DateTime, Option } from "effect";
 import { page } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { __resetLocalApiForTests } from "../../localApi";
-import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import { AppAtomRegistryProvider, resetAppAtomRegistryForTests } from "../../rpc/atomRegistry";
 import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
 import { ConnectionsSettings } from "./ConnectionsSettings";
 import { GeneralSettingsPanel } from "./SettingsPanels";
+import { SourceControlSettingsPanel } from "./SourceControlSettings";
 
 const authAccessHarness = vi.hoisted(() => {
   type Snapshot = AuthAccessSnapshot;
@@ -721,5 +723,150 @@ describe("GeneralSettingsPanel observability", () => {
     await expect.element(page.getByPlaceholder("http://127.0.0.1:4096")).toBeInTheDocument();
     await expect.element(page.getByText("Server password")).toBeInTheDocument();
     await expect.element(page.getByPlaceholder("Optional")).toBeInTheDocument();
+  });
+});
+
+describe("SourceControlSettingsPanel discovery states", () => {
+  let mounted:
+    | (Awaited<ReturnType<typeof render>> & {
+        cleanup?: () => Promise<void>;
+        unmount?: () => Promise<void>;
+      })
+    | null = null;
+
+  beforeEach(async () => {
+    resetAppAtomRegistryForTests();
+    await __resetLocalApiForTests();
+    document.body.innerHTML = "";
+  });
+
+  afterEach(async () => {
+    if (mounted) {
+      const teardown = mounted.cleanup ?? mounted.unmount;
+      await teardown?.call(mounted).catch(() => {});
+    }
+    mounted = null;
+    Reflect.deleteProperty(window, "nativeApi");
+    document.body.innerHTML = "";
+    await __resetLocalApiForTests();
+    resetAppAtomRegistryForTests();
+  });
+
+  function setSourceControlDiscoveryStub(
+    discoverSourceControl: () => Promise<SourceControlDiscoveryResult>,
+  ) {
+    window.nativeApi = {
+      server: {
+        discoverSourceControl,
+      },
+    } as LocalApi;
+  }
+
+  it("shows skeleton sections while the first source control scan is pending", async () => {
+    setSourceControlDiscoveryStub(() => new Promise(() => {}));
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("Version Control")).toBeInTheDocument();
+    await expect.element(page.getByText("Source Control Providers")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Scan source control tools" }))
+      .toBeDisabled();
+    await expect.element(page.getByText("No source control tools found")).not.toBeInTheDocument();
+  });
+
+  it("uses the shared empty state when discovery completes without tools", async () => {
+    setSourceControlDiscoveryStub(async () => ({
+      versionControlSystems: [],
+      sourceControlProviders: [],
+    }));
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("No source control tools found")).toBeInTheDocument();
+    await expect
+      .element(page.getByText("Install a supported Git or pull request CLI, then scan again."))
+      .toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Scan" })).toBeInTheDocument();
+  });
+
+  it("keeps discovered rows instead of showing the empty state", async () => {
+    setSourceControlDiscoveryStub(async () => ({
+      versionControlSystems: [
+        {
+          kind: "git",
+          label: "Git",
+          executable: "git",
+          implemented: true,
+          status: "available",
+          version: Option.some("git version 2.50.0"),
+          installHint: "Install Git.",
+          detail: Option.none(),
+        },
+      ],
+      sourceControlProviders: [],
+    }));
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByRole("heading", { name: "Git" })).toBeInTheDocument();
+    await expect.element(page.getByText("No source control tools found")).not.toBeInTheDocument();
+  });
+
+  it("does not rescan on remount while the discovery atom is fresh", async () => {
+    let calls = 0;
+    setSourceControlDiscoveryStub(async () => {
+      calls += 1;
+      return {
+        versionControlSystems: [
+          {
+            kind: "git",
+            label: "Git",
+            executable: "git",
+            implemented: true,
+            status: "available",
+            version: Option.some("git version 2.50.0"),
+            installHint: "Install Git.",
+            detail: Option.none(),
+          },
+        ],
+        sourceControlProviders: [],
+      };
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByRole("heading", { name: "Git" })).toBeInTheDocument();
+    expect(calls).toBe(1);
+
+    const teardown = mounted.cleanup ?? mounted.unmount;
+    await teardown?.call(mounted).catch(() => {});
+    mounted = null;
+    document.body.innerHTML = "";
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByRole("heading", { name: "Git" })).toBeInTheDocument();
+    expect(calls).toBe(1);
   });
 });
