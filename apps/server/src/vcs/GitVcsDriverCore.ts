@@ -969,6 +969,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map(parseRemoteNamesInGitOrder),
     );
 
+  const resolvePublishBranchName = Effect.fn("resolvePublishBranchName")(function* (
+    cwd: string,
+    branchName: string,
+  ) {
+    const remoteNames = yield* listRemoteNames(cwd).pipe(Effect.catch(() => Effect.succeed([])));
+    const parsedRemoteRef = parseRemoteRefWithRemoteNames(branchName, remoteNames);
+    return parsedRemoteRef?.branchName ?? branchName;
+  });
+
   const resolvePrimaryRemoteName = Effect.fn("resolvePrimaryRemoteName")(function* (cwd: string) {
     if (yield* originRemoteExists(cwd)) {
       return "origin";
@@ -1461,16 +1470,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             "Cannot push because no git remote is configured for this repository.",
           );
         }
+        const publishBranch = yield* resolvePublishBranchName(cwd, branch);
         yield* runGit("GitVcsDriver.pushCurrentBranch.pushWithUpstream", cwd, [
           "push",
           "-u",
           publishRemoteName,
-          `HEAD:refs/heads/${branch}`,
+          `HEAD:refs/heads/${publishBranch}`,
         ]);
         return {
           status: "pushed" as const,
           branch,
-          upstreamBranch: `${publishRemoteName}/${branch}`,
+          upstreamBranch: `${publishRemoteName}/${publishBranch}`,
           setUpstream: true,
         };
       }
@@ -1482,7 +1492,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* runGit("GitVcsDriver.pushCurrentBranch.pushUpstream", cwd, [
           "push",
           currentUpstream.remoteName,
-          `HEAD:${currentUpstream.upstreamRef}`,
+          `HEAD:refs/heads/${currentUpstream.branchName}`,
         ]);
         return {
           status: "pushed" as const,
