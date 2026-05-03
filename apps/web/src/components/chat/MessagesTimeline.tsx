@@ -87,6 +87,8 @@ interface TimelineRowSharedState {
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
+const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
+const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -261,8 +263,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         maintainVisibleContentPosition
         onScroll={handleScroll}
         className="h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
-        ListHeaderComponent={<div className="h-3 sm:h-4" />}
-        ListFooterComponent={<div className="h-3 sm:h-4" />}
+        ListHeaderComponent={TIMELINE_LIST_HEADER}
+        ListFooterComponent={TIMELINE_LIST_FOOTER}
       />
     </TimelineRowCtx.Provider>
   );
