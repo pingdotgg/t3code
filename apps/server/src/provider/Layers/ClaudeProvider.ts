@@ -53,134 +53,158 @@ const CLAUDE_PRESENTATION = {
   showInteractionModeToggle: true,
 } as const;
 const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
+const CLAUDE_CONTEXT_WINDOW_OPTIONS = [
+  { value: "200k", label: "200k", isDefault: true },
+  { value: "1m", label: "1M" },
+] as const;
+
+const CLAUDE_ULTRATHINK_PROMPT_VALUES = ["ultrathink"] as const;
+
+function buildClaudeCapabilities(input: {
+  readonly effortOptions?: ReadonlyArray<{
+    readonly value: string;
+    readonly label: string;
+    readonly isDefault?: boolean;
+  }>;
+  readonly promptInjectedValues?: ReadonlyArray<string>;
+  readonly includeFastMode?: boolean;
+  readonly includeThinking?: boolean;
+  readonly includeContextWindow?: boolean;
+}): ModelCapabilities {
+  const optionDescriptors = [];
+
+  if (input.effortOptions && input.effortOptions.length > 0) {
+    optionDescriptors.push(
+      buildSelectOptionDescriptor({
+        id: "effort",
+        label: "Reasoning",
+        options: input.effortOptions,
+        ...(input.promptInjectedValues && input.promptInjectedValues.length > 0
+          ? { promptInjectedValues: input.promptInjectedValues }
+          : {}),
+      }),
+    );
+  }
+
+  if (input.includeFastMode) {
+    optionDescriptors.push(
+      buildBooleanOptionDescriptor({
+        id: "fastMode",
+        label: "Fast Mode",
+      }),
+    );
+  }
+
+  if (input.includeThinking) {
+    optionDescriptors.push(
+      buildBooleanOptionDescriptor({
+        id: "thinking",
+        label: "Thinking",
+      }),
+    );
+  }
+
+  if (input.includeContextWindow) {
+    optionDescriptors.push(
+      buildSelectOptionDescriptor({
+        id: "contextWindow",
+        label: "Context Window",
+        options: CLAUDE_CONTEXT_WINDOW_OPTIONS,
+      }),
+    );
+  }
+
+  return createModelCapabilities({ optionDescriptors });
+}
+
+function createBuiltInClaudeModel(
+  slug: string,
+  name: string,
+  capabilities: ModelCapabilities,
+): ServerProviderModel {
+  return {
+    slug,
+    name,
+    isCustom: false,
+    capabilities,
+  };
+}
+
+const CLAUDE_OPUS_47_CAPABILITIES = buildClaudeCapabilities({
+  effortOptions: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "xhigh", label: "Extra High", isDefault: true },
+    { value: "max", label: "Max" },
+    { value: "ultrathink", label: "Ultrathink" },
+  ],
+  promptInjectedValues: CLAUDE_ULTRATHINK_PROMPT_VALUES,
+  includeContextWindow: true,
+});
+
+const CLAUDE_OPUS_47_ALIAS_CAPABILITIES = buildClaudeCapabilities({
+  effortOptions: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High" },
+    { value: "xhigh", label: "Extra High", isDefault: true },
+    { value: "max", label: "Max" },
+    { value: "ultrathink", label: "Ultrathink" },
+  ],
+  promptInjectedValues: CLAUDE_ULTRATHINK_PROMPT_VALUES,
+});
+
+const CLAUDE_OPUS_46_CAPABILITIES = buildClaudeCapabilities({
+  effortOptions: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High", isDefault: true },
+    { value: "max", label: "Max" },
+    { value: "ultrathink", label: "Ultrathink" },
+  ],
+  promptInjectedValues: CLAUDE_ULTRATHINK_PROMPT_VALUES,
+  includeFastMode: true,
+  includeContextWindow: true,
+});
+
+const CLAUDE_OPUS_45_CAPABILITIES = buildClaudeCapabilities({
+  effortOptions: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High", isDefault: true },
+    { value: "max", label: "Max" },
+  ],
+  includeFastMode: true,
+});
+
+const CLAUDE_SONNET_46_CAPABILITIES = buildClaudeCapabilities({
+  effortOptions: [
+    { value: "low", label: "Low" },
+    { value: "medium", label: "Medium" },
+    { value: "high", label: "High", isDefault: true },
+    { value: "max", label: "Max" },
+    { value: "ultrathink", label: "Ultrathink" },
+  ],
+  promptInjectedValues: CLAUDE_ULTRATHINK_PROMPT_VALUES,
+  includeContextWindow: true,
+});
+
+const CLAUDE_HAIKU_45_CAPABILITIES = buildClaudeCapabilities({
+  includeThinking: true,
+});
+
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
-  {
-    slug: "claude-opus-4-7",
-    name: "Claude Opus 4.7",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildSelectOptionDescriptor({
-          id: "effort",
-          label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High" },
-            { value: "xhigh", label: "Extra High", isDefault: true },
-            { value: "max", label: "Max" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
-          promptInjectedValues: ["ultrathink"],
-        }),
-        buildSelectOptionDescriptor({
-          id: "contextWindow",
-          label: "Context Window",
-          options: [
-            { value: "200k", label: "200k", isDefault: true },
-            { value: "1m", label: "1M" },
-          ],
-        }),
-      ],
-    }),
-  },
-  {
-    slug: "claude-opus-4-6",
-    name: "Claude Opus 4.6",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildSelectOptionDescriptor({
-          id: "effort",
-          label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "max", label: "Max" },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
-          promptInjectedValues: ["ultrathink"],
-        }),
-        buildBooleanOptionDescriptor({
-          id: "fastMode",
-          label: "Fast Mode",
-        }),
-        buildSelectOptionDescriptor({
-          id: "contextWindow",
-          label: "Context Window",
-          options: [
-            { value: "200k", label: "200k", isDefault: true },
-            { value: "1m", label: "1M" },
-          ],
-        }),
-      ],
-    }),
-  },
-  {
-    slug: "claude-opus-4-5",
-    name: "Claude Opus 4.5",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildSelectOptionDescriptor({
-          id: "effort",
-          label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "max", label: "Max" },
-          ],
-        }),
-        buildBooleanOptionDescriptor({
-          id: "fastMode",
-          label: "Fast Mode",
-        }),
-      ],
-    }),
-  },
-  {
-    slug: "claude-sonnet-4-6",
-    name: "Claude Sonnet 4.6",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildSelectOptionDescriptor({
-          id: "effort",
-          label: "Reasoning",
-          options: [
-            { value: "low", label: "Low" },
-            { value: "medium", label: "Medium" },
-            { value: "high", label: "High", isDefault: true },
-            { value: "ultrathink", label: "Ultrathink" },
-          ],
-          promptInjectedValues: ["ultrathink"],
-        }),
-        buildSelectOptionDescriptor({
-          id: "contextWindow",
-          label: "Context Window",
-          options: [
-            { value: "200k", label: "200k", isDefault: true },
-            { value: "1m", label: "1M" },
-          ],
-        }),
-      ],
-    }),
-  },
-  {
-    slug: "claude-haiku-4-5",
-    name: "Claude Haiku 4.5",
-    isCustom: false,
-    capabilities: createModelCapabilities({
-      optionDescriptors: [
-        buildBooleanOptionDescriptor({
-          id: "thinking",
-          label: "Thinking",
-        }),
-      ],
-    }),
-  },
+  createBuiltInClaudeModel("best", "Best", CLAUDE_OPUS_47_ALIAS_CAPABILITIES),
+  createBuiltInClaudeModel("opus", "Opus", CLAUDE_OPUS_47_CAPABILITIES),
+  createBuiltInClaudeModel("sonnet", "Sonnet", CLAUDE_SONNET_46_CAPABILITIES),
+  createBuiltInClaudeModel("haiku", "Haiku", CLAUDE_HAIKU_45_CAPABILITIES),
+  createBuiltInClaudeModel("opusplan", "Opus Plan", CLAUDE_OPUS_47_ALIAS_CAPABILITIES),
+  createBuiltInClaudeModel("claude-opus-4-7", "Claude Opus 4.7", CLAUDE_OPUS_47_CAPABILITIES),
+  createBuiltInClaudeModel("claude-opus-4-6", "Claude Opus 4.6", CLAUDE_OPUS_46_CAPABILITIES),
+  createBuiltInClaudeModel("claude-opus-4-5", "Claude Opus 4.5", CLAUDE_OPUS_45_CAPABILITIES),
+  createBuiltInClaudeModel("claude-sonnet-4-6", "Claude Sonnet 4.6", CLAUDE_SONNET_46_CAPABILITIES),
+  createBuiltInClaudeModel("claude-haiku-4-5", "Claude Haiku 4.5", CLAUDE_HAIKU_45_CAPABILITIES),
 ];
 
 function supportsClaudeOpus47(version: string | null | undefined): boolean {

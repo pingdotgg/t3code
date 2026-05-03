@@ -25,7 +25,7 @@
     "test:process-reaper": "vitest run src/server.test.ts src/provider/Layers/ClaudeAdapter.test.ts src/provider/Layers/ProviderSessionDirectory.test.ts src/provider/Layers/ProviderSessionReaper.test.ts src/provider/Layers/CodexAdapter.test.ts"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.111",
+    "@anthropic-ai/claude-agent-sdk": "^0.2.126",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",

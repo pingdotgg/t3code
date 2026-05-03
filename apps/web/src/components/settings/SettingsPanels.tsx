@@ -53,6 +53,7 @@ import {
 import {
   MAX_CUSTOM_MODEL_LENGTH,
   getCustomModelOptionsByProvider,
+  getProviderSettingsModelList,
   resolveAppModelSelectionState,
 } from "../../modelSelection";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
@@ -1521,14 +1522,11 @@ export function ProvidersSettingsPanel() {
     const defaultProviderConfig = DEFAULT_UNIFIED_SETTINGS.providers[providerSettings.provider];
     const statusKey = liveProvider?.status ?? (providerConfig.enabled ? "warning" : "disabled");
     const summary = getProviderSummary(liveProvider);
-    const models: ReadonlyArray<ServerProviderModel> =
-      liveProvider?.models ??
-      providerConfig.customModels.map((slug) => ({
-        slug,
-        name: slug,
-        isCustom: true,
-        capabilities: null,
-      }));
+    const models: ReadonlyArray<ServerProviderModel> = getProviderSettingsModelList(
+      settings,
+      serverProviders,
+      providerSettings.provider,
+    );
 
     return {
       provider: providerSettings.provider,

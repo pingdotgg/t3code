@@ -60,6 +60,7 @@ const REASONING_EFFORT_LABELS: Record<CodexSchema.V2ModelListResponse__Reasoning
 function codexAccountAuthLabel(account: CodexSchema.V2GetAccountResponse["account"]) {
   if (!account) return undefined;
   if (account.type === "apiKey") return "OpenAI API Key";
+  if (account.type === "amazonBedrock") return "Amazon Bedrock";
 
   switch (account.planType) {
     case "free":

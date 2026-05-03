@@ -126,7 +126,7 @@ export const ModelCapabilities = Schema.Struct({
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
 export const DEFAULT_MODEL_BY_PROVIDER: Record<ProviderKind, string> = {
-  codex: "gpt-5.4",
+  codex: "gpt-5.5",
   claudeAgent: "claude-sonnet-4-6",
   cursor: "auto",
   opencode: "openai/gpt-5",
@@ -144,12 +144,19 @@ export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Record<ProviderKind,
 
 export const MODEL_SLUG_ALIASES_BY_PROVIDER: Record<ProviderKind, Record<string, string>> = {
   codex: {
-    "gpt-5-codex": "gpt-5.4",
+    "gpt-5-codex": "gpt-5.5",
+    "5.5": "gpt-5.5",
+    "gpt-5.5": "gpt-5.5",
     "5.4": "gpt-5.4",
+    "gpt-5.4": "gpt-5.4",
+    "5.4-mini": "gpt-5.4-mini",
+    "gpt-5.4-mini": "gpt-5.4-mini",
     "5.3": "gpt-5.3-codex",
     "gpt-5.3": "gpt-5.3-codex",
     "5.3-spark": "gpt-5.3-codex-spark",
     "gpt-5.3-spark": "gpt-5.3-codex-spark",
+    "5.2": "gpt-5.2",
+    "gpt-5.2": "gpt-5.2",
   },
   claudeAgent: {
     opus: "claude-opus-4-7",

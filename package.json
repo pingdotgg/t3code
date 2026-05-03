@@ -72,8 +72,7 @@
     "@effect/platform-node-shared": "catalog:",
     "@effect/sql-sqlite-bun": "catalog:",
     "@effect/vitest": "catalog:",
-    "effect": "catalog:",
-    "vite": "^8.0.0"
+    "effect": "catalog:"
   },
   "engines": {
     "bun": "^1.3.11",

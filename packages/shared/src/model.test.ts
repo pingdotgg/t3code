@@ -67,7 +67,8 @@ const claudeCaps: ModelCapabilities = createModelCapabilities({
 
 describe("normalizeModelSlug", () => {
   it("maps known aliases to canonical slugs", () => {
-    expect(normalizeModelSlug("gpt-5-codex")).toBe("gpt-5.4");
+    expect(normalizeModelSlug("gpt-5-codex")).toBe("gpt-5.5");
+    expect(normalizeModelSlug("5.5")).toBe("gpt-5.5");
     expect(normalizeModelSlug("5.3")).toBe("gpt-5.3-codex");
     expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("claude-sonnet-4-6");
   });

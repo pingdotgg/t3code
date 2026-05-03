@@ -1104,4 +1104,81 @@ describe("Settings panels", () => {
     await expect.element(page.getByText("OpenCode server password")).toBeInTheDocument();
     await expect.element(page.getByPlaceholder("Server password")).toBeInTheDocument();
   });
+
+  it("removes custom provider models from the list immediately", async () => {
+    const updateSettings = vi.fn().mockResolvedValue(undefined);
+    window.nativeApi = {
+      server: {
+        updateSettings,
+      },
+    } as unknown as LocalApi;
+
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [
+        {
+          provider: "codex",
+          displayName: "Codex",
+          enabled: true,
+          installed: true,
+          version: "0.128.0",
+          status: "ready",
+          auth: { status: "authenticated" },
+          checkedAt: "2026-05-02T00:00:00.000Z",
+          message: undefined,
+          models: [
+            {
+              slug: "gpt-5.5",
+              name: "GPT-5.5",
+              isCustom: false,
+              capabilities: null,
+            },
+            {
+              slug: "5.5",
+              name: "5.5",
+              isCustom: true,
+              capabilities: null,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        },
+      ],
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providers: {
+          ...DEFAULT_SERVER_SETTINGS.providers,
+          codex: {
+            ...DEFAULT_SERVER_SETTINGS.providers.codex,
+            customModels: ["5.5"],
+          },
+        },
+      },
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ProvidersSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByLabelText("Toggle Codex details").click();
+    await expect.element(page.getByRole("button", { name: "Remove 5.5" })).toBeInTheDocument();
+
+    await page.getByRole("button", { name: "Remove 5.5" }).click();
+
+    await expect.element(page.getByRole("button", { name: "Remove 5.5" })).not.toBeInTheDocument();
+    expect(updateSettings).toHaveBeenCalledWith({
+      providers: {
+        ...DEFAULT_SERVER_SETTINGS.providers,
+        codex: {
+          ...DEFAULT_SERVER_SETTINGS.providers.codex,
+          customModels: [],
+        },
+        claudeAgent: DEFAULT_SERVER_SETTINGS.providers.claudeAgent,
+        cursor: DEFAULT_SERVER_SETTINGS.providers.cursor,
+        opencode: DEFAULT_SERVER_SETTINGS.providers.opencode,
+      },
+    });
+  });
 });

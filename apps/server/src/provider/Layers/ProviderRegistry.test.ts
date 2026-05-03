@@ -650,6 +650,45 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           ),
       );
 
+      it.effect("includes current Claude alias models and Sonnet max effort", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus();
+          assert.isDefined(status.models.find((model) => model.slug === "best"));
+          assert.isDefined(status.models.find((model) => model.slug === "opus"));
+          assert.isDefined(status.models.find((model) => model.slug === "sonnet"));
+          assert.isDefined(status.models.find((model) => model.slug === "haiku"));
+          assert.isDefined(status.models.find((model) => model.slug === "opusplan"));
+
+          const sonnet = status.models.find((model) => model.slug === "claude-sonnet-4-6");
+          if (!sonnet?.capabilities) {
+            assert.fail("Expected Claude Sonnet 4.6 capabilities to be present.");
+          }
+
+          const effortDescriptor = sonnet.capabilities.optionDescriptors?.find(
+            (descriptor) => descriptor.type === "select" && descriptor.id === "effort",
+          );
+          if (!effortDescriptor || effortDescriptor.type !== "select") {
+            assert.fail("Expected Claude Sonnet 4.6 to expose an effort descriptor.");
+          }
+
+          assert.isTrue(effortDescriptor.options.some((option) => option.id === "max"));
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.126\n", stderr: "", code: 0 };
+              if (joined === "auth status")
+                return {
+                  stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+                  stderr: "",
+                  code: 0,
+                };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
+      );
+
       it.effect("hides Claude Opus 4.7 on older Claude Code versions", () =>
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus();

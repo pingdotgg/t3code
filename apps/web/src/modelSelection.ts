@@ -3,6 +3,7 @@ import {
   type ModelSelection,
   type ProviderKind,
   type ServerProvider,
+  type ServerProviderModel,
 } from "@forma/contracts";
 import {
   createModelSelection,
@@ -112,6 +113,43 @@ export function getAppModelOptions(
   }
 
   return options;
+}
+
+export function getProviderSettingsModelList(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+  provider: ProviderKind,
+): ReadonlyArray<ServerProviderModel> {
+  const liveModels = getProviderModels(providers, provider);
+  const builtInModels = liveModels.filter((model) => !model.isCustom);
+  const builtInModelSlugs = new Set(builtInModels.map((model) => model.slug));
+  const fallbackCapabilities = liveModels.find((model) => model.capabilities)?.capabilities ?? null;
+  const liveCustomModelsBySlug = new Map(
+    liveModels.filter((model) => model.isCustom).map((model) => [model.slug, model] as const),
+  );
+
+  const customModels = normalizeCustomModelSlugs(
+    settings.providers[provider].customModels,
+    builtInModelSlugs,
+    provider,
+  ).map((slug) => {
+    const liveCustomModel = liveCustomModelsBySlug.get(slug);
+    if (liveCustomModel) {
+      return {
+        ...liveCustomModel,
+        isCustom: true,
+      };
+    }
+
+    return {
+      slug,
+      name: slug,
+      isCustom: true,
+      capabilities: fallbackCapabilities,
+    } satisfies ServerProviderModel;
+  });
+
+  return [...builtInModels, ...customModels];
 }
 
 export function resolveAppModelSelection(
