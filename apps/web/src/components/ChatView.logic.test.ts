@@ -30,6 +30,7 @@ describe("deriveComposerSendState", () => {
     const state = deriveComposerSendState({
       prompt: "\uFFFC",
       imageCount: 0,
+      textFileCount: 0,
       terminalContexts: [
         {
           id: "ctx-expired",
@@ -54,6 +55,7 @@ describe("deriveComposerSendState", () => {
     const state = deriveComposerSendState({
       prompt: `yoo \uFFFC waddup`,
       imageCount: 0,
+      textFileCount: 0,
       terminalContexts: [
         {
           id: "ctx-expired",

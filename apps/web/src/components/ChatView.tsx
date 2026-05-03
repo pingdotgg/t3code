@@ -89,6 +89,7 @@ import {
   DEFAULT_RUNTIME_MODE,
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
+  type ChatAttachment,
   type ChatMessage,
   type SessionPhase,
   type Thread,
@@ -127,9 +128,10 @@ import {
 import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
+  type ComposerTextFileAttachment,
   type DraftThreadEnvMode,
-  useComposerDraftStore,
   type DraftId,
+  useComposerDraftStore,
 } from "../composerDraftStore";
 import {
   appendTerminalContextsToPrompt,
@@ -183,6 +185,10 @@ import { RightPanelSheet } from "./RightPanelSheet";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
+const TEXT_FILE_BOOTSTRAP_PROMPT =
+  "[User attached one or more text files without additional text. Respond using the conversation context and the attached file(s).]";
+const MIXED_ATTACHMENT_BOOTSTRAP_PROMPT =
+  "[User attached images and text files without additional text. Respond using the conversation context and all attached files.]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
@@ -637,6 +643,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
+  const addComposerDraftTextFile = useComposerDraftStore((store) => store.addTextFile);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
     (store) => store.setTerminalContexts,
   );
@@ -663,6 +670,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
+  const composerTextFilesRef = useRef<ComposerTextFileAttachment[]>([]);
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
@@ -2410,6 +2418,7 @@ export default function ChatView(props: ChatViewProps) {
     if (!sendCtx) return;
     const {
       images: composerImages,
+      textFiles: composerTextFiles,
       terminalContexts: composerTerminalContexts,
       selectedProvider: ctxSelectedProvider,
       selectedModel: ctxSelectedModel,
@@ -2426,6 +2435,7 @@ export default function ChatView(props: ChatViewProps) {
     } = deriveComposerSendState({
       prompt: promptForSend,
       imageCount: composerImages.length,
+      textFileCount: composerTextFiles.length,
       terminalContexts: composerTerminalContexts,
     });
     if (showPlanFollowUpPrompt && activeProposedPlan) {
@@ -2443,7 +2453,9 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     const standaloneSlashCommand =
-      composerImages.length === 0 && sendableComposerTerminalContexts.length === 0
+      composerImages.length === 0 &&
+      composerTextFiles.length === 0 &&
+      sendableComposerTerminalContexts.length === 0
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
@@ -2490,6 +2502,7 @@ export default function ChatView(props: ChatViewProps) {
     beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
 
     const composerImagesSnapshot = [...composerImages];
+    const composerTextFilesSnapshot = [...composerTextFiles];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const messageTextForSend = appendTerminalContextsToPrompt(
       promptForSend,
@@ -2497,30 +2510,54 @@ export default function ChatView(props: ChatViewProps) {
     );
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
+    const bootstrapPrompt =
+      composerImages.length > 0 && composerTextFiles.length > 0
+        ? MIXED_ATTACHMENT_BOOTSTRAP_PROMPT
+        : composerImages.length > 0
+          ? IMAGE_ONLY_BOOTSTRAP_PROMPT
+          : composerTextFiles.length > 0
+            ? TEXT_FILE_BOOTSTRAP_PROMPT
+            : "";
     const outgoingMessageText = formatOutgoingPrompt({
       provider: ctxSelectedProvider,
       model: ctxSelectedModel,
       models: ctxSelectedProviderModels,
       effort: ctxSelectedPromptEffort,
-      text: messageTextForSend || IMAGE_ONLY_BOOTSTRAP_PROMPT,
+      text: messageTextForSend || bootstrapPrompt,
     });
-    const turnAttachmentsPromise = Promise.all(
-      composerImagesSnapshot.map(async (image) => ({
+    const turnAttachmentsPromise = Promise.all([
+      ...composerImagesSnapshot.map(async (image) => ({
         type: "image" as const,
         name: image.name,
         mimeType: image.mimeType,
         sizeBytes: image.sizeBytes,
         dataUrl: await readFileAsDataUrl(image.file),
       })),
-    );
-    const optimisticAttachments = composerImagesSnapshot.map((image) => ({
-      type: "image" as const,
-      id: image.id,
-      name: image.name,
-      mimeType: image.mimeType,
-      sizeBytes: image.sizeBytes,
-      previewUrl: image.previewUrl,
-    }));
+      ...composerTextFilesSnapshot.map(async (file) => ({
+        type: "text" as const,
+        name: file.name,
+        mimeType: file.mimeType,
+        sizeBytes: file.sizeBytes,
+        dataUrl: await readFileAsDataUrl(file.file),
+      })),
+    ]);
+    const optimisticAttachments: ChatAttachment[] = [
+      ...composerImagesSnapshot.map((image) => ({
+        type: "image" as const,
+        id: image.id,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        previewUrl: image.previewUrl,
+      })),
+      ...composerTextFilesSnapshot.map((file) => ({
+        type: "text" as const,
+        id: file.id,
+        name: file.name,
+        mimeType: file.mimeType,
+        sizeBytes: file.sizeBytes,
+      })),
+    ];
     // Scroll to the current end *before* adding the optimistic message.
     // This sets LegendList's internal isAtEnd=true so maintainScrollAtEnd
     // automatically pins to the new item when the data changes.
@@ -2535,7 +2572,7 @@ export default function ChatView(props: ChatViewProps) {
         id: messageIdForSend,
         role: "user",
         text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+        attachments: optimisticAttachments,
         createdAt: messageCreatedAt,
         streaming: false,
       },
@@ -2568,10 +2605,19 @@ export default function ChatView(props: ChatViewProps) {
           firstComposerImageName = firstComposerImage.name;
         }
       }
+      let firstComposerTextFileName: string | null = null;
+      if (composerTextFilesSnapshot.length > 0) {
+        const firstComposerTextFile = composerTextFilesSnapshot[0];
+        if (firstComposerTextFile) {
+          firstComposerTextFileName = firstComposerTextFile.name;
+        }
+      }
       let titleSeed = trimmed;
       if (!titleSeed) {
         if (firstComposerImageName) {
           titleSeed = `Image: ${firstComposerImageName}`;
+        } else if (firstComposerTextFileName) {
+          titleSeed = `File: ${firstComposerTextFileName}`;
         } else if (composerTerminalContextsSnapshot.length > 0) {
           titleSeed = formatTerminalContextLabel(composerTerminalContextsSnapshot[0]!);
         } else {
@@ -2659,6 +2705,7 @@ export default function ChatView(props: ChatViewProps) {
         !turnStartSucceeded &&
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
+        composerTextFilesRef.current.length === 0 &&
         composerTerminalContextsRef.current.length === 0
       ) {
         setOptimisticUserMessages((existing) => {
@@ -2672,9 +2719,13 @@ export default function ChatView(props: ChatViewProps) {
         promptRef.current = promptForSend;
         const retryComposerImages = composerImagesSnapshot.map(cloneComposerImageForRetry);
         composerImagesRef.current = retryComposerImages;
+        composerTextFilesRef.current = [...composerTextFilesSnapshot];
         composerTerminalContextsRef.current = composerTerminalContextsSnapshot;
         setComposerDraftPrompt(composerDraftTarget, promptForSend);
         addComposerDraftImages(composerDraftTarget, retryComposerImages);
+        for (const textFile of composerTextFilesSnapshot) {
+          addComposerDraftTextFile(composerDraftTarget, textFile);
+        }
         setComposerDraftTerminalContexts(composerDraftTarget, composerTerminalContextsSnapshot);
         composerRef.current?.resetCursorState({
           cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
@@ -3427,6 +3478,7 @@ export default function ChatView(props: ChatViewProps) {
               gitCwd={gitCwd}
               promptRef={promptRef}
               composerImagesRef={composerImagesRef}
+              composerTextFilesRef={composerTextFilesRef}
               composerTerminalContextsRef={composerTerminalContextsRef}
               shouldAutoScrollRef={isAtEndRef}
               scheduleStickToBottom={scrollToEnd}

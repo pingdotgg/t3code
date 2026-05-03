@@ -205,6 +205,7 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
       throw new Error("installUpdate not implemented in test");
     },
     onUpdateState: () => () => undefined,
+    pasteClipboardAsFile: async () => null,
     ...overrides,
   };
 }

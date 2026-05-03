@@ -85,6 +85,7 @@ const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
+const PASTE_CLIPBOARD_AS_FILE_CHANNEL = "desktop:paste-clipboard-as-file";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_SET_CHANNEL_CHANNEL = "desktop:update-set-channel";
@@ -1782,6 +1783,30 @@ function registerIpcHandlers(): void {
     } catch {
       return false;
     }
+  });
+
+  ipcMain.removeHandler(PASTE_CLIPBOARD_AS_FILE_CHANNEL);
+  ipcMain.handle(PASTE_CLIPBOARD_AS_FILE_CHANNEL, async () => {
+    const text = clipboard.readText();
+    if (!text) return null;
+
+    const now = new Date();
+    const timestamp = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, "0"),
+      String(now.getDate()).padStart(2, "0"),
+      String(now.getHours()).padStart(2, "0"),
+      String(now.getMinutes()).padStart(2, "0"),
+      String(now.getSeconds()).padStart(2, "0"),
+      String(now.getMilliseconds()).padStart(3, "0"),
+    ].join("-");
+    const fileName = `pasted-${timestamp}.md`;
+
+    const pastedFilesDir = Path.join(app.getPath("userData"), "pasted-files");
+    FS.mkdirSync(pastedFilesDir, { recursive: true });
+    FS.writeFileSync(Path.join(pastedFilesDir, fileName), text, "utf-8");
+
+    return { fileName, text };
   });
 
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);

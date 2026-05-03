@@ -1,16 +1,19 @@
-import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
-import { useEffect } from "react";
+import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
+import { useEffect, useMemo } from "react";
 
 import { useCommandPaletteStore } from "../commandPaletteStore";
+import { useComposerDraftStore, type ComposerThreadTarget } from "../composerDraftStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import {
   startNewLocalThreadFromContext,
   startNewThreadFromContext,
 } from "../lib/chatThreadActions";
 import { isTerminalFocused } from "../lib/terminalFocus";
+import { randomUUID } from "../lib/utils";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { resolveThreadRouteTarget } from "../threadRoutes";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "~/rpc/serverState";
@@ -27,6 +30,8 @@ function ChatRouteGlobalShortcuts() {
       : false,
   );
   const appSettings = useSettings();
+  const params = useParams({ strict: false });
+  const routeTarget = useMemo(() => resolveThreadRouteTarget(params), [params]);
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -76,6 +81,29 @@ function ChatRouteGlobalShortcuts() {
           handleNewThread,
         });
       }
+
+      if (command === "chat.pasteAsFile") {
+        event.preventDefault();
+        event.stopPropagation();
+        const bridge = window.desktopBridge;
+        if (!bridge || !routeTarget) return;
+        void (async () => {
+          const result = await bridge.pasteClipboardAsFile();
+          if (!result) return;
+          const composerTarget: ComposerThreadTarget =
+            routeTarget.kind === "server" ? routeTarget.threadRef : routeTarget.draftId;
+          const blob = new Blob([result.text], { type: "text/markdown" });
+          const file = new File([blob], result.fileName, { type: "text/markdown" });
+          useComposerDraftStore.getState().addTextFile(composerTarget, {
+            type: "text",
+            id: randomUUID(),
+            name: result.fileName,
+            mimeType: "text/markdown",
+            sizeBytes: file.size,
+            file,
+          });
+        })();
+      }
     };
 
     window.addEventListener("keydown", onWindowKeyDown);
@@ -92,6 +120,7 @@ function ChatRouteGlobalShortcuts() {
     selectedThreadKeysSize,
     terminalOpen,
     appSettings.defaultThreadEnvMode,
+    routeTarget,
   ]);
 
   return null;

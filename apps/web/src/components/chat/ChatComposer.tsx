@@ -43,12 +43,13 @@ import {
 } from "../../composer-logic";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
 import {
-  type ComposerImageAttachment,
-  type DraftId,
-  type PersistedComposerImageAttachment,
   useComposerDraftStore,
   useComposerThreadDraft,
   useEffectiveComposerModelState,
+  type ComposerImageAttachment,
+  type ComposerTextFileAttachment,
+  type DraftId,
+  type PersistedComposerImageAttachment,
 } from "../../composerDraftStore";
 import {
   type TerminalContextDraft,
@@ -88,6 +89,7 @@ import { toastManager } from "../ui/toast";
 import {
   BotIcon,
   CircleAlertIcon,
+  FileIcon,
   ListTodoIcon,
   type LucideIcon,
   LockIcon,
@@ -342,10 +344,15 @@ export interface ChatComposerHandle {
   }) => void;
   /** Insert a terminal context from the terminal drawer. */
   addTerminalContext: (selection: TerminalContextSelection) => void;
+  /** Attach a text file to the composer. */
+  addTextFile: (textFile: ComposerTextFileAttachment) => void;
+  /** Remove a text file from the composer. */
+  removeTextFile: (fileId: string) => void;
   /** Get the current prompt/effort/model state for use in send. */
   getSendContext: () => {
     prompt: string;
     images: ComposerImageAttachment[];
+    textFiles: ComposerTextFileAttachment[];
     terminalContexts: TerminalContextDraft[];
     selectedPromptEffort: string | null;
     selectedModelOptionsForDispatch: unknown;
@@ -428,6 +435,7 @@ export interface ChatComposerProps {
   // Refs the parent needs kept in sync
   promptRef: React.MutableRefObject<string>;
   composerImagesRef: React.MutableRefObject<ComposerImageAttachment[]>;
+  composerTextFilesRef: React.MutableRefObject<ComposerTextFileAttachment[]>;
   composerTerminalContextsRef: React.MutableRefObject<TerminalContextDraft[]>;
 
   // Scroll
@@ -515,6 +523,7 @@ export const ChatComposer = memo(
       gitCwd,
       promptRef,
       composerImagesRef,
+      composerTextFilesRef,
       composerTerminalContextsRef,
       shouldAutoScrollRef,
       scheduleStickToBottom,
@@ -543,6 +552,7 @@ export const ChatComposer = memo(
     const composerDraft = useComposerThreadDraft(composerDraftTarget);
     const prompt = composerDraft.prompt;
     const composerImages = composerDraft.images;
+    const composerTextFiles = composerDraft.textFiles;
     const composerTerminalContexts = composerDraft.terminalContexts;
     const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
 
@@ -550,6 +560,8 @@ export const ChatComposer = memo(
     const addComposerDraftImage = useComposerDraftStore((store) => store.addImage);
     const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
     const removeComposerDraftImage = useComposerDraftStore((store) => store.removeImage);
+    const addComposerDraftTextFile = useComposerDraftStore((store) => store.addTextFile);
+    const removeComposerDraftTextFile = useComposerDraftStore((store) => store.removeTextFile);
     const insertComposerDraftTerminalContext = useComposerDraftStore(
       (store) => store.insertTerminalContext,
     );
@@ -795,9 +807,10 @@ export const ChatComposer = memo(
         deriveComposerSendState({
           prompt,
           imageCount: composerImages.length,
+          textFileCount: composerTextFiles.length,
           terminalContexts: composerTerminalContexts,
         }),
-      [composerImages.length, composerTerminalContexts, prompt],
+      [composerImages.length, composerTextFiles.length, composerTerminalContexts, prompt],
     );
 
     // ------------------------------------------------------------------
@@ -1087,6 +1100,10 @@ export const ChatComposer = memo(
     useEffect(() => {
       composerImagesRef.current = composerImages;
     }, [composerImages, composerImagesRef]);
+
+    useEffect(() => {
+      composerTextFilesRef.current = composerTextFiles;
+    }, [composerTextFiles, composerTextFilesRef]);
 
     useEffect(() => {
       composerTerminalContextsRef.current = composerTerminalContexts;
@@ -1731,6 +1748,12 @@ export const ChatComposer = memo(
               : null,
           );
         },
+        addTextFile: (textFile: ComposerTextFileAttachment) => {
+          addComposerDraftTextFile(composerDraftTarget, textFile);
+        },
+        removeTextFile: (fileId: string) => {
+          removeComposerDraftTextFile(composerDraftTarget, fileId);
+        },
         addTerminalContext: (selection: TerminalContextSelection) => {
           if (!activeThread) return;
           const snapshot = composerEditorRef.current?.readSnapshot() ?? {
@@ -1769,6 +1792,7 @@ export const ChatComposer = memo(
         getSendContext: () => ({
           prompt: promptRef.current,
           images: composerImagesRef.current,
+          textFiles: composerTextFilesRef.current,
           terminalContexts: composerTerminalContextsRef.current,
           selectedPromptEffort,
           selectedModelOptionsForDispatch,
@@ -1786,6 +1810,7 @@ export const ChatComposer = memo(
         insertComposerDraftTerminalContext,
         promptRef,
         composerImagesRef,
+        composerTextFilesRef,
         composerTerminalContextsRef,
         isComposerModelPickerOpen,
         readComposerSnapshot,
@@ -1795,6 +1820,8 @@ export const ChatComposer = memo(
         selectedPromptEffort,
         selectedProvider,
         selectedProviderModels,
+        addComposerDraftTextFile,
+        removeComposerDraftTextFile,
       ],
     );
 
@@ -1935,6 +1962,31 @@ export const ChatComposer = memo(
                           className="absolute right-1 top-1 bg-background/80 hover:bg-background/90"
                           onClick={() => removeComposerImage(image.id)}
                           aria-label={`Remove ${image.name}`}
+                        >
+                          <XIcon />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+              {!isComposerApprovalState &&
+                pendingUserInputs.length === 0 &&
+                composerTextFiles.length > 0 && (
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {composerTextFiles.map((file) => (
+                      <div
+                        key={file.id}
+                        className="flex items-center gap-1.5 rounded-lg border border-border/80 bg-background px-2.5 py-1 text-sm text-muted-foreground"
+                      >
+                        <FileIcon className="size-3.5 shrink-0" />
+                        <span className="max-w-40 truncate">{file.name}</span>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className="size-4 p-0 text-muted-foreground/60 hover:text-foreground"
+                          onClick={() => removeComposerDraftTextFile(composerDraftTarget, file.id)}
+                          aria-label={`Remove ${file.name}`}
                         >
                           <XIcon />
                         </Button>

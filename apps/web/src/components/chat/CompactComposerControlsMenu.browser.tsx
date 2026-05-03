@@ -63,6 +63,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
       [threadKey]: {
         prompt: props?.prompt ?? "",
         images: [],
+        textFiles: [],
         nonPersistedImageIds: [],
         persistedAttachments: [],
         terminalContexts: [],

@@ -41,7 +41,15 @@ export interface ChatImageAttachment {
   previewUrl?: string;
 }
 
-export type ChatAttachment = ChatImageAttachment;
+export interface ChatTextFileAttachment {
+  type: "text";
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+}
+
+export type ChatAttachment = ChatImageAttachment | ChatTextFileAttachment;
 
 export interface ChatMessage {
   id: MessageId;
