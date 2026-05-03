@@ -233,11 +233,19 @@ export const startExecutionRun = (request: ExecutionRunCreateRequest) =>
 
     // We track the accepted run by thread id so the lifecycle watcher can map later
     // session updates back to the originating orchestrator execution run.
-    yield* runRegistry.trackAcceptedRun({
-      controlThreadId: request.controlThreadId,
-      executionRunId: request.executionRunId,
-      threadId,
-    });
+    if (request.taskRuntime === true) {
+      yield* runRegistry.trackAcceptedTaskRuntime({
+        taskId: request.controlThreadId,
+        workSessionId: request.executionRunId,
+        threadId,
+      });
+    } else {
+      yield* runRegistry.trackAcceptedRun({
+        controlThreadId: request.controlThreadId,
+        executionRunId: request.executionRunId,
+        threadId,
+      });
+    }
 
     return {
       controlThreadId: request.controlThreadId,

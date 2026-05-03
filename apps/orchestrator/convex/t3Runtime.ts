@@ -1,6 +1,12 @@
 import { v } from "convex/values";
 import { Schema } from "effect";
-import { SandboxId, ThreadId, type TaskRuntimeMaterializeResponse } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  SandboxId,
+  ThreadId,
+  type ModelSelection,
+  type TaskRuntimeMaterializeResponse,
+} from "@t3tools/contracts";
 
 import { createT3ExecutionBridgeClient } from "../src/t3/client.ts";
 import {
@@ -23,6 +29,11 @@ function parseAllowedSecretNames(value: string | undefined): string[] | undefine
     return undefined;
   }
 }
+
+const modalCodingAgentModelSelection: ModelSelection = {
+  instanceId: ProviderInstanceId.make("opencode"),
+  model: "amazon-bedrock/us.anthropic.claude-opus-4-7",
+};
 
 export const materializeTaskRuntime = action({
   args: {
@@ -48,9 +59,12 @@ export const materializeTaskRuntime = action({
     }
 
     const providerKind = tree.project.sandboxProvider ?? "local";
+    const requestedStartCodingAgent = args.startCodingAgent ?? true;
+    const startCodingAgentAfterMaterialization =
+      providerKind === "modal" && requestedStartCodingAgent;
     const workSessionSeed = await ctx.runMutation(internal.t3Runtime.prepareWorkSessionSeed, {
       taskId: args.taskId,
-      startCodingAgent: args.startCodingAgent ?? true,
+      startCodingAgent: requestedStartCodingAgent,
       sandboxProviderKind: providerKind,
     });
 
@@ -88,7 +102,7 @@ export const materializeTaskRuntime = action({
         title: tree.task.title,
         runtimeMode: "full-access",
         interactionMode: "default",
-        startCodingAgent: args.startCodingAgent ?? true,
+        startCodingAgent: startCodingAgentAfterMaterialization ? false : requestedStartCodingAgent,
         sandbox: {
           providerKind,
           ...(Object.keys(resources).length > 0 ? { resources } : {}),
@@ -164,11 +178,20 @@ export const materializeTaskRuntime = action({
       ...(services !== undefined ? { sandboxServicesJson: JSON.stringify(services) } : {}),
     });
 
-    await ctx.scheduler.runAfter(0, api.t3Runtime.ensureTaskPullRequest, {
-      taskId: args.taskId,
-      workSessionId: workSessionSeed.workSessionId,
-      reason: "runtime-materialized",
-    });
+    if (!startCodingAgentAfterMaterialization) {
+      await ctx.scheduler.runAfter(0, api.t3Runtime.ensureTaskPullRequest, {
+        taskId: args.taskId,
+        workSessionId: workSessionSeed.workSessionId,
+        reason: "runtime-materialized",
+      });
+    }
+    if (startCodingAgentAfterMaterialization) {
+      await ctx.scheduler.runAfter(15_000, api.t3Runtime.startMaterializedTaskRuntimeAgent, {
+        taskId: args.taskId,
+        workSessionId: workSessionSeed.workSessionId,
+        initialPrompt: args.initialPrompt,
+      });
+    }
 
     return {
       taskId: response.taskId,
@@ -179,6 +202,89 @@ export const materializeTaskRuntime = action({
       worktreePath: response.worktreePath ?? null,
       acceptedAt: response.acceptedAt,
     };
+  },
+});
+
+export const startMaterializedTaskRuntimeAgent = action({
+  args: {
+    taskId: v.id("tasks"),
+    workSessionId: v.id("workSessions"),
+    initialPrompt: v.string(),
+  },
+  returns: v.object({
+    started: v.boolean(),
+    t3ThreadId: v.optional(v.string()),
+    acceptedAt: v.optional(v.string()),
+    skippedReason: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    const seed = await ctx.runQuery(internal.t3Runtime.getTaskRuntimeAgentStartSeed, {
+      taskId: args.taskId,
+      workSessionId: args.workSessionId,
+    });
+    if (seed === null) {
+      return { started: false, skippedReason: "Task runtime is not materialized yet." };
+    }
+    if (seed.sandboxRuntimeEndpointUrl === undefined) {
+      return { started: false, skippedReason: "Task runtime does not have a sandbox endpoint." };
+    }
+    if (seed.worktreePath === undefined) {
+      return { started: false, skippedReason: "Task runtime does not have a worktree path." };
+    }
+
+    const eventKey = `task-runtime-agent:start:${String(args.taskId)}:${String(args.workSessionId)}`;
+    await ctx.runMutation(internal.t3Runtime.recordTaskRuntimeAgentStartRequested, {
+      taskId: args.taskId,
+      workSessionId: args.workSessionId,
+      eventKey: `${eventKey}:requested`,
+      requestedAt: Date.now(),
+    });
+
+    const client = createT3ExecutionBridgeClient({
+      baseUrl: resolveTaskRuntimeBridgeBaseUrl({
+        providerKind: seed.sandboxProviderKind,
+        runtimeEndpointUrl: seed.sandboxRuntimeEndpointUrl,
+      }),
+    });
+
+    try {
+      const response = await client.createExecutionRun({
+        controlThreadId: String(args.taskId),
+        executionRunId: String(args.workSessionId),
+        initialPrompt: args.initialPrompt,
+        workspaceRoot: seed.worktreePath,
+        title: seed.title,
+        modelSelection: modalCodingAgentModelSelection,
+        taskRuntime: true,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+      });
+
+      await ctx.runMutation(internal.t3Runtime.recordTaskRuntimeAgentStartAccepted, {
+        taskId: args.taskId,
+        taskThreadId: seed.taskThreadId,
+        workSessionId: args.workSessionId,
+        t3ThreadId: String(response.t3ThreadId),
+        eventKey: `${eventKey}:accepted`,
+        acceptedAt: Date.parse(response.acceptedAt),
+      });
+
+      return {
+        started: true,
+        t3ThreadId: String(response.t3ThreadId),
+        acceptedAt: response.acceptedAt,
+      };
+    } catch (error) {
+      const failureSummary = error instanceof Error ? error.message : String(error);
+      await ctx.runMutation(internal.t3Runtime.recordTaskRuntimeAgentStartFailed, {
+        taskId: args.taskId,
+        workSessionId: args.workSessionId,
+        eventKey: `${eventKey}:failed`,
+        failureSummary,
+        failedAt: Date.now(),
+      });
+      throw error;
+    }
   },
 });
 
@@ -523,6 +629,172 @@ export const recordTaskPullRequestEnsureResult = internalMutation({
       }),
       createdAt: args.checkedAt,
     });
+
+    return null;
+  },
+});
+
+export const getTaskRuntimeAgentStartSeed = internalQuery({
+  args: {
+    taskId: v.id("tasks"),
+    workSessionId: v.id("workSessions"),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      title: v.string(),
+      taskThreadId: v.id("taskThreads"),
+      worktreePath: v.optional(v.string()),
+      sandboxProviderKind: v.optional(v.union(v.literal("local"), v.literal("modal"))),
+      sandboxRuntimeEndpointUrl: v.optional(v.string()),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (task === null) {
+      return null;
+    }
+    const workSession = await ctx.db.get(args.workSessionId);
+    if (workSession === null || String(workSession.taskId) !== String(args.taskId)) {
+      return null;
+    }
+    const taskThread = await ctx.db.get(workSession.taskThreadId);
+    if (taskThread === null) {
+      return null;
+    }
+
+    return {
+      title: task.title,
+      taskThreadId: workSession.taskThreadId,
+      ...(taskThread.worktreePath !== undefined ? { worktreePath: taskThread.worktreePath } : {}),
+      ...(workSession.sandboxProviderKind !== undefined
+        ? { sandboxProviderKind: workSession.sandboxProviderKind }
+        : {}),
+      ...(workSession.sandboxRuntimeEndpointUrl !== undefined
+        ? { sandboxRuntimeEndpointUrl: workSession.sandboxRuntimeEndpointUrl }
+        : {}),
+    };
+  },
+});
+
+export const recordTaskRuntimeAgentStartRequested = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    workSessionId: v.id("workSessions"),
+    eventKey: v.string(),
+    requestedAt: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const existingEvent = await ctx.db
+      .query("taskEvents")
+      .withIndex("by_event_key", (q: any) => q.eq("eventKey", args.eventKey))
+      .unique();
+    if (existingEvent !== null) {
+      return null;
+    }
+
+    await ctx.db.insert("taskEvents", {
+      taskId: args.taskId,
+      eventKey: args.eventKey,
+      kind: "runtime.agent-start-requested",
+      summary: "T3 runtime coding agent start was requested.",
+      payloadJson: JSON.stringify({
+        workSessionId: args.workSessionId,
+      }),
+      createdAt: args.requestedAt,
+    });
+    return null;
+  },
+});
+
+export const recordTaskRuntimeAgentStartAccepted = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    taskThreadId: v.id("taskThreads"),
+    workSessionId: v.id("workSessions"),
+    t3ThreadId: v.string(),
+    eventKey: v.string(),
+    acceptedAt: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.taskThreadId, {
+      t3ThreadId: args.t3ThreadId,
+      updatedAt: args.acceptedAt,
+    });
+    await ctx.db.patch(args.workSessionId, {
+      t3ThreadId: args.t3ThreadId,
+      status: "accepted",
+      updatedAt: args.acceptedAt,
+    });
+    await ctx.db.patch(args.taskId, {
+      currentPrimaryTaskThreadId: args.taskThreadId,
+      status: "working",
+      updatedAt: args.acceptedAt,
+    });
+
+    const existingEvent = await ctx.db
+      .query("taskEvents")
+      .withIndex("by_event_key", (q: any) => q.eq("eventKey", args.eventKey))
+      .unique();
+    if (existingEvent === null) {
+      await ctx.db.insert("taskEvents", {
+        taskId: args.taskId,
+        eventKey: args.eventKey,
+        kind: "runtime.agent-start-accepted",
+        summary: "T3 runtime coding agent start was accepted.",
+        payloadJson: JSON.stringify({
+          workSessionId: args.workSessionId,
+          t3ThreadId: args.t3ThreadId,
+        }),
+        createdAt: args.acceptedAt,
+      });
+    }
+
+    return null;
+  },
+});
+
+export const recordTaskRuntimeAgentStartFailed = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    workSessionId: v.id("workSessions"),
+    eventKey: v.string(),
+    failureSummary: v.string(),
+    failedAt: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.workSessionId, {
+      status: "failed",
+      failureSummary: args.failureSummary,
+      updatedAt: args.failedAt,
+      endedAt: args.failedAt,
+    });
+    await ctx.db.patch(args.taskId, {
+      status: "failed",
+      statusReason: args.failureSummary,
+      updatedAt: args.failedAt,
+    });
+
+    const existingEvent = await ctx.db
+      .query("taskEvents")
+      .withIndex("by_event_key", (q: any) => q.eq("eventKey", args.eventKey))
+      .unique();
+    if (existingEvent === null) {
+      await ctx.db.insert("taskEvents", {
+        taskId: args.taskId,
+        eventKey: args.eventKey,
+        kind: "runtime.agent-start-failed",
+        summary: "T3 runtime coding agent start failed.",
+        payloadJson: JSON.stringify({
+          workSessionId: args.workSessionId,
+          failureSummary: args.failureSummary,
+        }),
+        createdAt: args.failedAt,
+      });
+    }
 
     return null;
   },

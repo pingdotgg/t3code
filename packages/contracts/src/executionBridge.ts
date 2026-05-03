@@ -41,6 +41,7 @@ export const ExecutionRunCreateRequest = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
+  taskRuntime: Schema.optional(Schema.Boolean),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
