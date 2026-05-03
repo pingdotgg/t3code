@@ -592,6 +592,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      protocols: [{ name: "T3 Code", schemes: ["t3"] }],
     };
   }
 

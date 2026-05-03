@@ -102,6 +102,7 @@ const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secr
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
+const OPEN_THREAD_CHANNEL = "desktop:open-thread";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
@@ -216,6 +217,7 @@ let backendListeningDetector: ServerListeningDetector | null = null;
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
+let pendingDeepLinkThreadId: string | null = null;
 let desktopProtocolRegistered = false;
 let aboutCommitHashCache: string | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
@@ -1104,6 +1106,35 @@ function revealWindow(window: BrowserWindow): void {
   }
 
   window.focus();
+}
+
+function handleDeepLink(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return;
+  }
+
+  if (parsed.protocol !== `${DESKTOP_SCHEME}:` || parsed.hostname !== "thread") {
+    return;
+  }
+
+  const threadId = parsed.pathname.slice(1); // strip leading "/"
+  if (!threadId) {
+    return;
+  }
+
+  writeDesktopLogHeader(`deep link open-thread threadId=${threadId}`);
+
+  const window = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
+  if (window && !window.isDestroyed()) {
+    revealWindow(window);
+    window.webContents.send(OPEN_THREAD_CHANNEL, threadId);
+  } else {
+    // App is still launching; dispatch once the window finishes loading.
+    pendingDeepLinkThreadId = threadId;
+  }
 }
 
 function emitUpdateState(): void {
@@ -1997,6 +2028,10 @@ function createWindow(): BrowserWindow {
   window.webContents.on("did-finish-load", () => {
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
+    if (pendingDeepLinkThreadId !== null) {
+      window.webContents.send(OPEN_THREAD_CHANNEL, pendingDeepLinkThreadId);
+      pendingDeepLinkThreadId = null;
+    }
   });
 
   // On Linux/Wayland with `show: false`, Electron's `ready-to-show` only
@@ -2113,12 +2148,37 @@ app.on("before-quit", () => {
   restoreStdIoCapture?.();
 });
 
+// macOS: fired when the OS routes a t3:// URL to this process (already running or cold-start).
+// Must be registered before whenReady() to avoid missing early events.
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  handleDeepLink(url);
+});
+
+// Windows / Linux: a second instance is launched with the URL in argv.
+// requestSingleInstanceLock redirects that second instance here instead.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, argv) => {
+    const url = argv.find((arg) => arg.startsWith(`${DESKTOP_SCHEME}://`));
+    if (url) {
+      handleDeepLink(url);
+    }
+    const window = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
+    if (window) {
+      revealWindow(window);
+    }
+  });
+}
+
 app
   .whenReady()
   .then(() => {
     writeDesktopLogHeader("app ready");
     configureAppIdentity();
     configureApplicationMenu();
+    app.setAsDefaultProtocolClient(DESKTOP_SCHEME);
     registerDesktopProtocol();
     configureAutoUpdater();
     void bootstrap().catch((error) => {
