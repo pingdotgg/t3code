@@ -113,7 +113,15 @@ vi.mock("~/lib/gitStatusState", () => ({
   resetGitStatusStateForTests: () => undefined,
   useGitStatus: vi.fn(() => ({
     data: {
-      branch: BRANCH_NAME,
+      isRepo: true,
+      sourceControlProvider: {
+        kind: "github",
+        name: "GitHub",
+        baseUrl: "https://github.com",
+      },
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: BRANCH_NAME,
       hasWorkingTreeChanges: false,
       workingTree: { files: [], insertions: 0, deletions: 0 },
       hasUpstream: true,
