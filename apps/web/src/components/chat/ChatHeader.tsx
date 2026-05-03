@@ -162,7 +162,7 @@ export const ChatHeader = memo(function ChatHeader({
                 aria-label="Toggle files panel"
                 disabled={!filesAvailable}
               >
-                <SidebarPanelIcon className="size-3 rotate-180" />
+                <SidebarPanelIcon className="size-4 rotate-180" />
               </HeaderIconActionButton>
             }
           />

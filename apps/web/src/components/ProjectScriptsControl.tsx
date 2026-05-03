@@ -314,7 +314,7 @@ export default function ProjectScriptsControl({
       {renderMode === "menu-items" ? (
         <>
           <MenuItem className={dropdownItemClassName} onClick={openAddDialog}>
-            <PlusIcon className="size-4" />
+            <PlusIcon className="size-3" />
             Add action
           </MenuItem>
           {scriptMenuItems.length > 0 ? (

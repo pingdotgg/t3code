@@ -81,7 +81,7 @@ export function ChatHeaderActionsMenu({
       <MenuTrigger
         render={<HeaderIconActionButton aria-label="More actions" title="More actions" />}
       >
-        <EllipsisIcon className="size-3.5" />
+        <EllipsisIcon className="size-3 rotate-90" />
       </MenuTrigger>
       <MenuPopup align="end" className="min-w-52" keepMounted>
         <MenuGroup>
