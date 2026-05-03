@@ -125,6 +125,17 @@ function scoreEntry(entry: SearchableWorkspaceEntry, query: string): number | nu
   return Math.min(...scores);
 }
 
+function compareProjectEntries(left: ProjectEntry, right: ProjectEntry): number {
+  if (left.kind !== right.kind) {
+    return left.kind === "directory" ? -1 : 1;
+  }
+
+  return left.path.localeCompare(right.path, undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
 function isPathInIgnoredDirectory(relativePath: string): boolean {
   const firstSegment = relativePath.split("/")[0];
   if (!firstSegment) return false;
@@ -183,6 +194,14 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       onNone: () => Effect.succeed(false),
     });
 
+  const gitWorkTreeCache = yield* Cache.makeWith<string, boolean, never>(isInsideGitWorkTree, {
+    capacity: WORKSPACE_CACHE_MAX_KEYS,
+    timeToLive: () => Duration.millis(WORKSPACE_CACHE_TTL_MS),
+  });
+
+  const readCachedInsideGitWorkTree = (cwd: string): Effect.Effect<boolean> =>
+    Cache.get(gitWorkTreeCache, cwd);
+
   const filterGitIgnoredPaths = (
     cwd: string,
     relativePaths: string[],
@@ -201,7 +220,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       if (Option.isNone(gitOption)) {
         return null;
       }
-      if (!(yield* isInsideGitWorkTree(cwd))) {
+      if (!(yield* readCachedInsideGitWorkTree(cwd))) {
         return null;
       }
 
@@ -288,7 +307,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   const buildWorkspaceIndexFromFilesystem = Effect.fn(
     "WorkspaceEntries.buildWorkspaceIndexFromFilesystem",
   )(function* (cwd: string): Effect.fn.Return<WorkspaceIndex, WorkspaceEntriesError> {
-    const shouldFilterWithGitIgnore = yield* isInsideGitWorkTree(cwd);
+    const shouldFilterWithGitIgnore = yield* readCachedInsideGitWorkTree(cwd);
 
     let pendingDirectories: string[] = [""];
     const entries: SearchableWorkspaceEntry[] = [];
@@ -410,14 +429,124 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     );
   });
 
+  const listEntries: WorkspaceEntriesShape["listEntries"] = Effect.fn(
+    "WorkspaceEntries.listEntries",
+  )(function* (input) {
+    const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    const target =
+      input.relativePath == null
+        ? { absolutePath: normalizedCwd, relativePath: "" }
+        : yield* workspacePaths
+            .resolveRelativePathWithinRoot({
+              workspaceRoot: normalizedCwd,
+              relativePath: input.relativePath,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new WorkspaceEntriesError({
+                    cwd: input.cwd,
+                    operation: "workspaceEntries.listEntries.resolveRelativePathWithinRoot",
+                    detail: cause.message,
+                    cause,
+                  }),
+              ),
+            );
+
+    const stat = yield* Effect.tryPromise({
+      try: () => fsPromises.stat(target.absolutePath),
+      catch: (cause) =>
+        new WorkspaceEntriesError({
+          cwd: input.cwd,
+          operation: "workspaceEntries.listEntries.stat",
+          detail:
+            cause instanceof Error
+              ? cause.message
+              : `Unable to inspect workspace path: ${String(cause)}`,
+          cause,
+        }),
+    });
+
+    if (!stat.isDirectory()) {
+      return yield* new WorkspaceEntriesError({
+        cwd: input.cwd,
+        operation: "workspaceEntries.listEntries.stat",
+        detail:
+          target.relativePath.length > 0
+            ? `Workspace path is not a directory: ${target.relativePath}`
+            : `Workspace path is not a directory: ${normalizedCwd}`,
+      });
+    }
+
+    const dirents = yield* Effect.tryPromise({
+      try: () => fsPromises.readdir(target.absolutePath, { withFileTypes: true }),
+      catch: (cause) =>
+        new WorkspaceEntriesError({
+          cwd: input.cwd,
+          operation: "workspaceEntries.listEntries.readDirectory",
+          detail:
+            cause instanceof Error
+              ? cause.message
+              : `Unable to read workspace directory: ${String(cause)}`,
+          cause,
+        }),
+    });
+
+    const candidates: Array<{ dirent: Dirent; relativePath: string }> = [];
+    for (const dirent of dirents) {
+      if (!dirent.name || dirent.name === "." || dirent.name === "..") {
+        continue;
+      }
+      if (dirent.isDirectory() && IGNORED_DIRECTORY_NAMES.has(dirent.name)) {
+        continue;
+      }
+      if (!dirent.isDirectory() && !dirent.isFile()) {
+        continue;
+      }
+
+      const relativePath = toPosixPath(
+        target.relativePath ? path.join(target.relativePath, dirent.name) : dirent.name,
+      );
+      if (isPathInIgnoredDirectory(relativePath)) {
+        continue;
+      }
+      candidates.push({ dirent, relativePath });
+    }
+
+    const allowedPathSet =
+      candidates.length > 0 && (yield* readCachedInsideGitWorkTree(normalizedCwd))
+        ? new Set(
+            yield* filterGitIgnoredPaths(
+              normalizedCwd,
+              candidates.map((candidate) => candidate.relativePath),
+            ),
+          )
+        : null;
+
+    return {
+      entries: candidates
+        .filter((candidate) => (allowedPathSet ? allowedPathSet.has(candidate.relativePath) : true))
+        .map(
+          (candidate): ProjectEntry => ({
+            path: candidate.relativePath,
+            kind: candidate.dirent.isDirectory() ? "directory" : "file",
+            parentPath: parentPathOf(candidate.relativePath),
+          }),
+        )
+        .toSorted(compareProjectEntries),
+    };
+  });
+
   const invalidate: WorkspaceEntriesShape["invalidate"] = Effect.fn("WorkspaceEntries.invalidate")(
     function* (cwd) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(cwd).pipe(
         Effect.catch(() => Effect.succeed(cwd)),
       );
       yield* Cache.invalidate(workspaceIndexCache, cwd);
+      yield* Cache.invalidate(gitWorkTreeCache, cwd);
       if (normalizedCwd !== cwd) {
         yield* Cache.invalidate(workspaceIndexCache, normalizedCwd);
+        yield* Cache.invalidate(gitWorkTreeCache, normalizedCwd);
       }
     },
   );
@@ -500,6 +629,7 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   return {
     browse,
     invalidate,
+    listEntries,
     search,
   } satisfies WorkspaceEntriesShape;
 });

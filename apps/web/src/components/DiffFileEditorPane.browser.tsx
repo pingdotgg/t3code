@@ -5,19 +5,26 @@ import { parsePatchFiles } from "@pierre/diffs";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   __resetEnvironmentApiOverridesForTests,
   __setEnvironmentApiOverrideForTests,
 } from "../environmentApi";
 import { __resetClientSettingsPersistenceForTests, useUpdateSettings } from "../hooks/useSettings";
-import { DiffFileEditorPane } from "./DiffFileEditorPane";
+import { __resetProjectFileReadCacheForTests } from "../lib/projectFileReadCache";
+import {
+  __resetDiffFileEditorPaneSessionCacheForTests,
+  DiffFileEditorPane,
+} from "./DiffFileEditorPane";
 
-const { focusMock, revealPositionInCenterMock, setPositionMock } = vi.hoisted(() => ({
-  focusMock: vi.fn(),
-  revealPositionInCenterMock: vi.fn(),
-  setPositionMock: vi.fn(),
-}));
+const { focusMock, monacoMountMock, revealPositionInCenterMock, setPositionMock } = vi.hoisted(
+  () => ({
+    focusMock: vi.fn(),
+    monacoMountMock: vi.fn(),
+    revealPositionInCenterMock: vi.fn(),
+    setPositionMock: vi.fn(),
+  }),
+);
 
 function offsetToPosition(text: string, offset: number) {
   const safeOffset = Math.max(0, Math.min(text.length, offset));
@@ -40,8 +47,11 @@ vi.mock("@monaco-editor/react", async () => {
   const React = await import("react");
 
   const MockEditor = (props: {
+    keepCurrentModel?: boolean;
     language?: string;
     options?: { fontSize?: number };
+    path?: string;
+    saveViewState?: boolean;
     value?: string;
     onChange?: (value: string | undefined) => void;
     onMount?: (
@@ -58,7 +68,7 @@ vi.mock("@monaco-editor/react", async () => {
       monaco: unknown,
     ) => void;
   }) => {
-    const { language, onChange, onMount, options, value } = props;
+    const { language, onChange, onMount, options, path, value } = props;
     const valueRef = React.useRef(props.value ?? "");
     const selectionRef = React.useRef({
       startLineNumber: 1,
@@ -89,6 +99,7 @@ vi.mock("@monaco-editor/react", async () => {
     }, [value]);
 
     React.useEffect(() => {
+      monacoMountMock();
       const editor = {
         addCommand: () => undefined,
         focus: focusMock,
@@ -145,6 +156,7 @@ vi.mock("@monaco-editor/react", async () => {
         aria-label="Monaco editor"
         data-font-size={String(options?.fontSize ?? "")}
         data-language={language ?? ""}
+        data-path={path ?? ""}
         className="h-full w-full"
         value={value ?? ""}
         onSelect={(event) => syncSelection(event.currentTarget)}
@@ -183,6 +195,7 @@ function setEnvironmentApiOverride(input: {
 }) {
   __setEnvironmentApiOverrideForTests(environmentId, {
     projects: {
+      listEntries: vi.fn(),
       readFile: input.readFile,
       searchEntries: vi.fn(),
       writeFile: input.writeFile,
@@ -215,8 +228,11 @@ describe("DiffFileEditorPane", () => {
   afterEach(() => {
     __resetEnvironmentApiOverridesForTests();
     __resetClientSettingsPersistenceForTests();
+    __resetProjectFileReadCacheForTests();
+    __resetDiffFileEditorPaneSessionCacheForTests();
     vi.restoreAllMocks();
     focusMock.mockReset();
+    monacoMountMock.mockReset();
     revealPositionInCenterMock.mockReset();
     setPositionMock.mockReset();
     document.body.innerHTML = "";
@@ -306,6 +322,8 @@ index 1111111..2222222 100644
         <DiffFileEditorPane
           cwd="/repo"
           environmentId={environmentId}
+          reuseMonacoModels={true}
+          sessionKey="workspace-files:test"
           fileDiff={null}
           filePath="src/example.ts"
           filePaths={["src/example.ts", "src/other.ts"]}
@@ -333,7 +351,9 @@ index 1111111..2222222 100644
 
       await page.getByRole("button", { name: "Discard" }).click();
 
-      expect(onRequestFilePathChange).toHaveBeenCalledWith("src/other.ts");
+      await vi.waitFor(() => {
+        expect(onRequestFilePathChange).toHaveBeenCalledWith("src/other.ts");
+      });
     } finally {
       await screen.unmount();
     }
@@ -377,6 +397,141 @@ index 1111111..2222222 100644
       await expect
         .element(page.getByLabelText("Monaco editor"))
         .toHaveAttribute("data-language", "typescript");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("updates the editor contents when switching files", async () => {
+    const readFile = vi.fn(async ({ relativePath }: { relativePath: string }) => ({
+      relativePath,
+      contents:
+        relativePath === "src/other.ts"
+          ? "export const other = true;\n"
+          : "export const example = true;\n",
+      version: relativePath === "src/other.ts" ? versionB : versionA,
+    }));
+    const writeFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.ts",
+      version: versionB,
+    });
+    setEnvironmentApiOverride({ readFile, writeFile });
+
+    function FileSwitchHarness() {
+      const [currentFilePath, setCurrentFilePath] = useState("src/example.ts");
+
+      return (
+        <div className="h-[640px] w-[960px]">
+          <DiffFileEditorPane
+            cwd="/repo"
+            environmentId={environmentId}
+            reuseMonacoModels={true}
+            sessionKey="workspace-files:test"
+            fileDiff={null}
+            filePath={currentFilePath}
+            filePaths={["src/example.ts", "src/other.ts"]}
+            navigationLabel="Back to diff"
+            initialOverride={undefined}
+            resolvedTheme="dark"
+            onAddCodeContext={vi.fn()}
+            onOpenInEditor={vi.fn()}
+            onOpenPreview={vi.fn()}
+            previewDisabledReason={null}
+            onPersisted={vi.fn()}
+            onRequestBack={vi.fn()}
+            onRequestFilePathChange={setCurrentFilePath}
+          />
+        </div>
+      );
+    }
+
+    const screen = await render(<FileSwitchHarness />);
+
+    try {
+      await expect
+        .element(page.getByLabelText("Monaco editor"))
+        .toHaveValue("export const example = true;\n");
+
+      await page.getByRole("button", { name: "other.ts" }).click();
+
+      await expect
+        .element(page.getByLabelText("Monaco editor"))
+        .toHaveValue("export const other = true;\n");
+      expect(monacoMountMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("restores cached draft contents when switching back to a previously opened file", async () => {
+    const readFile = vi.fn(async ({ relativePath }: { relativePath: string }) => ({
+      relativePath,
+      contents:
+        relativePath === "src/other.ts"
+          ? "export const other = true;\n"
+          : "export const example = true;\n",
+      version: relativePath === "src/other.ts" ? versionB : versionA,
+    }));
+    const writeFile = vi.fn().mockResolvedValue({
+      relativePath: "src/example.ts",
+      version: versionB,
+    });
+    setEnvironmentApiOverride({ readFile, writeFile });
+
+    function FileSwitchHarness() {
+      const [currentFilePath, setCurrentFilePath] = useState("src/example.ts");
+
+      return (
+        <div className="h-[640px] w-[960px]">
+          <div className="mb-2 flex gap-2">
+            <button type="button" onClick={() => setCurrentFilePath("src/example.ts")}>
+              Open example externally
+            </button>
+            <button type="button" onClick={() => setCurrentFilePath("src/other.ts")}>
+              Open other externally
+            </button>
+          </div>
+          <DiffFileEditorPane
+            cwd="/repo"
+            environmentId={environmentId}
+            reuseMonacoModels={true}
+            sessionKey="workspace-files:test"
+            fileDiff={null}
+            filePath={currentFilePath}
+            filePaths={["src/example.ts", "src/other.ts"]}
+            navigationLabel="Back to diff"
+            initialOverride={undefined}
+            resolvedTheme="dark"
+            onAddCodeContext={vi.fn()}
+            onOpenInEditor={vi.fn()}
+            onOpenPreview={vi.fn()}
+            previewDisabledReason={null}
+            onPersisted={vi.fn()}
+            onRequestBack={vi.fn()}
+            onRequestFilePathChange={setCurrentFilePath}
+          />
+        </div>
+      );
+    }
+
+    const screen = await render(<FileSwitchHarness />);
+
+    try {
+      await expect
+        .element(page.getByLabelText("Monaco editor"))
+        .toHaveValue("export const example = true;\n");
+      await page.getByLabelText("Monaco editor").fill("export const example = false;\n");
+      await page.getByRole("button", { name: "Open other externally" }).click();
+      await expect
+        .element(page.getByLabelText("Monaco editor"))
+        .toHaveValue("export const other = true;\n");
+
+      await page.getByRole("button", { name: "Open example externally" }).click();
+
+      await expect
+        .element(page.getByLabelText("Monaco editor"))
+        .toHaveValue("export const example = false;\n");
+      expect(monacoMountMock).toHaveBeenCalledTimes(1);
     } finally {
       await screen.unmount();
     }
@@ -466,8 +621,16 @@ index 1111111..2222222 100644
       await expect.element(page.getByRole("button", { name: "Exit edit" })).toBeVisible();
       await expect.element(page.getByRole("button", { name: "Open in IDE" })).toBeVisible();
       await expect.element(page.getByRole("button", { name: "Save" })).toBeVisible();
+      await expect.element(page.getByRole("button", { name: "example.ts" })).toBeVisible();
       await expect.element(page.getByText("⌘", { exact: true })).toBeVisible();
       await expect.element(page.getByText("src/example.ts")).not.toBeInTheDocument();
+      await vi.waitFor(() => {
+        const filePillLabel = document.querySelector<HTMLSpanElement>(
+          'button[title="src/example.ts"] span',
+        );
+        expect(filePillLabel?.className).toContain("text-ui-xs");
+        expect(filePillLabel?.className).not.toContain("text-code-compact");
+      });
       await vi.waitFor(() => {
         expect(revealPositionInCenterMock).toHaveBeenCalledWith({ lineNumber: 2, column: 7 });
         expect(setPositionMock).toHaveBeenCalledWith({ lineNumber: 2, column: 7 });

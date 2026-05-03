@@ -81,7 +81,34 @@ export function buildMenuItems(
   isBusy: boolean,
   hasOriginRemote = true,
 ): GitActionMenuItem[] {
-  if (!gitStatus) return [];
+  if (!gitStatus) {
+    return [
+      {
+        id: "commit",
+        label: "Commit",
+        disabled: true,
+        icon: "commit",
+        kind: "open_dialog",
+        dialogAction: "commit",
+      },
+      {
+        id: "push",
+        label: "Push",
+        disabled: true,
+        icon: "push",
+        kind: "open_dialog",
+        dialogAction: "push",
+      },
+      {
+        id: "pr",
+        label: "Create PR",
+        disabled: true,
+        icon: "pr",
+        kind: "open_dialog",
+        dialogAction: "create_pr",
+      },
+    ];
+  }
 
   const hasBranch = gitStatus.branch !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;

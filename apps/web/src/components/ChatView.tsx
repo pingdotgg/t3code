@@ -38,9 +38,10 @@ import { readLocalApi } from "../localApi";
 import {
   buildDiffClosedSearch,
   buildDiffEditorSearch,
-  buildDiffOpenSearch,
+  buildDiffFilesSearch,
   buildDiffTurnSearch,
   parseDiffRouteSearch,
+  resolveWorkspacePanelDisplayMode,
 } from "../diffRouteSearch";
 import {
   collapseExpandedComposerCursor,
@@ -96,7 +97,7 @@ import { buildTemporaryWorktreeBranchName } from "@forma/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { resolveShortcutCommand } from "../keybindings";
 import { ComposerMetaBar } from "./ComposerMetaBar";
 import PlanSidebar from "./PlanSidebar";
 import { IconChevronDown as ChevronDownIcon } from "symbols-react";
@@ -112,6 +113,7 @@ import {
 import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
+import { useThreadRowActions } from "../hooks/useThreadRowActions";
 import { resolveAppModelSelection } from "../modelSelection";
 import { type MarkdownFileLinkMeta } from "../markdown-links";
 import { resolveWorkspaceEditorTarget } from "../workspaceEditorTarget";
@@ -121,7 +123,7 @@ import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
+import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -175,11 +177,7 @@ import {
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { useBottomDrawerUiStore } from "../bottomDrawerUiStore";
-import {
-  classifyPreviewRelativePath,
-  openPreviewDrawer,
-  openPreviewTarget,
-} from "../previewTargets";
+import { classifyPreviewRelativePath, openPreviewTarget } from "../previewTargets";
 import { usePreviewWorkspaceStore } from "../previewWorkspaceStore";
 import {
   useServerAvailableEditors,
@@ -189,6 +187,7 @@ import {
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { RightPanelSheet } from "./RightPanelSheet";
+import { buildThreadMarkdownExport } from "../lib/threadMarkdownExport";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -334,18 +333,18 @@ type ChatViewProps =
   | {
       environmentId: EnvironmentId;
       threadId: ThreadId;
-      onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
       routeKind: "server";
       draftId?: never;
+      onRequestWorkspaceDiffToggle?: (() => void) | undefined;
     }
   | {
       environmentId: EnvironmentId;
       threadId: ThreadId;
-      onDiffPanelOpen?: () => void;
       reserveTitleBarControlInset?: boolean;
       routeKind: "draft";
       draftId: DraftId;
+      onRequestWorkspaceDiffToggle?: (() => void) | undefined;
     };
 
 function useLocalDispatchState(input: {
@@ -426,8 +425,8 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
     threadId,
     routeKind,
-    onDiffPanelOpen,
     reserveTitleBarControlInset = true,
+    onRequestWorkspaceDiffToggle,
   } = props;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const routeThreadRef = useMemo(
@@ -607,7 +606,8 @@ export default function ChatView(props: ChatViewProps) {
     : undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
-  const diffOpen = rawSearch.diff === "1";
+  const workspacePanelDisplayMode = resolveWorkspacePanelDisplayMode(rawSearch);
+  const filesOpen = workspacePanelDisplayMode !== "closed";
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadRef = useMemo(
     () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
@@ -1284,6 +1284,14 @@ export default function ChatView(props: ChatViewProps) {
     () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
     [selectedProvider, providerStatuses],
   );
+  const {
+    archiveNow,
+    copyThreadAsMarkdown,
+    copyThreadId,
+    copyWorkspacePath,
+    deleteWithConfirmation,
+    forkNow,
+  } = useThreadRowActions();
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -1291,41 +1299,96 @@ export default function ChatView(props: ChatViewProps) {
   const rightPanelOpen = planSidebarOpen;
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
-  const nonTerminalShortcutLabelOptions = useMemo(
-    () => ({
-      context: {
-        terminalFocus: false,
-        terminalOpen: Boolean(terminalState.terminalOpen),
-      },
-    }),
-    [terminalState.terminalOpen],
+  const diffAvailable = isServerThread && isGitRepo;
+  const threadMarkdownExport = useMemo(
+    () =>
+      activeThread
+        ? buildThreadMarkdownExport({
+            routeKind,
+            thread: activeThread,
+            environmentId: activeThread.environmentId,
+            ...(routeKind === "draft" && draftId ? { draftId } : {}),
+            ...(activeProject
+              ? {
+                  project: {
+                    id: activeProject.id,
+                    name: activeProject.name,
+                    cwd: activeProject.cwd,
+                  },
+                }
+              : {}),
+            workspaceRoot: activeWorkspaceRoot ?? null,
+          })
+        : "",
+    [activeProject, activeThread, activeWorkspaceRoot, draftId, routeKind],
   );
-  const terminalToggleShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "terminal.toggle"),
-    [keybindings],
-  );
-  const diffPanelShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "diff.toggle", nonTerminalShortcutLabelOptions),
-    [keybindings, nonTerminalShortcutLabelOptions],
-  );
-  const onToggleDiff = useCallback(() => {
-    if (!isServerThread) {
+  const handleCopyThreadAsMarkdown = useCallback(() => {
+    if (!threadMarkdownExport) {
       return;
     }
-    if (!diffOpen) {
-      onDiffPanelOpen?.();
+    copyThreadAsMarkdown(threadMarkdownExport);
+  }, [copyThreadAsMarkdown, threadMarkdownExport]);
+  const handleCopyWorkspacePath = useCallback(() => {
+    copyWorkspacePath(activeWorkspaceRoot ?? null);
+  }, [activeWorkspaceRoot, copyWorkspacePath]);
+  const handleCopyThreadId = useCallback(() => {
+    if (!activeThread) {
+      return;
     }
-    void navigate({
-      to: "/$environmentId/$threadId",
-      params: {
-        environmentId,
-        threadId,
-      },
-      replace: true,
-      search: (previous) =>
-        diffOpen ? buildDiffClosedSearch(previous) : buildDiffOpenSearch(previous),
-    });
-  }, [diffOpen, environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
+    copyThreadId(activeThread.id);
+  }, [activeThread, copyThreadId]);
+  const handleForkThread = useCallback(() => {
+    if (!activeThreadRef) {
+      return;
+    }
+    void forkNow(activeThreadRef);
+  }, [activeThreadRef, forkNow]);
+  const handleArchiveThread = useCallback(() => {
+    if (!activeThreadRef) {
+      return;
+    }
+    void archiveNow(activeThreadRef);
+  }, [activeThreadRef, archiveNow]);
+  const handleDeleteThread = useCallback(() => {
+    if (!activeThreadRef) {
+      return;
+    }
+    void deleteWithConfirmation(activeThreadRef);
+  }, [activeThreadRef, deleteWithConfirmation]);
+  const navigateCurrentThreadPanel = useCallback(
+    (updateSearch: (previous: Record<string, unknown>) => Record<string, unknown>) => {
+      if (routeKind === "draft") {
+        if (!draftId) {
+          return;
+        }
+        void navigate({
+          to: "/draft/$draftId",
+          params: buildDraftThreadRouteParams(draftId),
+          replace: true,
+          search: updateSearch,
+        });
+        return;
+      }
+
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(environmentId, threadId)),
+        replace: true,
+        search: updateSearch,
+      });
+    },
+    [draftId, environmentId, navigate, routeKind, threadId],
+  );
+  const onToggleFiles = useCallback(() => {
+    if (!activeWorkspaceRoot) {
+      return;
+    }
+    if (workspacePanelDisplayMode === "closed") {
+      navigateCurrentThreadPanel((previous) => buildDiffFilesSearch(previous));
+      return;
+    }
+    navigateCurrentThreadPanel((previous) => buildDiffClosedSearch(previous));
+  }, [activeWorkspaceRoot, navigateCurrentThreadPanel, workspacePanelDisplayMode]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -1420,13 +1483,6 @@ export default function ChatView(props: ChatViewProps) {
     showTerminalDrawer,
     terminalState.terminalOpen,
   ]);
-  const togglePreviewVisibility = useCallback(() => {
-    if (bottomDrawerMode === "preview") {
-      closeBottomDrawer();
-      return;
-    }
-    openPreviewDrawer(activeProjectRef);
-  }, [activeProjectRef, bottomDrawerMode, closeBottomDrawer]);
   useEffect(() => {
     if (bottomDrawerMode !== "preview") {
       return;
@@ -2137,7 +2193,10 @@ export default function ChatView(props: ChatViewProps) {
       if (command === "diff.toggle") {
         event.preventDefault();
         event.stopPropagation();
-        onToggleDiff();
+        if (!diffAvailable || workspacePanelDisplayMode === "closed") {
+          return;
+        }
+        onRequestWorkspaceDiffToggle?.();
         return;
       }
 
@@ -2169,7 +2228,9 @@ export default function ChatView(props: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     keybindings,
-    onToggleDiff,
+    onRequestWorkspaceDiffToggle,
+    diffAvailable,
+    workspacePanelDisplayMode,
     toggleTerminalVisibility,
   ]);
 
@@ -3203,7 +3264,7 @@ export default function ChatView(props: ChatViewProps) {
   }, []);
   const onOpenFileInPanel = useCallback(
     (meta: MarkdownFileLinkMeta, turnId: TurnId | null | undefined) => {
-      if (!isServerThread || !activeWorkspaceRoot) {
+      if (!activeWorkspaceRoot) {
         return false;
       }
 
@@ -3213,40 +3274,30 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       const effectiveTurnId = turnId ?? rawSearch.diffTurnId ?? undefined;
-      const backToDiff =
+      const backToView =
         rawSearch.diffView === "editor"
-          ? rawSearch.editorBackToDiff === "1"
-          : rawSearch.diff === "1";
-      onDiffPanelOpen?.();
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: {
-          environmentId,
-          threadId,
-        },
-        search: (previous) =>
-          buildDiffEditorSearch(previous, {
-            filePath: editorTarget.relativePath,
-            line: editorTarget.line,
-            column: editorTarget.column,
-            turnId: effectiveTurnId,
-            diffFilePath: effectiveTurnId ? editorTarget.relativePath : undefined,
-            backToDiff,
-          }),
-      });
+          ? rawSearch.editorBackToView
+          : effectiveTurnId
+            ? ("diff" as const)
+            : undefined;
+      navigateCurrentThreadPanel((previous) =>
+        buildDiffEditorSearch(previous, {
+          filePath: editorTarget.relativePath,
+          line: editorTarget.line,
+          column: editorTarget.column,
+          turnId: effectiveTurnId,
+          diffFilePath: effectiveTurnId ? editorTarget.relativePath : undefined,
+          ...(backToView ? { backToView } : {}),
+        }),
+      );
       return true;
     },
     [
       activeWorkspaceRoot,
-      environmentId,
-      isServerThread,
-      navigate,
-      onDiffPanelOpen,
-      rawSearch.diff,
+      navigateCurrentThreadPanel,
       rawSearch.diffView,
       rawSearch.diffTurnId,
-      rawSearch.editorBackToDiff,
-      threadId,
+      rawSearch.editorBackToView,
     ],
   );
   const onOpenFilePreview = useCallback(
@@ -3275,17 +3326,9 @@ export default function ChatView(props: ChatViewProps) {
       if (!isServerThread) {
         return;
       }
-      onDiffPanelOpen?.();
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: {
-          environmentId,
-          threadId,
-        },
-        search: (previous) => buildDiffTurnSearch(previous, { turnId, filePath }),
-      });
+      navigateCurrentThreadPanel((previous) => buildDiffTurnSearch(previous, { turnId, filePath }));
     },
-    [environmentId, isServerThread, navigate, onDiffPanelOpen, threadId],
+    [isServerThread, navigateCurrentThreadPanel],
   );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
@@ -3311,17 +3354,18 @@ export default function ChatView(props: ChatViewProps) {
       {/* Top bar */}
       <header
         className={cn(
-          "border-b border-border px-3 sm:px-5",
+          "border-b border-border px-5",
           isElectron
             ? cn(
-                "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]",
+                "drag-region h-12 flex items-center wco:h-[env(titlebar-area-height)]",
                 reserveTitleBarControlInset &&
                   "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
               )
-            : "py-2 sm:py-3",
+            : "py-2",
         )}
       >
         <ChatHeader
+          routeKind={routeKind}
           activeThreadEnvironmentId={activeThread.environmentId}
           activeThreadId={activeThread.id}
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
@@ -3335,21 +3379,22 @@ export default function ChatView(props: ChatViewProps) {
           }
           keybindings={keybindings}
           availableEditors={availableEditors}
-          terminalAvailable={activeProject !== undefined}
-          terminalOpen={bottomDrawerMode === "terminal"}
-          terminalToggleShortcutLabel={terminalToggleShortcutLabel}
-          previewOpen={bottomDrawerMode === "preview"}
-          diffToggleShortcutLabel={diffPanelShortcutLabel}
           gitCwd={gitCwd}
-          diffOpen={diffOpen}
+          workspaceRoot={activeWorkspaceRoot ?? null}
+          filesAvailable={activeWorkspaceRoot !== undefined}
+          filesOpen={filesOpen}
           onRunProjectScript={runProjectScript}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
           onOpenProjectSwitcher={openProjectSwitcher}
-          onToggleTerminal={toggleTerminalVisibility}
-          onTogglePreview={togglePreviewVisibility}
-          onToggleDiff={onToggleDiff}
+          onToggleFiles={onToggleFiles}
+          onCopyThreadAsMarkdown={handleCopyThreadAsMarkdown}
+          onCopyWorkspacePath={handleCopyWorkspacePath}
+          {...(routeKind === "server" ? { onCopyThreadId: handleCopyThreadId } : {})}
+          {...(routeKind === "server" ? { onForkThread: handleForkThread } : {})}
+          {...(routeKind === "server" ? { onArchiveThread: handleArchiveThread } : {})}
+          {...(routeKind === "server" ? { onDeleteThread: handleDeleteThread } : {})}
         />
       </header>
 

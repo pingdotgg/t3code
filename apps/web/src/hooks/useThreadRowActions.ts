@@ -54,6 +54,25 @@ export function useThreadRowActions() {
       );
     },
   });
+  const { copyToClipboard: copyThreadMarkdownToClipboard } = useCopyToClipboard<{
+    markdown: string;
+  }>({
+    onCopy: () => {
+      toastManager.add({
+        type: "success",
+        title: "Thread markdown copied",
+      });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to copy thread markdown",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+  });
 
   const markUnread = useCallback(
     ({ threadRef, latestTurnCompletedAt }: MarkUnreadInput) => {
@@ -85,6 +104,13 @@ export function useThreadRowActions() {
       copyThreadIdToClipboard(threadId, { threadId });
     },
     [copyThreadIdToClipboard],
+  );
+
+  const copyThreadAsMarkdown = useCallback(
+    (markdown: string) => {
+      copyThreadMarkdownToClipboard(markdown, { markdown });
+    },
+    [copyThreadMarkdownToClipboard],
   );
 
   const archiveNow = useCallback(
@@ -140,6 +166,7 @@ export function useThreadRowActions() {
 
   return {
     markUnread,
+    copyThreadAsMarkdown,
     copyWorkspacePath,
     copyThreadId,
     archiveNow,

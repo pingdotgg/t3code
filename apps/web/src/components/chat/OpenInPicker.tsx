@@ -88,23 +88,24 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
   return baseOptions.filter((option) => availableEditors.includes(option.value));
 };
 
-export const OpenInPicker = memo(function OpenInPicker({
+function useOpenInController({
   keybindings,
   availableEditors,
   openInCwd,
-  compact = false,
 }: {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
-  compact?: boolean;
 }) {
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
     () => resolveOptions(navigator.platform, availableEditors),
     [availableEditors],
   );
-  const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
+  const openFavoriteEditorShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
+    [keybindings],
+  );
 
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
@@ -117,13 +118,6 @@ export const OpenInPicker = memo(function OpenInPicker({
     },
     [preferredEditor, openInCwd, setPreferredEditor],
   );
-
-  const openFavoriteEditorShortcutLabel = useMemo(
-    () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
-    [keybindings],
-  );
-  const primaryButtonLabelClassName = topBarButtonLabelClassName(compact);
-  const groupSeparatorClassName = topBarGroupSeparatorClassName(compact);
 
   useEffect(() => {
     const handler = (e: globalThis.KeyboardEvent) => {
@@ -138,6 +132,73 @@ export const OpenInPicker = memo(function OpenInPicker({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [preferredEditor, keybindings, openInCwd]);
+
+  return {
+    openFavoriteEditorShortcutLabel,
+    openInEditor,
+    options,
+    preferredEditor,
+  };
+}
+
+export const OpenInMenuItems = memo(function OpenInMenuItems({
+  keybindings,
+  availableEditors,
+  openInCwd,
+}: {
+  keybindings: ResolvedKeybindingsConfig;
+  availableEditors: ReadonlyArray<EditorId>;
+  openInCwd: string | null;
+}) {
+  const { openFavoriteEditorShortcutLabel, openInEditor, options, preferredEditor } =
+    useOpenInController({
+      keybindings,
+      availableEditors,
+      openInCwd,
+    });
+
+  if (openInCwd === null) {
+    return <MenuItem disabled>No workspace available</MenuItem>;
+  }
+
+  if (options.length === 0) {
+    return <MenuItem disabled>No installed editors found</MenuItem>;
+  }
+
+  return (
+    <>
+      {options.map(({ label, Icon, value }) => (
+        <MenuItem key={value} onClick={() => openInEditor(value)}>
+          <Icon aria-hidden className={`${EDITOR_TRIGGER_ICON_CLASS_NAME} text-muted-foreground`} />
+          {label}
+          {value === preferredEditor && openFavoriteEditorShortcutLabel ? (
+            <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+          ) : null}
+        </MenuItem>
+      ))}
+    </>
+  );
+});
+
+export const OpenInPicker = memo(function OpenInPicker({
+  keybindings,
+  availableEditors,
+  openInCwd,
+  compact = false,
+}: {
+  keybindings: ResolvedKeybindingsConfig;
+  availableEditors: ReadonlyArray<EditorId>;
+  openInCwd: string | null;
+  compact?: boolean;
+}) {
+  const { openInEditor, options, preferredEditor } = useOpenInController({
+    keybindings,
+    availableEditors,
+    openInCwd,
+  });
+  const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
+  const primaryButtonLabelClassName = topBarButtonLabelClassName(compact);
+  const groupSeparatorClassName = topBarGroupSeparatorClassName(compact);
 
   return (
     <Group aria-label="Subscription actions">
@@ -159,19 +220,11 @@ export const OpenInPicker = memo(function OpenInPicker({
           <ChevronDownIcon aria-hidden="true" className="size-2.5" />
         </MenuTrigger>
         <MenuPopup align="end">
-          {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
-          {options.map(({ label, Icon, value }) => (
-            <MenuItem key={value} onClick={() => openInEditor(value)}>
-              <Icon
-                aria-hidden
-                className={`${EDITOR_TRIGGER_ICON_CLASS_NAME} text-muted-foreground`}
-              />
-              {label}
-              {value === preferredEditor && openFavoriteEditorShortcutLabel && (
-                <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
-              )}
-            </MenuItem>
-          ))}
+          <OpenInMenuItems
+            keybindings={keybindings}
+            availableEditors={availableEditors}
+            openInCwd={openInCwd}
+          />
         </MenuPopup>
       </Menu>
     </Group>

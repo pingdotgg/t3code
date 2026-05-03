@@ -12,6 +12,8 @@ import type { Effect } from "effect";
 import type {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
+  ProjectListEntriesInput,
+  ProjectListEntriesResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
 } from "@forma/contracts";
@@ -48,6 +50,13 @@ export interface WorkspaceEntriesShape {
   readonly browse: (
     input: FilesystemBrowseInput,
   ) => Effect.Effect<FilesystemBrowseResult, WorkspaceEntriesBrowseError>;
+
+  /**
+   * List immediate file and directory children for the provided workspace path.
+   */
+  readonly listEntries: (
+    input: ProjectListEntriesInput,
+  ) => Effect.Effect<ProjectListEntriesResult, WorkspaceEntriesError>;
 
   /**
    * Search indexed workspace entries for files and directories matching the

@@ -1,5 +1,5 @@
-import Editor, { type OnMount } from "@monaco-editor/react";
-import type { EnvironmentId } from "@forma/contracts";
+import Editor, { type Monaco, type OnMount } from "@monaco-editor/react";
+import type { EnvironmentId, ProjectReadFileResult } from "@forma/contracts";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import {
   IconExclamationmarkTriangle as AlertTriangleIcon,
@@ -9,12 +9,13 @@ import {
   IconSquareAndArrowDown as SaveIcon,
   IconSquareAndArrowUp as OpenInIDEIcon,
 } from "symbols-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { readEnvironmentApi } from "../environmentApi";
 import {
   reconstructPreTurnFileContents,
   type PersistedDiffFileEditOverride,
 } from "../lib/diffFileEditOverrides";
+import { resolveEditorFileLabel } from "../lib/editorFileLabel";
 import {
   getCodeContextSelectionLimitMessage,
   normalizeCodeContextSelection,
@@ -27,6 +28,12 @@ import {
   resolveProjectFileEditorError,
   type ProjectFileEditorStatus,
 } from "../lib/projectFileEditing";
+import {
+  invalidateProjectFileForEditor,
+  loadProjectFileForEditor,
+  peekProjectFileForEditor,
+  storeProjectFileForEditor,
+} from "../lib/projectFileReadCache";
 import { useSettings } from "../hooks/useSettings";
 import { getCodeEditorFontSize } from "../interfaceAppearance";
 import { cn } from "../lib/utils";
@@ -45,9 +52,21 @@ import { toastManager } from "./ui/toast";
 
 ensureMonacoConfigured();
 
+export interface DiffFileEditorRequestedNavigation {
+  nonce: number;
+  type: "back" | "close-panel" | "show-diff" | "switch-file";
+  filePath?: string | undefined;
+}
+
 type PendingNavigation =
   | {
       type: "back";
+    }
+  | {
+      type: "close-panel";
+    }
+  | {
+      type: "show-diff";
     }
   | {
       type: "switch-file";
@@ -57,6 +76,8 @@ type PendingNavigation =
 interface DiffFileEditorPaneProps {
   environmentId: EnvironmentId;
   cwd: string;
+  sessionKey?: string | undefined;
+  showHeader?: boolean | undefined;
   filePath: string;
   filePaths: readonly string[];
   fileDiff: FileDiffMetadata | null;
@@ -66,10 +87,25 @@ interface DiffFileEditorPaneProps {
   navigationLabel: string;
   resolvedTheme: ResolvedThemeMode;
   onRequestBack: () => void;
+  onRequestClosePanel?: (() => void) | undefined;
+  onRequestShowDiff?: (() => void) | undefined;
   onRequestFilePathChange: (filePath: string) => void;
+  requestedNavigation?: DiffFileEditorRequestedNavigation | null | undefined;
+  requestedSaveNonce?: number | undefined;
+  onEditorControlsStateChange?:
+    | ((
+        state: Readonly<{
+          canSave: boolean;
+          filePath: string;
+          isDirty: boolean;
+          isSaving: boolean;
+        }>,
+      ) => void)
+    | undefined;
   onOpenInEditor: (filePath: string) => void;
   onOpenPreview: (filePath: string) => void;
   previewDisabledReason: string | null;
+  reuseMonacoModels?: boolean | undefined;
   onPersisted: (input: {
     filePath: string;
     savedContents: string;
@@ -81,6 +117,256 @@ interface DiffFileEditorPaneProps {
 const SELECTION_ACTION_OFFSET_PX = 8;
 const SELECTION_ACTION_HEIGHT_PX = 28;
 const SELECTION_ACTION_MIN_EDGE_PX = 8;
+const MAX_WARM_EDITOR_MODELS = 20;
+
+interface CachedEditorSessionState {
+  filePath: string;
+  status: ProjectFileEditorStatus;
+  message: string | null;
+  baseContents: string;
+  draftContents: string;
+  baseVersion: string | null;
+  preTurnContents: string | null;
+}
+
+const editorSessionStateByKey = new Map<string, CachedEditorSessionState>();
+const warmEditorModelUsageBySessionKey = new Map<
+  string,
+  ReadonlyArray<{ cwd: string; filePath: string }>
+>();
+
+function normalizePathValue(path: string): string {
+  return path.replaceAll("\\", "/");
+}
+
+function encodePathSegments(path: string): string {
+  return normalizePathValue(path)
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+function buildEditorSessionStateCacheKey(input: {
+  sessionKey: string | undefined;
+  cwd: string;
+  filePath: string;
+}): string | null {
+  if (!input.sessionKey) {
+    return null;
+  }
+  return `${input.sessionKey}:${normalizePathValue(input.cwd)}:${normalizePathValue(input.filePath)}`;
+}
+
+function buildWarmEditorModelPath(input: {
+  sessionKey: string | undefined;
+  filePath: string;
+}): string {
+  if (!input.sessionKey) {
+    return input.filePath;
+  }
+  return `file:///__forma-workspace/${encodeURIComponent(input.sessionKey)}/${encodePathSegments(input.filePath)}`;
+}
+
+function buildWarmEditorUsageKey(input: { cwd: string; filePath: string }): string {
+  return `${normalizePathValue(input.cwd)}:${normalizePathValue(input.filePath)}`;
+}
+
+function readWarmEditorModelUsage(sessionKey: string | undefined) {
+  if (!sessionKey) {
+    return [];
+  }
+  return [...(warmEditorModelUsageBySessionKey.get(sessionKey) ?? [])];
+}
+
+function writeWarmEditorModelUsage(
+  sessionKey: string | undefined,
+  usage: ReadonlyArray<{ cwd: string; filePath: string }>,
+): void {
+  if (!sessionKey) {
+    return;
+  }
+  if (usage.length === 0) {
+    warmEditorModelUsageBySessionKey.delete(sessionKey);
+    return;
+  }
+  warmEditorModelUsageBySessionKey.set(sessionKey, usage);
+}
+
+function markWarmEditorModelUsed(input: {
+  sessionKey: string | undefined;
+  cwd: string;
+  filePath: string;
+}) {
+  const usage = readWarmEditorModelUsage(input.sessionKey);
+  const nextKey = buildWarmEditorUsageKey({ cwd: input.cwd, filePath: input.filePath });
+  const nextUsage = usage.filter((entry) => buildWarmEditorUsageKey(entry) !== nextKey);
+  nextUsage.push({
+    cwd: input.cwd,
+    filePath: input.filePath,
+  });
+  writeWarmEditorModelUsage(input.sessionKey, nextUsage);
+  return nextUsage;
+}
+
+function forgetWarmEditorModel(input: {
+  sessionKey: string | undefined;
+  cwd: string;
+  filePath: string;
+}): void {
+  if (!input.sessionKey) {
+    return;
+  }
+
+  const targetKey = buildWarmEditorUsageKey({
+    cwd: input.cwd,
+    filePath: input.filePath,
+  });
+  writeWarmEditorModelUsage(
+    input.sessionKey,
+    readWarmEditorModelUsage(input.sessionKey).filter(
+      (entry) => buildWarmEditorUsageKey(entry) !== targetKey,
+    ),
+  );
+}
+
+function evictWarmEditorModels(input: {
+  sessionKey: string | undefined;
+  currentCwd: string;
+  currentFilePath: string;
+  monaco: Monaco;
+}): void {
+  if (!input.sessionKey) {
+    return;
+  }
+
+  const usage = readWarmEditorModelUsage(input.sessionKey);
+  if (usage.length <= MAX_WARM_EDITOR_MODELS) {
+    return;
+  }
+
+  const nextUsage = [...usage];
+  const currentUsageKey = buildWarmEditorUsageKey({
+    cwd: input.currentCwd,
+    filePath: input.currentFilePath,
+  });
+  let index = 0;
+  while (nextUsage.length > MAX_WARM_EDITOR_MODELS && index < nextUsage.length) {
+    const candidate = nextUsage[index];
+    if (!candidate) {
+      index += 1;
+      continue;
+    }
+
+    if (buildWarmEditorUsageKey(candidate) === currentUsageKey) {
+      index += 1;
+      continue;
+    }
+
+    const cachedState = readCachedEditorSessionState(
+      input.sessionKey,
+      candidate.cwd,
+      candidate.filePath,
+    );
+    if (cachedState && cachedState.draftContents !== cachedState.baseContents) {
+      index += 1;
+      continue;
+    }
+
+    input.monaco.editor
+      .getModel(
+        input.monaco.Uri.parse(
+          buildWarmEditorModelPath({
+            sessionKey: input.sessionKey,
+            filePath: candidate.filePath,
+          }),
+        ),
+      )
+      ?.dispose();
+    nextUsage.splice(index, 1);
+  }
+
+  writeWarmEditorModelUsage(input.sessionKey, nextUsage);
+}
+
+function readCachedEditorSessionState(
+  sessionKey: string | undefined,
+  cwd: string,
+  filePath: string,
+): CachedEditorSessionState | null {
+  const cacheKey = buildEditorSessionStateCacheKey({
+    sessionKey,
+    cwd,
+    filePath,
+  });
+  if (!cacheKey) {
+    return null;
+  }
+  const state = editorSessionStateByKey.get(cacheKey) ?? null;
+  return state?.filePath === filePath ? state : null;
+}
+
+function writeCachedEditorSessionState(
+  sessionKey: string | undefined,
+  cwd: string,
+  filePath: string,
+  state: CachedEditorSessionState,
+): void {
+  const cacheKey = buildEditorSessionStateCacheKey({
+    sessionKey,
+    cwd,
+    filePath,
+  });
+  if (!cacheKey) {
+    return;
+  }
+  editorSessionStateByKey.set(cacheKey, state);
+}
+
+function clearCachedEditorSessionState(
+  sessionKey: string | undefined,
+  cwd: string,
+  filePath: string,
+): void {
+  const cacheKey = buildEditorSessionStateCacheKey({
+    sessionKey,
+    cwd,
+    filePath,
+  });
+  if (!cacheKey) {
+    return;
+  }
+  editorSessionStateByKey.delete(cacheKey);
+}
+
+function canReuseCachedEditorSessionState(
+  state: CachedEditorSessionState | null,
+): state is CachedEditorSessionState {
+  return state !== null && state.status !== "idle" && state.status !== "loading";
+}
+
+function buildCachedEditorSessionStateFromProjectFile(input: {
+  filePath: string;
+  file: ProjectReadFileResult;
+  fileDiff: FileDiffMetadata | null;
+  preTurnContents: string | null | undefined;
+}): CachedEditorSessionState {
+  return {
+    filePath: input.filePath,
+    status: "ready",
+    message: null,
+    baseContents: input.file.contents,
+    draftContents: input.file.contents,
+    baseVersion: input.file.version,
+    preTurnContents:
+      input.preTurnContents ??
+      (input.fileDiff ? reconstructPreTurnFileContents(input.fileDiff, input.file.contents) : null),
+  };
+}
+
+export function __resetDiffFileEditorPaneSessionCacheForTests(): void {
+  editorSessionStateByKey.clear();
+  warmEditorModelUsageBySessionKey.clear();
+}
 
 function buildUnavailableMessage(status: ProjectFileEditorStatus): string {
   switch (status) {
@@ -91,12 +377,6 @@ function buildUnavailableMessage(status: ProjectFileEditorStatus): string {
     default:
       return "Unable to open this file in the diff editor.";
   }
-}
-
-function resolveFileTabLabel(filePath: string): string {
-  const normalizedPath = filePath.replaceAll("\\", "/");
-  const segments = normalizedPath.split("/");
-  return segments.at(-1) ?? filePath;
 }
 
 function StatePanel(props: {
@@ -155,26 +435,64 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     initialLine,
     initialOverride,
     navigationLabel,
+    onEditorControlsStateChange,
     onOpenInEditor,
     onOpenPreview,
+    onRequestClosePanel,
+    onRequestShowDiff,
     previewDisabledReason,
+    requestedNavigation,
+    reuseMonacoModels = false,
+    requestedSaveNonce,
+    showHeader = true,
     onPersisted,
     onAddCodeContext,
+    sessionKey,
     onRequestBack,
     onRequestFilePathChange,
     resolvedTheme,
   } = props;
-  const [status, setStatus] = useState<ProjectFileEditorStatus>("idle");
-  const [message, setMessage] = useState<string | null>(null);
-  const [baseContents, setBaseContents] = useState("");
-  const [draftContents, setDraftContents] = useState("");
-  const [baseVersion, setBaseVersion] = useState<string | null>(null);
+  const cachedSessionState = readCachedEditorSessionState(sessionKey, cwd, filePath);
+  const cachedProjectFile = peekProjectFileForEditor({
+    environmentId,
+    cwd,
+    relativePath: filePath,
+  });
+  const initialSessionState =
+    cachedSessionState ??
+    (cachedProjectFile
+      ? buildCachedEditorSessionStateFromProjectFile({
+          filePath,
+          file: cachedProjectFile,
+          fileDiff,
+          preTurnContents: initialOverride?.preTurnContents,
+        })
+      : null);
+  const [status, setStatus] = useState<ProjectFileEditorStatus>(
+    initialSessionState?.status ?? "loading",
+  );
+  const [message, setMessage] = useState<string | null>(initialSessionState?.message ?? null);
+  const [baseContents, setBaseContents] = useState(initialSessionState?.baseContents ?? "");
+  const [draftContents, setDraftContents] = useState(initialSessionState?.draftContents ?? "");
+  const [baseVersion, setBaseVersion] = useState<string | null>(
+    initialSessionState?.baseVersion ?? null,
+  );
+  const [stateSessionKey, setStateSessionKey] = useState<string | undefined>(sessionKey);
+  const [stateFilePath, setStateFilePath] = useState(initialSessionState?.filePath ?? filePath);
   const [pendingNavigation, setPendingNavigation] = useState<PendingNavigation | null>(null);
   const loadRequestIdRef = useRef(0);
   const pendingNavigationRef = useRef<PendingNavigation | null>(null);
-  const preTurnContentsRef = useRef<string | null>(initialOverride?.preTurnContents ?? null);
+  const preTurnContentsRef = useRef<string | null>(
+    initialSessionState?.preTurnContents ?? initialOverride?.preTurnContents ?? null,
+  );
   const saveHandlerRef = useRef<() => Promise<boolean>>(async () => false);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
+  const monacoRef = useRef<Monaco | null>(null);
+  const lastHandledRequestedNavigationNonceRef = useRef<number | undefined>(
+    requestedNavigation?.nonce,
+  );
+  const lastHandledRequestedSaveNonceRef = useRef<number | undefined>(requestedSaveNonce);
+  const [monacoReadyGeneration, setMonacoReadyGeneration] = useState(0);
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const editorSubscriptionsRef = useRef<Array<{ dispose: () => void }>>([]);
   const updateSelectionActionRef = useRef<() => void>(() => undefined);
@@ -185,6 +503,17 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     left: number;
   } | null>(null);
   const codeFontScale = useSettings((settings) => settings.codeFontScale);
+  const renderedEditorFilePath = reuseMonacoModels ? stateFilePath : filePath;
+  const renderedEditorModelPath = useMemo(
+    () =>
+      reuseMonacoModels
+        ? buildWarmEditorModelPath({
+            sessionKey,
+            filePath: renderedEditorFilePath,
+          })
+        : renderedEditorFilePath,
+    [renderedEditorFilePath, reuseMonacoModels, sessionKey],
+  );
 
   const isDirty = draftContents !== baseContents;
   const canSave =
@@ -202,9 +531,17 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
         onRequestBack();
         return;
       }
+      if (navigation.type === "close-panel") {
+        onRequestClosePanel?.();
+        return;
+      }
+      if (navigation.type === "show-diff") {
+        onRequestShowDiff?.();
+        return;
+      }
       onRequestFilePathChange(navigation.filePath);
     },
-    [onRequestBack, onRequestFilePathChange],
+    [onRequestBack, onRequestClosePanel, onRequestFilePathChange, onRequestShowDiff],
   );
 
   const requestNavigation = useCallback(
@@ -219,55 +556,172 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     [isDirty, performNavigation],
   );
 
-  const loadFile = useCallback(async () => {
-    const requestId = ++loadRequestIdRef.current;
-    const api = readEnvironmentApi(environmentId);
-    if (!api) {
-      setStatus("error");
-      setMessage("Environment connection is unavailable.");
+  useLayoutEffect(() => {
+    const nextCachedState = readCachedEditorSessionState(sessionKey, cwd, filePath);
+    if (nextCachedState) {
+      setStateSessionKey(sessionKey);
+      setStateFilePath(filePath);
+      setStatus(nextCachedState.status);
+      setMessage(nextCachedState.message);
+      setBaseContents(nextCachedState.baseContents);
+      setDraftContents(nextCachedState.draftContents);
+      setBaseVersion(nextCachedState.baseVersion);
+      preTurnContentsRef.current = nextCachedState.preTurnContents;
       return;
     }
 
+    const nextCachedProjectFile = peekProjectFileForEditor({
+      environmentId,
+      cwd,
+      relativePath: filePath,
+    });
+    if (nextCachedProjectFile) {
+      const nextProjectState = buildCachedEditorSessionStateFromProjectFile({
+        filePath,
+        file: nextCachedProjectFile,
+        fileDiff,
+        preTurnContents: initialOverride?.preTurnContents,
+      });
+      setStateSessionKey(sessionKey);
+      setStateFilePath(filePath);
+      setStatus(nextProjectState.status);
+      setMessage(nextProjectState.message);
+      setBaseContents(nextProjectState.baseContents);
+      setDraftContents(nextProjectState.draftContents);
+      setBaseVersion(nextProjectState.baseVersion);
+      preTurnContentsRef.current = nextProjectState.preTurnContents;
+      return;
+    }
+
+    setStateSessionKey(sessionKey);
+    setStateFilePath(filePath);
     setStatus("loading");
     setMessage(null);
     setBaseContents("");
     setDraftContents("");
     setBaseVersion(null);
+    preTurnContentsRef.current = initialOverride?.preTurnContents ?? null;
+  }, [cwd, environmentId, fileDiff, filePath, initialOverride?.preTurnContents, sessionKey]);
 
-    try {
-      const file = await api.projects.readFile({
-        cwd,
-        relativePath: filePath,
-      });
-
-      if (requestId !== loadRequestIdRef.current) {
-        return;
-      }
-
-      preTurnContentsRef.current =
-        initialOverride?.preTurnContents ??
-        (fileDiff ? reconstructPreTurnFileContents(fileDiff, file.contents) : null);
-      setBaseContents(file.contents);
-      setDraftContents(file.contents);
-      setBaseVersion(file.version);
-      setStatus("ready");
-      setMessage(null);
-    } catch (error) {
-      if (requestId !== loadRequestIdRef.current) {
-        return;
-      }
-
-      const resolved = resolveProjectFileEditorError(error);
-      setStatus(resolved.status);
-      setMessage(resolved.message);
+  useEffect(() => {
+    if (status === "idle" || stateFilePath !== filePath || stateSessionKey !== sessionKey) {
+      return;
     }
-  }, [cwd, environmentId, fileDiff, filePath, initialOverride?.preTurnContents]);
+
+    writeCachedEditorSessionState(sessionKey, cwd, filePath, {
+      filePath,
+      status,
+      message,
+      baseContents,
+      draftContents,
+      baseVersion,
+      preTurnContents: preTurnContentsRef.current,
+    });
+  }, [
+    baseContents,
+    baseVersion,
+    draftContents,
+    filePath,
+    message,
+    cwd,
+    sessionKey,
+    stateFilePath,
+    stateSessionKey,
+    status,
+  ]);
+
+  const loadFile = useCallback(
+    async (options?: { force?: boolean }) => {
+      const cachedState = readCachedEditorSessionState(sessionKey, cwd, filePath);
+      if (canReuseCachedEditorSessionState(cachedState) && !options?.force) {
+        setStateSessionKey(sessionKey);
+        setStateFilePath(filePath);
+        setStatus(cachedState.status);
+        setMessage(cachedState.message);
+        setBaseContents(cachedState.baseContents);
+        setDraftContents(cachedState.draftContents);
+        setBaseVersion(cachedState.baseVersion);
+        preTurnContentsRef.current = cachedState.preTurnContents;
+        return;
+      }
+
+      const cachedProjectFile = !options?.force
+        ? peekProjectFileForEditor({
+            environmentId,
+            cwd,
+            relativePath: filePath,
+          })
+        : null;
+      if (cachedProjectFile) {
+        const nextProjectState = buildCachedEditorSessionStateFromProjectFile({
+          filePath,
+          file: cachedProjectFile,
+          fileDiff,
+          preTurnContents: initialOverride?.preTurnContents,
+        });
+        setStateSessionKey(sessionKey);
+        setStateFilePath(filePath);
+        setStatus(nextProjectState.status);
+        setMessage(nextProjectState.message);
+        setBaseContents(nextProjectState.baseContents);
+        setDraftContents(nextProjectState.draftContents);
+        setBaseVersion(nextProjectState.baseVersion);
+        preTurnContentsRef.current = nextProjectState.preTurnContents;
+        return;
+      }
+
+      const requestId = ++loadRequestIdRef.current;
+      setStateSessionKey(sessionKey);
+      setStateFilePath(filePath);
+      setStatus("loading");
+      setMessage(null);
+      setBaseContents("");
+      setDraftContents("");
+      setBaseVersion(null);
+
+      try {
+        const file = await loadProjectFileForEditor(
+          {
+            environmentId,
+            cwd,
+            relativePath: filePath,
+          },
+          options,
+        );
+
+        if (requestId !== loadRequestIdRef.current) {
+          return;
+        }
+
+        preTurnContentsRef.current =
+          initialOverride?.preTurnContents ??
+          (fileDiff ? reconstructPreTurnFileContents(fileDiff, file.contents) : null);
+        setStateSessionKey(sessionKey);
+        setStateFilePath(filePath);
+        setBaseContents(file.contents);
+        setDraftContents(file.contents);
+        setBaseVersion(file.version);
+        setStatus("ready");
+        setMessage(null);
+      } catch (error) {
+        if (requestId !== loadRequestIdRef.current) {
+          return;
+        }
+
+        const resolved = resolveProjectFileEditorError(error);
+        setStateSessionKey(sessionKey);
+        setStateFilePath(filePath);
+        setStatus(resolved.status);
+        setMessage(resolved.message);
+      }
+    },
+    [cwd, environmentId, fileDiff, filePath, initialOverride?.preTurnContents, sessionKey],
+  );
 
   const handleSave = useCallback(async () => {
     if (!canSave || baseVersion === null) {
       return false;
     }
-
     const api = readEnvironmentApi(environmentId);
     if (!api) {
       const nextMessage = "Environment connection is unavailable.";
@@ -296,6 +750,16 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
       setBaseVersion(result.version);
       setStatus("ready");
       setMessage(null);
+      storeProjectFileForEditor({
+        environmentId,
+        cwd,
+        relativePath: filePath,
+        result: {
+          relativePath: filePath,
+          contents: draftContents,
+          version: result.version,
+        },
+      });
 
       await onPersisted({
         filePath,
@@ -316,6 +780,11 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
 
       return true;
     } catch (error) {
+      invalidateProjectFileForEditor({
+        environmentId,
+        cwd,
+        relativePath: filePath,
+      });
       const resolved = resolveProjectFileEditorError(error);
       setStatus(resolved.status === "conflict" ? "conflict" : "error");
       setMessage(resolved.message);
@@ -348,8 +817,89 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   }, [initialOverride?.preTurnContents]);
 
   useEffect(() => {
+    onEditorControlsStateChange?.({
+      canSave,
+      filePath,
+      isDirty,
+      isSaving: status === "saving",
+    });
+  }, [canSave, filePath, isDirty, onEditorControlsStateChange, status]);
+
+  useEffect(() => {
+    if (
+      requestedNavigation === undefined ||
+      requestedNavigation === null ||
+      requestedNavigation.nonce === lastHandledRequestedNavigationNonceRef.current
+    ) {
+      return;
+    }
+
+    lastHandledRequestedNavigationNonceRef.current = requestedNavigation.nonce;
+    if (requestedNavigation.type === "switch-file") {
+      if (!requestedNavigation.filePath || requestedNavigation.filePath === filePath) {
+        return;
+      }
+      requestNavigation({
+        type: "switch-file",
+        filePath: requestedNavigation.filePath,
+      });
+      return;
+    }
+
+    if (requestedNavigation.type === "show-diff") {
+      requestNavigation({ type: "show-diff" });
+      return;
+    }
+
+    if (requestedNavigation.type === "close-panel") {
+      requestNavigation({ type: "close-panel" });
+      return;
+    }
+
+    requestNavigation({ type: "back" });
+  }, [filePath, requestNavigation, requestedNavigation]);
+
+  useEffect(() => {
+    if (
+      requestedSaveNonce === undefined ||
+      requestedSaveNonce === lastHandledRequestedSaveNonceRef.current
+    ) {
+      return;
+    }
+
+    lastHandledRequestedSaveNonceRef.current = requestedSaveNonce;
+    void handleSave();
+  }, [handleSave, requestedSaveNonce]);
+
+  useEffect(() => {
     saveHandlerRef.current = handleSave;
   }, [handleSave]);
+
+  useEffect(() => {
+    if (!reuseMonacoModels || !sessionKey || monacoRef.current === null) {
+      return;
+    }
+    if (
+      status === "loading" ||
+      status === "missing" ||
+      status === "unsupported" ||
+      status === "error"
+    ) {
+      return;
+    }
+
+    markWarmEditorModelUsed({
+      sessionKey,
+      cwd,
+      filePath: stateFilePath,
+    });
+    evictWarmEditorModels({
+      sessionKey,
+      currentCwd: cwd,
+      currentFilePath: stateFilePath,
+      monaco: monacoRef.current,
+    });
+  }, [cwd, monacoReadyGeneration, reuseMonacoModels, sessionKey, stateFilePath, status]);
 
   const clearEditorSubscriptions = useCallback(() => {
     for (const subscription of editorSubscriptionsRef.current) {
@@ -442,6 +992,8 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   const handleEditorMount = useCallback<OnMount>(
     (editor, monaco) => {
       editorRef.current = editor;
+      monacoRef.current = monaco;
+      setMonacoReadyGeneration((current) => current + 1);
       editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
         void saveHandlerRef.current();
       });
@@ -469,6 +1021,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   useEffect(() => {
     return () => {
       clearEditorSubscriptions();
+      monacoRef.current = null;
     };
   }, [clearEditorSubscriptions]);
 
@@ -497,7 +1050,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     return () => {
       window.cancelAnimationFrame(frameId);
     };
-  }, [filePath, initialColumn, initialLine, status]);
+  }, [renderedEditorFilePath, initialColumn, initialLine, status]);
 
   const editorOptions = useMemo(
     () => ({
@@ -512,69 +1065,37 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     [codeFontScale, status],
   );
   const monacoTheme = useMemo(() => ensureAppMonacoTheme(resolvedTheme), [resolvedTheme]);
-  const monacoLanguage = useMemo(() => resolveMonacoLanguage(filePath), [filePath]);
+  const monacoLanguage = useMemo(
+    () => resolveMonacoLanguage(renderedEditorFilePath),
+    [renderedEditorFilePath],
+  );
+  const showUnavailableState =
+    status === "missing" || status === "unsupported" || status === "error";
+  const showPersistentEditor = reuseMonacoModels || status !== "loading";
 
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/70 px-3 py-2">
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={() => requestNavigation({ type: "back" })}
-            aria-label={navigationLabel}
-            title={navigationLabel}
-          >
-            <ArrowLeftIcon className="size-3.5" />
-            <span className="sr-only">{navigationLabel}</span>
-          </Button>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <Button
-              size="xs"
-              className="px-2"
-              onClick={() => void handleSave()}
-              disabled={!canSave || !isDirty}
-            >
-              {status === "saving" ? "Saving..." : "Save"}
-              <KbdGroup aria-hidden className="pointer-events-none inline-flex items-center gap-1">
-                <Kbd className="text-ui-2xs h-4 min-w-0 rounded-sm bg-primary-foreground/12 px-1 text-primary-foreground/80">
-                  ⌘
-                </Kbd>
-                <Kbd className="text-ui-2xs h-4 min-w-4 rounded-sm bg-primary-foreground/12 px-1 text-primary-foreground/80">
-                  S
-                </Kbd>
-              </KbdGroup>
-            </Button>
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => onOpenPreview(filePath)}
-              disabled={previewDisabledReason !== null}
-              title={previewDisabledReason ?? "Open Preview"}
-            >
-              Preview
-            </Button>
+        {showHeader ? (
+          <div className="flex shrink-0 items-center gap-2 border-b border-border/70 px-3 py-2">
             <Button
               size="icon-xs"
-              variant="outline"
-              onClick={() => onOpenInEditor(filePath)}
-              aria-label="Open in IDE"
-              title="Open in IDE"
+              variant="ghost"
+              onClick={() => requestNavigation({ type: "back" })}
+              aria-label={navigationLabel}
+              title={navigationLabel}
             >
-              <OpenInIDEIcon className="size-3.5" />
+              <ArrowLeftIcon className="size-3.5" />
+              <span className="sr-only">{navigationLabel}</span>
             </Button>
-          </div>
-        </div>
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
-            <div className="shrink-0 border-b border-border/70 bg-background">
-              <div className="flex gap-1 overflow-x-auto px-2 py-1.5">
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-1 overflow-x-auto py-0.5">
                 {filePaths.map((candidatePath) => (
                   <button
                     key={candidatePath}
                     type="button"
                     className={cn(
-                      "text-code-compact min-w-0 shrink-0 rounded-md border px-2 py-1 text-left font-mono transition-colors",
+                      "min-w-0 shrink-0 rounded-full border px-2.5 py-1 font-medium leading-none transition-colors",
                       candidatePath === filePath
                         ? "border-border bg-accent text-accent-foreground"
                         : "border-transparent text-muted-foreground hover:border-border/60 hover:bg-accent/40 hover:text-foreground",
@@ -587,11 +1108,56 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                     }
                     title={candidatePath}
                   >
-                    <span className="block truncate">{resolveFileTabLabel(candidatePath)}</span>
+                    <span className="text-ui-xs block max-w-60 truncate">
+                      {resolveEditorFileLabel(candidatePath)}
+                    </span>
                   </button>
                 ))}
               </div>
             </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Button
+                size="xs"
+                className="px-2"
+                onClick={() => void handleSave()}
+                disabled={!canSave || !isDirty}
+              >
+                {status === "saving" ? "Saving..." : "Save"}
+                <KbdGroup
+                  aria-hidden
+                  className="pointer-events-none inline-flex items-center gap-1"
+                >
+                  <Kbd className="text-ui-2xs h-4 min-w-0 rounded-sm bg-primary-foreground/12 px-1 text-primary-foreground/80">
+                    ⌘
+                  </Kbd>
+                  <Kbd className="text-ui-2xs h-4 min-w-4 rounded-sm bg-primary-foreground/12 px-1 text-primary-foreground/80">
+                    S
+                  </Kbd>
+                </KbdGroup>
+              </Button>
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => onOpenPreview(filePath)}
+                disabled={previewDisabledReason !== null}
+                title={previewDisabledReason ?? "Open Preview"}
+              >
+                Preview
+              </Button>
+              <Button
+                size="icon-xs"
+                variant="outline"
+                onClick={() => onOpenInEditor(filePath)}
+                aria-label="Open in IDE"
+                title="Open in IDE"
+              >
+                <OpenInIDEIcon className="size-3.5" />
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {status === "conflict" ? (
                 <div className="flex shrink-0 items-start gap-3 border-b border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
@@ -604,7 +1170,11 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                       {message ?? "Reload from disk to pick up the latest file contents."}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <Button size="xs" variant="outline" onClick={() => void loadFile()}>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        onClick={() => void loadFile({ force: true })}
+                      >
                         <RefreshCwIcon className="size-3.5" />
                         Reload from disk
                       </Button>
@@ -615,7 +1185,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                   </div>
                 </div>
               ) : null}
-              {status === "missing" || status === "unsupported" || status === "error" ? (
+              {showUnavailableState ? (
                 <StatePanel
                   filePath={filePath}
                   message={message ?? "Unable to load this file."}
@@ -623,15 +1193,21 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                   status={status}
                   onBack={() => requestNavigation({ type: "back" })}
                   onOpenInEditor={() => onOpenInEditor(filePath)}
-                  onReload={() => void loadFile()}
+                  onReload={() => void loadFile({ force: true })}
                 />
-              ) : status === "loading" ? (
+              ) : !showPersistentEditor ? (
                 <div className="flex min-h-0 flex-1 items-center justify-center gap-2 px-4 py-6 text-sm text-muted-foreground">
                   <LoaderIcon className="size-4 animate-spin" />
                   Loading file…
                 </div>
               ) : (
                 <div ref={editorContainerRef} className="relative min-h-0 flex-1 overflow-hidden">
+                  {status === "loading" ? (
+                    <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center gap-2 bg-background/80 px-4 py-6 text-sm text-muted-foreground backdrop-blur-[1px]">
+                      <LoaderIcon className="size-4 animate-spin" />
+                      Loading file…
+                    </div>
+                  ) : null}
                   {selectionAction ? (
                     <Button
                       type="button"
@@ -655,22 +1231,44 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                       Add to chat
                     </Button>
                   ) : null}
-                  <Editor
-                    height="100%"
-                    keepCurrentModel={false}
-                    loading={
-                      <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                        Loading editor…
-                      </div>
-                    }
-                    onChange={(value) => setDraftContents(value ?? "")}
-                    onMount={handleEditorMount}
-                    options={editorOptions}
-                    path={filePath}
-                    theme={monacoTheme}
-                    value={draftContents}
-                    {...(monacoLanguage ? { language: monacoLanguage } : {})}
-                  />
+                  {reuseMonacoModels ? (
+                    <Editor
+                      height="100%"
+                      keepCurrentModel={true}
+                      loading={
+                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                          Loading editor…
+                        </div>
+                      }
+                      onChange={(value) => setDraftContents(value ?? "")}
+                      onMount={handleEditorMount}
+                      options={editorOptions}
+                      path={renderedEditorModelPath}
+                      saveViewState={true}
+                      theme={monacoTheme}
+                      value={draftContents}
+                      {...(monacoLanguage ? { language: monacoLanguage } : {})}
+                    />
+                  ) : (
+                    <Editor
+                      key={filePath}
+                      height="100%"
+                      keepCurrentModel={false}
+                      loading={
+                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                          Loading editor…
+                        </div>
+                      }
+                      onChange={(value) => setDraftContents(value ?? "")}
+                      onMount={handleEditorMount}
+                      options={editorOptions}
+                      path={renderedEditorModelPath}
+                      saveViewState={false}
+                      theme={monacoTheme}
+                      value={draftContents}
+                      {...(monacoLanguage ? { language: monacoLanguage } : {})}
+                    />
+                  )}
                 </div>
               )}
             </div>
@@ -695,6 +1293,24 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
             <Button
               variant="ghost"
               onClick={() => {
+                if (reuseMonacoModels && sessionKey && monacoRef.current?.editor) {
+                  monacoRef.current.editor
+                    .getModel?.(
+                      monacoRef.current.Uri.parse(
+                        buildWarmEditorModelPath({
+                          sessionKey,
+                          filePath,
+                        }),
+                      ),
+                    )
+                    ?.dispose?.();
+                  forgetWarmEditorModel({
+                    sessionKey,
+                    cwd,
+                    filePath,
+                  });
+                }
+                clearCachedEditorSessionState(sessionKey, cwd, filePath);
                 if (pendingNavigation) {
                   performNavigation(pendingNavigation);
                 }

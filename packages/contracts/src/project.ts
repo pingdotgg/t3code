@@ -33,6 +33,17 @@ export const ProjectSearchEntriesResult = Schema.Struct({
 });
 export type ProjectSearchEntriesResult = typeof ProjectSearchEntriesResult.Type;
 
+export const ProjectListEntriesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  relativePath: Schema.optional(Schema.NullOr(ProjectRelativePath)),
+});
+export type ProjectListEntriesInput = typeof ProjectListEntriesInput.Type;
+
+export const ProjectListEntriesResult = Schema.Struct({
+  entries: Schema.Array(ProjectEntry),
+});
+export type ProjectListEntriesResult = typeof ProjectListEntriesResult.Type;
+
 export const ProjectLocalAgentInventoryInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
 });
@@ -43,6 +54,14 @@ export type ProjectLocalAgentInventoryResult = typeof ProjectLocalAgentInventory
 
 export class ProjectSearchEntriesError extends Schema.TaggedErrorClass<ProjectSearchEntriesError>()(
   "ProjectSearchEntriesError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class ProjectListEntriesError extends Schema.TaggedErrorClass<ProjectListEntriesError>()(
+  "ProjectListEntriesError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),

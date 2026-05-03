@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ProjectListEntriesResult,
   ProjectLocalAgentInventoryResult,
   ProjectSearchEntriesResult,
 } from "@forma/contracts";
@@ -8,10 +9,17 @@ import { ensureEnvironmentApi } from "~/environmentApi";
 
 export const projectQueryKeys = {
   all: ["projects"] as const,
+  listEntriesScope: (environmentId: EnvironmentId | null, cwd: string | null) =>
+    ["projects", "list-entries", environmentId ?? null, cwd] as const,
   searchEntriesScope: (environmentId: EnvironmentId | null, cwd: string | null) =>
     ["projects", "search-entries", environmentId ?? null, cwd] as const,
   localAgentInventoryScope: (environmentId: EnvironmentId | null, cwd: string | null) =>
     ["projects", "local-agent-inventory", environmentId ?? null, cwd] as const,
+  listEntries: (
+    environmentId: EnvironmentId | null,
+    cwd: string | null,
+    relativePath: string | null,
+  ) => ["projects", "list-entries", environmentId ?? null, cwd, relativePath] as const,
   searchEntries: (
     environmentId: EnvironmentId | null,
     cwd: string | null,
@@ -22,6 +30,9 @@ export const projectQueryKeys = {
 
 const DEFAULT_SEARCH_ENTRIES_LIMIT = 80;
 const DEFAULT_SEARCH_ENTRIES_STALE_TIME = 15_000;
+const EMPTY_LIST_ENTRIES_RESULT: ProjectListEntriesResult = {
+  entries: [],
+};
 const EMPTY_SEARCH_ENTRIES_RESULT: ProjectSearchEntriesResult = {
   entries: [],
   truncated: false,
@@ -39,6 +50,9 @@ export function invalidateProjectQueries(
   const cwd = input?.cwd ?? null;
   if (cwd !== null) {
     return Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.listEntriesScope(environmentId, cwd),
+      }),
       queryClient.invalidateQueries({
         queryKey: projectQueryKeys.searchEntriesScope(environmentId, cwd),
       }),
@@ -71,6 +85,32 @@ export function projectLocalAgentInventoryQueryOptions(input: {
     enabled: (input.enabled ?? true) && input.environmentId !== null && input.cwd !== null,
     staleTime: input.staleTime ?? DEFAULT_SEARCH_ENTRIES_STALE_TIME,
     placeholderData: (previous) => previous ?? EMPTY_LOCAL_AGENT_INVENTORY_RESULT,
+  });
+}
+
+export function projectListEntriesQueryOptions(input: {
+  environmentId: EnvironmentId | null;
+  cwd: string | null;
+  relativePath?: string | null;
+  enabled?: boolean;
+  staleTime?: number;
+}) {
+  const relativePath = input.relativePath ?? null;
+  return queryOptions({
+    queryKey: projectQueryKeys.listEntries(input.environmentId, input.cwd, relativePath),
+    queryFn: async () => {
+      if (!input.cwd || !input.environmentId) {
+        throw new Error("Workspace entry listing is unavailable.");
+      }
+      const api = ensureEnvironmentApi(input.environmentId);
+      return api.projects.listEntries({
+        cwd: input.cwd,
+        ...(relativePath !== null ? { relativePath } : {}),
+      });
+    },
+    enabled: (input.enabled ?? true) && input.environmentId !== null && input.cwd !== null,
+    staleTime: input.staleTime ?? DEFAULT_SEARCH_ENTRIES_STALE_TIME,
+    placeholderData: (previous) => previous ?? EMPTY_LIST_ENTRIES_RESULT,
   });
 }
 

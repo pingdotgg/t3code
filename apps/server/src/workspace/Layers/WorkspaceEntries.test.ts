@@ -68,6 +68,12 @@ const searchWorkspaceEntries = (input: { cwd: string; query: string; limit: numb
     return yield* workspaceEntries.search(input);
   });
 
+const listWorkspaceEntries = (input: { cwd: string; relativePath?: string | null }) =>
+  Effect.gen(function* () {
+    const workspaceEntries = yield* WorkspaceEntries;
+    return yield* workspaceEntries.listEntries(input);
+  });
+
 const appendSeparator = (input: string) =>
   input.endsWith("/") || input.endsWith("\\")
     ? input
@@ -358,6 +364,83 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
           .pipe(Effect.flip);
 
         expect(error.detail).toBe("Relative filesystem browse paths require a current project.");
+      }),
+    );
+  });
+
+  describe("listEntries", () => {
+    it.effect(
+      "lists immediate children, keeps empty directories, and excludes ignored directories",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTempDir({ prefix: "forma-workspace-list-entries-" });
+          yield* writeTextFile(cwd, "src/index.ts", "export {};\n");
+          yield* writeTextFile(cwd, "src/components/Button.tsx", "export {};\n");
+          yield* writeTextFile(cwd, "README.md", "# Workspace\n");
+          yield* writeTextFile(cwd, "dist/ignored.js", "console.log('ignored');\n");
+          const fileSystem = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* fileSystem.makeDirectory(path.join(cwd, "docs"), { recursive: true });
+
+          const result = yield* listWorkspaceEntries({ cwd });
+
+          expect(result.entries).toEqual([
+            { path: "docs", kind: "directory", parentPath: undefined },
+            { path: "src", kind: "directory", parentPath: undefined },
+            { path: "README.md", kind: "file", parentPath: undefined },
+          ]);
+        }),
+    );
+
+    it.effect("lists nested directory children with project-relative paths", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "forma-workspace-list-nested-" });
+        yield* writeTextFile(cwd, "src/App.tsx", "export {};\n");
+        yield* writeTextFile(cwd, "src/components/Button.tsx", "export {};\n");
+
+        const result = yield* listWorkspaceEntries({
+          cwd,
+          relativePath: "src",
+        });
+
+        expect(result.entries).toEqual([
+          { path: "src/components", kind: "directory", parentPath: "src" },
+          { path: "src/App.tsx", kind: "file", parentPath: "src" },
+        ]);
+      }),
+    );
+
+    it.effect("filters gitignored paths for directory listings", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({
+          prefix: "forma-workspace-list-gitignored-",
+          git: true,
+        });
+        yield* writeTextFile(cwd, ".gitignore", ".venv/\n");
+        yield* writeTextFile(cwd, ".venv/lib/ignored.ts", "export const ignored = true;\n");
+        yield* writeTextFile(cwd, "src/tracked.ts", "export const tracked = true;\n");
+
+        const result = yield* listWorkspaceEntries({ cwd });
+
+        expect(result.entries).toEqual([
+          { path: "src", kind: "directory", parentPath: undefined },
+          { path: ".gitignore", kind: "file", parentPath: undefined },
+        ]);
+      }),
+    );
+
+    it.effect("rejects traversal outside the workspace root", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "forma-workspace-list-outside-" });
+
+        const error = yield* listWorkspaceEntries({
+          cwd,
+          relativePath: "../outside",
+        }).pipe(Effect.flip);
+
+        expect(error.detail).toBe(
+          "Workspace file path must be relative to the project root: ../outside",
+        );
       }),
     );
   });
