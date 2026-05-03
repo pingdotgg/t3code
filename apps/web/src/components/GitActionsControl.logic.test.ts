@@ -13,6 +13,7 @@ import {
 
 function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
   return {
+    kind: "git",
     isRepo: true,
     hasPrimaryRemote: true,
     isDefaultRef: false,

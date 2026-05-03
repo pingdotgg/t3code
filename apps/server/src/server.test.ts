@@ -54,6 +54,17 @@ import { vi } from "vitest";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
+const testGitRepository = (rootPath: string) => ({
+  kind: "git" as const,
+  rootPath,
+  metadataPath: null,
+  freshness: {
+    source: "live-local" as const,
+    observedAt: TEST_EPOCH,
+    expiresAt: Option.none(),
+  },
+});
+
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
@@ -2373,6 +2384,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest({
         layers: {
+          vcsDriver: {
+            detectRepository: () => Effect.succeed(testGitRepository("/tmp/repo")),
+            isInsideWorkTree: () => Effect.succeed(true),
+          },
           gitManager: {
             invalidateLocalStatus: () => Effect.void,
             invalidateRemoteStatus: () => Effect.void,
@@ -2380,6 +2395,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             localStatus: () =>
               Effect.succeed({
                 isRepo: true,
+                kind: "git",
                 hasPrimaryRemote: true,
                 isDefaultRef: true,
                 refName: "main",
@@ -2396,6 +2412,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             status: () =>
               Effect.succeed({
                 isRepo: true,
+                kind: "git",
                 hasPrimaryRemote: true,
                 isDefaultRef: true,
                 refName: "main",
@@ -2508,9 +2525,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             removeWorktree: () => Effect.void,
             createRef: (input) => Effect.succeed({ refName: input.refName }),
             switchRef: (input) => Effect.succeed({ refName: input.refName }),
-          },
-          vcsDriver: {
-            isInsideWorkTree: () => Effect.succeed(true),
           },
         },
       });
@@ -2652,6 +2666,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             localStatus: () =>
               Effect.succeed({
                 isRepo: true,
+                kind: "git",
                 hasPrimaryRemote: true,
                 isDefaultRef: true,
                 refName: "main",
@@ -2673,6 +2688,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 statusCalls += 1;
                 return {
                   isRepo: true,
+                  kind: "git",
                   hasPrimaryRemote: true,
                   isDefaultRef: true,
                   refName: "main",
@@ -2729,6 +2745,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             localStatus: () =>
               Effect.succeed({
                 isRepo: true,
+                kind: "git",
                 hasPrimaryRemote: true,
                 isDefaultRef: false,
                 refName: "feature/demo",
@@ -2750,6 +2767,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 statusCalls += 1;
                 return {
                   isRepo: true,
+                  kind: "git",
                   hasPrimaryRemote: true,
                   isDefaultRef: false,
                   refName: "feature/demo",
@@ -2787,6 +2805,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       yield* buildAppUnderTest({
         layers: {
+          vcsDriver: {
+            detectRepository: () => Effect.succeed(testGitRepository("/tmp/repo")),
+          },
           gitVcsDriver: {
             pullCurrentBranch: () =>
               Effect.succeed({
@@ -2801,6 +2822,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             localStatus: () =>
               Effect.succeed({
                 isRepo: true,
+                kind: "git",
                 hasPrimaryRemote: true,
                 isDefaultRef: true,
                 refName: "main",
@@ -2840,6 +2862,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           layers: {
             vcsDriver: {
               isInsideWorkTree: () => Effect.succeed(true),
+              detectRepository: () => Effect.succeed(testGitRepository("/tmp/repo")),
             },
             gitManager: {
               invalidateLocalStatus: () => Effect.void,
@@ -2847,6 +2870,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               localStatus: () =>
                 Effect.succeed({
                   isRepo: true,
+                  kind: "git",
                   hasPrimaryRemote: true,
                   isDefaultRef: false,
                   refName: "feature/demo",
@@ -2916,6 +2940,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           layers: {
             vcsDriver: {
               isInsideWorkTree: () => Effect.succeed(true),
+              detectRepository: () => Effect.succeed(testGitRepository("/tmp/repo")),
             },
             gitManager: {
               invalidateLocalStatus: () => Effect.void,
@@ -2926,6 +2951,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   Effect.andThen(
                     Effect.succeed({
                       isRepo: true,
+                      kind: "git" as const,
                       hasPrimaryRemote: true,
                       isDefaultRef: false,
                       refName: "feature/demo",
@@ -3592,6 +3618,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         const refreshStatus = vi.fn((_: string) =>
           Effect.succeed({
             isRepo: true,
+            kind: "git" as const,
             hasPrimaryRemote: true,
             isDefaultRef: false,
             refName: "t3code/bootstrap-refName",

@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, Layer, Option } from "effect";
+import { Context, Effect, Layer, Option } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import { makeGitVcsDriverCore } from "./GitVcsDriverCore.ts";
 import { VcsDriver, type VcsDriverShape } from "./VcsDriver.ts";
+import { nowFreshness } from "./VcsFreshness.ts";
 import { VcsProcess, type VcsProcessShape } from "./VcsProcess.ts";
 
 export interface ExecuteGitInput {
@@ -219,15 +220,6 @@ const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.untrackedCache=false",
 ] as const;
-
-const nowFreshness = Effect.fn("GitVcsDriver.nowFreshness")(function* () {
-  const now = yield* DateTime.now;
-  return {
-    source: "live-local" as const,
-    observedAt: now,
-    expiresAt: Option.none(),
-  };
-});
 
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
   const parts = input.split("\0");

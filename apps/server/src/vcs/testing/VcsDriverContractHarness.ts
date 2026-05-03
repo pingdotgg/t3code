@@ -56,9 +56,11 @@ export function runVcsDriverContractSuite<R, E>(input: VcsDriverContractSuiteInp
 
           yield* input.fixture.createRepo(cwd);
           yield* input.fixture.writeFile(cwd, "src/index.ts", "export const value = 1;\n");
+          const fileSystem = yield* FileSystem.FileSystem;
+          const realCwd = yield* fileSystem.realPath(cwd);
           const identity = yield* driver.detectRepository(cwd);
           assert.equal(identity?.kind, input.kind);
-          assert.isTrue(identity?.rootPath.endsWith(cwd));
+          assert.isTrue(identity?.rootPath.endsWith(realCwd));
           assert.equal(identity?.freshness.source, "live-local");
           assert.isTrue(DateTime.isDateTime(identity?.freshness.observedAt));
           assert.isTrue(Option.isNone(identity?.freshness.expiresAt ?? Option.none()));

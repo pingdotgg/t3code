@@ -291,6 +291,7 @@ describe("CheckpointReactor", () => {
         }).pipe(
           Effect.as({
             isRepo: true,
+            kind: "git",
             hasPrimaryRemote: false,
             isDefaultRef: true,
             refName: "main",

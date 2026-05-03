@@ -24,6 +24,7 @@ import { parsePullRequestReference } from "../pullRequestReference";
 import { getSourceControlPresentation } from "../sourceControlPresentation";
 import { useStore } from "../store";
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
+import { resolveVcsTerms } from "../vcsPresentation";
 import {
   deriveLocalBranchNameFromRemoteRef,
   resolveBranchSelectionTarget,
@@ -67,10 +68,11 @@ function getBranchTriggerLabel(input: {
   activeWorktreePath: string | null;
   effectiveEnvMode: "local" | "worktree";
   resolvedActiveBranch: string | null;
+  refNoun: string;
 }): string {
-  const { activeWorktreePath, effectiveEnvMode, resolvedActiveBranch } = input;
+  const { activeWorktreePath, effectiveEnvMode, resolvedActiveBranch, refNoun } = input;
   if (!resolvedActiveBranch) {
-    return "Select ref";
+    return `Select ${refNoun}`;
   }
   if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
     return `From ${resolvedActiveBranch}`;
@@ -202,6 +204,7 @@ export function BranchToolbarBranchSelector({
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
   const branchStatusQuery = useGitStatus({ environmentId, cwd: branchCwd });
+  const vcsTerms = resolveVcsTerms(branchStatusQuery.data?.kind);
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
 
@@ -295,11 +298,11 @@ export function BranchToolbarBranchSelector({
   const shouldVirtualizeBranchList = filteredBranchPickerItems.length > 40;
   const totalBranchCount = branchesSearchData?.pages[0]?.totalCount ?? 0;
   const branchStatusText = isBranchesSearchPending
-    ? "Loading refs..."
+    ? `Loading ${vcsTerms.refNounPlural}...`
     : isFetchingNextPage
-      ? "Loading more refs..."
+      ? `Loading more ${vcsTerms.refNounPlural}...`
       : hasNextPage
-        ? `Showing ${refs.length} of ${totalBranchCount} refs`
+        ? `Showing ${refs.length} of ${totalBranchCount} ${vcsTerms.refNounPlural}`
         : null;
 
   // ---------------------------------------------------------------------------
@@ -363,7 +366,7 @@ export function BranchToolbarBranchSelector({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to switch ref.",
+            title: `Failed to switch ${vcsTerms.refNoun}.`,
             description: toBranchActionErrorMessage(error),
           }),
         );
@@ -395,7 +398,7 @@ export function BranchToolbarBranchSelector({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Failed to create and switch ref.",
+            title: `Failed to create and switch ${vcsTerms.refNoun}.`,
             description: toBranchActionErrorMessage(error),
           }),
         );
@@ -494,6 +497,7 @@ export function BranchToolbarBranchSelector({
     activeWorktreePath,
     effectiveEnvMode,
     resolvedActiveBranch,
+    refNoun: vcsTerms.refNoun,
   });
 
   function renderPickerItem(itemValue: string, index: number) {
@@ -535,7 +539,9 @@ export function BranchToolbarBranchSelector({
           value={itemValue}
           onClick={() => createRef(trimmedBranchQuery)}
         >
-          <span className="truncate">Create new ref &quot;{trimmedBranchQuery}&quot;</span>
+          <span className="truncate">
+            Create new {vcsTerms.refNoun} &quot;{trimmedBranchQuery}&quot;
+          </span>
         </ComboboxItem>
       );
     }

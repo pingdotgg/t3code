@@ -3,6 +3,7 @@ import { Cache, Context, Duration, Effect, Exit, Layer } from "effect";
 import type { VcsDriverKind, VcsError, VcsRepositoryIdentity } from "@t3tools/contracts";
 import { VcsUnsupportedOperationError } from "@t3tools/contracts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import * as JjVcsDriver from "./JjVcsDriver.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 import type { VcsDriverShape } from "./VcsDriver.ts";
 
@@ -66,8 +67,10 @@ function parseDetectionCacheKey(key: string): {
 export const make = Effect.fn("makeVcsDriverRegistry")(function* () {
   const projectConfig = yield* VcsProjectConfig.VcsProjectConfig;
   const git = yield* GitVcsDriver.makeVcsDriverShape();
+  const jj = yield* JjVcsDriver.makeVcsDriverShape();
   const drivers: Partial<Record<VcsDriverKind, VcsDriverShape>> = {
     git,
+    jj,
   };
 
   const get: VcsDriverRegistryShape["get"] = (kind) => {
@@ -105,6 +108,11 @@ export const make = Effect.fn("makeVcsDriverRegistry")(function* () {
     if (requestedKind !== "auto" && requestedKind !== "unknown") {
       const driver = yield* get(requestedKind);
       return yield* detectWithDriver(requestedKind, driver, input.cwd);
+    }
+
+    const jjDetected = yield* detectWithDriver("jj", jj, input.cwd);
+    if (jjDetected) {
+      return jjDetected;
     }
 
     return yield* detectWithDriver("git", git, input.cwd);

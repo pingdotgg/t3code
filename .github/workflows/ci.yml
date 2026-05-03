@@ -25,6 +25,9 @@ jobs:
         with:
           node-version-file: package.json
 
+      - name: Setup Jujutsu
+        uses: ./.github/actions/setup-jj
+
       - name: Cache Bun and Turbo
         uses: actions/cache@v5
         with:

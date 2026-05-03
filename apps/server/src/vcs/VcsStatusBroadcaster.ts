@@ -1,9 +1,8 @@
-import { realpathSync } from "node:fs";
-
 import {
   Duration,
   Effect,
   Exit,
+  FileSystem,
   Fiber,
   Layer,
   PubSub,
@@ -69,18 +68,11 @@ function fingerprintStatusPart(status: unknown): string {
   return JSON.stringify(status);
 }
 
-function normalizeCwd(cwd: string): string {
-  try {
-    return realpathSync.native(cwd);
-  } catch {
-    return cwd;
-  }
-}
-
 export const layer = Layer.effect(
   VcsStatusBroadcaster,
   Effect.gen(function* () {
     const workflow = yield* GitWorkflowService;
+    const fileSystem = yield* FileSystem.FileSystem;
     const changesPubSub = yield* Effect.acquireRelease(
       PubSub.unbounded<VcsStatusChange>(),
       (pubsub) => PubSub.shutdown(pubsub),
@@ -90,6 +82,9 @@ export const layer = Layer.effect(
     );
     const cacheRef = yield* Ref.make(new Map<string, CachedVcsStatus>());
     const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
+
+    const normalizeCwd = (cwd: string) =>
+      fileSystem.realPath(cwd).pipe(Effect.catch(() => Effect.succeed(cwd)));
 
     const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
       cwd: string,
@@ -198,7 +193,7 @@ export const layer = Layer.effect(
     const getStatus: VcsStatusBroadcasterShape["getStatus"] = Effect.fn(
       "VcsStatusBroadcaster.getStatus",
     )(function* (input) {
-      const cwd = normalizeCwd(input.cwd);
+      const cwd = yield* normalizeCwd(input.cwd);
       const [local, remote] = yield* Effect.all([
         getOrLoadLocalStatus(cwd),
         getOrLoadRemoteStatus(cwd),
@@ -209,7 +204,7 @@ export const layer = Layer.effect(
     const refreshLocalStatus: VcsStatusBroadcasterShape["refreshLocalStatus"] = Effect.fn(
       "VcsStatusBroadcaster.refreshLocalStatus",
     )(function* (rawCwd) {
-      const cwd = normalizeCwd(rawCwd);
+      const cwd = yield* normalizeCwd(rawCwd);
       yield* workflow.invalidateLocalStatus(cwd);
       const local = yield* workflow.localStatus({ cwd });
       return yield* updateCachedLocalStatus(cwd, local, { publish: true });
@@ -226,7 +221,7 @@ export const layer = Layer.effect(
     const refreshStatus: VcsStatusBroadcasterShape["refreshStatus"] = Effect.fn(
       "VcsStatusBroadcaster.refreshStatus",
     )(function* (rawCwd) {
-      const cwd = normalizeCwd(rawCwd);
+      const cwd = yield* normalizeCwd(rawCwd);
       const [local, remote] = yield* Effect.all([
         refreshLocalStatus(cwd),
         refreshRemoteStatus(cwd),
@@ -312,7 +307,7 @@ export const layer = Layer.effect(
     const streamStatus: VcsStatusBroadcasterShape["streamStatus"] = (input) =>
       Stream.unwrap(
         Effect.gen(function* () {
-          const cwd = normalizeCwd(input.cwd);
+          const cwd = yield* normalizeCwd(input.cwd);
           const subscription = yield* PubSub.subscribe(changesPubSub);
           const initialLocal = yield* getOrLoadLocalStatus(cwd);
           const initialRemote = (yield* getCachedStatus(cwd))?.remote?.value ?? null;

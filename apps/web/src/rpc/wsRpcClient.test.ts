@@ -19,6 +19,7 @@ import { createWsRpcClient } from "./wsRpcClient";
 import { type WsTransport } from "./wsTransport";
 
 const baseLocalStatus: VcsStatusLocalResult = {
+  kind: "git",
   isRepo: true,
   hasPrimaryRemote: true,
   isDefaultRef: false,

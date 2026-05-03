@@ -36,6 +36,7 @@ import { createThreadSelectorByRef } from "../storeSelectors";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
+import { resolveVcsTerms } from "../vcsPresentation";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 
@@ -203,7 +204,8 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
     environmentId: activeThread?.environmentId ?? null,
     cwd: activeCwd ?? null,
   });
-  const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const isVcsRepo = gitStatusQuery.data?.isRepo ?? true;
+  const vcsTerms = resolveVcsTerms(gitStatusQuery.data?.kind);
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const orderedTurnDiffSummaries = useMemo(
@@ -281,7 +283,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
       ignoreWhitespace: diffIgnoreWhitespace,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : conversationCacheScope,
-      enabled: isGitRepo,
+      enabled: isVcsRepo,
     }),
   );
   const selectedTurnCheckpointDiff = selectedTurn
@@ -577,9 +579,9 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
           Select a thread to inspect turn diffs.
         </div>
-      ) : !isGitRepo ? (
+      ) : !isVcsRepo ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">
-          Turn diffs are unavailable because this project is not a git repository.
+          Turn diffs are unavailable because this project is not a {vcsTerms.repositoryNoun}.
         </div>
       ) : orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70">

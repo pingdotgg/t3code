@@ -724,6 +724,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       : null;
 
     return {
+      kind: details.isRepo ? ("git" as const) : ("unknown" as const),
       isRepo: details.isRepo,
       ...(hostingProvider ? { sourceControlProvider: hostingProvider } : {}),
       hasPrimaryRemote: details.hasOriginRemote,

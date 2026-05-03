@@ -240,6 +240,7 @@ describe("ProviderCommandReactor", () => {
     const refreshStatus = vi.fn((_: string) =>
       Effect.succeed({
         isRepo: true,
+        kind: "git" as const,
         hasPrimaryRemote: true,
         isDefaultRef: false,
         refName: "renamed-branch",

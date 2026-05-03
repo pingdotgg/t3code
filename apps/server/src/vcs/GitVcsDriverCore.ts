@@ -449,7 +449,7 @@ const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
 
     if (event === "child_exit") {
       hookStartByChildKey.delete(childKey);
-      const code = traceRecord.success.exitCode;
+      const code = traceRecord.success.code;
       const exitCode = typeof code === "number" && Number.isInteger(code) ? code : null;
       const now = yield* DateTime.now;
       const durationMs = started
@@ -1341,6 +1341,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   const status: GitVcsDriverShape["status"] = (input) =>
     statusDetails(input.cwd).pipe(
       Effect.map((details) => ({
+        kind: "git" as const,
         isRepo: details.isRepo,
         hasPrimaryRemote: details.hasOriginRemote,
         isDefaultRef: details.isDefaultBranch,

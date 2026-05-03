@@ -40,6 +40,7 @@ const TARGET = { environmentId: ENVIRONMENT_ID, cwd: "/repo" } as const;
 const FRESH_TARGET = { environmentId: ENVIRONMENT_ID, cwd: "/fresh" } as const;
 
 const BASE_STATUS: VcsStatusResult = {
+  kind: "git",
   isRepo: true,
   hasPrimaryRemote: true,
   isDefaultRef: false,

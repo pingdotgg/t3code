@@ -68,7 +68,7 @@ function normalizeCheckpointErrorMessage(error: unknown): string {
 
   const lower = message.toLowerCase();
   if (lower.includes("not a git repository")) {
-    return "Turn diffs are unavailable because this project is not a git repository.";
+    return "Turn diffs are unavailable because this project is not a repository.";
   }
 
   if (
