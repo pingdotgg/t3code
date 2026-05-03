@@ -55,6 +55,7 @@ export interface GitStatusDetails {
   hasUpstream: boolean;
   aheadCount: number;
   behindCount: number;
+  aheadOfDefaultCount: number;
 }
 
 export interface GitPreparedCommitContext {
@@ -133,6 +134,12 @@ export interface GitFetchRemoteBranchInput {
   localBranch: string;
 }
 
+export interface GitFetchRemoteTrackingBranchInput {
+  cwd: string;
+  remoteName: string;
+  remoteBranch: string;
+}
+
 export interface GitSetBranchUpstreamInput {
   cwd: string;
   branch: string;
@@ -176,8 +183,12 @@ export interface GitVcsDriverShape {
     input: GitFetchPullRequestBranchInput,
   ) => Effect.Effect<void, GitCommandError>;
   readonly ensureRemote: (input: GitEnsureRemoteInput) => Effect.Effect<string, GitCommandError>;
+  readonly resolvePrimaryRemoteName: (cwd: string) => Effect.Effect<string, GitCommandError>;
   readonly fetchRemoteBranch: (
     input: GitFetchRemoteBranchInput,
+  ) => Effect.Effect<void, GitCommandError>;
+  readonly fetchRemoteTrackingBranch: (
+    input: GitFetchRemoteTrackingBranchInput,
   ) => Effect.Effect<void, GitCommandError>;
   readonly setBranchUpstream: (
     input: GitSetBranchUpstreamInput,

@@ -280,6 +280,26 @@ describe("when: source control provider uses merge requests", () => {
 });
 
 describe("when: ref is clean, up to date, and has no open PR", () => {
+  it("enables create PR when synced with upstream but ahead of default", () => {
+    const syncedFeature = status({
+      aheadCount: 0,
+      behindCount: 0,
+      aheadOfDefaultCount: 1,
+      pr: null,
+    });
+
+    const quick = resolveQuickAction(syncedFeature, false);
+    assert.deepInclude(quick, {
+      label: "Create PR",
+      disabled: false,
+      kind: "run_action",
+      action: "create_pr",
+    });
+
+    const items = buildMenuItems(syncedFeature, false);
+    assert.equal(items.find((item) => item.id === "pr")?.disabled, false);
+  });
+
   it("resolveQuickAction returns disabled no-action state", () => {
     const quick = resolveQuickAction(
       status({ aheadCount: 0, behindCount: 0, hasWorkingTreeChanges: false, pr: null }),
@@ -430,6 +450,48 @@ describe("when: working tree has local changes", () => {
         id: "push",
         label: "Push",
         disabled: true,
+        icon: "push",
+        kind: "open_dialog",
+        dialogAction: "push",
+      },
+      {
+        id: "pr",
+        label: "Create PR",
+        disabled: true,
+        icon: "pr",
+        kind: "open_dialog",
+        dialogAction: "create_pr",
+      },
+    ]);
+  });
+
+  it("buildMenuItems enables push for ahead commits while local changes remain uncommitted", () => {
+    const items = buildMenuItems(
+      status({
+        refName: "feature/test",
+        hasWorkingTreeChanges: true,
+        aheadCount: 1,
+        workingTree: {
+          files: [{ path: ".vercel/project.json", insertions: 1, deletions: 0 }],
+          insertions: 1,
+          deletions: 0,
+        },
+      }),
+      false,
+    );
+    assert.deepEqual(items, [
+      {
+        id: "commit",
+        label: "Commit",
+        disabled: false,
+        icon: "commit",
+        kind: "open_dialog",
+        dialogAction: "commit",
+      },
+      {
+        id: "push",
+        label: "Push",
+        disabled: false,
         icon: "push",
         kind: "open_dialog",
         dialogAction: "push",

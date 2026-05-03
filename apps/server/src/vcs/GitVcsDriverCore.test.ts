@@ -102,6 +102,51 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         );
       }),
     );
+
+    it.effect("reports default-branch delta separately from upstream delta", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["checkout", "-b", "feature/synced"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature commit"]);
+        yield* git(cwd, ["push", "-u", "origin", "feature/synced"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.equal(status.hasUpstream, true);
+        assert.equal(status.aheadCount, 0);
+        assert.equal(status.behindCount, 0);
+        assert.equal(status.aheadOfDefaultCount, 1);
+      }),
+    );
+
+    it.effect("reuses the no-upstream fallback ahead count for default-branch delta", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["checkout", "-b", "feature/no-upstream"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature commit"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+        assert.equal(status.hasUpstream, false);
+        assert.equal(status.aheadCount, 1);
+        assert.equal(status.behindCount, 0);
+        assert.equal(status.aheadOfDefaultCount, 1);
+      }),
+    );
   });
 
   describe("refName operations", () => {
@@ -241,6 +286,45 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           branch: "feature/push",
         });
       }),
+    );
+
+    it.effect(
+      "pushes upstream branches to the remote branch name, not the upstream shorthand",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir("git-remote-");
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* git(cwd, ["branch", "-M", "main"]);
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "-u", "origin", "main"]);
+          yield* writeTextFile(cwd, "upstream.txt", "upstream\n");
+          yield* driver.prepareCommitContext(cwd);
+          yield* driver.commit(cwd, "Add upstream update", "");
+
+          const pushed = yield* driver.pushCurrentBranch(cwd, null);
+
+          assert.deepInclude(pushed, {
+            status: "pushed",
+            branch: "main",
+            upstreamBranch: "origin/main",
+            setUpstream: false,
+          });
+          assert.equal(
+            yield* git(remote, ["log", "-1", "--pretty=%s", "main"]),
+            "Add upstream update",
+          );
+          const badBranch = yield* driver.execute({
+            operation: "GitVcsDriver.test.showBadRemoteBranch",
+            cwd: remote,
+            args: ["show-ref", "--verify", "--quiet", "refs/heads/origin/main"],
+            allowNonZeroExit: true,
+            timeoutMs: 10_000,
+          });
+          assert.notEqual(badBranch.exitCode, 0);
+        }),
     );
   });
 });

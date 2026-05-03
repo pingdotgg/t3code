@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { DateTime, Effect, Layer, Option } from "effect";
 
 import { GitHubCli } from "./GitHubCli.ts";
+import { GitLabCli } from "./GitLabCli.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import { VcsDriverRegistry } from "../vcs/VcsDriverRegistry.ts";
 import type { VcsDriverShape } from "../vcs/VcsDriver.ts";
@@ -50,7 +51,9 @@ function makeRegistry(input: {
   });
 
   return SourceControlProviderRegistry.make().pipe(
-    Effect.provide(Layer.mergeAll(registryLayer, Layer.mock(GitHubCli)({}))),
+    Effect.provide(
+      Layer.mergeAll(registryLayer, Layer.mock(GitHubCli)({}), Layer.mock(GitLabCli)({})),
+    ),
   );
 }
 
@@ -78,27 +81,16 @@ it.effect("routes directly by provider kind for remote-first workflows", () =>
   }),
 );
 
-it.effect(
-  "detects GitLab remotes and returns an unsupported provider until one is registered",
-  () =>
-    Effect.gen(function* () {
-      const registry = yield* makeRegistry({
-        remotes: [{ name: "origin", url: "git@gitlab.com:group/project.git" }],
-      });
+it.effect("routes GitLab remotes to the GitLab provider", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@gitlab.com:group/project.git" }],
+    });
 
-      const provider = yield* registry.resolve({ cwd: "/repo" });
+    const provider = yield* registry.resolve({ cwd: "/repo" });
 
-      assert.strictEqual(provider.kind, "gitlab");
-      const error = yield* Effect.flip(
-        provider.listChangeRequests({
-          cwd: "/repo",
-          headSelector: "feature/source-control",
-          state: "open",
-        }),
-      );
-
-      assert.strictEqual(error.provider, "gitlab");
-    }),
+    assert.strictEqual(provider.kind, "gitlab");
+  }),
 );
 
 it.effect("falls back to a non-origin remote when origin is not configured", () =>

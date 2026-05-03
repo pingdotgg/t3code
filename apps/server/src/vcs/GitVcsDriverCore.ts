@@ -62,6 +62,7 @@ const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitStatusDetails>({
   hasUpstream: false,
   aheadCount: 0,
   behindCount: 0,
+  aheadOfDefaultCount: 0,
 });
 
 type TraceTailState = {
@@ -969,6 +970,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.map(parseRemoteNamesInGitOrder),
     );
 
+  const resolvePublishBranchName = Effect.fn("resolvePublishBranchName")(function* (
+    cwd: string,
+    branchName: string,
+  ) {
+    const remoteNames = yield* listRemoteNames(cwd).pipe(Effect.catch(() => Effect.succeed([])));
+    const parsedRemoteRef = parseRemoteRefWithRemoteNames(branchName, remoteNames);
+    return parsedRemoteRef?.branchName ?? branchName;
+  });
+
   const resolvePrimaryRemoteName = Effect.fn("resolvePrimaryRemoteName")(function* (cwd: string) {
     if (yield* originRemoteExists(cwd)) {
       return "origin";
@@ -1213,6 +1223,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     let upstreamRef: string | null = null;
     let aheadCount = 0;
     let behindCount = 0;
+    let aheadOfDefaultCount = 0;
     let hasWorkingTreeChanges = false;
     const changedFilesWithoutNumstat = new Set<string>();
 
@@ -1241,11 +1252,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
     }
 
-    if (!upstreamRef && refName) {
-      aheadCount = yield* computeAheadCountAgainstBase(cwd, refName).pipe(
-        Effect.catch(() => Effect.succeed(0)),
-      );
+    const fallbackAheadCount =
+      !upstreamRef && refName
+        ? yield* computeAheadCountAgainstBase(cwd, refName).pipe(
+            Effect.catch(() => Effect.succeed(0)),
+          )
+        : null;
+
+    if (fallbackAheadCount !== null) {
+      aheadCount = fallbackAheadCount;
       behindCount = 0;
+    }
+
+    const isDefaultBranch =
+      refName !== null &&
+      (refName === defaultBranch ||
+        (defaultBranch === null && (refName === "main" || refName === "master")));
+    if (refName && !isDefaultBranch) {
+      aheadOfDefaultCount =
+        fallbackAheadCount !== null
+          ? fallbackAheadCount
+          : yield* computeAheadCountAgainstBase(cwd, refName).pipe(
+              Effect.catch(() => Effect.succeed(0)),
+            );
     }
 
     const stagedEntries = parseNumstatEntries(stagedNumstatStdout);
@@ -1277,10 +1306,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return {
       isRepo: true,
       hasOriginRemote: hasPrimaryRemote,
-      isDefaultBranch:
-        refName !== null &&
-        (refName === defaultBranch ||
-          (defaultBranch === null && (refName === "main" || refName === "master"))),
+      isDefaultBranch,
       branch: refName,
       upstreamRef,
       hasWorkingTreeChanges,
@@ -1292,6 +1318,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       hasUpstream: upstreamRef !== null,
       aheadCount,
       behindCount,
+      aheadOfDefaultCount,
     };
   });
 
@@ -1323,6 +1350,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         hasUpstream: details.hasUpstream,
         aheadCount: details.aheadCount,
         behindCount: details.behindCount,
+        aheadOfDefaultCount: details.aheadOfDefaultCount,
         pr: null,
       })),
     );
@@ -1461,16 +1489,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             "Cannot push because no git remote is configured for this repository.",
           );
         }
+        const publishBranch = yield* resolvePublishBranchName(cwd, branch);
         yield* runGit("GitVcsDriver.pushCurrentBranch.pushWithUpstream", cwd, [
           "push",
           "-u",
           publishRemoteName,
-          `HEAD:refs/heads/${branch}`,
+          `HEAD:refs/heads/${publishBranch}`,
         ]);
         return {
           status: "pushed" as const,
           branch,
-          upstreamBranch: `${publishRemoteName}/${branch}`,
+          upstreamBranch: `${publishRemoteName}/${publishBranch}`,
           setUpstream: true,
         };
       }
@@ -1482,7 +1511,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* runGit("GitVcsDriver.pushCurrentBranch.pushUpstream", cwd, [
           "push",
           currentUpstream.remoteName,
-          `HEAD:${currentUpstream.upstreamRef}`,
+          `HEAD:refs/heads/${currentUpstream.branchName}`,
         ]);
         return {
           status: "pushed" as const,
@@ -1894,6 +1923,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const fetchRemoteTrackingBranch: GitVcsDriverShape["fetchRemoteTrackingBranch"] = Effect.fn(
+    "fetchRemoteTrackingBranch",
+  )(function* (input) {
+    yield* runGit("GitVcsDriver.fetchRemoteTrackingBranch", input.cwd, [
+      "fetch",
+      "--quiet",
+      "--no-tags",
+      input.remoteName,
+      `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,
+    ]);
+  });
+
   const setBranchUpstream: GitVcsDriverShape["setBranchUpstream"] = (input) =>
     runGit("GitVcsDriver.setBranchUpstream", input.cwd, [
       "branch",
@@ -2075,7 +2116,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     createWorktree,
     fetchPullRequestBranch,
     ensureRemote,
+    resolvePrimaryRemoteName,
     fetchRemoteBranch,
+    fetchRemoteTrackingBranch,
     setBranchUpstream,
     removeWorktree,
     renameBranch,

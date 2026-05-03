@@ -83,7 +83,7 @@ const SOURCE_CONTROL_PROVIDER_PROBES: ReadonlyArray<ProviderProbe> = [
     versionArgs: ["--version"],
     authArgs: ["auth", "status"],
     parseAuth: parseGitLabAuth,
-    implemented: false,
+    implemented: true,
     installHint:
       "Install GitLab CLI with `brew install glab` or from https://gitlab.com/gitlab-org/cli.",
   },

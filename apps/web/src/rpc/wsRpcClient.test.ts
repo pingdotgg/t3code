@@ -83,6 +83,7 @@ describe("wsRpcClient", () => {
           hasUpstream: false,
           aheadCount: 0,
           behindCount: 0,
+          aheadOfDefaultCount: 0,
           pr: null,
         },
       ],
