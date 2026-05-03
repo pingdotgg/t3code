@@ -42,6 +42,37 @@ fi
 
 git config --global --add safe.directory "$T3_RUNTIME_WORKSPACE" || true
 
+if [ -n "${T3_OPENCODE_MODEL:-}" ] && [ "${T3_DISABLE_RUNTIME_SETTINGS_BOOTSTRAP:-}" != "1" ]; then
+  settings_path="$T3CODE_HOME/userdata/settings.json"
+  if [ ! -f "$settings_path" ]; then
+    mkdir -p "$(dirname "$settings_path")"
+    cat > "$settings_path" <<EOF
+{
+  "textGenerationModelSelection": {
+    "instanceId": "opencode",
+    "model": "$T3_OPENCODE_MODEL"
+  },
+  "providers": {
+    "codex": {
+      "enabled": false
+    },
+    "claudeAgent": {
+      "enabled": false
+    },
+    "cursor": {
+      "enabled": false
+    },
+    "opencode": {
+      "enabled": true,
+      "binaryPath": "opencode",
+      "customModels": ["$T3_OPENCODE_MODEL"]
+    }
+  }
+}
+EOF
+  fi
+fi
+
 exec node /app/apps/server/dist/bin.mjs serve \
   --host 0.0.0.0 \
   --port "$T3_RUNTIME_PORT" \

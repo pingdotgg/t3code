@@ -26,6 +26,31 @@ it("uses the canonical Codex default for auto-bootstrapped model selection", () 
   });
 });
 
+it("allows Modal runtime bootstrap to override the default model selection", () => {
+  const originalProvider = process.env.T3_DEFAULT_PROVIDER_INSTANCE_ID;
+  const originalModel = process.env.T3_DEFAULT_MODEL;
+  try {
+    process.env.T3_DEFAULT_PROVIDER_INSTANCE_ID = "opencode";
+    process.env.T3_DEFAULT_MODEL = "amazon-bedrock/anthropic.claude-opus-4-7";
+
+    assert.deepStrictEqual(getAutoBootstrapDefaultModelSelection(), {
+      instanceId: ProviderInstanceId.make("opencode"),
+      model: "amazon-bedrock/anthropic.claude-opus-4-7",
+    });
+  } finally {
+    if (originalProvider === undefined) {
+      delete process.env.T3_DEFAULT_PROVIDER_INSTANCE_ID;
+    } else {
+      process.env.T3_DEFAULT_PROVIDER_INSTANCE_ID = originalProvider;
+    }
+    if (originalModel === undefined) {
+      delete process.env.T3_DEFAULT_MODEL;
+    } else {
+      process.env.T3_DEFAULT_MODEL = originalModel;
+    }
+  }
+});
+
 it.effect("enqueueCommand waits for readiness and then drains queued work", () =>
   Effect.scoped(
     Effect.gen(function* () {

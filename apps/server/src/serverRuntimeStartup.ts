@@ -155,8 +155,10 @@ export const launchStartupHeartbeat = recordStartupHeartbeat.pipe(
 );
 
 export const getAutoBootstrapDefaultModelSelection = (): ModelSelection => ({
-  instanceId: ProviderInstanceId.make("codex"),
-  model: DEFAULT_MODEL,
+  instanceId: ProviderInstanceId.make(
+    process.env.T3_DEFAULT_PROVIDER_INSTANCE_ID?.trim() || "codex",
+  ),
+  model: process.env.T3_DEFAULT_MODEL?.trim() || DEFAULT_MODEL,
 });
 
 export const resolveWelcomeBase = Effect.gen(function* () {

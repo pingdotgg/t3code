@@ -883,13 +883,16 @@ environment variables:
 
 - Git/GitHub auth: `GH_TOKEN` or `GITHUB_TOKEN`; optional `T3_GH_HOSTS_YML_B64`.
 - Codex subscription auth: `T3_CODEX_AUTH_JSON_B64`; optional `T3_CODEX_CONFIG_TOML_B64`.
-- OpenCode Bedrock auth/config: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`
-  when needed, `AWS_REGION` or `AWS_DEFAULT_REGION`, and optional `T3_OPENCODE_CONFIG_JSON_B64`.
+- OpenCode Bedrock auth/config: `AWS_BEARER_TOKEN_BEDROCK`, `AWS_REGION` or
+  `AWS_DEFAULT_REGION`, `T3_OPENCODE_MODEL`, and optional `OPENCODE_CONFIG_CONTENT` or
+  `T3_OPENCODE_CONFIG_JSON_B64`. Standard AWS keys remain supported when needed.
 - Execution bridge auth: `T3_EXECUTION_BRIDGE_SHARED_SECRET`.
 
 The Modal runtime entrypoint decodes the base64 file-backed values into `$CODEX_HOME`, GitHub CLI
 config, and `OPENCODE_CONFIG_CONTENT` before starting the T3 server. `GH_TOKEN` is also wired into a
-Git credential helper so `git push` and `gh pr create` both use the same secret.
+Git credential helper so `git push` and `gh pr create` both use the same secret. When
+`T3_OPENCODE_MODEL` is present, the entrypoint writes first-boot T3 settings that make OpenCode the
+default provider for coding turns and PR text generation.
 
 Recommended MVP secret names:
 
