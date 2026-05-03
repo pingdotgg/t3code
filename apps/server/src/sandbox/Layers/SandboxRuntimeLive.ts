@@ -3,6 +3,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   ExecutionRunCreateResponse,
   MessageId,
+  type ModelSelection,
   ProjectId,
   type SandboxServiceDescriptor,
   ThreadId,
@@ -100,12 +101,18 @@ function extractT3RuntimeEndpoint(
 }
 
 const decodeExecutionRunCreateResponse = Schema.decodeUnknownSync(ExecutionRunCreateResponse);
-const REMOTE_RUNTIME_START_TIMEOUT_MS = 30_000;
+const DEFAULT_REMOTE_RUNTIME_START_TIMEOUT_MS = 180_000;
+
+function remoteRuntimeStartTimeoutMs() {
+  const parsed = Number(process.env.T3_REMOTE_RUNTIME_START_TIMEOUT_MS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_REMOTE_RUNTIME_START_TIMEOUT_MS;
+}
 
 function startRemoteRuntime(input: {
   readonly endpointUrl: string;
   readonly request: TaskRuntimeMaterializeRequest;
   readonly providerResult: SandboxMaterializationResult;
+  readonly modelSelection: ModelSelection;
 }) {
   return Effect.tryPromise({
     try: async () => {
@@ -116,7 +123,7 @@ function startRemoteRuntime(input: {
       const runtimeStartUrl = `${input.endpointUrl.replace(/\/$/, "")}/api/execution/runs`;
       const response = await fetch(runtimeStartUrl, {
         method: "POST",
-        signal: AbortSignal.timeout(REMOTE_RUNTIME_START_TIMEOUT_MS),
+        signal: AbortSignal.timeout(remoteRuntimeStartTimeoutMs()),
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${sharedSecret}`,
@@ -128,9 +135,7 @@ function startRemoteRuntime(input: {
           workspaceRoot:
             input.providerResult.worktree?.worktreePath ?? input.request.project.workspaceRoot,
           title: input.request.title,
-          ...(input.request.modelSelection !== undefined
-            ? { modelSelection: input.request.modelSelection }
-            : {}),
+          modelSelection: input.modelSelection,
           runtimeMode: input.request.runtimeMode,
           interactionMode: input.request.interactionMode,
         }),
@@ -233,6 +238,7 @@ export const makeSandboxRuntime = Effect.gen(function* () {
           endpointUrl: remoteRuntimeEndpoint,
           request,
           providerResult,
+          modelSelection,
         });
         return materializationResponse({
           request,
