@@ -1,5 +1,51 @@
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 
+const LAST_ACKNOWLEDGED_VERSION_KEY = "t3code:lastAcknowledgedDesktopVersion";
+
+export const GITHUB_RELEASES_URL = "https://github.com/pingdotgg/t3code/releases/tag";
+
+export function getNewVersionReleaseNotesUrl(version: string): string {
+  return `${GITHUB_RELEASES_URL}/v${version}`;
+}
+
+export function shouldShowNewVersionToast(
+  updateState: DesktopUpdateState | null | undefined,
+): boolean {
+  if (!updateState?.enabled) return false;
+  const currentVersion = updateState.currentVersion;
+  if (!currentVersion) return false;
+
+  const lastAcknowledged = readLastAcknowledgedVersion();
+  if (lastAcknowledged === null) return false;
+  return currentVersion !== lastAcknowledged;
+}
+
+export function acknowledgeCurrentVersion(
+  updateState: DesktopUpdateState | null | undefined,
+): void {
+  if (!updateState?.enabled) return;
+  const currentVersion = updateState.currentVersion;
+  if (currentVersion) {
+    persistLastAcknowledgedVersion(currentVersion);
+  }
+}
+
+export function readLastAcknowledgedVersion(): string | null {
+  try {
+    return localStorage.getItem(LAST_ACKNOWLEDGED_VERSION_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function persistLastAcknowledgedVersion(version: string): void {
+  try {
+    localStorage.setItem(LAST_ACKNOWLEDGED_VERSION_KEY, version);
+  } catch {
+    // localStorage may be unavailable (incognito, SSR, etc.)
+  }
+}
+
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
 export function resolveDesktopUpdateButtonAction(

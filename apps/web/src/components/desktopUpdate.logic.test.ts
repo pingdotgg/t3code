@@ -1,17 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
 
 import {
+  acknowledgeCurrentVersion,
   canCheckForUpdate,
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
   getDesktopUpdateInstallConfirmationMessage,
+  getNewVersionReleaseNotesUrl,
   isDesktopUpdateButtonDisabled,
+  readLastAcknowledgedVersion,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldShowDesktopUpdateButton,
   shouldToastDesktopUpdateActionResult,
+  shouldShowNewVersionToast,
 } from "./desktopUpdate.logic";
 
 const baseState: DesktopUpdateState = {
@@ -288,5 +292,78 @@ describe("getDesktopUpdateButtonTooltip", () => {
     expect(getDesktopUpdateButtonTooltip({ ...baseState, status: "up-to-date" })).toBe(
       "Up to date",
     );
+  });
+});
+
+describe("new version toast", () => {
+  beforeEach(() => {
+    const store: Record<string, string> = {};
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => store[key] ?? null,
+      setItem: (key: string, value: string) => {
+        store[key] = value;
+      },
+      removeItem: (key: string) => {
+        delete store[key];
+      },
+      clear: () => {
+        for (const k of Object.keys(store)) delete store[k];
+      },
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("constructs the correct release notes URL", () => {
+    expect(getNewVersionReleaseNotesUrl("1.2.3")).toBe(
+      "https://github.com/pingdotgg/t3code/releases/tag/v1.2.3",
+    );
+  });
+
+  it("does not show toast when update state is null", () => {
+    expect(shouldShowNewVersionToast(null)).toBe(false);
+    expect(shouldShowNewVersionToast(undefined)).toBe(false);
+  });
+
+  it("does not show toast when updates are disabled", () => {
+    expect(shouldShowNewVersionToast({ ...baseState, enabled: false })).toBe(false);
+  });
+
+  it("does not show toast when no acknowledged version is stored and has no side effects", () => {
+    expect(readLastAcknowledgedVersion()).toBeNull();
+    expect(shouldShowNewVersionToast(baseState)).toBe(false);
+    expect(readLastAcknowledgedVersion()).toBeNull();
+  });
+
+  it("shows toast when version changes from acknowledged version", () => {
+    acknowledgeCurrentVersion(baseState);
+    expect(readLastAcknowledgedVersion()).toBe("1.0.0");
+
+    const updatedState: DesktopUpdateState = { ...baseState, currentVersion: "1.1.0" };
+    expect(shouldShowNewVersionToast(updatedState)).toBe(true);
+  });
+
+  it("does not show toast when version matches acknowledged version", () => {
+    acknowledgeCurrentVersion(baseState);
+    expect(shouldShowNewVersionToast(baseState)).toBe(false);
+  });
+
+  it("acknowledgeCurrentVersion persists the current version", () => {
+    const state: DesktopUpdateState = { ...baseState, currentVersion: "2.0.0" };
+    acknowledgeCurrentVersion(state);
+    expect(readLastAcknowledgedVersion()).toBe("2.0.0");
+  });
+
+  it("acknowledgeCurrentVersion does nothing for disabled updates", () => {
+    acknowledgeCurrentVersion({ ...baseState, enabled: false });
+    expect(readLastAcknowledgedVersion()).toBeNull();
+  });
+
+  it("does not show toast when acknowledged version matches after first launch", () => {
+    acknowledgeCurrentVersion(baseState);
+    expect(shouldShowNewVersionToast(baseState)).toBe(false);
+    expect(shouldShowNewVersionToast(baseState)).toBe(false);
   });
 });
