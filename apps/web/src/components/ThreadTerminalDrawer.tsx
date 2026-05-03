@@ -48,6 +48,7 @@ import {
 import { readEnvironmentApi } from "~/environmentApi";
 import { readLocalApi } from "~/localApi";
 import { attachTerminalSession } from "../terminalSessionState";
+import { openTerminalLinkInPreview } from "./preview/openTerminalLinkInPreview";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -509,11 +510,26 @@ export function TerminalViewport({
               }
 
               if (match.kind === "url") {
-                void localApi.shell.openExternal(match.text).catch((error: unknown) => {
-                  writeSystemMessage(
-                    latestTerminal,
-                    error instanceof Error ? error.message : "Unable to open link",
-                  );
+                const fallbackToBrowser = () => {
+                  void localApi.shell.openExternal(match.text).catch((error: unknown) => {
+                    writeSystemMessage(
+                      latestTerminal,
+                      error instanceof Error ? error.message : "Unable to open link",
+                    );
+                  });
+                };
+                const api = readEnvironmentApi(threadRef.environmentId);
+                if (!api) {
+                  fallbackToBrowser();
+                  return;
+                }
+                void openTerminalLinkInPreview({
+                  url: match.text,
+                  position: { x: event.clientX, y: event.clientY },
+                  threadRef,
+                  api,
+                  localApi,
+                  fallbackToBrowser,
                 });
                 return;
               }

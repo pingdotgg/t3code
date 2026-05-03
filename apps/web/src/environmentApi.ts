@@ -58,6 +58,16 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       subscribeThread: (input, callback, options) =>
         rpcClient.orchestration.subscribeThread(input, callback, options),
     },
+    preview: {
+      open: (input) => rpcClient.preview.open(input as never),
+      navigate: (input) => rpcClient.preview.navigate(input as never),
+      refresh: (input) => rpcClient.preview.refresh(input as never),
+      close: (input) => rpcClient.preview.close(input as never),
+      list: (input) => rpcClient.preview.list(input as never),
+      reportStatus: (input) => rpcClient.preview.reportStatus(input as never),
+      onEvent: (callback) => rpcClient.preview.onEvent(callback),
+      subscribePorts: (callback, options) => rpcClient.preview.subscribePorts(callback, options),
+    },
   };
 }
 

@@ -143,7 +143,7 @@ export function selectActiveRightPanel(
 - Remove the local `planSidebarOpen` state (`:688`).
 - Replace `setPlanSidebarOpen(true)` callsites with `rightPanelStore.open(activeThreadRef, "plan")`.
 - Replace `closePlanSidebar` with `rightPanelStore.close(activeThreadRef)`.
-- Existing `planSidebarDismissedForTurnRef`/`planSidebarOpenOnNextThreadRef` logic stays local — it only governs whether to *call* `open()`/`close()` on turn change.
+- Existing `planSidebarDismissedForTurnRef`/`planSidebarOpenOnNextThreadRef` logic stays local — it only governs whether to _call_ `open()`/`close()` on turn change.
 
 ### Render arbitration
 
@@ -176,49 +176,49 @@ const useSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
 
 ### NEW files
 
-| File | Purpose |
-|---|---|
-| `packages/contracts/src/preview.ts` | Effect/Schema schemas: inputs, snapshot, events, errors |
-| `packages/contracts/src/preview.test.ts` | Schema round‑trip tests |
-| `apps/server/src/preview/Services/Manager.ts` | `PreviewManager` Service tag + interface |
-| `apps/server/src/preview/Layers/Manager.ts` | Implementation: in‑memory map + event subject |
-| `apps/server/src/preview/Layers/Manager.test.ts` | Lifecycle, snapshot, event ordering |
-| `apps/desktop/src/preview-view-manager.ts` | Plain‑Node Electron port of ami's BrowserManager (subset) |
-| `apps/desktop/src/preview-preload.ts` | Webview preload (no‑op v1) |
-| `apps/web/src/previewStateStore.ts` | Per‑thread zustand store (mirrors `terminalStateStore.ts`) |
-| `apps/web/src/previewStateStore.test.ts` | Reducer tests |
-| `apps/web/src/rightPanelStore.ts` | Right‑panel arbiter |
-| `apps/web/src/rightPanelStore.test.ts` | Arbiter tests |
-| `apps/web/src/components/preview/PreviewPanel.tsx` | Right‑panel entry (wraps `PreviewPanelShell`) |
-| `apps/web/src/components/preview/PreviewPanelShell.tsx` | Shell mirroring `DiffPanelShell` (`mode: "inline"\|"sheet"\|"sidebar"`) |
-| `apps/web/src/components/preview/PreviewView.tsx` | Chrome bar (URL/back/fwd/refresh) + `<PreviewWebview>` |
-| `apps/web/src/components/preview/PreviewWebview.tsx` | Electron `<webview>` host; null on web build |
-| `apps/web/src/components/preview/PreviewEmptyState.tsx` | Pre‑URL empty state |
-| `apps/web/src/components/preview/PreviewUnsupportedToast.ts` | `"Preview is only available in the desktop app"` toast |
+| File                                                         | Purpose                                                                 |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `packages/contracts/src/preview.ts`                          | Effect/Schema schemas: inputs, snapshot, events, errors                 |
+| `packages/contracts/src/preview.test.ts`                     | Schema round‑trip tests                                                 |
+| `apps/server/src/preview/Services/Manager.ts`                | `PreviewManager` Service tag + interface                                |
+| `apps/server/src/preview/Layers/Manager.ts`                  | Implementation: in‑memory map + event subject                           |
+| `apps/server/src/preview/Layers/Manager.test.ts`             | Lifecycle, snapshot, event ordering                                     |
+| `apps/desktop/src/preview-view-manager.ts`                   | Plain‑Node Electron port of ami's BrowserManager (subset)               |
+| `apps/desktop/src/preview-preload.ts`                        | Webview preload (no‑op v1)                                              |
+| `apps/web/src/previewStateStore.ts`                          | Per‑thread zustand store (mirrors `terminalStateStore.ts`)              |
+| `apps/web/src/previewStateStore.test.ts`                     | Reducer tests                                                           |
+| `apps/web/src/rightPanelStore.ts`                            | Right‑panel arbiter                                                     |
+| `apps/web/src/rightPanelStore.test.ts`                       | Arbiter tests                                                           |
+| `apps/web/src/components/preview/PreviewPanel.tsx`           | Right‑panel entry (wraps `PreviewPanelShell`)                           |
+| `apps/web/src/components/preview/PreviewPanelShell.tsx`      | Shell mirroring `DiffPanelShell` (`mode: "inline"\|"sheet"\|"sidebar"`) |
+| `apps/web/src/components/preview/PreviewView.tsx`            | Chrome bar (URL/back/fwd/refresh) + `<PreviewWebview>`                  |
+| `apps/web/src/components/preview/PreviewWebview.tsx`         | Electron `<webview>` host; null on web build                            |
+| `apps/web/src/components/preview/PreviewEmptyState.tsx`      | Pre‑URL empty state                                                     |
+| `apps/web/src/components/preview/PreviewUnsupportedToast.ts` | `"Preview is only available in the desktop app"` toast                  |
 
 ### MODIFIED files
 
-| File | Change |
-|---|---|
-| `packages/contracts/src/keybindings.ts` | Add `preview.toggle`, `preview.refresh`, `preview.focusUrl` to `STATIC_KEYBINDING_COMMANDS`; add `previewFocus`, `previewOpen` to context keys |
-| `packages/contracts/src/project.ts` | Add `previewUrl?: string` and `autoOpenPreview?: boolean` to `ProjectScript` schema |
-| `packages/contracts/src/server.ts` | Extend `EnvironmentApi` with `preview` namespace |
-| `packages/contracts/src/index.ts` | Re‑export new types |
-| `apps/server/src/keybindings.ts` | Add defaults: `mod+shift+j` → `preview.toggle`, `mod+shift+r` → `preview.refresh` (when `previewFocus`) |
-| `apps/server/src/ws.ts` | Route `preview.open`, `preview.navigate`, `preview.refresh`, `preview.close`, `preview.list`, `preview.onEvent` |
-| `apps/server/src/orchestration/runtimeLayer.ts` (or equivalent) | Provide `PreviewManager.Default` |
-| `apps/web/src/environmentApi.ts` | Wire `preview` slot in `createEnvironmentApi` |
-| `apps/web/src/keybindings.ts` | Add `isPreviewToggleShortcut`, `isPreviewRefreshShortcut` helpers |
-| `apps/web/src/routes/_chat.tsx` | Handle `preview.toggle` in global shortcut handler |
-| `apps/web/src/components/ChatView.tsx` | Replace local `planSidebarOpen` with `rightPanelStore`; render `PreviewPanel` |
-| `apps/web/src/components/ThreadTerminalDrawer.tsx` | At terminal link activation, when `match.kind === "url"` and link looks like a dev URL, show context menu with "Open in preview" / "Open in browser"; pass through to `localApi.preview.openTab(...)` when chosen |
-| `apps/web/src/components/ProjectScriptsControl.tsx` | Add `previewUrl` + `autoOpenPreview` form fields in the Add/Edit dialog |
-| `apps/web/src/projectScripts.ts` | Carry the new fields through `commandForProjectScript` / serialization |
-| `apps/web/src/types.ts` | Add `PreviewSession` mirror types (or re‑export from contracts) |
-| `apps/web/src/lib/desktopBridge.d.ts` (or wherever bridge types live) | Add `preview` namespace shape |
-| `apps/desktop/src/main.ts` | Register `preview:*` IPC handlers; instantiate `previewViewManager`; wire `mainWindow` injection |
-| `apps/desktop/src/preload.ts` | Expose `desktopBridge.preview.*` |
-| `KEYBINDINGS.md` | Document new commands and `previewFocus`/`previewOpen` `when` keys |
+| File                                                                  | Change                                                                                                                                                                                                            |
+| --------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/keybindings.ts`                               | Add `preview.toggle`, `preview.refresh`, `preview.focusUrl` to `STATIC_KEYBINDING_COMMANDS`; add `previewFocus`, `previewOpen` to context keys                                                                    |
+| `packages/contracts/src/project.ts`                                   | Add `previewUrl?: string` and `autoOpenPreview?: boolean` to `ProjectScript` schema                                                                                                                               |
+| `packages/contracts/src/server.ts`                                    | Extend `EnvironmentApi` with `preview` namespace                                                                                                                                                                  |
+| `packages/contracts/src/index.ts`                                     | Re‑export new types                                                                                                                                                                                               |
+| `apps/server/src/keybindings.ts`                                      | Add defaults: `mod+shift+j` → `preview.toggle`, `mod+shift+r` → `preview.refresh` (when `previewFocus`)                                                                                                           |
+| `apps/server/src/ws.ts`                                               | Route `preview.open`, `preview.navigate`, `preview.refresh`, `preview.close`, `preview.list`, `preview.onEvent`                                                                                                   |
+| `apps/server/src/orchestration/runtimeLayer.ts` (or equivalent)       | Provide `PreviewManager.Default`                                                                                                                                                                                  |
+| `apps/web/src/environmentApi.ts`                                      | Wire `preview` slot in `createEnvironmentApi`                                                                                                                                                                     |
+| `apps/web/src/keybindings.ts`                                         | Add `isPreviewToggleShortcut`, `isPreviewRefreshShortcut` helpers                                                                                                                                                 |
+| `apps/web/src/routes/_chat.tsx`                                       | Handle `preview.toggle` in global shortcut handler                                                                                                                                                                |
+| `apps/web/src/components/ChatView.tsx`                                | Replace local `planSidebarOpen` with `rightPanelStore`; render `PreviewPanel`                                                                                                                                     |
+| `apps/web/src/components/ThreadTerminalDrawer.tsx`                    | At terminal link activation, when `match.kind === "url"` and link looks like a dev URL, show context menu with "Open in preview" / "Open in browser"; pass through to `localApi.preview.openTab(...)` when chosen |
+| `apps/web/src/components/ProjectScriptsControl.tsx`                   | Add `previewUrl` + `autoOpenPreview` form fields in the Add/Edit dialog                                                                                                                                           |
+| `apps/web/src/projectScripts.ts`                                      | Carry the new fields through `commandForProjectScript` / serialization                                                                                                                                            |
+| `apps/web/src/types.ts`                                               | Add `PreviewSession` mirror types (or re‑export from contracts)                                                                                                                                                   |
+| `apps/web/src/lib/desktopBridge.d.ts` (or wherever bridge types live) | Add `preview` namespace shape                                                                                                                                                                                     |
+| `apps/desktop/src/main.ts`                                            | Register `preview:*` IPC handlers; instantiate `previewViewManager`; wire `mainWindow` injection                                                                                                                  |
+| `apps/desktop/src/preload.ts`                                         | Expose `desktopBridge.preview.*`                                                                                                                                                                                  |
+| `KEYBINDINGS.md`                                                      | Document new commands and `previewFocus`/`previewOpen` `when` keys                                                                                                                                                |
 
 ### NOT changed
 
@@ -335,10 +335,7 @@ export class PreviewInvalidUrlError extends Schema.TaggedErrorClass<PreviewInval
   }
 }
 
-export const PreviewError = Schema.Union([
-  PreviewSessionLookupError,
-  PreviewInvalidUrlError,
-]);
+export const PreviewError = Schema.Union([PreviewSessionLookupError, PreviewInvalidUrlError]);
 export type PreviewError = typeof PreviewError.Type;
 ```
 
@@ -360,9 +357,9 @@ const STATIC_KEYBINDING_COMMANDS = [
   "terminal.new",
   "terminal.close",
   "diff.toggle",
-  "preview.toggle",      // NEW
-  "preview.refresh",     // NEW
-  "preview.focusUrl",    // NEW
+  "preview.toggle", // NEW
+  "preview.refresh", // NEW
+  "preview.focusUrl", // NEW
   "commandPalette.toggle",
   "chat.new",
   "chat.newLocal",
@@ -399,28 +396,21 @@ import {
 } from "@t3tools/contracts";
 
 export interface PreviewManagerShape {
-  readonly open: (
-    input: PreviewOpenInput,
-  ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
+  readonly open: (input: PreviewOpenInput) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
   readonly navigate: (
     input: PreviewNavigateInput,
   ) => Effect.Effect<PreviewSessionSnapshot, PreviewError>;
-  readonly refresh: (
-    input: PreviewRefreshInput,
-  ) => Effect.Effect<void, PreviewError>;
+  readonly refresh: (input: PreviewRefreshInput) => Effect.Effect<void, PreviewError>;
   readonly close: (input: PreviewCloseInput) => Effect.Effect<void, PreviewError>;
-  readonly list: (
-    threadId: string,
-  ) => Effect.Effect<ReadonlyArray<PreviewSessionSnapshot>>;
+  readonly list: (threadId: string) => Effect.Effect<ReadonlyArray<PreviewSessionSnapshot>>;
   readonly subscribe: (
     listener: (event: PreviewEvent) => Effect.Effect<void>,
   ) => Effect.Effect<() => void>;
 }
 
-export class PreviewManager extends Context.Service<
-  PreviewManager,
-  PreviewManagerShape
->()("t3/preview/Services/Manager/PreviewManager") {}
+export class PreviewManager extends Context.Service<PreviewManager, PreviewManagerShape>()(
+  "t3/preview/Services/Manager/PreviewManager",
+) {}
 ```
 
 ### `apps/server/src/preview/Layers/Manager.ts`
@@ -435,15 +425,12 @@ const normalizeUrl = (input: string) =>
     const trimmed = input.trim();
     if (!trimmed) throw new Error("empty");
     // localhost stays http unless explicitly https
-    const useHttp =
-      /^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:|\/|$)/.test(trimmed);
+    const useHttp = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:|\/|$)/.test(trimmed);
     const parsed = urlParseLax(trimmed, { https: !useHttp });
     if (!parsed?.href) throw new Error("unparseable");
     return parsed.href;
   }).pipe(
-    Effect.catchAll((cause) =>
-      Effect.fail(new PreviewInvalidUrlError({ rawUrl: input, cause })),
-    ),
+    Effect.catchAll((cause) => Effect.fail(new PreviewInvalidUrlError({ rawUrl: input, cause }))),
   );
 ```
 
@@ -513,14 +500,19 @@ export class PreviewViewManager {
     this.mainWindow = window;
   }
 
-  getPreloadPath(): string { return this.preloadPath; }
-  getBrowserPartition(): string { return PREVIEW_PARTITION; }
+  getPreloadPath(): string {
+    return this.preloadPath;
+  }
+  getBrowserPartition(): string {
+    return PREVIEW_PARTITION;
+  }
 
   getBrowserSession(): Session {
     if (this.browserSession) return this.browserSession;
     const sess = session.fromPartition(PREVIEW_PARTITION);
     // strip electron/t3code from UA so dev preview doesn't trip bot detection
-    const ua = sess.getUserAgent()
+    const ua = sess
+      .getUserAgent()
       .replace(/Electron\/[\d.]+ /, "")
       .replace(/\s*t3code\/[\d.]+/, "");
     sess.setUserAgent(ua);
@@ -593,9 +585,15 @@ export class PreviewViewManager {
     await wc.loadURL(url);
   }
 
-  goBack(tabId: string): void { this.requireWebContents(tabId).navigationHistory.goBack(); }
-  goForward(tabId: string): void { this.requireWebContents(tabId).navigationHistory.goForward(); }
-  refresh(tabId: string): void { this.requireWebContents(tabId).reload(); }
+  goBack(tabId: string): void {
+    this.requireWebContents(tabId).navigationHistory.goBack();
+  }
+  goForward(tabId: string): void {
+    this.requireWebContents(tabId).navigationHistory.goForward();
+  }
+  refresh(tabId: string): void {
+    this.requireWebContents(tabId).reload();
+  }
 
   onStateChange(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -656,16 +654,17 @@ export class PreviewViewManager {
     if (input.type !== "keyDown") return false;
     // Mirror the t3code keybinding defaults that should always reach the main window.
     const SHORTCUTS = [
-      { key: "j", meta: true, shift: true },     // preview.toggle
-      { key: "k", meta: true, shift: false },    // commandPalette.toggle
-      { key: ",", meta: true, shift: false },    // settings
-      { key: "w", meta: true, shift: false },    // close
+      { key: "j", meta: true, shift: true }, // preview.toggle
+      { key: "k", meta: true, shift: false }, // commandPalette.toggle
+      { key: ",", meta: true, shift: false }, // settings
+      { key: "w", meta: true, shift: false }, // close
       // future: terminal.* if user wants them while preview focused
     ];
-    return SHORTCUTS.some((s) =>
-      s.key.toLowerCase() === input.key.toLowerCase()
-        && s.meta === input.meta
-        && s.shift === input.shift,
+    return SHORTCUTS.some(
+      (s) =>
+        s.key.toLowerCase() === input.key.toLowerCase() &&
+        s.meta === input.meta &&
+        s.shift === input.shift,
     );
   }
 
@@ -704,9 +703,9 @@ export class PreviewViewManager {
     const trimmed = input.trim();
     if (!trimmed) throw new PreviewInvalidUrlError(input);
     const useHttp = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:|\/|$)/.test(trimmed);
-    const parsed = new URL(trimmed.includes("://")
-      ? trimmed
-      : `${useHttp ? "http" : "https"}://${trimmed}`);
+    const parsed = new URL(
+      trimmed.includes("://") ? trimmed : `${useHttp ? "http" : "https"}://${trimmed}`,
+    );
     return parsed.href;
   }
 }
@@ -716,9 +715,15 @@ export class PreviewTabNotFoundError extends Error {
     super(`Preview tab not found: ${tabId}`);
   }
 }
-export class PreviewWebContentsNotFoundError extends Error { /* … */ }
-export class PreviewWebviewNotInitializedError extends Error { /* … */ }
-export class PreviewInvalidUrlError extends Error { /* … */ }
+export class PreviewWebContentsNotFoundError extends Error {
+  /* … */
+}
+export class PreviewWebviewNotInitializedError extends Error {
+  /* … */
+}
+export class PreviewInvalidUrlError extends Error {
+  /* … */
+}
 
 export const previewViewManager = new PreviewViewManager();
 ```
@@ -734,18 +739,20 @@ previewViewManager.setMainWindow(mainWindow);
 Register IPC handlers (in `registerIpcHandlers()`):
 
 ```ts
-ipcMain.handle("preview:createTab", (_e, tabId: string) =>
-  previewViewManager.createTab(tabId));
-ipcMain.handle("preview:closeTab", (_e, tabId: string) =>
-  previewViewManager.closeTab(tabId));
+ipcMain.handle("preview:createTab", (_e, tabId: string) => previewViewManager.createTab(tabId));
+ipcMain.handle("preview:closeTab", (_e, tabId: string) => previewViewManager.closeTab(tabId));
 ipcMain.handle("preview:setVisibility", (_e, tabId: string, visible: boolean) =>
-  previewViewManager.setVisibility(tabId, visible));
+  previewViewManager.setVisibility(tabId, visible),
+);
 ipcMain.handle("preview:registerWebview", (_e, tabId: string, wcId: number) =>
-  previewViewManager.registerWebview(tabId, wcId));
+  previewViewManager.registerWebview(tabId, wcId),
+);
 ipcMain.handle("preview:unregisterWebview", (_e, tabId: string) =>
-  previewViewManager.unregisterWebview(tabId));
+  previewViewManager.unregisterWebview(tabId),
+);
 ipcMain.handle("preview:navigate", (_e, tabId: string, url: string) =>
-  previewViewManager.navigate(tabId, url));
+  previewViewManager.navigate(tabId, url),
+);
 ipcMain.handle("preview:goBack", (_e, tabId: string) => previewViewManager.goBack(tabId));
 ipcMain.handle("preview:goForward", (_e, tabId: string) => previewViewManager.goForward(tabId));
 ipcMain.handle("preview:refresh", (_e, tabId: string) => previewViewManager.refresh(tabId));
@@ -776,16 +783,13 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke("preview:setVisibility", tabId, visible),
     registerWebview: (tabId: string, wcId: number) =>
       ipcRenderer.invoke("preview:registerWebview", tabId, wcId),
-    unregisterWebview: (tabId: string) =>
-      ipcRenderer.invoke("preview:unregisterWebview", tabId),
-    navigate: (tabId: string, url: string) =>
-      ipcRenderer.invoke("preview:navigate", tabId, url),
+    unregisterWebview: (tabId: string) => ipcRenderer.invoke("preview:unregisterWebview", tabId),
+    navigate: (tabId: string, url: string) => ipcRenderer.invoke("preview:navigate", tabId, url),
     goBack: (tabId: string) => ipcRenderer.invoke("preview:goBack", tabId),
     goForward: (tabId: string) => ipcRenderer.invoke("preview:goForward", tabId),
     refresh: (tabId: string) => ipcRenderer.invoke("preview:refresh", tabId),
     getPreloadPath: (): Promise<string> => ipcRenderer.invoke("preview:getPreloadPath"),
-    getBrowserPartition: (): Promise<string> =>
-      ipcRenderer.invoke("preview:getBrowserPartition"),
+    getBrowserPartition: (): Promise<string> => ipcRenderer.invoke("preview:getBrowserPartition"),
     onStateChange: (cb: (tabId: string, state: DesktopPreviewTabState) => void) => {
       const listener = (_e: unknown, tabId: string, state: DesktopPreviewTabState) =>
         cb(tabId, state);
@@ -1096,14 +1100,14 @@ Adding `preview.toggle`, `preview.refresh`, `preview.focusUrl` to `STATIC_KEYBIN
 
 Following t3code's vitest patterns (`bun run test`, never `bun test`):
 
-| Test file | What it covers |
-|---|---|
-| `packages/contracts/src/preview.test.ts` | Schema encode/decode round-trips for inputs, snapshot, events; URL trimming; error tagged unions |
-| `apps/server/src/preview/Layers/Manager.test.ts` | `open` creates session and emits `opened`; `navigate` updates and emits `navigated`; `close` removes and emits `closed`; subscribers receive monotonic events; `list` returns sorted snapshots |
-| `apps/web/src/previewStateStore.test.ts` | `applyServerEvent` reducer correctness; ring buffer cap; `closed` removes entry; `desktopOverlay` is independent of snapshot fields |
-| `apps/web/src/rightPanelStore.test.ts` | `open` / `close` / `toggle` semantics; per-thread isolation; `?diff=1` sync compatibility |
-| `apps/web/src/components/preview/PreviewView.test.ts` (logic-only via `PreviewView.logic.ts` extraction) | URL bar input → navigation; navigation button enabled-state derivation; visibility toggle on panel hide |
-| Existing `ThreadTerminalDrawer.test.ts` | Add a case: link activation with `kind: "url"` and `previewable: true` shows the context menu (mock `localApi.contextMenu.show`) |
+| Test file                                                                                                | What it covers                                                                                                                                                                                 |
+| -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/contracts/src/preview.test.ts`                                                                 | Schema encode/decode round-trips for inputs, snapshot, events; URL trimming; error tagged unions                                                                                               |
+| `apps/server/src/preview/Layers/Manager.test.ts`                                                         | `open` creates session and emits `opened`; `navigate` updates and emits `navigated`; `close` removes and emits `closed`; subscribers receive monotonic events; `list` returns sorted snapshots |
+| `apps/web/src/previewStateStore.test.ts`                                                                 | `applyServerEvent` reducer correctness; ring buffer cap; `closed` removes entry; `desktopOverlay` is independent of snapshot fields                                                            |
+| `apps/web/src/rightPanelStore.test.ts`                                                                   | `open` / `close` / `toggle` semantics; per-thread isolation; `?diff=1` sync compatibility                                                                                                      |
+| `apps/web/src/components/preview/PreviewView.test.ts` (logic-only via `PreviewView.logic.ts` extraction) | URL bar input → navigation; navigation button enabled-state derivation; visibility toggle on panel hide                                                                                        |
+| Existing `ThreadTerminalDrawer.test.ts`                                                                  | Add a case: link activation with `kind: "url"` and `previewable: true` shows the context menu (mock `localApi.contextMenu.show`)                                                               |
 
 Manual smoke checklist (drop in `apps/desktop/test/smoke/`):
 
@@ -1120,15 +1124,15 @@ Manual smoke checklist (drop in `apps/desktop/test/smoke/`):
 
 ## 12. Risks and resolutions
 
-| Risk | Resolution |
-|---|---|
-| Hidden `<webview>` GPU cost when keeping multiple threads' previews mounted | v1 only mounts the active thread's preview. v2 can adopt the `PersistentThreadTerminalDrawer` pattern + `setVisibility` |
-| `<webview>` keyboard capture eats `mod+shift+j` etc. | `before-input-event` forwarder in `PreviewViewManager` (mirror of ami's pattern, smaller shortcut list) |
-| URL with `X-Frame-Options: DENY` works fine in `<webview>` (good — that's why we picked `<webview>` over iframe) | n/a |
-| Server restart while desktop is alive: `<webview>` is still loaded but server has no record | On WS reconnect, web side sends a `preview.list(threadId)` and if empty, sends a `preview.open(...)` to re‑register the current URL. Add a small `useReconciliation` effect in `PreviewView.tsx` |
-| Renderer process renders something into `<webview>` but never registered → orphaned tab in `PreviewViewManager` | `closeTab` is idempotent; on `<webview>` unmount, `unregisterWebview` is called; if that didn't fire (crash), the next `createTab` for the same `tabId` reuses the record |
-| `autoOpenPreview` racing with terminal output (URL might not be in stdout yet by the time the script "starts") | Two‑phase: if `script.previewUrl` is set, open eagerly with that URL. If not set but `autoOpenPreview === true`, watch terminal output via existing `terminal-links` extraction and open the first `previewable` URL within a 60s window |
-| Multiple windows of the desktop both rendering the same `<webview>` for the same thread | `<webview>` is per‑renderer; each window creates its own. The shared `persist:t3code-preview` partition keeps cookies in sync. Server records the last navigation URL but doesn't enforce single‑renderer |
+| Risk                                                                                                             | Resolution                                                                                                                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Hidden `<webview>` GPU cost when keeping multiple threads' previews mounted                                      | v1 only mounts the active thread's preview. v2 can adopt the `PersistentThreadTerminalDrawer` pattern + `setVisibility`                                                                                                                  |
+| `<webview>` keyboard capture eats `mod+shift+j` etc.                                                             | `before-input-event` forwarder in `PreviewViewManager` (mirror of ami's pattern, smaller shortcut list)                                                                                                                                  |
+| URL with `X-Frame-Options: DENY` works fine in `<webview>` (good — that's why we picked `<webview>` over iframe) | n/a                                                                                                                                                                                                                                      |
+| Server restart while desktop is alive: `<webview>` is still loaded but server has no record                      | On WS reconnect, web side sends a `preview.list(threadId)` and if empty, sends a `preview.open(...)` to re‑register the current URL. Add a small `useReconciliation` effect in `PreviewView.tsx`                                         |
+| Renderer process renders something into `<webview>` but never registered → orphaned tab in `PreviewViewManager`  | `closeTab` is idempotent; on `<webview>` unmount, `unregisterWebview` is called; if that didn't fire (crash), the next `createTab` for the same `tabId` reuses the record                                                                |
+| `autoOpenPreview` racing with terminal output (URL might not be in stdout yet by the time the script "starts")   | Two‑phase: if `script.previewUrl` is set, open eagerly with that URL. If not set but `autoOpenPreview === true`, watch terminal output via existing `terminal-links` extraction and open the first `previewable` URL within a 60s window |
+| Multiple windows of the desktop both rendering the same `<webview>` for the same thread                          | `<webview>` is per‑renderer; each window creates its own. The shared `persist:t3code-preview` partition keeps cookies in sync. Server records the last navigation URL but doesn't enforce single‑renderer                                |
 
 ---
 
@@ -1155,38 +1159,43 @@ Any of these can land in follow-up PRs against the same `PreviewViewManager` + `
 
 Every visible element below is built on existing components. No new design primitives are introduced. References below are to the `apps/web/src/components/ui/` directory.
 
-| Need | Primitive | File ref | Notes |
-|---|---|---|---|
-| Theme colors / radii | CSS vars `--background`, `--card`, `--muted`, `--muted-foreground`, `--border`, `--input`, `--ring`, `--success`, etc. | `apps/web/src/index.css:86` | Light + `@variant dark` blocks. Always reference vars via tailwind utilities (`bg-card`, `text-muted-foreground`) — never hard‑code hex |
-| `cn` class merger | `cn(...inputs)` from `~/lib/utils` | `apps/web/src/lib/utils.ts:8` | Wraps `cx` + `tailwind-merge` |
-| Buttons (chrome bar back/fwd/refresh) | `Button` `variant="ghost"` `size="icon-xs"` | `apps/web/src/components/ui/button.tsx` | `icon-xs` is `size-7 rounded-md sm:size-6` — exactly the density in the screenshot |
-| Buttons (URL field submit) | `Button` `variant="outline"` `size="sm"` | same | Matches the "ProjectScript primary action" density already in `BranchToolbar` |
-| Button group (back / fwd / refresh as a unit) | `Group` + implicit segmenting (no `GroupSeparator`) | `apps/web/src/components/ui/group.tsx` | Group automatically removes outer borders between adjacent `[data-slot]` children |
-| URL input (chrome bar editable) | `InputGroup` + `InputGroupInput` + `InputGroupAddon align="inline-start"` (globe icon) | `apps/web/src/components/ui/input-group.tsx` | Click‑anywhere‑to‑focus already wired in `InputGroupAddon`'s `onMouseDown` |
-| URL input (chrome bar disabled / read‑only) | Same `InputGroup` with `disabled` on the input | same | Yields the muted look in the screenshot via `has-[input:disabled]:opacity-64` |
-| Tab strip cells | Plain `<button>` + `cn` — **not** `Tabs` (base‑ui Tabs is over‑featured for browser tabs); `Group` semantics differ | new file `PreviewTabStrip.tsx` | Same hover/active treatment as the sidebar's `ChatPreview` rows |
-| "Local" recommendation card | `Card` (no `CardHeader`/`CardPanel` — flat) | `apps/web/src/components/ui/card.tsx` | `Card` already gives `rounded-2xl border bg-card text-card-foreground shadow-xs/5` plus the inset stroke via `before:` |
-| Status pulse dot (running) | `<span>` with `bg-success` and `animate-pulse` | tailwind built‑in | Theme‑aware via `--success` |
-| Tooltips (back/fwd/refresh hover) | `Tooltip` + `TooltipTrigger` + `TooltipPopup` | `apps/web/src/components/ui/tooltip.tsx` | Sub‑200ms hover already configured |
-| Empty state title + description | `Empty`, `EmptyHeader`, `EmptyTitle`, `EmptyDescription`, `EmptyContent`, `EmptyMedia` | `apps/web/src/components/ui/empty.tsx` | `EmptyMedia variant="icon"` gives the stacked‑cards icon with side rotation we want for "no preview yet" |
-| Loading bar (top of webview while navigating) | Plain `<div>` with `bg-primary` + `transition-all` | n/a | Mirrors ami's loading bar (`browser-view.tsx:434`) — single‑pixel‑height div animating `width` |
-| Spinner (inline in URL field while loading) | `Spinner` | `apps/web/src/components/ui/spinner.tsx` | Wraps `Loader2Icon` from lucide |
-| Context menu (terminal link "Open in preview") | `localApi.contextMenu.show(...)` (already exists) | `apps/web/src/localApi.ts:58` | Native menu on desktop, fallback in `contextMenuFallback.ts` on web |
-| Keybinding shortcut label in tooltips | `shortcutLabelForCommand(keybindings, "preview.toggle")` | `apps/web/src/keybindings.ts` | Renders `⌘⇧J` etc. |
-| Right‑panel shell sizing | Match `DiffPanelShell` exactly: `w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border` | `apps/web/src/components/DiffPanelShell.tsx:32` | Single class string, do not reinvent |
+| Need                                           | Primitive                                                                                                              | File ref                                        | Notes                                                                                                                                   |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Theme colors / radii                           | CSS vars `--background`, `--card`, `--muted`, `--muted-foreground`, `--border`, `--input`, `--ring`, `--success`, etc. | `apps/web/src/index.css:86`                     | Light + `@variant dark` blocks. Always reference vars via tailwind utilities (`bg-card`, `text-muted-foreground`) — never hard‑code hex |
+| `cn` class merger                              | `cn(...inputs)` from `~/lib/utils`                                                                                     | `apps/web/src/lib/utils.ts:8`                   | Wraps `cx` + `tailwind-merge`                                                                                                           |
+| Buttons (chrome bar back/fwd/refresh)          | `Button` `variant="ghost"` `size="icon-xs"`                                                                            | `apps/web/src/components/ui/button.tsx`         | `icon-xs` is `size-7 rounded-md sm:size-6` — exactly the density in the screenshot                                                      |
+| Buttons (URL field submit)                     | `Button` `variant="outline"` `size="sm"`                                                                               | same                                            | Matches the "ProjectScript primary action" density already in `BranchToolbar`                                                           |
+| Button group (back / fwd / refresh as a unit)  | `Group` + implicit segmenting (no `GroupSeparator`)                                                                    | `apps/web/src/components/ui/group.tsx`          | Group automatically removes outer borders between adjacent `[data-slot]` children                                                       |
+| URL input (chrome bar editable)                | `InputGroup` + `InputGroupInput` + `InputGroupAddon align="inline-start"` (globe icon)                                 | `apps/web/src/components/ui/input-group.tsx`    | Click‑anywhere‑to‑focus already wired in `InputGroupAddon`'s `onMouseDown`                                                              |
+| URL input (chrome bar disabled / read‑only)    | Same `InputGroup` with `disabled` on the input                                                                         | same                                            | Yields the muted look in the screenshot via `has-[input:disabled]:opacity-64`                                                           |
+| Tab strip cells                                | Plain `<button>` + `cn` — **not** `Tabs` (base‑ui Tabs is over‑featured for browser tabs); `Group` semantics differ    | new file `PreviewTabStrip.tsx`                  | Same hover/active treatment as the sidebar's `ChatPreview` rows                                                                         |
+| "Local" recommendation card                    | `Card` (no `CardHeader`/`CardPanel` — flat)                                                                            | `apps/web/src/components/ui/card.tsx`           | `Card` already gives `rounded-2xl border bg-card text-card-foreground shadow-xs/5` plus the inset stroke via `before:`                  |
+| Status pulse dot (running)                     | `<span>` with `bg-success` and `animate-pulse`                                                                         | tailwind built‑in                               | Theme‑aware via `--success`                                                                                                             |
+| Tooltips (back/fwd/refresh hover)              | `Tooltip` + `TooltipTrigger` + `TooltipPopup`                                                                          | `apps/web/src/components/ui/tooltip.tsx`        | Sub‑200ms hover already configured                                                                                                      |
+| Empty state title + description                | `Empty`, `EmptyHeader`, `EmptyTitle`, `EmptyDescription`, `EmptyContent`, `EmptyMedia`                                 | `apps/web/src/components/ui/empty.tsx`          | `EmptyMedia variant="icon"` gives the stacked‑cards icon with side rotation we want for "no preview yet"                                |
+| Loading bar (top of webview while navigating)  | Plain `<div>` with `bg-primary` + `transition-all`                                                                     | n/a                                             | Mirrors ami's loading bar (`browser-view.tsx:434`) — single‑pixel‑height div animating `width`                                          |
+| Spinner (inline in URL field while loading)    | `Spinner`                                                                                                              | `apps/web/src/components/ui/spinner.tsx`        | Wraps `Loader2Icon` from lucide                                                                                                         |
+| Context menu (terminal link "Open in preview") | `localApi.contextMenu.show(...)` (already exists)                                                                      | `apps/web/src/localApi.ts:58`                   | Native menu on desktop, fallback in `contextMenuFallback.ts` on web                                                                     |
+| Keybinding shortcut label in tooltips          | `shortcutLabelForCommand(keybindings, "preview.toggle")`                                                               | `apps/web/src/keybindings.ts`                   | Renders `⌘⇧J` etc.                                                                                                                      |
+| Right‑panel shell sizing                       | Match `DiffPanelShell` exactly: `w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border`                 | `apps/web/src/components/DiffPanelShell.tsx:32` | Single class string, do not reinvent                                                                                                    |
 
 **Icons.** Use `lucide-react` everywhere (already in `package.json`). The exact icons we need:
 
 ```ts
 import {
-  ArrowLeft, ArrowRight,            // back / forward
-  RotateCw, Loader2,                // refresh / spinning
-  Globe,                            // favicon fallback
-  X,                                // close tab
-  Plus,                             // new tab
-  Copy, ExternalLink,               // open in browser, copy URL
-  Sidebar, Columns2,                // right‑side toggles in tab strip (matches screenshot 2)
-  PanelRightOpen, PanelRightClose,  // alt for above
+  ArrowLeft,
+  ArrowRight, // back / forward
+  RotateCw,
+  Loader2, // refresh / spinning
+  Globe, // favicon fallback
+  X, // close tab
+  Plus, // new tab
+  Copy,
+  ExternalLink, // open in browser, copy URL
+  Sidebar,
+  Columns2, // right‑side toggles in tab strip (matches screenshot 2)
+  PanelRightOpen,
+  PanelRightClose, // alt for above
 } from "lucide-react";
 ```
 
@@ -1200,11 +1209,11 @@ import {
 
 Three states render inside `PreviewView.tsx` based on the `PreviewSession` for the active thread:
 
-| Session state | Component rendered |
-|---|---|
-| no tab open | `<PreviewEmptyState />` — disabled chrome row + "Local" recommendations |
-| tab loading / loaded | `<PreviewWebview />` + chrome row + tab strip |
-| tab navigation failed | `<PreviewUnreachable />` overlay above the webview |
+| Session state         | Component rendered                                                      |
+| --------------------- | ----------------------------------------------------------------------- |
+| no tab open           | `<PreviewEmptyState />` — disabled chrome row + "Local" recommendations |
+| tab loading / loaded  | `<PreviewWebview />` + chrome row + tab strip                           |
+| tab navigation failed | `<PreviewUnreachable />` overlay above the webview                      |
 
 ### 15.1 Empty state (`PreviewEmptyState.tsx`) — matches screenshot 1
 
@@ -1259,9 +1268,7 @@ export function PreviewEmptyState({ threadId, onOpen }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="px-6 pt-10 pb-4">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Local
-        </h2>
+        <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Local</h2>
       </div>
 
       {servers.length === 0 ? (
@@ -1308,10 +1315,7 @@ function LocalServerCard({
           {server.processName ?? `${server.host}:${server.port}`}
         </span>
       </div>
-      <span
-        className="size-2 shrink-0 rounded-full bg-success"
-        aria-label="Listening"
-      >
+      <span className="size-2 shrink-0 rounded-full bg-success" aria-label="Listening">
         <span className="block size-2 rounded-full bg-success animate-ping opacity-60" />
       </span>
     </Card>
@@ -1362,8 +1366,8 @@ The chrome row in the empty state — note the `disabled` props on every interac
   onForward={NOOP}
   onRefresh={NOOP}
   onSubmitUrl={(url) => api.preview.open({ threadId, url })}
-  inputDisabled={false}            // we still want to allow paste-to-open
-  buttonsDisabled                  // back/fwd/refresh are visually disabled
+  inputDisabled={false} // we still want to allow paste-to-open
+  buttonsDisabled // back/fwd/refresh are visually disabled
 />
 ```
 
@@ -1568,17 +1572,17 @@ When `navStatus._tag === "LoadFailed"`, render this instead of the failed `<webv
 
 Color mapping (Chromium → t3code theme):
 
-| Chromium | Tailwind/t3code |
-|---|---|
-| `--background-color: #fff` / `--google-gray-900` (dark) | `bg-background` |
-| `--text-color: --google-gray-700` / `--google-gray-500` (dark) | `text-muted-foreground` |
-| `--heading-color: --google-gray-900` / `--google-gray-500` (dark) | `text-foreground` |
-| `--error-code-color: --google-gray-700` / `--google-gray-500` (dark) | `text-muted-foreground/70` |
-| `--quiet-background-color: rgb(247,247,247)` / `--background` (dark) | `bg-muted/40` |
-| `--primary-button-fill-color: --google-blue-600` / `--google-blue-300` (dark) | `bg-primary text-primary-foreground` (theme primary is `oklch(0.488 0.217 264)` light / `oklch(0.588 0.217 264)` dark — a very close blue) |
-| `--secondary-button-*` | `Button variant="outline"` |
-| `--link-color: rgb(88,88,88)` / `--google-blue-300` (dark) | `text-primary underline-offset-4 hover:underline` |
-| Body font `system-ui, sans-serif; font-size: 75%` | We keep DM Sans (already in `apps/web/src/index.css:148`) and `text-sm` — the Chromium font tweak just compensates for their `html { font-size: 125% }` — we don't replicate that |
+| Chromium                                                                      | Tailwind/t3code                                                                                                                                                                   |
+| ----------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--background-color: #fff` / `--google-gray-900` (dark)                       | `bg-background`                                                                                                                                                                   |
+| `--text-color: --google-gray-700` / `--google-gray-500` (dark)                | `text-muted-foreground`                                                                                                                                                           |
+| `--heading-color: --google-gray-900` / `--google-gray-500` (dark)             | `text-foreground`                                                                                                                                                                 |
+| `--error-code-color: --google-gray-700` / `--google-gray-500` (dark)          | `text-muted-foreground/70`                                                                                                                                                        |
+| `--quiet-background-color: rgb(247,247,247)` / `--background` (dark)          | `bg-muted/40`                                                                                                                                                                     |
+| `--primary-button-fill-color: --google-blue-600` / `--google-blue-300` (dark) | `bg-primary text-primary-foreground` (theme primary is `oklch(0.488 0.217 264)` light / `oklch(0.588 0.217 264)` dark — a very close blue)                                        |
+| `--secondary-button-*`                                                        | `Button variant="outline"`                                                                                                                                                        |
+| `--link-color: rgb(88,88,88)` / `--google-blue-300` (dark)                    | `text-primary underline-offset-4 hover:underline`                                                                                                                                 |
+| Body font `system-ui, sans-serif; font-size: 75%`                             | We keep DM Sans (already in `apps/web/src/index.css:148`) and `text-sm` — the Chromium font tweak just compensates for their `html { font-size: 125% }` — we don't replicate that |
 
 Skeleton:
 
@@ -1592,7 +1596,7 @@ import { cn } from "~/lib/utils";
 
 interface Props {
   url: string;
-  errorCode: string;        // e.g. "ERR_NAME_NOT_RESOLVED", "ERR_CONNECTION_REFUSED"
+  errorCode: string; // e.g. "ERR_NAME_NOT_RESOLVED", "ERR_CONNECTION_REFUSED"
   description: string;
   onReload: () => void;
 }
@@ -1601,7 +1605,13 @@ const ICON_GENERIC = (
   // Replace with an inline SVG that matches the Chromium "icon-generic"
   // (a stylized broken page). For v1 a Lucide MapPinOff is a fine stand-in —
   // we want a visual that reads "destination unreachable".
-  <svg viewBox="0 0 64 64" className="size-10 text-muted-foreground/70" fill="none" stroke="currentColor" strokeWidth="2.5">
+  <svg
+    viewBox="0 0 64 64"
+    className="size-10 text-muted-foreground/70"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2.5"
+  >
     <path d="M16 12 L48 12 L48 52 L16 52 Z" />
     <path d="M22 22 L42 22 M22 30 L36 30 M22 38 L40 38" strokeLinecap="round" />
     <path d="M52 8 L12 56" strokeLinecap="round" />
@@ -1626,7 +1636,13 @@ export function PreviewUnreachable({ url, errorCode, description, onReload }: Pr
         {/* Summary — uses dangerouslySetInnerHTML only for the bold host treatment */}
         <p className="text-sm leading-relaxed text-muted-foreground">
           <strong className="font-semibold text-foreground">{host}</strong>
-          &rsquo;s server <abbr title="Domain Name System" className="cursor-help underline decoration-dotted underline-offset-2">DNS address</abbr>{" "}
+          &rsquo;s server{" "}
+          <abbr
+            title="Domain Name System"
+            className="cursor-help underline decoration-dotted underline-offset-2"
+          >
+            DNS address
+          </abbr>{" "}
           could not be found.
         </p>
 
@@ -1668,11 +1684,16 @@ export function PreviewUnreachable({ url, errorCode, description, onReload }: Pr
 }
 
 function safeHost(url: string): string | null {
-  try { return new URL(url).host; } catch { return null; }
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
 }
 ```
 
 The component intentionally:
+
 - Uses theme tokens only — looks correct in light + dark with no extra wiring.
 - Drops Chromium's "Diagnose connection" / "Portal sign-in" buttons (irrelevant in our shell).
 - Drops the dinosaur game (RIP).
@@ -1683,15 +1704,17 @@ The component intentionally:
 A 1.5px primary-colored bar that fills as the page loads, anchored to the bottom of the chrome row. Direct port of ami's pattern (`browser-view.tsx:434`):
 
 ```tsx
-{loadProgress > 0 && (
-  <div
-    className="pointer-events-none absolute bottom-0 left-0 z-10 h-0.5 rounded-full bg-primary transition-all duration-150 ease-out"
-    style={{
-      width: `${loadProgress}%`,
-      boxShadow: "0 0 6px 1px var(--ring)",
-    }}
-  />
-)}
+{
+  loadProgress > 0 && (
+    <div
+      className="pointer-events-none absolute bottom-0 left-0 z-10 h-0.5 rounded-full bg-primary transition-all duration-150 ease-out"
+      style={{
+        width: `${loadProgress}%`,
+        boxShadow: "0 0 6px 1px var(--ring)",
+      }}
+    />
+  );
+}
 ```
 
 Progress is computed locally with `useLoadingProgress(isLoading)` — same hook signature as ami's, ~30 lines.
@@ -1708,9 +1731,9 @@ The "Local" recommendations in §15.1 need a feed. New backend service.
 import { Context, Effect } from "effect";
 
 export interface DiscoveredLocalServer {
-  host: string;       // "localhost"
-  port: number;       // 5175
-  url: string;        // "http://localhost:5175"
+  host: string; // "localhost"
+  port: number; // 5175
+  url: string; // "http://localhost:5175"
   processName: string | null; // "node", "vite", "next-server"
   pid: number | null;
 }
@@ -1740,6 +1763,7 @@ Two strategies, picked at startup:
 2. **Fallback — TCP connect probe**: iterate a curated list of common dev ports `[3000, 3001, 3333, 4173, 4200, 4321, 5000, 5173, 5174, 5175, 5500, 8000, 8080, 8081, 8888, 9000]` against `127.0.0.1`, mark any that accepts a connection. Used on Windows and as the safety net if `lsof` is missing.
 
 Polling cadence:
+
 - When `retain()` count is 0 → not polling.
 - When ≥1 → poll every 3s. Diff against last result; only emit `subscribe` callbacks when the set differs.
 - `retain()` returns a release fn that decrements the counter; goes idle automatically when the empty state is hidden.
@@ -1762,20 +1786,20 @@ Deduped by URL string. Sort: configured > listening > recent. This yields the "s
 
 Append these to the file list:
 
-| File | Purpose |
-|---|---|
-| `apps/server/src/preview/Services/PortScanner.ts` | Service tag + interface |
-| `apps/server/src/preview/Layers/PortScanner.ts` | `lsof` strategy + TCP probe fallback + polling |
-| `apps/server/src/preview/Layers/PortScanner.test.ts` | Parser tests for `lsof -F pcn` output |
-| `apps/web/src/lib/favicon.ts` | `faviconUrlForOrigin(url, size)` helper |
-| `apps/web/src/components/preview/PreviewTabStrip.tsx` | Tab strip (screenshot 2) |
-| `apps/web/src/components/preview/TabFavicon.tsx` | Favicon `<img>` w/ `<Globe>` fallback |
-| `apps/web/src/components/preview/BrowserMockup.tsx` | Tiny tailwind browser thumbnail icon |
-| `apps/web/src/components/preview/PreviewLocalServerCard.tsx` | Card row for a discovered server |
-| `apps/web/src/components/preview/PreviewUnreachable.tsx` | 404.html rewritten in tailwind |
+| File                                                           | Purpose                                                                                                                          |
+| -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/server/src/preview/Services/PortScanner.ts`              | Service tag + interface                                                                                                          |
+| `apps/server/src/preview/Layers/PortScanner.ts`                | `lsof` strategy + TCP probe fallback + polling                                                                                   |
+| `apps/server/src/preview/Layers/PortScanner.test.ts`           | Parser tests for `lsof -F pcn` output                                                                                            |
+| `apps/web/src/lib/favicon.ts`                                  | `faviconUrlForOrigin(url, size)` helper                                                                                          |
+| `apps/web/src/components/preview/PreviewTabStrip.tsx`          | Tab strip (screenshot 2)                                                                                                         |
+| `apps/web/src/components/preview/TabFavicon.tsx`               | Favicon `<img>` w/ `<Globe>` fallback                                                                                            |
+| `apps/web/src/components/preview/BrowserMockup.tsx`            | Tiny tailwind browser thumbnail icon                                                                                             |
+| `apps/web/src/components/preview/PreviewLocalServerCard.tsx`   | Card row for a discovered server                                                                                                 |
+| `apps/web/src/components/preview/PreviewUnreachable.tsx`       | 404.html rewritten in tailwind                                                                                                   |
 | `apps/web/src/components/preview/useDiscoveredLocalServers.ts` | Hook subscribing to `EnvironmentApi.preview.subscribePorts` + merging in `recentUrlsFromTerminal` and `ProjectScript.previewUrl` |
-| `apps/web/src/components/preview/useLoadingProgress.ts` | 30-line progress simulator (port of ami's) |
-| `apps/web/src/components/preview/errorCodeMessages.ts` | `ERR_*` → human-readable description map |
+| `apps/web/src/components/preview/useLoadingProgress.ts`        | 30-line progress simulator (port of ami's)                                                                                       |
+| `apps/web/src/components/preview/errorCodeMessages.ts`         | `ERR_*` → human-readable description map                                                                                         |
 
 Update the contract additions in §4 to add:
 

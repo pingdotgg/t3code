@@ -268,6 +268,26 @@ function createMockEnvironmentApi(input: {
       subscribeThread: (() => () =>
         undefined) as EnvironmentApi["orchestration"]["subscribeThread"],
     },
+    preview: {
+      open: () => {
+        throw new Error("Not implemented in browser test.");
+      },
+      navigate: () => {
+        throw new Error("Not implemented in browser test.");
+      },
+      refresh: () => {
+        throw new Error("Not implemented in browser test.");
+      },
+      close: () => {
+        throw new Error("Not implemented in browser test.");
+      },
+      list: () => Promise.resolve({ sessions: [] }),
+      reportStatus: () => {
+        throw new Error("Not implemented in browser test.");
+      },
+      onEvent: () => () => undefined,
+      subscribePorts: () => () => undefined,
+    } as EnvironmentApi["preview"],
   };
 }
 
