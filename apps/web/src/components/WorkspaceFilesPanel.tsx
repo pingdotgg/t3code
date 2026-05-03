@@ -684,6 +684,48 @@ export function WorkspaceFilesPanel({
                 <DiffIcon className="size-3 fill-current" />
               </HeaderIconActionButton>
             ) : null}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <HeaderIconActionButton
+                    pressed={previewOpen}
+                    onClick={togglePreviewVisibility}
+                    aria-label="Toggle preview drawer"
+                    title="Toggle preview drawer"
+                    disabled={!previewAvailable}
+                  >
+                    <PreviewTriggerIcon className="size-3" />
+                  </HeaderIconActionButton>
+                }
+              />
+              <TooltipPopup side="bottom">
+                {!previewAvailable
+                  ? "Preview is unavailable until this thread has an active project."
+                  : "Toggle component preview drawer"}
+              </TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <HeaderIconActionButton
+                    pressed={terminalOpen}
+                    onClick={toggleTerminalVisibility}
+                    aria-label="Toggle terminal drawer"
+                    title="Toggle terminal drawer"
+                    disabled={!terminalAvailable}
+                  >
+                    <TerminalToggleIcon className="size-3" />
+                  </HeaderIconActionButton>
+                }
+              />
+              <TooltipPopup side="bottom">
+                {!terminalAvailable
+                  ? "Terminal is unavailable until this thread has an active project."
+                  : terminalToggleShortcutLabel
+                    ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
+                    : "Toggle terminal drawer"}
+              </TooltipPopup>
+            </Tooltip>
             <div className="min-w-0 flex-1">
               {editorVisible && editorFilePath ? (
                 <div className="flex min-w-0 items-center gap-1 overflow-x-auto py-0.5">
@@ -748,48 +790,6 @@ export function WorkspaceFilesPanel({
                   </Toggle>
                 </>
               ) : null}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <HeaderIconActionButton
-                      pressed={previewOpen}
-                      onClick={togglePreviewVisibility}
-                      aria-label="Toggle preview drawer"
-                      title="Toggle preview drawer"
-                      disabled={!previewAvailable}
-                    >
-                      <PreviewTriggerIcon className="size-3" />
-                    </HeaderIconActionButton>
-                  }
-                />
-                <TooltipPopup side="bottom">
-                  {!previewAvailable
-                    ? "Preview is unavailable until this thread has an active project."
-                    : "Toggle component preview drawer"}
-                </TooltipPopup>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <HeaderIconActionButton
-                      pressed={terminalOpen}
-                      onClick={toggleTerminalVisibility}
-                      aria-label="Toggle terminal drawer"
-                      title="Toggle terminal drawer"
-                      disabled={!terminalAvailable}
-                    >
-                      <TerminalToggleIcon className="size-3" />
-                    </HeaderIconActionButton>
-                  }
-                />
-                <TooltipPopup side="bottom">
-                  {!terminalAvailable
-                    ? "Terminal is unavailable until this thread has an active project."
-                    : terminalToggleShortcutLabel
-                      ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
-                      : "Toggle terminal drawer"}
-                </TooltipPopup>
-              </Tooltip>
               {editorVisible && editorFilePath ? (
                 <>
                   <Button
