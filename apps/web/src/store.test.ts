@@ -1015,4 +1015,84 @@ describe("incremental orchestration updates", () => {
     });
     expect(threadsOf(next)[0]?.latestTurn?.sourceProposedPlan).toBeUndefined();
   });
+
+  it("retains first turn messages when reverting single-turn conversation (turnCount=0)", () => {
+    const state = makeState(
+      makeThread({
+        messages: [
+          {
+            id: MessageId.make("user-1"),
+            role: "user",
+            text: "hello",
+            turnId: TurnId.make("turn-1"),
+            createdAt: "2026-02-27T00:00:00.000Z",
+            completedAt: "2026-02-27T00:00:00.000Z",
+            streaming: false,
+          },
+          {
+            id: MessageId.make("assistant-1"),
+            role: "assistant",
+            text: "hi there",
+            turnId: TurnId.make("turn-1"),
+            createdAt: "2026-02-27T00:00:01.000Z",
+            completedAt: "2026-02-27T00:00:01.000Z",
+            streaming: false,
+          },
+        ],
+        proposedPlans: [
+          {
+            id: "plan-1",
+            turnId: TurnId.make("turn-1"),
+            planMarkdown: "plan 1",
+            implementedAt: null,
+            implementationThreadId: null,
+            createdAt: "2026-02-27T00:00:00.000Z",
+            updatedAt: "2026-02-27T00:00:00.000Z",
+          },
+        ],
+        activities: [
+          {
+            id: EventId.make("activity-1"),
+            tone: "info",
+            kind: "step",
+            summary: "step one",
+            payload: {},
+            turnId: TurnId.make("turn-1"),
+            createdAt: "2026-02-27T00:00:00.000Z",
+          },
+        ],
+        turnDiffSummaries: [
+          {
+            turnId: TurnId.make("turn-1"),
+            completedAt: "2026-02-27T00:00:01.000Z",
+            status: "ready",
+            checkpointTurnCount: 1,
+            checkpointRef: CheckpointRef.make("ref-1"),
+            files: [],
+          },
+        ],
+      }),
+    );
+
+    const next = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.reverted", {
+        threadId: ThreadId.make("thread-1"),
+        turnCount: 0,
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(next)[0]?.messages.map((message) => message.id)).toEqual([
+      "user-1",
+      "assistant-1",
+    ]);
+    expect(threadsOf(next)[0]?.proposedPlans.map((plan) => plan.id)).toEqual(["plan-1"]);
+    expect(threadsOf(next)[0]?.activities.map((activity) => activity.id)).toEqual([
+      EventId.make("activity-1"),
+    ]);
+    expect(threadsOf(next)[0]?.turnDiffSummaries.map((summary) => summary.turnId)).toEqual([
+      TurnId.make("turn-1"),
+    ]);
+  });
 });

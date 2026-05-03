@@ -1562,11 +1562,12 @@ function applyEnvironmentOrchestrationEvent(
 
     case "thread.reverted":
       return updateThreadState(state, event.payload.threadId, (thread) => {
+        const effectiveTurnCount = Math.max(1, event.payload.turnCount);
         const turnDiffSummaries = thread.turnDiffSummaries
           .filter(
             (entry) =>
               entry.checkpointTurnCount !== undefined &&
-              entry.checkpointTurnCount <= event.payload.turnCount,
+              entry.checkpointTurnCount <= effectiveTurnCount,
           )
           .toSorted(
             (left, right) =>
@@ -1578,7 +1579,7 @@ function applyEnvironmentOrchestrationEvent(
         const messages = retainThreadMessagesAfterRevert(
           thread.messages,
           retainedTurnIds,
-          event.payload.turnCount,
+          effectiveTurnCount,
         ).slice(-MAX_THREAD_MESSAGES);
         const proposedPlans = retainThreadProposedPlansAfterRevert(
           thread.proposedPlans,

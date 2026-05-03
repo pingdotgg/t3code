@@ -74,6 +74,7 @@ import {
 } from "../pendingUserInput";
 import {
   selectProjectsAcrossEnvironments,
+  selectThreadByRef,
   selectThreadsAcrossEnvironments,
   useStore,
 } from "../store";
@@ -2379,6 +2380,17 @@ export default function ChatView(props: ChatViewProps) {
           turnCount,
           createdAt: new Date().toISOString(),
         });
+
+        const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+        const updatedThread = selectThreadByRef(useStore.getState(), threadRef);
+        if (updatedThread && promptRef.current.trim().length === 0) {
+          const lastUserMessage = [...updatedThread.messages]
+            .reverse()
+            .find((m) => m.role === "user");
+          if (lastUserMessage) {
+            setComposerDraftPrompt(composerDraftTarget, lastUserMessage.text);
+          }
+        }
       } catch (err) {
         setThreadError(
           activeThread.id,
@@ -2389,11 +2401,13 @@ export default function ChatView(props: ChatViewProps) {
     },
     [
       activeThread,
+      composerDraftTarget,
       environmentId,
       isConnecting,
       isRevertingCheckpoint,
       isSendBusy,
       phase,
+      setComposerDraftPrompt,
       setThreadError,
     ],
   );

@@ -575,15 +575,16 @@ export function projectEvent(
             return nextBase;
           }
 
+          const effectiveTurnCount = Math.max(1, payload.turnCount);
           const checkpoints = thread.checkpoints
-            .filter((entry) => entry.checkpointTurnCount <= payload.turnCount)
+            .filter((entry) => entry.checkpointTurnCount <= effectiveTurnCount)
             .toSorted((left, right) => left.checkpointTurnCount - right.checkpointTurnCount)
             .slice(-MAX_THREAD_CHECKPOINTS);
           const retainedTurnIds = new Set(checkpoints.map((checkpoint) => checkpoint.turnId));
           const messages = retainThreadMessagesAfterRevert(
             thread.messages,
             retainedTurnIds,
-            payload.turnCount,
+            effectiveTurnCount,
           ).slice(-MAX_THREAD_MESSAGES);
           const proposedPlans = retainThreadProposedPlansAfterRevert(
             thread.proposedPlans,
