@@ -17,7 +17,14 @@ import {
   type SandboxProvider,
 } from "@t3tools/sandbox";
 import { Effect } from "effect";
-import { ModalClient, Probe, type Image, type Sandbox, type SandboxCreateParams } from "modal";
+import {
+  ModalClient,
+  NotFoundError,
+  Probe,
+  type Image,
+  type Sandbox,
+  type SandboxCreateParams,
+} from "modal";
 
 export interface ModalSandboxRuntimeConfig {
   readonly appName: string;
@@ -37,6 +44,7 @@ export interface ModalSandboxClient {
     readonly sandboxName: string;
     readonly environment?: string | undefined;
     readonly secretNames?: ReadonlyArray<string> | undefined;
+    readonly imageDockerfileCommands?: ReadonlyArray<string> | undefined;
     readonly params: SandboxCreateParams;
     readonly tags: Record<string, string>;
   }) => Promise<{
@@ -54,7 +62,7 @@ const DEFAULT_WORKDIR = "/workspace/t3code";
 const DEFAULT_COMMAND = [
   "sh",
   "-lc",
-  "bun run start --host 0.0.0.0 --port ${T3_RUNTIME_PORT:-8787}",
+  "node /app/apps/server/dist/bin.mjs serve --host 0.0.0.0 --port ${T3_RUNTIME_PORT:-8787} --base-dir ${T3CODE_HOME:-/var/lib/t3code} --no-browser ${T3_RUNTIME_WORKSPACE:-/workspace/t3code}",
 ] as const;
 
 function splitCommand(value: string | undefined): ReadonlyArray<string> | undefined {
@@ -62,6 +70,20 @@ function splitCommand(value: string | undefined): ReadonlyArray<string> | undefi
     return undefined;
   }
   return ["sh", "-lc", value.trim()];
+}
+
+function parseDockerfileCommands(value: string | undefined): ReadonlyArray<string> | undefined {
+  if (value === undefined || value.trim() === "") {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.every((item) => typeof item === "string")
+      ? parsed
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function positiveOrDefault(value: number | undefined, fallback: number): number {
@@ -95,11 +117,13 @@ function toSandboxCreateParams(input: {
   readonly config: ModalSandboxRuntimeConfig;
   readonly resources?: SandboxResourceSpec | undefined;
 }): SandboxCreateParams {
+  const sharedSecret = process.env.T3_EXECUTION_BRIDGE_SHARED_SECRET?.trim();
   return {
     command: [...input.config.command],
     workdir: input.config.workdir,
     env: {
       T3_RUNTIME_PORT: String(input.config.runtimePort),
+      ...(sharedSecret ? { T3_EXECUTION_BRIDGE_SHARED_SECRET: sharedSecret } : {}),
     },
     encryptedPorts: [input.config.runtimePort],
     readinessProbe: Probe.withTcp(input.config.runtimePort),
@@ -188,17 +212,35 @@ export class ModalSdkSandboxClient implements ModalSandboxClient {
     readonly sandboxName: string;
     readonly environment?: string | undefined;
     readonly secretNames?: ReadonlyArray<string> | undefined;
+    readonly imageDockerfileCommands?: ReadonlyArray<string> | undefined;
     readonly params: SandboxCreateParams;
     readonly tags: Record<string, string>;
   }) {
     const modal = new ModalClient(input.environment ? { environment: input.environment } : {});
-    let sandbox: Sandbox;
+    let sandbox: Sandbox | undefined;
     try {
+      sandbox = await modal.sandboxes.fromName(
+        input.appName,
+        input.sandboxName,
+        input.environment !== undefined ? { environment: input.environment } : undefined,
+      );
+    } catch (error) {
+      if (!(error instanceof NotFoundError)) {
+        throw error;
+      }
+    }
+
+    if (sandbox === undefined) {
       const app = await modal.apps.fromName(input.appName, {
         createIfMissing: true,
         ...(input.environment !== undefined ? { environment: input.environment } : {}),
       });
-      const image: Image = modal.images.fromRegistry(input.imageTag);
+      const baseImage: Image = modal.images.fromRegistry(input.imageTag);
+      const buildCommands =
+        input.imageDockerfileCommands ??
+        parseDockerfileCommands(process.env.T3_MODAL_IMAGE_DOCKERFILE_COMMANDS_JSON);
+      const image =
+        buildCommands !== undefined ? baseImage.dockerfileCommands([...buildCommands]) : baseImage;
       const secrets =
         input.secretNames !== undefined
           ? await Promise.all(input.secretNames.map((name) => modal.secrets.fromName(name)))
@@ -208,12 +250,6 @@ export class ModalSdkSandboxClient implements ModalSandboxClient {
         name: input.sandboxName,
         ...(secrets !== undefined ? { secrets } : {}),
       });
-    } catch {
-      sandbox = await modal.sandboxes.fromName(
-        input.appName,
-        input.sandboxName,
-        input.environment !== undefined ? { environment: input.environment } : undefined,
-      );
     }
 
     await sandbox.setTags(input.tags);
@@ -268,6 +304,9 @@ export function makeModalSandboxProvider(
             ...(config.environment !== undefined ? { environment: config.environment } : {}),
             ...(input.providerConfig?.allowedSecretNames !== undefined
               ? { secretNames: input.providerConfig.allowedSecretNames }
+              : {}),
+            ...(input.providerConfig?.imageDockerfileCommands !== undefined
+              ? { imageDockerfileCommands: input.providerConfig.imageDockerfileCommands }
               : {}),
             params,
             tags,

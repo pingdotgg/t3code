@@ -253,6 +253,7 @@ export const SandboxRuntimeProviderConfig = Schema.Struct({
   bootstrapCommandRef: Schema.optional(TrimmedNonEmptyString),
   configVersion: Schema.optional(TrimmedNonEmptyString),
   allowedSecretNames: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  imageDockerfileCommands: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
 });
 export type SandboxRuntimeProviderConfig = typeof SandboxRuntimeProviderConfig.Type;
 

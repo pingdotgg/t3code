@@ -623,11 +623,19 @@ This adapter should be tested with a fake Modal client first. The live Modal smo
 - The live adapter uses `ModalClient`, `modal.apps.fromName({ createIfMissing: true })`, `modal.images.fromRegistry`, `modal.sandboxes.create`, `Probe.withTcp`, encrypted ports, Modal Secrets by configured names, tags, `waitUntilReady`, tunnels, and `detach`.
 - The adapter uses a small `ModalSandboxClient` interface so unit tests exercise descriptor/endpoint/tag construction without Modal credentials.
 - This reaches the live Modal Sandbox creation checkpoint. The next test requires operator-provided credentials and a runtime image/command that actually starts a T3 execution bridge in the Sandbox.
+- Added a minimal Modal runtime image recipe at `apps/server/Dockerfile.modal-runtime`. The image builds the server bundle, keeps a copy of the repo at `/workspace/t3code`, and starts `node /app/apps/server/dist/bin.mjs serve` on `${T3_RUNTIME_PORT:-8787}` for the execution bridge.
+- Docker Desktop could not publish the image locally during implementation because its containerd metadata store hit I/O errors after an oversized build context. Added `.dockerignore` so future Docker builds do not copy host `node_modules` or desktop artifacts.
+- Added `SandboxRuntimeProviderConfig.imageDockerfileCommands` so the Modal adapter can build the first runtime image remotely through Modal. The live smoke used `node:24-bookworm-slim`, installed Bun and the Linux build toolchain, cloned `affil/mvp-deployment`, ran `bun install --frozen-lockfile`, ran `bun --filter t3 build:bundle`, and copied the repo to `/workspace/t3code`.
+- Live Modal runtime smoke passed: the Sandbox booted the real T3 server, returned a `t3-runtime` tunnel, and an authenticated `/api/execution/runs/status` request returned `found: false` for a deliberately missing run.
 
 **Implementation Footprint**
 
 - Modified `bun.lock`.
+- Added `.dockerignore`.
 - Modified `apps/server/package.json`.
+- Added `apps/server/Dockerfile.modal-runtime`.
+- Modified `packages/contracts/src/sandbox.ts`.
+- Modified `packages/contracts/src/sandbox.test.ts`.
 - Modified `packages/sandbox/src/Provider.ts`.
 - Modified `apps/server/src/sandbox/Layers/SandboxRuntimeLive.ts`.
 - Modified `apps/server/src/sandbox/Layers/SandboxProviderRegistryLive.ts`.

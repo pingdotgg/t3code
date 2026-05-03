@@ -33,6 +33,7 @@ describe("ModalSandboxProvider", () => {
           imageTag: "ghcr.io/affil-ai/t3-runtime:test",
           runtimePort: 8787,
           allowedSecretNames: ["T3_EXECUTION_BRIDGE_SHARED_SECRET"],
+          imageDockerfileCommands: ["RUN echo building-runtime"],
         },
         resources: {
           memoryMiB: 2048,
@@ -53,6 +54,7 @@ describe("ModalSandboxProvider", () => {
         appName: "t3-task-runtime",
         imageTag: "ghcr.io/affil-ai/t3-runtime:test",
         environment: "prod",
+        imageDockerfileCommands: ["RUN echo building-runtime"],
         tags: expect.objectContaining({
           "t3.sandbox.provider": "modal",
           "t3.task.id": "task-1",

@@ -122,6 +122,7 @@ it.effect("decodes Modal runtime provider config", () =>
         imageTag: "2026-05-03",
         runtimePort: 8787,
         allowedSecretNames: ["T3_EXECUTION_BRIDGE_SHARED_SECRET"],
+        imageDockerfileCommands: ["RUN echo building-runtime"],
       },
     });
 

@@ -1,0 +1,37 @@
+FROM node:24-bookworm-slim AS build
+
+ENV BUN_INSTALL=/root/.bun
+ENV PATH="${BUN_INSTALL}/bin:${PATH}"
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl g++ git make openssh-client python3 unzip \
+  && rm -rf /var/lib/apt/lists/* \
+  && curl -fsSL https://bun.sh/install | bash -s -- bun-v1.3.10
+
+WORKDIR /app
+COPY . .
+RUN bun install --frozen-lockfile
+RUN bun --filter t3 build:bundle
+
+FROM node:24-bookworm-slim AS runtime
+
+ENV NODE_ENV=production
+ENV T3CODE_MODE=web
+ENV T3CODE_HOST=0.0.0.0
+ENV T3CODE_PORT=8787
+ENV T3CODE_NO_BROWSER=true
+ENV T3CODE_HOME=/var/lib/t3code
+ENV T3_RUNTIME_WORKSPACE=/workspace/t3code
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates git openssh-client \
+  && rm -rf /var/lib/apt/lists/* \
+  && mkdir -p /var/lib/t3code /workspace
+
+WORKDIR /app
+COPY --from=build /app /app
+RUN cp -R /app /workspace/t3code
+
+EXPOSE 8787
+
+CMD ["sh", "-lc", "node /app/apps/server/dist/bin.mjs serve --host 0.0.0.0 --port ${T3_RUNTIME_PORT:-8787} --base-dir ${T3CODE_HOME:-/var/lib/t3code} --no-browser ${T3_RUNTIME_WORKSPACE:-/workspace/t3code}"]

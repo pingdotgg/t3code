@@ -1,0 +1,12 @@
+.git
+.turbo
+node_modules
+apps/*/node_modules
+packages/*/node_modules
+apps/*/dist
+apps/*/dist-electron
+packages/*/dist
+apps/*/.turbo
+packages/*/.turbo
+*.log
+.DS_Store
