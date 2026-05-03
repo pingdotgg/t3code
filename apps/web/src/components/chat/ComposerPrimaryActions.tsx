@@ -68,6 +68,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               size="icon-sm"
               variant="outline"
               className="rounded-full"
+              onPointerDown={(event) => event.preventDefault()}
               onClick={onPreviousPendingQuestion}
               disabled={pendingAction.isResponding}
               aria-label="Previous question"
@@ -79,6 +80,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               size="sm"
               variant="outline"
               className="rounded-full"
+              onPointerDown={(event) => event.preventDefault()}
               onClick={onPreviousPendingQuestion}
               disabled={pendingAction.isResponding}
             >

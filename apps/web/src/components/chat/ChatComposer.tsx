@@ -139,6 +139,13 @@ const runtimeModeConfig: Record<
 const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
+const COMPOSER_FLOATING_LAYER_SELECTOR = [
+  '[data-slot="popover-popup"]',
+  '[data-slot="menu-popup"]',
+  '[data-slot="select-popup"]',
+  '[data-slot="combobox-popup"]',
+  '[data-slot="autocomplete-popup"]',
+].join(",");
 
 const extendReplacementRangeForTrailingSpace = (
   text: string,
@@ -167,6 +174,10 @@ const terminalContextIdListsEqual = (
   ids: ReadonlyArray<string>,
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
+
+function isInsideComposerFloatingLayer(element: Element): boolean {
+  return element.closest(COMPOSER_FLOATING_LAYER_SELECTOR) !== null;
+}
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
   showInteractionModeToggle: boolean;
@@ -1783,6 +1794,9 @@ export const ChatComposer = memo(
         }
         const composerSurface = composerSurfaceRef.current;
         const activeElement = document.activeElement;
+        if (activeElement instanceof Element && isInsideComposerFloatingLayer(activeElement)) {
+          return;
+        }
         if (
           composerSurface &&
           activeElement instanceof Node &&

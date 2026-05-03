@@ -2591,6 +2591,51 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps the mobile composer expanded when focus moves into the model picker portal", async () => {
+    const mounted = await mountChatView({
+      viewport: COMPACT_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-mobile-model-picker-target" as MessageId,
+        targetText: "mobile model picker thread",
+      }),
+    });
+
+    try {
+      const expandButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Expand composer"]'),
+        "Unable to find collapsed composer expand button.",
+      );
+      expandButton.click();
+
+      await waitForElement(
+        () => document.querySelector<HTMLElement>('[data-chat-composer-mobile-collapsed="false"]'),
+        "Mobile composer should expand before opening the model picker.",
+      );
+
+      const modelPickerButton = await waitForElement(
+        findComposerProviderModelPicker,
+        "Unable to find provider model picker.",
+      );
+      modelPickerButton.click();
+
+      await vi.waitFor(
+        () => {
+          const searchInput = document.querySelector<HTMLInputElement>(
+            'input[placeholder="Search models..."]',
+          );
+          expect(searchInput).not.toBeNull();
+          expect(document.activeElement).toBe(searchInput);
+          expect(
+            document.querySelector('[data-chat-composer-mobile-collapsed="false"]'),
+          ).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps custom provider instance ids when bootstrapping a local draft thread", async () => {
     setDraftThreadWithoutWorktree();
     const openRouterInstanceId = ProviderInstanceId.make("claude_openrouter");
