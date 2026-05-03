@@ -14,8 +14,8 @@ import { randomUUID } from "node:crypto";
 import { Effect, Layer, FileSystem, Path } from "effect";
 
 import { CheckpointInvariantError } from "../Errors.ts";
-import { GitCommandError } from "@t3tools/contracts";
-import { GitCore } from "../../git/Services/GitCore.ts";
+import { VcsProcessExitError } from "@t3tools/contracts";
+import { VcsDriverRegistry } from "../../vcs/VcsDriverRegistry.ts";
 import { CheckpointStore, type CheckpointStoreShape } from "../Services/CheckpointStore.ts";
 import { CheckpointRef } from "@t3tools/contracts";
 
@@ -24,10 +24,26 @@ const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
 const makeCheckpointStore = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const git = yield* GitCore;
+  const vcsRegistry = yield* VcsDriverRegistry;
+  const vcs = {
+    execute: (input: {
+      readonly operation: string;
+      readonly cwd: string;
+      readonly args: ReadonlyArray<string>;
+      readonly stdin?: string;
+      readonly env?: NodeJS.ProcessEnv;
+      readonly allowNonZeroExit?: boolean;
+      readonly timeoutMs?: number;
+      readonly maxOutputBytes?: number;
+      readonly truncateOutputAtMaxBytes?: boolean;
+    }) =>
+      vcsRegistry
+        .resolve({ cwd: input.cwd, requestedKind: "git" })
+        .pipe(Effect.flatMap((handle) => handle.driver.execute(input))),
+  };
 
-  const resolveHeadCommit = (cwd: string): Effect.Effect<string | null, GitCommandError> =>
-    git
+  const resolveHeadCommit = (cwd: string) =>
+    vcs
       .execute({
         operation: "CheckpointStore.resolveHeadCommit",
         cwd,
@@ -36,7 +52,7 @@ const makeCheckpointStore = Effect.gen(function* () {
       })
       .pipe(
         Effect.map((result) => {
-          if (result.code !== 0) {
+          if (result.exitCode !== 0) {
             return null;
           }
           const commit = result.stdout.trim();
@@ -44,21 +60,18 @@ const makeCheckpointStore = Effect.gen(function* () {
         }),
       );
 
-  const hasHeadCommit = (cwd: string): Effect.Effect<boolean, GitCommandError> =>
-    git
+  const hasHeadCommit = (cwd: string) =>
+    vcs
       .execute({
         operation: "CheckpointStore.hasHeadCommit",
         cwd,
         args: ["rev-parse", "--verify", "HEAD"],
         allowNonZeroExit: true,
       })
-      .pipe(Effect.map((result) => result.code === 0));
+      .pipe(Effect.map((result) => result.exitCode === 0));
 
-  const resolveCheckpointCommit = (
-    cwd: string,
-    checkpointRef: CheckpointRef,
-  ): Effect.Effect<string | null, GitCommandError> =>
-    git
+  const resolveCheckpointCommit = (cwd: string, checkpointRef: CheckpointRef) =>
+    vcs
       .execute({
         operation: "CheckpointStore.resolveCheckpointCommit",
         cwd,
@@ -67,7 +80,7 @@ const makeCheckpointStore = Effect.gen(function* () {
       })
       .pipe(
         Effect.map((result) => {
-          if (result.code !== 0) {
+          if (result.exitCode !== 0) {
             return null;
           }
           const commit = result.stdout.trim();
@@ -76,7 +89,7 @@ const makeCheckpointStore = Effect.gen(function* () {
       );
 
   const isGitRepository: CheckpointStoreShape["isGitRepository"] = (cwd) =>
-    git
+    vcs
       .execute({
         operation: "CheckpointStore.isGitRepository",
         cwd,
@@ -84,7 +97,7 @@ const makeCheckpointStore = Effect.gen(function* () {
         allowNonZeroExit: true,
       })
       .pipe(
-        Effect.map((result) => result.code === 0 && result.stdout.trim() === "true"),
+        Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"),
         Effect.catch(() => Effect.succeed(false)),
       );
 
@@ -108,7 +121,7 @@ const makeCheckpointStore = Effect.gen(function* () {
 
         const headExists = yield* hasHeadCommit(input.cwd);
         if (headExists) {
-          yield* git.execute({
+          yield* vcs.execute({
             operation,
             cwd: input.cwd,
             args: ["read-tree", "HEAD"],
@@ -116,14 +129,14 @@ const makeCheckpointStore = Effect.gen(function* () {
           });
         }
 
-        yield* git.execute({
+        yield* vcs.execute({
           operation,
           cwd: input.cwd,
           args: ["add", "-A", "--", "."],
           env: commitEnv,
         });
 
-        const writeTreeResult = yield* git.execute({
+        const writeTreeResult = yield* vcs.execute({
           operation,
           cwd: input.cwd,
           args: ["write-tree"],
@@ -131,16 +144,17 @@ const makeCheckpointStore = Effect.gen(function* () {
         });
         const treeOid = writeTreeResult.stdout.trim();
         if (treeOid.length === 0) {
-          return yield* new GitCommandError({
+          return yield* new VcsProcessExitError({
             operation,
             command: "git write-tree",
             cwd: input.cwd,
+            exitCode: 0,
             detail: "git write-tree returned an empty tree oid.",
           });
         }
 
         const message = `t3 checkpoint ref=${input.checkpointRef}`;
-        const commitTreeResult = yield* git.execute({
+        const commitTreeResult = yield* vcs.execute({
           operation,
           cwd: input.cwd,
           args: ["commit-tree", treeOid, "-m", message],
@@ -148,15 +162,16 @@ const makeCheckpointStore = Effect.gen(function* () {
         });
         const commitOid = commitTreeResult.stdout.trim();
         if (commitOid.length === 0) {
-          return yield* new GitCommandError({
+          return yield* new VcsProcessExitError({
             operation,
             command: "git commit-tree",
             cwd: input.cwd,
+            exitCode: 0,
             detail: "git commit-tree returned an empty commit oid.",
           });
         }
 
-        yield* git.execute({
+        yield* vcs.execute({
           operation,
           cwd: input.cwd,
           args: ["update-ref", input.checkpointRef, commitOid],
@@ -197,12 +212,12 @@ const makeCheckpointStore = Effect.gen(function* () {
       return false;
     }
 
-    yield* git.execute({
+    yield* vcs.execute({
       operation,
       cwd: input.cwd,
       args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
     });
-    yield* git.execute({
+    yield* vcs.execute({
       operation,
       cwd: input.cwd,
       args: ["clean", "-fd", "--", "."],
@@ -210,7 +225,7 @@ const makeCheckpointStore = Effect.gen(function* () {
 
     const headExists = yield* hasHeadCommit(input.cwd);
     if (headExists) {
-      yield* git.execute({
+      yield* vcs.execute({
         operation,
         cwd: input.cwd,
         args: ["reset", "--quiet", "--", "."],
@@ -235,15 +250,16 @@ const makeCheckpointStore = Effect.gen(function* () {
       }
 
       if (!fromCommitOid || !toCommitOid) {
-        return yield* new GitCommandError({
+        return yield* new VcsProcessExitError({
           operation,
           command: "git diff",
           cwd: input.cwd,
+          exitCode: 1,
           detail: "Checkpoint ref is unavailable for diff operation.",
         });
       }
 
-      const result = yield* git.execute({
+      const result = yield* vcs.execute({
         operation,
         cwd: input.cwd,
         args: ["diff", "--patch", "--minimal", "--no-color", fromCommitOid, toCommitOid],
@@ -262,7 +278,7 @@ const makeCheckpointStore = Effect.gen(function* () {
     yield* Effect.forEach(
       input.checkpointRefs,
       (checkpointRef) =>
-        git.execute({
+        vcs.execute({
           operation,
           cwd: input.cwd,
           args: ["update-ref", "-d", checkpointRef],
