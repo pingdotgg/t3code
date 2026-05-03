@@ -30,6 +30,18 @@ if [ -z "${OPENCODE_CONFIG_CONTENT:-}" ] && [ -n "${T3_OPENCODE_CONFIG_JSON_B64:
   export OPENCODE_CONFIG_CONTENT
 fi
 
+if [ -z "${OPENCODE_CONFIG_CONTENT:-}" ] && [ -n "${T3_OPENCODE_MODEL:-}" ]; then
+  case "$T3_OPENCODE_MODEL" in
+    amazon-bedrock/*)
+      OPENCODE_CONFIG_CONTENT="$(cat <<EOF
+{"provider":{"amazon-bedrock":{"options":{"region":"${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"}}},"model":"$T3_OPENCODE_MODEL","small_model":"$T3_OPENCODE_MODEL"}
+EOF
+)"
+      export OPENCODE_CONFIG_CONTENT
+      ;;
+  esac
+fi
+
 if [ -n "${GH_TOKEN:-${GITHUB_TOKEN:-}}" ]; then
   token="${GH_TOKEN:-$GITHUB_TOKEN}"
   export GH_TOKEN="$token"

@@ -31,11 +31,11 @@ it("allows Modal runtime bootstrap to override the default model selection", () 
   const originalModel = process.env.T3_DEFAULT_MODEL;
   try {
     process.env.T3_DEFAULT_PROVIDER_INSTANCE_ID = "opencode";
-    process.env.T3_DEFAULT_MODEL = "amazon-bedrock/anthropic.claude-opus-4-7";
+    process.env.T3_DEFAULT_MODEL = "amazon-bedrock/us.anthropic.claude-opus-4-7";
 
     assert.deepStrictEqual(getAutoBootstrapDefaultModelSelection(), {
       instanceId: ProviderInstanceId.make("opencode"),
-      model: "amazon-bedrock/anthropic.claude-opus-4-7",
+      model: "amazon-bedrock/us.anthropic.claude-opus-4-7",
     });
   } finally {
     if (originalProvider === undefined) {

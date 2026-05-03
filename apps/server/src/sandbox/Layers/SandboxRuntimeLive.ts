@@ -100,6 +100,7 @@ function extractT3RuntimeEndpoint(
 }
 
 const decodeExecutionRunCreateResponse = Schema.decodeUnknownSync(ExecutionRunCreateResponse);
+const REMOTE_RUNTIME_START_TIMEOUT_MS = 30_000;
 
 function startRemoteRuntime(input: {
   readonly endpointUrl: string;
@@ -112,8 +113,10 @@ function startRemoteRuntime(input: {
       if (!sharedSecret) {
         throw new Error("Missing T3_EXECUTION_BRIDGE_SHARED_SECRET for remote task runtime start.");
       }
-      const response = await fetch(`${input.endpointUrl.replace(/\/$/, "")}/api/execution/runs`, {
+      const runtimeStartUrl = `${input.endpointUrl.replace(/\/$/, "")}/api/execution/runs`;
+      const response = await fetch(runtimeStartUrl, {
         method: "POST",
+        signal: AbortSignal.timeout(REMOTE_RUNTIME_START_TIMEOUT_MS),
         headers: {
           "content-type": "application/json",
           authorization: `Bearer ${sharedSecret}`,
@@ -135,7 +138,9 @@ function startRemoteRuntime(input: {
       if (!response.ok) {
         const detail = await response.text();
         throw new Error(
-          `Remote task runtime rejected start (${response.status}): ${detail || "Unknown error"}`,
+          `Remote task runtime rejected start at ${runtimeStartUrl} (${response.status}): ${
+            detail || "Unknown error"
+          }`,
         );
       }
       return decodeExecutionRunCreateResponse(await response.json());

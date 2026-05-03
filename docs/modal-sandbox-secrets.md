@@ -45,5 +45,22 @@ When `T3_OPENCODE_MODEL` is present, the entrypoint also bootstraps T3 server se
 the default provider for coding turns and PR text generation. For the current MVP E2E this is:
 
 ```sh
-T3_OPENCODE_MODEL=amazon-bedrock/anthropic.claude-opus-4-7
+T3_OPENCODE_MODEL=amazon-bedrock/us.anthropic.claude-opus-4-7
+```
+
+For OpenCode Bedrock, keep `OPENCODE_CONFIG_CONTENT` minimal and let OpenCode use its bundled
+Amazon Bedrock provider. The working MVP shape is:
+
+```json
+{
+  "provider": {
+    "amazon-bedrock": {
+      "options": {
+        "region": "us-east-1"
+      }
+    }
+  },
+  "model": "amazon-bedrock/us.anthropic.claude-opus-4-7",
+  "small_model": "amazon-bedrock/us.anthropic.claude-opus-4-7"
+}
 ```
