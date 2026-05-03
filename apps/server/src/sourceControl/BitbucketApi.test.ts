@@ -5,6 +5,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstab
 import { vi } from "vitest";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
+import { GitVcsDriver, type GitVcsDriverShape } from "../vcs/GitVcsDriver.ts";
 import { VcsDriverRegistry } from "../vcs/VcsDriverRegistry.ts";
 import type { VcsDriverShape } from "../vcs/VcsDriver.ts";
 
@@ -48,10 +49,35 @@ const repositoryJson = {
 
 function makeLayer(input: {
   readonly response: (request: HttpClientRequest.HttpClientRequest) => Response;
+  readonly git?: Partial<GitVcsDriverShape>;
 }) {
   const execute = vi.fn((request: HttpClientRequest.HttpClientRequest) =>
     Effect.succeed(HttpClientResponse.fromWeb(request, input.response(request))),
   );
+  const gitMock = {
+    readConfigValue: vi.fn<GitVcsDriverShape["readConfigValue"]>(() =>
+      Effect.succeed<string | null>("git@bitbucket.org:pingdotgg/t3code.git"),
+    ),
+    resolvePrimaryRemoteName: vi.fn<GitVcsDriverShape["resolvePrimaryRemoteName"]>(() =>
+      Effect.succeed("origin"),
+    ),
+    ensureRemote: vi.fn<GitVcsDriverShape["ensureRemote"]>(() => Effect.succeed("octocat")),
+    fetchRemoteBranch: vi.fn<GitVcsDriverShape["fetchRemoteBranch"]>(() => Effect.void),
+    fetchRemoteTrackingBranch: vi.fn<GitVcsDriverShape["fetchRemoteTrackingBranch"]>(
+      () => Effect.void,
+    ),
+    setBranchUpstream: vi.fn<GitVcsDriverShape["setBranchUpstream"]>(() => Effect.void),
+    switchRef: vi.fn<GitVcsDriverShape["switchRef"]>((request) =>
+      Effect.succeed({ refName: request.refName }),
+    ),
+    listLocalBranchNames: vi.fn<GitVcsDriverShape["listLocalBranchNames"]>(() =>
+      Effect.succeed([]),
+    ),
+  };
+  const git = {
+    ...gitMock,
+    ...input.git,
+  } satisfies Partial<GitVcsDriverShape>;
 
   const driver = {
     listRemotes: () =>
@@ -98,6 +124,7 @@ function makeLayer(input: {
           }),
       }),
     ),
+    Layer.provide(Layer.mock(GitVcsDriver)(git)),
     Layer.provide(
       ConfigProvider.layer(
         ConfigProvider.fromEnv({
@@ -112,7 +139,7 @@ function makeLayer(input: {
     Layer.provideMerge(NodeServices.layer),
   );
 
-  return { execute, layer };
+  return { execute, git: gitMock, layer };
 }
 
 it.effect("parses pull request responses from the Bitbucket REST API", () => {
@@ -301,20 +328,115 @@ it.effect("reports auth status through the Bitbucket REST /user endpoint", () =>
   }).pipe(Effect.provide(layer));
 });
 
-it.effect("does not pretend pull request checkout is supported by a non-existent CLI", () => {
-  const { layer } = makeLayer({
-    response: () => Response.json({}),
+it.effect("checks out same-repository pull requests with the existing Bitbucket remote", () => {
+  const { git, layer } = makeLayer({
+    response: () =>
+      Response.json({
+        ...bitbucketPullRequest,
+        source: {
+          branch: { name: "feature/source-control" },
+          repository: {
+            full_name: "pingdotgg/t3code",
+            workspace: { slug: "pingdotgg" },
+          },
+        },
+      }),
   });
 
   return Effect.gen(function* () {
     const bitbucket = yield* BitbucketApi.BitbucketApi;
-    const result = yield* Effect.exit(
-      bitbucket.checkoutPullRequest({
-        cwd: "/repo",
-        reference: "42",
-      }),
-    );
+    yield* bitbucket.checkoutPullRequest({
+      cwd: "/repo",
+      context: {
+        provider: {
+          kind: "bitbucket",
+          name: "Bitbucket",
+          baseUrl: "https://bitbucket.org",
+        },
+        remoteName: "origin",
+        remoteUrl: "git@bitbucket.org:pingdotgg/t3code.git",
+      },
+      reference: "42",
+      force: true,
+    });
 
-    assert.strictEqual(result._tag, "Failure");
+    assert.strictEqual(git.ensureRemote.mock.calls.length, 0);
+    assert.deepStrictEqual(git.fetchRemoteBranch.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      remoteName: "origin",
+      remoteBranch: "feature/source-control",
+      localBranch: "feature/source-control",
+    });
+    assert.deepStrictEqual(git.setBranchUpstream.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      branch: "feature/source-control",
+      remoteName: "origin",
+      remoteBranch: "feature/source-control",
+    });
+    assert.deepStrictEqual(git.switchRef.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      refName: "feature/source-control",
+    });
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("checks out fork pull requests through an ensured fork remote", () => {
+  const { git, layer } = makeLayer({
+    response: (request) => {
+      if (request.url.endsWith("/repositories/octocat/t3code")) {
+        return Response.json({
+          ...repositoryJson,
+          full_name: "octocat/t3code",
+          links: {
+            html: { href: "https://bitbucket.org/octocat/t3code" },
+            clone: [
+              { name: "https", href: "https://bitbucket.org/octocat/t3code.git" },
+              { name: "ssh", href: "git@bitbucket.org:octocat/t3code.git" },
+            ],
+          },
+        });
+      }
+      return Response.json({
+        ...bitbucketPullRequest,
+        source: {
+          branch: { name: "main" },
+          repository: {
+            full_name: "octocat/t3code",
+            workspace: { slug: "octocat" },
+          },
+        },
+      });
+    },
+  });
+
+  return Effect.gen(function* () {
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    yield* bitbucket.checkoutPullRequest({
+      cwd: "/repo",
+      reference: "42",
+      force: true,
+    });
+
+    assert.deepStrictEqual(git.ensureRemote.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      preferredName: "octocat",
+      url: "git@bitbucket.org:octocat/t3code.git",
+    });
+    assert.deepStrictEqual(git.fetchRemoteBranch.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      remoteName: "octocat",
+      remoteBranch: "main",
+      localBranch: "t3code/pr-42/main",
+    });
+    assert.deepStrictEqual(git.setBranchUpstream.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      branch: "t3code/pr-42/main",
+      remoteName: "octocat",
+      remoteBranch: "main",
+    });
+    assert.deepStrictEqual(git.switchRef.mock.calls[0]?.[0], {
+      cwd: "/repo",
+      refName: "t3code/pr-42/main",
+    });
   }).pipe(Effect.provide(layer));
 });
