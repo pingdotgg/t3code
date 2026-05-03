@@ -259,10 +259,20 @@ const makeCheckpointStore = Effect.gen(function* () {
         });
       }
 
+      const diffArgs = [
+        "diff",
+        "--patch",
+        "--minimal",
+        "--no-color",
+        ...(input.ignoreWhitespace ? ["--ignore-all-space"] : []),
+        fromCommitOid,
+        toCommitOid,
+      ];
+
       const result = yield* vcs.execute({
         operation,
         cwd: input.cwd,
-        args: ["diff", "--patch", "--minimal", "--no-color", fromCommitOid, toCommitOid],
+        args: diffArgs,
         maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
       });
 

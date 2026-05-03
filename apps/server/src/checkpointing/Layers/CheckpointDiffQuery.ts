@@ -24,6 +24,7 @@ const make = Effect.gen(function* () {
   const getTurnDiff: CheckpointDiffQueryShape["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
       const operation = "CheckpointDiffQuery.getTurnDiff";
+      const ignoreWhitespace = input.ignoreWhitespace ?? true;
 
       if (input.fromTurnCount === input.toTurnCount) {
         const emptyDiff: OrchestrationGetTurnDiffResultType = {
@@ -131,6 +132,7 @@ const make = Effect.gen(function* () {
         fromCheckpointRef,
         toCheckpointRef,
         fallbackFromToHead: false,
+        ignoreWhitespace,
       });
 
       const turnDiff: OrchestrationGetTurnDiffResultType = {
@@ -157,6 +159,7 @@ const make = Effect.gen(function* () {
       threadId: input.threadId,
       fromTurnCount: 0,
       toTurnCount: input.toTurnCount,
+      ignoreWhitespace: input.ignoreWhitespace ?? true,
     }).pipe(Effect.map((result): OrchestrationGetFullThreadDiffResult => result));
 
   return {

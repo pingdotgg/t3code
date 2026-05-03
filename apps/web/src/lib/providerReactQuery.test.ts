@@ -30,6 +30,7 @@ describe("providerQueryKeys.checkpointDiff", () => {
       threadId,
       fromTurnCount: 1,
       toTurnCount: 2,
+      ignoreWhitespace: false,
     } as const;
 
     expect(
@@ -44,10 +45,32 @@ describe("providerQueryKeys.checkpointDiff", () => {
       }),
     );
   });
+
+  it("includes ignoreWhitespace so normal and whitespace-hidden diffs do not collide", () => {
+    const baseInput = {
+      environmentId,
+      threadId,
+      fromTurnCount: 1,
+      toTurnCount: 2,
+      cacheScope: "turn:abc",
+    } as const;
+
+    expect(
+      providerQueryKeys.checkpointDiff({
+        ...baseInput,
+        ignoreWhitespace: false,
+      }),
+    ).not.toEqual(
+      providerQueryKeys.checkpointDiff({
+        ...baseInput,
+        ignoreWhitespace: true,
+      }),
+    );
+  });
 });
 
 describe("checkpointDiffQueryOptions", () => {
-  it("forwards checkpoint range to the provider API", async () => {
+  it("forwards checkpoint range to the provider API by default", async () => {
     const getTurnDiff = vi.fn().mockResolvedValue({ diff: "patch" });
     const getFullThreadDiff = vi.fn().mockResolvedValue({ diff: "patch" });
     mockNativeApi({ getTurnDiff, getFullThreadDiff });
@@ -57,6 +80,7 @@ describe("checkpointDiffQueryOptions", () => {
       threadId,
       fromTurnCount: 3,
       toTurnCount: 4,
+      ignoreWhitespace: false,
       cacheScope: "turn:abc",
     });
 
@@ -67,6 +91,33 @@ describe("checkpointDiffQueryOptions", () => {
       threadId,
       fromTurnCount: 3,
       toTurnCount: 4,
+      ignoreWhitespace: false,
+    });
+    expect(getFullThreadDiff).not.toHaveBeenCalled();
+  });
+
+  it("forwards whitespace-hidden checkpoint range to the provider API", async () => {
+    const getTurnDiff = vi.fn().mockResolvedValue({ diff: "patch" });
+    const getFullThreadDiff = vi.fn().mockResolvedValue({ diff: "patch" });
+    mockNativeApi({ getTurnDiff, getFullThreadDiff });
+
+    const options = checkpointDiffQueryOptions({
+      environmentId,
+      threadId,
+      fromTurnCount: 3,
+      toTurnCount: 4,
+      ignoreWhitespace: true,
+      cacheScope: "turn:abc",
+    });
+
+    const queryClient = new QueryClient();
+    await queryClient.fetchQuery(options);
+
+    expect(getTurnDiff).toHaveBeenCalledWith({
+      threadId,
+      fromTurnCount: 3,
+      toTurnCount: 4,
+      ignoreWhitespace: true,
     });
     expect(getFullThreadDiff).not.toHaveBeenCalled();
   });
@@ -81,6 +132,7 @@ describe("checkpointDiffQueryOptions", () => {
       threadId,
       fromTurnCount: 0,
       toTurnCount: 2,
+      ignoreWhitespace: true,
       cacheScope: "thread:all",
     });
 
@@ -90,6 +142,7 @@ describe("checkpointDiffQueryOptions", () => {
     expect(getFullThreadDiff).toHaveBeenCalledWith({
       threadId,
       toTurnCount: 2,
+      ignoreWhitespace: true,
     });
     expect(getTurnDiff).not.toHaveBeenCalled();
   });
@@ -104,6 +157,7 @@ describe("checkpointDiffQueryOptions", () => {
       threadId,
       fromTurnCount: 4,
       toTurnCount: 3,
+      ignoreWhitespace: false,
       cacheScope: "turn:invalid",
     });
 
@@ -122,6 +176,7 @@ describe("checkpointDiffQueryOptions", () => {
       threadId,
       fromTurnCount: 1,
       toTurnCount: 2,
+      ignoreWhitespace: false,
       cacheScope: "turn:abc",
     });
     const retry = options.retry;
@@ -147,6 +202,7 @@ describe("checkpointDiffQueryOptions", () => {
       threadId,
       fromTurnCount: 1,
       toTurnCount: 2,
+      ignoreWhitespace: false,
       cacheScope: "turn:abc",
     });
     const retryDelay = options.retryDelay;

@@ -237,6 +237,7 @@ const make = Effect.gen(function* () {
         fromCheckpointRef,
         toCheckpointRef: targetCheckpointRef,
         fallbackFromToHead: false,
+        ignoreWhitespace: false,
       })
       .pipe(
         Effect.map((diff) =>
