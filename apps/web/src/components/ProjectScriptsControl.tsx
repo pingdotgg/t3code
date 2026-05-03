@@ -85,6 +85,10 @@ export interface NewProjectScriptInput {
   icon: ProjectScriptIcon;
   runOnWorktreeCreate: boolean;
   keybinding: string | null;
+  /** Optional URL to open in the in-app preview when this script runs. */
+  previewUrl: string | null;
+  /** When true, automatically open the preview panel pointed at `previewUrl`. */
+  autoOpenPreview: boolean;
 }
 
 interface ProjectScriptsControlProps {
@@ -115,6 +119,8 @@ export default function ProjectScriptsControl({
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [runOnWorktreeCreate, setRunOnWorktreeCreate] = useState(false);
   const [keybinding, setKeybinding] = useState("");
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [autoOpenPreview, setAutoOpenPreview] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
@@ -166,12 +172,15 @@ export default function ProjectScriptsControl({
         keybinding,
         command: commandForProjectScript(scriptIdForValidation),
       });
+      const trimmedPreviewUrl = previewUrl.trim();
       const payload = {
         name: trimmedName,
         command: trimmedCommand,
         icon,
         runOnWorktreeCreate,
         keybinding: keybindingRule?.key ?? null,
+        previewUrl: trimmedPreviewUrl.length > 0 ? trimmedPreviewUrl : null,
+        autoOpenPreview: trimmedPreviewUrl.length > 0 ? autoOpenPreview : false,
       } satisfies NewProjectScriptInput;
       if (editingScriptId) {
         await onUpdateScript(editingScriptId, payload);
@@ -193,6 +202,8 @@ export default function ProjectScriptsControl({
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(false);
     setKeybinding("");
+    setPreviewUrl("");
+    setAutoOpenPreview(false);
     setValidationError(null);
     setDialogOpen(true);
   };
@@ -205,6 +216,8 @@ export default function ProjectScriptsControl({
     setIconPickerOpen(false);
     setRunOnWorktreeCreate(script.runOnWorktreeCreate);
     setKeybinding(keybindingValueForCommand(keybindings, commandForProjectScript(script.id)) ?? "");
+    setPreviewUrl(script.previewUrl ?? "");
+    setAutoOpenPreview(script.autoOpenPreview ?? false);
     setValidationError(null);
     setDialogOpen(true);
   };
@@ -327,6 +340,8 @@ export default function ProjectScriptsControl({
           setIcon("play");
           setRunOnWorktreeCreate(false);
           setKeybinding("");
+          setPreviewUrl("");
+          setAutoOpenPreview(false);
           setValidationError(null);
         }}
         open={dialogOpen}
@@ -413,11 +428,35 @@ export default function ProjectScriptsControl({
                   onChange={(event) => setCommand(event.target.value)}
                 />
               </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="script-preview-url">Preview URL (optional)</Label>
+                <Input
+                  id="script-preview-url"
+                  placeholder="http://localhost:5173"
+                  value={previewUrl}
+                  onChange={(event) => setPreviewUrl(event.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Open this URL in the in-app preview when this action runs.
+                </p>
+              </div>
               <label className="flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm">
                 <span>Run automatically on worktree creation</span>
                 <Switch
                   checked={runOnWorktreeCreate}
                   onCheckedChange={(checked) => setRunOnWorktreeCreate(Boolean(checked))}
+                />
+              </label>
+              <label
+                className={`flex items-center justify-between gap-3 rounded-md border border-border/70 px-3 py-2 text-sm ${
+                  previewUrl.trim().length === 0 ? "opacity-60" : ""
+                }`}
+              >
+                <span>Open preview automatically when this action runs</span>
+                <Switch
+                  checked={autoOpenPreview}
+                  disabled={previewUrl.trim().length === 0}
+                  onCheckedChange={(checked) => setAutoOpenPreview(Boolean(checked))}
                 />
               </label>
               {validationError && <p className="text-sm text-destructive">{validationError}</p>}

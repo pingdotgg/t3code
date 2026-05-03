@@ -55,6 +55,18 @@ import type {
 import type { ServerRemoveKeybindingInput, ServerUpsertKeybindingInput } from "./server.ts";
 import * as Schema from "effect/Schema";
 import type {
+  DiscoveredLocalServerList,
+  PreviewCloseInput,
+  PreviewEvent,
+  PreviewListInput,
+  PreviewListResult,
+  PreviewNavigateInput,
+  PreviewOpenInput,
+  PreviewRefreshInput,
+  PreviewReportStatusInput,
+  PreviewSessionSnapshot,
+} from "./preview.ts";
+import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
@@ -402,6 +414,33 @@ export const DesktopCloudAuthFetchResultSchema = Schema.Struct({
 });
 export type DesktopCloudAuthFetchResult = typeof DesktopCloudAuthFetchResultSchema.Type;
 
+/**
+ * Renderer-facing snapshot of a desktop preview tab. Mirrors the main-process
+ * PreviewTabState shape but uses serialisable primitives only.
+ */
+export type DesktopPreviewNavStatus =
+  | { kind: "Idle" }
+  | { kind: "Loading"; url: string; title: string }
+  | { kind: "Success"; url: string; title: string }
+  | {
+      kind: "LoadFailed";
+      url: string;
+      title: string;
+      code: number;
+      description: string;
+    };
+
+export interface DesktopPreviewTabState {
+  tabId: string;
+  webContentsId: number | null;
+  navStatus: DesktopPreviewNavStatus;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  /** Current zoom factor (1.0 = 100%). */
+  zoomFactor: number;
+  updatedAt: string;
+}
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
@@ -460,6 +499,34 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  /**
+   * Desktop-only preview surface. Present iff the renderer is hosted by the
+   * Electron desktop build; web builds have `preview === undefined`.
+   */
+  preview?: DesktopPreviewBridge;
+}
+
+export interface DesktopPreviewBridge {
+  createTab: (tabId: string) => Promise<void>;
+  closeTab: (tabId: string) => Promise<void>;
+  registerWebview: (tabId: string, webContentsId: number) => Promise<void>;
+  navigate: (tabId: string, url: string) => Promise<void>;
+  goBack: (tabId: string) => Promise<void>;
+  goForward: (tabId: string) => Promise<void>;
+  refresh: (tabId: string) => Promise<void>;
+  zoomIn: (tabId: string) => Promise<void>;
+  zoomOut: (tabId: string) => Promise<void>;
+  resetZoom: (tabId: string) => Promise<void>;
+  /** Reload bypassing the HTTP cache. */
+  hardReload: (tabId: string) => Promise<void>;
+  /** Open the guest webview's DevTools (detached). */
+  openDevTools: (tabId: string) => Promise<void>;
+  /** Drop cookies + storage data for the preview partition (all tabs). */
+  clearCookies: () => Promise<void>;
+  /** Drop the HTTP cache for the preview partition (all tabs). */
+  clearCache: () => Promise<void>;
+  getBrowserPartition: () => Promise<string>;
+  onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
 }
 
 /**
@@ -617,6 +684,19 @@ export interface EnvironmentApi {
       options?: {
         onResubscribe?: () => void;
       },
+    ) => () => void;
+  };
+  preview: {
+    open: (input: typeof PreviewOpenInput.Encoded) => Promise<PreviewSessionSnapshot>;
+    navigate: (input: typeof PreviewNavigateInput.Encoded) => Promise<PreviewSessionSnapshot>;
+    refresh: (input: typeof PreviewRefreshInput.Encoded) => Promise<void>;
+    close: (input: typeof PreviewCloseInput.Encoded) => Promise<void>;
+    list: (input: typeof PreviewListInput.Encoded) => Promise<PreviewListResult>;
+    reportStatus: (input: typeof PreviewReportStatusInput.Encoded) => Promise<void>;
+    onEvent: (callback: (event: PreviewEvent) => void) => () => void;
+    subscribePorts: (
+      callback: (servers: DiscoveredLocalServerList) => void,
+      options?: { onResubscribe?: () => void },
     ) => () => void;
   };
 }

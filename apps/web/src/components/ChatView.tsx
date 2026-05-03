@@ -36,7 +36,7 @@ import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/proje
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useVcsStatus } from "~/lib/vcsStatusState";
@@ -98,6 +98,14 @@ import { useCommandPaletteStore } from "../commandPaletteStore";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
+import { selectActiveRightPanelKindWithUrl, useRightPanelStore } from "../rightPanelStore";
+import { isPreviewSupportedInRuntime } from "../previewStateStore";
+import { subscribePreviewAction } from "./preview/previewActionBus";
+// Lazy: keeps the entire preview component graph (webview host, favicon
+// helper, Chromium error icon) out of the web bundle until first open.
+const PreviewPanel = lazy(() =>
+  import("./preview/PreviewPanel").then((mod) => ({ default: mod.PreviewPanel })),
+);
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
@@ -910,7 +918,6 @@ export default function ChatView(props: ChatViewProps) {
   >({});
   const [pendingUserInputQuestionIndexByRequestId, setPendingUserInputQuestionIndexByRequestId] =
     useState<Record<string, number>>({});
-  const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
@@ -1045,7 +1052,6 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread],
   );
   const activeThreadKey = activeThreadRef ? scopedThreadKey(activeThreadRef) : null;
-
   useEffect(() => {
     if (!activeThreadRef) {
       return;
@@ -1068,7 +1074,11 @@ export default function ChatView(props: ChatViewProps) {
     reconcileTerminalIds,
     terminalUiState.terminalIds,
   ]);
-
+  const activeRightPanelKind = useRightPanelStore((store) =>
+    selectActiveRightPanelKindWithUrl(store.byThreadKey, activeThreadRef, diffOpen),
+  );
+  const planSidebarOpen = activeRightPanelKind === "plan";
+  const previewPanelOpen = activeRightPanelKind === "preview" && isPreviewSupportedInRuntime();
   const existingOpenTerminalThreadKeys = useMemo(() => {
     const existingThreadKeys = new Set<string>([...serverThreadKeys, ...draftThreadKeys]);
     return openTerminalThreadKeys.filter((nextThreadKey) => existingThreadKeys.has(nextThreadKey));
@@ -1925,12 +1935,47 @@ export default function ChatView(props: ChatViewProps) {
     () => shortcutLabelForCommand(keybindings, "diff.toggle", nonTerminalShortcutLabelOptions),
     [keybindings, nonTerminalShortcutLabelOptions],
   );
+  const previewPanelShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "preview.toggle", nonTerminalShortcutLabelOptions),
+    [keybindings, nonTerminalShortcutLabelOptions],
+  );
+  // Right-panel arbitration:
+  //   - The diff panel's openness is mirrored by the `?diff=1` URL search
+  //     param so it deep-links cleanly. The store still records preview/plan
+  //     openness; when both fight, `selectActiveRightPanelKindWithUrl` lets
+  //     diff win (URL is truth).
+  //   - The two toggles below treat the panels as mutually exclusive: opening
+  //     one always tears down the other in BOTH the URL and the store. Without
+  //     this, e.g. clicking the browser button while diff is URL-pinned would
+  //     just toggle the (overridden) store value and look like a no-op.
+  const onTogglePreview = useCallback(() => {
+    if (!activeThreadRef) return;
+    if (previewPanelOpen) {
+      useRightPanelStore.getState().close(activeThreadRef);
+      return;
+    }
+    if (diffOpen) {
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: { environmentId, threadId },
+        replace: true,
+        search: (previous) => ({ ...stripDiffSearchParams(previous), diff: undefined }),
+      });
+    }
+    useRightPanelStore.getState().open(activeThreadRef, "preview");
+  }, [activeThreadRef, diffOpen, environmentId, navigate, previewPanelOpen, threadId]);
   const onToggleDiff = useCallback(() => {
     if (!isServerThread) {
       return;
     }
     if (!diffOpen) {
       onDiffPanelOpen?.();
+      // Switching to diff: drop whatever the store had (e.g. preview) so
+      // that when the user later closes diff, an old store entry doesn't
+      // unexpectedly resurface.
+      if (activeThreadRef) {
+        useRightPanelStore.getState().close(activeThreadRef);
+      }
     }
     void navigate({
       to: "/$environmentId/$threadId",
@@ -1944,7 +1989,25 @@ export default function ChatView(props: ChatViewProps) {
         return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
       },
     });
-  }, [diffOpen, environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
+  }, [
+    activeThreadRef,
+    diffOpen,
+    environmentId,
+    isServerThread,
+    navigate,
+    onDiffPanelOpen,
+    threadId,
+  ]);
+
+  // Route the global mod+shift+J shortcut (dispatched from `routes/_chat.tsx`
+  // via `previewActionBus`) through the URL-aware toggle defined above.
+  useEffect(() => {
+    return subscribePreviewAction((action) => {
+      if (action !== "toggle-panel") return;
+      if (!isPreviewSupportedInRuntime()) return;
+      onTogglePreview();
+    });
+  }, [onTogglePreview]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -2223,6 +2286,19 @@ export default function ChatView(props: ChatViewProps) {
           terminalId: targetTerminalId,
           data: `${script.command}\r`,
         });
+        if (
+          script.autoOpenPreview &&
+          script.previewUrl &&
+          isPreviewSupportedInRuntime() &&
+          activeThreadRef
+        ) {
+          try {
+            await api.preview.open({ threadId: activeThreadId, url: script.previewUrl });
+            useRightPanelStore.getState().open(activeThreadRef, "preview");
+          } catch {
+            // Preview open failures are surfaced via the panel itself.
+          }
+        }
       } catch (error) {
         setThreadError(
           activeThreadId,
@@ -2295,6 +2371,8 @@ export default function ChatView(props: ChatViewProps) {
         command: input.command,
         icon: input.icon,
         runOnWorktreeCreate: input.runOnWorktreeCreate,
+        ...(input.previewUrl ? { previewUrl: input.previewUrl } : {}),
+        ...(input.autoOpenPreview ? { autoOpenPreview: input.autoOpenPreview } : {}),
       };
       const nextScripts = input.runOnWorktreeCreate
         ? [
@@ -2330,6 +2408,10 @@ export default function ChatView(props: ChatViewProps) {
         command: input.command,
         icon: input.icon,
         runOnWorktreeCreate: input.runOnWorktreeCreate,
+        ...(input.previewUrl ? { previewUrl: input.previewUrl } : { previewUrl: undefined }),
+        ...(input.autoOpenPreview
+          ? { autoOpenPreview: input.autoOpenPreview }
+          : { autoOpenPreview: undefined }),
       };
       const nextScripts = activeProject.scripts.map((script) =>
         script.id === scriptId
@@ -2424,21 +2506,25 @@ export default function ChatView(props: ChatViewProps) {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
   const togglePlanSidebar = useCallback(() => {
-    setPlanSidebarOpen((open) => {
-      if (open) {
-        planSidebarDismissedForTurnRef.current =
-          activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
-      } else {
-        planSidebarDismissedForTurnRef.current = null;
-      }
-      return !open;
-    });
-  }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+    if (!activeThreadRef) return;
+    if (planSidebarOpen) {
+      planSidebarDismissedForTurnRef.current =
+        activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
+    } else {
+      planSidebarDismissedForTurnRef.current = null;
+    }
+    useRightPanelStore.getState().toggle(activeThreadRef, "plan");
+  }, [activePlan?.turnId, activeThreadRef, planSidebarOpen, sidebarProposedPlan?.turnId]);
   const closePlanSidebar = useCallback(() => {
-    setPlanSidebarOpen(false);
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().close(activeThreadRef);
     planSidebarDismissedForTurnRef.current =
       activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
-  }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+  }, [activePlan?.turnId, activeThreadRef, sidebarProposedPlan?.turnId]);
+  const closePreviewPanel = useCallback(() => {
+    if (!activeThreadRef) return;
+    useRightPanelStore.getState().close(activeThreadRef);
+  }, [activeThreadRef]);
 
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
@@ -2523,12 +2609,12 @@ export default function ChatView(props: ChatViewProps) {
     setShowScrollToBottom(false);
     if (planSidebarOpenOnNextThreadRef.current) {
       planSidebarOpenOnNextThreadRef.current = false;
-      setPlanSidebarOpen(true);
-    } else {
-      planSidebarOpenOnNextThreadRef.current = false;
-      setPlanSidebarOpen(false);
+      if (activeThreadRef) {
+        useRightPanelStore.getState().open(activeThreadRef, "plan");
+      }
     }
     planSidebarDismissedForTurnRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- activeThreadRef is reset transitively
   }, [activeThread?.id]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
@@ -2541,10 +2627,13 @@ export default function ChatView(props: ChatViewProps) {
     if (latestTurnId && activePlan.turnId !== latestTurnId) return;
     const turnKey = activePlan.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
     if (planSidebarDismissedForTurnRef.current === turnKey) return;
-    setPlanSidebarOpen(true);
+    if (activeThreadRef) {
+      useRightPanelStore.getState().open(activeThreadRef, "plan");
+    }
   }, [
     activePlan,
     activeLatestTurn?.turnId,
+    activeThreadRef,
     autoOpenPlanSidebar,
     planSidebarOpen,
     sidebarProposedPlan?.turnId,
@@ -3462,7 +3551,9 @@ export default function ChatView(props: ChatViewProps) {
         // step-tracking activities that the sidebar will display.
         if (nextInteractionMode === "default" && autoOpenPlanSidebar) {
           planSidebarDismissedForTurnRef.current = null;
-          setPlanSidebarOpen(true);
+          if (activeThreadRef) {
+            useRightPanelStore.getState().open(activeThreadRef, "plan");
+          }
         }
         sendInFlightRef.current = false;
       } catch (err) {
@@ -3828,6 +3919,9 @@ export default function ChatView(props: ChatViewProps) {
           terminalOpen={terminalUiState.terminalOpen}
           terminalToggleShortcutLabel={terminalToggleShortcutLabel}
           diffToggleShortcutLabel={diffPanelShortcutLabel}
+          previewAvailable={isPreviewSupportedInRuntime()}
+          previewOpen={previewPanelOpen}
+          previewToggleShortcutLabel={previewPanelShortcutLabel}
           gitCwd={gitCwd}
           diffOpen={diffOpen}
           onRunProjectScript={runProjectScript}
@@ -3835,6 +3929,7 @@ export default function ChatView(props: ChatViewProps) {
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
           onToggleTerminal={toggleTerminalVisibility}
+          onTogglePreview={onTogglePreview}
           onToggleDiff={onToggleDiff}
         />
       </header>
@@ -4020,7 +4115,6 @@ export default function ChatView(props: ChatViewProps) {
         </div>
         {/* end chat column */}
 
-        {/* Plan sidebar */}
         {planSidebarOpen && !shouldUsePlanSidebarSheet ? (
           <PlanSidebar
             activePlan={activePlan}
@@ -4033,6 +4127,11 @@ export default function ChatView(props: ChatViewProps) {
             mode="sidebar"
             onClose={closePlanSidebar}
           />
+        ) : null}
+        {previewPanelOpen && !shouldUsePlanSidebarSheet && activeThreadRef ? (
+          <Suspense fallback={null}>
+            <PreviewPanel mode="inline" threadRef={activeThreadRef} visible />
+          </Suspense>
         ) : null}
       </div>
       {/* end horizontal flex container */}
@@ -4054,6 +4153,13 @@ export default function ChatView(props: ChatViewProps) {
           onAddTerminalContext={addTerminalContextToDraft}
         />
       ))}
+      {shouldUsePlanSidebarSheet && previewPanelOpen && activeThreadRef ? (
+        <RightPanelSheet open onClose={closePreviewPanel}>
+          <Suspense fallback={null}>
+            <PreviewPanel mode="sheet" threadRef={activeThreadRef} visible />
+          </Suspense>
+        </RightPanelSheet>
+      ) : null}
       {shouldUsePlanSidebarSheet ? (
         <RightPanelSheet open={planSidebarOpen} onClose={closePlanSidebar}>
           <PlanSidebar
