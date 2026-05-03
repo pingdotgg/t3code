@@ -1,7 +1,7 @@
-import { randomUUID } from "node:crypto";
 import * as nodePath from "node:path";
 import { type ServerProvider, ServerProvider as ServerProviderSchema } from "@forma/contracts";
-import { Cause, Effect, FileSystem, Path, Schema } from "effect";
+import { Cause, Effect, FileSystem, Schema } from "effect";
+import { writeFileStringAtomically } from "../atomicWrite.ts";
 
 export const PROVIDER_CACHE_IDS = [
   "codex",
@@ -97,23 +97,8 @@ export const readProviderStatusCache = (filePath: string) =>
 export const writeProviderStatusCache = (input: {
   readonly filePath: string;
   readonly provider: ServerProvider;
-}) => {
-  // Unique per write so concurrent persist calls never share a temp (pid+ms can collide).
-  const tempPath = `${input.filePath}.${randomUUID()}.tmp`;
-  return Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const encoded = `${JSON.stringify(input.provider, null, 2)}\n`;
-
-    yield* fs.makeDirectory(path.dirname(input.filePath), { recursive: true });
-    yield* fs.writeFileString(tempPath, encoded);
-    yield* fs.rename(tempPath, input.filePath);
-  }).pipe(
-    Effect.ensuring(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        yield* fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true }));
-      }),
-    ),
-  );
-};
+}) =>
+  writeFileStringAtomically({
+    filePath: input.filePath,
+    contents: `${JSON.stringify(input.provider, null, 2)}\n`,
+  });

@@ -22,9 +22,7 @@ const serverThread: Thread = {
   modelSelection: {
     provider: "codex",
     model: "gpt-5.4",
-    options: {
-      reasoningEffort: "medium",
-    },
+    options: [{ id: "reasoningEffort", value: "medium" }],
   },
   runtimeMode: "full-access",
   interactionMode: "default",
