@@ -24,7 +24,6 @@ import { useBottomDrawerSizing } from "../bottomDrawerSizing";
 import { useBottomDrawerUiStore } from "../bottomDrawerUiStore";
 import { stageOptimisticThreadShell } from "../environments/runtime/service";
 import { getEnvironmentHttpBaseUrl, resolveEnvironmentHttpUrl } from "../environments/runtime";
-import { resolveEditorFileLabel } from "../lib/editorFileLabel";
 import { newCommandId, newMessageId, newThreadId } from "../lib/utils";
 import {
   type PreviewControlDescriptor,
@@ -43,6 +42,7 @@ import { createThreadSelectorByRef } from "../storeSelectors";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import type { Project } from "../types";
 import { Button } from "./ui/button";
+import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 
 function resolvePreviewUrl(
@@ -197,204 +197,230 @@ function buildRuntimeSnapshotFromMessage(
   };
 }
 
-function PreviewControlsRail(props: {
+function PreviewControlsContent(props: {
+  scenarioItems: readonly { value: string; label: string }[];
+  selectedScenarioId: string | null;
   controls: readonly PreviewControlDescriptor[];
+  onSelectScenario: (scenarioId: string) => void;
   onSetControlValue: (name: string, value: unknown, mode: "debounced" | "immediate") => void;
   onFlushControl: (name: string) => void;
 }) {
-  if (props.controls.length === 0) {
-    return (
-      <div className="w-72 shrink-0 border-l border-border/70 bg-card/40 p-4">
-        <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">
+  return (
+    <div className="w-72 space-y-4">
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground/80">
           Controls
         </div>
-        <div className="mt-3 rounded-xl border border-border/70 bg-background/80 p-3">
-          <div className="text-sm text-muted-foreground">
-            No interactive controls are available for this preview.
+        {props.scenarioItems.length > 0 ? (
+          <div className="mt-4 flex flex-col gap-2 text-sm">
+            <span className="font-medium text-foreground">Variant</span>
+            <Select
+              items={props.scenarioItems}
+              value={props.selectedScenarioId ?? ""}
+              onValueChange={(value) => {
+                if (typeof value === "string") {
+                  props.onSelectScenario(value);
+                }
+              }}
+            >
+              <SelectTrigger size="sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectPopup alignItemWithTrigger={false}>
+                {props.scenarioItems.map((choice) => (
+                  <SelectItem key={choice.value} value={choice.value} hideIndicator>
+                    {choice.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           </div>
+        ) : null}
+      </div>
+
+      {props.controls.length === 0 ? (
+        <div className="rounded-lg border border-border/70 bg-background/80 p-3 text-sm text-muted-foreground">
+          No interactive controls are available for this preview.
         </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="w-72 shrink-0 border-l border-border/70 bg-card/40 p-4">
-      <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">
-        Controls
-      </div>
-      <div className="mt-4 space-y-4">
-        {props.controls.map((control) => {
-          const inputId = `preview-control-${control.name}`;
-          if (control.type === "boolean") {
-            return (
-              <label
-                key={control.name}
-                htmlFor={inputId}
-                className="flex items-center justify-between gap-3 text-sm"
-              >
-                <span className="min-w-0">
-                  <span className="block font-medium text-foreground">{control.label}</span>
-                  {control.description ? (
-                    <span className="mt-1 block text-xs text-muted-foreground">
-                      {control.description}
-                    </span>
-                  ) : null}
-                </span>
-                <input
-                  id={inputId}
-                  type="checkbox"
-                  checked={Boolean(control.value)}
-                  onChange={(event) =>
-                    props.onSetControlValue(control.name, event.currentTarget.checked, "immediate")
-                  }
-                />
-              </label>
-            );
-          }
-
-          if (
-            control.type === "select" ||
-            control.type === "radio" ||
-            control.type === "inline-radio"
-          ) {
-            const selectItems = (control.options ?? []).map((option) => {
-              const optionValue = String(option);
-              return {
-                value: optionValue,
-                label: optionValue,
-              };
-            });
-            return (
-              <div key={control.name} className="flex flex-col gap-2 text-sm">
-                <span className="font-medium text-foreground">{control.label}</span>
-                <Select
-                  items={selectItems}
-                  value={typeof control.value === "string" ? control.value : ""}
-                  onValueChange={(value) => {
-                    if (typeof value !== "string") {
-                      return;
-                    }
-                    props.onSetControlValue(control.name, value, "immediate");
-                  }}
+      ) : (
+        <div className="space-y-4">
+          {props.controls.map((control) => {
+            const inputId = `preview-control-${control.name}`;
+            if (control.type === "boolean") {
+              return (
+                <label
+                  key={control.name}
+                  htmlFor={inputId}
+                  className="flex items-center justify-between gap-3 text-sm"
                 >
-                  <SelectTrigger size="sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectPopup alignItemWithTrigger={false}>
-                    {selectItems.map((item) => (
-                      <SelectItem key={item.value} value={item.value} hideIndicator>
-                        {item.label}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-              </div>
-            );
-          }
+                  <span className="min-w-0">
+                    <span className="block font-medium text-foreground">{control.label}</span>
+                    {control.description ? (
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        {control.description}
+                      </span>
+                    ) : null}
+                  </span>
+                  <input
+                    id={inputId}
+                    type="checkbox"
+                    checked={Boolean(control.value)}
+                    onChange={(event) =>
+                      props.onSetControlValue(
+                        control.name,
+                        event.currentTarget.checked,
+                        "immediate",
+                      )
+                    }
+                  />
+                </label>
+              );
+            }
 
-          if (
-            control.type === "multi-select" ||
-            control.type === "check" ||
-            control.type === "inline-check"
-          ) {
-            const currentValues = Array.isArray(control.value) ? control.value.map(String) : [];
-            return (
-              <div key={control.name} className="space-y-2 text-sm">
-                <div className="font-medium text-foreground">{control.label}</div>
-                <div className="space-y-2">
-                  {(control.options ?? []).map((option) => {
-                    const stringValue = String(option);
-                    const checked = currentValues.includes(stringValue);
-                    return (
-                      <label
-                        key={stringValue}
-                        className="flex items-center gap-2 text-muted-foreground"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(event) => {
-                            const nextValues = new Set(currentValues);
-                            if (event.currentTarget.checked) {
-                              nextValues.add(stringValue);
-                            } else {
-                              nextValues.delete(stringValue);
-                            }
-                            props.onSetControlValue(control.name, [...nextValues], "immediate");
-                          }}
-                        />
-                        {stringValue}
-                      </label>
-                    );
-                  })}
+            if (
+              control.type === "select" ||
+              control.type === "radio" ||
+              control.type === "inline-radio"
+            ) {
+              const selectItems = (control.options ?? []).map((option) => {
+                const optionValue = String(option);
+                return {
+                  value: optionValue,
+                  label: optionValue,
+                };
+              });
+              return (
+                <div key={control.name} className="flex flex-col gap-2 text-sm">
+                  <span className="font-medium text-foreground">{control.label}</span>
+                  <Select
+                    items={selectItems}
+                    value={typeof control.value === "string" ? control.value : ""}
+                    onValueChange={(value) => {
+                      if (typeof value !== "string") {
+                        return;
+                      }
+                      props.onSetControlValue(control.name, value, "immediate");
+                    }}
+                  >
+                    <SelectTrigger size="sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectPopup alignItemWithTrigger={false}>
+                      {selectItems.map((item) => (
+                        <SelectItem key={item.value} value={item.value} hideIndicator>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectPopup>
+                  </Select>
                 </div>
-              </div>
-            );
-          }
+              );
+            }
 
-          if (control.type === "object") {
+            if (
+              control.type === "multi-select" ||
+              control.type === "check" ||
+              control.type === "inline-check"
+            ) {
+              const currentValues = Array.isArray(control.value) ? control.value.map(String) : [];
+              return (
+                <div key={control.name} className="space-y-2 text-sm">
+                  <div className="font-medium text-foreground">{control.label}</div>
+                  <div className="space-y-2">
+                    {(control.options ?? []).map((option) => {
+                      const stringValue = String(option);
+                      const checked = currentValues.includes(stringValue);
+                      return (
+                        <label
+                          key={stringValue}
+                          className="flex items-center gap-2 text-muted-foreground"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) => {
+                              const nextValues = new Set(currentValues);
+                              if (event.currentTarget.checked) {
+                                nextValues.add(stringValue);
+                              } else {
+                                nextValues.delete(stringValue);
+                              }
+                              props.onSetControlValue(control.name, [...nextValues], "immediate");
+                            }}
+                          />
+                          {stringValue}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            }
+
+            if (control.type === "object") {
+              return (
+                <label key={control.name} className="flex flex-col gap-2 text-sm">
+                  <span className="font-medium text-foreground">{control.label}</span>
+                  <textarea
+                    className="min-h-28 rounded-md border border-border bg-background px-3 py-2 font-mono text-xs"
+                    defaultValue={JSON.stringify(control.value ?? null, null, 2)}
+                    onBlur={(event) => {
+                      try {
+                        props.onSetControlValue(
+                          control.name,
+                          JSON.parse(event.currentTarget.value),
+                          "immediate",
+                        );
+                      } catch {
+                        event.currentTarget.value = JSON.stringify(control.value ?? null, null, 2);
+                      }
+                    }}
+                  />
+                </label>
+              );
+            }
+
+            const inputType =
+              control.type === "color"
+                ? "color"
+                : control.type === "date"
+                  ? "date"
+                  : control.type === "range"
+                    ? "range"
+                    : control.type === "number"
+                      ? "number"
+                      : "text";
             return (
               <label key={control.name} className="flex flex-col gap-2 text-sm">
                 <span className="font-medium text-foreground">{control.label}</span>
-                <textarea
-                  className="min-h-28 rounded-md border border-border bg-background px-3 py-2 font-mono text-xs"
-                  defaultValue={JSON.stringify(control.value ?? null, null, 2)}
-                  onBlur={(event) => {
-                    try {
-                      props.onSetControlValue(
-                        control.name,
-                        JSON.parse(event.currentTarget.value),
-                        "immediate",
-                      );
-                    } catch {
-                      event.currentTarget.value = JSON.stringify(control.value ?? null, null, 2);
-                    }
+                <input
+                  id={inputId}
+                  type={inputType}
+                  className="rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  value={
+                    typeof control.value === "string" || typeof control.value === "number"
+                      ? String(control.value)
+                      : ""
+                  }
+                  min={control.min ?? undefined}
+                  max={control.max ?? undefined}
+                  step={control.step ?? undefined}
+                  onChange={(event) => {
+                    const nextValue =
+                      control.type === "number" || control.type === "range"
+                        ? event.currentTarget.value === ""
+                          ? ""
+                          : Number(event.currentTarget.value)
+                        : event.currentTarget.value;
+                    props.onSetControlValue(control.name, nextValue, "debounced");
                   }}
+                  onBlur={() => props.onFlushControl(control.name)}
                 />
               </label>
             );
-          }
-
-          const inputType =
-            control.type === "color"
-              ? "color"
-              : control.type === "date"
-                ? "date"
-                : control.type === "range"
-                  ? "range"
-                  : control.type === "number"
-                    ? "number"
-                    : "text";
-          return (
-            <label key={control.name} className="flex flex-col gap-2 text-sm">
-              <span className="font-medium text-foreground">{control.label}</span>
-              <input
-                id={inputId}
-                type={inputType}
-                className="rounded-md border border-border bg-background px-3 py-2 text-sm"
-                value={
-                  typeof control.value === "string" || typeof control.value === "number"
-                    ? String(control.value)
-                    : ""
-                }
-                min={control.min ?? undefined}
-                max={control.max ?? undefined}
-                step={control.step ?? undefined}
-                onChange={(event) => {
-                  const nextValue =
-                    control.type === "number" || control.type === "range"
-                      ? event.currentTarget.value === ""
-                        ? ""
-                        : Number(event.currentTarget.value)
-                      : event.currentTarget.value;
-                  props.onSetControlValue(control.name, nextValue, "debounced");
-                }}
-                onBlur={() => props.onFlushControl(control.name)}
-              />
-            </label>
-          );
-        })}
-      </div>
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -1344,6 +1370,37 @@ export function PreviewDrawer() {
     );
   };
 
+  const handleSelectScenario = (scenarioId: string) => {
+    if (
+      !activeProjectRef ||
+      !runtimeSnapshot?.runtimeInstanceId ||
+      !activePreviewFileRelativePath
+    ) {
+      return;
+    }
+
+    clearPendingArgsForPreviewFile(activePreviewFileRelativePath);
+    updateProjectState(activeProjectRef, (state) => ({
+      ...state,
+      sessionsByPreviewFilePath: upsertPreviewFileSession(
+        state.sessionsByPreviewFilePath,
+        activePreviewFileRelativePath,
+        (session) => ({
+          ...session,
+          selectedScenarioId: scenarioId,
+          draftArgOverrides: {},
+          updatedAt: new Date().toISOString(),
+        }),
+      ),
+    }));
+    void sendPreviewCommandForActiveRuntime({
+      kind: "preview.command.selectScenario",
+      runtimeInstanceId: runtimeSnapshot.runtimeInstanceId,
+      previewFileRelativePath: activePreviewFileRelativePath,
+      scenarioId,
+    });
+  };
+
   const handleFlushControl = (name: string) => {
     if (!activePreviewFileRelativePath) {
       return;
@@ -1440,26 +1497,7 @@ export function PreviewDrawer() {
   }
 
   const inspection = activeProjectState?.inspection ?? null;
-  const headerStatus =
-    activeProjectState?.resolution?.status === "needsBootstrap"
-      ? "Preview setup required"
-      : activeProjectState?.resolution?.status === "needsGeneration"
-        ? "Preview file required"
-        : activeProjectState?.resolution?.status === "runtimeError"
-          ? activeProjectState.resolution.message
-          : activeProjectState?.runtimeState?.kind === "runtime.ready"
-            ? "Live preview connected"
-            : activeProjectState?.runtimeState?.kind === "runtime.starting"
-              ? "Starting preview runtime…"
-              : activeProjectState?.runtimeState?.kind === "runtime.error"
-                ? activeProjectState.runtimeState.message
-                : (inspection?.summary ??
-                  "Open a component file in the editor to preview it here.");
   const currentRelativePath = activeProjectState?.currentRelativePath ?? null;
-  const headerTitle = currentRelativePath
-    ? resolveEditorFileLabel(currentRelativePath)
-    : (activeProject?.name ?? "Preview");
-  const headerSubtitle = currentRelativePath ?? headerStatus;
   const runtimeErrorResolution =
     activeProjectState?.resolution?.status === "runtimeError"
       ? activeProjectState.resolution
@@ -1482,219 +1520,190 @@ export function PreviewDrawer() {
         onPointerUp={handleResizePointerEnd}
         onPointerCancel={handleResizePointerEnd}
       />
-      <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <div className="flex min-w-0 items-center justify-between border-b border-border/70 px-4 py-3">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-foreground">{headerTitle}</div>
-            <div className="truncate text-xs text-muted-foreground">{headerSubtitle}</div>
-          </div>
-          <div className="flex items-center gap-2">
-            {scenarioItems.length > 0 ? (
-              <Select
-                items={scenarioItems}
-                value={selectedScenarioId ?? ""}
-                onValueChange={(value) => {
-                  if (
-                    !activeProjectRef ||
-                    typeof value !== "string" ||
-                    !runtimeSnapshot?.runtimeInstanceId ||
-                    !activePreviewFileRelativePath
-                  ) {
-                    return;
+      <div className="relative h-full min-h-0 overflow-hidden">
+        <div className="absolute top-3 px-4 z-30 w-full flex items-center justify-between gap-1.5">
+          {iframeUrl ? (
+            <Popover>
+              <PopoverTrigger
+                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-background/88 px-2.5 text-foreground text-xs shadow-sm backdrop-blur-md transition-colors hover:bg-accent"
+                type="button"
+              >
+                Controls
+                <ChevronDownIcon className="size-3 fill-current opacity-60" />
+              </PopoverTrigger>
+              <PopoverPopup align="start" side="bottom" sideOffset={6}>
+                <PreviewControlsContent
+                  scenarioItems={scenarioItems}
+                  selectedScenarioId={selectedScenarioId}
+                  controls={displayedControls}
+                  onSelectScenario={handleSelectScenario}
+                  onSetControlValue={handleSetControlValue}
+                  onFlushControl={handleFlushControl}
+                />
+              </PopoverPopup>
+            </Popover>
+          ) : null}
+          <div className="inline-flex h-6 items-center overflow-hidden rounded-md border border-border/70 bg-background/88 shadow-sm backdrop-blur-md">
+            <button
+              type="button"
+              className="inline-flex size-7 items-center justify-center text-foreground/90 transition-colors hover:bg-accent"
+              onClick={() => setFullHeight(!fullHeight)}
+              aria-label={fullHeightActionLabel}
+              title={fullHeightActionLabel}
+            >
+              {fullHeight ? (
+                <ChevronDownIcon className="size-3 fill-current" />
+              ) : (
+                <ChevronUpIcon className="size-3 fill-current" />
+              )}
+            </button>
+            <div className="h-4 w-px bg-border/80" />
+            <button
+              type="button"
+              className="inline-flex h-7 w-7 items-center justify-center text-foreground/90 transition-colors hover:bg-accent"
+              onClick={closePreviewDrawer}
+              aria-label="Close preview"
+              title="Close preview"
+            >
+              <XIcon className="size-2.5 fill-current" />
+            </button>
+            {activeProjectState?.currentRelativePath ? (
+              <>
+                <div className="h-4 w-px bg-border/80" />
+                <button
+                  type="button"
+                  className="inline-flex h-7 w-7 items-center justify-center text-foreground/90 transition-colors hover:bg-accent"
+                  onClick={() =>
+                    void restartPreviewRuntime().then(refreshInspection).then(resolveCurrentTarget)
                   }
-
-                  clearPendingArgsForPreviewFile(activePreviewFileRelativePath);
-                  updateProjectState(activeProjectRef, (state) => ({
-                    ...state,
-                    sessionsByPreviewFilePath: upsertPreviewFileSession(
-                      state.sessionsByPreviewFilePath,
-                      activePreviewFileRelativePath,
-                      (session) => ({
-                        ...session,
-                        selectedScenarioId: value,
-                        draftArgOverrides: {},
-                        updatedAt: new Date().toISOString(),
-                      }),
-                    ),
-                  }));
-                  void sendPreviewCommandForActiveRuntime({
-                    kind: "preview.command.selectScenario",
-                    runtimeInstanceId: runtimeSnapshot.runtimeInstanceId,
-                    previewFileRelativePath: activePreviewFileRelativePath,
-                    scenarioId: value,
-                  });
-                }}
-              >
-                <SelectTrigger variant="ghost" size="xs" className="min-w-44 font-medium">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {scenarioItems.map((choice) => (
-                    <SelectItem key={choice.value} value={choice.value} hideIndicator>
-                      {choice.label}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
+                  aria-label="Refresh preview"
+                  title="Refresh preview"
+                >
+                  <RefreshIcon className="size-3 fill-current" />
+                </button>
+              </>
             ) : null}
-            <div className="inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70">
-              <button
-                type="button"
-                className="inline-flex items-center p-1 text-foreground/90 transition-colors hover:bg-accent"
-                onClick={() => setFullHeight(!fullHeight)}
-                aria-label={fullHeightActionLabel}
-                title={fullHeightActionLabel}
-              >
-                {fullHeight ? (
-                  <ChevronDownIcon className="size-3.25 fill-current" />
-                ) : (
-                  <ChevronUpIcon className="size-3.25 fill-current" />
-                )}
-              </button>
-              <div className="h-4 w-px bg-border/80" />
-              <button
-                type="button"
-                className="inline-flex items-center p-1 text-foreground/90 transition-colors hover:bg-accent"
-                onClick={closePreviewDrawer}
-                aria-label="Close preview"
-                title="Close preview"
-              >
-                <XIcon className="size-3.25 fill-current" />
-              </button>
-              {activeProjectState?.currentRelativePath ? (
-                <>
-                  <div className="h-4 w-px bg-border/80" />
-                  <button
-                    type="button"
-                    className="inline-flex items-center p-1 text-foreground/90 transition-colors hover:bg-accent"
-                    onClick={() =>
-                      void restartPreviewRuntime()
-                        .then(refreshInspection)
-                        .then(resolveCurrentTarget)
-                    }
-                    aria-label="Refresh preview"
-                    title="Refresh preview"
-                  >
-                    <RefreshIcon className="size-3.25 fill-current" />
-                  </button>
-                </>
-              ) : null}
-            </div>
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-auto p-4">
+        <div className="h-full min-h-0 overflow-auto">
           {activeProjectState?.resolution?.status === "needsBootstrap" ? (
-            <div className="rounded-xl border border-border/70 bg-card/60 p-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <PreviewIcon className="size-4" />
-                Repo isn't set up for previews
+            <div className="flex h-full items-center justify-center p-4">
+              <div className="w-full max-w-md rounded-xl border border-border/70 bg-card/80 p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <PreviewIcon className="size-4" />
+                  Repo isn't set up for previews
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {activeProjectState.resolution.reason}
+                </p>
+                <div className="mt-4 flex items-center gap-2">
+                  <Button
+                    disabled={launchingAction !== null}
+                    onClick={() => void launchBootstrapAction()}
+                  >
+                    {launchingAction === "bootstrap"
+                      ? "Opening setup thread…"
+                      : "Set up previews now"}
+                  </Button>
+                </div>
+                {actionErrorMessage ? (
+                  <p className="mt-3 text-sm text-destructive">{actionErrorMessage}</p>
+                ) : null}
               </div>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {activeProjectState.resolution.reason}
-              </p>
-              <div className="mt-4 flex items-center gap-2">
-                <Button
-                  disabled={launchingAction !== null}
-                  onClick={() => void launchBootstrapAction()}
-                >
-                  {launchingAction === "bootstrap"
-                    ? "Opening setup thread…"
-                    : "Set up previews now"}
-                </Button>
-              </div>
-              {actionErrorMessage ? (
-                <p className="mt-3 text-sm text-destructive">{actionErrorMessage}</p>
-              ) : null}
             </div>
           ) : activeProjectState?.resolution?.status === "needsGeneration" ? (
-            <div className="rounded-xl border border-border/70 bg-card/60 p-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                <IconSparkles className="size-4" />
-                This component needs a preview file
+            <div className="flex h-full items-center justify-center p-4">
+              <div className="w-full max-w-md rounded-xl border border-border/70 bg-card/80 p-4 shadow-sm">
+                <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                  <IconSparkles className="size-4" />
+                  This component needs a preview file
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {activeProjectState.resolution.reason}
+                </p>
+                <div className="mt-4 flex items-center gap-2">
+                  <Button
+                    disabled={launchingAction !== null}
+                    onClick={() => void launchGenerationAction()}
+                  >
+                    {launchingAction === "generation"
+                      ? "Opening preview thread…"
+                      : "Generate preview now"}
+                  </Button>
+                </div>
+                {actionErrorMessage ? (
+                  <p className="mt-3 text-sm text-destructive">{actionErrorMessage}</p>
+                ) : null}
               </div>
-              <p className="mt-2 text-sm text-muted-foreground">
-                {activeProjectState.resolution.reason}
-              </p>
-              <div className="mt-4 flex items-center gap-2">
-                <Button
-                  disabled={launchingAction !== null}
-                  onClick={() => void launchGenerationAction()}
-                >
-                  {launchingAction === "generation"
-                    ? "Opening preview thread…"
-                    : "Generate preview now"}
-                </Button>
-              </div>
-              {actionErrorMessage ? (
-                <p className="mt-3 text-sm text-destructive">{actionErrorMessage}</p>
-              ) : null}
             </div>
           ) : runtimeErrorResolution ? (
-            <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4">
-              <div className="text-sm font-semibold text-foreground">Preview runtime error</div>
-              <p className="mt-2 text-sm text-muted-foreground">{runtimeErrorResolution.message}</p>
-              <div className="mt-4 flex items-center gap-2">
-                <Button
-                  disabled={launchingAction !== null}
-                  onClick={() => void launchRepairAction()}
-                >
-                  {launchingAction === "repair" ? "Opening repair thread…" : "Repair preview now"}
-                </Button>
+            <div className="flex h-full items-center justify-center p-4">
+              <div className="w-full max-w-xl rounded-xl border border-destructive/40 bg-destructive/5 p-4 shadow-sm">
+                <div className="text-sm font-semibold text-foreground">Preview runtime error</div>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {runtimeErrorResolution.message}
+                </p>
+                <div className="mt-4 flex items-center gap-2">
+                  <Button
+                    disabled={launchingAction !== null}
+                    onClick={() => void launchRepairAction()}
+                  >
+                    {launchingAction === "repair" ? "Opening repair thread…" : "Repair preview now"}
+                  </Button>
+                </div>
+                {actionErrorMessage ? (
+                  <p className="mt-3 text-sm text-destructive">{actionErrorMessage}</p>
+                ) : null}
               </div>
-              {actionErrorMessage ? (
-                <p className="mt-3 text-sm text-destructive">{actionErrorMessage}</p>
-              ) : null}
             </div>
           ) : runtimeErrorEvent ? (
-            <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4">
-              <div className="text-sm font-semibold text-foreground">Preview runtime error</div>
-              <p className="mt-2 text-sm text-muted-foreground">{runtimeErrorEvent.message}</p>
-              <div className="mt-4 flex items-center gap-2">
-                <Button
-                  disabled={launchingAction !== null}
-                  onClick={() => void launchRepairAction()}
-                >
-                  {launchingAction === "repair" ? "Opening repair thread…" : "Repair preview now"}
-                </Button>
+            <div className="flex h-full items-center justify-center p-4">
+              <div className="w-full max-w-xl rounded-xl border border-destructive/40 bg-destructive/5 p-4 shadow-sm">
+                <div className="text-sm font-semibold text-foreground">Preview runtime error</div>
+                <p className="mt-2 text-sm text-muted-foreground">{runtimeErrorEvent.message}</p>
+                <div className="mt-4 flex items-center gap-2">
+                  <Button
+                    disabled={launchingAction !== null}
+                    onClick={() => void launchRepairAction()}
+                  >
+                    {launchingAction === "repair" ? "Opening repair thread…" : "Repair preview now"}
+                  </Button>
+                </div>
               </div>
             </div>
           ) : activeProjectState?.resolution?.status === "unsupportedTarget" ? (
-            <div className="rounded-xl border border-border/70 bg-card/60 p-4 text-sm text-muted-foreground">
-              {activeProjectState.resolution.reason}
+            <div className="flex h-full items-center justify-center p-4">
+              <div className="w-full max-w-md rounded-xl border border-border/70 bg-card/80 p-4 text-sm text-muted-foreground shadow-sm">
+                {activeProjectState.resolution.reason}
+              </div>
             </div>
           ) : activeProjectState?.resolution?.status === "notFound" ? (
-            <div className="rounded-xl border border-border/70 bg-card/60 p-4 text-sm text-muted-foreground">
-              Forma could not find this file in the current project workspace.
+            <div className="flex h-full items-center justify-center p-4">
+              <div className="w-full max-w-md rounded-xl border border-border/70 bg-card/80 p-4 text-sm text-muted-foreground shadow-sm">
+                Forma could not find this file in the current project workspace.
+              </div>
             </div>
           ) : iframeUrl ? (
-            <div className="h-full min-h-[18rem] overflow-hidden rounded-xl border border-border/70 bg-white shadow-sm">
-              <iframe
-                ref={iframeRef}
-                key={resolved?.iframePath}
-                className="h-full min-h-[18rem] w-full bg-white"
-                sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
-                src={iframeUrl}
-                title="Component preview canvas"
-              />
-            </div>
+            <iframe
+              ref={iframeRef}
+              key={resolved?.iframePath}
+              className="block h-full min-h-full w-full bg-background"
+              sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
+              src={iframeUrl}
+              title="Component preview canvas"
+            />
           ) : activeProjectState?.currentRelativePath &&
             (!resolved || (!shouldUseDirectIframe && !activeProjectState.accessToken)) ? (
-            <div className="flex h-full min-h-[18rem] items-center justify-center rounded-xl border border-dashed border-border/80 bg-card/30 text-sm text-muted-foreground">
+            <div className="flex h-full min-h-[18rem] items-center justify-center text-sm text-muted-foreground">
               {resolved ? "Authorizing preview…" : "Resolving preview…"}
             </div>
           ) : (
-            <div className="flex h-full min-h-[18rem] items-center justify-center rounded-xl border border-dashed border-border/80 bg-card/30 text-sm text-muted-foreground">
+            <div className="flex h-full min-h-[18rem] items-center justify-center text-sm text-muted-foreground">
               Open a component file from the editor to render it here.
             </div>
           )}
         </div>
-
-        <PreviewControlsRail
-          controls={displayedControls}
-          onSetControlValue={handleSetControlValue}
-          onFlushControl={handleFlushControl}
-        />
       </div>
     </div>
   );
