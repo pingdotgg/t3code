@@ -80,27 +80,13 @@ function toChangeRequest(summary: {
   };
 }
 
-function sourceFromInput(input: {
-  readonly headSelector: string;
-  readonly source?: SourceControlProvider.SourceControlRefSelector;
-}): SourceControlProvider.SourceControlRefSelector | undefined {
-  if (input.source) {
-    return input.source;
-  }
-
-  const match = /^([^:/\s]+):(.+)$/u.exec(input.headSelector.trim());
-  const owner = match?.[1]?.trim();
-  const refName = match?.[2]?.trim();
-  return owner && refName ? { owner, refName } : undefined;
-}
-
 export const make = Effect.fn("makeAzureDevOpsSourceControlProvider")(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: "azure-devops",
     listChangeRequests: (input) => {
-      const source = sourceFromInput(input);
+      const source = SourceControlProvider.sourceControlRefFromInput(input);
       return azure
         .listPullRequests({
           cwd: input.cwd,
@@ -120,7 +106,7 @@ export const make = Effect.fn("makeAzureDevOpsSourceControlProvider")(function* 
         Effect.mapError((error) => providerError("getChangeRequest", error)),
       ),
     createChangeRequest: (input) => {
-      const source = sourceFromInput(input);
+      const source = SourceControlProvider.sourceControlRefFromInput(input);
       return azure
         .createPullRequest({
           cwd: input.cwd,
