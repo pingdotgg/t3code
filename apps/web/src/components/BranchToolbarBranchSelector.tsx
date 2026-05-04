@@ -498,9 +498,10 @@ export function BranchToolbarBranchSelector({
         },
       });
       if (checkoutResult._tag === "Success") {
-        setOptimisticBranch(
-          checkoutResult.value.refName ?? localCheckoutBranchMismatch.threadBranch,
-        );
+        const nextBranchName =
+          checkoutResult.value.refName ?? localCheckoutBranchMismatch.threadBranch;
+        setOptimisticBranch(nextBranchName);
+        setThreadBranch(nextBranchName, null);
         setIsMismatchPopoverOpen(false);
         onComposerFocusRequest?.();
         return;
