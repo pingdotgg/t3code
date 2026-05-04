@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
+import { Effect, FileSystem, Layer, Option, PlatformError, Scope } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { expect } from "vitest";
 import type {
@@ -2217,7 +2217,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             baseRefName: "main",
             headRefName: "statemachine",
             state: "open",
-            updatedAt: null,
+            updatedAt: Option.none(),
             isCrossRepository: false,
             headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
             headRepositoryOwnerLogin: "pingdotgg",
@@ -2235,7 +2235,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             baseRefName: "main",
             headRefName: "statemachine",
             state: "open",
-            updatedAt: null,
+            updatedAt: Option.none(),
             isCrossRepository: true,
             headRepositoryNameWithOwner: "pingdotgg/codething-mvp",
             headRepositoryOwnerLogin: "pingdotgg",
@@ -2264,7 +2264,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
             baseRefName: "main",
             headRefName: "t3code/git-audit-stability",
             state: "open",
-            updatedAt: null,
+            updatedAt: Option.none(),
             isCrossRepository: true,
             headRepositoryNameWithOwner: "justsomelegs/t3code",
             headRepositoryOwnerLogin: "justsomelegs",
