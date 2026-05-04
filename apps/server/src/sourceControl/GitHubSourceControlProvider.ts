@@ -83,8 +83,8 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
   parseAuth: parseGitHubAuth,
-  implemented: true,
-  installHint: "Install GitHub CLI with `brew install gh` or from https://cli.github.com/.",
+  installHint:
+    "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
 } satisfies SourceControlProviderDiscovery.SourceControlCliDiscoverySpec;
 
 export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {

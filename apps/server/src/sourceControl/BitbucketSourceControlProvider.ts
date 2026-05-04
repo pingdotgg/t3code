@@ -119,10 +119,8 @@ export const makeDiscovery = Effect.fn("makeBitbucketSourceControlProviderDiscov
     type: "api",
     kind: "bitbucket",
     label: "Bitbucket",
-    executable: "Bitbucket REST API",
-    implemented: true,
     installHint:
-      "Create a Bitbucket API token with pull request/repository scopes, then set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN.",
+      "Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN on the server (use a Bitbucket API token with pull request and repository scopes).",
     probeAuth: bitbucket.probeAuth,
   } satisfies SourceControlProviderDiscovery.SourceControlApiDiscoverySpec;
 });

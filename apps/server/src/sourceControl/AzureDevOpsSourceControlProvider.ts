@@ -53,9 +53,8 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: ["account", "show", "--query", "user.name", "-o", "tsv"],
   parseAuth: parseAzureAuth,
-  implemented: true,
   installHint:
-    "Install Azure CLI with `brew install azure-cli`, then add Azure DevOps support with `az extension add --name azure-devops`.",
+    "Install the Azure command-line tools (`az`), then enable Azure DevOps support with `az extension add --name azure-devops`.",
 } satisfies SourceControlProviderDiscovery.SourceControlCliDiscoverySpec;
 
 function toChangeRequest(summary: {

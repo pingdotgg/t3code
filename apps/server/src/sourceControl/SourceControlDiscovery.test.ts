@@ -48,7 +48,7 @@ const processOutput = (
   stderrTruncated: false,
 });
 
-it.effect("reports implemented tools separately from locally available CLIs", () => {
+it.effect("reports implemented tools separately from locally available executables", () => {
   const processMock = {
     run: (input: VcsProcess.VcsProcessInput) => {
       if (input.command === "git") {
@@ -119,7 +119,6 @@ Logged in to github.com account juliusmarminge (keyring)
     assert.deepStrictEqual(
       result.sourceControlProviders.map((item) => ({
         kind: item.kind,
-        implemented: item.implemented,
         status: item.status,
         auth: item.auth.status,
         account: item.auth.account,
@@ -127,28 +126,24 @@ Logged in to github.com account juliusmarminge (keyring)
       [
         {
           kind: "github",
-          implemented: true,
           status: "available",
           auth: "authenticated",
           account: Option.some("juliusmarminge"),
         },
         {
           kind: "gitlab",
-          implemented: true,
           status: "missing",
           auth: "unknown",
           account: Option.none(),
         },
         {
           kind: "azure-devops",
-          implemented: true,
           status: "missing",
           auth: "unknown",
           account: Option.none(),
         },
         {
           kind: "bitbucket",
-          implemented: true,
           status: "available",
           auth: "unauthenticated",
           account: Option.none(),
@@ -157,7 +152,7 @@ Logged in to github.com account juliusmarminge (keyring)
     );
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
     assert.ok(bitbucket);
-    assert.strictEqual(bitbucket.executable, "Bitbucket REST API");
+    assert.strictEqual(bitbucket.executable, undefined);
   }).pipe(Effect.provide(testLayer));
 });
 

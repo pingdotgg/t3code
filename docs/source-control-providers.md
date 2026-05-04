@@ -1,252 +1,127 @@
-# Source Control Providers
+# Source Control Integrations
 
-T3 Code can connect your local projects to source control hosting providers so you can work with
-pull requests and merge requests from inside the app.
+T3 Code connects directly to your Git hosting provider so you can create pull requests, review code, and manage repositories without leaving your editor. Work stays in flow—no more jumping between browser tabs and terminal windows.
 
-This guide covers the providers currently supported by T3 Code:
+## Supported Providers
 
-- GitHub
-- GitLab
-- Bitbucket
-- Azure DevOps
+T3 Code works with the platforms your team already uses:
 
-## What Provider Support Enables
+- **GitHub** – Pull requests, repository creation, and clone integration
+- **GitLab** – Merge requests, repository publishing, and hosted clones
+- **Bitbucket** – Pull request workflows (via API token authentication)
+- **Azure DevOps** – Pull request support for Microsoft-hosted repositories
 
-When a provider is available and authenticated, T3 Code can use it for source-control actions such
-as:
+## What You Can Do
 
-- detecting the provider for the current project
-- showing whether the required provider tools are installed
-- showing whether you are signed in
-- finding pull requests or merge requests for the current branch
-- creating pull requests or merge requests
-- opening the current pull request or merge request in your browser
-- checking out an existing pull request or merge request locally
+### Start Projects from Anywhere
 
-The exact wording may differ by provider. GitHub and Bitbucket call these pull requests. GitLab
-calls them merge requests.
+**Clone repositories directly**
 
-## Check Provider Status
+- Open the Command Palette (`Cmd/Ctrl + K`) → **Add Project**
+- Choose **GitHub repository**, **GitLab repository**, **Bitbucket repository**, **Azure DevOps repository**, or paste any **Git URL**
+- Enter the repository path (`owner/repo`, `group/project`, `workspace/repository`, or `project/repository`) or a full Git URL, pick a destination, and start coding
 
-Open Settings, then Source Control.
+**Publish local projects to the cloud**
 
-T3 Code shows each provider with:
+- Have a local Git repository without a remote?
+- Use the **Publish Repository** action to create a new hosted repository (GitHub, GitLab, Bitbucket, or Azure DevOps), add it as your origin remote, and push—all in one flow
+- Perfect for turning a weekend prototype into a real project
 
-- whether the required tool or credentials are available
-- whether T3 Code can detect an authenticated account
-- the account or host when the provider reports one
-- setup hints when something is missing
+### Manage Code Reviews Without Context Switching
 
-After changing authentication in your terminal, refresh the Source Control settings page or restart
-T3 Code.
+**Create pull requests while you work**
 
-## GitHub
+- Push a branch and create a pull request from the Git panel
+- T3 Code can suggest titles and descriptions based on your commits
+- Supports GitHub Pull Requests, GitLab Merge Requests, and Bitbucket Pull Requests
 
-GitHub support uses the GitHub CLI.
+**Stay on top of open reviews**
 
-### Requirements
+- See if your current branch already has an open PR/MR
+- Open the review directly in your browser with one click
+- Check out a teammate's branch to review code locally
 
-Install GitHub CLI:
+### Know Your Setup at a Glance
 
-```bash
-brew install gh
-```
+The **Source Control settings** page shows you exactly what's connected:
 
-Or use the installer from:
+- ✅ Which providers are authenticated and ready
+- ⚠️ What's missing and how to fix it
+- 👤 Which account is signed in (when available)
 
-<https://cli.github.com/>
+Run a quick **Rescan** after setting up a new machine or changing credentials.
 
-### Sign In
+## Getting Started
 
-Run:
+### For GitHub (Recommended for most users)
 
-```bash
-gh auth login
-```
+1. Install the GitHub CLI on the machine running T3 Code:
+   ```bash
+   brew install gh
+   ```
+2. Sign in:
+   ```bash
+   gh auth login
+   ```
+3. Open **Settings → Source Control** in T3 Code and verify GitHub shows as authenticated
 
-Follow the prompts and choose the GitHub account you want T3 Code to use.
+That's it—you can now clone, publish, and create pull requests.
 
-To verify the login:
+### For GitLab
 
-```bash
-gh auth status
-```
+1. Install the GitLab CLI:
+   ```bash
+   brew install glab
+   ```
+2. Authenticate:
+   ```bash
+   glab auth login
+   ```
+3. Check **Settings → Source Control** to confirm the connection
 
-T3 Code reads the GitHub CLI login status and shows the signed-in account in Source Control
-settings.
+### For Bitbucket
 
-### Notes
+Bitbucket uses API tokens instead of a CLI tool:
 
-Use the same GitHub account that has access to the repositories you work with in T3 Code. If you use
-SSH remotes, make sure your GitHub SSH key is set up as well.
+1. Create an API token in your Atlassian account with read/write access to pull requests
+2. Add these environment variables to the environment running T3 Code:
+   ```bash
+   export T3CODE_BITBUCKET_EMAIL="you@example.com"
+   export T3CODE_BITBUCKET_API_TOKEN="your-token"
+   ```
+3. Restart T3 Code and verify the connection in **Source Control settings**
 
-## GitLab
+### For Azure DevOps
 
-GitLab support uses the GitLab CLI.
+1. Install Azure CLI:
+   ```bash
+   brew install azure-cli
+   ```
+2. Add the DevOps extension:
+   ```bash
+   az extension add --name azure-devops
+   ```
+3. Sign in:
+   ```bash
+   az login
+   ```
 
-### Requirements
+---
 
-Install GitLab CLI:
+## Requirements & Troubleshooting
 
-```bash
-brew install glab
-```
+**Git is required** – T3 Code uses Git for all local operations. Ensure `git` is installed on your server.
 
-Or use the installer from:
+**Server-side setup** – Authentication happens on the machine running T3 Code (the server), not your local browser. If you're using a hosted or team instance, your administrator may have already configured providers.
 
-<https://gitlab.com/gitlab-org/cli>
+**Common issues:**
 
-### Sign In
+- **Provider shows "Not authenticated"** – Run the login command for that provider (e.g., `gh auth login`) in a terminal on the server, then rescan in Settings
+- **Bitbucket not connecting** – Double-check your environment variables are set in the correct shell profile and the server was restarted
+- **Can't push to a remote** – Verify your Git remote URL matches the provider you've authenticated with (SSH vs HTTPS remotes may need different credentials)
 
-Run:
+**Need more help?** Check your provider's CLI documentation:
 
-```bash
-glab auth login
-```
-
-Follow the prompts for your GitLab host and account.
-
-To verify the login:
-
-```bash
-glab auth status
-```
-
-T3 Code reads the GitLab CLI login status and shows the signed-in account in Source Control
-settings.
-
-### Notes
-
-If your team uses a self-managed GitLab instance, authenticate `glab` against that host. T3 Code
-uses your repository remote to determine which provider should handle a project.
-
-## Bitbucket
-
-Bitbucket support uses the Bitbucket Cloud REST API.
-
-Bitbucket does not have an official general-purpose CLI like GitHub CLI or GitLab CLI, so T3 Code
-uses environment variables for authentication.
-
-### Requirements
-
-Create a Bitbucket API token for your Atlassian account.
-
-The token should include the Bitbucket scopes needed for the actions you want to use:
-
-- read access to your Bitbucket account
-- read access to pull requests
-- write access to pull requests
-
-If you want to push commits over HTTPS, your Git credentials also need write access to the
-repository. Many users prefer SSH for Git push and pull.
-
-### Sign In
-
-Expose these environment variables in the shell that starts T3 Code:
-
-```bash
-export T3CODE_BITBUCKET_EMAIL="you@example.com"
-export T3CODE_BITBUCKET_API_TOKEN="your-api-token"
-```
-
-Use your Atlassian account email for `T3CODE_BITBUCKET_EMAIL`.
-
-If you normally start T3 Code from a terminal, put those exports in your shell profile, such as
-`~/.zshrc`.
-
-If you start T3 Code from a desktop launcher, make sure the launcher receives those environment
-variables too.
-
-To verify the token manually:
-
-```bash
-curl -u "$T3CODE_BITBUCKET_EMAIL:$T3CODE_BITBUCKET_API_TOKEN" \
-  -H "Accept: application/json" \
-  "https://api.bitbucket.org/2.0/user"
-```
-
-T3 Code uses the same credentials to check your Bitbucket sign-in status.
-
-### Notes
-
-Bitbucket workspace billing and repository permissions can affect whether Git pushes are allowed.
-If pull request creation works but pushing fails, check the repository permissions, workspace plan,
-and whether your Git remote uses HTTPS credentials or SSH.
-
-## Azure DevOps
-
-Azure DevOps support uses Azure CLI with the Azure DevOps extension.
-
-### Requirements
-
-Install Azure CLI:
-
-```bash
-brew install azure-cli
-```
-
-Then install the Azure DevOps extension:
-
-```bash
-az extension add --name azure-devops
-```
-
-### Sign In
-
-Run:
-
-```bash
-az login
-```
-
-Follow the browser login flow for the Azure account that has access to your Azure DevOps
-organization and project.
-
-To verify the login:
-
-```bash
-az account show --query user.name -o tsv
-```
-
-T3 Code uses Azure CLI to check your sign-in status and show the signed-in account in Source
-Control settings.
-
-### Notes
-
-Azure DevOps repository remotes usually look like one of these:
-
-```text
-https://dev.azure.com/organization/project/_git/repository
-git@ssh.dev.azure.com:v3/organization/project/repository
-```
-
-Make sure Azure CLI can detect the organization and project for the repository you are working in.
-If your team uses SSH for Git operations, your Azure DevOps SSH key must be configured separately
-from `az login`.
-
-## Version Control Requirements
-
-Source control providers work with your local version control setup.
-
-Today, Git is the supported local version control system for provider actions. Make sure Git is
-installed:
-
-```bash
-git --version
-```
-
-T3 Code can also detect Jujutsu installations in Source Control settings, but provider workflows for
-Jujutsu are still being built.
-
-## Troubleshooting
-
-If a provider shows as unavailable:
-
-1. Install the required CLI or configure the required environment variables.
-2. Authenticate in your terminal.
-3. Restart T3 Code or refresh Source Control settings.
-4. Check that the current project's remote URL points to the provider you expect.
-5. Confirm your account has access to the repository.
-
-If provider actions work but Git push or checkout fails, verify your Git remote and credentials
-separately with normal Git commands.
+- [GitHub CLI](https://cli.github.com/)
+- [GitLab CLI](https://gitlab.com/gitlab-org/cli)
+- [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/)

@@ -7,16 +7,7 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import {
-  type ReactNode,
-  memo,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type ReactNode, memo, useCallback, useEffect, useMemo, useState } from "react";
 import {
   type AuthClientSession,
   type AuthPairingLink,
@@ -68,6 +59,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
+import { AnimatedHeight } from "../AnimatedHeight";
 import {
   Menu,
   MenuGroup,
@@ -173,62 +165,6 @@ function ConnectionStatusDot({
         {tooltipText}
       </TooltipPopup>
     </Tooltip>
-  );
-}
-
-function AnimatedHeight({ children }: { readonly children: ReactNode }) {
-  const contentRef = useRef<HTMLDivElement>(null);
-  const [height, setHeight] = useState<number | null>(null);
-
-  useLayoutEffect(() => {
-    const element = contentRef.current;
-    if (!element) return;
-    let firstFrameId: number | null = null;
-    let secondFrameId: number | null = null;
-
-    const updateHeight = () => {
-      const nextHeight = Math.ceil(element.scrollHeight || element.getBoundingClientRect().height);
-      setHeight((currentHeight) => (currentHeight === nextHeight ? currentHeight : nextHeight));
-    };
-    const cancelPendingFrames = () => {
-      if (firstFrameId !== null) {
-        window.cancelAnimationFrame(firstFrameId);
-        firstFrameId = null;
-      }
-      if (secondFrameId !== null) {
-        window.cancelAnimationFrame(secondFrameId);
-        secondFrameId = null;
-      }
-    };
-    const updateHeightAfterPaint = () => {
-      cancelPendingFrames();
-      updateHeight();
-      firstFrameId = window.requestAnimationFrame(() => {
-        firstFrameId = null;
-        updateHeight();
-        secondFrameId = window.requestAnimationFrame(() => {
-          secondFrameId = null;
-          updateHeight();
-        });
-      });
-    };
-
-    updateHeightAfterPaint();
-    const resizeObserver = new ResizeObserver(updateHeightAfterPaint);
-    resizeObserver.observe(element);
-    return () => {
-      resizeObserver.disconnect();
-      cancelPendingFrames();
-    };
-  }, []);
-
-  return (
-    <div
-      className="overflow-hidden transition-[height] duration-200 ease-out motion-reduce:transition-none"
-      style={height === null ? undefined : { height }}
-    >
-      <div ref={contentRef}>{children}</div>
-    </div>
   );
 }
 

@@ -79,9 +79,8 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: ["auth", "status"],
   parseAuth: parseGitLabAuth,
-  implemented: true,
   installHint:
-    "Install GitLab CLI with `brew install glab` or from https://gitlab.com/gitlab-org/cli.",
+    "Install the GitLab command-line tool (`glab`) from https://gitlab.com/gitlab-org/cli or your package manager (for example `brew install glab`).",
 } satisfies SourceControlProviderDiscovery.SourceControlCliDiscoverySpec;
 
 export const make = Effect.fn("makeGitLabSourceControlProvider")(function* () {

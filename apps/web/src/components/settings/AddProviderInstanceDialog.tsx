@@ -28,6 +28,7 @@ import { RadioGroup } from "../ui/radio-group";
 import { toastManager } from "../ui/toast";
 import { DRIVER_OPTION_BY_VALUE, DRIVER_OPTIONS } from "./providerDriverMeta";
 import { ProviderSettingsForm, deriveProviderSettingsFields } from "./ProviderSettingsForm";
+import { AnimatedHeight } from "../AnimatedHeight";
 
 const PROVIDER_ACCENT_SWATCHES = [
   "#2563eb",
@@ -250,7 +251,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                   key={step}
                   type="button"
                   className={cn(
-                    "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-x-2 rounded-lg border px-3 py-2 text-left transition",
+                    "grid min-w-0 grid-cols-[1rem_minmax(0,1fr)] gap-x-2 rounded-lg border px-3 py-2 text-left",
                     index === wizardStep
                       ? "border-primary bg-primary/10 ring-1 ring-primary/25"
                       : index < wizardStep
@@ -290,168 +291,173 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
             data-slot="dialog-panel"
             className="space-y-4 border-b border-border/70 bg-muted/20 px-6 py-5"
           >
-            <div className={cn("grid gap-2", wizardStep !== 0 && "hidden")}>
-              <span id="add-instance-driver-label" className="text-xs font-medium text-foreground">
-                Driver
-              </span>
-              <RadioGroup
-                value={driver}
-                onValueChange={(value) => setDriver(ProviderDriverKind.make(value))}
-                aria-labelledby="add-instance-driver-label"
-                className="grid grid-cols-2 gap-2.5"
-              >
-                {DRIVER_OPTIONS.map((option) => {
-                  const IconComponent = option.icon;
-                  const isSelected = option.value === driver;
-                  return (
-                    <RadioPrimitive.Root
-                      key={option.value}
-                      value={option.value}
-                      className={cn(
-                        "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-[background-color,border-color,box-shadow]",
-                        "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-                        isSelected
-                          ? "border-primary bg-background shadow-sm ring-2 ring-primary/35"
-                          : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50",
-                      )}
-                    >
-                      <IconComponent className="size-5 shrink-0" aria-hidden />
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                        {option.label}
-                      </span>
-                      {option.badgeLabel ? (
-                        <Badge variant="warning" size="sm">
-                          {option.badgeLabel}
-                        </Badge>
-                      ) : null}
-                    </RadioPrimitive.Root>
-                  );
-                })}
-                {COMING_SOON_DRIVER_OPTIONS.map((option) => {
-                  const IconComponent = option.icon;
-                  return (
-                    <RadioPrimitive.Root
-                      key={option.value}
-                      value={option.value}
-                      disabled
-                      className={cn(
-                        "relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-55 outline-none",
-                      )}
-                    >
-                      <IconComponent
-                        className="size-5 shrink-0 text-muted-foreground"
-                        aria-hidden
-                      />
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                        {option.label}
-                      </span>
-                      <Badge variant="warning" size="sm">
-                        Coming Soon
-                      </Badge>
-                    </RadioPrimitive.Root>
-                  );
-                })}
-              </RadioGroup>
-            </div>
-
-            <label className={cn("grid gap-2", wizardStep !== 1 && "hidden")}>
-              <span className="text-xs font-medium text-foreground">Label</span>
-              <Input
-                className="bg-background"
-                placeholder="e.g. Work"
-                value={label}
-                onChange={(event) => setLabel(event.target.value)}
-              />
-              <span className="text-[11px] text-muted-foreground">
-                Shown in the provider list. Optional.
-              </span>
-            </label>
-
-            <label className={cn("grid gap-2", wizardStep !== 1 && "hidden")}>
-              <span className="text-xs font-medium text-foreground">Instance ID</span>
-              <Input
-                className="bg-background"
-                placeholder={`${driver}_work`}
-                value={instanceId}
-                onChange={(event) => {
-                  setInstanceIdDirty(true);
-                  setInstanceId(event.target.value);
-                }}
-                aria-invalid={showInstanceIdError}
-              />
-              {showInstanceIdError ? (
-                <span className="text-[11px] text-destructive">{instanceIdError}</span>
-              ) : (
-                <span className="text-[11px] text-muted-foreground">
-                  Routing key used by threads and sessions. Letters, digits, '-', or '_'.
+            <AnimatedHeight>
+              <div className={cn("grid gap-2", wizardStep !== 0 && "hidden")}>
+                <span
+                  id="add-instance-driver-label"
+                  className="text-xs font-medium text-foreground"
+                >
+                  Driver
                 </span>
-              )}
-            </label>
-
-            <div className={cn("grid gap-2", wizardStep !== 1 && "hidden")}>
-              <span className="text-xs font-medium text-foreground">Accent color</span>
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <input
-                  type="color"
-                  value={normalizeProviderAccentColor(accentColor) ?? PROVIDER_ACCENT_SWATCHES[0]}
-                  onChange={(event) => setAccentColor(event.target.value)}
-                  aria-label="Provider instance accent color"
-                  className="h-8 w-10 cursor-pointer rounded-xl border border-input bg-background p-0.5"
-                />
-                <div className="flex flex-wrap gap-1.5">
-                  {PROVIDER_ACCENT_SWATCHES.map((swatch) => {
-                    const selected = accentColor.toLowerCase() === swatch;
+                <RadioGroup
+                  value={driver}
+                  onValueChange={(value) => setDriver(ProviderDriverKind.make(value))}
+                  aria-labelledby="add-instance-driver-label"
+                  className="grid grid-cols-2 gap-2.5"
+                >
+                  {DRIVER_OPTIONS.map((option) => {
+                    const IconComponent = option.icon;
+                    const isSelected = option.value === driver;
                     return (
-                      <button
-                        key={swatch}
-                        type="button"
+                      <RadioPrimitive.Root
+                        key={option.value}
+                        value={option.value}
                         className={cn(
-                          "size-6 cursor-pointer rounded-full border transition",
-                          selected
-                            ? "scale-110 border-foreground ring-2 ring-ring ring-offset-1 ring-offset-background"
-                            : "border-black/10 hover:scale-105 dark:border-white/20",
+                          "relative flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-[background-color,border-color,box-shadow]",
+                          "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
+                          isSelected
+                            ? "border-primary bg-background shadow-sm ring-2 ring-primary/35"
+                            : "border-border bg-background hover:border-foreground/20 hover:bg-muted/50",
                         )}
-                        style={{ backgroundColor: swatch }}
-                        onClick={() => setAccentColor(swatch)}
-                        aria-label={`Use ${swatch} accent`}
-                      />
+                      >
+                        <IconComponent className="size-5 shrink-0" aria-hidden />
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                          {option.label}
+                        </span>
+                        {option.badgeLabel ? (
+                          <Badge variant="warning" size="sm">
+                            {option.badgeLabel}
+                          </Badge>
+                        ) : null}
+                      </RadioPrimitive.Root>
                     );
                   })}
-                </div>
-                {accentColor ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    className="h-7 px-2 text-xs text-muted-foreground"
-                    onClick={() => setAccentColor("")}
-                  >
-                    Clear
-                  </Button>
-                ) : null}
+                  {COMING_SOON_DRIVER_OPTIONS.map((option) => {
+                    const IconComponent = option.icon;
+                    return (
+                      <RadioPrimitive.Root
+                        key={option.value}
+                        value={option.value}
+                        disabled
+                        className={cn(
+                          "relative flex cursor-not-allowed items-center gap-3 rounded-lg border border-border bg-background px-3 py-3 text-left opacity-55 outline-none",
+                        )}
+                      >
+                        <IconComponent
+                          className="size-5 shrink-0 text-muted-foreground"
+                          aria-hidden
+                        />
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                          {option.label}
+                        </span>
+                        <Badge variant="warning" size="sm">
+                          Coming Soon
+                        </Badge>
+                      </RadioPrimitive.Root>
+                    );
+                  })}
+                </RadioGroup>
               </div>
-              <span className="text-[11px] text-muted-foreground">
-                Optional marker shown in the picker.
-              </span>
-            </div>
 
-            {driverSettingsFields.length > 0 ? (
-              <div className={cn("grid gap-4", wizardStep !== 2 && "hidden")}>
-                <ProviderSettingsForm
-                  definition={driverOption}
-                  value={configDraft}
-                  idPrefix={`add-provider-${driver}`}
-                  variant="dialog"
-                  onChange={setConfigDraft}
+              <label className={cn("grid gap-2", wizardStep !== 1 && "hidden")}>
+                <span className="text-xs font-medium text-foreground">Label</span>
+                <Input
+                  className="bg-background"
+                  placeholder="e.g. Work"
+                  value={label}
+                  onChange={(event) => setLabel(event.target.value)}
                 />
+                <span className="text-[11px] text-muted-foreground">
+                  Shown in the provider list. Optional.
+                </span>
+              </label>
+
+              <label className={cn("grid gap-2", wizardStep !== 1 && "hidden")}>
+                <span className="text-xs font-medium text-foreground">Instance ID</span>
+                <Input
+                  className="bg-background"
+                  placeholder={`${driver}_work`}
+                  value={instanceId}
+                  onChange={(event) => {
+                    setInstanceIdDirty(true);
+                    setInstanceId(event.target.value);
+                  }}
+                  aria-invalid={showInstanceIdError}
+                />
+                {showInstanceIdError ? (
+                  <span className="text-[11px] text-destructive">{instanceIdError}</span>
+                ) : (
+                  <span className="text-[11px] text-muted-foreground">
+                    Routing key used by threads and sessions. Letters, digits, '-', or '_'.
+                  </span>
+                )}
+              </label>
+
+              <div className={cn("grid gap-2", wizardStep !== 1 && "hidden")}>
+                <span className="text-xs font-medium text-foreground">Accent color</span>
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <input
+                    type="color"
+                    value={normalizeProviderAccentColor(accentColor) ?? PROVIDER_ACCENT_SWATCHES[0]}
+                    onChange={(event) => setAccentColor(event.target.value)}
+                    aria-label="Provider instance accent color"
+                    className="h-8 w-10 cursor-pointer rounded-xl border border-input bg-background p-0.5"
+                  />
+                  <div className="flex flex-wrap gap-1.5">
+                    {PROVIDER_ACCENT_SWATCHES.map((swatch) => {
+                      const selected = accentColor.toLowerCase() === swatch;
+                      return (
+                        <button
+                          key={swatch}
+                          type="button"
+                          className={cn(
+                            "size-6 cursor-pointer rounded-full border transition",
+                            selected
+                              ? "scale-110 border-foreground ring-2 ring-ring ring-offset-1 ring-offset-background"
+                              : "border-black/10 hover:scale-105 dark:border-white/20",
+                          )}
+                          style={{ backgroundColor: swatch }}
+                          onClick={() => setAccentColor(swatch)}
+                          aria-label={`Use ${swatch} accent`}
+                        />
+                      );
+                    })}
+                  </div>
+                  {accentColor ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs text-muted-foreground"
+                      onClick={() => setAccentColor("")}
+                    >
+                      Clear
+                    </Button>
+                  ) : null}
+                </div>
+                <span className="text-[11px] text-muted-foreground">
+                  Optional marker shown in the picker.
+                </span>
               </div>
-            ) : wizardStep === 2 ? (
-              <div className="grid gap-2">
-                <p className="text-sm text-muted-foreground">
-                  This driver has no required configuration. You can add the instance now.
-                </p>
-              </div>
-            ) : null}
+
+              {driverSettingsFields.length > 0 ? (
+                <div className={cn("grid gap-4", wizardStep !== 2 && "hidden")}>
+                  <ProviderSettingsForm
+                    definition={driverOption}
+                    value={configDraft}
+                    idPrefix={`add-provider-${driver}`}
+                    variant="dialog"
+                    onChange={setConfigDraft}
+                  />
+                </div>
+              ) : wizardStep === 2 ? (
+                <div className="grid gap-2">
+                  <p className="text-sm text-muted-foreground">
+                    This driver has no required configuration. You can add the instance now.
+                  </p>
+                </div>
+              ) : null}
+            </AnimatedHeight>
           </div>
 
           <DialogFooter className="border-t bg-background">

@@ -16,13 +16,12 @@ export interface SourceControlAuthProbeInput {
 interface SourceControlDiscoverySpecBase {
   readonly kind: SourceControlProviderKind;
   readonly label: string;
-  readonly executable: string;
-  readonly implemented: boolean;
   readonly installHint: string;
 }
 
 export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly type: "cli";
+  readonly executable: string;
   readonly versionArgs: ReadonlyArray<string>;
   readonly authArgs: ReadonlyArray<string>;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
@@ -41,7 +40,6 @@ interface DiscoveryProbeResult {
   readonly kind: SourceControlProviderKind;
   readonly label: string;
   readonly executable: string;
-  readonly implemented: boolean;
   readonly status: "available" | "missing";
   readonly version: Option.Option<string>;
   readonly installHint: string;
@@ -149,7 +147,6 @@ function probeCli(input: {
             kind: input.spec.kind,
             label: input.spec.label,
             executable: input.spec.executable,
-            implemented: input.spec.implemented,
             status: "available" as const,
             version: Option.orElse(firstNonEmptyLine(result.stdout), () =>
               firstNonEmptyLine(result.stderr),
@@ -163,7 +160,6 @@ function probeCli(input: {
           kind: input.spec.kind,
           label: input.spec.label,
           executable: input.spec.executable,
-          implemented: input.spec.implemented,
           status: "missing" as const,
           version: Option.none<string>(),
           installHint: input.spec.installHint,
@@ -185,8 +181,6 @@ export function probeSourceControlProvider(input: {
           ({
             kind: input.spec.kind,
             label: input.spec.label,
-            executable: input.spec.executable,
-            implemented: input.spec.implemented,
             status: "available" as const,
             version: Option.none<string>(),
             installHint: input.spec.installHint,
@@ -208,7 +202,7 @@ export function probeSourceControlProvider(input: {
       if (item.status !== "available") {
         return Effect.succeed({
           ...item,
-          auth: unknownAuth("CLI is not installed."),
+          auth: unknownAuth("Hosting integration command was not found on the server PATH."),
         } satisfies SourceControlProviderDiscoveryItem);
       }
 
