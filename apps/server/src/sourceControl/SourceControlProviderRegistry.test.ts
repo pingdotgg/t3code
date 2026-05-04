@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { DateTime, Effect, Layer, Option } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../config.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
@@ -14,11 +15,26 @@ import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
+const processOutput = (
+  stdout: string,
+  options?: {
+    readonly stderr?: string;
+    readonly exitCode?: ChildProcessSpawner.ExitCode;
+  },
+): VcsProcess.VcsProcessOutput => ({
+  exitCode: options?.exitCode ?? ChildProcessSpawner.ExitCode(0),
+  stdout,
+  stderr: options?.stderr ?? "",
+  stdoutTruncated: false,
+  stderrTruncated: false,
+});
+
 function makeRegistry(input: {
   readonly remotes: ReadonlyArray<{
     readonly name: string;
     readonly url: string;
   }>;
+  readonly process?: Partial<VcsProcess.VcsProcessShape>;
 }) {
   const driver = {
     listRemotes: () =>
@@ -55,15 +71,20 @@ function makeRegistry(input: {
       }),
   });
 
+  const processLayer = Layer.mock(VcsProcess.VcsProcess)({
+    run: () => Effect.succeed(processOutput("")),
+    ...input.process,
+  });
+
   return SourceControlProviderRegistry.make().pipe(
     Effect.provide(
       Layer.mergeAll(
         registryLayer,
+        processLayer,
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
-        Layer.mock(VcsProcess.VcsProcess)({}),
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-registry-test-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),
@@ -100,6 +121,56 @@ it.effect("routes GitLab remotes to the GitLab provider", () =>
   Effect.gen(function* () {
     const registry = yield* makeRegistry({
       remotes: [{ name: "origin", url: "git@gitlab.com:group/project.git" }],
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "gitlab");
+  }),
+);
+
+it.effect("routes authenticated self-hosted GitLab remotes without relying on host naming", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://self-hosted.example.test/group/project.git" }],
+      process: {
+        run: () =>
+          Effect.succeed(
+            processOutput(
+              `gitlab.com
+  x gitlab.com: API call failed: 401 Unauthorized
+  ! No token found
+self-hosted.example.test
+  ✓ Logged in to self-hosted.example.test as gitlab-user
+  ✓ Token found: ******
+`,
+              { exitCode: ChildProcessSpawner.ExitCode(1) },
+            ),
+          ),
+      },
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "gitlab");
+  }),
+);
+
+it.effect("routes authenticated self-hosted GitLab remotes on non-standard ports", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://self-hosted.example.test:8443/group/project.git" }],
+      process: {
+        run: () =>
+          Effect.succeed(
+            processOutput(
+              `self-hosted.example.test:8443
+  ✓ Logged in to self-hosted.example.test:8443 as gitlab-user
+  ✓ Token found: ******
+`,
+            ),
+          ),
+      },
     });
 
     const provider = yield* registry.resolve({ cwd: "/repo" });

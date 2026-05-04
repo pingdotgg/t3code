@@ -56,4 +56,23 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
       detectSourceControlProviderFromRemoteUrl("git@bitbucket.org:workspace/repo.git")?.kind,
     ).toBe("bitbucket");
   });
+
+  it("preserves ports while classifying by hostname", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://gitlab.com:8443/group/repo.git"),
+    ).toEqual({
+      kind: "gitlab",
+      name: "GitLab",
+      baseUrl: "https://gitlab.com:8443",
+    });
+    expect(
+      detectSourceControlProviderFromRemoteUrl(
+        "https://self-hosted.example.test:8443/group/repo.git",
+      ),
+    ).toEqual({
+      kind: "unknown",
+      name: "self-hosted.example.test:8443",
+      baseUrl: "https://self-hosted.example.test:8443",
+    });
+  });
 });
