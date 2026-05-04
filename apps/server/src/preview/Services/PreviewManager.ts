@@ -1,21 +1,21 @@
 import {
-  type PreviewChooseStoryMappingInput,
   type PreviewEnsureRuntimeInput,
   type PreviewEnsureRuntimeResult,
   type PreviewIssueAccessTokenInput,
   type PreviewIssueAccessTokenResult,
   type PreviewInspectProjectInput,
-  type PreviewPrepareStoryWorkTurnInput,
-  type PreviewPrepareStoryWorkTurnResult,
-  type PreviewPrepareWorkspaceSetupThreadInput,
-  type PreviewPrepareWorkspaceSetupThreadResult,
+  type PreviewPrepareBootstrapThreadInput,
+  type PreviewPrepareBootstrapThreadResult,
+  type PreviewPreparePreviewGenerationTurnInput,
+  type PreviewPreparePreviewGenerationTurnResult,
+  type PreviewPreparePreviewRepairTurnInput,
+  type PreviewPreparePreviewRepairTurnResult,
   type PreviewProjectEvent,
   type PreviewProjectInspectionResult,
   type PreviewResolveTargetInput,
   type PreviewResolveTargetResult,
   type PreviewSearchComponentsInput,
   type PreviewSearchComponentsResult,
-  type PreviewSetStartCommandOverrideInput,
   type PreviewStopRuntimeInput,
   type PreviewSubscribeProjectInput,
   PreviewRpcError,
@@ -38,18 +38,15 @@ export interface PreviewManagerShape {
   readonly resolveTarget: (
     input: PreviewResolveTargetInput,
   ) => Effect.Effect<PreviewResolveTargetResult, PreviewRpcError>;
-  readonly chooseStoryMapping: (
-    input: PreviewChooseStoryMappingInput,
-  ) => Effect.Effect<void, PreviewRpcError>;
-  readonly setStartCommandOverride: (
-    input: PreviewSetStartCommandOverrideInput,
-  ) => Effect.Effect<void, PreviewRpcError>;
-  readonly prepareWorkspaceSetupThread: (
-    input: PreviewPrepareWorkspaceSetupThreadInput,
-  ) => Effect.Effect<PreviewPrepareWorkspaceSetupThreadResult, PreviewRpcError>;
-  readonly prepareStoryWorkTurn: (
-    input: PreviewPrepareStoryWorkTurnInput,
-  ) => Effect.Effect<PreviewPrepareStoryWorkTurnResult, PreviewRpcError>;
+  readonly prepareBootstrapThread: (
+    input: PreviewPrepareBootstrapThreadInput,
+  ) => Effect.Effect<PreviewPrepareBootstrapThreadResult, PreviewRpcError>;
+  readonly preparePreviewGenerationTurn: (
+    input: PreviewPreparePreviewGenerationTurnInput,
+  ) => Effect.Effect<PreviewPreparePreviewGenerationTurnResult, PreviewRpcError>;
+  readonly preparePreviewRepairTurn: (
+    input: PreviewPreparePreviewRepairTurnInput,
+  ) => Effect.Effect<PreviewPreparePreviewRepairTurnResult, PreviewRpcError>;
   readonly ensureRuntime: (
     input: PreviewEnsureRuntimeInput,
   ) => Effect.Effect<PreviewEnsureRuntimeResult, PreviewRpcError>;

@@ -1,29 +1,33 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { promises as fsPromises } from "node:fs";
+import { createRequire } from "node:module";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
+import type { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 
 import {
   CommandId,
-  type PreviewControlsBridgeStatus,
   type PreviewEnsureRuntimeResult,
+  type PreviewFramework,
   type PreviewIssueAccessTokenResult,
-  type PreviewPrepareStoryWorkTurnResult,
-  type PreviewPrepareWorkspaceSetupThreadResult,
+  type PreviewPrepareBootstrapThreadResult,
+  type PreviewPreparePreviewGenerationTurnResult,
+  type PreviewPreparePreviewRepairTurnResult,
   type PreviewProjectEvent,
   type PreviewProjectInspectionResult,
   type PreviewResolveTargetResult,
+  type PreviewScenarioEntry,
   type PreviewSearchComponentsResult,
   PreviewRpcError,
-  type PreviewStoryWorkAction,
-  type PreviewTargetKind,
   type ProjectId,
-  type ProjectPreviewConfig,
-  type ProjectPreviewWorkspaceRecord,
   ProjectRelativePath,
+  type ProjectPreviewWorkspaceRecord,
 } from "@forma/contracts";
-import { Cause, Deferred, Effect, Exit, Layer, PubSub, Ref, Stream } from "effect";
+import { Cause, Effect, Exit, Layer, PubSub, Ref, Stream } from "effect";
 
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import {
@@ -36,49 +40,13 @@ interface ProjectRecord {
   readonly id: ProjectId;
   readonly title: string;
   readonly workspaceRoot: string;
-  readonly previewConfig: ProjectPreviewConfig | null | undefined;
   readonly previewWorkspaceRecords: readonly ProjectPreviewWorkspaceRecord[];
 }
 
-interface StorybookIndexEntry {
-  readonly id: string;
-  readonly importPath?: string;
-  readonly title?: string;
-  readonly name?: string;
-  readonly type?: string;
-}
-
-interface StorybookWorkspace {
-  readonly workspaceRootRelativePath: string;
-  readonly storybookConfigPaths: readonly string[];
-  readonly mainConfigPath: string | null;
-  readonly commandCandidates: readonly string[];
-  readonly controlsBridgeStatus: PreviewControlsBridgeStatus;
-  readonly coverageStatus: "proven" | "unproven";
-  readonly resolvedStoryGlobs: readonly string[];
-}
-
-interface PackageWorkspace {
-  readonly workspaceRootRelativePath: string;
-  readonly packageJsonPath: string;
-  readonly packageJson: PackageJsonRecord | null;
-  readonly framework: string | null;
-}
-
-interface RuntimeRecord {
-  readonly projectId: ProjectId;
-  readonly cwd: string;
-  readonly command: string;
-  readonly port: number;
-  readonly baseUrl: string;
-  readonly iframeBasePath: string;
-  readonly child: ChildProcess;
-}
-
 interface PackageJsonRecord {
-  readonly scripts?: Record<string, string>;
   readonly dependencies?: Record<string, string>;
   readonly devDependencies?: Record<string, string>;
+  readonly bin?: string | Record<string, string>;
 }
 
 interface PreviewAccessTokenRecord {
@@ -87,27 +55,46 @@ interface PreviewAccessTokenRecord {
   readonly expiresAtMs: number;
 }
 
+interface ResolvedHarnessTarget {
+  readonly projectId: ProjectId;
+  readonly relativePath: string;
+  readonly previewFileRelativePath: string;
+  readonly workspaceRootRelativePath: string;
+  readonly framework: PreviewFramework;
+  readonly scenarioChoices: readonly PreviewScenarioEntry[];
+  readonly initialScenarioId: string | null;
+  readonly moduleMocks: Readonly<Record<string, string>>;
+  readonly aliasEntries: readonly AliasEntry[];
+}
+
+interface RuntimeRecord {
+  readonly projectId: ProjectId;
+  readonly relativePath: string;
+  readonly previewFileRelativePath: string;
+  readonly runtimeDir: string;
+  readonly port: number;
+  readonly baseUrl: string;
+  readonly iframeBasePath: string;
+  readonly child: ChildProcessByStdio<null, Readable, Readable>;
+  readonly logs: string[];
+}
+
+interface AliasEntry {
+  readonly find: string;
+  readonly replacement: string;
+}
+
 interface PreviewManagerState {
   readonly runtimes: Map<ProjectId, RuntimeRecord>;
-  readonly runtimeStarts: Map<
-    ProjectId,
-    Deferred.Deferred<PreviewEnsureRuntimeResult, PreviewRpcError>
-  >;
   readonly projectPubSubs: Map<ProjectId, PubSub.PubSub<PreviewProjectEvent>>;
   readonly accessTokens: Map<string, PreviewAccessTokenRecord>;
+  readonly lastResolvedTargets: Map<ProjectId, ResolvedHarnessTarget>;
 }
 
-interface StorybookInspectionDetails {
-  readonly framework: string | null;
-  readonly packageManager: "bun" | "pnpm" | "yarn" | "npm";
-  readonly storybookConfigPaths: readonly string[];
-  readonly detectedStartCommands: readonly string[];
-  readonly controlsBridgeStatus: PreviewControlsBridgeStatus;
-  readonly hasStorybookSetup: boolean;
-  readonly workspaces: readonly StorybookWorkspace[];
-}
-
+const PREVIEW_ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
+const PREVIEW_RUNTIME_HOST = "127.0.0.1";
 const IGNORED_DIRS = new Set([
+  ".forma",
   ".git",
   ".next",
   ".turbo",
@@ -115,20 +102,29 @@ const IGNORED_DIRS = new Set([
   "dist",
   "build",
   "node_modules",
-  "storybook-static",
 ]);
 const COMPONENT_EXTENSIONS = new Set([".tsx", ".jsx", ".vue", ".ts", ".js"]);
-const STORYBOOK_MAIN_CONFIG_CANDIDATES = [
-  ".storybook/main.ts",
-  ".storybook/main.tsx",
-  ".storybook/main.js",
-  ".storybook/main.jsx",
-  ".storybook/main.mjs",
-  ".storybook/main.cjs",
-];
-const STORYBOOK_BRIDGE_RELATIVE_PATH = ".forma/storybook/previewBridge.js";
-const PREVIEW_ACCESS_TOKEN_TTL_MS = 60 * 60 * 1000;
-const PREVIEW_RUNTIME_HOST = "127.0.0.1";
+const BOOTSTRAP_FILE_PATHS = [
+  ".forma/preview/config.ts",
+  ".forma/preview/wrapper.tsx",
+  ".forma/preview/mocks.ts",
+] as const;
+
+function resolveHarnessAssetPath(relativePath: string): string {
+  const candidates = [
+    fileURLToPath(new URL(`../harness/${relativePath}`, import.meta.url)),
+    fileURLToPath(new URL(`./harness/${relativePath}`, import.meta.url)),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0]!;
+}
+
+const HARNESS_VITE_CONFIG_PATH = resolveHarnessAssetPath("vite.config.ts");
+const HARNESS_RUNTIME_MODULE_PATH = resolveHarnessAssetPath("runtime.tsx");
 
 function pruneExpiredAccessTokens(state: PreviewManagerState, nowMs = Date.now()) {
   return new Map(
@@ -157,16 +153,12 @@ function displayNameForPath(relativePath: string): string {
   return basename.replace(/[-_]+/g, " ").trim() || basename;
 }
 
-function isStoryPath(relativePath: string): boolean {
-  return /\.(stories|story)\.[^.]+$/i.test(relativePath);
-}
-
 function isComponentPath(relativePath: string): boolean {
   const normalized = normalizeProjectPath(relativePath);
-  if (!COMPONENT_EXTENSIONS.has(path.extname(normalized))) return false;
   if (normalized.endsWith(".d.ts")) return false;
-  if (isStoryPath(normalized)) return false;
-  return !/(\.test|\.spec)\.[^.]+$/i.test(normalized);
+  if (/\.(stories|story|preview)\.[^.]+$/i.test(normalized)) return false;
+  if (/(\.test|\.spec)\.[^.]+$/i.test(normalized)) return false;
+  return COMPONENT_EXTENSIONS.has(path.extname(normalized));
 }
 
 async function pathExists(targetPath: string): Promise<boolean> {
@@ -215,314 +207,111 @@ async function listRelativeFiles(root: string): Promise<string[]> {
   return results;
 }
 
-async function detectPackageManager(cwd: string): Promise<"bun" | "pnpm" | "yarn" | "npm"> {
-  if (await pathExists(path.join(cwd, "bun.lock"))) return "bun";
-  if (await pathExists(path.join(cwd, "pnpm-lock.yaml"))) return "pnpm";
-  if (await pathExists(path.join(cwd, "yarn.lock"))) return "yarn";
-  return "npm";
-}
-
-function resolveFramework(pkg: PackageJsonRecord | null): string | null {
+function resolveFrameworkFromPackage(pkg: PackageJsonRecord | null): PreviewFramework {
   const dependencies = {
     ...pkg?.dependencies,
     ...pkg?.devDependencies,
   };
-  if ("next" in dependencies) return "nextjs";
-  if ("vue" in dependencies) return "vue";
-  if ("react" in dependencies) return "react";
-  return null;
+  if ("next" in dependencies) return "react-next";
+  if ("@remix-run/react" in dependencies) return "react-remix";
+  if ("react-router" in dependencies || "react-router-dom" in dependencies) return "react-router";
+  if ("react" in dependencies) return "react-vite";
+  return "unsupported";
 }
 
-function detectStorybookConfigPaths(files: readonly string[]): string[] {
-  return files.filter((file) => /(^|\/)\.storybook\//.test(file));
+async function resolveWorkspaceRootRelativePath(
+  projectRoot: string,
+  relativePath: string,
+): Promise<string> {
+  const absoluteTargetPath = path.join(projectRoot, relativePath);
+  let currentDir = path.dirname(absoluteTargetPath);
+  const normalizedProjectRoot = path.resolve(projectRoot);
+  while (currentDir.startsWith(normalizedProjectRoot)) {
+    if (await pathExists(path.join(currentDir, "package.json"))) {
+      return normalizeProjectPath(path.relative(projectRoot, currentDir));
+    }
+    const nextDir = path.dirname(currentDir);
+    if (nextDir === currentDir) {
+      break;
+    }
+    currentDir = nextDir;
+  }
+  return "";
 }
 
-function scriptCommandPrefix(packageManager: "bun" | "pnpm" | "yarn" | "npm"): string {
-  if (packageManager === "bun") return "bun run";
-  if (packageManager === "pnpm") return "pnpm run";
-  if (packageManager === "yarn") return "yarn";
-  return "npm run";
-}
-
-function buildScopedScriptCommand(
-  packageManager: "bun" | "pnpm" | "yarn" | "npm",
-  scriptName: string,
-  workspaceRootRelativePath?: string,
-): string {
-  const normalizedWorkspace = normalizeProjectPath(workspaceRootRelativePath ?? "");
-  if (!normalizedWorkspace || normalizedWorkspace === ".") {
-    return `${scriptCommandPrefix(packageManager)} ${scriptName}`;
-  }
-  const quotedWorkspace = JSON.stringify(normalizedWorkspace);
-  if (packageManager === "pnpm") {
-    return `pnpm --dir ${quotedWorkspace} run ${scriptName}`;
-  }
-  if (packageManager === "bun") {
-    return `bun run --cwd ${quotedWorkspace} ${scriptName}`;
-  }
-  if (packageManager === "yarn") {
-    return `yarn --cwd ${quotedWorkspace} ${scriptName}`;
-  }
-  return `npm --prefix ${quotedWorkspace} run ${scriptName}`;
-}
-
-function buildScopedExecutableCommand(
-  packageManager: "bun" | "pnpm" | "yarn" | "npm",
-  executableCommand: string,
-  workspaceRootRelativePath?: string,
-): string {
-  const normalizedWorkspace = normalizeProjectPath(workspaceRootRelativePath ?? "");
-  const quotedWorkspace = JSON.stringify(normalizedWorkspace || ".");
-  if (!normalizedWorkspace || normalizedWorkspace === ".") {
-    if (packageManager === "pnpm") return `pnpm exec ${executableCommand}`;
-    if (packageManager === "bun") return `bun x ${executableCommand}`;
-    if (packageManager === "yarn") return `yarn exec ${executableCommand}`;
-    return `npm exec -- ${executableCommand}`;
-  }
-  if (packageManager === "pnpm") {
-    return `pnpm --dir ${quotedWorkspace} exec ${executableCommand}`;
-  }
-  if (packageManager === "bun") {
-    return `cd ${quotedWorkspace} && bun x ${executableCommand}`;
-  }
-  if (packageManager === "yarn") {
-    return `yarn --cwd ${quotedWorkspace} exec ${executableCommand}`;
-  }
-  return `npm --prefix ${quotedWorkspace} exec -- ${executableCommand}`;
-}
-
-function isScriptRunnerCommand(command: string): boolean {
-  return (
-    /^(npm|pnpm|bun)\b[\s\S]*\brun\b/.test(command) ||
-    /^yarn\b[\s\S]*(?:\bexec\b)?[\s\S]*\S+/.test(command)
+async function resolveWorkspacePackageJson(
+  projectRoot: string,
+  workspaceRootRelativePath: string,
+): Promise<PackageJsonRecord | null> {
+  const workspaceRoot = path.join(projectRoot, workspaceRootRelativePath);
+  const directPackage = await readJsonFile<PackageJsonRecord>(
+    path.join(workspaceRoot, "package.json"),
   );
+  if (directPackage) {
+    return directPackage;
+  }
+  if (workspaceRootRelativePath.length === 0) {
+    return directPackage;
+  }
+  return await readJsonFile<PackageJsonRecord>(path.join(projectRoot, "package.json"));
 }
 
-function appendScriptRunnerArgs(command: string, args: readonly string[]): string {
-  if (args.length === 0) {
-    return command;
-  }
-  if (/^npm\b/.test(command)) {
-    return command.includes(" -- ")
-      ? `${command} ${args.join(" ")}`
-      : `${command} -- ${args.join(" ")}`;
-  }
-  if (/^(pnpm|bun|yarn)\b/.test(command)) {
-    return `${command} ${args.join(" ")}`;
-  }
-  return `${command} ${args.join(" ")}`;
-}
-
-function buildStorybookRuntimeCommandCandidate(
-  packageManager: "bun" | "pnpm" | "yarn" | "npm",
-  scriptName: string,
-  scriptCommand: string,
-  workspaceRootRelativePath?: string,
-): string {
-  if (/^\s*(?:storybook|start-storybook)\b/i.test(scriptCommand)) {
-    return buildScopedExecutableCommand(
-      packageManager,
-      scriptCommand.trim(),
-      workspaceRootRelativePath,
+async function detectProjectFramework(
+  projectRoot: string,
+  relativePath?: string,
+): Promise<PreviewFramework> {
+  if (relativePath) {
+    const workspaceRootRelativePath = await resolveWorkspaceRootRelativePath(
+      projectRoot,
+      relativePath,
+    );
+    return resolveFrameworkFromPackage(
+      await resolveWorkspacePackageJson(projectRoot, workspaceRootRelativePath),
     );
   }
-  return buildScopedScriptCommand(packageManager, scriptName, workspaceRootRelativePath);
-}
-
-function isStorybookBuildLikeScript(scriptName: string, command: string): boolean {
-  return (
-    /\bbuild\b/i.test(scriptName) ||
-    /\bstatic\b/i.test(scriptName) ||
-    /(?:^|:)run$/i.test(scriptName) ||
-    /\bstorybook\s+build\b/i.test(command) ||
-    /\bbuild-storybook\b/i.test(command) ||
-    /\bserve\b/i.test(command)
+  const rootPackageJson = await readJsonFile<PackageJsonRecord>(
+    path.join(projectRoot, "package.json"),
   );
-}
-
-function detectStorybookCommandCandidates(
-  pkg: PackageJsonRecord | null,
-  packageManager: "bun" | "pnpm" | "yarn" | "npm",
-  workspaceRootRelativePath?: string,
-): string[] {
-  const scripts = pkg?.scripts ?? {};
-  const scriptEntries = Object.entries(scripts).filter(
-    ([name, command]) =>
-      !isStorybookBuildLikeScript(name, command) &&
-      (/storybook/i.test(name) || /\bstorybook\b/i.test(command)),
+  const rootFramework = resolveFrameworkFromPackage(rootPackageJson);
+  if (rootFramework !== "unsupported") {
+    return rootFramework;
+  }
+  const files = await listRelativeFiles(projectRoot);
+  const packageJsonPaths = files.filter(
+    (file) => file.endsWith("/package.json") || file === "package.json",
   );
-  const preferredEntries = scriptEntries.some(([name]) => /storybook/i.test(name))
-    ? scriptEntries.filter(([name]) => /storybook/i.test(name))
-    : scriptEntries;
-  const candidates = preferredEntries.map(([name, command]) =>
-    buildStorybookRuntimeCommandCandidate(packageManager, name, command, workspaceRootRelativePath),
-  );
-  return [...new Set(candidates)].toSorted((left, right) => {
-    const leftScore = /\bstorybook$/.test(left) ? 0 : 1;
-    const rightScore = /\bstorybook$/.test(right) ? 0 : 1;
-    if (leftScore !== rightScore) {
-      return leftScore - rightScore;
-    }
-    return left.localeCompare(right);
-  });
-}
-
-function detectStorybookMainConfigPath(files: readonly string[]): string | null {
-  for (const candidate of STORYBOOK_MAIN_CONFIG_CANDIDATES) {
-    const match = files.find((file) => file.endsWith(candidate));
-    if (match) {
-      return match;
+  for (const packageJsonPath of packageJsonPaths) {
+    const pkg = await readJsonFile<PackageJsonRecord>(path.join(projectRoot, packageJsonPath));
+    const framework = resolveFrameworkFromPackage(pkg);
+    if (framework !== "unsupported") {
+      return framework;
     }
   }
-  return null;
+  return "unsupported";
 }
 
-function workspaceRootFromStorybookConfig(storybookConfigPath: string): string {
-  const normalized = normalizeProjectPath(storybookConfigPath);
-  const marker = "/.storybook/";
-  const markerIndex = normalized.indexOf(marker);
-  if (markerIndex < 0) {
-    return "";
+async function hasBootstrapFiles(projectRoot: string): Promise<boolean> {
+  for (const relativePath of BOOTSTRAP_FILE_PATHS) {
+    if (!(await pathExists(path.join(projectRoot, relativePath)))) {
+      return false;
+    }
   }
-  return normalized.slice(0, markerIndex);
+  return true;
 }
 
-function normalizeStorybookImportPath(importPath: string): string {
-  return normalizeProjectPath(importPath).replace(/^\.\/+/, "");
+function previewFilePathForComponent(componentRelativePath: string): string {
+  const normalized = normalizeProjectPath(componentRelativePath);
+  const extension = path.extname(normalized);
+  const stem = normalized.slice(0, normalized.length - extension.length);
+  return `${stem}.preview.tsx`;
 }
 
-function withConfiguredPort(command: string, port: number): string {
-  if (/(^|\s)--port(?:=|\s+)\d+/.test(command)) {
-    return command.replace(/(^|\s)--port(?:=|\s+)\d+/, `$1--port ${port}`);
-  }
-  if (/(^|\s)-p\s+\d+/.test(command)) {
-    return command.replace(/(^|\s)-p\s+\d+/, `$1-p ${port}`);
-  }
-  if (/^(npm|pnpm|bun)\b[\s\S]*\bexec\b[\s\S]*\bstorybook\b/.test(command)) {
-    return `${command} --port ${port}`;
-  }
-  if (isScriptRunnerCommand(command)) {
-    return appendScriptRunnerArgs(command, [`--port ${port}`]);
-  }
-  return `${command} --port ${port}`;
+function workspaceLabel(workspaceRootRelativePath: string): string {
+  return workspaceRootRelativePath.trim().length > 0 ? workspaceRootRelativePath : "project root";
 }
 
-function withConfiguredHost(command: string, host: string): string {
-  if (/(^|\s)--host(?:=|\s+)\S+/.test(command)) {
-    return command.replace(/(^|\s)--host(?:=|\s+)\S+/, `$1--host ${host}`);
-  }
-  if (/^(npm|pnpm|bun)\b[\s\S]*\bexec\b[\s\S]*\bstorybook\b/.test(command)) {
-    return `${command} --host ${host}`;
-  }
-  if (isScriptRunnerCommand(command)) {
-    return appendScriptRunnerArgs(command, [`--host ${host}`]);
-  }
-  return `${command} --host ${host}`;
-}
-
-function withConfiguredCi(command: string): string {
-  if (/(^|\s)--ci(?:\s|$)/.test(command)) {
-    return command;
-  }
-  if (/^(npm|pnpm|bun)\b[\s\S]*\bexec\b[\s\S]*\bstorybook\b/.test(command)) {
-    return `${command} --ci`;
-  }
-  if (isScriptRunnerCommand(command)) {
-    return appendScriptRunnerArgs(command, ["--ci"]);
-  }
-  return `${command} --ci`;
-}
-
-async function allocatePort(): Promise<number> {
-  return await new Promise<number>((resolve, reject) => {
-    const server = net.createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (!address || typeof address === "string") {
-        server.close();
-        reject(new Error("Failed to allocate preview port."));
-        return;
-      }
-      const port = address.port;
-      server.close((error) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(port);
-      });
-    });
-    server.on("error", reject);
-  });
-}
-
-async function waitForStorybookReady(baseUrl: string, timeoutMs = 30_000): Promise<void> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < timeoutMs) {
-    try {
-      const response = await fetch(`${baseUrl}/index.json`);
-      if (response.ok) return;
-    } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  throw new Error("Timed out waiting for Storybook preview runtime.");
-}
-
-async function isStorybookReady(baseUrl: string, timeoutMs = 1_500): Promise<boolean> {
-  try {
-    await waitForStorybookReady(baseUrl, timeoutMs);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function loadStorybookEntries(baseUrl: string): Promise<StorybookIndexEntry[]> {
-  const response = await fetch(`${baseUrl}/index.json`);
-  if (!response.ok) {
-    throw new Error(`Failed to load Storybook index (${response.status}).`);
-  }
-  const json = (await response.json()) as
-    | {
-        entries?: Record<string, StorybookIndexEntry>;
-        stories?: Record<string, StorybookIndexEntry>;
-      }
-    | undefined;
-  const entries = json?.entries ?? json?.stories ?? {};
-  return Object.values(entries);
-}
-
-function buildPreviewConfig(
-  current: ProjectPreviewConfig | null | undefined,
-  patch: {
-    readonly workspaceCommandOverrides?: Record<string, string> | undefined;
-    readonly componentStoryMappings?: Record<string, string> | undefined;
-  },
-): ProjectPreviewConfig {
-  return {
-    provider: "storybook",
-    workspaceCommandOverrides: {
-      ...current?.workspaceCommandOverrides,
-      ...patch.workspaceCommandOverrides,
-    },
-    startCommandOverride: current?.startCommandOverride ?? null,
-    componentStoryMappings: {
-      ...current?.componentStoryMappings,
-      ...patch.componentStoryMappings,
-    },
-  };
-}
-
-function getWorkspaceCommandOverride(
-  previewConfig: ProjectPreviewConfig | null | undefined,
-  workspaceRootRelativePath: string,
-): string | null {
-  const normalizedWorkspaceRoot = normalizeProjectPath(workspaceRootRelativePath);
-  return (
-    previewConfig?.workspaceCommandOverrides?.[normalizedWorkspaceRoot] ??
-    previewConfig?.startCommandOverride ??
-    null
-  );
+function buildThreadTitle(workspaceRootRelativePath: string) {
+  return `Preview setup · ${workspaceLabel(workspaceRootRelativePath)}`;
 }
 
 function getWorkspaceRecord(
@@ -551,627 +340,397 @@ function upsertWorkspaceRecord(
   );
 }
 
-async function inferStoryCandidates(cwd: string, componentRelativePath: string): Promise<string[]> {
-  const files = await listRelativeFiles(cwd);
-  const normalizedComponentPath = normalizeProjectPath(componentRelativePath);
-  const dirname = path.posix.dirname(normalizedComponentPath);
-  const basename = path.basename(normalizedComponentPath, path.extname(normalizedComponentPath));
-  const storyFiles = files.filter(isStoryPath);
-  const colocated = storyFiles.filter((file) => {
-    if (path.posix.dirname(file) !== dirname) return false;
-    const stem = path.basename(file).replace(/\.(stories|story)\.[^.]+$/i, "");
-    return stem === basename;
-  });
-  if (colocated.length > 0) return colocated;
-  return storyFiles.filter((file) => {
-    const stem = path.basename(file).replace(/\.(stories|story)\.[^.]+$/i, "");
-    return stem === basename;
-  });
+function normalizeViteFsPath(filePath: string): string {
+  const resolved = path.resolve(filePath).replaceAll("\\", "/");
+  return resolved.startsWith("/") ? `/@fs${resolved}` : `/@fs/${resolved}`;
 }
 
-function storyFilePathForComponent(componentRelativePath: string): string {
-  const normalized = normalizeProjectPath(componentRelativePath);
-  const extension = path.extname(normalized);
-  const base = normalized.slice(0, -extension.length);
-  if (extension === ".jsx" || extension === ".js") {
-    return `${base}.stories.jsx`;
+function requireResolveFromRoots(searchRoots: readonly string[], specifier: string): string {
+  const runtimeRequire = createRequire(import.meta.url);
+  for (const searchRoot of searchRoots) {
+    try {
+      const requireFromRoot = createRequire(path.join(searchRoot, "package.json"));
+      return requireFromRoot.resolve(specifier);
+    } catch {
+      // Try the next candidate root.
+    }
   }
-  return `${base}.stories.tsx`;
+  return runtimeRequire.resolve(specifier);
 }
 
-function storybookBridgeImportPathForWorkspaceRoot(workspaceRootRelativePath: string): string {
-  const normalizedWorkspaceRoot = normalizeProjectPath(workspaceRootRelativePath);
-  const relativeImportPath = normalizedWorkspaceRoot
-    ? path.posix.relative(normalizedWorkspaceRoot, STORYBOOK_BRIDGE_RELATIVE_PATH)
-    : STORYBOOK_BRIDGE_RELATIVE_PATH;
-  return normalizeProjectPath(relativeImportPath || STORYBOOK_BRIDGE_RELATIVE_PATH);
+async function resolvePackageBinPath(
+  searchRoots: readonly string[],
+  packageName: string,
+  binName = packageName,
+): Promise<string> {
+  const packageJsonPath = requireResolveFromRoots(searchRoots, `${packageName}/package.json`);
+  const packageJson = await readJsonFile<PackageJsonRecord>(packageJsonPath);
+  if (!packageJson?.bin) {
+    throw new Error(`Package "${packageName}" does not define a CLI entry.`);
+  }
+  const relativeBinPath =
+    typeof packageJson.bin === "string" ? packageJson.bin : packageJson.bin[binName];
+  if (!relativeBinPath) {
+    throw new Error(`Package "${packageName}" does not define a "${binName}" CLI entry.`);
+  }
+  return path.resolve(path.dirname(packageJsonPath), relativeBinPath);
 }
 
-function patchStorybookMainConfigWithBridge(
-  existingContents: string,
+async function inferAliasEntries(
+  projectRoot: string,
+  relativePath: string,
   workspaceRootRelativePath: string,
-):
-  | { kind: "patched"; contents: string; changed: boolean }
-  | { kind: "manualRequired"; reason: string } {
-  const bridgeImportPath = storybookBridgeImportPathForWorkspaceRoot(workspaceRootRelativePath);
-  if (existingContents.includes(bridgeImportPath)) {
-    return { kind: "patched", contents: existingContents, changed: false };
+): Promise<readonly AliasEntry[]> {
+  const normalized = normalizeProjectPath(relativePath);
+  const srcMarker = "/src/";
+  const markerIndex = normalized.lastIndexOf(srcMarker);
+  const candidateRoots: string[] = [];
+  if (markerIndex >= 0) {
+    candidateRoots.push(
+      path.join(projectRoot, normalized.slice(0, markerIndex + srcMarker.length)),
+    );
   }
-  if (existingContents.includes("previewBridge.js")) {
+  const workspaceRoot = path.join(projectRoot, workspaceRootRelativePath);
+  candidateRoots.push(path.join(workspaceRoot, "src"));
+  candidateRoots.push(path.join(projectRoot, "src"));
+
+  for (const candidateRoot of candidateRoots) {
+    if (await pathExists(candidateRoot)) {
+      return [{ find: "@", replacement: candidateRoot }];
+    }
+  }
+
+  return [];
+}
+
+function parseScenarioChoices(source: string): readonly PreviewScenarioEntry[] {
+  const scenarioSectionMatch = source.match(
+    /scenarios\s*:\s*\[([\s\S]*?)\]\s*(?:,\s*(?:controls|moduleMocks|envDefaults|component|componentExport)|\}\s*\))/,
+  );
+  const scenarioSection = scenarioSectionMatch?.[1] ?? source;
+  const scenarioMatches = [
+    ...scenarioSection.matchAll(
+      /id\s*:\s*["'`]([^"'`]+)["'`][\s\S]*?name\s*:\s*["'`]([^"'`]+)["'`]/g,
+    ),
+  ];
+  return scenarioMatches.map((match) => ({
+    id: match[1]!,
+    name: match[2]!,
+  }));
+}
+
+function parseModuleMocks(
+  source: string,
+  previewFileRelativePath: string,
+): Readonly<Record<string, string>> {
+  const moduleMocksMatch = source.match(
+    /moduleMocks\s*:\s*\{([\s\S]*?)\}\s*(?:,\s*(?:envDefaults|controls|component|componentExport)|\}\s*\))/,
+  );
+  if (!moduleMocksMatch) {
+    return {};
+  }
+  const matches = [
+    ...moduleMocksMatch[1]!.matchAll(/["'`]([^"'`]+)["'`]\s*:\s*["'`]([^"'`]+)["'`]/g),
+  ];
+  const directory = path.posix.dirname(normalizeProjectPath(previewFileRelativePath));
+  const entries = matches.map((match) => {
+    const rawPath = match[2]!;
+    const resolvedPath = rawPath.startsWith(".")
+      ? normalizeProjectPath(path.posix.join(directory, rawPath))
+      : normalizeProjectPath(rawPath);
+    return [match[1]!, resolvedPath] as const;
+  });
+  return Object.fromEntries(entries);
+}
+
+async function inspectPreviewFile(
+  projectRoot: string,
+  previewFileRelativePath: string,
+): Promise<{
+  readonly scenarioChoices: readonly PreviewScenarioEntry[];
+  readonly initialScenarioId: string | null;
+  readonly moduleMocks: Readonly<Record<string, string>>;
+}> {
+  const source = await readTextFile(path.join(projectRoot, previewFileRelativePath));
+  if (!source) {
     return {
-      kind: "patched",
-      contents: existingContents.replaceAll(
-        /(["'`])([^"'`\n]*previewBridge\.js)\1/g,
-        `$1${bridgeImportPath}$1`,
-      ),
-      changed: true,
+      scenarioChoices: [],
+      initialScenarioId: null,
+      moduleMocks: {},
     };
   }
-
-  if (/previewAnnotations\s*:/.test(existingContents)) {
-    const previewAnnotationsArrayMatch = existingContents.match(
-      /previewAnnotations\s*:\s*\[([\s\S]*?)\]/m,
-    );
-    if (!previewAnnotationsArrayMatch || previewAnnotationsArrayMatch.index === undefined) {
-      return {
-        kind: "manualRequired",
-        reason:
-          "Forma could not safely update .storybook/main.* because previewAnnotations uses a non-array expression.",
-      };
-    }
-    const nextContents = existingContents.replace(
-      /previewAnnotations\s*:\s*\[([\s\S]*?)\]/m,
-      (_match, body: string) => {
-        const trimmedBody = body.trim();
-        const insertion =
-          trimmedBody.length === 0
-            ? `previewAnnotations: ["${bridgeImportPath}"]`
-            : `previewAnnotations: [${body.replace(/\s*$/, "")}, "${bridgeImportPath}"]`;
-        return insertion;
-      },
-    );
-    return { kind: "patched", contents: nextContents, changed: true };
-  }
-
-  const objectOpenPatterns = [
-    /^(\s*)export\s+default\s*{/m,
-    /^(\s*)module\.exports\s*=\s*{/m,
-    /^(\s*)(?:const|let|var)\s+\w+(?::[^=]+)?\s*=\s*{/m,
-  ];
-  for (const pattern of objectOpenPatterns) {
-    const match = pattern.exec(existingContents);
-    if (!match || match.index === undefined) continue;
-    const indent = match[1] ?? "";
-    const matchedText = match[0];
-    const nextContents = `${existingContents.slice(0, match.index)}${matchedText}
-${indent}  previewAnnotations: ["${bridgeImportPath}"],${existingContents.slice(
-      match.index + matchedText.length,
-    )}`;
-    return { kind: "patched", contents: nextContents, changed: true };
-  }
-
+  const scenarioChoices = parseScenarioChoices(source);
   return {
-    kind: "manualRequired",
-    reason:
-      "Forma could not safely update .storybook/main.* because the exported Storybook config shape is unsupported.",
+    scenarioChoices,
+    initialScenarioId: scenarioChoices[0]?.id ?? null,
+    moduleMocks: parseModuleMocks(source, previewFileRelativePath),
   };
 }
 
-function buildControlsBridgeInspection(
-  files: readonly string[],
-  mainConfigContents: string | null,
-  workspaceRootRelativePath: string,
-) {
-  const bridgeImportPath = storybookBridgeImportPathForWorkspaceRoot(workspaceRootRelativePath);
-  if (!detectStorybookMainConfigPath(files)) {
-    return "manualRequired" as const;
-  }
-  if (mainConfigContents && mainConfigContents.includes(bridgeImportPath)) {
-    return "installed" as const;
-  }
-  if (!mainConfigContents) {
-    return "manualRequired" as const;
-  }
-  const patchAttempt = patchStorybookMainConfigWithBridge(
-    mainConfigContents,
-    workspaceRootRelativePath,
-  );
-  return patchAttempt.kind === "patched" ? "missing" : "manualRequired";
-}
-
-function resolveCombinedControlsBridgeStatus(
-  workspaces: readonly StorybookWorkspace[],
-): PreviewControlsBridgeStatus {
-  if (workspaces.length === 0) {
-    return "missing";
-  }
-  if (workspaces.some((workspace) => workspace.controlsBridgeStatus === "manualRequired")) {
-    return "manualRequired";
-  }
-  if (workspaces.every((workspace) => workspace.controlsBridgeStatus === "installed")) {
-    return "installed";
-  }
-  return "missing";
-}
-
-function isIdentifierCharacter(character: string | undefined): boolean {
-  return character !== undefined && /[A-Za-z0-9_$]/.test(character);
-}
-
-function skipTrivia(source: string, startIndex: number): number {
-  let index = startIndex;
-  while (index < source.length) {
-    const current = source[index];
-    const next = source[index + 1];
-    if (current && /\s/.test(current)) {
-      index += 1;
-      continue;
-    }
-    if (current === "/" && next === "/") {
-      index += 2;
-      while (index < source.length && source[index] !== "\n") {
-        index += 1;
+async function allocatePort(): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.on("error", reject);
+    server.listen(0, PREVIEW_RUNTIME_HOST, () => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        server.close();
+        reject(new Error("Could not resolve preview runtime port."));
+        return;
       }
-      continue;
-    }
-    if (current === "/" && next === "*") {
-      index += 2;
-      while (index + 1 < source.length) {
-        if (source[index] === "*" && source[index + 1] === "/") {
-          index += 2;
-          break;
+      const port = address.port;
+      server.close((error) => {
+        if (error) {
+          reject(error);
+          return;
         }
-        index += 1;
-      }
-      continue;
-    }
-    break;
-  }
-  return index;
+        resolve(port);
+      });
+    });
+  });
 }
 
-function readStaticStringLiteral(
-  source: string,
-  startIndex: number,
-): { readonly value: string; readonly endIndex: number } | null {
-  const quote = source[startIndex];
-  if (quote !== '"' && quote !== "'" && quote !== "`") {
-    return null;
-  }
-  let index = startIndex + 1;
-  let value = "";
-  while (index < source.length) {
-    const current = source[index];
-    if (current === "\\") {
-      const escaped = source[index + 1];
-      if (escaped === undefined) {
-        return null;
+async function waitForRuntimeReady(baseUrl: string, timeoutMs = 30_000): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    try {
+      const response = await fetch(`${baseUrl}/preview.html`);
+      if (response.ok) {
+        return;
       }
-      value += escaped;
-      index += 2;
-      continue;
+    } catch {
+      // ignore and retry
     }
-    if (quote === "`" && current === "$" && source[index + 1] === "{") {
-      return null;
-    }
-    if (current === quote) {
-      return { value, endIndex: index + 1 };
-    }
-    value += current;
-    index += 1;
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  return null;
+  throw new Error("Timed out waiting for the preview harness runtime.");
 }
 
-function parseStaticStoriesValue(
-  source: string,
-  startIndex: number,
-): { readonly values: readonly string[]; readonly endIndex: number } | null {
-  const index = skipTrivia(source, startIndex);
-  const current = source[index];
-  if (current === undefined) {
-    return null;
-  }
-  const stringLiteral = readStaticStringLiteral(source, index);
-  if (stringLiteral) {
-    return { values: [stringLiteral.value], endIndex: stringLiteral.endIndex };
-  }
-  if (current !== "[") {
-    return null;
-  }
-  const values: string[] = [];
-  let cursor = index + 1;
-  while (cursor < source.length) {
-    cursor = skipTrivia(source, cursor);
-    const next = source[cursor];
-    if (next === "]") {
-      return { values, endIndex: cursor + 1 };
-    }
-    if (next === ",") {
-      cursor += 1;
-      continue;
-    }
-    if (source.startsWith("...", cursor)) {
-      return null;
-    }
-    const nested = parseStaticStoriesValue(source, cursor);
-    if (!nested) {
-      return null;
-    }
-    values.push(...nested.values);
-    cursor = skipTrivia(source, nested.endIndex);
-    const separator = source[cursor];
-    if (separator === ",") {
-      cursor += 1;
-      continue;
-    }
-    if (separator === "]") {
-      return { values, endIndex: cursor + 1 };
-    }
-    return null;
-  }
-  return null;
-}
-
-function findStoriesPropertyValueStart(source: string): number | null {
-  let index = 0;
-  while (index < source.length) {
-    index = skipTrivia(source, index);
-    if (index >= source.length) {
-      return null;
-    }
-    const current = source[index];
-    if (current === '"' || current === "'" || current === "`") {
-      const stringLiteral = readStaticStringLiteral(source, index);
-      if (!stringLiteral) {
-        return null;
-      }
-      const nextIndex = skipTrivia(source, stringLiteral.endIndex);
-      if (stringLiteral.value === "stories" && source[nextIndex] === ":") {
-        return nextIndex + 1;
-      }
-      index = stringLiteral.endIndex;
-      continue;
-    }
-    if (
-      source.startsWith("stories", index) &&
-      !isIdentifierCharacter(source[index - 1]) &&
-      !isIdentifierCharacter(source[index + "stories".length])
-    ) {
-      const nextIndex = skipTrivia(source, index + "stories".length);
-      if (source[nextIndex] === ":") {
-        return nextIndex + 1;
-      }
-      index += "stories".length;
-      continue;
-    }
-    index += 1;
-  }
-  return null;
-}
-
-function resolveStaticStoryGlobsFromMainConfig(
-  mainConfigPath: string,
-  contents: string,
-): readonly string[] | null {
-  const storiesValueStart = findStoriesPropertyValueStart(contents);
-  if (storiesValueStart === null) {
-    return [];
-  }
-  const staticValues = parseStaticStoriesValue(contents, storiesValueStart);
-  if (!staticValues) {
-    return null;
-  }
-  const mainConfigDir = path.posix.dirname(normalizeProjectPath(mainConfigPath));
-  return staticValues.values.map((value) =>
-    normalizeProjectPath(
-      value.startsWith("/") ? value : path.posix.normalize(path.posix.join(mainConfigDir, value)),
-    ),
-  );
-}
-
-function escapeRegExp(input: string): string {
-  return input.replace(/[|\\{}()[\]^$+?.]/g, "\\$&");
-}
-
-function globToRegExp(glob: string): RegExp {
-  let pattern = "^";
-  for (let index = 0; index < glob.length; index += 1) {
-    const character = glob[index]!;
-    const next = glob[index + 1] ?? "";
-
-    if (character === "*" && next === "*") {
-      index += 1;
-      if (glob[index + 1] === "/") {
-        index += 1;
-        pattern += "(?:.*/)?";
-      } else {
-        pattern += ".*";
-      }
-      continue;
-    }
-    if (character === "*") {
-      pattern += "[^/]*";
-      continue;
-    }
-    if (character === "?") {
-      pattern += "[^/]";
-      continue;
-    }
-    if (character === "{") {
-      const closeIndex = glob.indexOf("}", index + 1);
-      if (closeIndex > index) {
-        const body = glob.slice(index + 1, closeIndex);
-        pattern += `(?:${body.split(",").map(escapeRegExp).join("|")})`;
-        index = closeIndex;
-        continue;
-      }
-    }
-    if (character === "@" && next === "(") {
-      const closeIndex = glob.indexOf(")", index + 2);
-      if (closeIndex > index) {
-        const body = glob.slice(index + 2, closeIndex);
-        pattern += `(?:${body.split("|").map(escapeRegExp).join("|")})`;
-        index = closeIndex;
-        continue;
-      }
-    }
-    if (character === "/") {
-      pattern += "/";
-      continue;
-    }
-    pattern += escapeRegExp(character);
-  }
-  pattern += "$";
-  return new RegExp(pattern);
-}
-
-function storybookWorkspaceCoversPath(
-  workspace: StorybookWorkspace,
-  relativePath: string,
-): boolean {
-  if (workspace.coverageStatus !== "proven") {
+async function isRuntimeReady(baseUrl: string): Promise<boolean> {
+  try {
+    await waitForRuntimeReady(baseUrl, 1_500);
+    return true;
+  } catch {
     return false;
   }
-  const normalizedPath = normalizeProjectPath(relativePath);
-  return workspace.resolvedStoryGlobs.some((glob) => globToRegExp(glob).test(normalizedPath));
 }
 
-function pickCoveringStorybookWorkspaceForPath(
-  workspaces: readonly StorybookWorkspace[],
-  relativePath: string,
-): StorybookWorkspace | null {
-  return (
-    workspaces
-      .filter((workspace) => storybookWorkspaceCoversPath(workspace, relativePath))
-      .toSorted(
-        (left, right) =>
-          right.workspaceRootRelativePath.length - left.workspaceRootRelativePath.length,
-      )[0] ?? null
+async function createRuntimeWorkspace(args: {
+  readonly projectRoot: string;
+  readonly componentRelativePath: string;
+  readonly previewFileRelativePath: string;
+  readonly framework: PreviewFramework;
+}): Promise<string> {
+  const runtimeDir = path.join(os.tmpdir(), "forma-preview-harness", randomUUID().slice(0, 12));
+  await fsPromises.mkdir(path.join(runtimeDir, "src"), { recursive: true });
+  const componentModuleUrl = normalizeViteFsPath(
+    path.join(args.projectRoot, args.componentRelativePath),
   );
-}
-
-async function discoverStorybookWorkspaces(
-  cwd: string,
-  files: readonly string[],
-  packageManager: "bun" | "pnpm" | "yarn" | "npm",
-): Promise<StorybookWorkspace[]> {
-  const storybookConfigPaths = detectStorybookConfigPaths(files);
-  const workspaceRootRelativePaths = [
-    ...new Set(storybookConfigPaths.map(workspaceRootFromStorybookConfig)),
-  ];
-  const workspaces = await Promise.all(
-    workspaceRootRelativePaths.map(async (workspaceRootRelativePath) => {
-      const normalizedWorkspace = normalizeProjectPath(workspaceRootRelativePath);
-      const workspaceFiles = files.filter((file) => {
-        if (!normalizedWorkspace) {
-          return true;
-        }
-        return file === normalizedWorkspace || file.startsWith(`${normalizedWorkspace}/`);
-      });
-      const packageJson = await readJsonFile<PackageJsonRecord>(
-        path.join(cwd, normalizedWorkspace, "package.json"),
-      );
-      const mainConfigPath =
-        workspaceFiles.find((file) =>
-          STORYBOOK_MAIN_CONFIG_CANDIDATES.some((candidate) => file.endsWith(candidate)),
-        ) ?? null;
-      const mainConfigContents = mainConfigPath
-        ? await readTextFile(path.join(cwd, mainConfigPath))
-        : null;
-      const resolvedStoryGlobs =
-        mainConfigPath && mainConfigContents
-          ? resolveStaticStoryGlobsFromMainConfig(mainConfigPath, mainConfigContents)
-          : [];
-      return {
-        workspaceRootRelativePath: normalizedWorkspace,
-        storybookConfigPaths: storybookConfigPaths.filter(
-          (configPath) => workspaceRootFromStorybookConfig(configPath) === normalizedWorkspace,
-        ),
-        mainConfigPath,
-        commandCandidates: detectStorybookCommandCandidates(
-          packageJson,
-          packageManager,
-          normalizedWorkspace,
-        ),
-        controlsBridgeStatus: buildControlsBridgeInspection(
-          workspaceFiles,
-          mainConfigContents,
-          normalizedWorkspace,
-        ),
-        coverageStatus: resolvedStoryGlobs === null ? "unproven" : "proven",
-        resolvedStoryGlobs: resolvedStoryGlobs ?? [],
-      } satisfies StorybookWorkspace;
-    }),
+  const previewModuleUrl = normalizeViteFsPath(
+    path.join(args.projectRoot, args.previewFileRelativePath),
   );
-
-  return workspaces
-    .filter(
-      (workspace) =>
-        workspace.storybookConfigPaths.length > 0 || workspace.commandCandidates.length > 0,
-    )
-    .toSorted((left, right) =>
-      left.workspaceRootRelativePath.localeCompare(right.workspaceRootRelativePath),
-    );
-}
-
-async function discoverPackageWorkspaces(
-  cwd: string,
-  files: readonly string[],
-): Promise<PackageWorkspace[]> {
-  const packageJsonPaths = files
-    .filter(
-      (file) => normalizeProjectPath(file) === "package.json" || file.endsWith("/package.json"),
-    )
-    .toSorted((left, right) => left.localeCompare(right));
-
-  const workspaces = await Promise.all(
-    packageJsonPaths.map(async (packageJsonPath) => {
-      const normalizedPackageJsonPath = normalizeProjectPath(packageJsonPath);
-      const workspaceRootRelativePath =
-        normalizedPackageJsonPath === "package.json"
-          ? ""
-          : path.posix.dirname(normalizedPackageJsonPath);
-      const packageJson = await readJsonFile<PackageJsonRecord>(
-        path.join(cwd, normalizedPackageJsonPath),
-      );
-      return {
-        workspaceRootRelativePath,
-        packageJsonPath: normalizedPackageJsonPath,
-        packageJson,
-        framework: resolveFramework(packageJson),
-      } satisfies PackageWorkspace;
-    }),
+  const wrapperModuleUrl = normalizeViteFsPath(
+    path.join(args.projectRoot, ".forma/preview/wrapper.tsx"),
   );
-
-  return workspaces.toSorted((left, right) =>
-    left.workspaceRootRelativePath.localeCompare(right.workspaceRootRelativePath),
+  const mocksModuleUrl = normalizeViteFsPath(
+    path.join(args.projectRoot, ".forma/preview/mocks.ts"),
   );
+  const runtimeHelperUrl = normalizeViteFsPath(HARNESS_RUNTIME_MODULE_PATH);
+
+  const mainSource = `import * as previewModule from ${JSON.stringify(previewModuleUrl)};
+import * as wrapperModule from ${JSON.stringify(wrapperModuleUrl)};
+import ${JSON.stringify(mocksModuleUrl)};
+import { startPreviewRuntime } from ${JSON.stringify(runtimeHelperUrl)};
+
+const previewDefinition = (previewModule.default ?? previewModule.preview ?? previewModule);
+
+startPreviewRuntime({
+  componentModuleUrl: ${JSON.stringify(componentModuleUrl)},
+  framework: ${JSON.stringify(args.framework)},
+  mountElementId: "app",
+  previewDefinition,
+  previewFileRelativePath: ${JSON.stringify(args.previewFileRelativePath)},
+  wrapperModule,
+});
+`;
+
+  const htmlSource = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Forma Preview</title>
+    <style>
+      html, body, #app {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        background: white;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+`;
+
+  await fsPromises.writeFile(path.join(runtimeDir, "src/main.tsx"), mainSource, "utf8");
+  await fsPromises.writeFile(path.join(runtimeDir, "preview.html"), htmlSource, "utf8");
+  return runtimeDir;
 }
 
-function pickPackageWorkspaceForPath(
-  workspaces: readonly PackageWorkspace[],
-  relativePath: string,
-): PackageWorkspace | null {
-  const normalizedPath = normalizeProjectPath(relativePath);
-  return (
-    workspaces
-      .filter((workspace) => {
-        const root = normalizeProjectPath(workspace.workspaceRootRelativePath);
-        return !root || normalizedPath === root || normalizedPath.startsWith(`${root}/`);
-      })
-      .toSorted(
-        (left, right) =>
-          right.workspaceRootRelativePath.length - left.workspaceRootRelativePath.length,
-      )[0] ?? null
+function buildBootstrapPrompt(args: {
+  readonly project: ProjectRecord;
+  readonly framework: PreviewFramework;
+  readonly workspaceRootRelativePath: string;
+  readonly relativePath: string;
+}) {
+  return `Set up Forma's component preview harness for project \`${args.project.title}\`.
+
+Selected component:
+- path: \`${args.relativePath}\`
+- owner workspace: \`${workspaceLabel(args.workspaceRootRelativePath)}\`
+- detected framework: \`${args.framework}\`
+
+Create these repo-level files exactly once under \`.forma/preview/\`:
+- \`config.ts\`
+- \`wrapper.tsx\`
+- \`mocks.ts\`
+
+Requirements:
+- \`config.ts\` must export a typed \`defineComponentPreview(...)\` helper and the preview definition types.
+- Preview definitions must stay deterministic and data-only. Do not import the component inside \`*.preview.tsx\`.
+- \`wrapper.tsx\` must default-export a React wrapper component for preview providers, CSS, and app context.
+- \`mocks.ts\` should set up shared deterministic mocks and no-op analytics where appropriate.
+- If the workspace depends on a local/shared UI package that exports global CSS utilities, theme variables, or motion classes, import that package stylesheet from \`wrapper.tsx\` in addition to the app's global stylesheet. Use a repo-local relative import when workspace package export resolution is unreliable in preview.
+- Prefer repo-level providers and fetch/network mocking over live data.
+- Do not add Storybook or any full-app dev-server dependency to this flow.
+- Use normal module specifiers like \`react\`, \`next/navigation\`, and repo aliases. Do not import from \`node_modules\` paths or absolute filesystem paths.
+- Keep \`moduleMocks\` typed as \`Record<string, string>\` where values are mock module paths.
+- Keep \`controls\` typed as objects with \`name\`, optional \`label\`/\`description\`, \`type\`, and optional \`defaultValue\`.
+
+The harness expects each component preview file to look like:
+\`\`\`ts
+import { defineComponentPreview } from "./relative/path/to/.forma/preview/config";
+
+export default defineComponentPreview({
+  component: "./Component.tsx",
+  componentExport: "NamedExportOrDefault",
+  scenarios: [
+    {
+      id: "default",
+      name: "Default",
+      args: {},
+      env: {
+        pathname: "/",
+        searchParams: {},
+      },
+    },
+  ],
+  controls: [],
+  moduleMocks: {},
+});
+\`\`\`
+
+Keep the exported preview object static and serializable so Forma can parse it without executing the component module.
+
+When finished, summarize the files you changed and any repo-specific assumptions the preview wrapper makes.`;
+}
+
+function buildPreviewGenerationPrompt(args: {
+  readonly relativePath: string;
+  readonly previewFileRelativePath: string;
+}) {
+  const configImportPath = path.posix.relative(
+    path.posix.dirname(normalizeProjectPath(args.previewFileRelativePath)),
+    ".forma/preview/config.ts",
   );
+  const normalizedConfigImportPath = configImportPath.startsWith(".")
+    ? configImportPath
+    : `./${configImportPath}`;
+
+  return `Create or update the component preview file \`${args.previewFileRelativePath}\` for \`${args.relativePath}\`.
+
+Requirements:
+- Import \`defineComponentPreview\` from \`${normalizedConfigImportPath}\`.
+- Export a single static preview definition object.
+- Do not import the component in the preview file. Use \`component\` and \`componentExport\` string fields.
+- Keep the file deterministic and repo-reusable.
+- Prefer fetch/query mocks and preview args over live data.
+- If a colocated mock module is needed, create \`${args.previewFileRelativePath.replace(/\.tsx$/, ".mocks.ts")}\`.
+- Provide multiple named scenarios when the component has materially different states.
+- If you declare controls, use the runtime shape: \`{ name, label?, description?, type?, options?, defaultValue? }\`.
+- If you declare module mocks, use string module paths: \`Record<string, string>\`.
+
+Minimum preview contract:
+\`\`\`ts
+import { defineComponentPreview } from "${normalizedConfigImportPath}";
+
+export default defineComponentPreview({
+  component: "./${path.posix.basename(args.relativePath)}",
+  componentExport: "default",
+  scenarios: [
+    {
+      id: "default",
+      name: "Default",
+      args: {},
+      env: {
+        pathname: "/",
+        searchParams: {},
+      },
+    },
+  ],
+  controls: [],
+  moduleMocks: {},
+});
+\`\`\`
+
+If the component has named exports, set \`componentExport\` correctly.
+If the component depends on router/query state, encode that in the scenario \`env\`.
+If the component needs deterministic data, encode that in preview args and mocks.
+
+When finished, summarize the scenarios you created and why they cover the component well.`;
 }
 
-async function resolveOwnerWorkspaceForPath(
-  cwd: string,
-  relativePath: string,
-): Promise<PackageWorkspace | null> {
-  const files = await listRelativeFiles(cwd);
-  const workspaces = await discoverPackageWorkspaces(cwd, files);
-  const preferredWorkspace = pickPackageWorkspaceForPath(workspaces, relativePath);
-  if (preferredWorkspace) {
-    return preferredWorkspace;
-  }
-  const rootWorkspace =
-    workspaces.find((workspace) => workspace.workspaceRootRelativePath.length === 0) ?? null;
-  return rootWorkspace;
-}
+function buildPreviewRepairPrompt(args: {
+  readonly relativePath: string;
+  readonly previewFileRelativePath: string | null;
+  readonly errorMessage: string;
+}) {
+  return `Repair the Forma component preview for \`${args.relativePath}\`.
 
-function resolveEffectivePreviewCommand(
-  project: ProjectRecord,
-  inspection: StorybookInspectionDetails,
-  preferredWorkspaceRootRelativePath?: string | null,
-): string | null {
-  if (preferredWorkspaceRootRelativePath) {
-    const workspaceOverride = getWorkspaceCommandOverride(
-      project.previewConfig,
-      preferredWorkspaceRootRelativePath,
-    );
-    if (workspaceOverride) {
-      return workspaceOverride;
-    }
-    const preferredWorkspace = inspection.workspaces.find(
-      (workspace) =>
-        workspace.workspaceRootRelativePath ===
-        normalizeProjectPath(preferredWorkspaceRootRelativePath),
-    );
-    if (preferredWorkspace?.commandCandidates.length === 1) {
-      return preferredWorkspace.commandCandidates[0] ?? null;
-    }
-  }
+Current preview file:
+- ${args.previewFileRelativePath ? `\`${args.previewFileRelativePath}\`` : "preview file missing or unresolved"}
 
-  if (inspection.workspaces.length === 1) {
-    const onlyWorkspace = inspection.workspaces[0]!;
-    const onlyWorkspaceOverride = getWorkspaceCommandOverride(
-      project.previewConfig,
-      onlyWorkspace.workspaceRootRelativePath,
-    );
-    if (onlyWorkspaceOverride) {
-      return onlyWorkspaceOverride;
-    }
-  }
+Error:
+\`\`\`
+${args.errorMessage}
+\`\`\`
 
-  const rootWorkspaceOverride = getWorkspaceCommandOverride(project.previewConfig, "");
-  if (rootWorkspaceOverride) {
-    return rootWorkspaceOverride;
-  }
+Requirements:
+- Repair the existing preview artifacts in place instead of regenerating unrelated files.
+- Keep the preview definition static and deterministic.
+- Preserve any useful scenarios and controls that already exist.
+- If the failure is caused by framework/router/query dependencies, fix it through the preview wrapper, preview mocks, or the preview scenario contract.
 
-  if (inspection.detectedStartCommands.length === 1) {
-    return inspection.detectedStartCommands[0] ?? null;
-  }
-
-  return null;
-}
-
-async function inspectStorybookProject(cwd: string): Promise<StorybookInspectionDetails> {
-  const packageJson = await readJsonFile<PackageJsonRecord>(path.join(cwd, "package.json"));
-  const packageManager = await detectPackageManager(cwd);
-  const files = await listRelativeFiles(cwd);
-  const storybookConfigPaths = detectStorybookConfigPaths(files);
-  const rootDetectedCommands = detectStorybookCommandCandidates(packageJson, packageManager);
-  const workspaces = await discoverStorybookWorkspaces(cwd, files, packageManager);
-  const workspaceCommands = workspaces.flatMap((workspace) => workspace.commandCandidates);
-  const detectedStartCommands = [...new Set([...rootDetectedCommands, ...workspaceCommands])];
-  const framework = resolveFramework(packageJson);
-  const hasStorybookSetup = storybookConfigPaths.length > 0 || detectedStartCommands.length > 0;
-  return {
-    framework,
-    packageManager,
-    storybookConfigPaths,
-    detectedStartCommands,
-    controlsBridgeStatus: resolveCombinedControlsBridgeStatus(workspaces),
-    hasStorybookSetup,
-    workspaces,
-  } satisfies StorybookInspectionDetails;
+When finished, summarize the exact files changed and what caused the failure.`;
 }
 
 const makePreviewManager = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const stateRef = yield* Ref.make<PreviewManagerState>({
     runtimes: new Map(),
-    runtimeStarts: new Map(),
     projectPubSubs: new Map(),
     accessTokens: new Map(),
+    lastResolvedTargets: new Map(),
   });
-  const context = yield* Effect.context<never>();
-  const runFork = Effect.runForkWith(context);
 
-  const publishProjectEvent = (projectId: ProjectId, event: PreviewProjectEvent) =>
-    Effect.gen(function* () {
-      const state = yield* Ref.get(stateRef);
-      const pubsub = state.projectPubSubs.get(projectId);
-      if (!pubsub) {
-        return yield* failPreview("Project preview event stream is unavailable.");
-      }
-      yield* PubSub.publish(pubsub, event);
-    });
-
-  const ensureProjectPubSub = (projectId: ProjectId) =>
+  const ensureProjectPubSub = (
+    projectId: ProjectId,
+  ): Effect.Effect<PubSub.PubSub<PreviewProjectEvent>, never> =>
     Effect.gen(function* () {
       const existing = (yield* Ref.get(stateRef)).projectPubSubs.get(projectId);
       if (existing) return existing;
@@ -1183,7 +742,18 @@ const makePreviewManager = Effect.gen(function* () {
       return next;
     });
 
-  const issueAccessTokenForProject = (projectId: ProjectId) =>
+  const publishProjectEvent = (
+    projectId: ProjectId,
+    event: PreviewProjectEvent,
+  ): Effect.Effect<void, never> =>
+    Effect.gen(function* () {
+      const pubsub = yield* ensureProjectPubSub(projectId);
+      yield* PubSub.publish(pubsub, event);
+    });
+
+  const issueAccessTokenForProject = (
+    projectId: ProjectId,
+  ): Effect.Effect<PreviewIssueAccessTokenResult, never> =>
     Effect.gen(function* () {
       const token = randomUUID();
       const record: PreviewAccessTokenRecord = {
@@ -1205,9 +775,15 @@ const makePreviewManager = Effect.gen(function* () {
       } satisfies PreviewIssueAccessTokenResult;
     });
 
-  const getProjectById = (projectId: ProjectId) =>
+  const getProjectById = (projectId: ProjectId): Effect.Effect<ProjectRecord, PreviewRpcError> =>
     Effect.gen(function* () {
-      const readModel = yield* orchestrationEngine.getReadModel();
+      const readModel = yield* orchestrationEngine
+        .getReadModel()
+        .pipe(
+          Effect.mapError((cause) =>
+            toPreviewError("Failed to load the orchestration read model.", cause),
+          ),
+        );
       const project = readModel.projects.find(
         (entry) => entry.id === projectId && entry.deletedAt === null,
       );
@@ -1215,218 +791,91 @@ const makePreviewManager = Effect.gen(function* () {
         return yield* failPreview(`Project '${projectId}' was not found.`);
       }
       return {
-        ...project,
-        previewConfig: project.previewConfig ?? null,
+        id: project.id,
+        title: project.title,
+        workspaceRoot: project.workspaceRoot,
         previewWorkspaceRecords: project.previewWorkspaceRecords ?? [],
       } satisfies ProjectRecord;
     });
 
   const updateProjectPreviewMetadata = (
     project: ProjectRecord,
-    patch: {
-      readonly previewConfig?: ProjectPreviewConfig | null | undefined;
-      readonly previewWorkspaceRecords?: readonly ProjectPreviewWorkspaceRecord[] | undefined;
-    },
+    previewWorkspaceRecords: readonly ProjectPreviewWorkspaceRecord[],
   ) =>
     orchestrationEngine
       .dispatch({
         type: "project.meta.update",
-        commandId: CommandId.make(`preview-meta:${crypto.randomUUID()}`),
+        commandId: CommandId.make(`preview-meta:${randomUUID()}`),
         projectId: project.id,
-        ...(patch.previewConfig !== undefined ? { previewConfig: patch.previewConfig } : {}),
-        ...(patch.previewWorkspaceRecords !== undefined
-          ? { previewWorkspaceRecords: [...patch.previewWorkspaceRecords] }
-          : {}),
+        previewWorkspaceRecords: [...previewWorkspaceRecords],
       })
       .pipe(
         Effect.asVoid,
         Effect.mapError((cause) =>
-          toPreviewError("Failed to update preview project metadata.", cause),
+          toPreviewError("Failed to update preview workspace records.", cause),
         ),
       );
-
-  const buildInspection = (project: ProjectRecord) =>
-    Effect.tryPromise({
-      try: async () => {
-        const details = await inspectStorybookProject(project.workspaceRoot);
-        const framework = details.framework;
-        const hasStorybookSetup = details.hasStorybookSetup;
-        const hasReact = framework === "react" || framework === "nextjs";
-        const hasWorkspaceOverride =
-          Object.keys(project.previewConfig?.workspaceCommandOverrides ?? {}).length > 0 ||
-          project.previewConfig?.startCommandOverride !== null;
-        const status =
-          hasStorybookSetup && (hasWorkspaceOverride || details.detectedStartCommands.length === 1)
-            ? "configured"
-            : hasStorybookSetup
-              ? "needsCommandOverride"
-              : hasReact
-                ? "enableable"
-                : "unsupported";
-        return {
-          projectId: project.id,
-          provider: "storybook",
-          status,
-          framework,
-          detectedStartCommands: [...details.detectedStartCommands],
-          storybookConfigPaths: details.storybookConfigPaths.map(asProjectRelativePath),
-          packageManager: details.packageManager,
-          controlsBridgeStatus: details.controlsBridgeStatus,
-          summary:
-            status === "configured"
-              ? "Storybook preview is configured."
-              : status === "needsCommandOverride"
-                ? "Storybook exists, but Forma needs a preview start command."
-                : status === "enableable"
-                  ? "This project can enable Storybook-backed previews."
-                  : "Forma could not detect a Storybook-compatible preview setup.",
-        } satisfies PreviewProjectInspectionResult;
-      },
-      catch: (cause) => toPreviewError("Failed to inspect project preview configuration.", cause),
-    });
-
-  const workspaceLabel = (workspaceRootRelativePath: string) =>
-    normalizeProjectPath(workspaceRootRelativePath) || "project root";
-
-  const buildWorkspaceThreadTitle = (workspaceRootRelativePath: string) =>
-    `Preview setup · ${workspaceLabel(workspaceRootRelativePath)}`;
 
   const persistWorkspaceRecord = (
     project: ProjectRecord,
     patch: {
       readonly workspaceRootRelativePath: string;
       readonly threadId?: ProjectPreviewWorkspaceRecord["threadId"] | undefined;
-      readonly status: ProjectPreviewWorkspaceRecord["status"] | undefined;
-      readonly lastTargetRelativePath?: string | null | undefined;
+      readonly status: ProjectPreviewWorkspaceRecord["status"];
+      readonly lastPreviewFileRelativePath?: string | null | undefined;
       readonly lastError?: string | null | undefined;
     },
-  ) => {
+  ): Effect.Effect<void, PreviewRpcError> => {
     const currentRecord = getWorkspaceRecord(project, patch.workspaceRootRelativePath);
     const nextRecord: ProjectPreviewWorkspaceRecord = {
       workspaceRootRelativePath: normalizeProjectPath(patch.workspaceRootRelativePath),
       threadId: patch.threadId !== undefined ? patch.threadId : (currentRecord?.threadId ?? null),
-      status: patch.status ?? currentRecord?.status ?? "unconfigured",
-      lastTargetRelativePath:
-        patch.lastTargetRelativePath !== undefined
-          ? patch.lastTargetRelativePath
-            ? asProjectRelativePath(patch.lastTargetRelativePath)
+      status: patch.status,
+      lastPreviewFileRelativePath:
+        patch.lastPreviewFileRelativePath !== undefined
+          ? patch.lastPreviewFileRelativePath
+            ? asProjectRelativePath(patch.lastPreviewFileRelativePath)
             : null
-          : (currentRecord?.lastTargetRelativePath ?? null),
+          : (currentRecord?.lastPreviewFileRelativePath ?? null),
       lastError:
         patch.lastError !== undefined ? patch.lastError : (currentRecord?.lastError ?? null),
       updatedAt: new Date().toISOString(),
     };
-    return updateProjectPreviewMetadata(project, {
-      previewWorkspaceRecords: upsertWorkspaceRecord(project.previewWorkspaceRecords, nextRecord),
-    });
+    return updateProjectPreviewMetadata(
+      project,
+      upsertWorkspaceRecord(project.previewWorkspaceRecords, nextRecord),
+    );
   };
-
-  const buildWorkspaceSetupReason = (
-    ownerWorkspaceRootRelativePath: string,
-    relativePath: string,
-    inspection: StorybookInspectionDetails,
-  ): string => {
-    const ownerLabel = workspaceLabel(ownerWorkspaceRootRelativePath);
-    const firstRelatedWorkspace =
-      inspection.workspaces.find(
-        (workspace) => workspace.workspaceRootRelativePath !== ownerWorkspaceRootRelativePath,
-      ) ?? null;
-    if (firstRelatedWorkspace) {
-      return firstRelatedWorkspace.coverageStatus === "unproven"
-        ? `Found Storybook in ${workspaceLabel(firstRelatedWorkspace.workspaceRootRelativePath)}, but Forma cannot prove its stories config covers ${ownerLabel}.`
-        : `Found Storybook in ${workspaceLabel(firstRelatedWorkspace.workspaceRootRelativePath)}, but it does not cover ${ownerLabel}.`;
-    }
-    return `No preview workspace covers '${relativePath}'. Set up Storybook previews for ${ownerLabel}.`;
-  };
-
-  const buildWorkspaceSetupInspectionSummary = (
-    ownerWorkspaceRootRelativePath: string,
-    relativePath: string,
-    inspection: StorybookInspectionDetails,
-  ) => buildWorkspaceSetupReason(ownerWorkspaceRootRelativePath, relativePath, inspection);
-
-  const buildWorkspaceSetupReviewSummary = (
-    ownerWorkspaceRootRelativePath: string,
-    relativePath: string,
-    inspection: StorybookInspectionDetails,
-  ): readonly string[] => {
-    const ownerLabel = workspaceLabel(ownerWorkspaceRootRelativePath);
-    const workspaceLines = inspection.workspaces.map((workspace) => {
-      const coverageDescription =
-        workspace.coverageStatus === "proven"
-          ? `covers ${workspace.resolvedStoryGlobs.length} static stories globs`
-          : "has dynamic or opaque stories config";
-      return `${workspaceLabel(workspace.workspaceRootRelativePath)}: ${coverageDescription}`;
-    });
-    return [
-      `Selected target: ${relativePath}`,
-      `Owner workspace: ${ownerLabel}`,
-      ...(workspaceLines.length > 0
-        ? ["Existing Storybook workspaces:", ...workspaceLines]
-        : ["No existing Storybook workspaces were detected in this repo."]),
-    ];
-  };
-
-  const buildWorkspaceSetupInitialPrompt = (input: {
-    readonly project: ProjectRecord;
-    readonly ownerWorkspaceRootRelativePath: string;
-    readonly relativePath: string;
-    readonly targetKind: PreviewTargetKind;
-    readonly inspection: StorybookInspectionDetails;
-  }) => {
-    const ownerLabel = workspaceLabel(input.ownerWorkspaceRootRelativePath);
-    const storybookWorkspaceLines =
-      input.inspection.workspaces.length > 0
-        ? input.inspection.workspaces.map((workspace) => {
-            const coverage =
-              workspace.coverageStatus === "proven"
-                ? workspace.resolvedStoryGlobs.length > 0
-                  ? `static coverage globs: ${workspace.resolvedStoryGlobs.join(", ")}`
-                  : "no static stories entries were found"
-                : "stories config is dynamic or opaque";
-            return `- ${workspaceLabel(workspace.workspaceRootRelativePath)}: ${coverage}`;
-          })
-        : ["- none detected"];
-
-    return `Set up Storybook-backed component previews for the workspace \`${ownerLabel}\` in project \`${input.project.title}\`.
-
-Target:
-- selected ${input.targetKind}: \`${input.relativePath}\`
-- owner workspace: \`${ownerLabel}\`
-
-Existing Storybook workspaces in this repo:
-${storybookWorkspaceLines.join("\n")}
-
-Constraints:
-- Prefer local workspace setup for \`${ownerLabel}\`.
-- Reuse an existing Storybook only if it already covers the target.
-- Do not silently extend unrelated Storybooks.
-- Verify success by booting the Storybook runtime for \`${ownerLabel}\`.
-- Use one reviewed setup session before making repo changes.
-
-When setup is complete, summarize the exact files changed and the command that starts the workspace preview runtime.`;
-  };
-
-  const buildStoryWorkTurnPrompt = (input: {
-    readonly workspaceRootRelativePath: string;
-    readonly componentRelativePath: string;
-    readonly storyRelativePath: string | null;
-    readonly action: PreviewStoryWorkAction;
-  }) => `Continue the preview setup for workspace \`${workspaceLabel(input.workspaceRootRelativePath)}\`.
-
-Component:
-- component path: \`${input.componentRelativePath}\`
-- story path: ${input.storyRelativePath ? `\`${input.storyRelativePath}\`` : "not created yet"}
-- requested action: ${input.action === "create" ? "create a Storybook story" : "fix the existing Storybook story"}
-
-Expectation:
-- the story should resolve in Storybook
-- the component should render in the preview drawer`;
 
   const inspectProject: PreviewManagerShape["inspectProject"] = (input) =>
     Effect.gen(function* () {
       const project = yield* getProjectById(input.projectId);
-      return yield* buildInspection(project);
+      return yield* Effect.tryPromise({
+        try: async () => {
+          const framework = await detectProjectFramework(project.workspaceRoot);
+          const bootstrapFilesPresent = await hasBootstrapFiles(project.workspaceRoot);
+          const status =
+            framework === "unsupported"
+              ? "unsupported"
+              : bootstrapFilesPresent
+                ? "ready"
+                : "needsBootstrap";
+          return {
+            projectId: project.id,
+            provider: "componentHarness",
+            framework,
+            status,
+            bootstrapFilesPresent,
+            summary:
+              status === "ready"
+                ? "Component preview harness is configured."
+                : status === "needsBootstrap"
+                  ? "Forma needs repo-level preview bootstrap files before component previews can render."
+                  : "Forma preview harness currently supports React-family repos only.",
+          } satisfies PreviewProjectInspectionResult;
+        },
+        catch: (cause) => toPreviewError("Failed to inspect project preview configuration.", cause),
+      });
     });
 
   const searchComponents: PreviewManagerShape["searchComponents"] = (input) =>
@@ -1457,22 +906,37 @@ Expectation:
       });
     });
 
-  const startRuntime = (project: ProjectRecord, detectedCommand: string) =>
+  const stopRuntimeRecord = (runtime: RuntimeRecord): Effect.Effect<void, never> =>
+    Effect.gen(function* () {
+      runtime.child.kill("SIGTERM");
+      yield* Effect.tryPromise({
+        try: () => fsPromises.rm(runtime.runtimeDir, { recursive: true, force: true }),
+        catch: () => undefined,
+      }).pipe(Effect.catch(() => Effect.void));
+    });
+
+  const startRuntimeForTarget = (
+    project: ProjectRecord,
+    target: ResolvedHarnessTarget,
+  ): Effect.Effect<PreviewEnsureRuntimeResult, PreviewRpcError> =>
     Effect.gen(function* () {
       const existing = (yield* Ref.get(stateRef)).runtimes.get(project.id);
       if (existing) {
-        if (existing.command === detectedCommand) {
-          const healthy = yield* Effect.promise(() => isStorybookReady(existing.baseUrl));
+        if (
+          existing.relativePath === target.relativePath &&
+          existing.previewFileRelativePath === target.previewFileRelativePath
+        ) {
+          const healthy = yield* Effect.promise(() => isRuntimeReady(existing.baseUrl));
           if (healthy) {
             return {
               projectId: project.id,
-              provider: "storybook",
+              provider: "componentHarness",
               started: false,
               iframeBasePath: existing.iframeBasePath,
             } satisfies PreviewEnsureRuntimeResult;
           }
         }
-        existing.child.kill("SIGTERM");
+        yield* stopRuntimeRecord(existing);
         yield* Ref.update(stateRef, (state) => {
           const nextRuntimes = new Map(state.runtimes);
           nextRuntimes.delete(project.id);
@@ -1490,31 +954,95 @@ Expectation:
         try: () => allocatePort(),
         catch: (cause) => toPreviewError("Failed to allocate a preview runtime port.", cause),
       });
-      const command = withConfiguredHost(
-        withConfiguredPort(detectedCommand, port),
-        PREVIEW_RUNTIME_HOST,
-      );
-      const child = spawn(command, {
-        cwd: project.workspaceRoot,
-        shell: true,
-        stdio: "ignore",
-        env: { ...process.env, PORT: String(port), STORYBOOK_DISABLE_TELEMETRY: "1" },
+      const runtimeDir = yield* Effect.tryPromise({
+        try: () =>
+          createRuntimeWorkspace({
+            projectRoot: project.workspaceRoot,
+            componentRelativePath: target.relativePath,
+            previewFileRelativePath: target.previewFileRelativePath,
+            framework: target.framework,
+          }),
+        catch: (cause) => toPreviewError("Failed to create preview runtime workspace.", cause),
       });
+      const workspaceRoot = path.join(project.workspaceRoot, target.workspaceRootRelativePath);
+      const resolutionRoots = [workspaceRoot, project.workspaceRoot];
+      const reactAliases = {
+        react: requireResolveFromRoots(resolutionRoots, "react"),
+        "react/jsx-dev-runtime": requireResolveFromRoots(resolutionRoots, "react/jsx-dev-runtime"),
+        "react/jsx-runtime": requireResolveFromRoots(resolutionRoots, "react/jsx-runtime"),
+        "react-dom": requireResolveFromRoots(resolutionRoots, "react-dom"),
+        "react-dom/client": requireResolveFromRoots(resolutionRoots, "react-dom/client"),
+      };
+      const viteCliPath = yield* Effect.tryPromise({
+        try: () => resolvePackageBinPath([process.cwd()], "vite"),
+        catch: (cause) => toPreviewError("Failed to locate the Vite preview runtime CLI.", cause),
+      });
+      const child = spawn(process.execPath, [viteCliPath, "--config", HARNESS_VITE_CONFIG_PATH], {
+        cwd: workspaceRoot,
+        env: {
+          ...process.env,
+          FORMA_PREVIEW_RUNTIME_ROOT: runtimeDir,
+          FORMA_PREVIEW_PROJECT_ROOT: project.workspaceRoot,
+          FORMA_PREVIEW_WORKSPACE_ROOT: workspaceRoot,
+          FORMA_PREVIEW_FRAMEWORK: target.framework,
+          FORMA_PREVIEW_HOST: PREVIEW_RUNTIME_HOST,
+          FORMA_PREVIEW_PORT: String(port),
+          FORMA_PREVIEW_MODULE_MOCKS: JSON.stringify(
+            Object.fromEntries(
+              Object.entries(target.moduleMocks).map(([find, replacement]) => [
+                find,
+                path.join(project.workspaceRoot, replacement),
+              ]),
+            ),
+          ),
+          FORMA_PREVIEW_ALIASES: JSON.stringify(target.aliasEntries),
+          FORMA_PREVIEW_REACT_ALIASES: JSON.stringify(reactAliases),
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (!child.stdout || !child.stderr) {
+        yield* stopRuntimeRecord({
+          projectId: project.id,
+          relativePath: target.relativePath,
+          previewFileRelativePath: target.previewFileRelativePath,
+          runtimeDir,
+          port,
+          baseUrl: `http://${PREVIEW_RUNTIME_HOST}:${port}`,
+          iframeBasePath: `/__preview/${project.id}`,
+          child: child as ChildProcessByStdio<null, Readable, Readable>,
+          logs: [],
+        });
+        return yield* failPreview("Preview runtime did not expose stdout/stderr pipes.");
+      }
+      const runtimeChild = child as ChildProcessByStdio<null, Readable, Readable>;
+
+      const logs: string[] = [];
+      const captureLogs = (chunk: Buffer) => {
+        logs.push(chunk.toString("utf8"));
+        if (logs.length > 20) {
+          logs.shift();
+        }
+      };
+      runtimeChild.stdout.on("data", captureLogs);
+      runtimeChild.stderr.on("data", captureLogs);
+
       const runtimeRecord: RuntimeRecord = {
         projectId: project.id,
-        cwd: project.workspaceRoot,
-        command: detectedCommand,
+        relativePath: target.relativePath,
+        previewFileRelativePath: target.previewFileRelativePath,
+        runtimeDir,
         port,
         baseUrl: `http://${PREVIEW_RUNTIME_HOST}:${port}`,
         iframeBasePath: `/__preview/${project.id}`,
-        child,
+        child: runtimeChild,
+        logs,
       };
 
-      child.once("exit", () => {
-        runFork(
+      runtimeChild.once("exit", () => {
+        void Effect.runPromise(
           Ref.update(stateRef, (state) => {
             const activeRuntime = state.runtimes.get(project.id);
-            if (!activeRuntime || activeRuntime.child !== child) {
+            if (!activeRuntime || activeRuntime.child !== runtimeChild) {
               return state;
             }
             const nextRuntimes = new Map(state.runtimes);
@@ -1524,15 +1052,21 @@ Expectation:
             Effect.andThen(
               publishProjectEvent(project.id, { kind: "runtime.stopped", projectId: project.id }),
             ),
+            Effect.catch(() => Effect.void),
           ),
         );
       });
 
       yield* Effect.tryPromise({
         try: async () => {
-          await waitForStorybookReady(runtimeRecord.baseUrl);
+          await waitForRuntimeReady(runtimeRecord.baseUrl);
         },
-        catch: (cause) => toPreviewError("Failed to start Storybook preview runtime.", cause),
+        catch: (cause) => {
+          const lastLogs = logs.join("\n").trim();
+          const baseMessage =
+            cause instanceof Error ? cause.message : "Failed to start preview harness runtime.";
+          return toPreviewError(lastLogs ? `${baseMessage}\n\n${lastLogs}` : baseMessage, cause);
+        },
       }).pipe(
         Effect.tapError((error) =>
           publishProjectEvent(project.id, {
@@ -1555,40 +1089,260 @@ Expectation:
 
       return {
         projectId: project.id,
-        provider: "storybook",
+        provider: "componentHarness",
         started: true,
         iframeBasePath: runtimeRecord.iframeBasePath,
       } satisfies PreviewEnsureRuntimeResult;
     });
 
+  const resolveTarget: PreviewManagerShape["resolveTarget"] = (input) =>
+    Effect.gen(function* () {
+      const project = yield* getProjectById(input.projectId);
+      const relativePath = normalizeProjectPath(input.relativePath);
+      const absolutePath = path.join(project.workspaceRoot, relativePath);
+      const exists = yield* Effect.tryPromise({
+        try: () => pathExists(absolutePath),
+        catch: (cause) => toPreviewError("Failed to resolve the selected preview target.", cause),
+      });
+      if (!exists) {
+        return {
+          status: "notFound",
+          relativePath: asProjectRelativePath(relativePath),
+        } satisfies PreviewResolveTargetResult;
+      }
+      if (!isComponentPath(relativePath)) {
+        return {
+          status: "unsupportedTarget",
+          relativePath: asProjectRelativePath(relativePath),
+          reason: "Only component source files can be previewed.",
+        } satisfies PreviewResolveTargetResult;
+      }
+
+      const framework = yield* Effect.tryPromise({
+        try: () => detectProjectFramework(project.workspaceRoot, relativePath),
+        catch: (cause) => toPreviewError("Failed to detect the preview framework.", cause),
+      });
+      if (framework === "unsupported") {
+        return {
+          status: "unsupportedTarget",
+          relativePath: asProjectRelativePath(relativePath),
+          reason: "Forma preview harness currently supports React-family repos only.",
+        } satisfies PreviewResolveTargetResult;
+      }
+
+      const workspaceRootRelativePath = yield* Effect.tryPromise({
+        try: () => resolveWorkspaceRootRelativePath(project.workspaceRoot, relativePath),
+        catch: (cause) =>
+          toPreviewError("Failed to resolve the owning workspace for this preview target.", cause),
+      });
+      const workspaceRecord = getWorkspaceRecord(project, workspaceRootRelativePath);
+
+      const bootstrapReady = yield* Effect.tryPromise({
+        try: () => hasBootstrapFiles(project.workspaceRoot),
+        catch: (cause) => toPreviewError("Failed to inspect preview bootstrap files.", cause),
+      });
+      if (!bootstrapReady) {
+        return {
+          status: "needsBootstrap",
+          relativePath: asProjectRelativePath(relativePath),
+          workspaceRootRelativePath,
+          existingThreadId: workspaceRecord?.threadId ?? null,
+          reason: "Repo-level preview bootstrap files are missing under .forma/preview/.",
+        } satisfies PreviewResolveTargetResult;
+      }
+
+      const previewFileRelativePath = previewFilePathForComponent(relativePath);
+      if (
+        !(yield* Effect.tryPromise({
+          try: () => pathExists(path.join(project.workspaceRoot, previewFileRelativePath)),
+          catch: (cause) => toPreviewError("Failed to inspect component preview files.", cause),
+        }))
+      ) {
+        return {
+          status: "needsGeneration",
+          relativePath: asProjectRelativePath(relativePath),
+          workspaceRootRelativePath,
+          threadId: workspaceRecord?.threadId ?? null,
+          previewFileRelativePath: asProjectRelativePath(previewFileRelativePath),
+          reason: "This component does not have a preview file yet.",
+        } satisfies PreviewResolveTargetResult;
+      }
+
+      const previewFileInspection = yield* Effect.tryPromise({
+        try: () => inspectPreviewFile(project.workspaceRoot, previewFileRelativePath),
+        catch: (cause) => toPreviewError("Failed to inspect the component preview file.", cause),
+      });
+      const aliasEntries = yield* Effect.tryPromise({
+        try: () =>
+          inferAliasEntries(project.workspaceRoot, relativePath, workspaceRootRelativePath),
+        catch: (cause) => toPreviewError("Failed to infer project import aliases.", cause),
+      });
+      const targetRecord: ResolvedHarnessTarget = {
+        projectId: project.id,
+        relativePath,
+        previewFileRelativePath,
+        workspaceRootRelativePath,
+        framework,
+        scenarioChoices: previewFileInspection.scenarioChoices,
+        initialScenarioId: previewFileInspection.initialScenarioId,
+        moduleMocks: previewFileInspection.moduleMocks,
+        aliasEntries,
+      };
+      yield* Ref.update(stateRef, (state) => ({
+        ...state,
+        lastResolvedTargets: new Map(state.lastResolvedTargets).set(project.id, targetRecord),
+      }));
+
+      const runtimeExit = yield* Effect.exit(startRuntimeForTarget(project, targetRecord));
+      if (!Exit.isSuccess(runtimeExit)) {
+        const runtimeFailure = Cause.squash(runtimeExit.cause);
+        const runtimeMessage =
+          runtimeFailure instanceof Error ? runtimeFailure.message : String(runtimeFailure);
+        yield* persistWorkspaceRecord(project, {
+          workspaceRootRelativePath,
+          status: "failed",
+          lastPreviewFileRelativePath: previewFileRelativePath,
+          lastError: runtimeMessage,
+        });
+        return {
+          status: "runtimeError",
+          relativePath: asProjectRelativePath(relativePath),
+          workspaceRootRelativePath,
+          threadId: workspaceRecord?.threadId ?? null,
+          previewFileRelativePath: asProjectRelativePath(previewFileRelativePath),
+          message: runtimeMessage,
+        } satisfies PreviewResolveTargetResult;
+      }
+
+      yield* persistWorkspaceRecord(project, {
+        workspaceRootRelativePath,
+        status: "ready",
+        lastPreviewFileRelativePath: previewFileRelativePath,
+        lastError: null,
+      });
+
+      const runtime = runtimeExit.value;
+      const runtimeTarget = (yield* Ref.get(stateRef)).runtimes.get(project.id);
+      if (!runtimeTarget) {
+        return yield* failPreview("Preview runtime was not available after startup.");
+      }
+      return {
+        status: "resolved",
+        relativePath: asProjectRelativePath(relativePath),
+        previewFileRelativePath: asProjectRelativePath(previewFileRelativePath),
+        iframePath: `${runtime.iframeBasePath}/preview.html`,
+        directIframeUrl: `${runtimeTarget.baseUrl}/preview.html`,
+        initialScenarioId: previewFileInspection.initialScenarioId,
+        scenarioChoices: [...previewFileInspection.scenarioChoices],
+      } satisfies PreviewResolveTargetResult;
+    });
+
+  const prepareBootstrapThread: PreviewManagerShape["prepareBootstrapThread"] = (input) =>
+    Effect.gen(function* () {
+      const project = yield* getProjectById(input.projectId);
+      const relativePath = normalizeProjectPath(input.relativePath);
+      const workspaceRootRelativePath = yield* Effect.tryPromise({
+        try: () => resolveWorkspaceRootRelativePath(project.workspaceRoot, relativePath),
+        catch: (cause) =>
+          toPreviewError("Failed to resolve the owning workspace for this preview target.", cause),
+      });
+      const workspaceRecord = getWorkspaceRecord(project, workspaceRootRelativePath);
+      const framework = yield* Effect.tryPromise({
+        try: () => detectProjectFramework(project.workspaceRoot, relativePath),
+        catch: (cause) => toPreviewError("Failed to detect the preview framework.", cause),
+      });
+      return {
+        workspaceRootRelativePath,
+        existingThreadId: workspaceRecord?.threadId ?? null,
+        threadTitle: buildThreadTitle(workspaceRootRelativePath),
+        initialPrompt: buildBootstrapPrompt({
+          project,
+          framework,
+          workspaceRootRelativePath,
+          relativePath,
+        }),
+        inspectionSummary: `Set up repo-level preview bootstrap files for ${workspaceLabel(workspaceRootRelativePath)}.`,
+        reviewSummary: [
+          `Selected component: ${relativePath}`,
+          `Owner workspace: ${workspaceLabel(workspaceRootRelativePath)}`,
+          `Bootstrap files: ${BOOTSTRAP_FILE_PATHS.join(", ")}`,
+        ],
+      } satisfies PreviewPrepareBootstrapThreadResult;
+    });
+
+  const preparePreviewGenerationTurn: PreviewManagerShape["preparePreviewGenerationTurn"] = (
+    input,
+  ) =>
+    Effect.gen(function* () {
+      const project = yield* getProjectById(input.projectId);
+      const relativePath = normalizeProjectPath(input.relativePath);
+      const workspaceRootRelativePath = yield* Effect.tryPromise({
+        try: () => resolveWorkspaceRootRelativePath(project.workspaceRoot, relativePath),
+        catch: (cause) =>
+          toPreviewError("Failed to resolve the owning workspace for this preview target.", cause),
+      });
+      const workspaceRecord = getWorkspaceRecord(project, workspaceRootRelativePath);
+      const previewFileRelativePath = previewFilePathForComponent(relativePath);
+      return {
+        workspaceRootRelativePath,
+        threadId: workspaceRecord?.threadId ?? null,
+        turnPrompt: buildPreviewGenerationPrompt({
+          relativePath,
+          previewFileRelativePath,
+        }),
+        previewFileRelativePath: asProjectRelativePath(previewFileRelativePath),
+      } satisfies PreviewPreparePreviewGenerationTurnResult;
+    });
+
+  const preparePreviewRepairTurn: PreviewManagerShape["preparePreviewRepairTurn"] = (input) =>
+    Effect.gen(function* () {
+      const project = yield* getProjectById(input.projectId);
+      const relativePath = normalizeProjectPath(input.relativePath);
+      const workspaceRootRelativePath = yield* Effect.tryPromise({
+        try: () => resolveWorkspaceRootRelativePath(project.workspaceRoot, relativePath),
+        catch: (cause) =>
+          toPreviewError("Failed to resolve the owning workspace for this preview target.", cause),
+      });
+      const workspaceRecord = getWorkspaceRecord(project, workspaceRootRelativePath);
+      return {
+        workspaceRootRelativePath,
+        threadId: workspaceRecord?.threadId ?? null,
+        turnPrompt: buildPreviewRepairPrompt({
+          relativePath,
+          previewFileRelativePath: input.previewFileRelativePath,
+          errorMessage: input.errorMessage,
+        }),
+        previewFileRelativePath: input.previewFileRelativePath,
+      } satisfies PreviewPreparePreviewRepairTurnResult;
+    });
+
   const ensureRuntime: PreviewManagerShape["ensureRuntime"] = (input) =>
     Effect.gen(function* () {
       const project = yield* getProjectById(input.projectId);
-      const inspection = yield* Effect.tryPromise({
-        try: () => inspectStorybookProject(project.workspaceRoot),
-        catch: (cause) =>
-          toPreviewError("Failed to inspect Storybook preview configuration.", cause),
-      });
-      const effectiveCommand = resolveEffectivePreviewCommand(project, inspection);
-      if (!effectiveCommand) {
-        return yield* failPreview(
-          !inspection.hasStorybookSetup &&
-            inspection.framework !== "react" &&
-            inspection.framework !== "nextjs"
-            ? "Storybook preview is unavailable for this project."
-            : !inspection.hasStorybookSetup
-              ? "Storybook previews are not enabled for this project."
-              : "A preview start command is required before Forma can open Storybook.",
-        );
+      const existingRuntime = (yield* Ref.get(stateRef)).runtimes.get(project.id);
+      if (
+        existingRuntime &&
+        (yield* Effect.promise(() => isRuntimeReady(existingRuntime.baseUrl)))
+      ) {
+        return {
+          projectId: project.id,
+          provider: "componentHarness",
+          started: false,
+          iframeBasePath: existingRuntime.iframeBasePath,
+        } satisfies PreviewEnsureRuntimeResult;
       }
-      return yield* startRuntime(project, effectiveCommand);
+      const lastTarget = (yield* Ref.get(stateRef)).lastResolvedTargets.get(project.id);
+      if (!lastTarget) {
+        return yield* failPreview("No preview target has been resolved yet for this project.");
+      }
+      return yield* startRuntimeForTarget(project, lastTarget);
     });
 
   const stopRuntime: PreviewManagerShape["stopRuntime"] = (input) =>
     Effect.gen(function* () {
       const runtime = (yield* Ref.get(stateRef)).runtimes.get(input.projectId);
       if (!runtime) return;
-      runtime.child.kill("SIGTERM");
+      yield* stopRuntimeRecord(runtime);
       yield* Ref.update(stateRef, (state) => {
         const next = new Map(state.runtimes);
         next.delete(input.projectId);
@@ -1604,455 +1358,6 @@ Expectation:
     Effect.gen(function* () {
       yield* getProjectById(input.projectId);
       return yield* issueAccessTokenForProject(input.projectId);
-    });
-
-  const resolveStoryVariants = (
-    _project: ProjectRecord,
-    runtimeBaseUrl: string,
-    runtimeIframeBasePath: string,
-    workspaceRootRelativePath: string,
-    storyRelativePath: string,
-    targetKind: PreviewTargetKind,
-    relativePath: string,
-    componentRelativePath: string | null,
-  ) =>
-    Effect.gen(function* () {
-      const storyEntries = yield* Effect.tryPromise({
-        try: () => loadStorybookEntries(runtimeBaseUrl),
-        catch: (cause) => toPreviewError("Failed to load Storybook stories for preview.", cause),
-      });
-      const normalizedStoryRelativePath = normalizeProjectPath(storyRelativePath);
-      const normalizedWorkspaceRoot = normalizeProjectPath(workspaceRootRelativePath);
-      const workspaceRelativeStoryPath =
-        normalizedWorkspaceRoot.length > 0 &&
-        normalizedStoryRelativePath.startsWith(`${normalizedWorkspaceRoot}/`)
-          ? normalizedStoryRelativePath.slice(normalizedWorkspaceRoot.length + 1)
-          : normalizedStoryRelativePath;
-      const variants = storyEntries
-        .filter(
-          (entry) =>
-            entry.type === "story" &&
-            typeof entry.importPath === "string" &&
-            (() => {
-              const importPath = normalizeStorybookImportPath(entry.importPath);
-              return (
-                importPath === normalizedStoryRelativePath ||
-                importPath.endsWith(normalizedStoryRelativePath) ||
-                importPath === workspaceRelativeStoryPath ||
-                importPath.endsWith(workspaceRelativeStoryPath)
-              );
-            })(),
-        )
-        .map((entry) => ({
-          storyId: entry.id,
-          exportName: entry.name ?? entry.id,
-          name: entry.name ?? entry.id,
-        }));
-      if (variants.length === 0) {
-        return yield* failPreview(
-          `No Storybook variants were found for '${normalizedStoryRelativePath}'.`,
-        );
-      }
-      return {
-        status: "resolved",
-        targetKind,
-        relativePath: asProjectRelativePath(relativePath),
-        componentRelativePath: componentRelativePath
-          ? asProjectRelativePath(componentRelativePath)
-          : null,
-        storyRelativePath: asProjectRelativePath(storyRelativePath),
-        initialStoryId: variants[0]!.storyId,
-        iframePath: `${runtimeIframeBasePath}/iframe.html?id=${encodeURIComponent(variants[0]!.storyId)}&viewMode=story`,
-        directIframeUrl: `${runtimeBaseUrl}/iframe.html?id=${encodeURIComponent(variants[0]!.storyId)}&viewMode=story`,
-        variants,
-      } satisfies PreviewResolveTargetResult;
-    });
-
-  const resolveTarget: PreviewManagerShape["resolveTarget"] = (input) =>
-    Effect.gen(function* () {
-      const project = yield* getProjectById(input.projectId);
-      const inspection = yield* Effect.tryPromise({
-        try: () => inspectStorybookProject(project.workspaceRoot),
-        catch: (cause) =>
-          toPreviewError("Failed to inspect Storybook preview configuration.", cause),
-      });
-      const relativePath = normalizeProjectPath(input.relativePath);
-      const absolutePath = path.join(project.workspaceRoot, relativePath);
-      const exists = yield* Effect.tryPromise({
-        try: () => pathExists(absolutePath),
-        catch: (cause) => toPreviewError("Failed to resolve the selected preview target.", cause),
-      });
-      if (!exists) {
-        return {
-          status: "notFound",
-          targetKind: input.targetKind,
-          relativePath: asProjectRelativePath(relativePath),
-        } satisfies PreviewResolveTargetResult;
-      }
-
-      const ownerWorkspace = yield* Effect.tryPromise({
-        try: () => resolveOwnerWorkspaceForPath(project.workspaceRoot, relativePath),
-        catch: (cause) =>
-          toPreviewError("Failed to resolve the owning workspace for this preview target.", cause),
-      });
-      const ownerWorkspaceRootRelativePath = normalizeProjectPath(
-        ownerWorkspace?.workspaceRootRelativePath ?? "",
-      );
-      const workspaceRecord = getWorkspaceRecord(project, ownerWorkspaceRootRelativePath);
-      const buildNeedsWorkspaceSetupResult = (reason: string): PreviewResolveTargetResult => ({
-        status: "needsWorkspaceSetup",
-        targetKind: input.targetKind,
-        relativePath: asProjectRelativePath(relativePath),
-        ownerWorkspaceRootRelativePath,
-        coveringWorkspaceRootRelativePath: null,
-        existingThreadId: workspaceRecord?.threadId ?? null,
-        reason,
-      });
-
-      if (input.targetKind === "story") {
-        if (!isStoryPath(relativePath)) {
-          return {
-            status: "unsupportedTarget",
-            targetKind: input.targetKind,
-            relativePath: asProjectRelativePath(relativePath),
-            reason: "Only Storybook story files can be opened as direct preview targets.",
-          } satisfies PreviewResolveTargetResult;
-        }
-        const storyWorkspace = pickCoveringStorybookWorkspaceForPath(
-          inspection.workspaces,
-          relativePath,
-        );
-        if (!storyWorkspace) {
-          return buildNeedsWorkspaceSetupResult(
-            buildWorkspaceSetupReason(ownerWorkspaceRootRelativePath, relativePath, inspection),
-          );
-        }
-        const effectiveCommand = resolveEffectivePreviewCommand(
-          project,
-          inspection,
-          storyWorkspace.workspaceRootRelativePath,
-        );
-        if (!effectiveCommand) {
-          return {
-            status: "needsCommandOverride",
-            targetKind: input.targetKind,
-            relativePath: asProjectRelativePath(relativePath),
-            workspaceRootRelativePath: storyWorkspace.workspaceRootRelativePath,
-            detectedCommands: storyWorkspace.commandCandidates.length
-              ? storyWorkspace.commandCandidates
-              : inspection.detectedStartCommands,
-          } satisfies PreviewResolveTargetResult;
-        }
-        const runtimeExit = yield* Effect.exit(startRuntime(project, effectiveCommand));
-        if (!Exit.isSuccess(runtimeExit)) {
-          if (!workspaceRecord?.threadId) {
-            return yield* Effect.failCause(runtimeExit.cause);
-          }
-          const runtimeFailure = Cause.squash(runtimeExit.cause);
-          const runtimeMessage =
-            runtimeFailure instanceof Error ? runtimeFailure.message : String(runtimeFailure);
-          yield* persistWorkspaceRecord(project, {
-            workspaceRootRelativePath: ownerWorkspaceRootRelativePath,
-            status: "setup_failed",
-            lastTargetRelativePath: relativePath,
-            lastError: runtimeMessage,
-          });
-          return buildNeedsWorkspaceSetupResult(runtimeMessage);
-        }
-        const runtime = runtimeExit.value;
-        const runtimeTarget = (yield* Ref.get(stateRef)).runtimes.get(project.id);
-        if (!runtimeTarget) {
-          return yield* failPreview("Preview runtime was not available after startup.");
-        }
-        const resolvedTarget = yield* resolveStoryVariants(
-          project,
-          runtimeTarget.baseUrl,
-          runtime.iframeBasePath,
-          storyWorkspace.workspaceRootRelativePath,
-          relativePath,
-          input.targetKind,
-          relativePath,
-          null,
-        );
-        if (workspaceRecord) {
-          yield* persistWorkspaceRecord(project, {
-            workspaceRootRelativePath: ownerWorkspaceRootRelativePath,
-            status: "ready",
-            lastTargetRelativePath: relativePath,
-            lastError: null,
-          });
-        }
-        return resolvedTarget;
-      }
-
-      if (!isComponentPath(relativePath)) {
-        return {
-          status: "unsupportedTarget",
-          targetKind: input.targetKind,
-          relativePath: asProjectRelativePath(relativePath),
-          reason: "Only component source files can be previewed from this action.",
-        } satisfies PreviewResolveTargetResult;
-      }
-
-      const mappedStory = project.previewConfig?.componentStoryMappings?.[relativePath] ?? null;
-      const storyCandidates = mappedStory
-        ? [mappedStory]
-        : yield* Effect.tryPromise({
-            try: () => inferStoryCandidates(project.workspaceRoot, relativePath),
-            catch: (cause) =>
-              toPreviewError("Failed to resolve story candidates for component preview.", cause),
-          });
-      const generatedStoryRelativePath = storyFilePathForComponent(relativePath);
-
-      if (storyCandidates.length === 0) {
-        const generatedStoryWorkspace = pickCoveringStorybookWorkspaceForPath(
-          inspection.workspaces,
-          generatedStoryRelativePath,
-        );
-        if (generatedStoryWorkspace) {
-          return {
-            status: "needsStoryWork",
-            componentRelativePath: asProjectRelativePath(relativePath),
-            storyRelativePath: null,
-            action: "create",
-            workspaceRootRelativePath: generatedStoryWorkspace.workspaceRootRelativePath,
-            threadId: workspaceRecord?.threadId ?? null,
-          } satisfies PreviewResolveTargetResult;
-        }
-        return buildNeedsWorkspaceSetupResult(
-          buildWorkspaceSetupReason(ownerWorkspaceRootRelativePath, relativePath, inspection),
-        );
-      }
-
-      const coveredStoryCandidates = storyCandidates.filter((candidatePath) =>
-        Boolean(pickCoveringStorybookWorkspaceForPath(inspection.workspaces, candidatePath)),
-      );
-
-      if (coveredStoryCandidates.length > 1) {
-        return {
-          status: "needsStoryChoice",
-          componentRelativePath: asProjectRelativePath(relativePath),
-          storyChoices: coveredStoryCandidates.map((candidatePath) => ({
-            relativePath: asProjectRelativePath(candidatePath),
-            displayName: displayNameForPath(candidatePath),
-          })),
-        } satisfies PreviewResolveTargetResult;
-      }
-
-      if (coveredStoryCandidates.length === 0) {
-        return buildNeedsWorkspaceSetupResult(
-          buildWorkspaceSetupReason(ownerWorkspaceRootRelativePath, relativePath, inspection),
-        );
-      }
-
-      const storyRelativePath = coveredStoryCandidates[0]!;
-      const storyWorkspace = pickCoveringStorybookWorkspaceForPath(
-        inspection.workspaces,
-        storyRelativePath,
-      );
-      if (!storyWorkspace) {
-        return buildNeedsWorkspaceSetupResult(
-          buildWorkspaceSetupReason(ownerWorkspaceRootRelativePath, relativePath, inspection),
-        );
-      }
-      const effectiveCommand = resolveEffectivePreviewCommand(
-        project,
-        inspection,
-        storyWorkspace.workspaceRootRelativePath,
-      );
-      if (!effectiveCommand) {
-        return {
-          status: "needsCommandOverride",
-          targetKind: input.targetKind,
-          relativePath: asProjectRelativePath(relativePath),
-          workspaceRootRelativePath: storyWorkspace.workspaceRootRelativePath,
-          detectedCommands: storyWorkspace.commandCandidates.length
-            ? storyWorkspace.commandCandidates
-            : inspection.detectedStartCommands,
-        } satisfies PreviewResolveTargetResult;
-      }
-      const runtimeExit = yield* Effect.exit(startRuntime(project, effectiveCommand));
-      if (!Exit.isSuccess(runtimeExit)) {
-        if (!workspaceRecord?.threadId) {
-          return yield* Effect.failCause(runtimeExit.cause);
-        }
-        const runtimeFailure = Cause.squash(runtimeExit.cause);
-        const runtimeMessage =
-          runtimeFailure instanceof Error ? runtimeFailure.message : String(runtimeFailure);
-        yield* persistWorkspaceRecord(project, {
-          workspaceRootRelativePath: ownerWorkspaceRootRelativePath,
-          status: "setup_failed",
-          lastTargetRelativePath: relativePath,
-          lastError: runtimeMessage,
-        });
-        return buildNeedsWorkspaceSetupResult(runtimeMessage);
-      }
-      const runtime = runtimeExit.value;
-      const runtimeTarget = (yield* Ref.get(stateRef)).runtimes.get(project.id);
-      if (!runtimeTarget) {
-        return yield* failPreview("Preview runtime was not available after startup.");
-      }
-      const variantResolutionExit = yield* Effect.exit(
-        resolveStoryVariants(
-          project,
-          runtimeTarget.baseUrl,
-          runtime.iframeBasePath,
-          storyWorkspace.workspaceRootRelativePath,
-          storyRelativePath,
-          input.targetKind,
-          relativePath,
-          relativePath,
-        ),
-      );
-      if (!Exit.isSuccess(variantResolutionExit)) {
-        if (workspaceRecord) {
-          yield* persistWorkspaceRecord(project, {
-            workspaceRootRelativePath: ownerWorkspaceRootRelativePath,
-            status: "story_work_pending",
-            lastTargetRelativePath: relativePath,
-            lastError: null,
-          });
-        }
-        return {
-          status: "needsStoryWork",
-          componentRelativePath: asProjectRelativePath(relativePath),
-          storyRelativePath: asProjectRelativePath(storyRelativePath),
-          action: "fix",
-          workspaceRootRelativePath: ownerWorkspaceRootRelativePath,
-          threadId: workspaceRecord?.threadId ?? null,
-        } satisfies PreviewResolveTargetResult;
-      }
-      const variantResolution = variantResolutionExit.value;
-      if (workspaceRecord) {
-        yield* persistWorkspaceRecord(project, {
-          workspaceRootRelativePath: ownerWorkspaceRootRelativePath,
-          status: "ready",
-          lastTargetRelativePath: relativePath,
-          lastError: null,
-        });
-      }
-      return variantResolution;
-    });
-
-  const chooseStoryMapping: PreviewManagerShape["chooseStoryMapping"] = (input) =>
-    Effect.gen(function* () {
-      const project = yield* getProjectById(input.projectId);
-      const nextConfig = buildPreviewConfig(project.previewConfig, {
-        componentStoryMappings: {
-          [input.componentRelativePath]: input.storyRelativePath,
-        },
-      });
-      yield* updateProjectPreviewMetadata(project, { previewConfig: nextConfig }).pipe(
-        Effect.mapError((cause) => toPreviewError("Failed to save preview story mapping.", cause)),
-      );
-    });
-
-  const setStartCommandOverride: PreviewManagerShape["setStartCommandOverride"] = (input) =>
-    Effect.gen(function* () {
-      const project = yield* getProjectById(input.projectId);
-      const nextConfig = buildPreviewConfig(project.previewConfig, {
-        workspaceCommandOverrides: {
-          [normalizeProjectPath(input.workspaceRootRelativePath)]: input.command,
-        },
-      });
-      yield* updateProjectPreviewMetadata(project, { previewConfig: nextConfig }).pipe(
-        Effect.mapError((cause) =>
-          toPreviewError("Failed to save preview start command override.", cause),
-        ),
-      );
-    });
-
-  const prepareWorkspaceSetupThread: PreviewManagerShape["prepareWorkspaceSetupThread"] = (input) =>
-    Effect.gen(function* () {
-      const project = yield* getProjectById(input.projectId);
-      const inspection = yield* Effect.tryPromise({
-        try: () => inspectStorybookProject(project.workspaceRoot),
-        catch: (cause) =>
-          toPreviewError("Failed to inspect Storybook preview configuration.", cause),
-      });
-      const ownerWorkspace = yield* Effect.tryPromise({
-        try: () => resolveOwnerWorkspaceForPath(project.workspaceRoot, input.relativePath),
-        catch: (cause) =>
-          toPreviewError("Failed to resolve the owning workspace for this preview target.", cause),
-      });
-      const ownerWorkspaceRootRelativePath = normalizeProjectPath(
-        ownerWorkspace?.workspaceRootRelativePath ?? "",
-      );
-      const workspaceRecord = getWorkspaceRecord(project, ownerWorkspaceRootRelativePath);
-      return {
-        workspaceRootRelativePath: ownerWorkspaceRootRelativePath,
-        existingThreadId: workspaceRecord?.threadId ?? null,
-        threadTitle: buildWorkspaceThreadTitle(ownerWorkspaceRootRelativePath),
-        initialPrompt: buildWorkspaceSetupInitialPrompt({
-          project,
-          ownerWorkspaceRootRelativePath,
-          relativePath: normalizeProjectPath(input.relativePath),
-          targetKind: input.targetKind,
-          inspection,
-        }),
-        inspectionSummary: buildWorkspaceSetupInspectionSummary(
-          ownerWorkspaceRootRelativePath,
-          normalizeProjectPath(input.relativePath),
-          inspection,
-        ),
-        reviewSummary: [
-          ...buildWorkspaceSetupReviewSummary(
-            ownerWorkspaceRootRelativePath,
-            normalizeProjectPath(input.relativePath),
-            inspection,
-          ),
-        ],
-      } satisfies PreviewPrepareWorkspaceSetupThreadResult;
-    });
-
-  const prepareStoryWorkTurn: PreviewManagerShape["prepareStoryWorkTurn"] = (input) =>
-    Effect.gen(function* () {
-      const project = yield* getProjectById(input.projectId);
-      const inspection = yield* Effect.tryPromise({
-        try: () => inspectStorybookProject(project.workspaceRoot),
-        catch: (cause) =>
-          toPreviewError("Failed to inspect Storybook preview configuration.", cause),
-      });
-      const ownerWorkspace = yield* Effect.tryPromise({
-        try: () => resolveOwnerWorkspaceForPath(project.workspaceRoot, input.componentRelativePath),
-        catch: (cause) =>
-          toPreviewError(
-            "Failed to resolve the owning workspace for this preview story action.",
-            cause,
-          ),
-      });
-      const workspaceRootRelativePath = normalizeProjectPath(
-        ownerWorkspace?.workspaceRootRelativePath ?? "",
-      );
-      const workspaceRecord = getWorkspaceRecord(project, workspaceRootRelativePath);
-      const mappedStory =
-        project.previewConfig?.componentStoryMappings?.[
-          normalizeProjectPath(input.componentRelativePath)
-        ] ?? null;
-      const storyCandidates = mappedStory
-        ? [mappedStory]
-        : yield* Effect.tryPromise({
-            try: () => inferStoryCandidates(project.workspaceRoot, input.componentRelativePath),
-            catch: (cause) =>
-              toPreviewError("Failed to resolve story candidates for preview story work.", cause),
-          });
-      const firstCoveredStoryCandidate =
-        storyCandidates.find((candidatePath) =>
-          Boolean(pickCoveringStorybookWorkspaceForPath(inspection.workspaces, candidatePath)),
-        ) ?? null;
-      return {
-        workspaceRootRelativePath,
-        threadId: workspaceRecord?.threadId ?? null,
-        turnPrompt: buildStoryWorkTurnPrompt({
-          workspaceRootRelativePath,
-          componentRelativePath: normalizeProjectPath(input.componentRelativePath),
-          storyRelativePath: firstCoveredStoryCandidate,
-          action: input.action,
-        }),
-        storyRelativePath: firstCoveredStoryCandidate
-          ? asProjectRelativePath(firstCoveredStoryCandidate)
-          : null,
-      } satisfies PreviewPrepareStoryWorkTurnResult;
     });
 
   const streamProject: PreviewManagerShape["streamProject"] = (input) =>
@@ -2098,14 +1403,10 @@ Expectation:
   yield* Effect.addFinalizer(() =>
     Ref.get(stateRef).pipe(
       Effect.flatMap((state) =>
-        Effect.forEach(
-          state.runtimes.values(),
-          (runtime) => Effect.sync(() => runtime.child.kill("SIGTERM")),
-          {
-            concurrency: "unbounded",
-            discard: true,
-          },
-        ),
+        Effect.forEach(state.runtimes.values(), (runtime) => stopRuntimeRecord(runtime), {
+          concurrency: "unbounded",
+          discard: true,
+        }),
       ),
     ),
   );
@@ -2114,10 +1415,9 @@ Expectation:
     inspectProject,
     searchComponents,
     resolveTarget,
-    chooseStoryMapping,
-    setStartCommandOverride,
-    prepareWorkspaceSetupThread,
-    prepareStoryWorkTurn,
+    prepareBootstrapThread,
+    preparePreviewGenerationTurn,
+    preparePreviewRepairTurn,
     ensureRuntime,
     issueAccessToken,
     stopRuntime,

@@ -261,14 +261,11 @@ function createMockEnvironmentApi(input: {
         input.preview?.inspectProject ??
         ((async ({ projectId }) => ({
           projectId,
-          provider: "storybook",
-          status: "configured",
-          framework: "React",
-          detectedStartCommands: [],
-          storybookConfigPaths: [],
-          packageManager: "bun",
-          controlsBridgeStatus: "missing",
-          summary: "Storybook is configured.",
+          provider: "componentHarness",
+          status: "ready",
+          framework: "react-vite",
+          bootstrapFilesPresent: true,
+          summary: "Component preview is ready.",
         })) as EnvironmentApi["preview"]["inspectProject"]),
       searchComponents:
         input.preview?.searchComponents ??
@@ -278,34 +275,32 @@ function createMockEnvironmentApi(input: {
         })) as EnvironmentApi["preview"]["searchComponents"]),
       resolveTarget:
         input.preview?.resolveTarget ??
-        ((async ({ relativePath, targetKind }) => ({
+        ((async ({ relativePath }) => ({
           status: "notFound",
           relativePath,
-          targetKind,
         })) as EnvironmentApi["preview"]["resolveTarget"]),
-      chooseStoryMapping:
-        input.preview?.chooseStoryMapping ??
-        ((async () => undefined) as EnvironmentApi["preview"]["chooseStoryMapping"]),
-      setStartCommandOverride:
-        input.preview?.setStartCommandOverride ??
-        ((async () => undefined) as EnvironmentApi["preview"]["setStartCommandOverride"]),
-      prepareWorkspaceSetupThread:
-        input.preview?.prepareWorkspaceSetupThread ??
+      prepareBootstrapThread:
+        input.preview?.prepareBootstrapThread ??
         ((async () => {
           throw new Error("Not implemented in browser test.");
-        }) as EnvironmentApi["preview"]["prepareWorkspaceSetupThread"]),
-      prepareStoryWorkTurn:
-        input.preview?.prepareStoryWorkTurn ??
+        }) as EnvironmentApi["preview"]["prepareBootstrapThread"]),
+      preparePreviewGenerationTurn:
+        input.preview?.preparePreviewGenerationTurn ??
         ((async () => {
           throw new Error("Not implemented in browser test.");
-        }) as EnvironmentApi["preview"]["prepareStoryWorkTurn"]),
+        }) as EnvironmentApi["preview"]["preparePreviewGenerationTurn"]),
+      preparePreviewRepairTurn:
+        input.preview?.preparePreviewRepairTurn ??
+        ((async () => {
+          throw new Error("Not implemented in browser test.");
+        }) as EnvironmentApi["preview"]["preparePreviewRepairTurn"]),
       ensureRuntime:
         input.preview?.ensureRuntime ??
         ((async ({ projectId }) => ({
           projectId,
-          provider: "storybook",
+          provider: "componentHarness",
           started: true,
-          iframeBasePath: "/iframe.html",
+          iframeBasePath: "/__preview/project",
         })) as EnvironmentApi["preview"]["ensureRuntime"]),
       issueAccessToken:
         input.preview?.issueAccessToken ??
@@ -470,7 +465,7 @@ function createSnapshotForTargetUser(options: {
           model: "gpt-5",
         },
         scripts: [],
-        previewConfig: null,
+        previewWorkspaceRecords: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
@@ -983,7 +978,7 @@ function createSnapshotWithSecondaryProject(options?: {
         workspaceRoot: "/repo/clients/docs-portal",
         defaultModelSelection: { provider: "codex", model: "gpt-5" },
         scripts: [],
-        previewConfig: null,
+        previewWorkspaceRecords: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
@@ -1072,7 +1067,7 @@ function createSnapshotWithGroupedCleanupThreads(): OrchestrationReadModel {
         repositoryIdentity,
         defaultModelSelection: { provider: "codex", model: "gpt-5" },
         scripts: [],
-        previewConfig: null,
+        previewWorkspaceRecords: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
@@ -8344,8 +8339,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("launches the component preview after story creation completes", async () => {
-    let storyCreated = false;
+  it("launches the component preview after preview generation completes", async () => {
+    let previewGenerated = false;
 
     __setEnvironmentApiOverrideForTests(
       LOCAL_ENVIRONMENT_ID,
@@ -8355,49 +8350,42 @@ describe("ChatView timeline estimator parity (full app)", () => {
         preview: {
           inspectProject: vi.fn(async ({ projectId }) => ({
             projectId,
-            provider: "storybook" as const,
-            status: "configured" as const,
-            framework: "React",
-            detectedStartCommands: [],
-            storybookConfigPaths: [],
-            packageManager: "bun" as const,
-            controlsBridgeStatus: "missing" as const,
-            summary: "Storybook is configured.",
+            provider: "componentHarness" as const,
+            status: "ready" as const,
+            framework: "react-vite" as const,
+            bootstrapFilesPresent: true,
+            summary: "Component preview is ready.",
           })),
-          resolveTarget: vi.fn(async ({ relativePath, targetKind }) =>
-            storyCreated
+          resolveTarget: vi.fn(async ({ relativePath }) =>
+            previewGenerated
               ? {
                   status: "resolved" as const,
-                  targetKind,
                   relativePath,
-                  componentRelativePath: "src/Button.tsx",
-                  storyRelativePath: "src/Button.stories.tsx",
-                  initialStoryId: "button--default",
-                  iframePath: "/iframe.html?id=button--default&viewMode=story",
-                  directIframeUrl:
-                    "http://127.0.0.1:6006/iframe.html?id=button--default&viewMode=story",
-                  variants: [
+                  previewFileRelativePath: "src/Button.preview.tsx",
+                  initialScenarioId: "default",
+                  iframePath: "/preview.html?component=src%2FButton.tsx",
+                  directIframeUrl: "http://127.0.0.1:4173/preview.html?component=src%2FButton.tsx",
+                  scenarioChoices: [
                     {
-                      storyId: "button--default",
-                      exportName: "Default",
+                      id: "default",
                       name: "Default",
                     },
                   ],
                 }
               : {
-                  status: "needsStoryWork" as const,
-                  componentRelativePath: "src/Button.tsx",
-                  storyRelativePath: null,
-                  action: "create" as const,
+                  status: "needsGeneration" as const,
+                  relativePath,
                   workspaceRootRelativePath: "",
                   threadId: THREAD_ID,
+                  previewFileRelativePath: "src/Button.preview.tsx",
+                  reason: "A preview file has not been generated for this component yet.",
                 },
           ),
-          prepareStoryWorkTurn: vi.fn(async () => ({
+          preparePreviewGenerationTurn: vi.fn(async () => ({
             workspaceRootRelativePath: "",
             threadId: THREAD_ID,
-            turnPrompt: "Create a Storybook story for src/Button.tsx.",
-            storyRelativePath: null,
+            turnPrompt: "Create a preview file for src/Button.tsx.",
+            previewFileRelativePath: "src/Button.preview.tsx",
           })),
         },
       }),
@@ -8412,19 +8400,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
       activeProjectRef: scopeProjectRef(LOCAL_ENVIRONMENT_ID, PROJECT_ID),
       projectStateByKey: {
         [`${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`]: {
-          currentTargetKind: "component",
           currentRelativePath: "src/Button.tsx",
-          currentComponentRelativePath: "src/Button.tsx",
-          currentStoryRelativePath: null,
-          currentStoryId: null,
-          currentVariantIndex: 0,
-          ephemeralArgs: {},
+          currentPreviewFileRelativePath: null,
+          runtimeSnapshot: null,
+          sessionsByPreviewFilePath: {},
           runtimeState: null,
-          storyChoices: [],
           resolution: null,
           inspection: null,
-          controlsBridgeStatus: null,
-          controls: [],
           accessToken: null,
         },
       },
@@ -8441,14 +8423,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       await vi.waitFor(
         () => {
-          expect(document.body.textContent).toContain("Create story");
+          expect(document.body.textContent).toContain("Generating component preview");
         },
         { timeout: 8_000, interval: 16 },
       );
 
-      await page.getByRole("button", { name: "Create story in setup thread" }).click();
+      await page.getByRole("button", { name: "Regenerate preview" }).click();
 
-      storyCreated = true;
+      previewGenerated = true;
       fixture.snapshot = {
         ...fixture.snapshot,
         snapshotSequence: fixture.snapshot.snapshotSequence + 1,
@@ -8480,10 +8462,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          expect(document.body.textContent).not.toContain("Create story in setup thread");
+          expect(document.body.textContent).not.toContain("Generating component preview");
           const iframe = document.querySelector<HTMLIFrameElement>("iframe");
           expect(iframe).not.toBeNull();
-          expect(iframe?.src).toContain("button--default");
+          expect(iframe?.src).toContain("src%2FButton.tsx");
         },
         { timeout: 8_000, interval: 16 },
       );

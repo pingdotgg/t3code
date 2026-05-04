@@ -1,10 +1,9 @@
 import { scopedProjectKey } from "@forma/client-runtime";
 import type {
-  PreviewControlsBridgeStatus,
   PreviewProjectEvent,
   PreviewProjectInspectionResult,
   PreviewResolveTargetResult,
-  PreviewTargetKind,
+  PreviewScenarioEntry,
   ScopedProjectRef,
 } from "@forma/contracts";
 import { create } from "zustand";
@@ -36,24 +35,30 @@ export interface PreviewControlDescriptor {
   step?: number | null | undefined;
 }
 
+export interface PreviewRuntimeSnapshot {
+  runtimeInstanceId: string | null;
+  currentScenarioId: string | null;
+  currentScenarioChoices: PreviewScenarioEntry[];
+  controls: PreviewControlDescriptor[];
+  lastAppliedCommandId: number;
+}
+
+export interface PreviewFileSessionState {
+  previewFileRelativePath: string;
+  selectedScenarioId: string | null;
+  confirmedArgOverrides: Record<string, unknown>;
+  draftArgOverrides: Record<string, unknown>;
+  updatedAt: string;
+}
+
 export interface PreviewWorkspaceProjectState {
-  currentTargetKind: PreviewTargetKind | null;
   currentRelativePath: string | null;
-  currentComponentRelativePath: string | null;
-  currentStoryRelativePath: string | null;
-  currentStoryId: string | null;
-  currentVariantIndex: number;
-  ephemeralArgs: Record<string, unknown>;
+  currentPreviewFileRelativePath: string | null;
+  runtimeSnapshot: PreviewRuntimeSnapshot | null;
+  sessionsByPreviewFilePath: Record<string, PreviewFileSessionState>;
   runtimeState: PreviewProjectEvent | null;
-  storyChoices: PreviewResolveTargetResult extends infer TResult
-    ? TResult extends { status: "needsStoryChoice"; storyChoices: infer TChoices }
-      ? TChoices
-      : never
-    : never;
   resolution: PreviewResolveTargetResult | null;
   inspection: PreviewProjectInspectionResult | null;
-  controlsBridgeStatus: PreviewControlsBridgeStatus | null;
-  controls: PreviewControlDescriptor[];
   accessToken: string | null;
 }
 
@@ -61,6 +66,10 @@ interface PreviewWorkspaceStore {
   activeProjectRef: ScopedProjectRef | null;
   projectStateByKey: Record<string, PreviewWorkspaceProjectState>;
   setActiveProjectRef: (projectRef: ScopedProjectRef | null) => void;
+  updateProjectState: (
+    projectRef: ScopedProjectRef,
+    updater: (state: PreviewWorkspaceProjectState) => PreviewWorkspaceProjectState,
+  ) => void;
   patchProjectState: (
     projectRef: ScopedProjectRef,
     patch: Partial<PreviewWorkspaceProjectState>,
@@ -70,19 +79,13 @@ interface PreviewWorkspaceStore {
 
 function createDefaultProjectState(): PreviewWorkspaceProjectState {
   return {
-    currentTargetKind: null,
     currentRelativePath: null,
-    currentComponentRelativePath: null,
-    currentStoryRelativePath: null,
-    currentStoryId: null,
-    currentVariantIndex: 0,
-    ephemeralArgs: {},
+    currentPreviewFileRelativePath: null,
+    runtimeSnapshot: null,
+    sessionsByPreviewFilePath: {},
     runtimeState: null,
-    storyChoices: [],
     resolution: null,
     inspection: null,
-    controlsBridgeStatus: null,
-    controls: [],
     accessToken: null,
   };
 }
@@ -113,16 +116,28 @@ export const usePreviewWorkspaceStore = create<PreviewWorkspaceStore>((set) => (
         },
       };
     }),
-  patchProjectState: (projectRef, patch) =>
+  updateProjectState: (projectRef, updater) =>
     set((state) => ({
       projectStateByKey: {
         ...state.projectStateByKey,
-        [scopedProjectKey(projectRef)]: {
-          ...getProjectStateRecord(state.projectStateByKey, projectRef),
-          ...patch,
-        },
+        [scopedProjectKey(projectRef)]: updater(
+          getProjectStateRecord(state.projectStateByKey, projectRef),
+        ),
       },
     })),
+  patchProjectState: (projectRef, patch) =>
+    set((state) => {
+      const currentState = getProjectStateRecord(state.projectStateByKey, projectRef);
+      return {
+        projectStateByKey: {
+          ...state.projectStateByKey,
+          [scopedProjectKey(projectRef)]: {
+            ...currentState,
+            ...patch,
+          },
+        },
+      };
+    }),
   resetProjectState: (projectRef) =>
     set((state) => ({
       projectStateByKey: {

@@ -553,7 +553,7 @@ describe("incremental orchestration updates", () => {
           createdAt: "2026-02-27T00:00:00.000Z",
           updatedAt: "2026-02-27T00:00:00.000Z",
           scripts: [],
-          previewConfig: null,
+          previewWorkspaceRecords: [],
         },
       },
     });
@@ -569,7 +569,7 @@ describe("incremental orchestration updates", () => {
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
         },
         scripts: [],
-        previewConfig: null,
+        previewWorkspaceRecords: [],
         createdAt: "2026-02-27T00:00:01.000Z",
         updatedAt: "2026-02-27T00:00:01.000Z",
       }),

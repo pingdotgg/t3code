@@ -10,7 +10,6 @@ import {
   IsoDateTime,
   ModelSelection,
   ProjectId,
-  ProjectPreviewConfig,
   ProjectPreviewWorkspaceRecord,
   ProjectScript,
 } from "@forma/contracts";
@@ -25,7 +24,6 @@ export const ProjectionProject = Schema.Struct({
   workspaceRoot: Schema.String,
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
-  previewConfig: Schema.NullOr(ProjectPreviewConfig),
   previewWorkspaceRecords: Schema.Array(ProjectPreviewWorkspaceRecord),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

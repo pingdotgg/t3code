@@ -3315,11 +3315,10 @@ export default function ChatView(props: ChatViewProps) {
         return false;
       }
       const classification = classifyPreviewRelativePath(editorTarget.relativePath);
-      if (!classification.enabled || !classification.targetKind) {
+      if (!classification.enabled) {
         return false;
       }
       openPreviewTarget(activeProjectRef, {
-        targetKind: classification.targetKind,
         relativePath: editorTarget.relativePath,
       });
       return true;

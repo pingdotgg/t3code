@@ -77,14 +77,15 @@ export interface WsRpcClient {
     readonly inspectProject: RpcUnaryMethod<typeof WS_METHODS.previewInspectProject>;
     readonly searchComponents: RpcUnaryMethod<typeof WS_METHODS.previewSearchComponents>;
     readonly resolveTarget: RpcUnaryMethod<typeof WS_METHODS.previewResolveTarget>;
-    readonly chooseStoryMapping: RpcUnaryMethod<typeof WS_METHODS.previewChooseStoryMapping>;
-    readonly setStartCommandOverride: RpcUnaryMethod<
-      typeof WS_METHODS.previewSetStartCommandOverride
+    readonly prepareBootstrapThread: RpcUnaryMethod<
+      typeof WS_METHODS.previewPrepareBootstrapThread
     >;
-    readonly prepareWorkspaceSetupThread: RpcUnaryMethod<
-      typeof WS_METHODS.previewPrepareWorkspaceSetupThread
+    readonly preparePreviewGenerationTurn: RpcUnaryMethod<
+      typeof WS_METHODS.previewPreparePreviewGenerationTurn
     >;
-    readonly prepareStoryWorkTurn: RpcUnaryMethod<typeof WS_METHODS.previewPrepareStoryWorkTurn>;
+    readonly preparePreviewRepairTurn: RpcUnaryMethod<
+      typeof WS_METHODS.previewPreparePreviewRepairTurn
+    >;
     readonly ensureRuntime: RpcUnaryMethod<typeof WS_METHODS.previewEnsureRuntime>;
     readonly issueAccessToken: RpcUnaryMethod<typeof WS_METHODS.previewIssueAccessToken>;
     readonly stopRuntime: RpcUnaryMethod<typeof WS_METHODS.previewStopRuntime>;
@@ -183,14 +184,14 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.previewSearchComponents](input)),
       resolveTarget: (input) =>
         transport.request((client) => client[WS_METHODS.previewResolveTarget](input)),
-      chooseStoryMapping: (input) =>
-        transport.request((client) => client[WS_METHODS.previewChooseStoryMapping](input)),
-      setStartCommandOverride: (input) =>
-        transport.request((client) => client[WS_METHODS.previewSetStartCommandOverride](input)),
-      prepareWorkspaceSetupThread: (input) =>
-        transport.request((client) => client[WS_METHODS.previewPrepareWorkspaceSetupThread](input)),
-      prepareStoryWorkTurn: (input) =>
-        transport.request((client) => client[WS_METHODS.previewPrepareStoryWorkTurn](input)),
+      prepareBootstrapThread: (input) =>
+        transport.request((client) => client[WS_METHODS.previewPrepareBootstrapThread](input)),
+      preparePreviewGenerationTurn: (input) =>
+        transport.request((client) =>
+          client[WS_METHODS.previewPreparePreviewGenerationTurn](input),
+        ),
+      preparePreviewRepairTurn: (input) =>
+        transport.request((client) => client[WS_METHODS.previewPreparePreviewRepairTurn](input)),
       ensureRuntime: (input) =>
         transport.request((client) => client[WS_METHODS.previewEnsureRuntime](input)),
       issueAccessToken: (input) =>

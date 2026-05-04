@@ -1,7 +1,7 @@
 import { Effect, Option, Schema, SchemaIssue, Struct } from "effect";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity } from "./environment.ts";
-import { ProjectPreviewConfig, ProjectPreviewWorkspaceRecord } from "./preview.ts";
+import { ProjectPreviewWorkspaceRecord } from "./preview.ts";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -169,7 +169,6 @@ export const OrchestrationProject = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
-  previewConfig: Schema.optional(Schema.NullOr(ProjectPreviewConfig)),
   previewWorkspaceRecords: Schema.optional(Schema.Array(ProjectPreviewWorkspaceRecord)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -381,7 +380,6 @@ export const OrchestrationProjectShell = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
-  previewConfig: Schema.optional(Schema.NullOr(ProjectPreviewConfig)),
   previewWorkspaceRecords: Schema.optional(Schema.Array(ProjectPreviewWorkspaceRecord)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -486,7 +484,6 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
-  previewConfig: Schema.optional(Schema.NullOr(ProjectPreviewConfig)),
   previewWorkspaceRecords: Schema.optional(Schema.Array(ProjectPreviewWorkspaceRecord)),
 });
 
@@ -887,7 +884,6 @@ export const ProjectCreatedPayload = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
-  previewConfig: Schema.optional(Schema.NullOr(ProjectPreviewConfig)),
   previewWorkspaceRecords: Schema.optional(Schema.Array(ProjectPreviewWorkspaceRecord)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -900,7 +896,6 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
-  previewConfig: Schema.optional(Schema.NullOr(ProjectPreviewConfig)),
   previewWorkspaceRecords: Schema.optional(Schema.Array(ProjectPreviewWorkspaceRecord)),
   updatedAt: IsoDateTime,
 });

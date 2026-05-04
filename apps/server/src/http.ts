@@ -32,7 +32,7 @@ const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const PREVIEW_TOKEN_QUERY_PARAM = "previewToken";
 const PREVIEW_ROOT_ASSET_REGEX =
-  /(["'(=])\/((?:@vite\/|@id\/|@fs\/|node_modules\/|\.storybook\/|src\/|sb-common-assets\/)[^"'()\s]*|__vite_ping|@react-refresh|vite-inject-mocker-entry\.js|index\.json|stories\.json)(["')\s])/g;
+  /(["'(=])\/((?:@vite\/|@id\/|@fs\/|node_modules\/|src\/)[^"'()\s]*|__vite_ping|@react-refresh|vite-inject-mocker-entry\.js)(["')\s])/g;
 
 export const browserApiCorsLayer = HttpRouter.cors({
   allowedMethods: ["GET", "POST", "OPTIONS"],
@@ -523,10 +523,7 @@ export const previewAssetProxyRouteLayer = Layer.mergeAll(
   makePreviewAssetProxyRoute("/@id/*"),
   makePreviewAssetProxyRoute("/@fs/*"),
   makePreviewAssetProxyRoute("/@react-refresh"),
-  makePreviewAssetProxyRoute("/index.json"),
-  makePreviewAssetProxyRoute("/stories.json"),
   makePreviewAssetProxyRoute("/node_modules/*"),
-  makePreviewAssetProxyRoute("/.storybook/*"),
   makePreviewAssetProxyRoute("/src/*"),
   makePreviewAssetProxyRoute("/vite-inject-mocker-entry.js"),
   makePreviewAssetProxyRoute("/__vite_ping"),

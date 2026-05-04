@@ -10,21 +10,17 @@ import { ProjectRelativePath } from "./project.ts";
 
 const PREVIEW_WORKSPACE_ROOT_RELATIVE_PATH_MAX_LENGTH = 512;
 
-export const PreviewProvider = Schema.Literal("storybook");
+export const PreviewProvider = Schema.Literal("componentHarness");
 export type PreviewProvider = typeof PreviewProvider.Type;
 
-export const PreviewTargetKind = Schema.Literals(["component", "story"]);
-export type PreviewTargetKind = typeof PreviewTargetKind.Type;
-
-export const PreviewPackageManager = Schema.Literals(["bun", "pnpm", "yarn", "npm"]);
-export type PreviewPackageManager = typeof PreviewPackageManager.Type;
-
-export const PreviewControlsBridgeStatus = Schema.Literals([
-  "installed",
-  "missing",
-  "manualRequired",
+export const PreviewFramework = Schema.Literals([
+  "react-next",
+  "react-remix",
+  "react-router",
+  "react-vite",
+  "unsupported",
 ]);
-export type PreviewControlsBridgeStatus = typeof PreviewControlsBridgeStatus.Type;
+export type PreviewFramework = typeof PreviewFramework.Type;
 
 export const PreviewWorkspaceRootRelativePath = Schema.String.check(
   Schema.isMaxLength(PREVIEW_WORKSPACE_ROOT_RELATIVE_PATH_MAX_LENGTH),
@@ -32,11 +28,11 @@ export const PreviewWorkspaceRootRelativePath = Schema.String.check(
 export type PreviewWorkspaceRootRelativePath = typeof PreviewWorkspaceRootRelativePath.Type;
 
 export const ProjectPreviewWorkspaceStatus = Schema.Literals([
-  "unconfigured",
-  "setup_in_progress",
-  "setup_failed",
+  "bootstrapping",
+  "generation_in_progress",
+  "repair_in_progress",
   "ready",
-  "story_work_pending",
+  "failed",
 ]);
 export type ProjectPreviewWorkspaceStatus = typeof ProjectPreviewWorkspaceStatus.Type;
 
@@ -44,7 +40,7 @@ export const ProjectPreviewWorkspaceRecord = Schema.Struct({
   workspaceRootRelativePath: PreviewWorkspaceRootRelativePath,
   threadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   status: ProjectPreviewWorkspaceStatus,
-  lastTargetRelativePath: Schema.NullOr(ProjectRelativePath).pipe(
+  lastPreviewFileRelativePath: Schema.NullOr(ProjectRelativePath).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   lastError: Schema.NullOr(TrimmedNonEmptyString).pipe(
@@ -54,54 +50,21 @@ export const ProjectPreviewWorkspaceRecord = Schema.Struct({
 });
 export type ProjectPreviewWorkspaceRecord = typeof ProjectPreviewWorkspaceRecord.Type;
 
-export const ProjectPreviewConfig = Schema.Struct({
-  provider: PreviewProvider.pipe(Schema.withDecodingDefault(Effect.succeed("storybook"))),
-  workspaceCommandOverrides: Schema.Record(
-    PreviewWorkspaceRootRelativePath,
-    TrimmedNonEmptyString,
-  ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  startCommandOverride: Schema.NullOr(TrimmedNonEmptyString).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  componentStoryMappings: Schema.Record(ProjectRelativePath, ProjectRelativePath).pipe(
-    Schema.withDecodingDefault(Effect.succeed({})),
-  ),
-});
-export type ProjectPreviewConfig = typeof ProjectPreviewConfig.Type;
-
 export const PreviewInspectProjectInput = Schema.Struct({
   projectId: ProjectId,
   cwd: TrimmedNonEmptyString,
 });
 export type PreviewInspectProjectInput = typeof PreviewInspectProjectInput.Type;
 
-export const PreviewProjectStatus = Schema.Literals([
-  "configured",
-  "needsCommandOverride",
-  "enableable",
-  "unsupported",
-]);
+export const PreviewProjectStatus = Schema.Literals(["ready", "needsBootstrap", "unsupported"]);
 export type PreviewProjectStatus = typeof PreviewProjectStatus.Type;
 
 export const PreviewProjectInspectionResult = Schema.Struct({
   projectId: ProjectId,
   provider: PreviewProvider,
+  framework: PreviewFramework,
   status: PreviewProjectStatus,
-  framework: Schema.NullOr(TrimmedNonEmptyString).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  detectedStartCommands: Schema.Array(TrimmedNonEmptyString).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
-  storybookConfigPaths: Schema.Array(ProjectRelativePath).pipe(
-    Schema.withDecodingDefault(Effect.succeed([])),
-  ),
-  packageManager: Schema.NullOr(PreviewPackageManager).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  controlsBridgeStatus: PreviewControlsBridgeStatus.pipe(
-    Schema.withDecodingDefault(Effect.succeed("missing")),
-  ),
+  bootstrapFilesPresent: Schema.Boolean,
   summary: TrimmedNonEmptyString,
 });
 export type PreviewProjectInspectionResult = typeof PreviewProjectInspectionResult.Type;
@@ -128,128 +91,89 @@ export type PreviewSearchComponentsResult = typeof PreviewSearchComponentsResult
 export const PreviewResolveTargetInput = Schema.Struct({
   projectId: ProjectId,
   relativePath: ProjectRelativePath,
-  targetKind: PreviewTargetKind,
 });
 export type PreviewResolveTargetInput = typeof PreviewResolveTargetInput.Type;
 
-export const PreviewVariantEntry = Schema.Struct({
-  storyId: TrimmedNonEmptyString,
-  exportName: TrimmedNonEmptyString,
+export const PreviewScenarioEntry = Schema.Struct({
+  id: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
 });
-export type PreviewVariantEntry = typeof PreviewVariantEntry.Type;
-
-export const PreviewStoryChoiceEntry = Schema.Struct({
-  relativePath: ProjectRelativePath,
-  displayName: TrimmedNonEmptyString,
-});
-export type PreviewStoryChoiceEntry = typeof PreviewStoryChoiceEntry.Type;
-
-export const PreviewStoryWorkAction = Schema.Literals(["create", "fix"]);
-export type PreviewStoryWorkAction = typeof PreviewStoryWorkAction.Type;
+export type PreviewScenarioEntry = typeof PreviewScenarioEntry.Type;
 
 const PreviewResolvedTarget = Schema.Struct({
   status: Schema.Literal("resolved"),
-  targetKind: PreviewTargetKind,
   relativePath: ProjectRelativePath,
-  componentRelativePath: Schema.NullOr(ProjectRelativePath).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  storyRelativePath: ProjectRelativePath,
-  initialStoryId: TrimmedNonEmptyString,
+  previewFileRelativePath: ProjectRelativePath,
   iframePath: TrimmedNonEmptyString,
   directIframeUrl: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  variants: Schema.Array(PreviewVariantEntry),
-});
-
-const PreviewNeedsStoryChoice = Schema.Struct({
-  status: Schema.Literal("needsStoryChoice"),
-  componentRelativePath: ProjectRelativePath,
-  storyChoices: Schema.Array(PreviewStoryChoiceEntry),
-});
-
-const PreviewNeedsWorkspaceSetup = Schema.Struct({
-  status: Schema.Literal("needsWorkspaceSetup"),
-  targetKind: PreviewTargetKind,
-  relativePath: ProjectRelativePath,
-  ownerWorkspaceRootRelativePath: PreviewWorkspaceRootRelativePath,
-  coveringWorkspaceRootRelativePath: Schema.NullOr(PreviewWorkspaceRootRelativePath).pipe(
+  initialScenarioId: Schema.NullOr(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
-  existingThreadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-  reason: TrimmedNonEmptyString,
-});
-
-const PreviewNeedsStoryWork = Schema.Struct({
-  status: Schema.Literal("needsStoryWork"),
-  componentRelativePath: ProjectRelativePath,
-  storyRelativePath: Schema.NullOr(ProjectRelativePath).pipe(
-    Schema.withDecodingDefault(Effect.succeed(null)),
-  ),
-  action: PreviewStoryWorkAction,
-  workspaceRootRelativePath: PreviewWorkspaceRootRelativePath,
-  threadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
-});
-
-const PreviewNeedsCommandOverride = Schema.Struct({
-  status: Schema.Literal("needsCommandOverride"),
-  targetKind: PreviewTargetKind,
-  relativePath: ProjectRelativePath,
-  workspaceRootRelativePath: PreviewWorkspaceRootRelativePath,
-  detectedCommands: Schema.Array(TrimmedNonEmptyString).pipe(
+  scenarioChoices: Schema.Array(PreviewScenarioEntry).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
 });
 
+const PreviewNeedsBootstrap = Schema.Struct({
+  status: Schema.Literal("needsBootstrap"),
+  relativePath: ProjectRelativePath,
+  workspaceRootRelativePath: PreviewWorkspaceRootRelativePath,
+  existingThreadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  reason: TrimmedNonEmptyString,
+});
+
+const PreviewNeedsGeneration = Schema.Struct({
+  status: Schema.Literal("needsGeneration"),
+  relativePath: ProjectRelativePath,
+  workspaceRootRelativePath: PreviewWorkspaceRootRelativePath,
+  threadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  previewFileRelativePath: Schema.NullOr(ProjectRelativePath).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  reason: TrimmedNonEmptyString,
+});
+
+const PreviewRuntimeError = Schema.Struct({
+  status: Schema.Literal("runtimeError"),
+  relativePath: ProjectRelativePath,
+  workspaceRootRelativePath: PreviewWorkspaceRootRelativePath,
+  threadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  previewFileRelativePath: Schema.NullOr(ProjectRelativePath).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  message: TrimmedNonEmptyString,
+});
+
 const PreviewTargetNotFound = Schema.Struct({
   status: Schema.Literal("notFound"),
-  targetKind: PreviewTargetKind,
   relativePath: ProjectRelativePath,
 });
 
 const PreviewUnsupportedTarget = Schema.Struct({
   status: Schema.Literal("unsupportedTarget"),
-  targetKind: PreviewTargetKind,
   relativePath: ProjectRelativePath,
   reason: TrimmedNonEmptyString,
 });
 
 export const PreviewResolveTargetResult = Schema.Union([
   PreviewResolvedTarget,
-  PreviewNeedsStoryChoice,
-  PreviewNeedsWorkspaceSetup,
-  PreviewNeedsStoryWork,
-  PreviewNeedsCommandOverride,
+  PreviewNeedsBootstrap,
+  PreviewNeedsGeneration,
+  PreviewRuntimeError,
   PreviewTargetNotFound,
   PreviewUnsupportedTarget,
 ]);
 export type PreviewResolveTargetResult = typeof PreviewResolveTargetResult.Type;
 
-export const PreviewChooseStoryMappingInput = Schema.Struct({
-  projectId: ProjectId,
-  componentRelativePath: ProjectRelativePath,
-  storyRelativePath: ProjectRelativePath,
-});
-export type PreviewChooseStoryMappingInput = typeof PreviewChooseStoryMappingInput.Type;
-
-export const PreviewSetStartCommandOverrideInput = Schema.Struct({
-  projectId: ProjectId,
-  workspaceRootRelativePath: PreviewWorkspaceRootRelativePath,
-  command: TrimmedNonEmptyString,
-});
-export type PreviewSetStartCommandOverrideInput = typeof PreviewSetStartCommandOverrideInput.Type;
-
-export const PreviewPrepareWorkspaceSetupThreadInput = Schema.Struct({
+export const PreviewPrepareBootstrapThreadInput = Schema.Struct({
   projectId: ProjectId,
   relativePath: ProjectRelativePath,
-  targetKind: PreviewTargetKind,
 });
-export type PreviewPrepareWorkspaceSetupThreadInput =
-  typeof PreviewPrepareWorkspaceSetupThreadInput.Type;
+export type PreviewPrepareBootstrapThreadInput = typeof PreviewPrepareBootstrapThreadInput.Type;
 
-export const PreviewPrepareWorkspaceSetupThreadResult = Schema.Struct({
+export const PreviewPrepareBootstrapThreadResult = Schema.Struct({
   workspaceRootRelativePath: PreviewWorkspaceRootRelativePath,
   existingThreadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   threadTitle: TrimmedNonEmptyString,
@@ -259,25 +183,44 @@ export const PreviewPrepareWorkspaceSetupThreadResult = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
 });
-export type PreviewPrepareWorkspaceSetupThreadResult =
-  typeof PreviewPrepareWorkspaceSetupThreadResult.Type;
+export type PreviewPrepareBootstrapThreadResult = typeof PreviewPrepareBootstrapThreadResult.Type;
 
-export const PreviewPrepareStoryWorkTurnInput = Schema.Struct({
+export const PreviewPreparePreviewGenerationTurnInput = Schema.Struct({
   projectId: ProjectId,
-  componentRelativePath: ProjectRelativePath,
-  action: PreviewStoryWorkAction,
+  relativePath: ProjectRelativePath,
 });
-export type PreviewPrepareStoryWorkTurnInput = typeof PreviewPrepareStoryWorkTurnInput.Type;
+export type PreviewPreparePreviewGenerationTurnInput =
+  typeof PreviewPreparePreviewGenerationTurnInput.Type;
 
-export const PreviewPrepareStoryWorkTurnResult = Schema.Struct({
+export const PreviewPreparePreviewGenerationTurnResult = Schema.Struct({
   workspaceRootRelativePath: PreviewWorkspaceRootRelativePath,
   threadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   turnPrompt: TrimmedNonEmptyString,
-  storyRelativePath: Schema.NullOr(ProjectRelativePath).pipe(
+  previewFileRelativePath: ProjectRelativePath,
+});
+export type PreviewPreparePreviewGenerationTurnResult =
+  typeof PreviewPreparePreviewGenerationTurnResult.Type;
+
+export const PreviewPreparePreviewRepairTurnInput = Schema.Struct({
+  projectId: ProjectId,
+  relativePath: ProjectRelativePath,
+  errorMessage: TrimmedNonEmptyString,
+  previewFileRelativePath: Schema.NullOr(ProjectRelativePath).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
 });
-export type PreviewPrepareStoryWorkTurnResult = typeof PreviewPrepareStoryWorkTurnResult.Type;
+export type PreviewPreparePreviewRepairTurnInput = typeof PreviewPreparePreviewRepairTurnInput.Type;
+
+export const PreviewPreparePreviewRepairTurnResult = Schema.Struct({
+  workspaceRootRelativePath: PreviewWorkspaceRootRelativePath,
+  threadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  turnPrompt: TrimmedNonEmptyString,
+  previewFileRelativePath: Schema.NullOr(ProjectRelativePath).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+});
+export type PreviewPreparePreviewRepairTurnResult =
+  typeof PreviewPreparePreviewRepairTurnResult.Type;
 
 export const PreviewEnsureRuntimeInput = Schema.Struct({
   projectId: ProjectId,

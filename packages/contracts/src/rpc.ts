@@ -66,16 +66,17 @@ import {
   ProjectWriteFileRpcError,
 } from "./project.ts";
 import {
-  PreviewChooseStoryMappingInput,
   PreviewEnsureRuntimeInput,
   PreviewEnsureRuntimeResult,
   PreviewIssueAccessTokenInput,
   PreviewIssueAccessTokenResult,
   PreviewInspectProjectInput,
-  PreviewPrepareStoryWorkTurnInput,
-  PreviewPrepareStoryWorkTurnResult,
-  PreviewPrepareWorkspaceSetupThreadInput,
-  PreviewPrepareWorkspaceSetupThreadResult,
+  PreviewPrepareBootstrapThreadInput,
+  PreviewPrepareBootstrapThreadResult,
+  PreviewPreparePreviewGenerationTurnInput,
+  PreviewPreparePreviewGenerationTurnResult,
+  PreviewPreparePreviewRepairTurnInput,
+  PreviewPreparePreviewRepairTurnResult,
   PreviewProjectEvent,
   PreviewProjectInspectionResult,
   PreviewResolveTargetInput,
@@ -83,7 +84,6 @@ import {
   PreviewRpcError,
   PreviewSearchComponentsInput,
   PreviewSearchComponentsResult,
-  PreviewSetStartCommandOverrideInput,
   PreviewStopRuntimeInput,
   PreviewSubscribeProjectInput,
 } from "./preview.ts";
@@ -121,10 +121,9 @@ export const WS_METHODS = {
   previewInspectProject: "preview.inspectProject",
   previewSearchComponents: "preview.searchComponents",
   previewResolveTarget: "preview.resolveTarget",
-  previewChooseStoryMapping: "preview.chooseStoryMapping",
-  previewSetStartCommandOverride: "preview.setStartCommandOverride",
-  previewPrepareWorkspaceSetupThread: "preview.prepareWorkspaceSetupThread",
-  previewPrepareStoryWorkTurn: "preview.prepareStoryWorkTurn",
+  previewPrepareBootstrapThread: "preview.prepareBootstrapThread",
+  previewPreparePreviewGenerationTurn: "preview.preparePreviewGenerationTurn",
+  previewPreparePreviewRepairTurn: "preview.preparePreviewRepairTurn",
   previewEnsureRuntime: "preview.ensureRuntime",
   previewIssueAccessToken: "preview.issueAccessToken",
   previewStopRuntime: "preview.stopRuntime",
@@ -252,35 +251,32 @@ export const WsPreviewResolveTargetRpc = Rpc.make(WS_METHODS.previewResolveTarge
   error: PreviewRpcError,
 });
 
-export const WsPreviewChooseStoryMappingRpc = Rpc.make(WS_METHODS.previewChooseStoryMapping, {
-  payload: PreviewChooseStoryMappingInput,
-  success: Schema.Void,
-  error: PreviewRpcError,
-});
-
-export const WsPreviewSetStartCommandOverrideRpc = Rpc.make(
-  WS_METHODS.previewSetStartCommandOverride,
+export const WsPreviewPrepareBootstrapThreadRpc = Rpc.make(
+  WS_METHODS.previewPrepareBootstrapThread,
   {
-    payload: PreviewSetStartCommandOverrideInput,
-    success: Schema.Void,
+    payload: PreviewPrepareBootstrapThreadInput,
+    success: PreviewPrepareBootstrapThreadResult,
     error: PreviewRpcError,
   },
 );
 
-export const WsPreviewPrepareWorkspaceSetupThreadRpc = Rpc.make(
-  WS_METHODS.previewPrepareWorkspaceSetupThread,
+export const WsPreviewPreparePreviewGenerationTurnRpc = Rpc.make(
+  WS_METHODS.previewPreparePreviewGenerationTurn,
   {
-    payload: PreviewPrepareWorkspaceSetupThreadInput,
-    success: PreviewPrepareWorkspaceSetupThreadResult,
+    payload: PreviewPreparePreviewGenerationTurnInput,
+    success: PreviewPreparePreviewGenerationTurnResult,
     error: PreviewRpcError,
   },
 );
 
-export const WsPreviewPrepareStoryWorkTurnRpc = Rpc.make(WS_METHODS.previewPrepareStoryWorkTurn, {
-  payload: PreviewPrepareStoryWorkTurnInput,
-  success: PreviewPrepareStoryWorkTurnResult,
-  error: PreviewRpcError,
-});
+export const WsPreviewPreparePreviewRepairTurnRpc = Rpc.make(
+  WS_METHODS.previewPreparePreviewRepairTurn,
+  {
+    payload: PreviewPreparePreviewRepairTurnInput,
+    success: PreviewPreparePreviewRepairTurnResult,
+    error: PreviewRpcError,
+  },
+);
 
 export const WsPreviewEnsureRuntimeRpc = Rpc.make(WS_METHODS.previewEnsureRuntime, {
   payload: PreviewEnsureRuntimeInput,
@@ -508,10 +504,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsPreviewInspectProjectRpc,
   WsPreviewSearchComponentsRpc,
   WsPreviewResolveTargetRpc,
-  WsPreviewChooseStoryMappingRpc,
-  WsPreviewSetStartCommandOverrideRpc,
-  WsPreviewPrepareWorkspaceSetupThreadRpc,
-  WsPreviewPrepareStoryWorkTurnRpc,
+  WsPreviewPrepareBootstrapThreadRpc,
+  WsPreviewPreparePreviewGenerationTurnRpc,
+  WsPreviewPreparePreviewRepairTurnRpc,
   WsPreviewEnsureRuntimeRpc,
   WsPreviewIssueAccessTokenRpc,
   WsPreviewStopRuntimeRpc,

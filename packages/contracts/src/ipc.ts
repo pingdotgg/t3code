@@ -32,23 +32,23 @@ import type {
   ProjectWriteFileResult,
 } from "./project.ts";
 import type {
-  PreviewChooseStoryMappingInput,
   PreviewEnsureRuntimeInput,
   PreviewEnsureRuntimeResult,
   PreviewIssueAccessTokenInput,
   PreviewIssueAccessTokenResult,
   PreviewInspectProjectInput,
-  PreviewPrepareStoryWorkTurnInput,
-  PreviewPrepareStoryWorkTurnResult,
-  PreviewPrepareWorkspaceSetupThreadInput,
-  PreviewPrepareWorkspaceSetupThreadResult,
+  PreviewPrepareBootstrapThreadInput,
+  PreviewPrepareBootstrapThreadResult,
+  PreviewPreparePreviewGenerationTurnInput,
+  PreviewPreparePreviewGenerationTurnResult,
+  PreviewPreparePreviewRepairTurnInput,
+  PreviewPreparePreviewRepairTurnResult,
   PreviewProjectEvent,
   PreviewProjectInspectionResult,
   PreviewResolveTargetInput,
   PreviewResolveTargetResult,
   PreviewSearchComponentsInput,
   PreviewSearchComponentsResult,
-  PreviewSetStartCommandOverrideInput,
   PreviewStopRuntimeInput,
   PreviewSubscribeProjectInput,
 } from "./preview.ts";
@@ -305,14 +305,15 @@ export interface EnvironmentApi {
       input: PreviewSearchComponentsInput,
     ) => Promise<PreviewSearchComponentsResult>;
     resolveTarget: (input: PreviewResolveTargetInput) => Promise<PreviewResolveTargetResult>;
-    chooseStoryMapping: (input: PreviewChooseStoryMappingInput) => Promise<void>;
-    setStartCommandOverride: (input: PreviewSetStartCommandOverrideInput) => Promise<void>;
-    prepareWorkspaceSetupThread: (
-      input: PreviewPrepareWorkspaceSetupThreadInput,
-    ) => Promise<PreviewPrepareWorkspaceSetupThreadResult>;
-    prepareStoryWorkTurn: (
-      input: PreviewPrepareStoryWorkTurnInput,
-    ) => Promise<PreviewPrepareStoryWorkTurnResult>;
+    prepareBootstrapThread: (
+      input: PreviewPrepareBootstrapThreadInput,
+    ) => Promise<PreviewPrepareBootstrapThreadResult>;
+    preparePreviewGenerationTurn: (
+      input: PreviewPreparePreviewGenerationTurnInput,
+    ) => Promise<PreviewPreparePreviewGenerationTurnResult>;
+    preparePreviewRepairTurn: (
+      input: PreviewPreparePreviewRepairTurnInput,
+    ) => Promise<PreviewPreparePreviewRepairTurnResult>;
     ensureRuntime: (input: PreviewEnsureRuntimeInput) => Promise<PreviewEnsureRuntimeResult>;
     issueAccessToken: (
       input: PreviewIssueAccessTokenInput,

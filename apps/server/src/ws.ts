@@ -864,34 +864,26 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.previewResolveTarget, previewManager.resolveTarget(input), {
             "rpc.aggregate": "preview",
           }),
-        [WS_METHODS.previewChooseStoryMapping]: (input) =>
+        [WS_METHODS.previewPrepareBootstrapThread]: (input) =>
           observeRpcEffect(
-            WS_METHODS.previewChooseStoryMapping,
-            previewManager.chooseStoryMapping(input),
+            WS_METHODS.previewPrepareBootstrapThread,
+            previewManager.prepareBootstrapThread(input),
             {
               "rpc.aggregate": "preview",
             },
           ),
-        [WS_METHODS.previewSetStartCommandOverride]: (input) =>
+        [WS_METHODS.previewPreparePreviewGenerationTurn]: (input) =>
           observeRpcEffect(
-            WS_METHODS.previewSetStartCommandOverride,
-            previewManager.setStartCommandOverride(input),
+            WS_METHODS.previewPreparePreviewGenerationTurn,
+            previewManager.preparePreviewGenerationTurn(input),
             {
               "rpc.aggregate": "preview",
             },
           ),
-        [WS_METHODS.previewPrepareWorkspaceSetupThread]: (input) =>
+        [WS_METHODS.previewPreparePreviewRepairTurn]: (input) =>
           observeRpcEffect(
-            WS_METHODS.previewPrepareWorkspaceSetupThread,
-            previewManager.prepareWorkspaceSetupThread(input),
-            {
-              "rpc.aggregate": "preview",
-            },
-          ),
-        [WS_METHODS.previewPrepareStoryWorkTurn]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.previewPrepareStoryWorkTurn,
-            previewManager.prepareStoryWorkTurn(input),
+            WS_METHODS.previewPreparePreviewRepairTurn,
+            previewManager.preparePreviewRepairTurn(input),
             {
               "rpc.aggregate": "preview",
             },

@@ -10,8 +10,8 @@ import {
   IconProgressIndicator as LoaderIcon,
   IconRectangleSplit2x1 as Columns2Icon,
   IconRectangleSplit3x1 as Rows3Icon,
-  IconSquareAndArrowUp as OpenInIDEIcon,
   IconTextWordSpacing as TextWrapIcon,
+  IconXmarkCircleFill as XIconCircle,
   IconXmark as XIcon,
 } from "symbols-react";
 import {
@@ -50,11 +50,7 @@ import {
 } from "../lib/projectReactQuery";
 import { cn } from "../lib/utils";
 import { readLocalApi } from "../localApi";
-import {
-  classifyPreviewRelativePath,
-  openPreviewDrawer,
-  openPreviewTarget,
-} from "../previewTargets";
+import { classifyPreviewRelativePath, openPreviewTarget } from "../previewTargets";
 import { resolvePathLinkTarget } from "../terminal-links";
 import {
   type ThreadRouteTarget,
@@ -218,6 +214,12 @@ export function WorkspaceFilesPanel({
     selectThreadTerminalState(state.terminalStateByThreadKey, activeThreadRef),
   );
   const setTerminalOpen = useTerminalStateStore((state) => state.setTerminalOpen);
+  const activePreviewRelativePath = usePreviewWorkspaceStore((state) =>
+    activeProjectRef
+      ? (state.projectStateByKey[`${activeProjectRef.environmentId}:${activeProjectRef.projectId}`]
+          ?.currentRelativePath ?? null)
+      : null,
+  );
   const panelOpen = diffSearch.diff === "1";
   const surfaceMode = resolveSurfaceMode(diffSearch);
   const routeEditorTarget = useMemo(
@@ -278,7 +280,6 @@ export function WorkspaceFilesPanel({
   const editorFilePath = activeEditorTarget?.filePath ?? null;
   const editorLine = activeEditorTarget?.line;
   const editorColumn = activeEditorTarget?.column;
-  const previewAvailable = activeProjectRef !== null;
   const previewOpen = bottomDrawerMode === "preview";
   const terminalAvailable = activeProjectRef !== null && activeThreadRef !== null;
   const terminalOpen = bottomDrawerMode === "terminal";
@@ -462,16 +463,27 @@ export function WorkspaceFilesPanel({
         return;
       }
       const classification = classifyPreviewRelativePath(filePath);
-      if (!classification.enabled || !classification.targetKind) {
+      if (!classification.enabled) {
+        return;
+      }
+      if (bottomDrawerMode === "preview" && activePreviewRelativePath === filePath) {
+        closeBottomDrawer();
         return;
       }
       openPreviewTarget(activeProjectRef, {
-        targetKind: classification.targetKind,
         relativePath: filePath,
       });
     },
-    [activeProjectRef],
+    [activePreviewRelativePath, activeProjectRef, bottomDrawerMode, closeBottomDrawer],
   );
+
+  const activeFilePreviewDisabledReason =
+    editorVisible && editorFilePath ? previewDisabledReasonForFile(editorFilePath) : null;
+  const activeFilePreviewOpen =
+    previewOpen &&
+    editorVisible &&
+    editorFilePath !== null &&
+    activePreviewRelativePath === editorFilePath;
 
   const closeWorkspacePanel = useCallback(() => {
     navigateToCurrentRoute((previous) => buildDiffClosedSearch(previous));
@@ -533,17 +545,6 @@ export function WorkspaceFilesPanel({
     showTerminalDrawer,
     terminalState.terminalOpen,
   ]);
-
-  const togglePreviewVisibility = useCallback(() => {
-    if (!activeProjectRef) {
-      return;
-    }
-    if (bottomDrawerMode === "preview") {
-      closeBottomDrawer();
-      return;
-    }
-    openPreviewDrawer(activeProjectRef);
-  }, [activeProjectRef, bottomDrawerMode, closeBottomDrawer]);
 
   const openDiffRoute = useCallback(() => {
     if (!supportsDiff) {
@@ -688,26 +689,6 @@ export function WorkspaceFilesPanel({
               <TooltipTrigger
                 render={
                   <HeaderIconActionButton
-                    pressed={previewOpen}
-                    onClick={togglePreviewVisibility}
-                    aria-label="Toggle preview drawer"
-                    title="Toggle preview drawer"
-                    disabled={!previewAvailable}
-                  >
-                    <PreviewTriggerIcon className="size-3" />
-                  </HeaderIconActionButton>
-                }
-              />
-              <TooltipPopup side="bottom">
-                {!previewAvailable
-                  ? "Preview is unavailable until this thread has an active project."
-                  : "Toggle component preview drawer"}
-              </TooltipPopup>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <HeaderIconActionButton
                     pressed={terminalOpen}
                     onClick={toggleTerminalVisibility}
                     aria-label="Toggle terminal drawer"
@@ -746,7 +727,7 @@ export function WorkspaceFilesPanel({
                         issueNavigationRequest("back");
                       }}
                     >
-                      <XIcon className="size-2.5" />
+                      <XIconCircle className="size-3 fill-current" />
                     </button>
                   </div>
                 </div>
@@ -814,13 +795,18 @@ export function WorkspaceFilesPanel({
                     </KbdGroup>
                   </Button>
                   <Button
-                    size="icon-xs"
+                    size="xs"
                     variant="outline"
-                    onClick={() => openWorkspaceFileInEditor(editorFilePath)}
-                    aria-label="Open in IDE"
-                    title="Open in IDE"
+                    className="gap-1.5 px-2"
+                    onClick={() => openPreviewForFile(editorFilePath)}
+                    disabled={activeFilePreviewDisabledReason !== null}
+                    title={
+                      activeFilePreviewDisabledReason ??
+                      (activeFilePreviewOpen ? "Close preview" : "Open preview")
+                    }
                   >
-                    <OpenInIDEIcon className="size-3.5" />
+                    <PreviewTriggerIcon className="size-3.5" />
+                    {activeFilePreviewOpen ? "Previewing" : "Preview"}
                   </Button>
                 </>
               ) : null}

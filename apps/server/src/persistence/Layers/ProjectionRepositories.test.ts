@@ -32,7 +32,6 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
           model: "gpt-5.4",
         },
         scripts: [],
-        previewConfig: null,
         previewWorkspaceRecords: [],
         createdAt: "2026-03-24T00:00:00.000Z",
         updatedAt: "2026-03-24T00:00:00.000Z",
@@ -66,6 +65,74 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         provider: "codex",
         model: "gpt-5.4",
       });
+    }),
+  );
+
+  it.effect("stores preview workspace records as JSON", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectionProjectRepository;
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* projects.upsert({
+        projectId: ProjectId.make("project-preview-workspace-records"),
+        title: "Preview workspace project",
+        workspaceRoot: "/tmp/project-preview-workspace-records",
+        defaultModelSelection: null,
+        scripts: [],
+        previewWorkspaceRecords: [
+          {
+            workspaceRootRelativePath: "apps/web",
+            threadId: ThreadId.make("thread-preview-setup"),
+            status: "bootstrapping",
+            lastPreviewFileRelativePath: "src/components/swap-dropdown-button.preview.tsx",
+            lastError: null,
+            updatedAt: "2026-03-24T00:00:00.000Z",
+          },
+        ],
+        createdAt: "2026-03-24T00:00:00.000Z",
+        updatedAt: "2026-03-24T00:00:00.000Z",
+        deletedAt: null,
+      });
+
+      const rows = yield* sql<{
+        readonly previewWorkspaceRecords: string | null;
+      }>`
+        SELECT preview_workspace_records_json AS "previewWorkspaceRecords"
+        FROM projection_projects
+        WHERE project_id = 'project-preview-workspace-records'
+      `;
+      const row = rows[0];
+      if (!row) {
+        return yield* Effect.fail(new Error("Expected projection_projects row to exist."));
+      }
+
+      assert.strictEqual(
+        row.previewWorkspaceRecords,
+        JSON.stringify([
+          {
+            workspaceRootRelativePath: "apps/web",
+            threadId: "thread-preview-setup",
+            status: "bootstrapping",
+            lastPreviewFileRelativePath: "src/components/swap-dropdown-button.preview.tsx",
+            lastError: null,
+            updatedAt: "2026-03-24T00:00:00.000Z",
+          },
+        ]),
+      );
+
+      const persisted = yield* projects.getById({
+        projectId: ProjectId.make("project-preview-workspace-records"),
+      });
+      assert.deepStrictEqual(Option.getOrNull(persisted)?.previewWorkspaceRecords, [
+        {
+          workspaceRootRelativePath: "apps/web",
+          threadId: ThreadId.make("thread-preview-setup"),
+          status: "bootstrapping",
+          lastPreviewFileRelativePath: "src/components/swap-dropdown-button.preview.tsx",
+          lastError: null,
+          updatedAt: "2026-03-24T00:00:00.000Z",
+        },
+      ]);
     }),
   );
 

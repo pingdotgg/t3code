@@ -744,7 +744,7 @@ function OpenCommandPaletteDialog() {
   actionItems.push({
     kind: "action",
     value: "action:open-preview",
-    searchTerms: ["preview", "storybook", "component", "canvas"],
+    searchTerms: ["preview", "component", "canvas"],
     title: "Open component preview",
     icon: <PreviewTriggerIcon className={ITEM_ICON_CLASS} />,
     run: async () => {

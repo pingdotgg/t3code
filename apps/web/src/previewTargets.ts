@@ -1,4 +1,4 @@
-import type { PreviewTargetKind, ScopedProjectRef } from "@forma/contracts";
+import type { ScopedProjectRef } from "@forma/contracts";
 
 import { useBottomDrawerUiStore } from "./bottomDrawerUiStore";
 import { usePreviewWorkspaceStore } from "./previewWorkspaceStore";
@@ -7,12 +7,10 @@ const COMPONENT_EXTENSIONS = new Set([".tsx", ".jsx", ".ts", ".js", ".vue"]);
 
 export interface PreviewPathClassification {
   enabled: boolean;
-  targetKind?: PreviewTargetKind | undefined;
   reason?: string | undefined;
 }
 
 export interface PreviewLaunchTarget {
-  targetKind: PreviewTargetKind;
   relativePath: string;
 }
 
@@ -30,8 +28,8 @@ export function classifyPreviewRelativePath(relativePath: string): PreviewPathCl
   const normalized = normalizedPath(relativePath);
   if (/\.(stories|story)\.[^.]+$/i.test(normalized)) {
     return {
-      enabled: true,
-      targetKind: "story",
+      enabled: false,
+      reason: "Story files are no longer preview targets. Open the component source file instead.",
     };
   }
   if (normalized.endsWith(".d.ts")) {
@@ -49,12 +47,11 @@ export function classifyPreviewRelativePath(relativePath: string): PreviewPathCl
   if (COMPONENT_EXTENSIONS.has(pathExtension(normalized))) {
     return {
       enabled: true,
-      targetKind: "component",
     };
   }
   return {
     enabled: false,
-    reason: "Only component source files and Storybook story files can be previewed.",
+    reason: "Only component source files can be previewed.",
   };
 }
 
@@ -67,17 +64,11 @@ export function openPreviewTarget(projectRef: ScopedProjectRef, target: PreviewL
   const previewStore = usePreviewWorkspaceStore.getState();
   previewStore.setActiveProjectRef(projectRef);
   previewStore.patchProjectState(projectRef, {
-    currentTargetKind: target.targetKind,
     currentRelativePath: target.relativePath,
-    currentComponentRelativePath: target.targetKind === "component" ? target.relativePath : null,
-    currentStoryRelativePath: target.targetKind === "story" ? target.relativePath : null,
-    currentStoryId: null,
-    currentVariantIndex: 0,
-    ephemeralArgs: {},
+    currentPreviewFileRelativePath: null,
+    runtimeSnapshot: null,
     runtimeState: null,
-    storyChoices: [],
     resolution: null,
-    controls: [],
     accessToken: null,
   });
   useBottomDrawerUiStore.getState().showPreview();

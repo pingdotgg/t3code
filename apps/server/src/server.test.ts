@@ -528,25 +528,19 @@ const buildAppUnderTest = (options?: {
           inspectProject: () =>
             Effect.succeed({
               projectId: defaultProjectId,
-              provider: "storybook",
+              provider: "componentHarness",
               status: "unsupported",
-              framework: null,
-              detectedStartCommands: [],
-              storybookConfigPaths: [],
-              packageManager: null,
-              controlsBridgeStatus: "missing",
+              framework: "unsupported",
+              bootstrapFilesPresent: false,
               summary: "Previews unavailable.",
             }),
           searchComponents: () => Effect.succeed({ components: [], truncated: false }),
           resolveTarget: () =>
             Effect.succeed({
               status: "notFound",
-              targetKind: "component",
               relativePath: "src/Component.tsx",
             }),
-          chooseStoryMapping: () => Effect.void,
-          setStartCommandOverride: () => Effect.void,
-          prepareWorkspaceSetupThread: () =>
+          prepareBootstrapThread: () =>
             Effect.succeed({
               workspaceRootRelativePath: "",
               existingThreadId: null,
@@ -555,17 +549,24 @@ const buildAppUnderTest = (options?: {
               inspectionSummary: "No preview workspace covers this component.",
               reviewSummary: [],
             }),
-          prepareStoryWorkTurn: () =>
+          preparePreviewGenerationTurn: () =>
             Effect.succeed({
               workspaceRootRelativePath: "",
               threadId: null,
-              turnPrompt: "Create or fix the story.",
-              storyRelativePath: null,
+              turnPrompt: "Create or fix the preview file.",
+              previewFileRelativePath: "src/Component.preview.tsx",
+            }),
+          preparePreviewRepairTurn: () =>
+            Effect.succeed({
+              workspaceRootRelativePath: "",
+              threadId: null,
+              turnPrompt: "Repair the preview file.",
+              previewFileRelativePath: "src/Component.preview.tsx",
             }),
           ensureRuntime: () =>
             Effect.succeed({
               projectId: defaultProjectId,
-              provider: "storybook",
+              provider: "componentHarness",
               started: false,
               iframeBasePath: "/__preview/project-default",
             }),

@@ -1,6 +1,7 @@
-import { scopeThreadRef } from "@forma/client-runtime";
+import { scopedProjectKey, scopeThreadRef } from "@forma/client-runtime";
 import type {
   ModelSelection,
+  OrchestrationThreadShell,
   ProjectPreviewWorkspaceRecord,
   ScopedProjectRef,
   ThreadId,
@@ -10,30 +11,40 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import {
   IconArrowClockwise as RefreshIcon,
   IconChevronDown as ChevronDownIcon,
-  IconChevronLeft,
-  IconChevronRight,
   IconChevronUp as ChevronUpIcon,
-  IconMagnifyingglass as SearchIcon,
-  IconXmark as XIcon,
-  IconSparkles,
   IconRectangleOnRectangle as PreviewIcon,
+  IconSparkles,
+  IconXmark as XIcon,
 } from "symbols-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { readEnvironmentApi } from "../environmentApi";
 import { useBottomDrawerSizing } from "../bottomDrawerSizing";
-import { getEnvironmentHttpBaseUrl, resolveEnvironmentHttpUrl } from "../environments/runtime";
 import { useBottomDrawerUiStore } from "../bottomDrawerUiStore";
+import { stageOptimisticThreadShell } from "../environments/runtime/service";
+import { getEnvironmentHttpBaseUrl, resolveEnvironmentHttpUrl } from "../environments/runtime";
+import { resolveEditorFileLabel } from "../lib/editorFileLabel";
 import { newCommandId, newMessageId, newThreadId } from "../lib/utils";
-import { openPreviewTarget } from "../previewTargets";
-import { type PreviewControlDescriptor, usePreviewWorkspaceStore } from "../previewWorkspaceStore";
-import { selectProjectsAcrossEnvironments, useStore } from "../store";
+import {
+  type PreviewControlDescriptor,
+  type PreviewRuntimeSnapshot,
+  usePreviewWorkspaceStore,
+} from "../previewWorkspaceStore";
+import {
+  buildSessionFromRuntimeSnapshot,
+  createPreviewFileSessionState,
+  getPreviewFileSession,
+  mergePreviewControlsWithDrafts,
+  normalizeSelectedScenarioId,
+  upsertPreviewFileSession,
+} from "../previewSessionState";
+import { selectProjectsAcrossEnvironments, selectThreadByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import type { Project } from "../types";
-import { waitForStartedServerThread } from "./ChatView.logic";
 import { Button } from "./ui/button";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 
 function resolvePreviewUrl(
   projectRef: ScopedProjectRef,
@@ -62,20 +73,42 @@ function isLoopbackHostname(hostname: string): boolean {
   );
 }
 
-function updateControlValue(
-  controls: readonly PreviewControlDescriptor[],
-  name: string,
-  value: unknown,
-): PreviewControlDescriptor[] {
-  return controls.map((control) => (control.name === name ? { ...control, value } : control));
-}
-
 function workspaceLabel(workspaceRootRelativePath: string): string {
   return workspaceRootRelativePath.trim().length > 0 ? workspaceRootRelativePath : "project root";
 }
 
 function buildPreviewSetupThreadTitle(workspaceRootRelativePath: string): string {
   return `Preview setup · ${workspaceLabel(workspaceRootRelativePath)}`;
+}
+
+function buildOptimisticPreviewThreadShell(input: {
+  threadId: ThreadId;
+  projectId: Project["id"];
+  title: string;
+  modelSelection: ModelSelection;
+  createdAt: string;
+}): OrchestrationThreadShell {
+  return {
+    id: input.threadId,
+    projectId: input.projectId,
+    title: input.title,
+    modelSelection: input.modelSelection,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    latestTurn: null,
+    createdAt: input.createdAt,
+    updatedAt: input.createdAt,
+    archivedAt: null,
+    session: null,
+    latestUserMessageAt: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    queuedTurnCount: 0,
+    turnQueueStatus: "idle",
+  };
 }
 
 function resolvePreviewThreadModelSelection(project: Project): ModelSelection {
@@ -99,11 +132,76 @@ function upsertPreviewWorkspaceRecord(
   );
 }
 
+type PreviewParentCommandMessage =
+  | {
+      source: "forma-preview-parent";
+      kind: "preview.command.restoreSession";
+      runtimeInstanceId: string;
+      previewFileRelativePath: string;
+      commandId: number;
+      selectedScenarioId: string | null;
+      argOverrides: Record<string, unknown>;
+    }
+  | {
+      source: "forma-preview-parent";
+      kind: "preview.command.selectScenario";
+      runtimeInstanceId: string;
+      previewFileRelativePath: string;
+      commandId: number;
+      scenarioId: string;
+    }
+  | {
+      source: "forma-preview-parent";
+      kind: "preview.command.setArgsPartial";
+      runtimeInstanceId: string;
+      previewFileRelativePath: string;
+      commandId: number;
+      argsPartial: Record<string, unknown>;
+    };
+
+interface PreviewRuntimeSnapshotMessage {
+  source: "forma-component-harness";
+  runtimeInstanceId: string;
+  previewFileRelativePath: string;
+  scenarioChoices: Array<{ id: string; name: string }>;
+  currentScenarioId: string | null;
+  controls: PreviewControlDescriptor[];
+  argOverrides: Record<string, unknown>;
+  lastAppliedCommandId: number;
+}
+
+interface PreviewReadyMessage extends PreviewRuntimeSnapshotMessage {
+  kind: "preview.ready";
+}
+
+interface PreviewStateMessage extends PreviewRuntimeSnapshotMessage {
+  kind: "preview.state";
+}
+
+interface PreviewRuntimeErrorMessage {
+  source: "forma-component-harness";
+  kind: "preview.runtime.error";
+  runtimeInstanceId: string;
+  previewFileRelativePath: string;
+  message: string;
+}
+
+function buildRuntimeSnapshotFromMessage(
+  message: PreviewReadyMessage | PreviewStateMessage,
+): PreviewRuntimeSnapshot {
+  return {
+    runtimeInstanceId: message.runtimeInstanceId,
+    currentScenarioId: message.currentScenarioId,
+    currentScenarioChoices: [...message.scenarioChoices],
+    controls: [...message.controls],
+    lastAppliedCommandId: message.lastAppliedCommandId,
+  };
+}
+
 function PreviewControlsRail(props: {
   controls: readonly PreviewControlDescriptor[];
-  showEnableControlsCta: boolean;
-  onEnableBridge: () => void;
-  onChangeControl: (name: string, value: unknown) => void;
+  onSetControlValue: (name: string, value: unknown, mode: "debounced" | "immediate") => void;
+  onFlushControl: (name: string) => void;
 }) {
   if (props.controls.length === 0) {
     return (
@@ -113,15 +211,8 @@ function PreviewControlsRail(props: {
         </div>
         <div className="mt-3 rounded-xl border border-border/70 bg-background/80 p-3">
           <div className="text-sm text-muted-foreground">
-            {props.showEnableControlsCta
-              ? "Plain preview is ready. Open the preview setup thread to enable interactive controls."
-              : "No interactive controls are available for this variant."}
+            No interactive controls are available for this preview.
           </div>
-          {props.showEnableControlsCta ? (
-            <Button size="sm" className="mt-3" onClick={props.onEnableBridge}>
-              Enable interactive controls
-            </Button>
-          ) : null}
         </div>
       </div>
     );
@@ -155,7 +246,7 @@ function PreviewControlsRail(props: {
                   type="checkbox"
                   checked={Boolean(control.value)}
                   onChange={(event) =>
-                    props.onChangeControl(control.name, event.currentTarget.checked)
+                    props.onSetControlValue(control.name, event.currentTarget.checked, "immediate")
                   }
                 />
               </label>
@@ -167,23 +258,38 @@ function PreviewControlsRail(props: {
             control.type === "radio" ||
             control.type === "inline-radio"
           ) {
+            const selectItems = (control.options ?? []).map((option) => {
+              const optionValue = String(option);
+              return {
+                value: optionValue,
+                label: optionValue,
+              };
+            });
             return (
-              <label key={control.name} className="flex flex-col gap-2 text-sm">
+              <div key={control.name} className="flex flex-col gap-2 text-sm">
                 <span className="font-medium text-foreground">{control.label}</span>
-                <select
-                  className="rounded-md border border-border bg-background px-3 py-2 text-sm"
+                <Select
+                  items={selectItems}
                   value={typeof control.value === "string" ? control.value : ""}
-                  onChange={(event) =>
-                    props.onChangeControl(control.name, event.currentTarget.value)
-                  }
+                  onValueChange={(value) => {
+                    if (typeof value !== "string") {
+                      return;
+                    }
+                    props.onSetControlValue(control.name, value, "immediate");
+                  }}
                 >
-                  {(control.options ?? []).map((option) => (
-                    <option key={String(option)} value={String(option)}>
-                      {String(option)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                  <SelectTrigger size="sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectPopup alignItemWithTrigger={false}>
+                    {selectItems.map((item) => (
+                      <SelectItem key={item.value} value={item.value} hideIndicator>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              </div>
             );
           }
 
@@ -215,7 +321,7 @@ function PreviewControlsRail(props: {
                             } else {
                               nextValues.delete(stringValue);
                             }
-                            props.onChangeControl(control.name, [...nextValues]);
+                            props.onSetControlValue(control.name, [...nextValues], "immediate");
                           }}
                         />
                         {stringValue}
@@ -236,7 +342,11 @@ function PreviewControlsRail(props: {
                   defaultValue={JSON.stringify(control.value ?? null, null, 2)}
                   onBlur={(event) => {
                     try {
-                      props.onChangeControl(control.name, JSON.parse(event.currentTarget.value));
+                      props.onSetControlValue(
+                        control.name,
+                        JSON.parse(event.currentTarget.value),
+                        "immediate",
+                      );
                     } catch {
                       event.currentTarget.value = JSON.stringify(control.value ?? null, null, 2);
                     }
@@ -260,28 +370,27 @@ function PreviewControlsRail(props: {
             <label key={control.name} className="flex flex-col gap-2 text-sm">
               <span className="font-medium text-foreground">{control.label}</span>
               <input
-                className="rounded-md border border-border bg-background px-3 py-2 text-sm"
+                id={inputId}
                 type={inputType}
+                className="rounded-md border border-border bg-background px-3 py-2 text-sm"
+                value={
+                  typeof control.value === "string" || typeof control.value === "number"
+                    ? String(control.value)
+                    : ""
+                }
                 min={control.min ?? undefined}
                 max={control.max ?? undefined}
                 step={control.step ?? undefined}
-                value={
-                  inputType === "number" || inputType === "range"
-                    ? typeof control.value === "number"
-                      ? control.value
-                      : 0
-                    : typeof control.value === "string"
-                      ? control.value
-                      : ""
-                }
-                onChange={(event) =>
-                  props.onChangeControl(
-                    control.name,
-                    inputType === "number" || inputType === "range"
-                      ? Number(event.currentTarget.value)
-                      : event.currentTarget.value,
-                  )
-                }
+                onChange={(event) => {
+                  const nextValue =
+                    control.type === "number" || control.type === "range"
+                      ? event.currentTarget.value === ""
+                        ? ""
+                        : Number(event.currentTarget.value)
+                      : event.currentTarget.value;
+                  props.onSetControlValue(control.name, nextValue, "debounced");
+                }}
+                onBlur={() => props.onFlushControl(control.name)}
               />
             </label>
           );
@@ -312,23 +421,26 @@ export function PreviewDrawer() {
     ),
   );
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
-  const { activeProjectRef, patchProjectState, projectStateByKey, resetProjectState } =
+  const { activeProjectRef, patchProjectState, projectStateByKey, updateProjectState } =
     usePreviewWorkspaceStore(
       useShallow((state) => ({
         activeProjectRef: state.activeProjectRef,
         patchProjectState: state.patchProjectState,
+        updateProjectState: state.updateProjectState,
         projectStateByKey: state.projectStateByKey,
-        resetProjectState: state.resetProjectState,
       })),
     );
-  const [componentQuery, setComponentQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<
-    ReadonlyArray<{ relativePath: string; displayName: string }>
-  >([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [searchSidebarOpen, setSearchSidebarOpen] = useState(true);
-  const [commandOverride, setCommandOverride] = useState("");
+  const [actionErrorMessage, setActionErrorMessage] = useState<string | null>(null);
+  const [launchingAction, setLaunchingAction] = useState<
+    "bootstrap" | "generation" | "repair" | null
+  >(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const handledPreviewTurnKeyRef = useRef<string | null>(null);
+  const nextPreviewCommandIdRef = useRef(1);
+  const runtimeCommandWatermarkRef = useRef<Record<string, number>>({});
+  const pendingArgsPartialsRef = useRef<Record<string, Record<string, unknown>>>({});
+  const pendingArgsTimerRef = useRef<Record<string, number>>({});
+  const previousPreviewFileRelativePathRef = useRef<string | null>(null);
   const {
     drawerRef,
     drawerHeight,
@@ -363,10 +475,84 @@ export function PreviewDrawer() {
       ? projectStateByKey[`${activeProjectRef.environmentId}:${activeProjectRef.projectId}`]!
       : null;
   const activeRouteLatestTurn = activeRouteThread?.latestTurn ?? null;
-  const handledStoryWorkTurnKeyRef = useRef<string | null>(null);
   const api = activeProjectRef ? readEnvironmentApi(activeProjectRef.environmentId) : undefined;
+  const currentRuntimeErrorMessage =
+    activeProjectState?.resolution?.status === "runtimeError"
+      ? activeProjectState.resolution.message
+      : activeProjectState?.runtimeState?.kind === "runtime.error"
+        ? activeProjectState.runtimeState.message
+        : null;
+  const currentRuntimeErrorPreviewFileRelativePath =
+    activeProjectState?.resolution?.status === "runtimeError"
+      ? activeProjectState.resolution.previewFileRelativePath
+      : (activeProjectState?.currentPreviewFileRelativePath ?? null);
+  const resolved =
+    activeProjectState?.resolution?.status === "resolved" ? activeProjectState.resolution : null;
+  const activePreviewFileRelativePath =
+    activeProjectState?.currentPreviewFileRelativePath ?? resolved?.previewFileRelativePath ?? null;
+  const activePreviewSession = getPreviewFileSession(
+    activeProjectState?.sessionsByPreviewFilePath ?? {},
+    activePreviewFileRelativePath,
+  );
+  const runtimeSnapshot = activeProjectState?.runtimeSnapshot ?? null;
+  const scenarioChoices = runtimeSnapshot?.currentScenarioChoices ?? [];
+  const scenarioItems = useMemo(
+    () =>
+      scenarioChoices.map((choice) => ({
+        value: choice.id,
+        label: choice.name,
+      })),
+    [scenarioChoices],
+  );
+  const selectedScenarioId =
+    activePreviewSession?.selectedScenarioId ??
+    runtimeSnapshot?.currentScenarioId ??
+    resolved?.initialScenarioId ??
+    null;
+  const displayedControls = useMemo(
+    () =>
+      mergePreviewControlsWithDrafts(
+        runtimeSnapshot?.controls ?? [],
+        activePreviewSession?.draftArgOverrides ?? {},
+      ),
+    [activePreviewSession?.draftArgOverrides, runtimeSnapshot?.controls],
+  );
+  const environmentHttpBaseUrl = activeProjectRef
+    ? getEnvironmentHttpBaseUrl(activeProjectRef.environmentId)
+    : null;
+  const shouldUseDirectIframe =
+    Boolean(resolved?.directIframeUrl) &&
+    Boolean(environmentHttpBaseUrl) &&
+    (() => {
+      if (!environmentHttpBaseUrl) {
+        return false;
+      }
+      try {
+        return isLoopbackHostname(new URL(environmentHttpBaseUrl).hostname);
+      } catch {
+        return false;
+      }
+    })();
+  const iframeUrl =
+    activeProjectRef && resolved
+      ? shouldUseDirectIframe && resolved.directIframeUrl
+        ? resolved.directIframeUrl
+        : activeProjectState?.accessToken
+          ? resolvePreviewUrl(activeProjectRef, resolved.iframePath, activeProjectState.accessToken)
+          : null
+      : null;
 
-  const refreshInspection = useCallback(async () => {
+  const postPreviewCommand = useCallback((message: PreviewParentCommandMessage) => {
+    const contentWindow = iframeRef.current?.contentWindow;
+    if (!contentWindow) {
+      return null;
+    }
+    runtimeCommandWatermarkRef.current[message.runtimeInstanceId] = message.commandId;
+    contentWindow.postMessage(message, "*");
+    return message.commandId;
+  }, []);
+
+  const refreshInspection = async () => {
     if (!activeProjectRef || !api || !activeProject) {
       return;
     }
@@ -376,41 +562,244 @@ export function PreviewDrawer() {
     });
     patchProjectState(activeProjectRef, {
       inspection: result,
-      controlsBridgeStatus: result.controlsBridgeStatus,
     });
-    setCommandOverride((currentValue) => {
-      if (currentValue.trim().length > 0 || result.detectedStartCommands.length === 0) {
-        return currentValue;
-      }
-      return result.detectedStartCommands[0] ?? "";
-    });
-  }, [activeProject, activeProjectRef, api, patchProjectState]);
+  };
 
-  const restartPreviewRuntime = useCallback(async () => {
+  const clearPendingArgsForPreviewFile = useCallback((previewFileRelativePath: string | null) => {
+    if (!previewFileRelativePath) {
+      return;
+    }
+    const timerId = pendingArgsTimerRef.current[previewFileRelativePath];
+    if (timerId !== undefined) {
+      window.clearTimeout(timerId);
+      delete pendingArgsTimerRef.current[previewFileRelativePath];
+    }
+    delete pendingArgsPartialsRef.current[previewFileRelativePath];
+  }, []);
+
+  const sendPreviewCommandForActiveRuntime = useCallback(
+    (
+      input:
+        | {
+            kind: "preview.command.restoreSession";
+            runtimeInstanceId: string;
+            previewFileRelativePath: string;
+            selectedScenarioId: string | null;
+            argOverrides: Record<string, unknown>;
+          }
+        | {
+            kind: "preview.command.selectScenario";
+            runtimeInstanceId: string;
+            previewFileRelativePath: string;
+            scenarioId: string;
+          }
+        | {
+            kind: "preview.command.setArgsPartial";
+            runtimeInstanceId: string;
+            previewFileRelativePath: string;
+            argsPartial: Record<string, unknown>;
+          },
+    ) => {
+      const commandId = nextPreviewCommandIdRef.current++;
+      if (input.kind === "preview.command.restoreSession") {
+        return postPreviewCommand({
+          source: "forma-preview-parent",
+          kind: input.kind,
+          runtimeInstanceId: input.runtimeInstanceId,
+          previewFileRelativePath: input.previewFileRelativePath,
+          commandId,
+          selectedScenarioId: input.selectedScenarioId,
+          argOverrides: input.argOverrides,
+        });
+      }
+      if (input.kind === "preview.command.selectScenario") {
+        return postPreviewCommand({
+          source: "forma-preview-parent",
+          kind: input.kind,
+          runtimeInstanceId: input.runtimeInstanceId,
+          previewFileRelativePath: input.previewFileRelativePath,
+          commandId,
+          scenarioId: input.scenarioId,
+        });
+      }
+      return postPreviewCommand({
+        source: "forma-preview-parent",
+        kind: input.kind,
+        runtimeInstanceId: input.runtimeInstanceId,
+        previewFileRelativePath: input.previewFileRelativePath,
+        commandId,
+        argsPartial: input.argsPartial,
+      });
+    },
+    [postPreviewCommand],
+  );
+
+  const flushPendingArgsForPreviewFile = useCallback(
+    (previewFileRelativePath: string | null) => {
+      if (!previewFileRelativePath || !activeProjectRef) {
+        return;
+      }
+
+      const pendingPartialArgs = pendingArgsPartialsRef.current[previewFileRelativePath];
+      clearPendingArgsForPreviewFile(previewFileRelativePath);
+      if (!pendingPartialArgs || Object.keys(pendingPartialArgs).length === 0) {
+        return;
+      }
+
+      const projectState =
+        usePreviewWorkspaceStore.getState().projectStateByKey[scopedProjectKey(activeProjectRef)] ??
+        null;
+      const runtimeInstanceId = projectState?.runtimeSnapshot?.runtimeInstanceId ?? null;
+      const activePreviewFilePath = projectState?.currentPreviewFileRelativePath ?? null;
+      if (!runtimeInstanceId || activePreviewFilePath !== previewFileRelativePath) {
+        return;
+      }
+
+      void sendPreviewCommandForActiveRuntime({
+        kind: "preview.command.setArgsPartial",
+        runtimeInstanceId,
+        previewFileRelativePath,
+        argsPartial: pendingPartialArgs,
+      });
+    },
+    [activeProjectRef, clearPendingArgsForPreviewFile, sendPreviewCommandForActiveRuntime],
+  );
+
+  const queuePendingArgsPartial = useCallback(
+    (previewFileRelativePath: string, argsPartial: Record<string, unknown>, immediate: boolean) => {
+      pendingArgsPartialsRef.current[previewFileRelativePath] = {
+        ...(pendingArgsPartialsRef.current[previewFileRelativePath] ?? {}),
+        ...argsPartial,
+      };
+
+      if (immediate) {
+        flushPendingArgsForPreviewFile(previewFileRelativePath);
+        return;
+      }
+
+      const existingTimerId = pendingArgsTimerRef.current[previewFileRelativePath];
+      if (existingTimerId !== undefined) {
+        window.clearTimeout(existingTimerId);
+      }
+      pendingArgsTimerRef.current[previewFileRelativePath] = window.setTimeout(() => {
+        flushPendingArgsForPreviewFile(previewFileRelativePath);
+      }, 150);
+    },
+    [flushPendingArgsForPreviewFile],
+  );
+
+  const applyRuntimeSnapshot = useCallback(
+    (
+      message: PreviewReadyMessage | PreviewStateMessage,
+      confirmedArgOverrides: Record<string, unknown>,
+    ) => {
+      if (!activeProjectRef) {
+        return;
+      }
+      updateProjectState(activeProjectRef, (state) => {
+        if (
+          state.currentPreviewFileRelativePath &&
+          state.currentPreviewFileRelativePath !== message.previewFileRelativePath
+        ) {
+          return state;
+        }
+        const runtimeSnapshot = buildRuntimeSnapshotFromMessage(message);
+        const existingSession = getPreviewFileSession(
+          state.sessionsByPreviewFilePath,
+          message.previewFileRelativePath,
+        );
+        return {
+          ...state,
+          currentPreviewFileRelativePath: message.previewFileRelativePath,
+          runtimeSnapshot,
+          sessionsByPreviewFilePath: upsertPreviewFileSession(
+            state.sessionsByPreviewFilePath,
+            message.previewFileRelativePath,
+            () =>
+              buildSessionFromRuntimeSnapshot({
+                existingSession,
+                previewFileRelativePath: message.previewFileRelativePath,
+                runtimeSnapshot,
+                confirmedArgOverrides,
+              }),
+          ),
+        };
+      });
+    },
+    [activeProjectRef, updateProjectState],
+  );
+
+  const restoreSessionIntoRuntime = useCallback(
+    (message: PreviewReadyMessage) => {
+      if (!activeProjectRef) {
+        return;
+      }
+      const projectState =
+        usePreviewWorkspaceStore.getState().projectStateByKey[scopedProjectKey(activeProjectRef)] ??
+        null;
+      const cachedSession = getPreviewFileSession(
+        projectState?.sessionsByPreviewFilePath ?? {},
+        message.previewFileRelativePath,
+      );
+      if (!cachedSession) {
+        return;
+      }
+
+      const selectedScenarioId = normalizeSelectedScenarioId(
+        cachedSession.selectedScenarioId,
+        message.scenarioChoices,
+        message.currentScenarioId,
+      );
+      const argOverrides = {
+        ...cachedSession.confirmedArgOverrides,
+        ...cachedSession.draftArgOverrides,
+      };
+
+      if (
+        selectedScenarioId === message.currentScenarioId &&
+        Object.keys(argOverrides).length === 0
+      ) {
+        return;
+      }
+
+      void sendPreviewCommandForActiveRuntime({
+        kind: "preview.command.restoreSession",
+        runtimeInstanceId: message.runtimeInstanceId,
+        previewFileRelativePath: message.previewFileRelativePath,
+        selectedScenarioId,
+        argOverrides,
+      });
+    },
+    [activeProjectRef, sendPreviewCommandForActiveRuntime],
+  );
+
+  const restartPreviewRuntime = async () => {
     if (!activeProjectRef || !api) {
       return;
     }
+    clearPendingArgsForPreviewFile(activeProjectState?.currentPreviewFileRelativePath ?? null);
     patchProjectState(activeProjectRef, {
       runtimeState: {
         kind: "runtime.starting",
         projectId: activeProjectRef.projectId,
       },
       accessToken: null,
-      controls: [],
-      ephemeralArgs: {},
+      runtimeSnapshot: null,
     });
     await api.preview.stopRuntime({
       projectId: activeProjectRef.projectId,
     });
-  }, [activeProjectRef, api, patchProjectState]);
+  };
 
-  const resolveCurrentTarget = useCallback(async () => {
+  const resolveCurrentTarget = async () => {
     if (!activeProjectRef || !api) {
       return;
     }
-    const projectKey = `${activeProjectRef.environmentId}:${activeProjectRef.projectId}`;
-    const latestProjectState = usePreviewWorkspaceStore.getState().projectStateByKey[projectKey];
-    if (!latestProjectState?.currentRelativePath || !latestProjectState.currentTargetKind) {
+    const latestProjectState =
+      usePreviewWorkspaceStore.getState().projectStateByKey[
+        `${activeProjectRef.environmentId}:${activeProjectRef.projectId}`
+      ];
+    if (!latestProjectState?.currentRelativePath) {
       return;
     }
 
@@ -418,50 +807,43 @@ export function PreviewDrawer() {
       const resolution = await api.preview.resolveTarget({
         projectId: activeProjectRef.projectId,
         relativePath: latestProjectState.currentRelativePath,
-        targetKind: latestProjectState.currentTargetKind,
       });
 
-      const previousStoryId = latestProjectState.currentStoryId;
-      const preservedVariantIndex =
-        resolution.status === "resolved" && previousStoryId
-          ? resolution.variants.findIndex((variant) => variant.storyId === previousStoryId)
-          : -1;
-      const shouldPreserveVariantState = preservedVariantIndex >= 0;
-
-      patchProjectState(activeProjectRef, {
-        resolution,
-        runtimeState: resolution.status === "resolved" ? latestProjectState.runtimeState : null,
-        storyChoices: resolution.status === "needsStoryChoice" ? resolution.storyChoices : [],
-        currentComponentRelativePath:
-          resolution.status === "resolved"
-            ? (resolution.componentRelativePath ?? latestProjectState.currentComponentRelativePath)
-            : resolution.status === "needsStoryChoice" || resolution.status === "needsStoryWork"
-              ? resolution.componentRelativePath
-              : latestProjectState.currentComponentRelativePath,
-        currentStoryRelativePath:
-          resolution.status === "resolved"
-            ? resolution.storyRelativePath
-            : resolution.status === "needsStoryWork"
-              ? resolution.storyRelativePath
-              : latestProjectState.currentStoryRelativePath,
-        currentStoryId:
-          resolution.status === "resolved"
-            ? shouldPreserveVariantState
-              ? previousStoryId
-              : resolution.initialStoryId
-            : null,
-        currentVariantIndex:
-          resolution.status === "resolved"
-            ? shouldPreserveVariantState
-              ? preservedVariantIndex
-              : 0
-            : 0,
-        ephemeralArgs: shouldPreserveVariantState ? latestProjectState.ephemeralArgs : {},
-        controls: shouldPreserveVariantState ? latestProjectState.controls : [],
+      const previewFileRelativePath =
+        resolution.status === "resolved"
+          ? resolution.previewFileRelativePath
+          : resolution.status === "needsGeneration" || resolution.status === "runtimeError"
+            ? resolution.previewFileRelativePath
+            : null;
+      updateProjectState(activeProjectRef, (state) => {
+        const shouldPreserveRuntimeSnapshot =
+          resolution.status === "resolved" &&
+          state.currentPreviewFileRelativePath === resolution.previewFileRelativePath;
+        const nextSessionsByPreviewFilePath =
+          resolution.status === "resolved" && resolution.previewFileRelativePath
+            ? upsertPreviewFileSession(
+                state.sessionsByPreviewFilePath,
+                resolution.previewFileRelativePath,
+                (existingSession) => ({
+                  ...existingSession,
+                  selectedScenarioId:
+                    existingSession.selectedScenarioId ?? resolution.initialScenarioId ?? null,
+                }),
+              )
+            : state.sessionsByPreviewFilePath;
+        return {
+          ...state,
+          resolution,
+          runtimeState: resolution.status === "resolved" ? state.runtimeState : null,
+          currentPreviewFileRelativePath: previewFileRelativePath,
+          runtimeSnapshot: shouldPreserveRuntimeSnapshot ? state.runtimeSnapshot : null,
+          sessionsByPreviewFilePath: nextSessionsByPreviewFilePath,
+        };
       });
     } catch (error) {
       patchProjectState(activeProjectRef, {
         resolution: null,
+        runtimeSnapshot: null,
         runtimeState: {
           kind: "runtime.error",
           projectId: activeProjectRef.projectId,
@@ -469,7 +851,7 @@ export function PreviewDrawer() {
         },
       });
     }
-  }, [activeProjectRef, api, patchProjectState]);
+  };
 
   useEffect(() => {
     if (!activeProjectRef || !api) return;
@@ -488,40 +870,278 @@ export function PreviewDrawer() {
 
   useEffect(() => {
     void refreshInspection();
-  }, [refreshInspection]);
-
-  useEffect(() => {
-    setCommandOverride("");
   }, [activeProjectRef?.environmentId, activeProjectRef?.projectId]);
 
   useEffect(() => {
-    const nextResolutionCommandChoices =
-      activeProjectState?.resolution?.status === "needsCommandOverride"
-        ? activeProjectState.resolution.detectedCommands
-        : [];
-    if (commandOverride.trim().length > 0 || nextResolutionCommandChoices.length === 0) {
-      return;
-    }
-    setCommandOverride(nextResolutionCommandChoices[0] ?? "");
-  }, [activeProjectState?.resolution, commandOverride]);
-
-  useEffect(() => {
-    if (
-      !activeProjectRef ||
-      !api ||
-      !activeProjectState?.currentRelativePath ||
-      !activeProjectState.currentTargetKind
-    ) {
+    if (!activeProjectRef || !api || !activeProjectState?.currentRelativePath) {
       return;
     }
     void resolveCurrentTarget();
+  }, [activeProjectRef, activeProjectState?.currentRelativePath, api]);
+
+  useEffect(() => {
+    setActionErrorMessage(null);
   }, [
-    activeProjectRef,
+    activeProjectRef?.environmentId,
+    activeProjectRef?.projectId,
     activeProjectState?.currentRelativePath,
-    activeProjectState?.currentTargetKind,
-    api,
-    resolveCurrentTarget,
   ]);
+
+  useEffect(() => {
+    const previousPreviewFileRelativePath = previousPreviewFileRelativePathRef.current;
+    if (
+      previousPreviewFileRelativePath &&
+      previousPreviewFileRelativePath !== activePreviewFileRelativePath
+    ) {
+      clearPendingArgsForPreviewFile(previousPreviewFileRelativePath);
+    }
+    previousPreviewFileRelativePathRef.current = activePreviewFileRelativePath;
+  }, [activePreviewFileRelativePath, clearPendingArgsForPreviewFile]);
+
+  useEffect(
+    () => () => {
+      for (const previewFileRelativePath of Object.keys(pendingArgsTimerRef.current)) {
+        clearPendingArgsForPreviewFile(previewFileRelativePath);
+      }
+    },
+    [clearPendingArgsForPreviewFile],
+  );
+
+  const persistWorkspaceThreadRecord = async (input: {
+    workspaceRootRelativePath: string;
+    threadId: ThreadId;
+    status: ProjectPreviewWorkspaceRecord["status"];
+    lastPreviewFileRelativePath: string | null;
+    lastError: string | null;
+  }) => {
+    if (!activeProjectRef || !api) {
+      return;
+    }
+    const latestProject =
+      selectProjectsAcrossEnvironments(useStore.getState()).find(
+        (project) =>
+          project.environmentId === activeProjectRef.environmentId &&
+          project.id === activeProjectRef.projectId,
+      ) ?? null;
+    if (!latestProject) {
+      return;
+    }
+    const nextRecords = upsertPreviewWorkspaceRecord(latestProject.previewWorkspaceRecords, {
+      workspaceRootRelativePath: input.workspaceRootRelativePath,
+      threadId: input.threadId,
+      status: input.status,
+      lastPreviewFileRelativePath: input.lastPreviewFileRelativePath,
+      lastError: input.lastError,
+      updatedAt: new Date().toISOString(),
+    });
+    await api.orchestration.dispatchCommand({
+      type: "project.meta.update",
+      commandId: newCommandId(),
+      projectId: activeProjectRef.projectId,
+      previewWorkspaceRecords: nextRecords,
+    });
+  };
+
+  const persistWorkspaceThreadRecordBestEffort = async (input: {
+    workspaceRootRelativePath: string;
+    threadId: ThreadId;
+    status: ProjectPreviewWorkspaceRecord["status"];
+    lastPreviewFileRelativePath: string | null;
+    lastError: string | null;
+  }) => {
+    try {
+      await persistWorkspaceThreadRecord(input);
+    } catch (error) {
+      console.error("Failed to persist preview workspace record.", error);
+    }
+  };
+
+  const resolveExistingPreviewThreadId = (threadId: ThreadId | null): ThreadId | null => {
+    if (!activeProjectRef || !threadId) {
+      return null;
+    }
+    const thread = selectThreadByRef(
+      useStore.getState(),
+      scopeThreadRef(activeProjectRef.environmentId, threadId),
+    );
+    return thread && thread.projectId === activeProjectRef.projectId ? threadId : null;
+  };
+
+  const navigateToPreviewThread = async (threadId: ThreadId) => {
+    if (!activeProjectRef) {
+      return;
+    }
+    await navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(scopeThreadRef(activeProjectRef.environmentId, threadId)),
+    });
+  };
+
+  const openOrResumePreviewThread = async (input: {
+    workspaceRootRelativePath: string;
+    existingThreadId: ThreadId | null;
+    title: string;
+    prompt: string;
+    status: ProjectPreviewWorkspaceRecord["status"];
+    lastPreviewFileRelativePath: string | null;
+    sendPromptWhenThreadExists: boolean;
+  }) => {
+    if (!activeProjectRef || !activeProject || !api) {
+      return;
+    }
+    const modelSelection = resolvePreviewThreadModelSelection(activeProject);
+    const reusableThreadId = resolveExistingPreviewThreadId(input.existingThreadId);
+
+    const createPreviewThread = async (threadId: ThreadId, createdAt: string) => {
+      await api.orchestration.dispatchCommand({
+        type: "thread.create",
+        commandId: newCommandId(),
+        threadId,
+        projectId: activeProjectRef.projectId,
+        title: input.title,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      stageOptimisticThreadShell(
+        buildOptimisticPreviewThreadShell({
+          threadId,
+          projectId: activeProjectRef.projectId,
+          title: input.title,
+          modelSelection,
+          createdAt,
+        }),
+        activeProjectRef.environmentId,
+      );
+    };
+
+    const startPreviewThreadTurn = async (threadId: ThreadId, createdAt: string) => {
+      await api.orchestration.dispatchCommand({
+        type: "thread.turn.start",
+        commandId: newCommandId(),
+        threadId,
+        message: {
+          messageId: newMessageId(),
+          role: "user",
+          text: input.prompt,
+          attachments: [],
+        },
+        modelSelection,
+        titleSeed: input.title,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt,
+      });
+    };
+
+    const openThread = async (threadId: ThreadId, createdAt: string, isExistingThread: boolean) => {
+      if (!isExistingThread) {
+        await createPreviewThread(threadId, createdAt);
+      }
+
+      await navigateToPreviewThread(threadId);
+
+      if (!isExistingThread || input.sendPromptWhenThreadExists) {
+        await startPreviewThreadTurn(threadId, createdAt);
+      }
+
+      await persistWorkspaceThreadRecordBestEffort({
+        workspaceRootRelativePath: input.workspaceRootRelativePath,
+        threadId,
+        status: input.status,
+        lastPreviewFileRelativePath: input.lastPreviewFileRelativePath,
+        lastError: null,
+      });
+    };
+
+    if (reusableThreadId) {
+      try {
+        await openThread(reusableThreadId, new Date().toISOString(), true);
+        return;
+      } catch (error) {
+        const fallbackThreadId = newThreadId();
+        const fallbackCreatedAt = new Date().toISOString();
+        await createPreviewThread(fallbackThreadId, fallbackCreatedAt);
+        await navigateToPreviewThread(fallbackThreadId);
+        await startPreviewThreadTurn(fallbackThreadId, fallbackCreatedAt);
+        await persistWorkspaceThreadRecordBestEffort({
+          workspaceRootRelativePath: input.workspaceRootRelativePath,
+          threadId: fallbackThreadId,
+          status: input.status,
+          lastPreviewFileRelativePath: input.lastPreviewFileRelativePath,
+          lastError: error instanceof Error ? error.message : "Failed to reuse preview thread.",
+        });
+        return;
+      }
+    }
+
+    await openThread(newThreadId(), new Date().toISOString(), false);
+  };
+
+  const openBootstrapThread = async (sendPromptWhenThreadExists = true) => {
+    if (!activeProjectRef || !api || !activeProjectState?.currentRelativePath) {
+      return;
+    }
+    const payload = await api.preview.prepareBootstrapThread({
+      projectId: activeProjectRef.projectId,
+      relativePath: activeProjectState.currentRelativePath,
+    });
+    await openOrResumePreviewThread({
+      workspaceRootRelativePath: payload.workspaceRootRelativePath,
+      existingThreadId: payload.existingThreadId,
+      title: payload.threadTitle,
+      prompt: payload.initialPrompt,
+      status: "bootstrapping",
+      lastPreviewFileRelativePath: activeProjectState.currentPreviewFileRelativePath,
+      sendPromptWhenThreadExists,
+    });
+  };
+
+  const openPreviewGenerationThread = async (sendPromptWhenThreadExists = true) => {
+    if (!activeProjectRef || !api || !activeProjectState?.currentRelativePath) {
+      return;
+    }
+    const payload = await api.preview.preparePreviewGenerationTurn({
+      projectId: activeProjectRef.projectId,
+      relativePath: activeProjectState.currentRelativePath,
+    });
+    await openOrResumePreviewThread({
+      workspaceRootRelativePath: payload.workspaceRootRelativePath,
+      existingThreadId: payload.threadId,
+      title: buildPreviewSetupThreadTitle(payload.workspaceRootRelativePath),
+      prompt: payload.turnPrompt,
+      status: "generation_in_progress",
+      lastPreviewFileRelativePath: payload.previewFileRelativePath,
+      sendPromptWhenThreadExists,
+    });
+  };
+
+  const openPreviewRepairThread = async (sendPromptWhenThreadExists = true) => {
+    if (!activeProjectRef || !api || !activeProjectState?.currentRelativePath) {
+      return;
+    }
+    if (!currentRuntimeErrorMessage) {
+      return;
+    }
+    const payload = await api.preview.preparePreviewRepairTurn({
+      projectId: activeProjectRef.projectId,
+      relativePath: activeProjectState.currentRelativePath,
+      errorMessage: currentRuntimeErrorMessage,
+      previewFileRelativePath: currentRuntimeErrorPreviewFileRelativePath,
+    });
+    await openOrResumePreviewThread({
+      workspaceRootRelativePath: payload.workspaceRootRelativePath,
+      existingThreadId: payload.threadId,
+      title: buildPreviewSetupThreadTitle(payload.workspaceRootRelativePath),
+      prompt: payload.turnPrompt,
+      status: "repair_in_progress",
+      lastPreviewFileRelativePath: payload.previewFileRelativePath,
+      sendPromptWhenThreadExists,
+    });
+  };
 
   useEffect(() => {
     const nextTurnKey =
@@ -530,92 +1150,212 @@ export function PreviewDrawer() {
         : null;
     if (
       !activeProjectRef ||
-      activeProjectState?.resolution?.status !== "needsStoryWork" ||
       routeTarget?.kind !== "server" ||
       routeTarget.threadRef.environmentId !== activeProjectRef.environmentId ||
       activeRouteThread?.projectId !== activeProjectRef.projectId ||
       !nextTurnKey
     ) {
-      handledStoryWorkTurnKeyRef.current = null;
+      handledPreviewTurnKeyRef.current = null;
       return;
     }
-    if (handledStoryWorkTurnKeyRef.current === nextTurnKey) {
+    if (handledPreviewTurnKeyRef.current === nextTurnKey) {
       return;
     }
-    handledStoryWorkTurnKeyRef.current = nextTurnKey;
-    void resolveCurrentTarget();
+    handledPreviewTurnKeyRef.current = nextTurnKey;
+    void refreshInspection().then(resolveCurrentTarget);
   }, [
     activeProjectRef,
-    activeProjectState?.resolution?.status,
     activeRouteLatestTurn?.completedAt,
     activeRouteLatestTurn?.state,
     activeRouteLatestTurn?.turnId,
     activeRouteThread?.projectId,
-    resolveCurrentTarget,
     routeTarget?.kind,
     routeTarget?.kind === "server" ? routeTarget.threadRef.environmentId : null,
   ]);
 
   useEffect(() => {
-    if (!activeProjectRef || !api) return;
-    const query = componentQuery.trim();
-    if (query.length === 0) {
-      setSearchResults([]);
+    const handleMessage = (event: MessageEvent) => {
+      if (!activeProjectRef || !event.data || event.data.source !== "forma-component-harness") {
+        return;
+      }
+      const projectState =
+        usePreviewWorkspaceStore.getState().projectStateByKey[scopedProjectKey(activeProjectRef)] ??
+        null;
+
+      if (
+        event.data.kind === "preview.ready" &&
+        typeof event.data.runtimeInstanceId === "string" &&
+        typeof event.data.previewFileRelativePath === "string"
+      ) {
+        const message = event.data as PreviewReadyMessage;
+        if (
+          projectState?.currentPreviewFileRelativePath &&
+          projectState.currentPreviewFileRelativePath !== message.previewFileRelativePath
+        ) {
+          return;
+        }
+        runtimeCommandWatermarkRef.current[message.runtimeInstanceId] = 0;
+        applyRuntimeSnapshot(message, message.argOverrides);
+        restoreSessionIntoRuntime(message);
+        return;
+      }
+      if (
+        event.data.kind === "preview.state" &&
+        typeof event.data.runtimeInstanceId === "string" &&
+        typeof event.data.previewFileRelativePath === "string"
+      ) {
+        const message = event.data as PreviewStateMessage;
+        if (
+          projectState?.currentPreviewFileRelativePath &&
+          projectState.currentPreviewFileRelativePath !== message.previewFileRelativePath
+        ) {
+          return;
+        }
+        if (
+          projectState?.runtimeSnapshot?.runtimeInstanceId &&
+          projectState.runtimeSnapshot.runtimeInstanceId !== message.runtimeInstanceId
+        ) {
+          return;
+        }
+        const latestSentCommandId =
+          runtimeCommandWatermarkRef.current[message.runtimeInstanceId] ?? 0;
+        if (message.lastAppliedCommandId < latestSentCommandId) {
+          return;
+        }
+        applyRuntimeSnapshot(message, message.argOverrides);
+        return;
+      }
+      if (
+        event.data.kind === "preview.runtime.error" &&
+        typeof event.data.message === "string" &&
+        typeof event.data.previewFileRelativePath === "string"
+      ) {
+        const message = event.data as PreviewRuntimeErrorMessage;
+        if (
+          projectState?.currentPreviewFileRelativePath &&
+          projectState.currentPreviewFileRelativePath !== message.previewFileRelativePath
+        ) {
+          return;
+        }
+        if (
+          projectState?.runtimeSnapshot?.runtimeInstanceId &&
+          projectState.runtimeSnapshot.runtimeInstanceId !== message.runtimeInstanceId
+        ) {
+          return;
+        }
+        patchProjectState(activeProjectRef, {
+          runtimeState: {
+            kind: "runtime.error",
+            projectId: activeProjectRef.projectId,
+            message: message.message,
+          },
+        });
+      }
+    };
+    window.addEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+    };
+  }, [
+    activeProjectRef,
+    activeProjectRef?.projectId,
+    applyRuntimeSnapshot,
+    patchProjectState,
+    restoreSessionIntoRuntime,
+  ]);
+
+  const launchBootstrapAction = async () => {
+    if (launchingAction) {
       return;
     }
-    setSearchLoading(true);
-    const timer = window.setTimeout(() => {
-      void api.preview
-        .searchComponents({
-          projectId: activeProjectRef.projectId,
-          query,
-          limit: 12,
-        })
-        .then((result) => setSearchResults(result.components))
-        .catch(() => setSearchResults([]))
-        .finally(() => setSearchLoading(false));
-    }, 160);
-    return () => window.clearTimeout(timer);
-  }, [activeProjectRef, api, componentQuery]);
+    setActionErrorMessage(null);
+    setLaunchingAction("bootstrap");
+    try {
+      await openBootstrapThread(true);
+    } catch (error) {
+      setActionErrorMessage(
+        error instanceof Error ? error.message : "Failed to open the preview setup thread.",
+      );
+    } finally {
+      setLaunchingAction(null);
+    }
+  };
 
-  const resolved =
-    activeProjectState?.resolution?.status === "resolved" ? activeProjectState.resolution : null;
-  const variants = resolved?.variants ?? [];
-  const currentVariant =
-    variants.length > 0
-      ? variants[Math.min(activeProjectState?.currentVariantIndex ?? 0, variants.length - 1)]
-      : null;
-  const environmentHttpBaseUrl = activeProjectRef
-    ? getEnvironmentHttpBaseUrl(activeProjectRef.environmentId)
-    : null;
-  const shouldUseDirectIframe =
-    Boolean(resolved?.directIframeUrl) &&
-    Boolean(environmentHttpBaseUrl) &&
-    (() => {
-      if (!environmentHttpBaseUrl) {
-        return false;
-      }
-      try {
-        return isLoopbackHostname(new URL(environmentHttpBaseUrl).hostname);
-      } catch {
-        return false;
-      }
-    })();
-  const iframeUrl =
-    activeProjectRef && resolved && currentVariant
-      ? shouldUseDirectIframe && resolved.directIframeUrl
-        ? resolved.directIframeUrl.replace(
-            /id=[^&]+/,
-            `id=${encodeURIComponent(currentVariant.storyId)}`,
-          )
-        : activeProjectState?.accessToken
-          ? resolvePreviewUrl(
-              activeProjectRef,
-              `${resolved.iframePath.replace(/id=[^&]+/, `id=${encodeURIComponent(currentVariant.storyId)}`)}`,
-              activeProjectState.accessToken,
-            )
-          : null
-      : null;
+  const launchGenerationAction = async () => {
+    if (launchingAction) {
+      return;
+    }
+    setActionErrorMessage(null);
+    setLaunchingAction("generation");
+    try {
+      await openPreviewGenerationThread(true);
+    } catch (error) {
+      setActionErrorMessage(
+        error instanceof Error ? error.message : "Failed to open the preview generation thread.",
+      );
+    } finally {
+      setLaunchingAction(null);
+    }
+  };
+
+  const launchRepairAction = async () => {
+    if (launchingAction) {
+      return;
+    }
+    setActionErrorMessage(null);
+    setLaunchingAction("repair");
+    try {
+      await openPreviewRepairThread(true);
+    } catch (error) {
+      setActionErrorMessage(
+        error instanceof Error ? error.message : "Failed to open the preview repair thread.",
+      );
+    } finally {
+      setLaunchingAction(null);
+    }
+  };
+
+  const handleSetControlValue = (name: string, value: unknown, mode: "debounced" | "immediate") => {
+    if (!activeProjectRef || !activePreviewFileRelativePath) {
+      return;
+    }
+
+    updateProjectState(activeProjectRef, (state) => ({
+      ...state,
+      sessionsByPreviewFilePath: upsertPreviewFileSession(
+        state.sessionsByPreviewFilePath,
+        activePreviewFileRelativePath,
+        (session) => ({
+          ...session,
+          draftArgOverrides: {
+            ...session.draftArgOverrides,
+            [name]: value,
+          },
+          updatedAt: new Date().toISOString(),
+        }),
+      ),
+    }));
+
+    queuePendingArgsPartial(
+      activePreviewFileRelativePath,
+      {
+        [name]: value,
+      },
+      mode === "immediate",
+    );
+  };
+
+  const handleFlushControl = (name: string) => {
+    if (!activePreviewFileRelativePath) {
+      return;
+    }
+    const pendingPartialArgs = pendingArgsPartialsRef.current[activePreviewFileRelativePath];
+    if (!pendingPartialArgs || !Object.prototype.hasOwnProperty.call(pendingPartialArgs, name)) {
+      return;
+    }
+    flushPendingArgsForPreviewFile(activePreviewFileRelativePath);
+  };
+
   const fullHeightActionLabel = fullHeight ? "Restore drawer height" : "Expand to full height";
 
   useEffect(() => {
@@ -661,224 +1401,6 @@ export function PreviewDrawer() {
     shouldUseDirectIframe,
   ]);
 
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (
-        !activeProjectRef ||
-        !currentVariant ||
-        !event.data ||
-        event.data.source !== "forma-storybook-preview-bridge" ||
-        event.data.kind !== "preview.story.state" ||
-        event.data.storyId !== currentVariant.storyId ||
-        !Array.isArray(event.data.controls)
-      ) {
-        return;
-      }
-      patchProjectState(activeProjectRef, {
-        controls: event.data.controls as PreviewControlDescriptor[],
-      });
-    };
-    window.addEventListener("message", handleMessage);
-    return () => {
-      window.removeEventListener("message", handleMessage);
-    };
-  }, [activeProjectRef, currentVariant, patchProjectState]);
-
-  useEffect(() => {
-    if (!iframeRef.current?.contentWindow || !currentVariant) {
-      return;
-    }
-    iframeRef.current.contentWindow.postMessage(
-      {
-        source: "forma-preview-parent",
-        kind: "preview.args.update",
-        storyId: currentVariant.storyId,
-        args: activeProjectState?.ephemeralArgs ?? {},
-      },
-      "*",
-    );
-  }, [activeProjectState?.ephemeralArgs, currentVariant]);
-
-  const persistWorkspaceThreadRecord = useCallback(
-    async (input: {
-      workspaceRootRelativePath: string;
-      threadId: ThreadId;
-      status: ProjectPreviewWorkspaceRecord["status"];
-      lastTargetRelativePath: string | null;
-      lastError: string | null;
-    }) => {
-      if (!activeProjectRef || !api) {
-        return;
-      }
-      const latestProject =
-        selectProjectsAcrossEnvironments(useStore.getState()).find(
-          (project) =>
-            project.environmentId === activeProjectRef.environmentId &&
-            project.id === activeProjectRef.projectId,
-        ) ?? null;
-      if (!latestProject) {
-        return;
-      }
-      const nextRecords = upsertPreviewWorkspaceRecord(latestProject.previewWorkspaceRecords, {
-        workspaceRootRelativePath: input.workspaceRootRelativePath,
-        threadId: input.threadId,
-        status: input.status,
-        lastTargetRelativePath: input.lastTargetRelativePath,
-        lastError: input.lastError,
-        updatedAt: new Date().toISOString(),
-      });
-      await api.orchestration.dispatchCommand({
-        type: "project.meta.update",
-        commandId: newCommandId(),
-        projectId: activeProjectRef.projectId,
-        previewWorkspaceRecords: nextRecords,
-      });
-    },
-    [activeProjectRef, api],
-  );
-
-  const openOrResumePreviewThread = useCallback(
-    async (input: {
-      workspaceRootRelativePath: string;
-      existingThreadId: ThreadId | null;
-      title: string;
-      prompt: string;
-      status: ProjectPreviewWorkspaceRecord["status"];
-      lastTargetRelativePath: string | null;
-      sendPromptWhenThreadExists: boolean;
-    }) => {
-      if (!activeProjectRef || !activeProject || !api) {
-        return;
-      }
-      const modelSelection = resolvePreviewThreadModelSelection(activeProject);
-      const createdAt = new Date().toISOString();
-      const threadId = input.existingThreadId ?? newThreadId();
-
-      if (!input.existingThreadId) {
-        await api.orchestration.dispatchCommand({
-          type: "thread.create",
-          commandId: newCommandId(),
-          threadId,
-          projectId: activeProjectRef.projectId,
-          title: input.title,
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          createdAt,
-        });
-      }
-
-      await persistWorkspaceThreadRecord({
-        workspaceRootRelativePath: input.workspaceRootRelativePath,
-        threadId,
-        status: input.status,
-        lastTargetRelativePath: input.lastTargetRelativePath,
-        lastError: null,
-      });
-
-      if (!input.existingThreadId || input.sendPromptWhenThreadExists) {
-        await api.orchestration.dispatchCommand({
-          type: "thread.turn.start",
-          commandId: newCommandId(),
-          threadId,
-          message: {
-            messageId: newMessageId(),
-            role: "user",
-            text: input.prompt,
-            attachments: [],
-          },
-          modelSelection,
-          titleSeed: input.title,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          createdAt,
-        });
-      }
-
-      if (!input.existingThreadId) {
-        await waitForStartedServerThread(
-          scopeThreadRef(activeProjectRef.environmentId, threadId),
-          1_500,
-        );
-      }
-
-      await navigate({
-        to: "/$environmentId/$threadId",
-        params: buildThreadRouteParams(scopeThreadRef(activeProjectRef.environmentId, threadId)),
-      });
-    },
-    [activeProject, activeProjectRef, api, navigate, persistWorkspaceThreadRecord],
-  );
-
-  const openPreviewSetupThread = useCallback(
-    async (sendPromptWhenThreadExists = false) => {
-      if (
-        !activeProjectRef ||
-        !api ||
-        !activeProjectState?.currentRelativePath ||
-        !activeProjectState.currentTargetKind
-      ) {
-        return;
-      }
-      const payload = await api.preview.prepareWorkspaceSetupThread({
-        projectId: activeProjectRef.projectId,
-        relativePath: activeProjectState.currentRelativePath,
-        targetKind: activeProjectState.currentTargetKind,
-      });
-      await openOrResumePreviewThread({
-        workspaceRootRelativePath: payload.workspaceRootRelativePath,
-        existingThreadId: payload.existingThreadId,
-        title: payload.threadTitle,
-        prompt: payload.initialPrompt,
-        status: "setup_in_progress",
-        lastTargetRelativePath: activeProjectState.currentRelativePath,
-        sendPromptWhenThreadExists,
-      });
-    },
-    [activeProjectRef, activeProjectState, api, openOrResumePreviewThread],
-  );
-
-  const openStoryWorkThread = useCallback(
-    async (action: "create" | "fix") => {
-      if (!activeProjectRef || !api || !activeProjectState?.currentComponentRelativePath) {
-        return;
-      }
-      const payload = await api.preview.prepareStoryWorkTurn({
-        projectId: activeProjectRef.projectId,
-        componentRelativePath: activeProjectState.currentComponentRelativePath,
-        action,
-      });
-      await openOrResumePreviewThread({
-        workspaceRootRelativePath: payload.workspaceRootRelativePath,
-        existingThreadId: payload.threadId,
-        title: buildPreviewSetupThreadTitle(payload.workspaceRootRelativePath),
-        prompt: payload.turnPrompt,
-        status: "story_work_pending",
-        lastTargetRelativePath: activeProjectState.currentRelativePath,
-        sendPromptWhenThreadExists: true,
-      });
-    },
-    [activeProjectRef, activeProjectState, api, openOrResumePreviewThread],
-  );
-
-  const handleChangeControl = useCallback(
-    (name: string, value: unknown) => {
-      if (!activeProjectRef || !activeProjectState) {
-        return;
-      }
-      patchProjectState(activeProjectRef, {
-        controls: updateControlValue(activeProjectState.controls, name, value),
-        ephemeralArgs: {
-          ...activeProjectState.ephemeralArgs,
-          [name]: value,
-        },
-      });
-    },
-    [activeProjectRef, activeProjectState, patchProjectState],
-  );
-
   if (!activeProjectRef) {
     return (
       <div
@@ -911,8 +1433,7 @@ export function PreviewDrawer() {
         <div className="h-full overflow-auto px-4 py-4">
           <div className="text-sm font-semibold text-foreground">Preview</div>
           <div className="mt-1 text-sm text-muted-foreground">
-            Open preview from a thread with an active project or from a project-scoped preview
-            action.
+            Open preview for the current editor file to render it here.
           </div>
         </div>
       </div>
@@ -920,23 +1441,34 @@ export function PreviewDrawer() {
   }
 
   const inspection = activeProjectState?.inspection ?? null;
-  const shouldShowMissingSetupHeader =
-    activeProjectState?.resolution?.status === "needsWorkspaceSetup" ||
-    inspection?.status === "unsupported" ||
-    inspection?.status === "enableable";
-  const resolutionCommandChoices =
-    activeProjectState?.resolution?.status === "needsCommandOverride"
-      ? activeProjectState.resolution.detectedCommands
-      : [];
-  const storyWorkResolution =
-    activeProjectState?.resolution?.status === "needsStoryWork"
+  const headerStatus =
+    activeProjectState?.resolution?.status === "needsBootstrap"
+      ? "Preview setup required"
+      : activeProjectState?.resolution?.status === "needsGeneration"
+        ? "Preview file required"
+        : activeProjectState?.resolution?.status === "runtimeError"
+          ? activeProjectState.resolution.message
+          : activeProjectState?.runtimeState?.kind === "runtime.ready"
+            ? "Live preview connected"
+            : activeProjectState?.runtimeState?.kind === "runtime.starting"
+              ? "Starting preview runtime…"
+              : activeProjectState?.runtimeState?.kind === "runtime.error"
+                ? activeProjectState.runtimeState.message
+                : (inspection?.summary ??
+                  "Open a component file in the editor to preview it here.");
+  const currentRelativePath = activeProjectState?.currentRelativePath ?? null;
+  const headerTitle = currentRelativePath
+    ? resolveEditorFileLabel(currentRelativePath)
+    : (activeProject?.name ?? "Preview");
+  const headerSubtitle = currentRelativePath ?? headerStatus;
+  const runtimeErrorResolution =
+    activeProjectState?.resolution?.status === "runtimeError"
       ? activeProjectState.resolution
       : null;
-  const showCommandOverride = activeProjectState?.resolution?.status === "needsCommandOverride";
-  const showBridgeCta =
-    resolved &&
-    activeProjectState?.controlsBridgeStatus === "missing" &&
-    activeProjectState.controls.length === 0;
+  const runtimeErrorEvent =
+    activeProjectState?.runtimeState?.kind === "runtime.error"
+      ? activeProjectState.runtimeState
+      : null;
 
   return (
     <div
@@ -952,389 +1484,218 @@ export function PreviewDrawer() {
         onPointerCancel={handleResizePointerEnd}
       />
       <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <div className="flex min-h-0 flex-1">
-          {searchSidebarOpen ? (
-            <aside className="flex w-72 shrink-0 flex-col border-r border-border/70 bg-card/30">
-              <div className="border-b border-border/70 px-4 py-3">
-                <div className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/80">
-                  Search
-                </div>
-                <input
-                  className="mt-3 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                  placeholder="Search components..."
-                  value={componentQuery}
-                  onChange={(event) => setComponentQuery(event.currentTarget.value)}
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="mt-3"
-                  onClick={() => {
-                    if (!activeProjectRef) return;
-                    resetProjectState(activeProjectRef);
-                    setComponentQuery("");
-                  }}
-                >
-                  Reset preview
-                </Button>
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-                {searchLoading ? (
-                  <div className="px-2 py-2 text-sm text-muted-foreground">Searching…</div>
-                ) : null}
-                {componentQuery.trim().length > 0 ? (
-                  <div className="grid gap-1">
-                    {searchResults.map((result) => (
-                      <button
-                        key={result.relativePath}
-                        type="button"
-                        className="rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent"
-                        onClick={() => {
-                          setComponentQuery(result.displayName);
-                          openPreviewTarget(activeProjectRef, {
-                            targetKind: "component",
-                            relativePath: result.relativePath,
-                          });
-                        }}
-                      >
-                        <div className="text-sm font-medium text-foreground">
-                          {result.displayName}
-                        </div>
-                        <div className="text-xs text-muted-foreground">{result.relativePath}</div>
-                      </button>
-                    ))}
-                  </div>
+        <div className="flex min-w-0 items-center justify-between border-b border-border/70 px-4 py-3">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-foreground">{headerTitle}</div>
+            <div className="truncate text-xs text-muted-foreground">{headerSubtitle}</div>
+          </div>
+          <div className="flex items-center gap-2">
+            {scenarioItems.length > 0 ? (
+              <Select
+                items={scenarioItems}
+                value={selectedScenarioId ?? ""}
+                onValueChange={(value) => {
+                  if (
+                    !activeProjectRef ||
+                    typeof value !== "string" ||
+                    !runtimeSnapshot?.runtimeInstanceId ||
+                    !activePreviewFileRelativePath
+                  ) {
+                    return;
+                  }
+
+                  clearPendingArgsForPreviewFile(activePreviewFileRelativePath);
+                  updateProjectState(activeProjectRef, (state) => ({
+                    ...state,
+                    sessionsByPreviewFilePath: upsertPreviewFileSession(
+                      state.sessionsByPreviewFilePath,
+                      activePreviewFileRelativePath,
+                      (session) => ({
+                        ...session,
+                        selectedScenarioId: value,
+                        draftArgOverrides: {},
+                        updatedAt: new Date().toISOString(),
+                      }),
+                    ),
+                  }));
+                  void sendPreviewCommandForActiveRuntime({
+                    kind: "preview.command.selectScenario",
+                    runtimeInstanceId: runtimeSnapshot.runtimeInstanceId,
+                    previewFileRelativePath: activePreviewFileRelativePath,
+                    scenarioId: value,
+                  });
+                }}
+              >
+                <SelectTrigger variant="ghost" size="xs" className="min-w-44 font-medium">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {scenarioItems.map((choice) => (
+                    <SelectItem key={choice.value} value={choice.value} hideIndicator>
+                      {choice.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            ) : null}
+            <div className="inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70">
+              <button
+                type="button"
+                className="inline-flex items-center p-1 text-foreground/90 transition-colors hover:bg-accent"
+                onClick={() => setFullHeight(!fullHeight)}
+                aria-label={fullHeightActionLabel}
+                title={fullHeightActionLabel}
+              >
+                {fullHeight ? (
+                  <ChevronDownIcon className="size-3.25 fill-current" />
                 ) : (
-                  <div className="px-2 py-2 text-sm text-muted-foreground">
-                    Search for a component to open its preview here.
-                  </div>
+                  <ChevronUpIcon className="size-3.25 fill-current" />
                 )}
-              </div>
-            </aside>
-          ) : null}
-          <div className="flex min-w-0 flex-1 flex-col">
-            <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
-              <div className="flex min-w-0 items-center gap-3">
-                <button
-                  type="button"
-                  className="inline-flex items-center rounded-md p-1 text-foreground/90 transition-colors hover:bg-accent"
-                  onClick={() => setSearchSidebarOpen((current) => !current)}
-                  aria-label={searchSidebarOpen ? "Hide preview search" : "Show preview search"}
-                  title={searchSidebarOpen ? "Hide preview search" : "Show preview search"}
-                >
-                  <SearchIcon className="size-3.5 fill-current" />
-                </button>
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-foreground">
-                    {activeProject?.name ?? "Preview"}
-                  </div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    {shouldShowMissingSetupHeader
-                      ? "Forma could not detect a Storybook-compatible preview setup."
-                      : activeProjectState?.runtimeState?.kind === "runtime.ready"
-                        ? "Live preview connected"
-                        : activeProjectState?.runtimeState?.kind === "runtime.starting"
-                          ? "Starting Storybook…"
-                          : activeProjectState?.runtimeState?.kind === "runtime.error"
-                            ? activeProjectState.runtimeState.message
-                            : (inspection?.summary ?? "Search for a component to preview")}
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70">
-                  <button
-                    type="button"
-                    className="inline-flex items-center p-1 text-foreground/90 transition-colors hover:bg-accent"
-                    onClick={() => setFullHeight(!fullHeight)}
-                    aria-label={fullHeightActionLabel}
-                    title={fullHeightActionLabel}
-                  >
-                    {fullHeight ? (
-                      <ChevronDownIcon className="size-3.25 fill-current" />
-                    ) : (
-                      <ChevronUpIcon className="size-3.25 fill-current" />
-                    )}
-                  </button>
+              </button>
+              <div className="h-4 w-px bg-border/80" />
+              <button
+                type="button"
+                className="inline-flex items-center p-1 text-foreground/90 transition-colors hover:bg-accent"
+                onClick={closePreviewDrawer}
+                aria-label="Close preview"
+                title="Close preview"
+              >
+                <XIcon className="size-3.25 fill-current" />
+              </button>
+              {activeProjectState?.currentRelativePath ? (
+                <>
                   <div className="h-4 w-px bg-border/80" />
                   <button
                     type="button"
                     className="inline-flex items-center p-1 text-foreground/90 transition-colors hover:bg-accent"
-                    onClick={closePreviewDrawer}
-                    aria-label="Close preview"
-                    title="Close preview"
-                  >
-                    <XIcon className="size-3.25 fill-current" />
-                  </button>
-                  {resolved ? (
-                    <>
-                      <div className="h-4 w-px bg-border/80" />
-                      <button
-                        type="button"
-                        className="inline-flex items-center p-1 text-foreground/90 transition-colors hover:bg-accent"
-                        onClick={() =>
-                          void restartPreviewRuntime()
-                            .then(refreshInspection)
-                            .then(resolveCurrentTarget)
-                        }
-                        aria-label="Refresh preview"
-                        title="Refresh preview"
-                      >
-                        <RefreshIcon className="size-3.25 fill-current" />
-                      </button>
-                    </>
-                  ) : null}
-                </div>
-                {resolved ? (
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      className="inline-flex items-center rounded-md p-1 text-foreground/90 transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
-                      disabled={(activeProjectState?.currentVariantIndex ?? 0) <= 0}
-                      onClick={() => {
-                        if (!activeProjectRef) return;
-                        const nextIndex = Math.max(
-                          (activeProjectState?.currentVariantIndex ?? 0) - 1,
-                          0,
-                        );
-                        patchProjectState(activeProjectRef, {
-                          currentVariantIndex: nextIndex,
-                          currentStoryId: variants[nextIndex]?.storyId ?? null,
-                          ephemeralArgs: {},
-                          controls: [],
-                        });
-                      }}
-                    >
-                      <IconChevronLeft className="size-4 fill-current" />
-                    </button>
-                    <div className="min-w-36 text-center text-sm text-foreground">
-                      {currentVariant?.name ?? "Variant"}
-                    </div>
-                    <button
-                      type="button"
-                      className="inline-flex items-center rounded-md p-1 text-foreground/90 transition-colors hover:bg-accent disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent"
-                      disabled={
-                        (activeProjectState?.currentVariantIndex ?? 0) >= variants.length - 1
-                      }
-                      onClick={() => {
-                        if (!activeProjectRef) return;
-                        const nextIndex = Math.min(
-                          (activeProjectState?.currentVariantIndex ?? 0) + 1,
-                          variants.length - 1,
-                        );
-                        patchProjectState(activeProjectRef, {
-                          currentVariantIndex: nextIndex,
-                          currentStoryId: variants[nextIndex]?.storyId ?? null,
-                          ephemeralArgs: {},
-                          controls: [],
-                        });
-                      }}
-                    >
-                      <IconChevronRight className="size-4 fill-current" />
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-auto p-4">
-              {activeProjectState?.resolution?.status === "needsWorkspaceSetup" ? (
-                <div className="rounded-xl border border-border/70 bg-card/60 p-4">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                    <PreviewIcon className="size-4" />
-                    {activeProjectState.resolution.existingThreadId
-                      ? "Resume preview setup thread"
-                      : `Set up previews for ${workspaceLabel(activeProjectState.resolution.ownerWorkspaceRootRelativePath)}`}
-                  </div>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {activeProjectState.resolution.reason}
-                  </p>
-                  <Button className="mt-4" onClick={() => void openPreviewSetupThread()}>
-                    {activeProjectState.resolution.existingThreadId
-                      ? "Open setup thread"
-                      : `Set up ${workspaceLabel(activeProjectState.resolution.ownerWorkspaceRootRelativePath)}`}
-                  </Button>
-                </div>
-              ) : activeProjectState?.runtimeState?.kind === "runtime.error" &&
-                activeProjectState?.currentRelativePath ? (
-                <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4">
-                  <div className="text-sm font-semibold text-foreground">
-                    Failed to start Storybook preview runtime
-                  </div>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {activeProjectState.runtimeState.message}
-                  </p>
-                  <div className="mt-4 flex items-center gap-2">
-                    <Button
-                      onClick={() =>
-                        void restartPreviewRuntime()
-                          .then(refreshInspection)
-                          .then(resolveCurrentTarget)
-                      }
-                    >
-                      Retry preview
-                    </Button>
-                  </div>
-                </div>
-              ) : showCommandOverride ? (
-                <div className="rounded-xl border border-border/70 bg-card/60 p-4">
-                  <div className="text-sm font-semibold text-foreground">
-                    Choose a Storybook start command
-                  </div>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Forma found Storybook, but it needs one explicit command to start the preview
-                    runtime.
-                  </p>
-                  <input
-                    className="mt-4 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
-                    value={commandOverride}
-                    onChange={(event) => setCommandOverride(event.currentTarget.value)}
-                    placeholder="bun run storybook"
-                  />
-                  {resolutionCommandChoices.length > 0 ||
-                  inspection?.detectedStartCommands.length ? (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {(resolutionCommandChoices.length > 0
-                        ? resolutionCommandChoices
-                        : (inspection?.detectedStartCommands ?? [])
-                      ).map((command) => (
-                        <Button
-                          key={command}
-                          size="sm"
-                          variant="outline"
-                          onClick={() => setCommandOverride(command)}
-                        >
-                          {command}
-                        </Button>
-                      ))}
-                    </div>
-                  ) : null}
-                  <div className="mt-4 flex items-center gap-2">
-                    <Button
-                      onClick={() => {
-                        if (
-                          !activeProjectRef ||
-                          !api ||
-                          commandOverride.trim().length === 0 ||
-                          activeProjectState?.resolution?.status !== "needsCommandOverride"
-                        )
-                          return;
-                        void api.preview
-                          .setStartCommandOverride({
-                            projectId: activeProjectRef.projectId,
-                            workspaceRootRelativePath:
-                              activeProjectState.resolution.workspaceRootRelativePath,
-                            command: commandOverride.trim(),
-                          })
-                          .then(restartPreviewRuntime)
-                          .then(refreshInspection)
-                          .then(resolveCurrentTarget);
-                      }}
-                    >
-                      Save command
-                    </Button>
-                  </div>
-                </div>
-              ) : activeProjectState?.resolution?.status === "needsStoryChoice" ? (
-                <div className="rounded-xl border border-border/70 bg-card/60 p-4">
-                  <div className="text-sm font-semibold text-foreground">Choose a story file</div>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Forma found multiple story files for this component. Pick the one this preview
-                    canvas should use.
-                  </p>
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {activeProjectState.resolution.storyChoices.map((choice) => (
-                      <Button
-                        key={choice.relativePath}
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          if (
-                            !api ||
-                            !activeProjectRef ||
-                            !activeProjectState.currentComponentRelativePath
-                          )
-                            return;
-                          void api.preview
-                            .chooseStoryMapping({
-                              projectId: activeProjectRef.projectId,
-                              componentRelativePath:
-                                activeProjectState.currentComponentRelativePath,
-                              storyRelativePath: choice.relativePath,
-                            })
-                            .then(resolveCurrentTarget);
-                        }}
-                      >
-                        {choice.displayName}
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              ) : activeProjectState?.resolution?.status === "needsStoryWork" ? (
-                <div className="rounded-xl border border-border/70 bg-card/60 p-4">
-                  <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                    <IconSparkles className="size-4" />
-                    {storyWorkResolution?.action === "create" ? "Create story" : "Fix story"}
-                  </div>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {storyWorkResolution?.action === "create"
-                      ? "The workspace preview runtime is ready, but this component still needs a Storybook story."
-                      : "The workspace preview runtime is ready, but the selected story needs to be fixed before it can render in the preview drawer."}
-                  </p>
-                  <Button
-                    className="mt-4"
                     onClick={() =>
-                      void openStoryWorkThread(storyWorkResolution?.action ?? "create")
+                      void restartPreviewRuntime()
+                        .then(refreshInspection)
+                        .then(resolveCurrentTarget)
                     }
+                    aria-label="Refresh preview"
+                    title="Refresh preview"
                   >
-                    {storyWorkResolution?.threadId
-                      ? storyWorkResolution.action === "create"
-                        ? "Create story in setup thread"
-                        : "Fix story in setup thread"
-                      : storyWorkResolution?.action === "create"
-                        ? "Create story"
-                        : "Fix story"}
-                  </Button>
-                </div>
-              ) : activeProjectState?.resolution?.status === "unsupportedTarget" ? (
-                <div className="rounded-xl border border-border/70 bg-card/60 p-4 text-sm text-muted-foreground">
-                  {activeProjectState.resolution.reason}
-                </div>
-              ) : activeProjectState?.resolution?.status === "notFound" ? (
-                <div className="rounded-xl border border-border/70 bg-card/60 p-4 text-sm text-muted-foreground">
-                  Forma could not find this file in the current project workspace.
-                </div>
-              ) : iframeUrl ? (
-                <div className="h-full min-h-[18rem] overflow-hidden rounded-xl border border-border/70 bg-white shadow-sm">
-                  <iframe
-                    ref={iframeRef}
-                    key={iframeUrl}
-                    className="h-full min-h-[18rem] w-full bg-white"
-                    sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
-                    src={iframeUrl}
-                    title="Component preview canvas"
-                  />
-                </div>
-              ) : activeProjectState?.currentRelativePath &&
-                (!resolved || (!shouldUseDirectIframe && !activeProjectState.accessToken)) ? (
-                <div className="flex h-full min-h-[18rem] items-center justify-center rounded-xl border border-dashed border-border/80 bg-card/30 text-sm text-muted-foreground">
-                  {resolved ? "Authorizing preview…" : "Resolving preview…"}
-                </div>
-              ) : (
-                <div className="flex h-full min-h-[18rem] items-center justify-center rounded-xl border border-dashed border-border/80 bg-card/30 text-sm text-muted-foreground">
-                  Search for a component or open preview from a file.
-                </div>
-              )}
+                    <RefreshIcon className="size-3.25 fill-current" />
+                  </button>
+                </>
+              ) : null}
             </div>
           </div>
-
-          <PreviewControlsRail
-            controls={activeProjectState?.controls ?? []}
-            showEnableControlsCta={Boolean(showBridgeCta)}
-            onEnableBridge={() => void openPreviewSetupThread(true)}
-            onChangeControl={handleChangeControl}
-          />
         </div>
+
+        <div className="min-h-0 flex-1 overflow-auto p-4">
+          {activeProjectState?.resolution?.status === "needsBootstrap" ? (
+            <div className="rounded-xl border border-border/70 bg-card/60 p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <PreviewIcon className="size-4" />
+                Repo isn't set up for previews
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {activeProjectState.resolution.reason}
+              </p>
+              <div className="mt-4 flex items-center gap-2">
+                <Button
+                  disabled={launchingAction !== null}
+                  onClick={() => void launchBootstrapAction()}
+                >
+                  {launchingAction === "bootstrap"
+                    ? "Opening setup thread…"
+                    : "Set up previews now"}
+                </Button>
+              </div>
+              {actionErrorMessage ? (
+                <p className="mt-3 text-sm text-destructive">{actionErrorMessage}</p>
+              ) : null}
+            </div>
+          ) : activeProjectState?.resolution?.status === "needsGeneration" ? (
+            <div className="rounded-xl border border-border/70 bg-card/60 p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <IconSparkles className="size-4" />
+                This component needs a preview file
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                {activeProjectState.resolution.reason}
+              </p>
+              <div className="mt-4 flex items-center gap-2">
+                <Button
+                  disabled={launchingAction !== null}
+                  onClick={() => void launchGenerationAction()}
+                >
+                  {launchingAction === "generation"
+                    ? "Opening preview thread…"
+                    : "Generate preview now"}
+                </Button>
+              </div>
+              {actionErrorMessage ? (
+                <p className="mt-3 text-sm text-destructive">{actionErrorMessage}</p>
+              ) : null}
+            </div>
+          ) : runtimeErrorResolution ? (
+            <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4">
+              <div className="text-sm font-semibold text-foreground">Preview runtime error</div>
+              <p className="mt-2 text-sm text-muted-foreground">{runtimeErrorResolution.message}</p>
+              <div className="mt-4 flex items-center gap-2">
+                <Button
+                  disabled={launchingAction !== null}
+                  onClick={() => void launchRepairAction()}
+                >
+                  {launchingAction === "repair" ? "Opening repair thread…" : "Repair preview now"}
+                </Button>
+              </div>
+              {actionErrorMessage ? (
+                <p className="mt-3 text-sm text-destructive">{actionErrorMessage}</p>
+              ) : null}
+            </div>
+          ) : runtimeErrorEvent ? (
+            <div className="rounded-xl border border-destructive/40 bg-destructive/5 p-4">
+              <div className="text-sm font-semibold text-foreground">Preview runtime error</div>
+              <p className="mt-2 text-sm text-muted-foreground">{runtimeErrorEvent.message}</p>
+              <div className="mt-4 flex items-center gap-2">
+                <Button
+                  disabled={launchingAction !== null}
+                  onClick={() => void launchRepairAction()}
+                >
+                  {launchingAction === "repair" ? "Opening repair thread…" : "Repair preview now"}
+                </Button>
+              </div>
+            </div>
+          ) : activeProjectState?.resolution?.status === "unsupportedTarget" ? (
+            <div className="rounded-xl border border-border/70 bg-card/60 p-4 text-sm text-muted-foreground">
+              {activeProjectState.resolution.reason}
+            </div>
+          ) : activeProjectState?.resolution?.status === "notFound" ? (
+            <div className="rounded-xl border border-border/70 bg-card/60 p-4 text-sm text-muted-foreground">
+              Forma could not find this file in the current project workspace.
+            </div>
+          ) : iframeUrl ? (
+            <div className="h-full min-h-[18rem] overflow-hidden rounded-xl border border-border/70 bg-white shadow-sm">
+              <iframe
+                ref={iframeRef}
+                key={resolved?.iframePath}
+                className="h-full min-h-[18rem] w-full bg-white"
+                sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
+                src={iframeUrl}
+                title="Component preview canvas"
+              />
+            </div>
+          ) : activeProjectState?.currentRelativePath &&
+            (!resolved || (!shouldUseDirectIframe && !activeProjectState.accessToken)) ? (
+            <div className="flex h-full min-h-[18rem] items-center justify-center rounded-xl border border-dashed border-border/80 bg-card/30 text-sm text-muted-foreground">
+              {resolved ? "Authorizing preview…" : "Resolving preview…"}
+            </div>
+          ) : (
+            <div className="flex h-full min-h-[18rem] items-center justify-center rounded-xl border border-dashed border-border/80 bg-card/30 text-sm text-muted-foreground">
+              Open a component file from the editor to render it here.
+            </div>
+          )}
+        </div>
+
+        <PreviewControlsRail
+          controls={displayedControls}
+          onSetControlValue={handleSetControlValue}
+          onFlushControl={handleFlushControl}
+        />
       </div>
     </div>
   );

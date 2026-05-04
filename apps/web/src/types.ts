@@ -9,7 +9,6 @@ import type {
   RepositoryIdentity,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
-  ProjectPreviewConfig,
   ProjectPreviewWorkspaceRecord,
   ProjectScript as ContractProjectScript,
   ThreadId,
@@ -105,7 +104,6 @@ export interface Project {
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
   scripts: ProjectScript[];
-  previewConfig?: ProjectPreviewConfig | null;
   previewWorkspaceRecords?: readonly ProjectPreviewWorkspaceRecord[];
 }
 

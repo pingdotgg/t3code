@@ -156,6 +156,20 @@ const buildCmd = Command.make(
         }),
       );
 
+      const harnessSource = path.join(serverDir, "src/preview/harness");
+      const harnessTarget = path.join(serverDir, "dist/harness");
+      if (yield* fs.exists(harnessSource)) {
+        yield* fs
+          .remove(harnessTarget, { recursive: true, force: true })
+          .pipe(Effect.catch(() => Effect.void));
+        yield* fs.copy(harnessSource, harnessTarget);
+        yield* Effect.log("[cli] Bundled preview harness assets into dist/harness");
+      } else {
+        yield* Effect.logWarning(
+          "[cli] Preview harness source not found — skipping harness bundle.",
+        );
+      }
+
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");
 
