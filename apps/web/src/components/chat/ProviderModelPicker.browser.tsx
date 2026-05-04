@@ -1081,6 +1081,7 @@ describe("ProviderModelPicker", () => {
       }
       expect(button.className).toContain("border-input");
       expect(button.className).toContain("bg-popover");
+      expect(button.className).toContain("rounded-full");
     } finally {
       await mounted.cleanup();
     }

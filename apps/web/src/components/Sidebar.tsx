@@ -2071,7 +2071,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               {isManualProjectSorting ? (
                 <SidebarGrabHandleIcon
                   className={cn(
-                    "absolute inset-0 m-auto size-3 text-muted-foreground/70 opacity-0 group-hover/project-header:opacity-100",
+                    "absolute inset-0 m-auto size-2 text-muted-foreground/70 opacity-0 group-hover/project-header:opacity-100",
                     MICRO_FADE_MOTION_CLASS_NAME,
                   )}
                 />

@@ -1,0 +1,199 @@
+@keyframes markerIn {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.3);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes markerOut {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.3);
+  }
+}
+
+@keyframes tooltipIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(2px) scale(0.891);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(0.909);
+  }
+}
+
+@keyframes renumberRoll {
+  0% {
+    transform: translateX(-40%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.marker {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  background: var(--preview-feedback-color-accent);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+  cursor: pointer;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.2),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.04);
+  user-select: none;
+  will-change: transform, opacity;
+  contain: layout style;
+  z-index: 1;
+
+  &:hover {
+    z-index: 2;
+  }
+
+  &:not(.enter):not(.exit):not(.clearing) {
+    transition:
+      background-color 0.15s ease,
+      transform 0.1s ease;
+  }
+
+  &.enter {
+    animation: markerIn 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  &.exit {
+    animation: markerOut 0.2s ease-out both;
+    pointer-events: none;
+  }
+
+  &.clearing {
+    animation: markerOut 0.15s ease-out both;
+    pointer-events: none;
+  }
+
+  &:not(.enter):not(.exit):not(.clearing):hover {
+    transform: translate(-50%, -50%) scale(1.1);
+  }
+
+  &.pending {
+    position: fixed;
+    background-color: var(--preview-feedback-color-accent);
+    cursor: default;
+  }
+
+  &.fixed {
+    position: fixed;
+  }
+
+  &.multiSelect {
+    background-color: var(--preview-feedback-color-green);
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    font-size: 0.75rem;
+
+    &.pending {
+      background-color: var(--preview-feedback-color-green);
+    }
+  }
+
+  &.hovered {
+    background-color: var(--preview-feedback-color-red);
+  }
+}
+
+.renumber {
+  display: block;
+  animation: renumberRoll 0.2s ease-out;
+}
+
+.markerTooltip {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%) scale(0.909);
+  z-index: 100002;
+  background: #1a1a1a;
+  padding: 8px 0.75rem;
+  border-radius: 0.75rem;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  font-weight: 400;
+  color: #fff;
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
+  min-width: 120px;
+  max-width: 200px;
+  pointer-events: none;
+  cursor: default;
+
+  &.enter {
+    animation: tooltipIn 0.1s ease-out forwards;
+  }
+}
+
+.markerQuote {
+  display: block;
+  font-size: 12px;
+  font-style: italic;
+  color: rgba(255, 255, 255, 0.6);
+  margin-bottom: 0.3125rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.markerNote {
+  display: block;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-bottom: 2px;
+}
+
+// Light mode overrides
+[data-preview-feedback-theme="light"] {
+  .markerTooltip {
+    background: #fff;
+    box-shadow:
+      0 4px 20px rgba(0, 0, 0, 0.12),
+      0 0 0 1px rgba(0, 0, 0, 0.06);
+
+    .markerQuote {
+      color: rgba(0, 0, 0, 0.5);
+    }
+
+    .markerNote {
+      color: rgba(0, 0, 0, 0.85);
+    }
+  }
+}

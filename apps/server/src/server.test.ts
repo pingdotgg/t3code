@@ -694,7 +694,7 @@ const bootstrapBrowserSession = (
   Effect.gen(function* () {
     const bootstrapUrl = yield* getHttpServerUrl("/api/auth/bootstrap");
     const response = yield* Effect.promise(() =>
-      fetch(bootstrapUrl, {
+      fetchWithTransientResetRetry(bootstrapUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -721,7 +721,7 @@ const bootstrapBearerSession = (credential = defaultDesktopBootstrapToken) =>
   Effect.gen(function* () {
     const bootstrapUrl = yield* getHttpServerUrl("/api/auth/bootstrap/bearer");
     const response = yield* Effect.promise(() =>
-      fetch(bootstrapUrl, {
+      fetchWithTransientResetRetry(bootstrapUrl, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -793,6 +793,32 @@ const splitHeaderTokens = (value: string | null) =>
     .map((token) => token.trim())
     .filter((token) => token.length > 0)
     .toSorted();
+
+const isTransientFetchReset = (error: unknown): boolean => {
+  if (!(error instanceof TypeError)) {
+    return false;
+  }
+  const cause = (error as { readonly cause?: unknown }).cause;
+  return (
+    typeof cause === "object" &&
+    cause !== null &&
+    (cause as { readonly code?: unknown }).code === "ECONNRESET"
+  );
+};
+
+async function fetchWithTransientResetRetry(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1],
+): Promise<Response> {
+  try {
+    return await fetch(input, init);
+  } catch (error) {
+    if (!isTransientFetchReset(error)) {
+      throw error;
+    }
+    return await fetch(input, init);
+  }
+}
 
 const getWsServerUrl = (
   pathname = "",

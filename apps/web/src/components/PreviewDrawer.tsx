@@ -31,6 +31,15 @@ import {
   usePreviewWorkspaceStore,
 } from "../previewWorkspaceStore";
 import {
+  buildPreviewFeedbackPrompt,
+  buildPreviewFeedbackScopeKey,
+  filterAnnotationsForActiveScope,
+  markPreviewFeedbackAnnotationsSent,
+  stableHashPreviewArgs,
+  type PreviewFeedbackAnnotation,
+  type PreviewFeedbackScope,
+} from "../previewFeedback";
+import {
   buildSessionFromRuntimeSnapshot,
   getPreviewFileSession,
   mergePreviewControlsWithDrafts,
@@ -79,6 +88,11 @@ function workspaceLabel(workspaceRootRelativePath: string): string {
 
 function buildPreviewSetupThreadTitle(workspaceRootRelativePath: string): string {
   return `Preview setup · ${workspaceLabel(workspaceRootRelativePath)}`;
+}
+
+function buildPreviewFeedbackThreadTitle(previewFileRelativePath: string): string {
+  const fileName = previewFileRelativePath.split(/[\\/]/).at(-1) ?? previewFileRelativePath;
+  return `Preview feedback · ${fileName}`;
 }
 
 function buildOptimisticPreviewThreadShell(input: {
@@ -168,6 +182,27 @@ type PreviewParentCommandMessage =
         width: number | null;
         height: number | null;
       };
+    }
+  | {
+      source: "forma-preview-parent";
+      kind: "preview.feedback.setEnabled";
+      runtimeInstanceId: string;
+      previewFileRelativePath: string;
+      enabled: boolean;
+    }
+  | {
+      source: "forma-preview-parent";
+      kind: "preview.feedback.syncAnnotations";
+      runtimeInstanceId: string;
+      previewFileRelativePath: string;
+      annotations: PreviewFeedbackAnnotation[];
+    }
+  | {
+      source: "forma-preview-parent";
+      kind: "preview.feedback.setTheme";
+      runtimeInstanceId: string;
+      previewFileRelativePath: string;
+      primaryColor: string;
     };
 
 interface PreviewRuntimeSnapshotMessage {
@@ -195,6 +230,22 @@ interface PreviewRuntimeErrorMessage {
   runtimeInstanceId: string;
   previewFileRelativePath: string;
   message: string;
+}
+
+interface PreviewFeedbackCreatedMessage {
+  source: "forma-component-harness";
+  kind: "preview.feedback.created";
+  runtimeInstanceId: string;
+  previewFileRelativePath: string;
+  annotation: PreviewFeedbackAnnotation;
+}
+
+function resolveDocumentPrimaryColor(): string {
+  if (typeof document === "undefined") {
+    return "var(--primary)";
+  }
+  const primaryColor = getComputedStyle(document.documentElement).getPropertyValue("--primary");
+  return primaryColor.trim() || "var(--primary)";
 }
 
 function buildRuntimeSnapshotFromMessage(
@@ -606,6 +657,7 @@ export function PreviewDrawer() {
   const [previewViewportId, setPreviewViewportId] = useState<PreviewViewportId>("fit");
   const [previewZoomId, setPreviewZoomId] = useState<PreviewZoomId>("fit");
   const [previewFrameReloadNonce, setPreviewFrameReloadNonce] = useState(0);
+  const [feedbackEnabled, setFeedbackEnabled] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const previewCanvasRef = useRef<HTMLDivElement | null>(null);
   const [previewCanvasSize, setPreviewCanvasSize] = useState({ width: 0, height: 0 });
@@ -718,6 +770,43 @@ export function PreviewDrawer() {
       : null;
   const previewViewport = resolvePreviewViewport(previewViewportId);
   const previewZoom = resolvePreviewZoom(previewZoomId);
+  const [previewFeedbackPrimaryColor, setPreviewFeedbackPrimaryColor] = useState(
+    resolveDocumentPrimaryColor,
+  );
+  const activeFeedbackScope = useMemo<PreviewFeedbackScope>(
+    () => ({
+      scenarioId: selectedScenarioId,
+      scenarioName:
+        scenarioChoices.find((choice) => choice.id === selectedScenarioId)?.name ??
+        selectedScenarioId,
+      argOverrides: activePreviewSession?.confirmedArgOverrides ?? {},
+      argOverridesHash: stableHashPreviewArgs(activePreviewSession?.confirmedArgOverrides ?? {}),
+      viewport: {
+        id: previewViewport.id,
+        width: previewViewport.width,
+        height: previewViewport.height,
+      },
+    }),
+    [
+      activePreviewSession?.confirmedArgOverrides,
+      previewViewport.height,
+      previewViewport.id,
+      previewViewport.width,
+      scenarioChoices,
+      selectedScenarioId,
+    ],
+  );
+  const activeFeedbackAnnotations = useMemo(
+    () =>
+      filterAnnotationsForActiveScope(
+        activePreviewSession?.feedbackAnnotations ?? [],
+        activeFeedbackScope,
+      ),
+    [activeFeedbackScope, activePreviewSession?.feedbackAnnotations],
+  );
+  const unsentFeedbackCount = activeFeedbackAnnotations.filter(
+    (annotation) => annotation.status === "unsent",
+  ).length;
 
   const postPreviewCommand = useCallback((message: PreviewParentCommandMessage) => {
     const contentWindow = iframeRef.current?.contentWindow;
@@ -730,6 +819,70 @@ export function PreviewDrawer() {
     contentWindow.postMessage(message, "*");
     return "commandId" in message ? message.commandId : null;
   }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const updatePrimaryColor = () => {
+      setPreviewFeedbackPrimaryColor(resolveDocumentPrimaryColor());
+    };
+    updatePrimaryColor();
+    const observer = new MutationObserver(updatePrimaryColor);
+    observer.observe(root, {
+      attributeFilter: ["style", "data-theme", "data-theme-mode", "data-theme-preference-mode"],
+      attributes: true,
+    });
+    return () => observer.disconnect();
+  }, []);
+
+  const syncPreviewFeedbackToRuntime = useCallback(
+    (annotations: PreviewFeedbackAnnotation[] = activeFeedbackAnnotations) => {
+      if (!runtimeSnapshot?.runtimeInstanceId || !activePreviewFileRelativePath) {
+        return;
+      }
+      postPreviewCommand({
+        source: "forma-preview-parent",
+        kind: "preview.feedback.syncAnnotations",
+        runtimeInstanceId: runtimeSnapshot.runtimeInstanceId,
+        previewFileRelativePath: activePreviewFileRelativePath,
+        annotations,
+      });
+      postPreviewCommand({
+        source: "forma-preview-parent",
+        kind: "preview.feedback.setTheme",
+        runtimeInstanceId: runtimeSnapshot.runtimeInstanceId,
+        previewFileRelativePath: activePreviewFileRelativePath,
+        primaryColor: previewFeedbackPrimaryColor,
+      });
+      postPreviewCommand({
+        source: "forma-preview-parent",
+        kind: "preview.feedback.setEnabled",
+        runtimeInstanceId: runtimeSnapshot.runtimeInstanceId,
+        previewFileRelativePath: activePreviewFileRelativePath,
+        enabled: feedbackEnabled,
+      });
+    },
+    [
+      activeFeedbackAnnotations,
+      activePreviewFileRelativePath,
+      feedbackEnabled,
+      postPreviewCommand,
+      previewFeedbackPrimaryColor,
+      runtimeSnapshot?.runtimeInstanceId,
+    ],
+  );
+
+  const syncPreviewFeedbackThemeToRuntime = useCallback(
+    (runtimeInstanceId: string, previewFileRelativePath: string) => {
+      postPreviewCommand({
+        source: "forma-preview-parent",
+        kind: "preview.feedback.setTheme",
+        runtimeInstanceId,
+        previewFileRelativePath,
+        primaryColor: resolveDocumentPrimaryColor(),
+      });
+    },
+    [postPreviewCommand],
+  );
 
   const syncPreviewViewportToRuntime = useCallback(() => {
     if (!runtimeSnapshot?.runtimeInstanceId || !activePreviewFileRelativePath) {
@@ -1229,6 +1382,7 @@ export function PreviewDrawer() {
     status: ProjectPreviewWorkspaceRecord["status"];
     lastPreviewFileRelativePath: string | null;
     sendPromptWhenThreadExists: boolean;
+    persistWorkspaceRecord?: boolean;
   }) => {
     if (!activeProjectRef || !activeProject || !api) {
       return;
@@ -1292,13 +1446,15 @@ export function PreviewDrawer() {
         await startPreviewThreadTurn(threadId, createdAt);
       }
 
-      await persistWorkspaceThreadRecordBestEffort({
-        workspaceRootRelativePath: input.workspaceRootRelativePath,
-        threadId,
-        status: input.status,
-        lastPreviewFileRelativePath: input.lastPreviewFileRelativePath,
-        lastError: null,
-      });
+      if (input.persistWorkspaceRecord ?? true) {
+        await persistWorkspaceThreadRecordBestEffort({
+          workspaceRootRelativePath: input.workspaceRootRelativePath,
+          threadId,
+          status: input.status,
+          lastPreviewFileRelativePath: input.lastPreviewFileRelativePath,
+          lastError: null,
+        });
+      }
     };
 
     if (reusableThreadId) {
@@ -1311,13 +1467,15 @@ export function PreviewDrawer() {
         await createPreviewThread(fallbackThreadId, fallbackCreatedAt);
         await navigateToPreviewThread(fallbackThreadId);
         await startPreviewThreadTurn(fallbackThreadId, fallbackCreatedAt);
-        await persistWorkspaceThreadRecordBestEffort({
-          workspaceRootRelativePath: input.workspaceRootRelativePath,
-          threadId: fallbackThreadId,
-          status: input.status,
-          lastPreviewFileRelativePath: input.lastPreviewFileRelativePath,
-          lastError: error instanceof Error ? error.message : "Failed to reuse preview thread.",
-        });
+        if (input.persistWorkspaceRecord ?? true) {
+          await persistWorkspaceThreadRecordBestEffort({
+            workspaceRootRelativePath: input.workspaceRootRelativePath,
+            threadId: fallbackThreadId,
+            status: input.status,
+            lastPreviewFileRelativePath: input.lastPreviewFileRelativePath,
+            lastError: error instanceof Error ? error.message : "Failed to reuse preview thread.",
+          });
+        }
         return;
       }
     }
@@ -1387,6 +1545,60 @@ export function PreviewDrawer() {
     });
   };
 
+  const openPreviewFeedbackThread = async () => {
+    if (!activeProjectRef || !activeProject || !activePreviewFileRelativePath) {
+      return;
+    }
+    const unsentAnnotations = activeFeedbackAnnotations.filter(
+      (annotation) => annotation.status === "unsent",
+    );
+    if (unsentAnnotations.length === 0) {
+      return;
+    }
+    const workspaceRecord =
+      activeProject.previewWorkspaceRecords?.find(
+        (record) => record.lastPreviewFileRelativePath === activePreviewFileRelativePath,
+      ) ??
+      activeProject.previewWorkspaceRecords?.find((record) => record.threadId !== null) ??
+      null;
+    const workspaceRootRelativePath = workspaceRecord?.workspaceRootRelativePath ?? "";
+    const prompt = buildPreviewFeedbackPrompt({
+      previewFileRelativePath: activePreviewFileRelativePath,
+      componentRelativePath:
+        resolved?.relativePath ?? activeProjectState?.currentRelativePath ?? null,
+      scope: activeFeedbackScope,
+      annotations: unsentAnnotations,
+    });
+    await openOrResumePreviewThread({
+      workspaceRootRelativePath,
+      existingThreadId: null,
+      title: buildPreviewFeedbackThreadTitle(activePreviewFileRelativePath),
+      prompt,
+      status: "ready",
+      lastPreviewFileRelativePath: activePreviewFileRelativePath,
+      sendPromptWhenThreadExists: false,
+      persistWorkspaceRecord: false,
+    });
+    const sentAt = new Date().toISOString();
+    const sentIds = unsentAnnotations.map((annotation) => annotation.id);
+    updateProjectState(activeProjectRef, (currentState) => ({
+      ...currentState,
+      sessionsByPreviewFilePath: upsertPreviewFileSession(
+        currentState.sessionsByPreviewFilePath,
+        activePreviewFileRelativePath,
+        (session) => ({
+          ...session,
+          feedbackAnnotations: markPreviewFeedbackAnnotationsSent(
+            session.feedbackAnnotations,
+            sentIds,
+            sentAt,
+          ),
+          updatedAt: sentAt,
+        }),
+      ),
+    }));
+  };
+
   useEffect(() => {
     const nextTurnKey =
       activeRouteLatestTurn && activeRouteLatestTurn.state !== "running"
@@ -1442,6 +1654,11 @@ export function PreviewDrawer() {
         runtimeCommandWatermarkRef.current[message.runtimeInstanceId] = 0;
         applyRuntimeSnapshot(message, message.argOverrides);
         restoreSessionIntoRuntime(message);
+        syncPreviewFeedbackThemeToRuntime(
+          message.runtimeInstanceId,
+          message.previewFileRelativePath,
+        );
+        syncPreviewFeedbackToRuntime();
         return;
       }
       if (
@@ -1499,6 +1716,120 @@ export function PreviewDrawer() {
             message: message.message,
           },
         });
+        return;
+      }
+
+      if (
+        event.data.kind === "preview.feedback.enabledChanged" &&
+        typeof event.data.runtimeInstanceId === "string" &&
+        typeof event.data.previewFileRelativePath === "string" &&
+        typeof event.data.enabled === "boolean"
+      ) {
+        if (
+          projectState?.currentPreviewFileRelativePath &&
+          projectState.currentPreviewFileRelativePath !== event.data.previewFileRelativePath
+        ) {
+          return;
+        }
+        if (
+          projectState?.runtimeSnapshot?.runtimeInstanceId &&
+          projectState.runtimeSnapshot.runtimeInstanceId !== event.data.runtimeInstanceId
+        ) {
+          return;
+        }
+        setFeedbackEnabled(event.data.enabled);
+        return;
+      }
+
+      if (
+        event.data.kind === "preview.feedback.created" &&
+        typeof event.data.runtimeInstanceId === "string" &&
+        typeof event.data.previewFileRelativePath === "string" &&
+        event.data.annotation &&
+        typeof event.data.annotation === "object"
+      ) {
+        const message = event.data as PreviewFeedbackCreatedMessage;
+        if (
+          projectState?.currentPreviewFileRelativePath &&
+          projectState.currentPreviewFileRelativePath !== message.previewFileRelativePath
+        ) {
+          return;
+        }
+        if (
+          projectState?.runtimeSnapshot?.runtimeInstanceId &&
+          projectState.runtimeSnapshot.runtimeInstanceId !== message.runtimeInstanceId
+        ) {
+          return;
+        }
+        updateProjectState(activeProjectRef, (currentState) => ({
+          ...currentState,
+          sessionsByPreviewFilePath: upsertPreviewFileSession(
+            currentState.sessionsByPreviewFilePath,
+            message.previewFileRelativePath,
+            (session) => ({
+              ...session,
+              feedbackAnnotations: [...session.feedbackAnnotations, message.annotation],
+              updatedAt: new Date().toISOString(),
+            }),
+          ),
+        }));
+        return;
+      }
+
+      if (
+        event.data.kind === "preview.feedback.submitRequested" &&
+        typeof event.data.runtimeInstanceId === "string" &&
+        typeof event.data.previewFileRelativePath === "string"
+      ) {
+        if (
+          projectState?.currentPreviewFileRelativePath &&
+          projectState.currentPreviewFileRelativePath !== event.data.previewFileRelativePath
+        ) {
+          return;
+        }
+        if (
+          projectState?.runtimeSnapshot?.runtimeInstanceId &&
+          projectState.runtimeSnapshot.runtimeInstanceId !== event.data.runtimeInstanceId
+        ) {
+          return;
+        }
+        void openPreviewFeedbackThread();
+        return;
+      }
+
+      if (
+        event.data.kind === "preview.feedback.clearRequested" &&
+        typeof event.data.runtimeInstanceId === "string" &&
+        typeof event.data.previewFileRelativePath === "string"
+      ) {
+        if (
+          projectState?.currentPreviewFileRelativePath &&
+          projectState.currentPreviewFileRelativePath !== event.data.previewFileRelativePath
+        ) {
+          return;
+        }
+        if (
+          projectState?.runtimeSnapshot?.runtimeInstanceId &&
+          projectState.runtimeSnapshot.runtimeInstanceId !== event.data.runtimeInstanceId
+        ) {
+          return;
+        }
+        updateProjectState(activeProjectRef, (currentState) => ({
+          ...currentState,
+          sessionsByPreviewFilePath: upsertPreviewFileSession(
+            currentState.sessionsByPreviewFilePath,
+            event.data.previewFileRelativePath,
+            (session) => ({
+              ...session,
+              feedbackAnnotations: session.feedbackAnnotations.filter(
+                (annotation) =>
+                  buildPreviewFeedbackScopeKey(annotation.scope) !==
+                  buildPreviewFeedbackScopeKey(activeFeedbackScope),
+              ),
+              updatedAt: new Date().toISOString(),
+            }),
+          ),
+        }));
       }
     };
     window.addEventListener("message", handleMessage);
@@ -1512,6 +1843,11 @@ export function PreviewDrawer() {
     patchProjectState,
     recoverPreviewRuntimeOnce,
     restoreSessionIntoRuntime,
+    syncPreviewFeedbackThemeToRuntime,
+    syncPreviewFeedbackToRuntime,
+    updateProjectState,
+    activeFeedbackScope,
+    openPreviewFeedbackThread,
   ]);
 
   useEffect(() => {
@@ -1529,6 +1865,10 @@ export function PreviewDrawer() {
   useEffect(() => {
     syncPreviewViewportToRuntime();
   }, [syncPreviewViewportToRuntime]);
+
+  useEffect(() => {
+    syncPreviewFeedbackToRuntime();
+  }, [syncPreviewFeedbackToRuntime]);
 
   useEffect(() => {
     const canvasElement = previewCanvasRef.current;
@@ -1820,29 +2160,36 @@ export function PreviewDrawer() {
       <div className="relative h-full min-h-0 overflow-hidden">
         <div className="absolute top-3 px-4 z-30 w-full flex items-center justify-between gap-1.5">
           {iframeUrl ? (
-            <Popover>
-              <PopoverTrigger
-                className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-background/88 px-2.5 text-foreground text-xs shadow-sm backdrop-blur-md transition-colors hover:bg-accent"
-                type="button"
-              >
-                Controls
-                <ChevronDownIcon className="size-3 fill-current opacity-60" />
-              </PopoverTrigger>
-              <PopoverPopup align="start" side="bottom" sideOffset={6}>
-                <PreviewControlsContent
-                  scenarioItems={scenarioItems}
-                  selectedScenarioId={selectedScenarioId}
-                  selectedViewportId={previewViewportId}
-                  selectedZoomId={previewZoomId}
-                  controls={displayedControls}
-                  onSelectScenario={handleSelectScenario}
-                  onSelectViewport={setPreviewViewportId}
-                  onSelectZoom={setPreviewZoomId}
-                  onSetControlValue={handleSetControlValue}
-                  onFlushControl={handleFlushControl}
-                />
-              </PopoverPopup>
-            </Popover>
+            <div className="flex items-center gap-1.5">
+              <Popover>
+                <PopoverTrigger
+                  className="inline-flex h-7 items-center gap-1.5 rounded-md border border-border/70 bg-background/88 px-2.5 text-foreground text-xs shadow-sm backdrop-blur-md transition-colors hover:bg-accent"
+                  type="button"
+                >
+                  Controls
+                  <ChevronDownIcon className="size-3 fill-current opacity-60" />
+                </PopoverTrigger>
+                <PopoverPopup align="start" side="bottom" sideOffset={6}>
+                  <PreviewControlsContent
+                    scenarioItems={scenarioItems}
+                    selectedScenarioId={selectedScenarioId}
+                    selectedViewportId={previewViewportId}
+                    selectedZoomId={previewZoomId}
+                    controls={displayedControls}
+                    onSelectScenario={handleSelectScenario}
+                    onSelectViewport={setPreviewViewportId}
+                    onSelectZoom={setPreviewZoomId}
+                    onSetControlValue={handleSetControlValue}
+                    onFlushControl={handleFlushControl}
+                  />
+                </PopoverPopup>
+              </Popover>
+              {activeFeedbackAnnotations.length > 0 ? (
+                <span className="inline-flex h-7 items-center rounded-md border border-border/70 bg-background/88 px-2 text-xs text-muted-foreground shadow-sm backdrop-blur-md">
+                  {unsentFeedbackCount} unsent feedback
+                </span>
+              ) : null}
+            </div>
           ) : null}
           <div className="inline-flex h-6 items-center overflow-hidden rounded-md border border-border/70 bg-background/88 shadow-sm backdrop-blur-md">
             <button

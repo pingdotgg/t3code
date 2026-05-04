@@ -31,6 +31,9 @@ const framework = process.env.FORMA_PREVIEW_FRAMEWORK?.trim() || "unsupported";
 const moduleMocks = parseJsonEnv<Record<string, string>>("FORMA_PREVIEW_MODULE_MOCKS", {});
 const cacheDir =
   process.env.FORMA_PREVIEW_CACHE_DIR?.trim() || path.join(runtimeRoot, "node_modules", ".vite");
+const optimizeDepsEntries = parseJsonEnv<string[]>("FORMA_PREVIEW_OPTIMIZE_DEPS_ENTRIES", [
+  "src/main.tsx",
+]);
 const warmupFiles = parseJsonEnv<string[]>("FORMA_PREVIEW_WARMUP_FILES", []);
 const extraAliases = parseJsonEnv<Array<{ find: string; replacement: string }>>(
   "FORMA_PREVIEW_ALIASES",
@@ -157,10 +160,18 @@ export default defineConfig({
   resolve: {
     alias: aliasEntries,
   },
+  optimizeDeps: {
+    entries: optimizeDepsEntries,
+    holdUntilCrawlEnd: true,
+    ignoreOutdatedRequests: true,
+  },
   server: {
     host,
     port,
     strictPort: true,
+    headers: {
+      "Cache-Control": "no-store",
+    },
     warmup: {
       clientFiles: warmupFiles,
     },

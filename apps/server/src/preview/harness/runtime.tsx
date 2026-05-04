@@ -2,6 +2,8 @@ import * as React from "react";
 import { createRoot } from "react-dom/client";
 
 import { setPreviewEnvironment } from "./environmentStore.ts";
+import { PreviewFeedbackOverlay } from "./feedback/PreviewFeedbackOverlay.tsx";
+import type { PreviewFeedbackAnnotation } from "./feedback/types.ts";
 import {
   applyPreviewRuntimeCommand,
   buildPreviewRuntimeArgNameSet,
@@ -16,6 +18,7 @@ import type {
 
 interface RuntimeOptions {
   componentModuleUrl: string;
+  componentRelativePath?: string | null;
   framework: "react-next" | "react-remix" | "react-router" | "react-vite" | "unsupported";
   mountElementId: string;
   previewDefinition: PreviewDefinition;
@@ -55,6 +58,29 @@ function createRuntimeInstanceId(): string {
     return crypto.randomUUID();
   }
   return `preview-runtime-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .toSorted()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(",")}}`;
+}
+
+function hashString(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 function humanizeLabel(name: string): string {
@@ -248,6 +274,11 @@ function PreviewShell(props: RuntimeOptions) {
     width: null,
     height: null,
   });
+  const [feedbackEnabled, setFeedbackEnabled] = React.useState(false);
+  const [feedbackAnnotations, setFeedbackAnnotations] = React.useState<PreviewFeedbackAnnotation[]>(
+    [],
+  );
+  const [feedbackPrimaryColor, setFeedbackPrimaryColor] = React.useState("var(--primary)");
 
   React.useEffect(() => {
     const previousHtmlBackground = document.documentElement.style.background;
@@ -491,6 +522,29 @@ function PreviewShell(props: RuntimeOptions) {
           width: typeof viewport.width === "number" ? viewport.width : null,
           height: typeof viewport.height === "number" ? viewport.height : null,
         });
+        return;
+      }
+
+      if (event.data.kind === "preview.feedback.setEnabled") {
+        setFeedbackEnabled(event.data.enabled === true);
+        return;
+      }
+
+      if (event.data.kind === "preview.feedback.syncAnnotations") {
+        setFeedbackAnnotations(
+          Array.isArray(event.data.annotations)
+            ? (event.data.annotations as PreviewFeedbackAnnotation[])
+            : [],
+        );
+        return;
+      }
+
+      if (event.data.kind === "preview.feedback.setTheme") {
+        setFeedbackPrimaryColor(
+          typeof event.data.primaryColor === "string" && event.data.primaryColor.trim().length > 0
+            ? event.data.primaryColor.trim()
+            : "var(--primary)",
+        );
       }
     };
 
@@ -521,31 +575,79 @@ function PreviewShell(props: RuntimeOptions) {
   }
 
   const previewContent = (
-    <PreviewErrorBoundary
-      onError={(error) =>
+    <PreviewFeedbackOverlay
+      runtimeInstanceId={runtimeInstanceId}
+      previewFileRelativePath={props.previewFileRelativePath}
+      componentRelativePath={props.componentRelativePath ?? null}
+      scope={{
+        scenarioId: selectedScenario.id,
+        scenarioName: selectedScenario.name,
+        argOverrides: runtimeState.argOverrides,
+        argOverridesHash: hashString(stableStringify(runtimeState.argOverrides)),
+        viewport: previewViewport,
+      }}
+      annotations={feedbackAnnotations}
+      accentColor={feedbackPrimaryColor}
+      enabled={feedbackEnabled}
+      onEnabledChange={(enabled) => {
+        setFeedbackEnabled(enabled);
         postToParent({
-          kind: "preview.runtime.error",
+          kind: "preview.feedback.enabledChanged",
           runtimeInstanceId,
           previewFileRelativePath: props.previewFileRelativePath,
-          message: error.message,
+          enabled,
+        });
+      }}
+      onAnnotationCreate={(annotation) => {
+        setFeedbackAnnotations((current) => [...current, annotation]);
+        postToParent({
+          kind: "preview.feedback.created",
+          runtimeInstanceId,
+          previewFileRelativePath: props.previewFileRelativePath,
+          annotation,
+        });
+      }}
+      onSubmitRequested={() =>
+        postToParent({
+          kind: "preview.feedback.submitRequested",
+          runtimeInstanceId,
+          previewFileRelativePath: props.previewFileRelativePath,
+        })
+      }
+      onClearRequested={() =>
+        postToParent({
+          kind: "preview.feedback.clearRequested",
+          runtimeInstanceId,
+          previewFileRelativePath: props.previewFileRelativePath,
         })
       }
     >
-      <Wrapper
-        env={activeEnvironment}
-        scenario={{
-          id: selectedScenario.id,
-          name: selectedScenario.name,
-          env: selectedScenario.env ?? null,
-        }}
-        previewArgs={mergedArgs}
-        previewViewport={previewViewport}
-        pathname={activeEnvironment.pathname}
-        searchParams={activeEnvironment.searchParams}
+      <PreviewErrorBoundary
+        onError={(error) =>
+          postToParent({
+            kind: "preview.runtime.error",
+            runtimeInstanceId,
+            previewFileRelativePath: props.previewFileRelativePath,
+            message: error.message,
+          })
+        }
       >
-        <Component {...mergedArgs} />
-      </Wrapper>
-    </PreviewErrorBoundary>
+        <Wrapper
+          env={activeEnvironment}
+          scenario={{
+            id: selectedScenario.id,
+            name: selectedScenario.name,
+            env: selectedScenario.env ?? null,
+          }}
+          previewArgs={mergedArgs}
+          previewViewport={previewViewport}
+          pathname={activeEnvironment.pathname}
+          searchParams={activeEnvironment.searchParams}
+        >
+          <Component {...mergedArgs} />
+        </Wrapper>
+      </PreviewErrorBoundary>
+    </PreviewFeedbackOverlay>
   );
 
   if (

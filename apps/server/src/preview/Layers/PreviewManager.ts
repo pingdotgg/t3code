@@ -39,6 +39,7 @@ import { aliasEntriesFromTsconfigPaths, type AliasEntry } from "./previewAliases
 import {
   buildPreviewRuntimeWarmupPlan,
   parsePreviewComponentRelativePath,
+  resolvePreviewComponentPath,
 } from "./previewRuntimeWarmup.ts";
 
 interface ProjectRecord {
@@ -575,7 +576,11 @@ export async function waitForRuntimeReady(
         for (const readinessPath of readinessPaths) {
           const response = await fetchRuntimePath(baseUrl, readinessPath);
           if (!response.ok) {
-            return `${readinessPath} returned ${response.status}`;
+            const detail = await response.text().catch(() => "");
+            const trimmedDetail = detail.trim();
+            return trimmedDetail.length > 0
+              ? `${readinessPath} returned ${response.status}: ${trimmedDetail.slice(0, 240)}`
+              : `${readinessPath} returned ${response.status}`;
           }
         }
         return null;
@@ -612,6 +617,8 @@ async function createRuntimeWorkspace(args: {
   readonly projectRoot: string;
   readonly componentRelativePath: string;
   readonly previewFileRelativePath: string;
+  readonly previewComponentRelativePath: string | null;
+  readonly moduleMocks: Readonly<Record<string, string>>;
   readonly framework: PreviewFramework;
 }): Promise<string> {
   const runtimeDir = path.join(os.tmpdir(), "forma-preview-harness", randomUUID().slice(0, 12));
@@ -627,6 +634,16 @@ async function createRuntimeWorkspace(args: {
   );
   const mocksModuleUrl = normalizeViteFsPath(
     path.join(args.projectRoot, ".forma/preview/mocks.ts"),
+  );
+  const optimizerComponentPath = resolvePreviewComponentPath({
+    projectRoot: args.projectRoot,
+    previewFilePath: path.join(args.projectRoot, args.previewFileRelativePath),
+    componentRelativePath: args.componentRelativePath,
+    previewComponentRelativePath: args.previewComponentRelativePath,
+  });
+  const optimizerComponentModuleUrl = normalizeViteFsPath(optimizerComponentPath);
+  const optimizerMockModuleUrls = Object.values(args.moduleMocks).map((relativePath) =>
+    normalizeViteFsPath(path.join(args.projectRoot, relativePath)),
   );
   const runtimeHelperUrl = normalizeViteFsPath(HARNESS_RUNTIME_MODULE_PATH);
 
@@ -644,6 +661,7 @@ const componentModuleUrl =
 
 startPreviewRuntime({
   componentModuleUrl,
+  componentRelativePath: ${JSON.stringify(args.componentRelativePath)},
   framework: ${JSON.stringify(args.framework)},
   mountElementId: "app",
   previewDefinition,
@@ -651,6 +669,15 @@ startPreviewRuntime({
   wrapperModule,
 });
 `;
+
+  const optimizerEntrySource = [
+    `import ${JSON.stringify("./main.tsx")};`,
+    `import ${JSON.stringify(previewModuleUrl)};`,
+    `import ${JSON.stringify(wrapperModuleUrl)};`,
+    `import ${JSON.stringify(mocksModuleUrl)};`,
+    `import ${JSON.stringify(optimizerComponentModuleUrl)};`,
+    ...optimizerMockModuleUrls.map((moduleUrl) => `import ${JSON.stringify(moduleUrl)};`),
+  ].join("\n");
 
   const htmlSource = `<!doctype html>
 <html lang="en">
@@ -676,6 +703,11 @@ startPreviewRuntime({
 `;
 
   await fsPromises.writeFile(path.join(runtimeDir, "src/main.tsx"), mainSource, "utf8");
+  await fsPromises.writeFile(
+    path.join(runtimeDir, "src/optimizer-entry.ts"),
+    `${optimizerEntrySource}\n`,
+    "utf8",
+  );
   await fsPromises.writeFile(path.join(runtimeDir, "preview.html"), htmlSource, "utf8");
   return runtimeDir;
 }
@@ -1060,6 +1092,8 @@ const makePreviewManager = Effect.gen(function* () {
             projectRoot: project.workspaceRoot,
             componentRelativePath: target.relativePath,
             previewFileRelativePath: target.previewFileRelativePath,
+            previewComponentRelativePath: target.previewComponentRelativePath,
+            moduleMocks: target.moduleMocks,
             framework: target.framework,
           }),
         catch: (cause) => toPreviewError("Failed to create preview runtime workspace.", cause),
@@ -1098,6 +1132,7 @@ const makePreviewManager = Effect.gen(function* () {
           FORMA_PREVIEW_HOST: PREVIEW_RUNTIME_HOST,
           FORMA_PREVIEW_PORT: String(port),
           FORMA_PREVIEW_CACHE_DIR: warmupPlan.cacheDir,
+          FORMA_PREVIEW_OPTIMIZE_DEPS_ENTRIES: JSON.stringify(warmupPlan.optimizeDepsEntries),
           FORMA_PREVIEW_WARMUP_FILES: JSON.stringify(warmupPlan.warmupFiles),
           FORMA_PREVIEW_MODULE_MOCKS: JSON.stringify(
             Object.fromEntries(

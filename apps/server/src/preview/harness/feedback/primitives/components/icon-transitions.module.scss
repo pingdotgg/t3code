@@ -1,0 +1,54 @@
+// Scoped icon transition classes.
+// Replaces inline <style> tags that injected global class names (e.g. .copy-icon)
+// which could conflict with host page styles. CSS module class names are hashed,
+// so they're immune to host CSS collisions.
+// Using !important ensures host rules like `svg * { opacity: 1 !important }` can't
+// force both icon states visible simultaneously (class specificity 0,1,0 beats
+// element selectors like `svg *` at 0,0,1 even when both use !important).
+
+// Opacity + transform transitions (copy, send icons)
+.iconState {
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+  transform-origin: center;
+}
+
+.iconStateFast {
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
+  transform-origin: center;
+}
+
+// Opacity-only transitions (eye, pause/play icons)
+.iconFade {
+  transition: opacity 0.2s ease;
+}
+
+.iconFadeFast {
+  transition: opacity 0.15s ease;
+}
+
+.visible {
+  opacity: 1 !important;
+}
+
+.visibleScaled {
+  opacity: 1 !important;
+  transform: scale(1);
+}
+
+.hidden {
+  opacity: 0 !important;
+}
+
+.hiddenScaled {
+  opacity: 0 !important;
+  transform: scale(0.8);
+}
+
+.sending {
+  opacity: 0.5 !important;
+  transform: scale(0.8);
+}

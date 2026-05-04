@@ -15,6 +15,7 @@ export function createPreviewFileSessionState(
     selectedScenarioId: input?.selectedScenarioId ?? null,
     confirmedArgOverrides: { ...input?.confirmedArgOverrides },
     draftArgOverrides: { ...input?.draftArgOverrides },
+    feedbackAnnotations: [...(input?.feedbackAnnotations ?? [])],
     updatedAt: new Date().toISOString(),
   };
 }

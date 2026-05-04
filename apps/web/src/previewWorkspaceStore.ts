@@ -7,6 +7,7 @@ import type {
   ScopedProjectRef,
 } from "@forma/contracts";
 import { create } from "zustand";
+import type { PreviewFeedbackAnnotation } from "./previewFeedback";
 
 export type PreviewControlType =
   | "boolean"
@@ -48,6 +49,7 @@ export interface PreviewFileSessionState {
   selectedScenarioId: string | null;
   confirmedArgOverrides: Record<string, unknown>;
   draftArgOverrides: Record<string, unknown>;
+  feedbackAnnotations: PreviewFeedbackAnnotation[];
   updatedAt: string;
 }
 
