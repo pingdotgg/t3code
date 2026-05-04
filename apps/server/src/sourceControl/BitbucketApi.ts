@@ -65,6 +65,23 @@ const RawBitbucketRepositorySchema = Schema.Struct({
   ),
 });
 
+const RawBitbucketBranchingModelSchema = Schema.Struct({
+  development: Schema.optional(
+    Schema.Struct({
+      branch: Schema.optional(
+        Schema.NullOr(
+          Schema.Struct({
+            name: Schema.optional(TrimmedNonEmptyString),
+          }),
+        ),
+      ),
+      is_valid: Schema.optional(Schema.Boolean),
+      name: Schema.optional(Schema.NullOr(Schema.String)),
+      use_mainbranch: Schema.optional(Schema.Boolean),
+    }),
+  ),
+});
+
 const BitbucketUserSchema = Schema.Struct({
   username: Schema.optional(TrimmedNonEmptyString),
   display_name: Schema.optional(TrimmedNonEmptyString),
@@ -216,7 +233,7 @@ function parseBitbucketRemoteUrl(remoteUrl: string): BitbucketRepositoryLocator 
 }
 
 function normalizeRepositoryCloneUrls(
-  raw: Schema.Schema.Type<typeof RawBitbucketRepositorySchema>,
+  raw: typeof RawBitbucketRepositorySchema.Type,
 ): SourceControlRepositoryCloneUrls {
   const httpClone =
     raw.links.clone?.find((entry) => entry.name.toLowerCase() === "https")?.href ??
@@ -228,6 +245,24 @@ function normalizeRepositoryCloneUrls(
     url: httpClone ?? raw.links.html?.href ?? raw.full_name,
     sshUrl: sshClone ?? httpClone ?? raw.full_name,
   };
+}
+
+function defaultChangeRequestTargetBranch(input: {
+  readonly repository: typeof RawBitbucketRepositorySchema.Type;
+  readonly branchingModel: typeof RawBitbucketBranchingModelSchema.Type | null;
+}): string | null {
+  const repositoryMainBranch = input.repository.mainbranch?.name ?? null;
+  const development = input.branchingModel?.development;
+  if (!development || development.use_mainbranch === true || development.is_valid === false) {
+    return repositoryMainBranch;
+  }
+
+  const developmentBranch = development.branch?.name?.trim() ?? development.name?.trim() ?? "";
+  if (developmentBranch.length === 0 || developmentBranch === "null") {
+    return repositoryMainBranch;
+  }
+
+  return developmentBranch;
 }
 
 function shouldPreferSshRemote(originRemoteUrl: string | null): boolean {
@@ -430,23 +465,32 @@ export const make = Effect.fn("makeBitbucketApi")(function* () {
     });
   });
 
+  const getRepositoryFromLocator = (repository: BitbucketRepositoryLocator) =>
+    executeJson(
+      "getRepository",
+      HttpClientRequest.get(
+        apiUrl(
+          `/repositories/${encodeURIComponent(repository.workspace)}/${encodeURIComponent(repository.repoSlug)}`,
+        ),
+      ),
+      RawBitbucketRepositorySchema,
+    );
+
   const getRepository = (input: {
     readonly cwd: string;
     readonly context?: SourceControlProvider.SourceControlProviderContext;
     readonly repository?: string;
-  }) =>
-    resolveRepository(input).pipe(
-      Effect.flatMap((repository) =>
-        executeJson(
-          "getRepository",
-          HttpClientRequest.get(
-            apiUrl(
-              `/repositories/${encodeURIComponent(repository.workspace)}/${encodeURIComponent(repository.repoSlug)}`,
-            ),
-          ),
-          RawBitbucketRepositorySchema,
+  }) => resolveRepository(input).pipe(Effect.flatMap(getRepositoryFromLocator));
+
+  const getBranchingModelFromLocator = (repository: BitbucketRepositoryLocator) =>
+    executeJson(
+      "getBranchingModel",
+      HttpClientRequest.get(
+        apiUrl(
+          `/repositories/${encodeURIComponent(repository.workspace)}/${encodeURIComponent(repository.repoSlug)}/branching-model`,
         ),
       ),
+      RawBitbucketBranchingModelSchema,
     );
 
   const getRawPullRequestFromRepository = (
@@ -628,7 +672,22 @@ export const make = Effect.fn("makeBitbucketApi")(function* () {
         );
       }),
     getDefaultBranch: (input) =>
-      getRepository(input).pipe(Effect.map((repository) => repository.mainbranch?.name ?? null)),
+      resolveRepository(input).pipe(
+        Effect.flatMap((locator) =>
+          Effect.all(
+            {
+              repository: getRepositoryFromLocator(locator),
+              branchingModel: getBranchingModelFromLocator(locator).pipe(
+                Effect.catch(() =>
+                  Effect.succeed<typeof RawBitbucketBranchingModelSchema.Type | null>(null),
+                ),
+              ),
+            },
+            { concurrency: "unbounded" },
+          ),
+        ),
+        Effect.map(defaultChangeRequestTargetBranch),
+      ),
     // Bitbucket Cloud pull requests are Git-backed and Bitbucket does not provide
     // an official checkout CLI. This provider-local path uses GitVcsDriver as a
     // narrow escape hatch to materialize Bitbucket PR refs. Do not generalize this
