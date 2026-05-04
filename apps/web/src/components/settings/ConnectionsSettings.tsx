@@ -2289,7 +2289,7 @@ export function ConnectionsSettings() {
             <Input
               value={savedBackendSshUsername}
               onChange={(event) => setSavedBackendSshUsername(event.target.value)}
-              placeholder="julius"
+              placeholder="root"
               disabled={isAddingSavedBackend}
               spellCheck={false}
             />
