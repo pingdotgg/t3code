@@ -567,7 +567,7 @@ describe("discoverCursorModelsViaAcp", () => {
 });
 
 describe("discoverCursorModelCapabilitiesViaAcp", () => {
-  it("closes all ACP probe runtimes after capability enrichment completes", async () => {
+  it("discovers model capabilities through Cursor's list_available_models extension method", async () => {
     const { exitLogPath, wrapperPath } = await runNode(
       makeExitLogFixture("cursor-capabilities-exit-log-"),
     );
@@ -601,9 +601,26 @@ describe("discoverCursorModelCapabilitiesViaAcp", () => {
       "gpt-5.4",
       "claude-opus-4-6",
     ]);
+    expect(models.find((model) => model.slug === "gpt-5.4")?.capabilities).toEqual(
+      createModelCapabilities({
+        optionDescriptors: [
+          selectDescriptor("reasoning", "Reasoning", [
+            { id: "low", label: "Low" },
+            { id: "medium", label: "Medium", isDefault: true },
+            { id: "high", label: "High" },
+            { id: "xhigh", label: "Extra High" },
+          ]),
+          selectDescriptor("contextWindow", "Context", [
+            { id: "272k", label: "272K", isDefault: true },
+            { id: "1m", label: "1M" },
+          ]),
+          booleanDescriptor("fastMode", "Fast", false),
+        ],
+      }),
+    );
 
     const exitLog = await runNode(waitForFileContent(exitLogPath));
-    expect(exitLog.match(/SIGTERM/g)?.length ?? 0).toBe(4);
+    expect(exitLog.match(/SIGTERM/g)?.length ?? 0).toBe(1);
   });
 });
 

@@ -4,6 +4,7 @@
  */
 import type { UserInputQuestion } from "@t3tools/contracts";
 import { Schema } from "effect";
+import * as AcpSchema from "effect-acp/schema";
 
 const CursorAskQuestionOption = Schema.Struct({
   id: Schema.String,
@@ -51,6 +52,16 @@ export const CursorUpdateTodosRequest = Schema.Struct({
   toolCallId: Schema.String,
   todos: Schema.Array(CursorTodo),
   merge: Schema.Boolean,
+});
+
+const CursorAvailableModel = Schema.Struct({
+  value: Schema.String,
+  name: Schema.String,
+  configOptions: Schema.optional(Schema.Array(AcpSchema.SessionConfigOption)),
+});
+
+export const CursorListAvailableModelsResponse = Schema.Struct({
+  models: Schema.Array(CursorAvailableModel),
 });
 
 export function extractAskQuestions(

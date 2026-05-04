@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CursorListAvailableModelsResponse,
   extractAskQuestions,
   extractPlanMarkdown,
   extractTodosAsPlan,
@@ -104,5 +105,31 @@ describe("CursorAcpExtension", () => {
         { step: "Unknown status", status: "pending" },
       ],
     });
+  });
+
+  it("decodes Cursor list_available_models responses with per-model config options", () => {
+    const decoded = CursorListAvailableModelsResponse.make({
+      models: [
+        {
+          value: "gpt-5.4",
+          name: "GPT-5.4",
+          configOptions: [
+            {
+              id: "reasoning",
+              name: "Reasoning",
+              category: "thought_level",
+              type: "select",
+              currentValue: "medium",
+              options: [
+                { value: "low", name: "Low" },
+                { value: "medium", name: "Medium" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(decoded.models[0]?.configOptions?.[0]?.id).toBe("reasoning");
   });
 });
