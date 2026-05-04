@@ -92,6 +92,10 @@ export const make = Effect.fn("makeGitLabSourceControlProvider")(function* () {
       gitlab
         .getRepositoryCloneUrls(input)
         .pipe(Effect.mapError((error) => providerError("getRepositoryCloneUrls", error))),
+    createRepository: (input) =>
+      gitlab
+        .createRepository(input)
+        .pipe(Effect.mapError((error) => providerError("createRepository", error))),
     getDefaultBranch: (input) =>
       gitlab
         .getDefaultBranch(input)

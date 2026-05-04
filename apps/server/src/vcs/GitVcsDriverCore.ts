@@ -1431,7 +1431,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   const pushCurrentBranch: GitVcsDriverShape["pushCurrentBranch"] = Effect.fn("pushCurrentBranch")(
-    function* (cwd, fallbackBranch) {
+    function* (cwd, fallbackBranch, options) {
       const details = yield* statusDetails(cwd);
       const branch = details.branch ?? fallbackBranch;
       if (!branch) {
@@ -1441,6 +1441,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ["push"],
           "Cannot push from detached HEAD.",
         );
+      }
+
+      const requestedRemoteName = options?.remoteName?.trim() || null;
+      if (requestedRemoteName) {
+        const publishBranch = yield* resolvePublishBranchName(cwd, branch);
+        yield* runGit("GitVcsDriver.pushCurrentBranch.pushWithRequestedRemote", cwd, [
+          "push",
+          "-u",
+          requestedRemoteName,
+          `HEAD:refs/heads/${publishBranch}`,
+        ]);
+        return {
+          status: "pushed" as const,
+          branch,
+          upstreamBranch: `${requestedRemoteName}/${publishBranch}`,
+          setUpstream: true,
+        };
       }
 
       const hasNoLocalDelta = details.aheadCount === 0 && details.behindCount === 0;

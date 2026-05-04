@@ -730,7 +730,7 @@ describe("when: ref has no upstream configured", () => {
     });
   });
 
-  it("resolveQuickAction disables push-and-pr flows when no origin remote exists", () => {
+  it("resolveQuickAction publishes when no origin remote exists", () => {
     const quick = resolveQuickAction(
       status({
         hasUpstream: false,
@@ -742,10 +742,9 @@ describe("when: ref has no upstream configured", () => {
       false,
     );
     assert.deepEqual(quick, {
-      kind: "show_hint",
-      label: "Push",
-      hint: 'Add an "origin" remote before pushing or creating a pull request.',
-      disabled: true,
+      kind: "open_publish",
+      label: "Publish repository",
+      disabled: false,
     });
   });
 
@@ -779,7 +778,7 @@ describe("when: ref has no upstream configured", () => {
     ]);
   });
 
-  it("buildMenuItems disables push and create PR when no origin remote exists", () => {
+  it("buildMenuItems hides push and create PR when no origin remote exists", () => {
     const items = buildMenuItems(
       status({ hasUpstream: false, pr: null, aheadCount: 2 }),
       false,
@@ -793,22 +792,6 @@ describe("when: ref has no upstream configured", () => {
         icon: "commit",
         kind: "open_dialog",
         dialogAction: "commit",
-      },
-      {
-        id: "push",
-        label: "Push",
-        disabled: true,
-        icon: "push",
-        kind: "open_dialog",
-        dialogAction: "push",
-      },
-      {
-        id: "pr",
-        label: "Create PR",
-        disabled: true,
-        icon: "pr",
-        kind: "open_dialog",
-        dialogAction: "create_pr",
       },
     ]);
   });

@@ -8,6 +8,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   Columns2Icon,
+  PilcrowIcon,
   Rows3Icon,
   TextWrapIcon,
 } from "lucide-react";
@@ -172,6 +173,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const settings = useSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
+  const [diffIgnoreWhitespace, setDiffIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const previousDiffOpenRef = useRef(false);
@@ -277,6 +279,7 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       threadId: activeThreadId,
       fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
+      ignoreWhitespace: diffIgnoreWhitespace,
       cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : conversationCacheScope,
       enabled: isGitRepo,
     }),
@@ -317,9 +320,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   useEffect(() => {
     if (diffOpen && !previousDiffOpenRef.current) {
       setDiffWordWrap(settings.diffWordWrap);
+      setDiffIgnoreWhitespace(settings.diffIgnoreWhitespace);
     }
     previousDiffOpenRef.current = diffOpen;
-  }, [diffOpen, settings.diffWordWrap]);
+  }, [diffOpen, settings.diffIgnoreWhitespace, settings.diffWordWrap]);
 
   useEffect(() => {
     if (!selectedFilePath || !patchViewportRef.current) {
@@ -550,6 +554,18 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
           }}
         >
           <TextWrapIcon className="size-3" />
+        </Toggle>
+        <Toggle
+          aria-label={diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
+          title={diffIgnoreWhitespace ? "Show whitespace changes" : "Hide whitespace changes"}
+          variant="outline"
+          size="xs"
+          pressed={diffIgnoreWhitespace}
+          onPressedChange={(pressed) => {
+            setDiffIgnoreWhitespace(Boolean(pressed));
+          }}
+        >
+          <PilcrowIcon className="size-3" />
         </Toggle>
       </div>
     </>

@@ -43,6 +43,66 @@ export const SourceControlRepositoryCloneUrls = Schema.Struct({
 });
 export type SourceControlRepositoryCloneUrls = typeof SourceControlRepositoryCloneUrls.Type;
 
+export const SourceControlRepositoryVisibility = Schema.Literals(["private", "public"]);
+export type SourceControlRepositoryVisibility = typeof SourceControlRepositoryVisibility.Type;
+
+export const SourceControlCloneProtocol = Schema.Literals(["auto", "ssh", "https"]);
+export type SourceControlCloneProtocol = typeof SourceControlCloneProtocol.Type;
+
+export const SourceControlRepositoryInfo = Schema.Struct({
+  provider: SourceControlProviderKind,
+  nameWithOwner: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  sshUrl: TrimmedNonEmptyString,
+});
+export type SourceControlRepositoryInfo = typeof SourceControlRepositoryInfo.Type;
+
+export const SourceControlRepositoryLookupInput = Schema.Struct({
+  provider: SourceControlProviderKind,
+  repository: TrimmedNonEmptyString,
+  cwd: Schema.optional(TrimmedNonEmptyString),
+});
+export type SourceControlRepositoryLookupInput = typeof SourceControlRepositoryLookupInput.Type;
+
+export const SourceControlCloneRepositoryInput = Schema.Struct({
+  provider: Schema.optional(SourceControlProviderKind),
+  repository: Schema.optional(TrimmedNonEmptyString),
+  remoteUrl: Schema.optional(TrimmedNonEmptyString),
+  destinationPath: TrimmedNonEmptyString,
+  protocol: Schema.optional(SourceControlCloneProtocol),
+});
+export type SourceControlCloneRepositoryInput = typeof SourceControlCloneRepositoryInput.Type;
+
+export const SourceControlCloneRepositoryResult = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  remoteUrl: TrimmedNonEmptyString,
+  repository: Schema.NullOr(SourceControlRepositoryInfo),
+});
+export type SourceControlCloneRepositoryResult = typeof SourceControlCloneRepositoryResult.Type;
+
+export const SourceControlPublishRepositoryInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  provider: SourceControlProviderKind,
+  repository: TrimmedNonEmptyString,
+  visibility: SourceControlRepositoryVisibility,
+  remoteName: Schema.optional(TrimmedNonEmptyString),
+  protocol: Schema.optional(SourceControlCloneProtocol),
+});
+export type SourceControlPublishRepositoryInput = typeof SourceControlPublishRepositoryInput.Type;
+
+export const SourceControlPublishStatus = Schema.Literals(["pushed", "remote_added"]);
+export type SourceControlPublishStatus = typeof SourceControlPublishStatus.Type;
+
+export const SourceControlPublishRepositoryResult = Schema.Struct({
+  repository: SourceControlRepositoryInfo,
+  remoteName: TrimmedNonEmptyString,
+  remoteUrl: TrimmedNonEmptyString,
+  branch: TrimmedNonEmptyString,
+  upstreamBranch: Schema.optional(TrimmedNonEmptyString),
+  status: SourceControlPublishStatus,
+});
+export type SourceControlPublishRepositoryResult = typeof SourceControlPublishRepositoryResult.Type;
+
 export const SourceControlDiscoveryStatus = Schema.Literals(["available", "missing"]);
 export type SourceControlDiscoveryStatus = typeof SourceControlDiscoveryStatus.Type;
 
@@ -63,7 +123,7 @@ export type SourceControlProviderAuth = typeof SourceControlProviderAuth.Type;
 
 const SourceControlDiscoveryItemFields = {
   label: TrimmedNonEmptyString,
-  executable: TrimmedNonEmptyString,
+  executable: Schema.optional(TrimmedNonEmptyString),
   implemented: Schema.Boolean,
   status: SourceControlDiscoveryStatus,
   version: Schema.Option(TrimmedNonEmptyString),
@@ -107,5 +167,19 @@ export class SourceControlProviderError extends Schema.TaggedErrorClass<SourceCo
 ) {
   override get message(): string {
     return `Source control provider ${this.provider} failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
+export class SourceControlRepositoryError extends Schema.TaggedErrorClass<SourceControlRepositoryError>()(
+  "SourceControlRepositoryError",
+  {
+    provider: SourceControlProviderKind,
+    operation: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Source control repository operation ${this.operation} failed for ${this.provider}: ${this.detail}`;
   }
 }
