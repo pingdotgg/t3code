@@ -11,9 +11,13 @@ const AZURE_DEVOPS_CLI_PR_CHECKOUT_PATTERN = /^az\s+repos\s+pr\s+checkout\s+(.+)
 
 function parseAzureDevOpsCheckoutReference(args: string): string | null {
   const parts = args.trim().split(/\s+/).filter(Boolean);
-  const idFlagIndex = parts.findIndex((part) => part === "--id" || part === "-i");
-  if (idFlagIndex >= 0) {
-    return parts[idFlagIndex + 1] ?? null;
+  for (const [index, part] of parts.entries()) {
+    if (part === "--id" || part === "-i") {
+      return parts[index + 1] ?? null;
+    }
+    if (part.startsWith("--id=")) {
+      return part.slice("--id=".length) || null;
+    }
   }
   return parts.find((part) => !part.startsWith("-")) ?? null;
 }

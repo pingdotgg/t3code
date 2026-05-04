@@ -22,6 +22,7 @@ import {
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
+import { Option } from "effect";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
 import { page } from "vitest/browser";
@@ -952,6 +953,73 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
   const tag = body._tag;
   if (tag === WS_METHODS.serverGetConfig) {
     return fixture.serverConfig;
+  }
+  if (tag === WS_METHODS.serverDiscoverSourceControl) {
+    return {
+      versionControlSystems: [],
+      sourceControlProviders: [
+        {
+          kind: "github",
+          label: "GitHub",
+          executable: "gh",
+          status: "available",
+          version: Option.some("gh version 2.0.0"),
+          installHint: "Install GitHub CLI.",
+          detail: Option.none(),
+          auth: {
+            status: "authenticated",
+            account: Option.some("t3-oss"),
+            host: Option.some("github.com"),
+            detail: Option.none(),
+          },
+        },
+        {
+          kind: "gitlab",
+          label: "GitLab",
+          executable: "glab",
+          status: "available",
+          version: Option.some("glab version 1.0.0"),
+          installHint: "Install GitLab CLI.",
+          detail: Option.none(),
+          auth: {
+            status: "authenticated",
+            account: Option.some("t3-oss"),
+            host: Option.some("gitlab.com"),
+            detail: Option.none(),
+          },
+        },
+        {
+          kind: "bitbucket",
+          label: "Bitbucket",
+          executable: "Bitbucket REST API",
+          status: "available",
+          version: Option.none(),
+          installHint: "Set Bitbucket API token environment variables.",
+          detail: Option.none(),
+          auth: {
+            status: "authenticated",
+            account: Option.some("t3-oss"),
+            host: Option.some("bitbucket.org"),
+            detail: Option.none(),
+          },
+        },
+        {
+          kind: "azure-devops",
+          label: "Azure DevOps",
+          executable: "az",
+          status: "available",
+          version: Option.some("azure-cli 2.0.0"),
+          installHint: "Install Azure CLI.",
+          detail: Option.none(),
+          auth: {
+            status: "authenticated",
+            account: Option.some("t3-oss"),
+            host: Option.some("dev.azure.com"),
+            detail: Option.none(),
+          },
+        },
+      ],
+    };
   }
   if (tag === WS_METHODS.vcsListRefs) {
     return {
@@ -4650,6 +4718,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       const palette = page.getByTestId("command-palette");
       await expect.element(palette).toBeInTheDocument();
+      await palette.getByText("Local folder", { exact: true }).click();
 
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await expect.element(browseInput).toHaveValue("~/");
@@ -4712,6 +4781,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       const palette = page.getByTestId("command-palette");
       await expect.element(palette).toBeInTheDocument();
+      await palette.getByText("Local folder", { exact: true }).click();
 
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await expect.element(browseInput).toHaveValue("~/Development/");
@@ -4771,6 +4841,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await page.getByTestId("sidebar-add-project-trigger").click();
 
       await expect.element(palette).toBeInTheDocument();
+      await palette.getByText("Local folder", { exact: true }).click();
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await page.getByPlaceholder(ADD_PROJECT_SUBMENU_PLACEHOLDER).fill("~/Desktop/fresh-project");
 
@@ -4850,6 +4921,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await page.getByTestId("sidebar-add-project-trigger").click();
 
       await expect.element(palette).toBeInTheDocument();
+      await palette.getByText("Local folder", { exact: true }).click();
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await page.getByPlaceholder(ADD_PROJECT_SUBMENU_PLACEHOLDER).fill("~/Development/codex/");
 
@@ -4976,12 +5048,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await expect.element(palette).toBeInTheDocument();
       await palette.getByText("Add project", { exact: true }).click();
-      await palette.getByText("Local folder", { exact: true }).click();
       await expect.element(palette.getByText("Environments", { exact: true })).toBeInTheDocument();
       await expect
         .element(palette.getByText("This device", { exact: true }).first())
         .toBeInTheDocument();
       await palette.getByText("Staging", { exact: true }).click();
+      await palette.getByText("Local folder", { exact: true }).click();
 
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await expect.element(browseInput).toHaveValue("~/workspaces/");
@@ -5075,6 +5147,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       const palette = page.getByTestId("command-palette");
       await expect.element(palette).toBeInTheDocument();
+      await palette.getByText("Local folder", { exact: true }).click();
       const browseInput = palette.getByPlaceholder(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await browseInput.fill("~/Applications/access");
 

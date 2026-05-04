@@ -1,13 +1,12 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, describe } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { describe } from "vitest";
 
-import { VcsProcess, type VcsProcessInput, type VcsProcessOutput } from "./VcsProcess.ts";
-import { VcsProjectConfig } from "./VcsProjectConfig.ts";
-import { VcsDriverRegistry, make as makeVcsDriverRegistry } from "./VcsDriverRegistry.ts";
+import * as VcsProcess from "./VcsProcess.ts";
+import * as VcsProjectConfig from "./VcsProjectConfig.ts";
+import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";
 
-const processOutput = (stdout: string): VcsProcessOutput => ({
+const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
   exitCode: ChildProcessSpawner.ExitCode(0),
   stdout,
   stderr: "",
@@ -17,21 +16,21 @@ const processOutput = (stdout: string): VcsProcessOutput => ({
 
 describe("VcsDriverRegistry", () => {
   it.effect("routes directly by VCS driver kind for non-repository workflows", () => {
-    const layer = Layer.effect(VcsDriverRegistry, makeVcsDriverRegistry()).pipe(
+    const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make()).pipe(
       Layer.provide(
-        Layer.mock(VcsProjectConfig)({
+        Layer.mock(VcsProjectConfig.VcsProjectConfig)({
           resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
         }),
       ),
       Layer.provide(
-        Layer.mock(VcsProcess)({
+        Layer.mock(VcsProcess.VcsProcess)({
           run: () => Effect.succeed(processOutput("")),
         }),
       ),
     );
 
     return Effect.gen(function* () {
-      const registry = yield* VcsDriverRegistry;
+      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
       const driver = yield* registry.get("git");
 
       assert.strictEqual(driver.capabilities.kind, "git");
@@ -39,15 +38,15 @@ describe("VcsDriverRegistry", () => {
   });
 
   it.effect("caches repository detection for repeated resolves in the same cwd and kind", () => {
-    const calls: VcsProcessInput[] = [];
-    const layer = Layer.effect(VcsDriverRegistry, makeVcsDriverRegistry()).pipe(
+    const calls: VcsProcess.VcsProcessInput[] = [];
+    const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make()).pipe(
       Layer.provide(
-        Layer.mock(VcsProjectConfig)({
+        Layer.mock(VcsProjectConfig.VcsProjectConfig)({
           resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
         }),
       ),
       Layer.provide(
-        Layer.mock(VcsProcess)({
+        Layer.mock(VcsProcess.VcsProcess)({
           run: (input) =>
             Effect.sync(() => {
               calls.push(input);
@@ -68,7 +67,7 @@ describe("VcsDriverRegistry", () => {
     );
 
     return Effect.gen(function* () {
-      const registry = yield* VcsDriverRegistry;
+      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
       const first = yield* registry.resolve({ cwd: "/repo", requestedKind: "git" });
       const second = yield* registry.resolve({ cwd: "/repo", requestedKind: "git" });
 

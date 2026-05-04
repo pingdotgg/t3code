@@ -57,6 +57,10 @@ describe("parsePullRequestReference", () => {
     expect(parsePullRequestReference("az repos pr checkout --id 42")).toBe("42");
   });
 
+  it("accepts az repos pr checkout commands with equals-style ids", () => {
+    expect(parsePullRequestReference("az repos pr checkout --id=42")).toBe("42");
+  });
+
   it("accepts az repos pr checkout commands with extra flags", () => {
     expect(parsePullRequestReference("az repos pr checkout --id 42 --remote-name origin")).toBe(
       "42",

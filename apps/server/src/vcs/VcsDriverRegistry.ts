@@ -4,7 +4,7 @@ import type { VcsDriverKind, VcsError, VcsRepositoryIdentity } from "@t3tools/co
 import { VcsUnsupportedOperationError } from "@t3tools/contracts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
-import type { VcsDriverShape } from "./VcsDriver.ts";
+import * as VcsDriver from "./VcsDriver.ts";
 
 const DETECTION_CACHE_CAPACITY = 2_048;
 const DETECTION_CACHE_TTL = Duration.seconds(2);
@@ -17,11 +17,11 @@ export interface VcsDriverResolveInput {
 export interface VcsDriverHandle {
   readonly kind: VcsDriverKind;
   readonly repository: VcsRepositoryIdentity;
-  readonly driver: VcsDriverShape;
+  readonly driver: VcsDriver.VcsDriverShape;
 }
 
 export interface VcsDriverRegistryShape {
-  readonly get: (kind: VcsDriverKind) => Effect.Effect<VcsDriverShape, VcsError>;
+  readonly get: (kind: VcsDriverKind) => Effect.Effect<VcsDriver.VcsDriverShape, VcsError>;
   readonly detect: (
     input: VcsDriverResolveInput,
   ) => Effect.Effect<VcsDriverHandle | null, VcsError>;
@@ -66,7 +66,7 @@ function parseDetectionCacheKey(key: string): {
 export const make = Effect.fn("makeVcsDriverRegistry")(function* () {
   const projectConfig = yield* VcsProjectConfig.VcsProjectConfig;
   const git = yield* GitVcsDriver.makeVcsDriverShape();
-  const drivers: Partial<Record<VcsDriverKind, VcsDriverShape>> = {
+  const drivers: Partial<Record<VcsDriverKind, VcsDriver.VcsDriverShape>> = {
     git,
   };
 
@@ -82,7 +82,7 @@ export const make = Effect.fn("makeVcsDriverRegistry")(function* () {
 
   const detectWithDriver = Effect.fn("VcsDriverRegistry.detectWithDriver")(function* (
     kind: VcsDriverKind,
-    driver: VcsDriverShape,
+    driver: VcsDriver.VcsDriverShape,
     cwd: string,
   ) {
     const repository = yield* driver.detectRepository(cwd);

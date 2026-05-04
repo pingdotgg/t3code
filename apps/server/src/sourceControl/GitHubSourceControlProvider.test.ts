@@ -2,11 +2,11 @@ import { assert, it } from "@effect/vitest";
 import { DateTime, Effect, Layer, Option } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { GitHubCli, type GitHubCliShape } from "./GitHubCli.ts";
-import type { VcsProcessOutput } from "../vcs/VcsProcess.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as GitHubCli from "./GitHubCli.ts";
 import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 
-const processResult = (stdout: string): VcsProcessOutput => ({
+const processResult = (stdout: string): VcsProcess.VcsProcessOutput => ({
   exitCode: ChildProcessSpawner.ExitCode(0),
   stdout,
   stderr: "",
@@ -14,8 +14,10 @@ const processResult = (stdout: string): VcsProcessOutput => ({
   stderrTruncated: false,
 });
 
-function makeProvider(github: Partial<GitHubCliShape>) {
-  return GitHubSourceControlProvider.make().pipe(Effect.provide(Layer.mock(GitHubCli)(github)));
+function makeProvider(github: Partial<GitHubCli.GitHubCliShape>) {
+  return GitHubSourceControlProvider.make().pipe(
+    Effect.provide(Layer.mock(GitHubCli.GitHubCli)(github)),
+  );
 }
 
 it.effect("maps GitHub PR summaries into provider-neutral change requests", () =>
@@ -127,7 +129,7 @@ it.effect("treats empty non-open change request listing output as no results", (
 
 it.effect("creates GitHub PRs through provider-neutral input names", () =>
   Effect.gen(function* () {
-    let createInput: Parameters<GitHubCliShape["createPullRequest"]>[0] | null = null;
+    let createInput: Parameters<GitHubCli.GitHubCliShape["createPullRequest"]>[0] | null = null;
     const provider = yield* makeProvider({
       createPullRequest: (input) => {
         createInput = input;

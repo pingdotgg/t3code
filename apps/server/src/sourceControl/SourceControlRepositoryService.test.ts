@@ -6,14 +6,10 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { GitCommandError, type SourceControlProviderError } from "@t3tools/contracts";
 
 import { ServerConfig } from "../config.ts";
-import {
-  GitVcsDriver,
-  type ExecuteGitResult,
-  type GitVcsDriverShape,
-} from "../vcs/GitVcsDriver.ts";
-import { SourceControlProviderRegistry } from "./SourceControlProviderRegistry.ts";
-import type { SourceControlProviderShape } from "./SourceControlProvider.ts";
-import { SourceControlRepositoryService, layer } from "./SourceControlRepositoryService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import type * as SourceControlProvider from "./SourceControlProvider.ts";
+import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+import * as SourceControlRepositoryService from "./SourceControlRepositoryService.ts";
 
 const CLONE_URLS = {
   nameWithOwner: "octocat/t3code",
@@ -22,8 +18,8 @@ const CLONE_URLS = {
 };
 
 function makeProvider(
-  overrides: Partial<SourceControlProviderShape> = {},
-): SourceControlProviderShape {
+  overrides: Partial<SourceControlProvider.SourceControlProviderShape> = {},
+): SourceControlProvider.SourceControlProviderShape {
   const unsupported = (operation: string) =>
     Effect.die(`unexpected provider operation ${operation}`) as Effect.Effect<
       never,
@@ -43,7 +39,7 @@ function makeProvider(
   };
 }
 
-function processOutput(): ExecuteGitResult {
+function processOutput(): GitVcsDriver.ExecuteGitResult {
   return {
     exitCode: ChildProcessSpawner.ExitCode(0),
     stdout: "",
@@ -54,17 +50,17 @@ function processOutput(): ExecuteGitResult {
 }
 
 function makeLayer(input: {
-  readonly provider?: SourceControlProviderShape;
-  readonly git?: Partial<GitVcsDriverShape>;
+  readonly provider?: SourceControlProvider.SourceControlProviderShape;
+  readonly git?: Partial<GitVcsDriver.GitVcsDriverShape>;
 }) {
-  return layer.pipe(
+  return SourceControlRepositoryService.layer.pipe(
     Layer.provide(
-      Layer.mock(SourceControlProviderRegistry)({
+      Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
         get: () => Effect.succeed(input.provider ?? makeProvider()),
       }),
     ),
     Layer.provide(
-      Layer.mock(GitVcsDriver)({
+      Layer.mock(GitVcsDriver.GitVcsDriver)({
         execute: () => Effect.succeed(processOutput()),
         ensureRemote: () => Effect.succeed("origin"),
         pushCurrentBranch: () =>
@@ -93,7 +89,7 @@ it.effect("looks up repositories through the requested provider without search",
   });
 
   return Effect.gen(function* () {
-    const service = yield* SourceControlRepositoryService;
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
     const result = yield* service.lookupRepository({
       provider: "github",
       repository: "octocat/t3code",
@@ -115,7 +111,7 @@ it.effect("clones a looked-up repository into the requested destination", () =>
     const cloneCalls: Array<{ cwd: string; args: ReadonlyArray<string> }> = [];
 
     yield* Effect.gen(function* () {
-      const service = yield* SourceControlRepositoryService;
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const result = yield* service.cloneRepository({
         provider: "github",
         repository: "octocat/t3code",
@@ -167,7 +163,7 @@ it.effect("publishes by creating the repository, adding a remote, and pushing up
   });
 
   return Effect.gen(function* () {
-    const service = yield* SourceControlRepositoryService;
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
     const result = yield* service.publishRepository({
       cwd: "/workspace",
       provider: "github",
@@ -222,7 +218,7 @@ it.effect("publishes to the remote name returned by ensureRemote", () => {
   const pushCalls: Array<{ cwd: string; remoteName: string | null | undefined }> = [];
 
   return Effect.gen(function* () {
-    const service = yield* SourceControlRepositoryService;
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
     const result = yield* service.publishRepository({
       cwd: "/workspace",
       provider: "github",
@@ -258,7 +254,7 @@ it.effect("publishes to the remote name returned by ensureRemote", () => {
 it.effect("publish succeeds with status remote_added when the local repo has no commits", () => {
   let pushCalls = 0;
   return Effect.gen(function* () {
-    const service = yield* SourceControlRepositoryService;
+    const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
     const result = yield* service.publishRepository({
       cwd: "/workspace",
       provider: "github",

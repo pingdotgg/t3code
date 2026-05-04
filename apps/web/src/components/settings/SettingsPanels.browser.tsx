@@ -1081,9 +1081,9 @@ describe("SourceControlSettingsPanel discovery states", () => {
     await expect.element(page.getByText("Version Control")).toBeInTheDocument();
     await expect.element(page.getByText("Source Control Providers")).toBeInTheDocument();
     await expect
-      .element(page.getByRole("button", { name: "Scan source control tools" }))
+      .element(page.getByRole("button", { name: "Rescan server environment" }))
       .toBeDisabled();
-    await expect.element(page.getByText("No source control tools found")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Nothing detected yet")).not.toBeInTheDocument();
   });
 
   it("uses the shared empty state when discovery completes without tools", async () => {
@@ -1098,9 +1098,13 @@ describe("SourceControlSettingsPanel discovery states", () => {
       </AppAtomRegistryProvider>,
     );
 
-    await expect.element(page.getByText("No source control tools found")).toBeInTheDocument();
+    await expect.element(page.getByText("Nothing detected yet")).toBeInTheDocument();
     await expect
-      .element(page.getByText("Install a supported Git or pull request CLI, then scan again."))
+      .element(
+        page.getByText(
+          "Install Git on the server, add optional hosting integrations or credentials your workspace needs, then rescan.",
+        ),
+      )
       .toBeInTheDocument();
     await expect.element(page.getByRole("button", { name: "Scan" })).toBeInTheDocument();
   });
@@ -1129,7 +1133,7 @@ describe("SourceControlSettingsPanel discovery states", () => {
     );
 
     await expect.element(page.getByRole("heading", { name: "Git" })).toBeInTheDocument();
-    await expect.element(page.getByText("No source control tools found")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Nothing detected yet")).not.toBeInTheDocument();
   });
 
   it("does not rescan on remount while the discovery atom is fresh", async () => {

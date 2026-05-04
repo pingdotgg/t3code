@@ -1,25 +1,24 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, afterEach, expect, vi } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { afterEach, expect, vi } from "vitest";
 
 import { VcsProcessExitError } from "@t3tools/contracts";
 
-import { VcsProcess, type VcsProcessOutput, type VcsProcessShape } from "../vcs/VcsProcess.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 
-const mockedRun = vi.fn<VcsProcessShape["run"]>();
+const mockedRun = vi.fn<VcsProcess.VcsProcessShape["run"]>();
 const layer = it.layer(
   GitLabCli.layer.pipe(
     Layer.provide(
-      Layer.mock(VcsProcess)({
+      Layer.mock(VcsProcess.VcsProcess)({
         run: mockedRun,
       }),
     ),
   ),
 );
 
-function processOutput(stdout: string): VcsProcessOutput {
+function processOutput(stdout: string): VcsProcess.VcsProcessOutput {
   return {
     exitCode: ChildProcessSpawner.ExitCode(0),
     stdout,

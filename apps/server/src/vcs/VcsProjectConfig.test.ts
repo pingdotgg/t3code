@@ -1,11 +1,10 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, FileSystem, Layer, Path } from "effect";
-import { describe } from "vitest";
 
-import { VcsProjectConfig, layer as VcsProjectConfigLayer } from "./VcsProjectConfig.ts";
+import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 
-const TestLayer = VcsProjectConfigLayer.pipe(
+const TestLayer = VcsProjectConfig.layer.pipe(
   Layer.provide(NodeServices.layer),
   Layer.provideMerge(NodeServices.layer),
 );
@@ -14,7 +13,7 @@ describe("VcsProjectConfig", () => {
   it.layer(TestLayer)("uses an explicit requested VCS kind before config", (it) => {
     it.effect("returns the requested kind", () =>
       Effect.gen(function* () {
-        const config = yield* VcsProjectConfig;
+        const config = yield* VcsProjectConfig.VcsProjectConfig;
         const kind = yield* config.resolveKind({
           cwd: "/repo",
           requestedKind: "jj",
@@ -42,7 +41,7 @@ describe("VcsProjectConfig", () => {
           JSON.stringify({ vcs: { kind: "jj" } }),
         );
 
-        const config = yield* VcsProjectConfig;
+        const config = yield* VcsProjectConfig.VcsProjectConfig;
         const kind = yield* config.resolveKind({ cwd: nested });
 
         assert.equal(kind, "jj");
@@ -57,7 +56,7 @@ describe("VcsProjectConfig", () => {
         const root = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-vcs-config-test-",
         });
-        const config = yield* VcsProjectConfig;
+        const config = yield* VcsProjectConfig.VcsProjectConfig;
         const kind = yield* config.resolveKind({ cwd: root });
 
         assert.equal(kind, "auto");

@@ -2,13 +2,9 @@ import { Context, Effect, Layer, Option, Result, Schema, SchemaIssue, type DateT
 
 import { TrimmedNonEmptyString, type SourceControlRepositoryVisibility } from "@t3tools/contracts";
 
-import {
-  decodeGitLabMergeRequestJson,
-  decodeGitLabMergeRequestListJson,
-  formatGitLabJsonDecodeError,
-} from "./gitLabMergeRequests.ts";
-import { VcsProcess, type VcsProcessOutput } from "../vcs/VcsProcess.ts";
-import type { SourceControlRefSelector } from "./SourceControlProvider.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
+import * as GitLabMergeRequests from "./gitLabMergeRequests.ts";
+import type * as SourceControlProvider from "./SourceControlProvider.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -46,12 +42,12 @@ export interface GitLabCliShape {
     readonly cwd: string;
     readonly args: ReadonlyArray<string>;
     readonly timeoutMs?: number;
-  }) => Effect.Effect<VcsProcessOutput, GitLabCliError>;
+  }) => Effect.Effect<VcsProcess.VcsProcessOutput, GitLabCliError>;
 
   readonly listMergeRequests: (input: {
     readonly cwd: string;
     readonly headSelector: string;
-    readonly source?: SourceControlRefSelector;
+    readonly source?: SourceControlProvider.SourceControlRefSelector;
     readonly state: "open" | "closed" | "merged" | "all";
     readonly limit?: number;
   }) => Effect.Effect<ReadonlyArray<GitLabMergeRequestSummary>, GitLabCliError>;
@@ -76,8 +72,8 @@ export interface GitLabCliShape {
     readonly cwd: string;
     readonly baseBranch: string;
     readonly headSelector: string;
-    readonly source?: SourceControlRefSelector;
-    readonly target?: SourceControlRefSelector;
+    readonly source?: SourceControlProvider.SourceControlRefSelector;
+    readonly target?: SourceControlProvider.SourceControlRefSelector;
     readonly title: string;
     readonly bodyFile: string;
   }) => Effect.Effect<void, GitLabCliError>;
@@ -220,12 +216,14 @@ function normalizeHeadSelector(headSelector: string): string {
 
 function sourceRefName(input: {
   readonly headSelector: string;
-  readonly source?: SourceControlRefSelector;
+  readonly source?: SourceControlProvider.SourceControlRefSelector;
 }): string {
   return input.source?.refName ?? normalizeHeadSelector(input.headSelector);
 }
 
-function sourceProjectIdentifier(source: SourceControlRefSelector | undefined): string | null {
+function sourceProjectIdentifier(
+  source: SourceControlProvider.SourceControlRefSelector | undefined,
+): string | null {
   return source?.repository ?? source?.owner ?? null;
 }
 
@@ -252,7 +250,7 @@ function parseRepositoryPath(repository: string): {
 }
 
 export const make = Effect.fn("makeGitLabCli")(function* () {
-  const process = yield* VcsProcess;
+  const process = yield* VcsProcess.VcsProcess;
 
   const execute: GitLabCliShape["execute"] = (input) =>
     process
@@ -286,13 +284,13 @@ export const make = Effect.fn("makeGitLabCli")(function* () {
         Effect.flatMap((raw) =>
           raw.length === 0
             ? Effect.succeed([])
-            : Effect.sync(() => decodeGitLabMergeRequestListJson(raw)).pipe(
+            : Effect.sync(() => GitLabMergeRequests.decodeGitLabMergeRequestListJson(raw)).pipe(
                 Effect.flatMap((decoded) => {
                   if (!Result.isSuccess(decoded)) {
                     return Effect.fail(
                       new GitLabCliError({
                         operation: "listMergeRequests",
-                        detail: `GitLab CLI returned invalid MR list JSON: ${formatGitLabJsonDecodeError(decoded.failure)}`,
+                        detail: `GitLab CLI returned invalid MR list JSON: ${GitLabMergeRequests.formatGitLabJsonDecodeError(decoded.failure)}`,
                         cause: decoded.failure,
                       }),
                     );
@@ -310,13 +308,13 @@ export const make = Effect.fn("makeGitLabCli")(function* () {
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
-          Effect.sync(() => decodeGitLabMergeRequestJson(raw)).pipe(
+          Effect.sync(() => GitLabMergeRequests.decodeGitLabMergeRequestJson(raw)).pipe(
             Effect.flatMap((decoded) => {
               if (!Result.isSuccess(decoded)) {
                 return Effect.fail(
                   new GitLabCliError({
                     operation: "getMergeRequest",
-                    detail: `GitLab CLI returned invalid merge request JSON: ${formatGitLabJsonDecodeError(decoded.failure)}`,
+                    detail: `GitLab CLI returned invalid merge request JSON: ${GitLabMergeRequests.formatGitLabJsonDecodeError(decoded.failure)}`,
                     cause: decoded.failure,
                   }),
                 );

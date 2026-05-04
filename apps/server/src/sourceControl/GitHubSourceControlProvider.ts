@@ -5,11 +5,15 @@ import {
   type ChangeRequestState,
 } from "@t3tools/contracts";
 
-import { GitHubCli, type GitHubCliError, type GitHubPullRequestSummary } from "./GitHubCli.ts";
-import { decodeGitHubPullRequestListJson } from "./gitHubPullRequests.ts";
-import { SourceControlProvider, type SourceControlProviderShape } from "./SourceControlProvider.ts";
+import * as GitHubCli from "./GitHubCli.ts";
+import * as GitHubPullRequests from "./gitHubPullRequests.ts";
+import * as SourceControlProvider from "./SourceControlProvider.ts";
+import * as SourceControlProviderDiscovery from "./SourceControlProviderDiscovery.ts";
 
-function providerError(operation: string, cause: GitHubCliError): SourceControlProviderError {
+function providerError(
+  operation: string,
+  cause: GitHubCli.GitHubCliError,
+): SourceControlProviderError {
   return new SourceControlProviderError({
     provider: "github",
     operation,
@@ -18,7 +22,7 @@ function providerError(operation: string, cause: GitHubCliError): SourceControlP
   });
 }
 
-function toChangeRequest(summary: GitHubPullRequestSummary): ChangeRequest {
+function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeRequest {
   return {
     provider: "github",
     number: summary.number,
@@ -40,75 +44,119 @@ function toChangeRequest(summary: GitHubPullRequestSummary): ChangeRequest {
   };
 }
 
-export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {
-  const github = yield* GitHubCli;
+function parseGitHubAuth(input: SourceControlProviderDiscovery.SourceControlAuthProbeInput) {
+  const output = SourceControlProviderDiscovery.combinedAuthOutput(input);
+  const account = SourceControlProviderDiscovery.matchFirst(output, [
+    /Logged in to .* account\s+([^\s(]+)/iu,
+    /Logged in to .* as\s+([^\s(]+)/iu,
+  ]);
+  const host = SourceControlProviderDiscovery.parseCliHost(output);
 
-  const listChangeRequests: SourceControlProviderShape["listChangeRequests"] = (input) => {
-    if (input.state === "open") {
+  if (input.exitCode !== 0) {
+    return SourceControlProviderDiscovery.providerAuth({
+      status: "unauthenticated",
+      host,
+      detail:
+        SourceControlProviderDiscovery.firstSafeAuthLine(output) ??
+        "Run `gh auth login` to authenticate GitHub CLI.",
+    });
+  }
+
+  if (account) {
+    return SourceControlProviderDiscovery.providerAuth({ status: "authenticated", account, host });
+  }
+
+  return SourceControlProviderDiscovery.providerAuth({
+    status: "unknown",
+    host,
+    detail:
+      SourceControlProviderDiscovery.firstSafeAuthLine(output) ??
+      "GitHub CLI auth status could not be parsed.",
+  });
+}
+
+export const discovery = {
+  type: "cli",
+  kind: "github",
+  label: "GitHub",
+  executable: "gh",
+  versionArgs: ["--version"],
+  authArgs: ["auth", "status"],
+  parseAuth: parseGitHubAuth,
+  installHint:
+    "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
+} satisfies SourceControlProviderDiscovery.SourceControlCliDiscoverySpec;
+
+export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {
+  const github = yield* GitHubCli.GitHubCli;
+
+  const listChangeRequests: SourceControlProvider.SourceControlProviderShape["listChangeRequests"] =
+    (input) => {
+      if (input.state === "open") {
+        return github
+          .listOpenPullRequests({
+            cwd: input.cwd,
+            headSelector: input.headSelector,
+            ...(input.limit !== undefined ? { limit: input.limit } : {}),
+          })
+          .pipe(
+            Effect.map((items) => items.map(toChangeRequest)),
+            Effect.mapError((error) => providerError("listChangeRequests", error)),
+          );
+      }
+
+      const stateArg: ChangeRequestState | "all" = input.state;
       return github
-        .listOpenPullRequests({
+        .execute({
           cwd: input.cwd,
-          headSelector: input.headSelector,
-          ...(input.limit !== undefined ? { limit: input.limit } : {}),
+          args: [
+            "pr",
+            "list",
+            "--head",
+            input.headSelector,
+            "--state",
+            stateArg,
+            "--limit",
+            String(input.limit ?? 20),
+            "--json",
+            "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+          ],
         })
         .pipe(
-          Effect.map((items) => items.map(toChangeRequest)),
-          Effect.mapError((error) => providerError("listChangeRequests", error)),
+          Effect.flatMap((result) => {
+            const raw = result.stdout.trim();
+            if (raw.length === 0) {
+              return Effect.succeed([]);
+            }
+            return Effect.sync(() => GitHubPullRequests.decodeGitHubPullRequestListJson(raw)).pipe(
+              Effect.flatMap((decoded) =>
+                Result.isSuccess(decoded)
+                  ? Effect.succeed(
+                      decoded.success.map((item) => ({
+                        ...toChangeRequest(item),
+                        updatedAt: item.updatedAt,
+                      })),
+                    )
+                  : Effect.fail(
+                      new SourceControlProviderError({
+                        provider: "github",
+                        operation: "listChangeRequests",
+                        detail: "GitHub CLI returned invalid change request JSON.",
+                        cause: decoded.failure,
+                      }),
+                    ),
+              ),
+            );
+          }),
+          Effect.mapError((error) =>
+            Schema.is(SourceControlProviderError)(error)
+              ? error
+              : providerError("listChangeRequests", error),
+          ),
         );
-    }
+    };
 
-    const stateArg: ChangeRequestState | "all" = input.state;
-    return github
-      .execute({
-        cwd: input.cwd,
-        args: [
-          "pr",
-          "list",
-          "--head",
-          input.headSelector,
-          "--state",
-          stateArg,
-          "--limit",
-          String(input.limit ?? 20),
-          "--json",
-          "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
-        ],
-      })
-      .pipe(
-        Effect.flatMap((result) => {
-          const raw = result.stdout.trim();
-          if (raw.length === 0) {
-            return Effect.succeed([]);
-          }
-          return Effect.sync(() => decodeGitHubPullRequestListJson(raw)).pipe(
-            Effect.flatMap((decoded) =>
-              Result.isSuccess(decoded)
-                ? Effect.succeed(
-                    decoded.success.map((item) => ({
-                      ...toChangeRequest(item),
-                      updatedAt: item.updatedAt,
-                    })),
-                  )
-                : Effect.fail(
-                    new SourceControlProviderError({
-                      provider: "github",
-                      operation: "listChangeRequests",
-                      detail: "GitHub CLI returned invalid change request JSON.",
-                      cause: decoded.failure,
-                    }),
-                  ),
-            ),
-          );
-        }),
-        Effect.mapError((error) =>
-          Schema.is(SourceControlProviderError)(error)
-            ? error
-            : providerError("listChangeRequests", error),
-        ),
-      );
-  };
-
-  return SourceControlProvider.of({
+  return SourceControlProvider.SourceControlProvider.of({
     kind: "github",
     listChangeRequests,
     getChangeRequest: (input) =>
@@ -145,4 +193,4 @@ export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {
   });
 });
 
-export const layer = Layer.effect(SourceControlProvider, make());
+export const layer = Layer.effect(SourceControlProvider.SourceControlProvider, make());

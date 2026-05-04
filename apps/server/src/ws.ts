@@ -56,6 +56,14 @@ import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import * as SourceControlDiscoveryLayer from "./sourceControl/SourceControlDiscovery.ts";
 import { SourceControlRepositoryService } from "./sourceControl/SourceControlRepositoryService.ts";
+import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
+import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
+import * as GitHubCli from "./sourceControl/GitHubCli.ts";
+import * as GitLabCli from "./sourceControl/GitLabCli.ts";
+import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
+import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
+import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import {
   BootstrapCredentialService,
@@ -1134,7 +1142,25 @@ export const websocketRpcRouteLayer = Layer.unwrap(
             makeWsRpcLayer(session.sessionId).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(
-                SourceControlDiscoveryLayer.layer.pipe(Layer.provide(VcsProcess.layer)),
+                SourceControlDiscoveryLayer.layer.pipe(
+                  Layer.provide(
+                    SourceControlProviderRegistry.layer.pipe(
+                      Layer.provide(
+                        Layer.mergeAll(
+                          AzureDevOpsCli.layer,
+                          BitbucketApi.layer,
+                          GitHubCli.layer,
+                          GitLabCli.layer,
+                        ),
+                      ),
+                      Layer.provideMerge(GitVcsDriver.layer),
+                      Layer.provide(
+                        VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer)),
+                      ),
+                    ),
+                  ),
+                  Layer.provide(VcsProcess.layer),
+                ),
               ),
             ),
           ),
