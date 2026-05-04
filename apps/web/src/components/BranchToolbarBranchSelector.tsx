@@ -427,7 +427,9 @@ export function BranchToolbarBranchSelector({
           cwd: activeProjectCwd,
           refName: localCheckoutBranchMismatch.threadBranch,
         });
-        setOptimisticBranch(checkoutResult.refName ?? localCheckoutBranchMismatch.threadBranch);
+        const nextBranchName = checkoutResult.refName ?? localCheckoutBranchMismatch.threadBranch;
+        setOptimisticBranch(nextBranchName);
+        setThreadBranch(nextBranchName, null);
         setIsMismatchPopoverOpen(false);
         onComposerFocusRequest?.();
       } catch (error) {
