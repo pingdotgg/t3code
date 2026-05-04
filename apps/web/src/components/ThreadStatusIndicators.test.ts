@@ -18,8 +18,8 @@ function status(overrides: Partial<VcsStatusResult> = {}): VcsStatusResult {
       number: 42,
       title: "PR branch",
       url: "https://github.com/pingdotgg/t3code/pull/42",
-      baseBranch: "main",
-      headBranch: "feature/current",
+      baseRef: "main",
+      headRef: "feature/current",
       state: "open",
     },
     ...overrides,
@@ -64,7 +64,7 @@ describe("resolveThreadPr", () => {
 
 describe("prStatusIndicator", () => {
   it("formats PR tooltips with number, uppercase status, and title", () => {
-    expect(prStatusIndicator(status().pr)).toMatchObject({
+    expect(prStatusIndicator(status().pr, undefined)).toMatchObject({
       tooltip: "PR #42 - Open: PR branch",
       tooltipLead: "PR #42 - Open",
       tooltipTitle: "PR branch",

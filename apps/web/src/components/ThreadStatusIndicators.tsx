@@ -39,16 +39,13 @@ export function prStatusIndicator(
   pr: ThreadPr,
   provider: VcsStatusResult["sourceControlProvider"] | null | undefined,
 ): PrStatusIndicator | null {
-function formatPrState(state: NonNullable<ThreadPr>["state"]): string {
-  return state.charAt(0).toUpperCase() + state.slice(1);
-}
+  function formatPrState(state: NonNullable<ThreadPr>["state"]): string {
+    return state.charAt(0).toUpperCase() + state.slice(1);
+  }
 
-function formatPrStatusLead(
-  pr: NonNullable<ThreadPr>,
-  changeRequestShortName: string,
-): string {
-  return `${changeRequestShortName} #${pr.number} - ${formatPrState(pr.state)}`;
-}
+  function formatPrStatusLead(pr: NonNullable<ThreadPr>, changeRequestShortName: string): string {
+    return `${changeRequestShortName} #${pr.number} - ${formatPrState(pr.state)}`;
+  }
   if (!pr) return null;
   const presentation = resolveChangeRequestPresentation(provider);
 
