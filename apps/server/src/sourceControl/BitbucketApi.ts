@@ -233,7 +233,7 @@ function parseBitbucketRemoteUrl(remoteUrl: string): BitbucketRepositoryLocator 
 }
 
 function normalizeRepositoryCloneUrls(
-  raw: Schema.Schema.Type<typeof RawBitbucketRepositorySchema>,
+  raw: typeof RawBitbucketRepositorySchema.Type,
 ): SourceControlRepositoryCloneUrls {
   const httpClone =
     raw.links.clone?.find((entry) => entry.name.toLowerCase() === "https")?.href ??
@@ -248,8 +248,8 @@ function normalizeRepositoryCloneUrls(
 }
 
 function defaultChangeRequestTargetBranch(input: {
-  readonly repository: Schema.Schema.Type<typeof RawBitbucketRepositorySchema>;
-  readonly branchingModel: Schema.Schema.Type<typeof RawBitbucketBranchingModelSchema> | null;
+  readonly repository: typeof RawBitbucketRepositorySchema.Type;
+  readonly branchingModel: typeof RawBitbucketBranchingModelSchema.Type | null;
 }): string | null {
   const repositoryMainBranch = input.repository.mainbranch?.name ?? null;
   const development = input.branchingModel?.development;
@@ -679,9 +679,7 @@ export const make = Effect.fn("makeBitbucketApi")(function* () {
               repository: getRepositoryFromLocator(locator),
               branchingModel: getBranchingModelFromLocator(locator).pipe(
                 Effect.catch(() =>
-                  Effect.succeed<Schema.Schema.Type<
-                    typeof RawBitbucketBranchingModelSchema
-                  > | null>(null),
+                  Effect.succeed<typeof RawBitbucketBranchingModelSchema.Type | null>(null),
                 ),
               ),
             },
