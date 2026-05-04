@@ -1,8 +1,10 @@
 import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig, type Alias } from "vite";
+import { defineConfig, type Alias, type Plugin } from "vite";
 
 function requireEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -35,6 +37,72 @@ const extraAliases = parseJsonEnv<Array<{ find: string; replacement: string }>>(
 const harnessDir = path.dirname(fileURLToPath(import.meta.url));
 const reactAliases = parseJsonEnv<Record<string, string>>("FORMA_PREVIEW_REACT_ALIASES", {});
 const workspacePublicDir = path.join(workspaceRoot, "public");
+const workspaceRequire = createRequire(path.join(workspaceRoot, "package.json"));
+const projectRequire = createRequire(path.join(projectRoot, "package.json"));
+
+function cssString(value: string): string {
+  return JSON.stringify(value);
+}
+
+function isBareImport(specifier: string): boolean {
+  return (
+    !specifier.startsWith(".") &&
+    !specifier.startsWith("/") &&
+    !specifier.startsWith("\0") &&
+    !/^(?:[a-zA-Z][a-zA-Z\d+.-]*:|\/\/)/.test(specifier)
+  );
+}
+
+function tryResolveFromRequire(requireFromRoot: NodeJS.Require, specifier: string): string | null {
+  try {
+    return requireFromRoot.resolve(specifier);
+  } catch {
+    return null;
+  }
+}
+
+function workspaceBareImportResolver(): Plugin {
+  return {
+    name: "forma-workspace-bare-import-resolver",
+    async resolveId(source) {
+      if (!isBareImport(source)) {
+        return null;
+      }
+      return (
+        tryResolveFromRequire(workspaceRequire, source) ??
+        tryResolveFromRequire(projectRequire, source)
+      );
+    },
+  };
+}
+
+function tailwindSourceInjector(): Plugin {
+  const sourceRoots = [
+    workspaceRoot,
+    path.join(projectRoot, ".forma", "preview"),
+    path.join(projectRoot, "packages"),
+  ].filter(
+    (sourceRoot, index, roots) => existsSync(sourceRoot) && roots.indexOf(sourceRoot) === index,
+  );
+  const sourceDirectives = sourceRoots.map((sourceRoot) => `@source ${cssString(sourceRoot)};`);
+
+  return {
+    name: "forma-tailwind-source-injector",
+    enforce: "pre",
+    transform(code, id) {
+      if (!id.endsWith(".css") || !code.includes('@import "tailwindcss"')) {
+        return null;
+      }
+      if (sourceDirectives.length === 0) {
+        return null;
+      }
+      return code.replace(
+        /@import\s+["']tailwindcss["']\s*;/,
+        (match) => `${match}\n${sourceDirectives.join("\n")}`,
+      );
+    },
+  };
+}
 
 function compareAliasPrecedence(left: Alias, right: Alias) {
   const leftFind = left.find;
@@ -78,7 +146,7 @@ export default defineConfig({
   appType: "spa",
   root: runtimeRoot,
   publicDir: existsSync(workspacePublicDir) ? workspacePublicDir : false,
-  plugins: [react()],
+  plugins: [workspaceBareImportResolver(), tailwindSourceInjector(), react(), tailwindcss()],
   css: {
     postcss: workspaceRoot,
   },

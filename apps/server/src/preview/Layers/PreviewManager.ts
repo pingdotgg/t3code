@@ -35,6 +35,7 @@ import {
   type PreviewManagerShape,
   type PreviewRuntimeTarget,
 } from "../Services/PreviewManager.ts";
+import { aliasEntriesFromTsconfigPaths, type AliasEntry } from "./previewAliases.ts";
 
 interface ProjectRecord {
   readonly id: ProjectId;
@@ -53,6 +54,13 @@ interface PreviewAccessTokenRecord {
   readonly token: string;
   readonly projectId: ProjectId;
   readonly expiresAtMs: number;
+}
+
+interface TsConfigRecord {
+  readonly compilerOptions?: {
+    readonly baseUrl?: string;
+    readonly paths?: Record<string, readonly string[]>;
+  };
 }
 
 interface ResolvedHarnessTarget {
@@ -77,11 +85,6 @@ interface RuntimeRecord {
   readonly iframeBasePath: string;
   readonly child: ChildProcessByStdio<null, Readable, Readable>;
   readonly logs: string[];
-}
-
-interface AliasEntry {
-  readonly find: string;
-  readonly replacement: string;
 }
 
 interface PreviewManagerState {
@@ -381,6 +384,36 @@ async function inferAliasEntries(
   relativePath: string,
   workspaceRootRelativePath: string,
 ): Promise<readonly AliasEntry[]> {
+  const workspaceRoot = path.join(projectRoot, workspaceRootRelativePath);
+  const candidateConfigPaths = [
+    path.join(workspaceRoot, "tsconfig.json"),
+    path.join(workspaceRoot, "jsconfig.json"),
+    path.join(projectRoot, "tsconfig.json"),
+    path.join(projectRoot, "jsconfig.json"),
+  ].filter((candidatePath, index, entries) => entries.indexOf(candidatePath) === index);
+
+  const configuredAliasEntries = (
+    await Promise.all(
+      candidateConfigPaths.map(async (configPath) => {
+        const config = await readJsonFile<TsConfigRecord>(configPath);
+        if (!config?.compilerOptions?.paths) {
+          return [];
+        }
+        const aliasEntries = aliasEntriesFromTsconfigPaths(config.compilerOptions.paths, {
+          configDir: path.dirname(configPath),
+          ...(config.compilerOptions.baseUrl ? { baseUrl: config.compilerOptions.baseUrl } : {}),
+        });
+        return (
+          await Promise.all(
+            aliasEntries.map(async (entry) =>
+              (await pathExists(entry.replacement)) ? entry : null,
+            ),
+          )
+        ).flatMap((entry) => (entry ? [entry] : []));
+      }),
+    )
+  ).flat();
+
   const normalized = normalizeProjectPath(relativePath);
   const srcMarker = "/src/";
   const markerIndex = normalized.lastIndexOf(srcMarker);
@@ -390,17 +423,23 @@ async function inferAliasEntries(
       path.join(projectRoot, normalized.slice(0, markerIndex + srcMarker.length)),
     );
   }
-  const workspaceRoot = path.join(projectRoot, workspaceRootRelativePath);
   candidateRoots.push(path.join(workspaceRoot, "src"));
   candidateRoots.push(path.join(projectRoot, "src"));
 
+  const inferredAliasEntries: AliasEntry[] = [];
   for (const candidateRoot of candidateRoots) {
     if (await pathExists(candidateRoot)) {
-      return [{ find: "@", replacement: candidateRoot }];
+      inferredAliasEntries.push({ find: "@", replacement: candidateRoot });
+      break;
     }
   }
 
-  return [];
+  const dedupedEntries = [...configuredAliasEntries, ...inferredAliasEntries].filter(
+    (entry, index, entries) =>
+      entries.findIndex((candidate) => candidate.find === entry.find) === index,
+  );
+
+  return dedupedEntries;
 }
 
 function parseScenarioChoices(source: string): readonly PreviewScenarioEntry[] {
@@ -523,7 +562,7 @@ async function createRuntimeWorkspace(args: {
 }): Promise<string> {
   const runtimeDir = path.join(os.tmpdir(), "forma-preview-harness", randomUUID().slice(0, 12));
   await fsPromises.mkdir(path.join(runtimeDir, "src"), { recursive: true });
-  const componentModuleUrl = normalizeViteFsPath(
+  const defaultComponentModuleUrl = normalizeViteFsPath(
     path.join(args.projectRoot, args.componentRelativePath),
   );
   const previewModuleUrl = normalizeViteFsPath(
@@ -543,9 +582,14 @@ import ${JSON.stringify(mocksModuleUrl)};
 import { startPreviewRuntime } from ${JSON.stringify(runtimeHelperUrl)};
 
 const previewDefinition = (previewModule.default ?? previewModule.preview ?? previewModule);
+const previewModuleBaseUrl = new URL(${JSON.stringify(previewModuleUrl)}, window.location.origin);
+const componentModuleUrl =
+  typeof previewDefinition?.component === "string" && previewDefinition.component.trim().length > 0
+    ? new URL(previewDefinition.component, previewModuleBaseUrl).pathname
+    : ${JSON.stringify(defaultComponentModuleUrl)};
 
 startPreviewRuntime({
-  componentModuleUrl: ${JSON.stringify(componentModuleUrl)},
+  componentModuleUrl,
   framework: ${JSON.stringify(args.framework)},
   mountElementId: "app",
   previewDefinition,

@@ -33,7 +33,6 @@ import {
 } from "../previewWorkspaceStore";
 import {
   buildSessionFromRuntimeSnapshot,
-  createPreviewFileSessionState,
   getPreviewFileSession,
   mergePreviewControlsWithDrafts,
   normalizeSelectedScenarioId,

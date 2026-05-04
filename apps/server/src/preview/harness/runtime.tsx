@@ -497,6 +497,7 @@ function PreviewShell(props: RuntimeOptions) {
           name: selectedScenario.name,
           env: selectedScenario.env ?? null,
         }}
+        previewArgs={mergedArgs}
         pathname={activeEnvironment.pathname}
         searchParams={activeEnvironment.searchParams}
       >
