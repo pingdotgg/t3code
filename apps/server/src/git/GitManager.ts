@@ -1336,7 +1336,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       label: `Creating ${terms.singular}...`,
     });
     const target = parseRepositorySelector(repositoryNameWithOwner, baseBranch);
-    yield* provider
+    const createResult = yield* provider
       .createChangeRequest({
         cwd,
         ...(target !== undefined ? { target } : {}),
@@ -1346,7 +1346,30 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
         bodyFile,
         draft,
       })
-      .pipe(Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.catch(() => Effect.void))));
+      .pipe(
+        Effect.as({ status: "created" as const }),
+        Effect.catch((error) =>
+          findOpenPr(cwd, headContext, repositoryNameWithOwner).pipe(
+            Effect.flatMap((pullRequest) =>
+              pullRequest !== null
+                ? Effect.succeed({ status: "opened_existing" as const, pullRequest })
+                : Effect.fail(error),
+            ),
+          ),
+        ),
+        Effect.ensuring(fileSystem.remove(bodyFile).pipe(Effect.catch(() => Effect.void))),
+      );
+
+    if (createResult.status === "opened_existing") {
+      return {
+        status: "opened_existing" as const,
+        url: createResult.pullRequest.url,
+        number: createResult.pullRequest.number,
+        baseBranch: createResult.pullRequest.baseRefName,
+        headBranch: createResult.pullRequest.headRefName,
+        title: createResult.pullRequest.title,
+      };
+    }
 
     const created = yield* Effect.gen(function* () {
       for (let attempt = 0; attempt < 5; attempt += 1) {

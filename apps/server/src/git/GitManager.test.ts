@@ -41,6 +41,7 @@ interface FakeGhScenario {
   prListByHeadSelector?: Record<string, string>;
   prListSequenceByHeadSelector?: Record<string, string[]>;
   createdPrUrl?: string;
+  createPrError?: GitHubCliError;
   defaultBranch?: string;
   pullRequest?: {
     number: number;
@@ -406,6 +407,9 @@ function createGitHubCliWithFakeGh(scenario: FakeGhScenario = {}): {
     }
 
     if (args[0] === "pr" && args[1] === "create") {
+      if (scenario.createPrError) {
+        return Effect.fail(scenario.createPrError);
+      }
       return Effect.succeed(
         fakeGhOutput(
           (scenario.createdPrUrl ?? "https://github.com/pingdotgg/codething-mvp/pull/101") + "\n",
@@ -1944,6 +1948,50 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
       }),
     12_000,
+  );
+
+  it.effect("recovers existing PR metadata when create races with GitHub", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/create-race"]);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/create-race"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            "[]",
+            JSON.stringify([
+              {
+                number: 88,
+                title: "Existing race PR",
+                url: "https://github.com/pingdotgg/codething-mvp/pull/88",
+                baseRefName: "main",
+                headRefName: "feature/create-race",
+              },
+            ]),
+          ],
+          createPrError: new GitHubCliError({
+            operation: "execute",
+            detail:
+              'a pull request for branch "feature/create-race" into branch "main" already exists:\nhttps://github.com/pingdotgg/codething-mvp/pull/88',
+          }),
+        },
+      });
+
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
+
+      expect(result.pr.status).toBe("opened_existing");
+      expect(result.pr.number).toBe(88);
+      expect(result.pr.url).toBe("https://github.com/pingdotgg/codething-mvp/pull/88");
+      expect(ghCalls.filter((call) => call.startsWith("pr list "))).toHaveLength(2);
+      expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(true);
+    }),
   );
 
   it.effect(
