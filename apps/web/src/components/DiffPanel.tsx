@@ -105,25 +105,6 @@ const DIFF_PANEL_UNSAFE_CSS = `
   color: color-mix(in srgb, var(--foreground) 84%, var(--primary)) !important;
   text-decoration-color: currentColor;
 }
-
-[data-header-content] {
-  position: relative;
-}
-
-[data-header-content] slot[name="header-prefix"] {
-  display: contents;
-}
-
-[data-header-content] slot[name="header-prefix"]::slotted(*) {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 1rem;
-}
-
-:host(.diff-render-instance-icon-hovered) [data-change-icon],
-:host(.diff-render-instance-collapsed) [data-change-icon] {
-  opacity: 0;
-}
 `;
 
 type RenderablePatch =
@@ -212,7 +193,6 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const [collapsedDiffFileKeys, setCollapsedDiffFileKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
-  const [hoveredDiffFileKey, setHoveredDiffFileKey] = useState<string | null>(null);
   const patchViewportRef = useRef<HTMLDivElement>(null);
   const turnStripRef = useRef<HTMLDivElement>(null);
   const previousDiffOpenRef = useRef(false);
@@ -702,33 +682,16 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
                     >
                       <FileDiff
                         fileDiff={fileDiff}
-                        className={cn(
-                          collapsed && "diff-render-instance-collapsed",
-                          hoveredDiffFileKey === fileKey && "diff-render-instance-icon-hovered",
-                        )}
                         renderHeaderPrefix={() => (
                           <button
                             type="button"
                             className={cn(
-                              "absolute left-0 top-1/2 z-10 inline-flex size-4 -translate-y-1/2 cursor-pointer items-center justify-center border-0 bg-transparent p-0 opacity-0 transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-hidden",
+                              "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden",
                               getDiffCollapseIconClassName(fileDiff),
-                              collapsed && "opacity-100",
                             )}
                             aria-label={collapsed ? `Expand ${filePath}` : `Collapse ${filePath}`}
                             aria-expanded={!collapsed}
                             title={collapsed ? "Expand diff" : "Collapse diff"}
-                            onMouseEnter={() => setHoveredDiffFileKey(fileKey)}
-                            onMouseLeave={() =>
-                              setHoveredDiffFileKey((current) =>
-                                current === fileKey ? null : current,
-                              )
-                            }
-                            onFocus={() => setHoveredDiffFileKey(fileKey)}
-                            onBlur={() =>
-                              setHoveredDiffFileKey((current) =>
-                                current === fileKey ? null : current,
-                              )
-                            }
                             onClick={(event) => {
                               event.stopPropagation();
                               toggleDiffFileCollapsed(fileKey);
