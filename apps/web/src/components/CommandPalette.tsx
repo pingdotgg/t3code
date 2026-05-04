@@ -7,6 +7,7 @@ import {
   type FilesystemBrowseResult,
   type ProjectId,
   ProviderInstanceId,
+  type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
   type SourceControlRepositoryInfo,
 } from "@t3tools/contracts";
@@ -46,7 +47,7 @@ import {
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
 import { readLocalApi } from "../localApi";
-import { useSourceControlDiscovery } from "../lib/sourceControlDiscoveryState";
+import { refreshSourceControlDiscovery } from "../lib/sourceControlDiscoveryState";
 import {
   startNewThreadInProjectFromContext,
   startNewThreadFromContext,
@@ -239,6 +240,62 @@ function sourceProviderKind(source: AddProjectRemoteSource): AddProjectRemotePro
   return source === "url" ? null : source;
 }
 
+type AddProjectRemoteSourceReadiness = Record<
+  AddProjectRemoteSource,
+  { readonly ready: boolean; readonly hint: string | null }
+>;
+
+function buildAddProjectRemoteSourceReadiness(
+  discovery: SourceControlDiscoveryResult | null,
+): AddProjectRemoteSourceReadiness {
+  const unavailable = {
+    ready: false,
+    hint: "Provider status unavailable. Open Settings -> Source Control and rescan.",
+  } as const;
+  const defaultReadiness: AddProjectRemoteSourceReadiness = {
+    url: { ready: true, hint: null },
+    github: unavailable,
+    gitlab: unavailable,
+    bitbucket: unavailable,
+    "azure-devops": unavailable,
+  };
+
+  if (!discovery) {
+    return defaultReadiness;
+  }
+
+  const providerByKind = new Map(
+    discovery.sourceControlProviders.map((provider) => [provider.kind, provider]),
+  );
+  const readiness = { ...defaultReadiness };
+
+  for (const source of REMOTE_PROJECT_SOURCES) {
+    const kind = sourceProviderKind(source);
+    if (!kind) continue;
+    const provider = providerByKind.get(kind);
+    if (!provider) {
+      readiness[source] = unavailable;
+      continue;
+    }
+    if (provider.status !== "available") {
+      readiness[source] = { ready: false, hint: provider.installHint };
+      continue;
+    }
+    if (provider.auth.status === "unauthenticated") {
+      readiness[source] = {
+        ready: false,
+        hint:
+          Option.getOrNull(provider.auth.detail) ??
+          `${provider.label} is not authenticated. Open Settings -> Source Control for setup guidance.`,
+      };
+      continue;
+    }
+    readiness[source] = { ready: true, hint: null };
+  }
+
+  return readiness;
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
@@ -327,7 +384,6 @@ function OpenCommandPaletteDialog() {
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
   const keybindings = useServerKeybindings();
-  const sourceControlDiscovery = useSourceControlDiscovery();
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
   const currentView = viewStack.at(-1) ?? null;
   const [browseGeneration, setBrowseGeneration] = useState(0);
@@ -698,6 +754,116 @@ function OpenCommandPaletteDialog() {
     [],
   );
 
+  const openSourceControlSettings = useCallback(() => {
+    setOpen(false);
+    void navigate({ to: "/settings/source-control" });
+  }, [navigate, setOpen]);
+
+  const buildAddProjectSourceGroups = useCallback(
+    (
+      environmentId: EnvironmentId,
+      readinessBySource: AddProjectRemoteSourceReadiness,
+    ): CommandPaletteView["groups"] => {
+      const sourceItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [
+        {
+          kind: "action",
+          value: `action:add-project:${environmentId}:local`,
+          searchTerms: ["local", "folder", "directory", "browse"],
+          title: "Local folder",
+          description: "Browse a folder on disk",
+          icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+          keepOpen: true,
+          run: async () => {
+            startAddProjectBrowse(environmentId);
+          },
+        },
+      ];
+
+      for (const source of REMOTE_PROJECT_SOURCES) {
+        const label = remoteProjectSourceLabel(source);
+        const title = source === "url" ? "Git URL" : `${label} repository`;
+        const description =
+          source === "url"
+            ? "Clone from a remote URL"
+            : `Clone ${label} ${remoteProjectSourcePathHint(source)}`;
+        const readiness = readinessBySource[source];
+        const disabledHint = readiness.hint;
+
+        const titleTrailingContent = readiness.ready ? undefined : (
+          <span className="ml-auto">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    className="h-5 rounded-[.25rem] px-1.5 text-[10px] text-warning-foreground"
+                    onClick={() => {
+                      openSourceControlSettings();
+                    }}
+                  >
+                    Setup Required
+                  </Button>
+                }
+              />
+              <TooltipPopup align="end" side="left">
+                {disabledHint ?? "Open Settings -> Source Control to configure this provider."}
+              </TooltipPopup>
+            </Tooltip>
+          </span>
+        );
+
+        if (!readiness.ready) {
+          sourceItems.push({
+            kind: "action",
+            value: `action:add-project:${environmentId}:${source}:not-ready`,
+            searchTerms: ["clone", "remote", "repository", "repo", "git", label, "setup required"],
+            title,
+            description,
+            disabled: true,
+            icon: remoteProjectSourceIcon(source, ITEM_ICON_CLASS),
+            ...(titleTrailingContent ? { titleTrailingContent } : {}),
+            run: async () => {},
+          });
+          continue;
+        }
+
+        sourceItems.push({
+          kind: "action",
+          value: `action:add-project:${environmentId}:${source}`,
+          searchTerms: ["clone", "remote", "repository", "repo", "git", label],
+          title,
+          description,
+          icon: remoteProjectSourceIcon(source, ITEM_ICON_CLASS),
+          ...(titleTrailingContent ? { titleTrailingContent } : {}),
+          keepOpen: true,
+          run: async () => {
+            startAddProjectClone(environmentId, source);
+          },
+        });
+      }
+
+      return [{ value: `sources:${environmentId}`, label: "Sources", items: sourceItems }];
+    },
+    [openSourceControlSettings, startAddProjectBrowse, startAddProjectClone],
+  );
+
+  const startAddProjectSourceSelection = useCallback(
+    async (environmentId: EnvironmentId): Promise<void> => {
+      setAddProjectEnvironmentId(environmentId);
+      setAddProjectCloneFlow(null);
+      const discovery = await refreshSourceControlDiscovery({ environmentId });
+      pushPaletteView({
+        addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
+        groups: buildAddProjectSourceGroups(
+          environmentId,
+          buildAddProjectRemoteSourceReadiness(discovery),
+        ),
+      });
+    },
+    [buildAddProjectSourceGroups],
+  );
+
   const addProjectEnvironmentItems: CommandPaletteActionItem[] = addProjectEnvironmentOptions.map(
     (option) => ({
       kind: "action",
@@ -708,7 +874,7 @@ function OpenCommandPaletteDialog() {
       icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
       keepOpen: true,
       run: async () => {
-        startAddProjectBrowse(option.environmentId);
+        await startAddProjectSourceSelection(option.environmentId);
       },
     }),
   );
@@ -723,254 +889,6 @@ function OpenCommandPaletteDialog() {
     ],
     [addProjectEnvironmentItems],
   );
-
-  const addProjectRemoteEnvironmentGroups = useMemo<
-    Record<AddProjectRemoteSource, CommandPaletteView["groups"]>
-  >(() => {
-    const buildGroups = (source: AddProjectRemoteSource): CommandPaletteView["groups"] => [
-      {
-        value: `environments:${source}`,
-        label: "Environments",
-        items: addProjectEnvironmentOptions.map((option) => ({
-          kind: "action" as const,
-          value: `action:add-project:${source}:environment:${option.environmentId}`,
-          searchTerms: [
-            option.label,
-            option.environmentId,
-            option.isPrimary ? "this device" : "",
-            remoteProjectSourceLabel(source),
-          ],
-          title: option.label,
-          description: option.isPrimary ? "This device" : option.environmentId,
-          icon: remoteProjectSourceIcon(source, ITEM_ICON_CLASS),
-          keepOpen: true,
-          run: async () => {
-            startAddProjectClone(option.environmentId, source);
-          },
-        })),
-      },
-    ];
-
-    return {
-      github: buildGroups("github"),
-      gitlab: buildGroups("gitlab"),
-      bitbucket: buildGroups("bitbucket"),
-      "azure-devops": buildGroups("azure-devops"),
-      url: buildGroups("url"),
-    };
-  }, [addProjectEnvironmentOptions, startAddProjectClone]);
-
-  const addProjectRemoteSourceReadiness = useMemo(() => {
-    const defaultReadiness: Record<
-      AddProjectRemoteSource,
-      { readonly ready: boolean; readonly hint: string | null }
-    > = {
-      url: { ready: true, hint: null },
-      github: { ready: true, hint: null },
-      gitlab: { ready: true, hint: null },
-      bitbucket: { ready: true, hint: null },
-      "azure-devops": { ready: true, hint: null },
-    };
-
-    if (!sourceControlDiscovery.data) {
-      return defaultReadiness;
-    }
-
-    const providerByKind = new Map(
-      (sourceControlDiscovery.data?.sourceControlProviders ?? []).map((provider) => [
-        provider.kind,
-        provider,
-      ]),
-    );
-
-    const readiness = { ...defaultReadiness };
-
-    for (const source of REMOTE_PROJECT_SOURCES) {
-      const kind = sourceProviderKind(source);
-      if (!kind) continue;
-      const provider = providerByKind.get(kind);
-      if (!provider) {
-        readiness[source] = {
-          ready: false,
-          hint: "Provider status unavailable. Open Settings -> Source Control and rescan.",
-        };
-        continue;
-      }
-      if (provider.status !== "available") {
-        readiness[source] = { ready: false, hint: provider.installHint };
-        continue;
-      }
-      if (provider.auth.status === "unauthenticated") {
-        readiness[source] = {
-          ready: false,
-          hint:
-            Option.getOrNull(provider.auth.detail) ??
-            `${provider.label} is not authenticated. Open Settings -> Source Control for setup guidance.`,
-        };
-      }
-    }
-
-    return readiness;
-  }, [sourceControlDiscovery.data]);
-
-  const openAddProjectCloneFlow = useCallback(
-    (source: AddProjectRemoteSource) => {
-      if (addProjectEnvironmentOptions.length > 1) {
-        pushPaletteView({
-          addonIcon: remoteProjectSourceIcon(source, ADDON_ICON_CLASS),
-          groups: addProjectRemoteEnvironmentGroups[source],
-        });
-        return;
-      }
-
-      const environmentId = defaultAddProjectEnvironmentId;
-      if (!environmentId) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Unable to clone project",
-            description: "No environment is available.",
-          }),
-        );
-        return;
-      }
-
-      startAddProjectClone(environmentId, source);
-    },
-    [
-      addProjectEnvironmentOptions.length,
-      addProjectRemoteEnvironmentGroups,
-      defaultAddProjectEnvironmentId,
-      startAddProjectClone,
-    ],
-  );
-
-  const openSourceControlSettings = useCallback(() => {
-    setOpen(false);
-    void navigate({ to: "/settings/source-control" });
-  }, [navigate, setOpen]);
-
-  const addProjectSourceGroups = useMemo<CommandPaletteView["groups"]>(() => {
-    const sourceItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
-
-    if (addProjectEnvironmentOptions.length > 1) {
-      sourceItems.push({
-        kind: "submenu",
-        value: "action:add-project:local",
-        searchTerms: ["local", "folder", "directory", "browse", "environment"],
-        title: "Browse local directory",
-        icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
-        addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
-        groups: addProjectEnvironmentGroups,
-      });
-    } else {
-      sourceItems.push({
-        kind: "action",
-        value: "action:add-project:local",
-        searchTerms: ["local", "folder", "directory", "browse"],
-        title: "Browse local directory",
-        icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
-        keepOpen: true,
-        run: async () => {
-          const environmentId = defaultAddProjectEnvironmentId;
-          if (!environmentId) {
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Unable to browse projects",
-                description: "No environment is available.",
-              }),
-            );
-            return;
-          }
-          startAddProjectBrowse(environmentId);
-        },
-      });
-    }
-
-    for (const source of REMOTE_PROJECT_SOURCES) {
-      const label = remoteProjectSourceLabel(source);
-      const title = source === "url" ? "Clone from Git URL" : `Clone ${label} repository`;
-      const readiness = addProjectRemoteSourceReadiness[source];
-      const disabledHint = readiness.hint;
-
-      const titleTrailingContent = readiness.ready ? undefined : (
-        <span className="ml-auto">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="outline"
-                  size="xs"
-                  className="h-5 rounded-[.25rem] px-1.5 text-[10px] text-warning-foreground"
-                  onClick={() => {
-                    openSourceControlSettings();
-                  }}
-                >
-                  Setup Required
-                </Button>
-              }
-            />
-            <TooltipPopup align="end" side="left">
-              {disabledHint ?? "Open Settings -> Source Control to configure this provider."}
-            </TooltipPopup>
-          </Tooltip>
-        </span>
-      );
-
-      if (!readiness.ready) {
-        sourceItems.push({
-          kind: "action",
-          value: `action:add-project:${source}:not-ready`,
-          searchTerms: ["clone", "remote", "repository", "repo", "git", label, "setup required"],
-          title,
-          disabled: true,
-          icon: remoteProjectSourceIcon(source, ITEM_ICON_CLASS),
-          ...(titleTrailingContent ? { titleTrailingContent } : {}),
-          run: async () => {},
-        });
-        continue;
-      }
-
-      if (addProjectEnvironmentOptions.length > 1) {
-        sourceItems.push({
-          kind: "submenu",
-          value: `action:add-project:${source}`,
-          searchTerms: ["clone", "remote", "repository", "repo", "git", label],
-          title,
-          icon: remoteProjectSourceIcon(source, ITEM_ICON_CLASS),
-          ...(titleTrailingContent ? { titleTrailingContent } : {}),
-          addonIcon: remoteProjectSourceIcon(source, ADDON_ICON_CLASS),
-          groups: addProjectRemoteEnvironmentGroups[source],
-        });
-        continue;
-      }
-
-      sourceItems.push({
-        kind: "action",
-        value: `action:add-project:${source}`,
-        searchTerms: ["clone", "remote", "repository", "repo", "git", label],
-        title,
-        icon: remoteProjectSourceIcon(source, ITEM_ICON_CLASS),
-        ...(titleTrailingContent ? { titleTrailingContent } : {}),
-        keepOpen: true,
-        run: async () => {
-          openAddProjectCloneFlow(source);
-        },
-      });
-    }
-
-    return [{ value: "sources", label: "Sources", items: sourceItems }];
-  }, [
-    addProjectEnvironmentGroups,
-    addProjectEnvironmentOptions.length,
-    addProjectRemoteSourceReadiness,
-    addProjectRemoteEnvironmentGroups,
-    defaultAddProjectEnvironmentId,
-    openSourceControlSettings,
-    openAddProjectCloneFlow,
-    startAddProjectBrowse,
-  ]);
 
   const openAddProjectFlow = useCallback(() => {
     if (addProjectEnvironmentOptions.length > 1) {
@@ -993,12 +911,12 @@ function OpenCommandPaletteDialog() {
       return;
     }
 
-    startAddProjectBrowse(environmentId);
+    void startAddProjectSourceSelection(environmentId);
   }, [
     addProjectEnvironmentGroups,
     addProjectEnvironmentOptions.length,
     defaultAddProjectEnvironmentId,
-    startAddProjectBrowse,
+    startAddProjectSourceSelection,
   ]);
 
   useEffect(() => {
@@ -1052,7 +970,7 @@ function OpenCommandPaletteDialog() {
   }
 
   actionItems.push({
-    kind: "submenu",
+    kind: "action",
     value: "action:add-project",
     searchTerms: [
       "add project",
@@ -1074,8 +992,10 @@ function OpenCommandPaletteDialog() {
     ],
     title: "Add project",
     icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
-    addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
-    groups: addProjectSourceGroups,
+    keepOpen: true,
+    run: async () => {
+      openAddProjectFlow();
+    },
   });
 
   actionItems.push({
