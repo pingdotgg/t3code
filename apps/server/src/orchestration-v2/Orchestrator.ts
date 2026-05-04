@@ -25,6 +25,7 @@ import { Context, DateTime, Effect, Layer, Option, Ref, Schema, Stream } from "e
 import * as Semaphore from "effect/Semaphore";
 
 import { CheckpointServiceV2 } from "./CheckpointService.ts";
+import { CommandPolicyV2 } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import {
   ContextHandoffServiceV2,
@@ -302,6 +303,7 @@ function visibleDeltaRunOrdinals(
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
   const checkpointService = yield* CheckpointServiceV2;
+  const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
   const eventSink = yield* EventSinkV2;
   const commandReceipts = yield* CommandReceiptStoreV2;
@@ -313,6 +315,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchSemaphore = yield* Semaphore.make(1);
 
   const mapDispatchError =
+    (command: OrchestrationV2Command) =>
+    <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, OrchestratorDispatchError, R> =>
+      effect.pipe(
+        Effect.mapError(
+          (cause) =>
+            new OrchestratorDispatchError({
+              commandId: command.commandId,
+              commandType: command.type,
+              cause,
+            }),
+        ),
+      );
+
+  const enforceCommandPolicy =
     (command: OrchestrationV2Command) =>
     <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, OrchestratorDispatchError, R> =>
       effect.pipe(
@@ -1032,7 +1048,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           });
         });
 
-      if (session.providerSession.capabilities.turns.supportsActiveSteering) {
+      const steeringPolicy = yield* enforceCommandPolicy(input.command)(
+        commandPolicy.decideSteeringExecution({
+          commandId: input.command.commandId,
+          threadId: input.command.threadId,
+          provider: targetRun.provider,
+          capabilities: session.providerSession.capabilities,
+        }),
+      );
+
+      if (steeringPolicy === "active_steering") {
         yield* session
           .steerTurn({
             threadId: input.command.threadId,
@@ -1061,14 +1086,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           providerTurnId: providerTurn.id,
         });
         return;
-      }
-
-      if (!session.providerSession.capabilities.turns.supportsSteeringByInterruptRestart) {
-        return yield* new OrchestratorDispatchError({
-          commandId: input.command.commandId,
-          commandType: input.command.type,
-          cause: `Provider ${targetRun.provider} cannot steer or restart active turns.`,
-        });
       }
 
       yield* session.interruptTurn({ providerThread, providerTurnId: providerTurn.id }).pipe(
@@ -1353,6 +1370,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Queued dispatch for provider ${modelSelection.provider} cannot run behind active provider ${queueProviderThread.provider}.`,
           });
         }
+        const existingProviderSession =
+          queueProviderThread.providerSessionId === null
+            ? undefined
+            : projection.providerSessions.find(
+                (candidate) => candidate.id === queueProviderThread.providerSessionId,
+              );
+        if (existingProviderSession !== undefined) {
+          yield* enforceCommandPolicy(command)(
+            commandPolicy.ensureQueuedMessages({
+              commandId: command.commandId,
+              threadId: command.threadId,
+              provider: modelSelection.provider,
+              capabilities: existingProviderSession.capabilities,
+            }),
+          );
+        }
 
         const resolvedRuntimePolicy = yield* runtimePolicy
           .resolve({ thread: projection.thread, modelSelection })
@@ -1371,12 +1404,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
         const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
         const rootNodeId = idAllocator.derive.rootNode({ runId });
-        const existingProviderSession =
-          queueProviderThread.providerSessionId === null
-            ? undefined
-            : projection.providerSessions.find(
-                (candidate) => candidate.id === queueProviderThread.providerSessionId,
-              );
         const checkpointScope = yield* checkpointService
           .prepareRootRunScope({
             threadId: command.threadId,
@@ -1684,15 +1711,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
-      if (
-        pendingForkTransfer !== undefined &&
-        !session.providerSession.capabilities.threads.canForkThread
-      ) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Provider ${modelSelection.provider} does not support native fork resolution.`,
-        });
+      if (pendingForkTransfer !== undefined) {
+        yield* enforceCommandPolicy(command)(
+          commandPolicy.ensureNativeFork({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            provider: modelSelection.provider,
+            capabilities: session.providerSession.capabilities,
+            fromSpecificTurn: sourceRun !== null,
+          }),
+        );
       }
 
       const ensuredProviderThread =
@@ -1801,6 +1829,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: command.type,
           cause: `Pending merge-back transfer ${pendingMergeBackTransfer.id} has no resolvable source provider thread.`,
         });
+      }
+      if (pendingMergeBackTransfer !== undefined) {
+        yield* enforceCommandPolicy(command)(
+          commandPolicy.ensureContextHandoff({
+            commandId: command.commandId,
+            threadId: command.threadId,
+            provider: modelSelection.provider,
+            capabilities: session.providerSession.capabilities,
+            strategy: "fork_delta_context",
+          }),
+        );
       }
       const mergeBackDeltaItems =
         mergeBackSourceProjection === null || mergeBackSourceRun === null
@@ -2598,6 +2637,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           cause: `Provider session ${providerThread.providerSessionId} is not active.`,
         });
       }
+      yield* enforceCommandPolicy(command)(
+        commandPolicy.ensureInterrupt({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          provider: run.provider,
+          capabilities: sessionOption.value.providerSession.capabilities,
+        }),
+      );
 
       const now = yield* DateTime.now;
       const emitEvent = emit(events, command);
@@ -2734,6 +2781,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
+      yield* enforceCommandPolicy(command)(
+        commandPolicy.ensureRollback({
+          commandId: command.commandId,
+          threadId: command.threadId,
+          provider: modelSelection.provider,
+          capabilities: session.providerSession.capabilities,
+        }),
+      );
 
       const targetCheckpoint = projection.checkpoints.find(
         (candidate) => candidate.id === command.checkpointId,
@@ -3084,6 +3139,7 @@ export const layer: Layer.Layer<
   OrchestratorV2,
   never,
   | CheckpointServiceV2
+  | CommandPolicyV2
   | CommandReceiptStoreV2
   | ContextHandoffServiceV2
   | EventSinkV2

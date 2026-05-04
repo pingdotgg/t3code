@@ -13,6 +13,7 @@ import { ServerConfig, type ServerConfigShape } from "../../config.ts";
 import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { layer as checkpointServiceLayer } from "../CheckpointService.ts";
+import { layer as commandPolicyLayer } from "../CommandPolicy.ts";
 import { layer as commandReceiptStoreLayer } from "../CommandReceiptStore.ts";
 import { layer as contextHandoffServiceLayer } from "../ContextHandoffService.ts";
 import { layer as eventSinkLayer } from "../EventSink.ts";
@@ -220,6 +221,7 @@ export function makeOrchestratorV2ProviderReplayLayer<
     Layer.provide(
       Layer.mergeAll(
         checkpointServiceProvided,
+        commandPolicyLayer,
         contextHandoffServiceProvided,
         persistenceLayer,
         runtimeLayer,

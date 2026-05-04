@@ -1,11 +1,7 @@
 import { describe, it } from "@effect/vitest";
 import type { ProviderKind, ProviderReplayTranscript } from "@t3tools/contracts";
 import { Effect } from "effect";
-import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { promisify } from "node:util";
+import { readFile, rm } from "node:fs/promises";
 
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
@@ -20,25 +16,14 @@ import {
   runOrchestratorV2ProviderReplayScenario,
   type OrchestratorV2ProviderReplayHarness,
 } from "./ProviderReplayHarness.ts";
+import { makeCheckpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 
 const PROVIDER_REPLAY_HARNESSES = [CodexOrchestratorReplayHarness] as const;
-const execFileAsync = promisify(execFile);
 
 async function readTranscript(file: URL): Promise<ProviderReplayTranscript> {
   const text = await readFile(file, "utf8");
   return await Effect.runPromise(decodeProviderReplayNdjson(text));
-}
-
-async function makeCheckpointWorkspace(fixtureName: string): Promise<string> {
-  const cwd = await mkdtemp(path.join(tmpdir(), `t3-orchestrator-v2-${fixtureName}-`));
-  await execFileAsync("git", ["init"], { cwd });
-  await execFileAsync("git", ["config", "user.name", "T3 Code Test"], { cwd });
-  await execFileAsync("git", ["config", "user.email", "t3code-test@example.com"], { cwd });
-  await writeFile(path.join(cwd, "README.md"), `# ${fixtureName}\n`, "utf8");
-  await execFileAsync("git", ["add", "README.md"], { cwd });
-  await execFileAsync("git", ["commit", "-m", "initial"], { cwd });
-  return cwd;
 }
 
 function harnessFor(provider: ProviderKind) {
