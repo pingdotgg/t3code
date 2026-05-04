@@ -48,6 +48,19 @@ describe("remote environment api", () => {
     });
   });
 
+  it("derives backend urls and token from a hosted app pairing link", () => {
+    expect(
+      resolveRemotePairingTarget({
+        pairingUrl:
+          "https://app.t3.codes/pair?host=https%3A%2F%2Fdesktop.tailnet.ts.net%3A44342%2F#token=pairing-token",
+      }),
+    ).toEqual({
+      credential: "pairing-token",
+      httpBaseUrl: "https://desktop.tailnet.ts.net:44342/",
+      wsBaseUrl: "wss://desktop.tailnet.ts.net:44342/",
+    });
+  });
+
   it("derives backend urls from a host and pairing code", () => {
     expect(
       resolveRemotePairingTarget({

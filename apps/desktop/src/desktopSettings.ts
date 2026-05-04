@@ -6,12 +6,18 @@ import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 
 export interface DesktopSettings {
   readonly serverExposureMode: DesktopServerExposureMode;
+  readonly tailscaleServeEnabled: boolean;
+  readonly tailscaleServePort: number;
   readonly updateChannel: DesktopUpdateChannel;
   readonly updateChannelConfiguredByUser: boolean;
 }
 
+export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
+
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   serverExposureMode: "local-only",
+  tailscaleServeEnabled: false,
+  tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
   updateChannel: "latest",
   updateChannelConfiguredByUser: false,
 };
@@ -33,6 +39,29 @@ export function setDesktopServerExposurePreference(
         ...settings,
         serverExposureMode: requestedMode,
       };
+}
+
+export function setDesktopTailscaleServePreference(
+  settings: DesktopSettings,
+  input: { readonly enabled: boolean; readonly port?: number },
+): DesktopSettings {
+  const port =
+    input.port === undefined
+      ? settings.tailscaleServePort
+      : normalizeTailscaleServePort(input.port);
+  return settings.tailscaleServeEnabled === input.enabled && settings.tailscaleServePort === port
+    ? settings
+    : {
+        ...settings,
+        tailscaleServeEnabled: input.enabled,
+        tailscaleServePort: port,
+      };
+}
+
+export function normalizeTailscaleServePort(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65_535
+    ? value
+    : DEFAULT_TAILSCALE_SERVE_PORT;
 }
 
 export function setDesktopUpdateChannelPreference(
@@ -57,6 +86,8 @@ export function readDesktopSettings(settingsPath: string, appVersion: string): D
     const raw = FS.readFileSync(settingsPath, "utf8");
     const parsed = JSON.parse(raw) as {
       readonly serverExposureMode?: unknown;
+      readonly tailscaleServeEnabled?: unknown;
+      readonly tailscaleServePort?: unknown;
       readonly updateChannel?: unknown;
       readonly updateChannelConfiguredByUser?: unknown;
     };
@@ -72,6 +103,8 @@ export function readDesktopSettings(settingsPath: string, appVersion: string): D
     return {
       serverExposureMode:
         parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
+      tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,
+      tailscaleServePort: normalizeTailscaleServePort(parsed.tailscaleServePort),
       updateChannel:
         updateChannelConfiguredByUser && parsedUpdateChannel !== null
           ? parsedUpdateChannel

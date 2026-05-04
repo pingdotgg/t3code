@@ -1,0 +1,277 @@
+diff --git a/dist/unstable/rpc/RpcClient.d.ts b/dist/unstable/rpc/RpcClient.d.ts
+index 7c5970042df67a25b4145df017960b3e6febed9c..7af3374632d53ad59f24e80835aa6741853b1f2b 100644
+--- a/dist/unstable/rpc/RpcClient.d.ts
++++ b/dist/unstable/rpc/RpcClient.d.ts
+@@ -2,6 +2,7 @@ import * as Cause from "../../Cause.ts";
+ import * as Context from "../../Context.ts";
+ import type * as Duration from "../../Duration.ts";
+ import * as Effect from "../../Effect.ts";
++import * as Exit from "../../Exit.ts";
+ import * as Layer from "../../Layer.ts";
+ import * as Queue from "../../Queue.ts";
+ import * as Schedule from "../../Schedule.ts";
+@@ -192,9 +193,40 @@ export declare const layerProtocolWorker: (options: {
+     readonly targetUtilization?: number | undefined;
+     readonly timeToLive: Duration.Input;
+ }) => Layer.Layer<Protocol, WorkerError, Worker.WorkerPlatform | Worker.Spawner>;
++declare const RequestHooks_base: Context.ServiceClass<RequestHooks, "effect/rpc/RpcClient/RequestHooks", {
++    readonly onRequestStart?: ((info: {
++        readonly id: RequestId;
++        readonly tag: string;
++        readonly stream: boolean;
++    }) => Effect.Effect<void>) | undefined;
++    readonly onRequestChunk?: ((info: {
++        readonly id: RequestId;
++        readonly tag: string;
++        readonly chunkCount: number;
++    }) => Effect.Effect<void>) | undefined;
++    readonly onRequestExit?: ((info: {
++        readonly id: RequestId;
++        readonly tag: string;
++        readonly stream: boolean;
++        readonly exit: Exit.Exit<unknown, unknown>;
++    }) => Effect.Effect<void>) | undefined;
++    readonly onRequestInterrupt?: ((info: {
++        readonly id: RequestId;
++        readonly tag?: string | undefined;
++    }) => Effect.Effect<void>) | undefined;
++}>;
++/**
++ * @since 4.0.0
++ * @category RequestHooks
++ */
++export declare class RequestHooks extends RequestHooks_base {
++}
+ declare const ConnectionHooks_base: Context.ServiceClass<ConnectionHooks, "effect/rpc/RpcClient/ConnectionHooks", {
+     readonly onConnect: Effect.Effect<void>;
+     readonly onDisconnect: Effect.Effect<void>;
++    readonly onPing?: Effect.Effect<void> | undefined;
++    readonly onPong?: Effect.Effect<void> | undefined;
++    readonly onPingTimeout?: Effect.Effect<void> | undefined;
+ }>;
+ /**
+  * @since 4.0.0
+diff --git a/dist/unstable/rpc/RpcClient.js b/dist/unstable/rpc/RpcClient.js
+index 951dfc2d667a9136cfa714dcd3195e6575917fde..599c0345873bedd72bc93afe80eab0c676319421 100644
+--- a/dist/unstable/rpc/RpcClient.js
++++ b/dist/unstable/rpc/RpcClient.js
+@@ -42,6 +42,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+   const services = yield* Effect.context();
+   const scope = Context.get(services, Scope.Scope);
+   const entries = new Map();
++  const hooks = yield* Effect.serviceOption(RequestHooks);
+   let isShutdown = false;
+   yield* Scope.addFinalizer(scope, Effect.withFiber(parent => {
+     isShutdown = true;
+@@ -79,6 +80,11 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+       return Effect.interrupt;
+     }
+     const id = generateRequestId();
++    const onStart = Option.isSome(hooks) && hooks.value.onRequestStart ? hooks.value.onRequestStart({
++      id,
++      tag: rpc._tag,
++      stream: false
++    }) : Effect.void;
+     const send = middleware(message => options.onFromClient({
+       message,
+       context,
+@@ -96,7 +102,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+       headers: Headers.merge(parentFiber.getRef(CurrentHeaders), headers)
+     });
+     if (discard) {
+-      return send;
++      return onStart.pipe(Effect.andThen(send));
+     }
+     let fiber;
+     return Effect.onInterrupt(Effect.callback(resume => {
+@@ -114,7 +120,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+         }
+       };
+       entries.set(id, entry);
+-      fiber = send.pipe(span ? Effect.withParentSpan(span, {
++      fiber = onStart.pipe(Effect.andThen(send), span ? Effect.withParentSpan(span, {
+         captureStackTrace: false
+       }) : identity, Effect.runForkWith(parentFiber.context));
+       fiber.addObserver(exit => {
+@@ -123,8 +129,9 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+         }
+       });
+     }), interruptors => {
++      const entry = entries.get(id);
+       entries.delete(id);
+-      return Effect.andThen(Fiber.interrupt(fiber), sendInterrupt(id, Array.from(interruptors), context));
++      return Effect.andThen(Fiber.interrupt(fiber), sendInterrupt(id, Array.from(interruptors), context, entry?.rpc._tag));
+     });
+   });
+   const onStreamRequest = Effect.fnUntraced(function* (rpc, middleware, payload, headers, streamBufferSize, context) {
+@@ -136,11 +143,17 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+     });
+     const fiber = Fiber.getCurrent();
+     const id = generateRequestId();
++    const onStart = Option.isSome(hooks) && hooks.value.onRequestStart ? hooks.value.onRequestStart({
++      id,
++      tag: rpc._tag,
++      stream: true
++    }) : Effect.void;
+     const scope = Context.getUnsafe(fiber.context, Scope.Scope);
+     yield* Scope.addFinalizerExit(scope, exit => {
+-      if (!entries.has(id)) return Effect.void;
++      const entry = entries.get(id);
++      if (!entry) return Effect.void;
+       entries.delete(id);
+-      return sendInterrupt(id, Exit.isFailure(exit) ? Array.from(Cause.interruptors(exit.cause)) : [], context);
++      return sendInterrupt(id, Exit.isFailure(exit) ? Array.from(Cause.interruptors(exit.cause)) : [], context, entry.rpc._tag);
+     });
+     const queue = yield* Queue.bounded(streamBufferSize);
+     entries.set(id, {
+@@ -148,9 +161,10 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+       rpc,
+       queue,
+       scope,
+-      context
++      context,
++      chunkCount: 0
+     });
+-    yield* middleware(message => options.onFromClient({
++    yield* onStart.pipe(Effect.andThen(middleware(message => options.onFromClient({
+       message,
+       context,
+       discard: false
+@@ -165,7 +179,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+         sampled: span.sampled
+       } : {}),
+       headers: Headers.merge(fiber.getRef(CurrentHeaders), headers)
+-    }).pipe(span ? Effect.withParentSpan(span, {
++    }))).pipe(span ? Effect.withParentSpan(span, {
+       captureStackTrace: false
+     }) : identity, Effect.catchCause(error => Queue.failCause(queue, error)), Effect.interruptible, Effect.forkIn(scope, {
+       startImmediately: true
+@@ -195,7 +209,10 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+       });
+     };
+   };
+-  const sendInterrupt = (requestId, interruptors, context) => Effect.callback(resume => {
++  const sendInterrupt = (requestId, interruptors, context, tag) => (Option.isSome(hooks) && hooks.value.onRequestInterrupt ? hooks.value.onRequestInterrupt({
++    id: requestId,
++    tag
++  }) : Effect.void).pipe(Effect.andThen(Effect.callback(resume => {
+     const parentFiber = Fiber.getCurrent();
+     const fiber = options.onFromClient({
+       message: {
+@@ -209,7 +226,7 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+     fiber.addObserver(() => {
+       resume(Effect.void);
+     });
+-  });
++  })));
+   const write = message => {
+     switch (message._tag) {
+       case "Chunk":
+@@ -217,7 +234,13 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+           const requestId = message.requestId;
+           const entry = entries.get(requestId);
+           if (!entry || entry._tag !== "Queue") return Effect.void;
+-          return Queue.offerAll(entry.queue, message.values).pipe(supportsAck ? Effect.flatMap(() => options.onFromClient({
++          const chunkCount = entry.chunkCount += message.values.length;
++          const onChunk = Option.isSome(hooks) && hooks.value.onRequestChunk ? hooks.value.onRequestChunk({
++            id: requestId,
++            tag: entry.rpc._tag,
++            chunkCount
++          }) : Effect.void;
++          return Queue.offerAll(entry.queue, message.values).pipe(Effect.andThen(onChunk), supportsAck ? Effect.flatMap(() => options.onFromClient({
+             message: {
+               _tag: "Ack",
+               requestId: message.requestId
+@@ -232,11 +255,18 @@ export const makeNoSerialization = /*#__PURE__*/Effect.fnUntraced(function* (gro
+           const entry = entries.get(requestId);
+           if (!entry) return Effect.void;
+           entries.delete(requestId);
++          const onExit = Option.isSome(hooks) && hooks.value.onRequestExit ? hooks.value.onRequestExit({
++            id: requestId,
++            tag: entry.rpc._tag,
++            stream: entry._tag === "Queue",
++            exit: message.exit
++          }) : Effect.void;
+           if (entry._tag === "Effect") {
+-            entry.resume(message.exit);
+-            return Effect.void;
++            return onExit.pipe(Effect.andThen(Effect.sync(() => {
++              entry.resume(message.exit);
++            })));
+           }
+-          return message.exit._tag === "Success" ? Queue.end(entry.queue) : Queue.failCause(entry.queue, message.exit.cause);
++          return onExit.pipe(Effect.andThen(message.exit._tag === "Success" ? Queue.end(entry.queue) : Queue.failCause(entry.queue, message.exit.cause)));
+         }
+       case "Defect":
+         {
+@@ -530,7 +560,7 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+   const requestClientMap = new Map();
+   const write = yield* socket.writer;
+   let parser = serialization.makeUnsafe();
+-  const pinger = yield* makePinger(write(parser.encode(constPing)));
++  const pinger = yield* makePinger(write(parser.encode(constPing)), Option.isSome(hooks) ? hooks.value : undefined);
+   let currentError;
+   const onOpen = Effect.suspend(() => {
+     currentError = undefined;
+@@ -550,8 +580,7 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+           body: () => {
+             const response = responses[i++];
+             if (response._tag === "Pong") {
+-              pinger.onPong();
+-              return Effect.void;
++              return pinger.onPong;
+             }
+             if ("requestId" in response) {
+               const clientId = requestClientMap.get(response.requestId);
+@@ -579,12 +608,12 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+       }
+     }, {
+       onOpen
+-    }).pipe(Effect.raceFirst(Effect.flatMap(pinger.timeout, () => Effect.fail(new Socket.SocketError({
++    }).pipe(Effect.raceFirst(Effect.flatMap(pinger.timeout, () => (Option.isSome(hooks) && hooks.value.onPingTimeout ? hooks.value.onPingTimeout : Effect.void).pipe(Effect.andThen(Effect.fail(new Socket.SocketError({
+       reason: new Socket.SocketOpenError({
+         kind: "Timeout",
+         cause: new Error("ping timeout")
+       })
+-    })))));
++    })))))));
+   }).pipe(Effect.flatMap(() => Effect.fail(new Socket.SocketError({
+     reason: new Socket.SocketCloseError({
+       code: 1000
+@@ -626,20 +655,20 @@ export const makeProtocolSocket = options => Protocol.make(Effect.fnUntraced(fun
+   };
+ }));
+ const defaultRetryPolicy = /*#__PURE__*/Schedule.exponential(500, 1.5).pipe(/*#__PURE__*/Schedule.either(/*#__PURE__*/Schedule.spaced(5000)));
+-const makePinger = /*#__PURE__*/Effect.fnUntraced(function* (writePing) {
++const makePinger = /*#__PURE__*/Effect.fnUntraced(function* (writePing, hooks) {
+   let recievedPong = true;
+   const latch = Latch.makeUnsafe();
+   const reset = () => {
+     recievedPong = true;
+     latch.closeUnsafe();
+   };
+-  const onPong = () => {
++  const onPong = Effect.sync(() => {
+     recievedPong = true;
+-  };
++  }).pipe(Effect.andThen(hooks?.onPong ?? Effect.void));
+   yield* Effect.suspend(() => {
+     if (!recievedPong) return latch.open;
+     recievedPong = false;
+-    return writePing;
++    return (hooks?.onPing ?? Effect.void).pipe(Effect.andThen(writePing));
+   }).pipe(Effect.delay("5 seconds"), Effect.ignore, Effect.forever, Effect.interruptible, Effect.forkScoped);
+   return {
+     timeout: latch.await,
+@@ -773,6 +802,11 @@ export const makeProtocolWorker = options => Protocol.make(Effect.fnUntraced(fun
+  * @category protocol
+  */
+ export const layerProtocolWorker = /*#__PURE__*/flow(makeProtocolWorker, /*#__PURE__*/Layer.effect(Protocol));
++/**
++ * @since 4.0.0
++ * @category RequestHooks
++ */
++export class RequestHooks extends /*#__PURE__*/Context.Service()("effect/rpc/RpcClient/RequestHooks") {}
+ /**
+  * @since 4.0.0
+  * @category ConnectionHooks

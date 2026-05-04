@@ -10,10 +10,12 @@ import {
   type ServerLifecycleStreamEvent,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   getServerConfig,
+  getServerKeybindings,
   onProvidersUpdated,
   onServerConfigUpdated,
   onWelcome,
@@ -141,6 +143,11 @@ afterEach(() => {
 });
 
 describe("serverState", () => {
+  it("uses default keybindings before a server config snapshot is available", () => {
+    expect(getServerConfig()).toBeNull();
+    expect(getServerKeybindings()).toEqual(DEFAULT_RESOLVED_KEYBINDINGS);
+  });
+
   it("bootstraps the server config snapshot and replays it to late subscribers", async () => {
     serverApi.getConfig.mockResolvedValueOnce(baseServerConfig);
 
@@ -271,10 +278,25 @@ describe("serverState", () => {
       },
     ];
 
+    const nextKeybindings = [
+      {
+        command: "commandPalette.toggle",
+        shortcut: {
+          key: "p",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      },
+    ] as const;
+
     emitServerConfigEvent({
       version: 1,
       type: "keybindingsUpdated",
       payload: {
+        keybindings: nextKeybindings,
         issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
       },
     });
@@ -299,6 +321,7 @@ describe("serverState", () => {
     await waitFor(() => {
       expect(getServerConfig()).toEqual({
         ...baseServerConfig,
+        keybindings: nextKeybindings,
         issues: [{ kind: "keybindings.malformed-config", message: "bad json" }],
         providers: nextProviders,
         settings: {

@@ -10,6 +10,7 @@ import {
   type PersistedUiState,
   persistState,
   reorderProjects,
+  setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
   syncProjects,
@@ -23,6 +24,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    defaultAdvertisedEndpointKey: null,
     ...overrides,
   };
 }
@@ -100,6 +102,18 @@ describe("uiStateStore pure functions", () => {
     const next = reorderProjects(initialState, [ProjectId.make("missing")], [project2]);
 
     expect(next).toBe(initialState);
+  });
+
+  it("setDefaultAdvertisedEndpointKey stores endpoint preference by stable key", () => {
+    const initialState = makeUiState();
+
+    const next = setDefaultAdvertisedEndpointKey(initialState, "desktop-core:lan:http");
+
+    expect(next.defaultAdvertisedEndpointKey).toBe("desktop-core:lan:http");
+    expect(setDefaultAdvertisedEndpointKey(next, "desktop-core:lan:http")).toBe(next);
+    expect(setDefaultAdvertisedEndpointKey(next, "")).toMatchObject({
+      defaultAdvertisedEndpointKey: null,
+    });
   });
 
   it("reorderProjects moves all member keys of a multi-member group together", () => {
@@ -552,6 +566,17 @@ describe("uiStateStore persistence round-trip", () => {
     const rehydrated = syncProjects(makeUiState(), [projectA, projectB, projectC]);
 
     expect(rehydrated.projectOrder).toEqual([projectC.key, projectA.key, projectB.key]);
+  });
+
+  it("persists the default advertised endpoint preference", () => {
+    const state = setDefaultAdvertisedEndpointKey(makeUiState(), "desktop-core:lan:http");
+
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.defaultAdvertisedEndpointKey).toBe("desktop-core:lan:http");
   });
 
   it("preserves expand state across restart when project's logical key changes", () => {

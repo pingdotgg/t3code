@@ -24,6 +24,8 @@ const workspaceFiles = [
   "packages/client-runtime/package.json",
   "packages/contracts/package.json",
   "packages/shared/package.json",
+  "packages/ssh/package.json",
+  "packages/tailscale/package.json",
   "packages/effect-acp/package.json",
   "packages/effect-codex-app-server/package.json",
   "scripts/package.json",
@@ -31,6 +33,17 @@ const workspaceFiles = [
 
 function copyWorkspaceManifestFixture(targetRoot: string): void {
   for (const relativePath of workspaceFiles) {
+    const sourcePath = resolve(repoRoot, relativePath);
+    const destinationPath = resolve(targetRoot, relativePath);
+    mkdirSync(dirname(destinationPath), { recursive: true });
+    cpSync(sourcePath, destinationPath);
+  }
+
+  const packageJson = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")) as {
+    readonly patchedDependencies?: Record<string, string>;
+  };
+
+  for (const relativePath of Object.values(packageJson.patchedDependencies ?? {})) {
     const sourcePath = resolve(repoRoot, relativePath);
     const destinationPath = resolve(targetRoot, relativePath);
     mkdirSync(dirname(destinationPath), { recursive: true });

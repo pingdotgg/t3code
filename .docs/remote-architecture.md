@@ -93,6 +93,8 @@ Examples:
 
 A known environment may or may not know the target `environmentId` before first successful connect.
 
+In the hosted web app, known environments are browser-local. A hosted pairing URL can create the saved entry, but it does not give the hosted app a server-side control plane or a copy of the session state.
+
 ### AccessEndpoint
 
 An `AccessEndpoint` is one concrete way to reach a known environment.
@@ -107,6 +109,67 @@ A single environment may have many endpoints:
 - a desktop-managed SSH tunnel that resolves to a local forwarded WebSocket URL
 
 The environment stays the same. Only the access path changes.
+
+### AdvertisedEndpoint
+
+An `AdvertisedEndpoint` is a server or desktop-authored candidate endpoint for an environment. It is how the backend tells the client which URLs may be useful for pairing and reconnecting.
+
+`AdvertisedEndpoint` is deliberately narrower than the full access model:
+
+- it describes a concrete HTTP and WebSocket base URL pair
+- it can mark the endpoint as default, available, or unavailable
+- it includes reachability hints such as loopback, LAN, private, public, or tunnel
+- it includes compatibility hints such as whether the endpoint can be used from the hosted HTTPS app
+
+Clients should treat advertised endpoints as hints, not as proof that a route works from the current device. The final connection attempt still decides whether the endpoint is reachable.
+
+The UI presents one default advertised endpoint in the network-access summary and keeps the rest behind an expandable advanced list. The default controls pairing QR codes and primary copy actions. Users can override it, but that override is a UI preference, not backend configuration.
+
+Persist the override by stable endpoint kind rather than raw URL whenever possible. For example, a LAN endpoint should be stored as the desktop LAN endpoint preference, not as `192.168.x.y`, because the address can change when the user switches networks. Provider endpoints should use provider-specific stable keys such as Tailscale IP or Tailscale MagicDNS HTTPS. Custom endpoints may fall back to their concrete identity.
+
+When no user default is saved, endpoint selection should prefer:
+
+1. endpoints compatible with the hosted HTTPS app
+2. explicitly default endpoints
+3. non-loopback endpoints
+4. loopback endpoints only for same-machine clients
+
+This keeps endpoint discovery centralized without making any one provider, such as Tailscale or a future tunnel service, part of the core environment model.
+
+### Endpoint providers
+
+Endpoint providers are add-ons that contribute advertised endpoints for the current environment.
+
+The provider boundary is intentionally outside the core environment model:
+
+- core owns `ExecutionEnvironment`, saved environments, pairing, and connection lifecycle
+- providers discover or synthesize endpoints
+- providers return normalized `AdvertisedEndpoint` records
+- the UI and pairing logic select from those records without knowing provider-specific commands
+
+The first provider is Tailscale. It can discover Tailnet IP and MagicDNS addresses from the local machine and publish them as additional endpoint candidates. Future providers, such as a hosted tunnel service, should plug into the same shape rather than adding a separate remote environment path.
+
+Provider-specific confidence should remain a hint. A Tailscale endpoint still needs a successful browser or desktop connection before the client treats it as connected.
+
+### Hosted pairing request
+
+A hosted pairing request is a bootstrap URL for the static web app, not a transport.
+
+Example:
+
+```text
+https://app.t3.codes/pair?host=https://backend.example.com:3773#token=PAIRCODE
+```
+
+The hosted app reads the `host` parameter and pairing token, exchanges the token directly with that backend, then saves the resulting environment record in browser local storage.
+
+Important constraints:
+
+- the hosted app does not proxy HTTP or WebSocket traffic
+- the backend must still be reachable directly from the browser
+- HTTPS pages can only connect to HTTPS/WSS backends
+- HTTP LAN endpoints should keep using direct desktop or CLI pairing URLs
+- the token belongs in the URL hash so it is not sent to the hosted app origin
 
 ### RepositoryIdentity
 
@@ -151,6 +214,8 @@ Benefits:
 - no client-specific process management required
 - best fit for hosted or self-managed remote T3 deployments
 
+Browser security rules are part of this access method. A hosted HTTPS web client can connect to `wss://` backends, but it cannot connect to plain `ws://` or `http://` LAN backends because that would be mixed content.
+
 ### 2. Tunneled WebSocket access
 
 Examples:
@@ -170,6 +235,8 @@ This is especially useful when:
 - mobile must reach a desktop-hosted environment
 - a machine should be reachable without exposing raw LAN or public ports
 
+Tailscale-backed access sits here architecturally even though the current implementation is endpoint discovery rather than a T3-managed tunnel. It contributes private-network endpoints and lets the existing HTTP/WebSocket client path do the actual connection.
+
 ### 3. Desktop-managed SSH access
 
 SSH is an access and launch helper, not a separate environment type.
@@ -184,6 +251,8 @@ The desktop main process can use SSH to:
 After that, the renderer should still connect using an ordinary WebSocket URL against the forwarded local port.
 
 This keeps the renderer transport model consistent with every other access method.
+
+The desktop main process owns the SSH bridge because it can spawn local SSH processes, manage askpass prompts, write temporary launch scripts, and clean up forwards. The renderer receives a saved environment record and connects through the forwarded URL; it should not need SSH-specific RPC paths for normal environment traffic.
 
 ## Launch methods
 
@@ -227,6 +296,15 @@ The recommended T3 flow is:
 4. Desktop establishes local port forwarding.
 5. Renderer connects to the forwarded WebSocket endpoint as a normal environment.
 
+The saved environment should remember that it was created by desktop SSH launch only for reconnect and lifecycle UX. That metadata should not change the server protocol or the environment identity model.
+
+Failure handling should be explicit:
+
+- SSH authentication failure should surface before any environment is saved
+- remote launch failure should include remote logs or the launcher command output when available
+- forwarded-port failure should leave the saved environment disconnected rather than falling back to an unrelated endpoint
+- reconnect should attempt to restore the SSH bridge before reconnecting the normal WebSocket client
+
 ### 3. Client-managed local publish
 
 This is the inverse of remote launch: a local T3 server is already running, and the client publishes it through a tunnel.
@@ -266,6 +344,8 @@ That means:
 T3 already supports a WebSocket auth token on the server. That should become a first-class part of environment access rather than remaining an incidental query parameter convention.
 
 For publicly reachable environments, authenticated access should be treated as required.
+
+Hosted pairing should be treated as a client-side convenience only. The hosted app must not receive pairing tokens through query parameters, must not store pairing state server-side, and must not imply that an HTTP backend is safe or reachable from an HTTPS browser context.
 
 ## Relationship to Zed
 

@@ -21,6 +21,7 @@ import { render } from "vitest-browser-react";
 import { __resetLocalApiForTests } from "../../localApi";
 import { AppAtomRegistryProvider, resetAppAtomRegistryForTests } from "../../rpc/atomRegistry";
 import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
+import { useUiStateStore } from "../../uiStateStore";
 import { ConnectionsSettings } from "./ConnectionsSettings";
 import { GeneralSettingsPanel } from "./SettingsPanels";
 import { SourceControlSettingsPanel } from "./SourceControlSettings";
@@ -115,6 +116,8 @@ const authAccessHarness = vi.hoisted(() => {
   };
 });
 
+const mockConnectDesktopSshEnvironment = vi.hoisted(() => vi.fn());
+
 vi.mock("../../environments/runtime", () => {
   const primaryConnection = {
     kind: "primary" as const,
@@ -152,6 +155,7 @@ vi.mock("../../environments/runtime", () => {
       new URL(path, "http://localhost:3000").toString(),
     waitForSavedEnvironmentRegistryHydration: async () => undefined,
     addSavedEnvironment: vi.fn(),
+    connectDesktopSshEnvironment: mockConnectDesktopSshEnvironment,
     disconnectSavedEnvironment: vi.fn(),
     ensureEnvironmentConnectionBootstrapped: async () => undefined,
     getPrimaryEnvironmentConnection: () => primaryConnection,
@@ -259,7 +263,9 @@ function makeClientSession(input: {
 }
 
 const createDesktopBridgeStub = (overrides?: {
+  readonly discoverSshHosts?: DesktopBridge["discoverSshHosts"];
   readonly serverExposureState?: Awaited<ReturnType<DesktopBridge["getServerExposureState"]>>;
+  readonly advertisedEndpoints?: Awaited<ReturnType<DesktopBridge["getAdvertisedEndpoints"]>>;
   readonly setServerExposureMode?: DesktopBridge["setServerExposureMode"];
   readonly setUpdateChannel?: DesktopBridge["setUpdateChannel"];
 }): DesktopBridge => {
@@ -295,11 +301,58 @@ const createDesktopBridgeStub = (overrides?: {
     getSavedEnvironmentSecret: vi.fn().mockResolvedValue(null),
     setSavedEnvironmentSecret: vi.fn().mockResolvedValue(true),
     removeSavedEnvironmentSecret: vi.fn().mockResolvedValue(undefined),
+    discoverSshHosts: overrides?.discoverSshHosts ?? vi.fn().mockResolvedValue([]),
+    ensureSshEnvironment: vi.fn().mockImplementation(async (target) => ({
+      target,
+      httpBaseUrl: "http://127.0.0.1:3774/",
+      wsBaseUrl: "ws://127.0.0.1:3774/",
+      pairingToken: "ssh-pairing-token",
+    })),
+    disconnectSshEnvironment: vi.fn().mockResolvedValue(undefined),
+    fetchSshEnvironmentDescriptor: vi.fn().mockResolvedValue({
+      environmentId: "environment-ssh",
+      label: "SSH environment",
+      platform: {
+        os: "linux",
+        arch: "x64",
+      },
+      serverVersion: "0.0.0-test",
+      capabilities: {
+        repositoryIdentity: true,
+      },
+    }),
+    bootstrapSshBearerSession: vi.fn().mockResolvedValue({
+      authenticated: true,
+      role: "owner",
+      sessionMethod: "bearer-session-token",
+      expiresAt: "2026-05-01T12:00:00.000Z",
+      sessionToken: "ssh-bearer-token",
+    }),
+    fetchSshSessionState: vi.fn().mockResolvedValue({
+      authenticated: true,
+      auth: {
+        policy: "remote-reachable",
+        bootstrapMethods: ["one-time-token"],
+        sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+        sessionCookieName: "t3_session",
+      },
+      role: "owner",
+      sessionMethod: "bearer-session-token",
+      expiresAt: "2026-05-01T12:00:00.000Z",
+    }),
+    issueSshWebSocketToken: vi.fn().mockResolvedValue({
+      token: "ssh-ws-token",
+      expiresAt: "2026-05-01T12:05:00.000Z",
+    }),
+    onSshPasswordPrompt: vi.fn(() => () => {}),
+    resolveSshPasswordPrompt: vi.fn().mockResolvedValue(undefined),
     getServerExposureState: vi.fn().mockResolvedValue(
       overrides?.serverExposureState ?? {
         mode: "local-only",
         endpointUrl: null,
         advertisedHost: null,
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       },
     ),
     setServerExposureMode:
@@ -308,7 +361,17 @@ const createDesktopBridgeStub = (overrides?: {
         mode,
         endpointUrl: mode === "network-accessible" ? "http://192.168.1.44:3773" : null,
         advertisedHost: mode === "network-accessible" ? "192.168.1.44" : null,
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       })),
+    setTailscaleServeEnabled: vi.fn().mockImplementation(async (input) => ({
+      mode: overrides?.serverExposureState?.mode ?? "network-accessible",
+      endpointUrl: overrides?.serverExposureState?.endpointUrl ?? "http://192.168.1.44:3773",
+      advertisedHost: overrides?.serverExposureState?.advertisedHost ?? "192.168.1.44",
+      tailscaleServeEnabled: input.enabled,
+      tailscaleServePort: input.port ?? 443,
+    })),
+    getAdvertisedEndpoints: vi.fn().mockResolvedValue(overrides?.advertisedEndpoints ?? []),
     pickFolder: vi.fn().mockResolvedValue(null),
     confirm: vi.fn().mockResolvedValue(false),
     setTheme: vi.fn().mockResolvedValue(undefined),
@@ -345,7 +408,9 @@ describe("GeneralSettingsPanel observability", () => {
     resetServerStateForTests();
     await __resetLocalApiForTests();
     localStorage.clear();
+    useUiStateStore.setState({ defaultAdvertisedEndpointKey: null });
     authAccessHarness.reset();
+    mockConnectDesktopSshEnvironment.mockReset();
   });
 
   afterEach(async () => {
@@ -431,6 +496,176 @@ describe("GeneralSettingsPanel observability", () => {
       .toBeInTheDocument();
   });
 
+  it("hides advertised endpoint rows when desktop network access is disabled", async () => {
+    window.desktopBridge = createDesktopBridgeStub({
+      serverExposureState: {
+        mode: "local-only",
+        endpointUrl: null,
+        advertisedHost: null,
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
+      },
+      advertisedEndpoints: [
+        {
+          id: "loopback",
+          label: "This machine",
+          provider: {
+            id: "desktop-core",
+            label: "Desktop",
+            kind: "manual",
+            isAddon: false,
+          },
+          httpBaseUrl: "http://127.0.0.1:3773/",
+          wsBaseUrl: "ws://127.0.0.1:3773/",
+          reachability: "loopback",
+          compatibility: {
+            hostedHttpsApp: "mixed-content-blocked",
+            desktopApp: "compatible",
+          },
+          source: "desktop-core",
+          status: "available",
+          isDefault: true,
+        },
+        {
+          id: "tailscale-ip",
+          label: "Tailscale IP",
+          provider: {
+            id: "tailscale",
+            label: "Tailscale",
+            kind: "private-network",
+            isAddon: true,
+          },
+          httpBaseUrl: "http://100.105.39.17:3773/",
+          wsBaseUrl: "ws://100.105.39.17:3773/",
+          reachability: "private-network",
+          compatibility: {
+            hostedHttpsApp: "mixed-content-blocked",
+            desktopApp: "compatible",
+          },
+          source: "desktop-addon",
+          status: "available",
+        },
+      ],
+    });
+    authAccessHarness.setSnapshot({
+      pairingLinks: [],
+      clientSessions: [],
+    });
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("Limited to this machine.")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "This machine", exact: true }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Tailscale IP", exact: true }))
+      .not.toBeInTheDocument();
+  });
+
+  it("collapses advertised endpoints behind the network access summary", async () => {
+    window.desktopBridge = createDesktopBridgeStub({
+      serverExposureState: {
+        mode: "network-accessible",
+        endpointUrl: "http://192.168.86.39:3773",
+        advertisedHost: "192.168.86.39",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
+      },
+      advertisedEndpoints: [
+        {
+          id: "desktop-loopback:3773",
+          label: "This machine",
+          provider: {
+            id: "desktop-core",
+            label: "Desktop",
+            kind: "manual",
+            isAddon: false,
+          },
+          httpBaseUrl: "http://127.0.0.1:3773/",
+          wsBaseUrl: "ws://127.0.0.1:3773/",
+          reachability: "loopback",
+          compatibility: {
+            hostedHttpsApp: "mixed-content-blocked",
+            desktopApp: "compatible",
+          },
+          source: "desktop-core",
+          status: "available",
+        },
+        {
+          id: "desktop-lan:http://192.168.86.39:3773",
+          label: "Local network",
+          provider: {
+            id: "desktop-core",
+            label: "Desktop",
+            kind: "manual",
+            isAddon: false,
+          },
+          httpBaseUrl: "http://192.168.86.39:3773/",
+          wsBaseUrl: "ws://192.168.86.39:3773/",
+          reachability: "lan",
+          compatibility: {
+            hostedHttpsApp: "mixed-content-blocked",
+            desktopApp: "compatible",
+          },
+          source: "desktop-core",
+          status: "available",
+          isDefault: true,
+        },
+        {
+          id: "tailscale-ip:http://100.105.39.17:3773",
+          label: "Tailscale IP",
+          provider: {
+            id: "tailscale",
+            label: "Tailscale",
+            kind: "private-network",
+            isAddon: true,
+          },
+          httpBaseUrl: "http://100.105.39.17:3773/",
+          wsBaseUrl: "ws://100.105.39.17:3773/",
+          reachability: "private-network",
+          compatibility: {
+            hostedHttpsApp: "mixed-content-blocked",
+            desktopApp: "compatible",
+          },
+          source: "desktop-addon",
+          status: "available",
+        },
+      ],
+    });
+    authAccessHarness.setSnapshot({
+      pairingLinks: [],
+      clientSessions: [],
+    });
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("http://192.168.86.39:3773/")).toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "+2" })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Local network", exact: true }))
+      .not.toBeInTheDocument();
+
+    await page.getByRole("button", { name: "+2" }).click();
+
+    await expect
+      .element(page.getByRole("heading", { name: "Local network", exact: true }))
+      .toBeInTheDocument();
+    await expect.element(page.getByText("Default", { exact: true })).toBeInTheDocument();
+    await page.getByRole("button", { name: "Set as default" }).first().click();
+    await expect.element(page.getByText("http://127.0.0.1:3773/").first()).toBeInTheDocument();
+  });
+
   it("shows diagnostics inside About with a single logs-folder action", async () => {
     setServerConfigSnapshot(createBaseServerConfig());
 
@@ -461,6 +696,8 @@ describe("GeneralSettingsPanel observability", () => {
         mode: "network-accessible",
         endpointUrl: "http://192.168.1.44:3773",
         advertisedHost: "192.168.1.44",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       },
     });
     let pairingLinks: Array<AuthAccessSnapshot["pairingLinks"][number]> = [];
@@ -566,7 +803,7 @@ describe("GeneralSettingsPanel observability", () => {
       .element(page.getByText("Client · Mobile · iOS · Safari · 192.168.1.88"))
       .toBeInTheDocument();
     await expect
-      .element(page.getByRole("button", { name: /^(Copy|Show link)$/ }))
+      .element(page.getByRole("button", { name: /^Copy pairing URL for:/ }))
       .toBeInTheDocument();
     await expect.element(page.getByText("Revoke others")).toBeInTheDocument();
   });
@@ -577,6 +814,8 @@ describe("GeneralSettingsPanel observability", () => {
         mode: "network-accessible",
         endpointUrl: "http://192.168.1.44:3773",
         advertisedHost: "192.168.1.44",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       },
     });
     let clientSessions: Array<AuthAccessSnapshot["clientSessions"][number]> = [
@@ -677,9 +916,77 @@ describe("GeneralSettingsPanel observability", () => {
     await vi.waitFor(() => {
       expect(desktopBridge.setServerExposureMode).toHaveBeenCalledWith("network-accessible");
     });
+    await expect.element(page.getByText("http://192.168.1.44:3773")).toBeInTheDocument();
+  });
+
+  it("adds desktop ssh environments from the add-environment dialog", async () => {
+    const discoverSshHosts = vi.fn().mockResolvedValue([
+      {
+        alias: "devbox",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 22,
+        source: "ssh-config" as const,
+      },
+    ]);
+    window.desktopBridge = createDesktopBridgeStub({
+      discoverSshHosts,
+    });
+    mockConnectDesktopSshEnvironment.mockResolvedValue({
+      environmentId: EnvironmentId.make("environment-devbox"),
+      label: "Build box",
+      wsBaseUrl: "ws://127.0.0.1:3774/",
+      httpBaseUrl: "http://127.0.0.1:3774/",
+      createdAt: "2036-04-07T00:00:00.000Z",
+      lastConnectedAt: "2036-04-07T00:00:00.000Z",
+      desktopSsh: {
+        alias: "devbox.example.com",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 2222,
+      },
+    });
+
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByRole("button", { name: "Add environment", exact: true }).click();
+    const addEnvironmentDialog = page.getByRole("dialog", { name: "Add Environment" });
     await expect
-      .element(page.getByText("Reachable at http://192.168.1.44:3773"))
+      .element(addEnvironmentDialog.getByRole("heading", { name: "Add Environment", exact: true }))
       .toBeInTheDocument();
+    await addEnvironmentDialog.getByRole("button", { name: /^SSH\b/ }).click();
+    await vi.waitFor(() => {
+      expect(discoverSshHosts).toHaveBeenCalledTimes(1);
+    });
+    await expect
+      .element(page.getByRole("heading", { name: "devbox", exact: true }))
+      .toBeInTheDocument();
+
+    await addEnvironmentDialog.getByLabelText("SSH host or alias").fill("devbox.example.com");
+    await addEnvironmentDialog.getByLabelText("Username").fill("julius");
+    await addEnvironmentDialog.getByLabelText("Port").fill("2222");
+    await addEnvironmentDialog
+      .getByRole("button", { name: "Add environment", exact: true })
+      .first()
+      .click();
+
+    await vi.waitFor(() => {
+      expect(mockConnectDesktopSshEnvironment).toHaveBeenCalledWith(
+        {
+          alias: "devbox.example.com",
+          hostname: "devbox.example.com",
+          username: "julius",
+          port: 2222,
+        },
+        { label: "" },
+      );
+    });
   });
 
   it("opens the logs folder in the preferred editor", async () => {

@@ -1663,6 +1663,74 @@ describe("ChatView timeline estimator parity (full app)", () => {
     customWsRpcResolver = null;
     document.body.innerHTML = "";
   });
+
+  it("renders locked single-environment mobile run context as a static workspace label", async () => {
+    const mounted = await mountChatView({
+      viewport: COMPACT_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-mobile-locked-workspace" as MessageId,
+        targetText: "locked mobile workspace",
+      }),
+    });
+
+    try {
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("span")).find(
+            (element) => element.textContent?.trim() === "Local checkout",
+          ) ?? null,
+        "Unable to find static mobile workspace label.",
+      );
+
+      expect(findButtonByText("Local checkout")).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps dismiss-only composer banners aligned on mobile", async () => {
+    const mounted = await mountChatView({
+      viewport: COMPACT_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-mobile-version-banner" as MessageId,
+        targetText: "mobile version banner",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          environment: {
+            ...nextFixture.serverConfig.environment,
+            serverVersion: "9.9.9",
+          },
+        };
+      },
+    });
+
+    try {
+      const banner = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="alert"]')).find(
+            (element) => element.textContent?.includes("Client and server versions differ"),
+          ) ?? null,
+        "Unable to find version mismatch banner.",
+      );
+      const title = banner.querySelector<HTMLElement>('[data-slot="alert-title"]');
+      const description = banner.querySelector<HTMLElement>('[data-slot="alert-description"]');
+      const dismissButton = banner.querySelector<HTMLButtonElement>(
+        'button[aria-label="Dismiss version mismatch warning"]',
+      );
+
+      expect(title).toBeTruthy();
+      expect(description).toBeTruthy();
+      expect(dismissButton).toBeTruthy();
+      expect(dismissButton!.getBoundingClientRect().top).toBeLessThan(
+        description!.getBoundingClientRect().top,
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("re-expands the bootstrap project using its logical key", async () => {
     useUiStateStore.setState({
       projectExpandedById: {

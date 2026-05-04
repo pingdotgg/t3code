@@ -15,13 +15,17 @@
     "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
+    "@effect/platform-node": "catalog:",
     "effect": "catalog:",
     "electron": "40.9.3",
     "electron-updater": "^6.6.2"
   },
   "devDependencies": {
+    "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
+    "@t3tools/ssh": "workspace:*",
+    "@t3tools/tailscale": "workspace:*",
     "@types/node": "catalog:",
     "effect-acp": "workspace:*",
     "tsdown": "catalog:",

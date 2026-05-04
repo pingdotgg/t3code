@@ -45,7 +45,9 @@ describe("wsConnectionState", () => {
   });
 
   it("schedules the next retry after a failed websocket attempt", () => {
-    recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionAttempt("ws://localhost:3020/ws", {
+      connectionLabel: "Remote Mac",
+    });
     recordWsConnectionErrored("Unable to connect to the T3 server WebSocket.");
 
     const firstRetryDelayMs = getWsReconnectDelayMsForRetry(0);
@@ -54,9 +56,39 @@ describe("wsConnectionState", () => {
     }
 
     expect(getWsConnectionStatus()).toMatchObject({
+      connectionLabel: "Remote Mac",
       nextRetryAt: new Date(Date.now() + firstRetryDelayMs).toISOString(),
       reconnectAttemptCount: 1,
       reconnectPhase: "waiting",
+    });
+  });
+
+  it("adds a version mismatch hint to websocket errors when metadata includes one", () => {
+    recordWsConnectionAttempt("ws://localhost:3020/ws", {
+      connectionLabel: "Remote Mac",
+    });
+    recordWsConnectionErrored("Unable to connect to the T3 server WebSocket.", {
+      versionMismatchHint: "Version mismatch. Try syncing the client and server.",
+    });
+
+    expect(getWsConnectionStatus()).toMatchObject({
+      lastError:
+        "Unable to connect to the T3 server WebSocket. Hint: Version mismatch. Try syncing the client and server.",
+    });
+  });
+
+  it("adds a version mismatch hint to websocket close reasons when metadata includes one", () => {
+    recordWsConnectionAttempt("ws://localhost:3020/ws");
+    recordWsConnectionOpened();
+    recordWsConnectionClosed(
+      { code: 1006, reason: "socket closed" },
+      {
+        versionMismatchHint: "Version mismatch. Try syncing the client and server.",
+      },
+    );
+
+    expect(getWsConnectionStatus()).toMatchObject({
+      closeReason: "socket closed Hint: Version mismatch. Try syncing the client and server.",
     });
   });
 

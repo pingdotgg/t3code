@@ -289,7 +289,7 @@ function sendServerConfigUpdatedPush(issues: ServerConfig["issues"]) {
   rpcHarness.emitStreamValue(WS_METHODS.subscribeServerConfig, {
     version: 1,
     type: "keybindingsUpdated",
-    payload: { issues },
+    payload: { keybindings: fixture.serverConfig.keybindings, issues },
   });
 }
 
