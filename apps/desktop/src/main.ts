@@ -36,11 +36,14 @@ import { autoUpdater } from "electron-updater";
 import type { ContextMenuItem } from "@t3tools/contracts";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
+import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 import { DEFAULT_DESKTOP_BACKEND_PORT, resolveDesktopBackendPort } from "./backendPort.ts";
 import {
+  type DesktopSettings,
   DEFAULT_DESKTOP_SETTINGS,
   readDesktopSettings,
   setDesktopServerExposurePreference,
+  setDesktopTailscaleServePreference,
   setDesktopUpdateChannelPreference,
   setDesktopWindowDisplayState,
   setDesktopWindowSize,
@@ -57,7 +60,11 @@ import {
 } from "./clientPersistence.ts";
 import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness.ts";
 import { showDesktopConfirmDialog } from "./confirmDialog.ts";
-import { resolveDesktopServerExposure } from "./serverExposure.ts";
+import {
+  resolveDesktopCoreAdvertisedEndpoints,
+  resolveDesktopServerExposure,
+} from "./serverExposure.ts";
+import { DesktopSshEnvironmentBridge, resolveRemoteT3CliPackageSpec } from "./sshEnvironment.ts";
 import { syncShellEnvironment } from "./syncShellEnvironment.ts";
 import { waitForBackendStartupReady } from "./backendStartupReadiness.ts";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState.ts";
@@ -79,6 +86,7 @@ import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runti
 import { resolveDesktopAppBranding } from "./appBranding.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
 import { MIN_WINDOW_HEIGHT, MIN_WINDOW_WIDTH, resolveInitialWindowSize } from "./windowBounds.ts";
+import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
 
 syncShellEnvironment();
 
@@ -105,6 +113,8 @@ const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secr
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
+const SET_TAILSCALE_SERVE_ENABLED_CHANNEL = "desktop:set-tailscale-serve-enabled";
+const GET_ADVERTISED_ENDPOINTS_CHANNEL = "desktop:get-advertised-endpoints";
 const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
@@ -113,6 +123,11 @@ const SAVED_ENVIRONMENT_REGISTRY_PATH = Path.join(STATE_DIR, "saved-environments
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
+// Dev-only SSH launcher override. Set this to an absolute path on the SSH host
+// for a built server entry, for example:
+// "/Users/julius/Development/Work/codething-mvp/apps/server/dist/bin.mjs"
+const DEV_REMOTE_T3_SERVER_ENTRY_PATH =
+  process.env.T3CODE_DEV_REMOTE_T3_SERVER_ENTRY_PATH?.trim() ?? "";
 const desktopAppBranding: DesktopAppBranding = resolveDesktopAppBranding({
   isDevelopment,
   appVersion: app.getVersion(),
@@ -300,6 +315,9 @@ function backendChildEnv(): NodeJS.ProcessEnv {
   delete env.T3CODE_DESKTOP_WS_URL;
   delete env.T3CODE_DESKTOP_LAN_ACCESS;
   delete env.T3CODE_DESKTOP_LAN_HOST;
+  delete env.T3CODE_DESKTOP_HTTPS_ENDPOINTS;
+  delete env.T3CODE_TAILSCALE_SERVE;
+  delete env.T3CODE_TAILSCALE_SERVE_PORT;
   return env;
 }
 
@@ -308,7 +326,30 @@ function getDesktopServerExposureState(): DesktopServerExposureState {
     mode: desktopServerExposureMode,
     endpointUrl: backendEndpointUrl,
     advertisedHost: backendAdvertisedHost,
+    tailscaleServeEnabled: desktopSettings.tailscaleServeEnabled,
+    tailscaleServePort: desktopSettings.tailscaleServePort,
   };
+}
+
+async function getDesktopAdvertisedEndpoints() {
+  const exposure = resolveDesktopServerExposure({
+    mode: desktopServerExposureMode,
+    port: backendPort,
+    networkInterfaces: OS.networkInterfaces(),
+    ...(backendAdvertisedHost ? { advertisedHostOverride: backendAdvertisedHost } : {}),
+  });
+  const coreEndpoints = resolveDesktopCoreAdvertisedEndpoints({
+    port: backendPort,
+    exposure,
+    customHttpsEndpointUrls: resolveCustomHttpsEndpointUrls(),
+  });
+  const tailscaleEndpoints = await resolveTailscaleAdvertisedEndpoints({
+    port: backendPort,
+    serveEnabled: desktopSettings.tailscaleServeEnabled,
+    servePort: desktopSettings.tailscaleServePort,
+    networkInterfaces: OS.networkInterfaces(),
+  });
+  return [...coreEndpoints, ...tailscaleEndpoints];
 }
 
 function getDesktopSecretStorage() {
@@ -324,9 +365,19 @@ function resolveAdvertisedHostOverride(): string | undefined {
   return override && override.length > 0 ? override : undefined;
 }
 
+function resolveCustomHttpsEndpointUrls(): readonly string[] {
+  return (process.env.T3CODE_DESKTOP_HTTPS_ENDPOINTS ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+}
+
 async function applyDesktopServerExposureMode(
   mode: DesktopServerExposureMode,
-  options?: { readonly persist?: boolean; readonly rejectIfUnavailable?: boolean },
+  options?: {
+    readonly persist?: boolean;
+    readonly rejectIfUnavailable?: boolean;
+  },
 ): Promise<DesktopServerExposureState> {
   const advertisedHostOverride = resolveAdvertisedHostOverride();
   const requestedMode = mode;
@@ -364,6 +415,17 @@ async function applyDesktopServerExposureMode(
   return getDesktopServerExposureState();
 }
 
+async function applyDesktopTailscaleServeEnabled(
+  nextSettings: DesktopSettings,
+): Promise<DesktopServerExposureState> {
+  desktopSettings = nextSettings;
+  writeDesktopSettings(DESKTOP_SETTINGS_PATH, desktopSettings);
+  relaunchDesktopApp(
+    desktopSettings.tailscaleServeEnabled ? "tailscale-serve-enabled" : "tailscale-serve-disabled",
+  );
+  return getDesktopServerExposureState();
+}
+
 function relaunchDesktopApp(reason: string): void {
   writeDesktopLogHeader(`desktop relaunch requested reason=${reason}`);
   setImmediate(() => {
@@ -376,6 +438,7 @@ function relaunchDesktopApp(reason: string): void {
           `desktop relaunch backend shutdown warning message=${formatErrorMessage(error)}`,
         );
       })
+      .then(() => desktopSshEnvironmentBridge.dispose().catch(() => undefined))
       .finally(() => {
         restoreStdIoCapture?.();
         if (isDevelopment) {
@@ -631,6 +694,22 @@ let updateDownloadInFlight = false;
 let updateInstallInFlight = false;
 let updaterConfigured = false;
 let updateState: DesktopUpdateState = initialUpdateState();
+
+const desktopSshEnvironmentBridge = new DesktopSshEnvironmentBridge({
+  getMainWindow: () => mainWindow,
+  resolveCliRunner: (): RemoteT3RunnerOptions => {
+    if (isDevelopment && DEV_REMOTE_T3_SERVER_ENTRY_PATH.length > 0) {
+      return { nodeScriptPath: DEV_REMOTE_T3_SERVER_ENTRY_PATH };
+    }
+    return {
+      packageSpec: resolveRemoteT3CliPackageSpec({
+        appVersion: app.getVersion(),
+        updateChannel: desktopSettings.updateChannel,
+        isDevelopment,
+      }),
+    };
+  },
+});
 
 function resolveUpdaterErrorContext(): DesktopUpdateErrorContext {
   if (updateInstallInFlight) return "install";
@@ -1183,7 +1262,10 @@ async function checkForUpdates(reason: string): Promise<boolean> {
   }
 }
 
-async function downloadAvailableUpdate(): Promise<{ accepted: boolean; completed: boolean }> {
+async function downloadAvailableUpdate(): Promise<{
+  accepted: boolean;
+  completed: boolean;
+}> {
   if (!updaterConfigured || updateDownloadInFlight || updateState.status !== "available") {
     return { accepted: false, completed: false };
   }
@@ -1205,7 +1287,10 @@ async function downloadAvailableUpdate(): Promise<{ accepted: boolean; completed
   }
 }
 
-async function installDownloadedUpdate(): Promise<{ accepted: boolean; completed: boolean }> {
+async function installDownloadedUpdate(): Promise<{
+  accepted: boolean;
+  completed: boolean;
+}> {
   if (isQuitting || !updaterConfigured || updateState.status !== "downloaded") {
     return { accepted: false, completed: false };
   }
@@ -1405,6 +1490,8 @@ function startBackend(): void {
         t3Home: BASE_DIR,
         host: backendBindHost,
         desktopBootstrapToken: backendBootstrapToken,
+        tailscaleServeEnabled: desktopSettings.tailscaleServeEnabled,
+        tailscaleServePort: desktopSettings.tailscaleServePort,
         ...(backendObservabilitySettings.otlpTracesUrl
           ? { otlpTracesUrl: backendObservabilitySettings.otlpTracesUrl }
           : {}),
@@ -1650,6 +1737,8 @@ function registerIpcHandlers(): void {
     },
   );
 
+  desktopSshEnvironmentBridge.registerIpcHandlers(ipcMain);
+
   ipcMain.removeHandler(GET_SERVER_EXPOSURE_STATE_CHANNEL);
   ipcMain.handle(GET_SERVER_EXPOSURE_STATE_CHANNEL, async () => getDesktopServerExposureState());
 
@@ -1671,6 +1760,31 @@ function registerIpcHandlers(): void {
     relaunchDesktopApp(`serverExposureMode=${nextMode}`);
     return nextState;
   });
+
+  ipcMain.removeHandler(SET_TAILSCALE_SERVE_ENABLED_CHANNEL);
+  ipcMain.handle(SET_TAILSCALE_SERVE_ENABLED_CHANNEL, async (_event, rawInput: unknown) => {
+    if (typeof rawInput !== "object" || rawInput === null) {
+      throw new Error("Invalid Tailscale Serve input.");
+    }
+    const input = rawInput as {
+      readonly enabled?: unknown;
+      readonly port?: unknown;
+    };
+    if (typeof input.enabled !== "boolean") {
+      throw new Error("Invalid Tailscale Serve input.");
+    }
+    const nextSettings = setDesktopTailscaleServePreference(desktopSettings, {
+      enabled: input.enabled,
+      ...(typeof input.port === "number" ? { port: input.port } : {}),
+    });
+    if (nextSettings === desktopSettings) {
+      return getDesktopServerExposureState();
+    }
+    return applyDesktopTailscaleServeEnabled(nextSettings);
+  });
+
+  ipcMain.removeHandler(GET_ADVERTISED_ENDPOINTS_CHANNEL);
+  ipcMain.handle(GET_ADVERTISED_ENDPOINTS_CHANNEL, async () => getDesktopAdvertisedEndpoints());
 
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
   ipcMain.handle(PICK_FOLDER_CHANNEL, async (_event, rawOptions: unknown) => {
@@ -2042,7 +2156,10 @@ function createWindow(): BrowserWindow {
     const externalUrl = getSafeExternalUrl(params.linkURL);
     if (externalUrl) {
       menuTemplate.push(
-        { label: "Copy Link", click: () => clipboard.writeText(params.linkURL) },
+        {
+          label: "Copy Link",
+          click: () => clipboard.writeText(params.linkURL),
+        },
         { type: "separator" },
       );
     }
@@ -2102,6 +2219,9 @@ function createWindow(): BrowserWindow {
   }
 
   window.on("closed", () => {
+    desktopSshEnvironmentBridge.cancelPendingPasswordPrompts(
+      "SSH authentication was cancelled because the app window closed.",
+    );
     if (mainWindow === window) {
       mainWindow = null;
     }
@@ -2193,6 +2313,7 @@ app.on("before-quit", () => {
   clearUpdatePollTimer();
   cancelBackendReadinessWait();
   stopBackend();
+  void desktopSshEnvironmentBridge.dispose().catch(() => undefined);
   restoreStdIoCapture?.();
 });
 
@@ -2242,6 +2363,7 @@ if (process.platform !== "win32") {
     clearUpdatePollTimer();
     cancelBackendReadinessWait();
     stopBackend();
+    void desktopSshEnvironmentBridge.dispose().catch(() => undefined);
     restoreStdIoCapture?.();
     app.quit();
   });
@@ -2252,6 +2374,7 @@ if (process.platform !== "win32") {
     writeDesktopLogHeader("SIGTERM received");
     clearUpdatePollTimer();
     stopBackend();
+    void desktopSshEnvironmentBridge.dispose().catch(() => undefined);
     restoreStdIoCapture?.();
     app.quit();
   });

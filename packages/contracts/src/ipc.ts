@@ -1,22 +1,22 @@
 import type {
-  GitCheckoutInput,
-  GitCheckoutResult,
-  GitCreateBranchInput,
+  VcsSwitchRefInput,
+  VcsSwitchRefResult,
+  VcsCreateRefInput,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
   GitPullRequestRefInput,
-  GitCreateWorktreeInput,
-  GitCreateWorktreeResult,
-  GitInitInput,
-  GitListBranchesInput,
-  GitListBranchesResult,
-  GitPullInput,
-  GitPullResult,
-  GitRemoveWorktreeInput,
+  VcsCreateWorktreeInput,
+  VcsCreateWorktreeResult,
+  VcsInitInput,
+  VcsListRefsInput,
+  VcsListRefsResult,
+  VcsPullInput,
+  VcsPullResult,
+  VcsRemoveWorktreeInput,
   GitResolvePullRequestResult,
-  GitStatusInput,
-  GitStatusResult,
-  GitCreateBranchResult,
+  VcsStatusInput,
+  VcsStatusResult,
+  VcsCreateRefResult,
 } from "./git.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type {
@@ -53,8 +53,24 @@ import type {
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
 import type { EnvironmentId } from "./baseSchemas.ts";
+import type {
+  AuthBearerBootstrapResult,
+  AuthSessionState,
+  AuthWebSocketTokenResult,
+} from "./auth.ts";
+import type { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { EditorId } from "./editor.ts";
-import { ServerSettings, type ClientSettings, type ServerSettingsPatch } from "./settings.ts";
+import type { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import type { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import type {
+  SourceControlCloneRepositoryInput,
+  SourceControlCloneRepositoryResult,
+  SourceControlDiscoveryResult,
+  SourceControlPublishRepositoryInput,
+  SourceControlPublishRepositoryResult,
+  SourceControlRepositoryInfo,
+  SourceControlRepositoryLookupInput,
+} from "./sourceControl.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -126,6 +142,36 @@ export interface DesktopEnvironmentBootstrap {
   bootstrapToken?: string;
 }
 
+export interface DesktopSshEnvironmentTarget {
+  alias: string;
+  hostname: string;
+  username: string | null;
+  port: number | null;
+}
+
+export type DesktopSshHostSource = "ssh-config" | "known-hosts";
+
+export interface DesktopDiscoveredSshHost extends DesktopSshEnvironmentTarget {
+  source: DesktopSshHostSource;
+}
+
+export interface DesktopSshEnvironmentBootstrap {
+  target: DesktopSshEnvironmentTarget;
+  httpBaseUrl: string;
+  wsBaseUrl: string;
+  pairingToken: string | null;
+  remotePort?: number;
+  remoteServerKind?: "external" | "managed";
+}
+
+export interface DesktopSshPasswordPromptRequest {
+  requestId: string;
+  destination: string;
+  username: string | null;
+  prompt: string;
+  expiresAt: string;
+}
+
 export interface PersistedSavedEnvironmentRecord {
   environmentId: EnvironmentId;
   label: string;
@@ -133,6 +179,7 @@ export interface PersistedSavedEnvironmentRecord {
   httpBaseUrl: string;
   createdAt: string;
   lastConnectedAt: string | null;
+  desktopSsh?: DesktopSshEnvironmentTarget;
 }
 
 export type DesktopServerExposureMode = "local-only" | "network-accessible";
@@ -141,6 +188,8 @@ export interface DesktopServerExposureState {
   mode: DesktopServerExposureMode;
   endpointUrl: string | null;
   advertisedHost: string | null;
+  tailscaleServeEnabled: boolean;
+  tailscaleServePort: number;
 }
 
 export interface PickFolderOptions {
@@ -159,8 +208,31 @@ export interface DesktopBridge {
   getSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<string | null>;
   setSavedEnvironmentSecret: (environmentId: EnvironmentId, secret: string) => Promise<boolean>;
   removeSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<void>;
+  discoverSshHosts: () => Promise<readonly DesktopDiscoveredSshHost[]>;
+  ensureSshEnvironment: (
+    target: DesktopSshEnvironmentTarget,
+    options?: { issuePairingToken?: boolean },
+  ) => Promise<DesktopSshEnvironmentBootstrap>;
+  disconnectSshEnvironment: (target: DesktopSshEnvironmentTarget) => Promise<void>;
+  fetchSshEnvironmentDescriptor: (httpBaseUrl: string) => Promise<ExecutionEnvironmentDescriptor>;
+  bootstrapSshBearerSession: (
+    httpBaseUrl: string,
+    credential: string,
+  ) => Promise<AuthBearerBootstrapResult>;
+  fetchSshSessionState: (httpBaseUrl: string, bearerToken: string) => Promise<AuthSessionState>;
+  issueSshWebSocketToken: (
+    httpBaseUrl: string,
+    bearerToken: string,
+  ) => Promise<AuthWebSocketTokenResult>;
+  onSshPasswordPrompt: (listener: (request: DesktopSshPasswordPromptRequest) => void) => () => void;
+  resolveSshPasswordPrompt: (requestId: string, password: string | null) => Promise<void>;
   getServerExposureState: () => Promise<DesktopServerExposureState>;
   setServerExposureMode: (mode: DesktopServerExposureMode) => Promise<DesktopServerExposureState>;
+  setTailscaleServeEnabled: (input: {
+    readonly enabled: boolean;
+    readonly port?: number;
+  }) => Promise<DesktopServerExposureState>;
+  getAdvertisedEndpoints: () => Promise<readonly AdvertisedEndpoint[]>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
@@ -227,6 +299,7 @@ export interface LocalApi {
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+    discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
   };
 }
 
@@ -235,7 +308,7 @@ export interface LocalApi {
  *
  * These operations must always be routed with explicit environment context.
  * They represent remote stateful capabilities such as orchestration, terminal,
- * project, and git operations. In multi-environment mode, each environment gets
+ * project, VCS, and provider operations. In multi-environment mode, each environment gets
  * its own instance of this surface, and callers should resolve it by
  * `environmentId` rather than reaching through the local desktop bridge.
  */
@@ -256,26 +329,39 @@ export interface EnvironmentApi {
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
   };
-  git: {
-    listBranches: (input: GitListBranchesInput) => Promise<GitListBranchesResult>;
-    createWorktree: (input: GitCreateWorktreeInput) => Promise<GitCreateWorktreeResult>;
-    removeWorktree: (input: GitRemoveWorktreeInput) => Promise<void>;
-    createBranch: (input: GitCreateBranchInput) => Promise<GitCreateBranchResult>;
-    checkout: (input: GitCheckoutInput) => Promise<GitCheckoutResult>;
-    init: (input: GitInitInput) => Promise<void>;
-    resolvePullRequest: (input: GitPullRequestRefInput) => Promise<GitResolvePullRequestResult>;
-    preparePullRequestThread: (
-      input: GitPreparePullRequestThreadInput,
-    ) => Promise<GitPreparePullRequestThreadResult>;
-    pull: (input: GitPullInput) => Promise<GitPullResult>;
-    refreshStatus: (input: GitStatusInput) => Promise<GitStatusResult>;
+  sourceControl: {
+    lookupRepository: (
+      input: SourceControlRepositoryLookupInput,
+    ) => Promise<SourceControlRepositoryInfo>;
+    cloneRepository: (
+      input: SourceControlCloneRepositoryInput,
+    ) => Promise<SourceControlCloneRepositoryResult>;
+    publishRepository: (
+      input: SourceControlPublishRepositoryInput,
+    ) => Promise<SourceControlPublishRepositoryResult>;
+  };
+  vcs: {
+    listRefs: (input: VcsListRefsInput) => Promise<VcsListRefsResult>;
+    createWorktree: (input: VcsCreateWorktreeInput) => Promise<VcsCreateWorktreeResult>;
+    removeWorktree: (input: VcsRemoveWorktreeInput) => Promise<void>;
+    createRef: (input: VcsCreateRefInput) => Promise<VcsCreateRefResult>;
+    switchRef: (input: VcsSwitchRefInput) => Promise<VcsSwitchRefResult>;
+    init: (input: VcsInitInput) => Promise<void>;
+    pull: (input: VcsPullInput) => Promise<VcsPullResult>;
+    refreshStatus: (input: VcsStatusInput) => Promise<VcsStatusResult>;
     onStatus: (
-      input: GitStatusInput,
-      callback: (status: GitStatusResult) => void,
+      input: VcsStatusInput,
+      callback: (status: VcsStatusResult) => void,
       options?: {
         onResubscribe?: () => void;
       },
     ) => () => void;
+  };
+  git: {
+    resolvePullRequest: (input: GitPullRequestRefInput) => Promise<GitResolvePullRequestResult>;
+    preparePullRequestThread: (
+      input: GitPreparePullRequestThreadInput,
+    ) => Promise<GitPreparePullRequestThreadResult>;
   };
   orchestration: {
     dispatchCommand: (command: ClientOrchestrationCommand) => Promise<{ sequence: number }>;

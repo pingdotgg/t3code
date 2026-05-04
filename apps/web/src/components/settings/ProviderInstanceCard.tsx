@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDownIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
   type ProviderInstanceConfig,
@@ -21,8 +21,10 @@ import { DraftInput } from "../ui/draft-input";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { DriverOption } from "./providerDriverMeta";
+import { ProviderSettingsForm } from "./ProviderSettingsForm";
 import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import {
   PROVIDER_STATUS_STYLES,
   getProviderSummary,
@@ -40,8 +42,6 @@ const PROVIDER_ACCENT_SWATCHES = [
 ] as const;
 
 const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
-
-const REDACTED_EMAIL_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 
 let environmentVariableDraftId = 0;
 const nextEnvironmentVariableDraftId = () => `provider-env-${environmentVariableDraftId++}`;
@@ -67,39 +67,6 @@ function makeEnvironmentDraftRow(
   };
 }
 
-function redactedEmailPlaceholder(email: string): string {
-  let state = 0x811c9dc5;
-  for (let index = 0; index < email.length; index += 1) {
-    state ^= email.charCodeAt(index);
-    state = Math.imul(state, 0x01000193);
-  }
-
-  const nextChar = () => {
-    state = Math.imul(state ^ (state >>> 13), 0x85ebca6b);
-    state = Math.imul(state ^ (state >>> 16), 0xc2b2ae35);
-    return REDACTED_EMAIL_ALPHABET[Math.abs(state) % REDACTED_EMAIL_ALPHABET.length] ?? "x";
-  };
-
-  return Array.from(email, (char) => {
-    if (char === "@" || char === "." || char === "-" || char === "_") return char;
-    return nextChar();
-  }).join("");
-}
-
-/**
- * Read a string value at `key` from the opaque per-driver config blob.
- * Returns an empty string when the key is missing or the stored value is
- * not a string. The permissive shape reflects that `config` is
- * `Schema.Unknown` at the contract boundary — forks may populate it with
- * non-string values that the built-in UI should round-trip without
- * throwing.
- */
-function readConfigString(config: unknown, key: string): string {
-  if (config === null || typeof config !== "object") return "";
-  const value = (config as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : "";
-}
-
 /**
  * Read a string[] at `key` from the opaque config blob, filtering out
  * non-string entries. Used for `customModels`, which is always typed as
@@ -114,34 +81,8 @@ function readConfigStringArray(config: unknown, key: string): ReadonlyArray<stri
 }
 
 /**
- * Produce the next config blob after setting `key` to `value`. Empty
- * strings drop the key so server defaults stay in effect, mirroring the
- * save-time normalization in `AddProviderInstanceDialog`. Returns
- * `undefined` when the resulting blob has no keys, which matches
- * `ProviderInstanceConfig.config` being optional.
- *
- * Non-string values already stored in the blob are carried through
- * verbatim so fork-owned fields survive edits made through this UI.
- */
-function nextConfigBlobWithString(
-  config: unknown,
-  key: string,
-  value: string,
-): Record<string, unknown> | undefined {
-  const base: Record<string, unknown> =
-    config !== null && typeof config === "object" ? { ...(config as Record<string, unknown>) } : {};
-  const trimmed = value.trim();
-  if (trimmed.length > 0) {
-    base[key] = value;
-  } else {
-    delete base[key];
-  }
-  return Object.keys(base).length > 0 ? base : undefined;
-}
-
-/**
  * Set `key` to an arbitrary value on the opaque config blob. Unlike
- * `nextConfigBlobWithString`, does not drop empty-looking values — the
+ * provider settings field updates, does not drop empty-looking values — the
  * caller is responsible for deciding whether an empty array / empty
  * object should be stored explicitly (e.g. `customModels: []` is a
  * meaningful "user cleared their custom list" state distinct from
@@ -185,35 +126,19 @@ function ProviderAuthEmail(props: {
   readonly prefix?: string;
   readonly separator?: boolean;
 }) {
-  const [revealed, setRevealed] = useState(false);
   const trimmed = props.email?.trim();
-  const redacted = useMemo(() => (trimmed ? redactedEmailPlaceholder(trimmed) : ""), [trimmed]);
   if (!trimmed) return null;
 
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5">
       {props.separator ? <span aria-hidden>·</span> : null}
       {props.prefix ? <span className="text-muted-foreground/80">{props.prefix}</span> : null}
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              className={cn(
-                "min-w-0 cursor-pointer rounded-sm font-mono text-[11px] leading-none transition hover:text-foreground",
-                revealed ? "text-muted-foreground" : "select-none text-muted-foreground blur-[2px]",
-              )}
-              onClick={() => setRevealed((value) => !value)}
-              aria-label={revealed ? "Hide account email" : "Reveal account email"}
-            >
-              {revealed ? trimmed : redacted}
-            </button>
-          }
-        />
-        <TooltipPopup side="top">
-          {revealed ? "Click to hide email" : "Click to reveal email"}
-        </TooltipPopup>
-      </Tooltip>
+      <RedactedSensitiveText
+        value={trimmed}
+        ariaLabel="Toggle account email visibility"
+        revealTooltip="Click to reveal email"
+        hideTooltip="Click to hide email"
+      />
     </span>
   );
 }
@@ -473,7 +398,7 @@ interface ProviderInstanceCardProps {
    * default slots supply a reset-to-factory control here; custom instances
    * omit it.
    */
-  readonly headerAction?: React.ReactNode | undefined;
+  readonly headerAction?: ReactNode | undefined;
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
@@ -585,8 +510,7 @@ export function ProviderInstanceCard({
     );
   };
 
-  const updateConfigField = (key: string, value: string) => {
-    const nextConfig = nextConfigBlobWithString(instance.config, key, value);
+  const updateConfig = (nextConfig: Record<string, unknown> | undefined) => {
     const { config: _omit, ...rest } = instance;
     onUpdate(
       nextConfig !== undefined
@@ -759,28 +683,15 @@ export function ProviderInstanceCard({
               />
             </div>
 
-            {driverOption?.fields.map((field) => (
-              <div key={field.key} className="border-t border-border/60 px-4 py-3 sm:px-5">
-                <label htmlFor={`provider-instance-${instanceId}-${field.key}`} className="block">
-                  <span className="text-xs font-medium text-foreground">{field.label}</span>
-                  <DraftInput
-                    id={`provider-instance-${instanceId}-${field.key}`}
-                    className="mt-1.5"
-                    type={field.type === "password" ? "password" : undefined}
-                    autoComplete={field.type === "password" ? "off" : undefined}
-                    value={readConfigString(instance.config, field.key)}
-                    onCommit={(next) => updateConfigField(field.key, next)}
-                    placeholder={field.placeholder}
-                    spellCheck={false}
-                  />
-                  {field.description ? (
-                    <span className="mt-1 block text-xs text-muted-foreground">
-                      {field.description}
-                    </span>
-                  ) : null}
-                </label>
-              </div>
-            ))}
+            {driverOption ? (
+              <ProviderSettingsForm
+                definition={driverOption}
+                value={instance.config}
+                idPrefix={`provider-instance-${instanceId}`}
+                variant="card"
+                onChange={updateConfig}
+              />
+            ) : null}
 
             {driverOption !== undefined ? (
               <ProviderModelsSection

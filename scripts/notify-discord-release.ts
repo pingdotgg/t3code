@@ -173,7 +173,7 @@ export const notifyDiscordReleaseCommand = Command.make(
       Flag.withSchema(Schema.NonEmptyString),
       Flag.withDescription("Human-readable release name."),
     ),
-    version: Flag.string("version").pipe(
+    releaseVersion: Flag.string("release-version").pipe(
       Flag.withSchema(Schema.NonEmptyString),
       Flag.withDescription("Release version."),
     ),
@@ -186,7 +186,7 @@ export const notifyDiscordReleaseCommand = Command.make(
       Flag.withDescription("Public GitHub release URL."),
     ),
   },
-  ({ target, roleId, releaseName, version, tag, releaseUrl }) =>
+  ({ target, roleId, releaseName, releaseVersion, tag, releaseUrl }) =>
     Effect.gen(function* () {
       yield* Effect.logInfo("discord release announcement starting").pipe(
         Effect.annotateLogs({
@@ -194,7 +194,7 @@ export const notifyDiscordReleaseCommand = Command.make(
           roleIdProvided: roleId.length > 0,
           roleIdLength: roleId.length,
           releaseName,
-          version,
+          version: releaseVersion,
           tag,
           releaseUrl,
         }),
@@ -205,7 +205,7 @@ export const notifyDiscordReleaseCommand = Command.make(
         target,
         roleId,
         releaseName,
-        version,
+        version: releaseVersion,
         tag,
         releaseUrl,
         timestamp: new Date().toISOString(),

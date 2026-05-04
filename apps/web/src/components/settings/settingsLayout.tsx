@@ -28,13 +28,13 @@ export function SettingsSection({
 }) {
   return (
     <section className="space-y-2.5">
-      <div className="flex items-center justify-between px-1">
+      <div className="flex h-5 items-center justify-between px-1">
         <h2 className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-foreground/50">
           <span className="inline-block h-px w-3 bg-border" aria-hidden />
           {icon}
           {title}
         </h2>
-        {headerAction}
+        <div className="flex h-5 min-w-5 items-center justify-end">{headerAction}</div>
       </div>
       <div className="relative overflow-hidden rounded-2xl border bg-card text-card-foreground shadow-sm/4 not-dark:bg-clip-padding before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:shadow-none dark:before:shadow-[0_-1px_--theme(--color-white/6%)]">
         {children}
@@ -52,7 +52,7 @@ export function SettingsRow({
   children,
 }: {
   title: ReactNode;
-  description: string;
+  description: ReactNode;
   status?: ReactNode;
   resetAction?: ReactNode;
   control?: ReactNode;

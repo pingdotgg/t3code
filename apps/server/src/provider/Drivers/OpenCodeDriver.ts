@@ -16,7 +16,7 @@ import { OpenCodeSettings, ProviderDriverKind, type ServerProvider } from "@t3to
 import { Duration, Effect, FileSystem, Path, Schema, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { makeOpenCodeTextGeneration } from "../../git/Layers/OpenCodeTextGeneration.ts";
+import { makeOpenCodeTextGeneration } from "../../textGeneration/OpenCodeTextGeneration.ts";
 import { ServerConfig } from "../../config.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
