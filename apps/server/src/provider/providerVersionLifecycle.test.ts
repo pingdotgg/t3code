@@ -19,41 +19,41 @@ const isNativeTestCommandPath =
   (expectedPathSegment: string) =>
   (commandPath: string): boolean =>
     normalizeCommandPath(commandPath).includes(expectedPathSegment);
-const codexUpdate = makePackageManagedProviderVersionLifecycleResolver({
-  provider: driver("codex"),
-  npmPackageName: "@openai/codex",
-  homebrewFormula: "codex",
+const packageToolUpdate = makePackageManagedProviderVersionLifecycleResolver({
+  provider: driver("packageTool"),
+  npmPackageName: "@example/package-tool",
+  homebrewFormula: "package-tool",
   nativeUpdate: null,
 });
-const claudeUpdate = makePackageManagedProviderVersionLifecycleResolver({
-  provider: driver("claudeAgent"),
-  npmPackageName: "@anthropic-ai/claude-code",
-  homebrewFormula: "claude-code",
+const nativePackageToolUpdate = makePackageManagedProviderVersionLifecycleResolver({
+  provider: driver("nativePackageTool"),
+  npmPackageName: "@example/native-package-tool",
+  homebrewFormula: "native-package-tool",
   nativeUpdate: {
-    executable: "claude",
+    executable: "native-package-tool",
     args: ["update"],
-    lockKey: "claude-native",
-    isCommandPath: isNativeTestCommandPath("/.local/bin/claude"),
+    lockKey: "native-package-tool-native",
+    isCommandPath: isNativeTestCommandPath("/.local/bin/native-package-tool"),
   },
 });
-const opencodeUpdate = makePackageManagedProviderVersionLifecycleResolver({
-  provider: driver("opencode"),
-  npmPackageName: "opencode-ai",
-  homebrewFormula: "anomalyco/tap/opencode",
+const scopedPackageToolUpdate = makePackageManagedProviderVersionLifecycleResolver({
+  provider: driver("scopedPackageTool"),
+  npmPackageName: "@example/scoped-package-tool",
+  homebrewFormula: "example/tap/scoped-package-tool",
   nativeUpdate: {
-    executable: "opencode",
+    executable: "scoped-package-tool",
     args: ["upgrade"],
-    lockKey: "opencode-native",
-    isCommandPath: isNativeTestCommandPath("/.opencode/bin/opencode"),
+    lockKey: "scoped-package-tool-native",
+    isCommandPath: isNativeTestCommandPath("/.scoped-package-tool/bin/scoped-package-tool"),
   },
 });
-const cursorUpdate = makeStaticProviderVersionLifecycleResolver(
+const staticToolUpdate = makeStaticProviderVersionLifecycleResolver(
   makeProviderVersionLifecycle({
-    provider: driver("cursor"),
+    provider: driver("staticTool"),
     packageName: null,
-    updateExecutable: "agent",
+    updateExecutable: "static-tool",
     updateArgs: ["update"],
-    updateLockKey: "cursor-agent",
+    updateLockKey: "static-tool",
   }),
 );
 
@@ -61,7 +61,7 @@ describe("providerVersionLifecycle", () => {
   it("marks providers with unknown current versions as unknown", () => {
     expect(
       createProviderVersionAdvisory({
-        driver: driver("codex"),
+        driver: driver("packageTool"),
         currentVersion: null,
         latestVersion: "9.9.9",
       }),
@@ -75,7 +75,7 @@ describe("providerVersionLifecycle", () => {
   it("marks providers with unknown latest versions as unknown", () => {
     expect(
       createProviderVersionAdvisory({
-        driver: driver("codex"),
+        driver: driver("packageTool"),
         currentVersion: "1.0.0",
         latestVersion: null,
       }),
@@ -90,29 +90,29 @@ describe("providerVersionLifecycle", () => {
   it("marks installed providers behind latest when a newer provider version is available", () => {
     expect(
       createProviderVersionAdvisory({
-        driver: driver("claudeAgent"),
+        driver: driver("nativePackageTool"),
         currentVersion: "2.1.110",
         latestVersion: "2.1.117",
-        versionLifecycle: claudeUpdate.resolve(),
+        versionLifecycle: nativePackageToolUpdate.resolve(),
       }),
     ).toMatchObject({
       status: "behind_latest",
       currentVersion: "2.1.110",
       latestVersion: "2.1.117",
-      updateCommand: "npm install -g @anthropic-ai/claude-code@latest",
+      updateCommand: "npm install -g @example/native-package-tool@latest",
       canUpdate: true,
       message: "Install the update now or review provider settings.",
     });
   });
 
   it("keeps update commands owned by provider lifecycle metadata", () => {
-    expect(cursorUpdate.resolve()).toEqual({
-      provider: driver("cursor"),
+    expect(staticToolUpdate.resolve()).toEqual({
+      provider: driver("staticTool"),
       packageName: null,
-      updateCommand: "agent update",
-      updateExecutable: "agent",
+      updateCommand: "static-tool update",
+      updateExecutable: "static-tool",
       updateArgs: ["update"],
-      updateLockKey: "cursor-agent",
+      updateLockKey: "static-tool",
     });
   });
 
@@ -120,24 +120,24 @@ describe("providerVersionLifecycle", () => {
     const tempDir = path.join(os.tmpdir(), `t3-vite-plus-lifecycle-${Date.now()}`);
     const vitePlusBinDir = path.join(tempDir, ".vite-plus", "bin");
     mkdirSync(vitePlusBinDir, { recursive: true });
-    const codexPath = path.join(vitePlusBinDir, "codex");
-    writeFileSync(codexPath, "#!/bin/sh\n");
-    chmodSync(codexPath, 0o755);
+    const packageToolPath = path.join(vitePlusBinDir, "package-tool");
+    writeFileSync(packageToolPath, "#!/bin/sh\n");
+    chmodSync(packageToolPath, 0o755);
 
     expect(
-      codexUpdate.resolve({
-        binaryPath: "codex",
+      packageToolUpdate.resolve({
+        binaryPath: "package-tool",
         platform: "darwin",
         env: {
           PATH: vitePlusBinDir,
         },
       }),
     ).toEqual({
-      provider: driver("codex"),
-      packageName: "@openai/codex",
-      updateCommand: "vp i -g @openai/codex",
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
+      updateCommand: "vp i -g @example/package-tool",
       updateExecutable: "vp",
-      updateArgs: ["i", "-g", "@openai/codex"],
+      updateArgs: ["i", "-g", "@example/package-tool"],
       updateLockKey: "vite-plus-global",
     });
   });
@@ -146,11 +146,11 @@ describe("providerVersionLifecycle", () => {
     const tempDir = path.join(os.tmpdir(), `t3-bun-lifecycle-${Date.now()}`);
     const bunBinDir = path.join(tempDir, ".bun", "bin");
     mkdirSync(bunBinDir, { recursive: true });
-    writeFileSync(path.join(bunBinDir, "claude.exe"), "MZ");
+    writeFileSync(path.join(bunBinDir, "native-package-tool.exe"), "MZ");
 
     expect(
-      claudeUpdate.resolve({
-        binaryPath: "claude",
+      nativePackageToolUpdate.resolve({
+        binaryPath: "native-package-tool",
         platform: "win32",
         env: {
           PATH: bunBinDir,
@@ -158,11 +158,11 @@ describe("providerVersionLifecycle", () => {
         },
       }),
     ).toEqual({
-      provider: driver("claudeAgent"),
-      packageName: "@anthropic-ai/claude-code",
-      updateCommand: "bun i -g @anthropic-ai/claude-code@latest",
+      provider: driver("nativePackageTool"),
+      packageName: "@example/native-package-tool",
+      updateCommand: "bun i -g @example/native-package-tool@latest",
       updateExecutable: "bun",
-      updateArgs: ["i", "-g", "@anthropic-ai/claude-code@latest"],
+      updateArgs: ["i", "-g", "@example/native-package-tool@latest"],
       updateLockKey: "bun-global",
     });
   });
@@ -171,133 +171,133 @@ describe("providerVersionLifecycle", () => {
     const tempDir = path.join(os.tmpdir(), `t3-pnpm-lifecycle-${Date.now()}`);
     const pnpmHomeDir = path.join(tempDir, ".local", "share", "pnpm");
     mkdirSync(pnpmHomeDir, { recursive: true });
-    const opencodePath = path.join(pnpmHomeDir, "opencode");
-    writeFileSync(opencodePath, "#!/bin/sh\n");
-    chmodSync(opencodePath, 0o755);
+    const scopedPackageToolPath = path.join(pnpmHomeDir, "scoped-package-tool");
+    writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
+    chmodSync(scopedPackageToolPath, 0o755);
 
     expect(
-      opencodeUpdate.resolve({
-        binaryPath: "opencode",
+      scopedPackageToolUpdate.resolve({
+        binaryPath: "scoped-package-tool",
         platform: "darwin",
         env: {
           PATH: pnpmHomeDir,
         },
       }),
     ).toEqual({
-      provider: driver("opencode"),
-      packageName: "opencode-ai",
-      updateCommand: "pnpm add -g opencode-ai@latest",
+      provider: driver("scopedPackageTool"),
+      packageName: "@example/scoped-package-tool",
+      updateCommand: "pnpm add -g @example/scoped-package-tool@latest",
       updateExecutable: "pnpm",
-      updateArgs: ["add", "-g", "opencode-ai@latest"],
+      updateArgs: ["add", "-g", "@example/scoped-package-tool@latest"],
       updateLockKey: "pnpm-global",
     });
   });
 
-  it("switches codex to Homebrew updates when the binary resolves through Homebrew", () => {
+  it("switches package-tool to Homebrew updates when the binary resolves through Homebrew", () => {
     expect(
-      codexUpdate.resolve({
-        binaryPath: "/opt/homebrew/bin/codex",
+      packageToolUpdate.resolve({
+        binaryPath: "/opt/homebrew/bin/package-tool",
         platform: "darwin",
         env: {
           PATH: "",
         },
       }),
     ).toEqual({
-      provider: driver("codex"),
-      packageName: "@openai/codex",
-      updateCommand: "brew upgrade codex",
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
+      updateCommand: "brew upgrade package-tool",
       updateExecutable: "brew",
-      updateArgs: ["upgrade", "codex"],
+      updateArgs: ["upgrade", "package-tool"],
       updateLockKey: "homebrew",
     });
   });
 
-  it("switches claude to native updates when the binary resolves through the native installer", () => {
-    const tempDir = path.join(os.tmpdir(), `t3-claude-native-lifecycle-${Date.now()}`);
+  it("switches native-package-tool to native updates when the binary resolves through the native installer", () => {
+    const tempDir = path.join(os.tmpdir(), `t3-native-package-tool-native-lifecycle-${Date.now()}`);
     const nativeBinDir = path.join(tempDir, ".local", "bin");
     mkdirSync(nativeBinDir, { recursive: true });
-    const claudePath = path.join(nativeBinDir, "claude");
-    writeFileSync(claudePath, "#!/bin/sh\n");
-    chmodSync(claudePath, 0o755);
+    const nativePackageToolPath = path.join(nativeBinDir, "native-package-tool");
+    writeFileSync(nativePackageToolPath, "#!/bin/sh\n");
+    chmodSync(nativePackageToolPath, 0o755);
 
     expect(
-      claudeUpdate.resolve({
-        binaryPath: "claude",
+      nativePackageToolUpdate.resolve({
+        binaryPath: "native-package-tool",
         platform: "darwin",
         env: {
           PATH: nativeBinDir,
         },
       }),
     ).toEqual({
-      provider: driver("claudeAgent"),
-      packageName: "@anthropic-ai/claude-code",
-      updateCommand: "claude update",
-      updateExecutable: "claude",
+      provider: driver("nativePackageTool"),
+      packageName: "@example/native-package-tool",
+      updateCommand: "native-package-tool update",
+      updateExecutable: "native-package-tool",
       updateArgs: ["update"],
-      updateLockKey: "claude-native",
+      updateLockKey: "native-package-tool-native",
     });
   });
 
-  it("switches opencode to native upgrades when the binary resolves through the standalone installer", () => {
-    const tempDir = path.join(os.tmpdir(), `t3-opencode-native-lifecycle-${Date.now()}`);
-    const nativeBinDir = path.join(tempDir, ".opencode", "bin");
+  it("switches scoped-package-tool to native upgrades when the binary resolves through the standalone installer", () => {
+    const tempDir = path.join(os.tmpdir(), `t3-scoped-package-tool-native-lifecycle-${Date.now()}`);
+    const nativeBinDir = path.join(tempDir, ".scoped-package-tool", "bin");
     mkdirSync(nativeBinDir, { recursive: true });
-    const opencodePath = path.join(nativeBinDir, "opencode");
-    writeFileSync(opencodePath, "#!/bin/sh\n");
-    chmodSync(opencodePath, 0o755);
+    const scopedPackageToolPath = path.join(nativeBinDir, "scoped-package-tool");
+    writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
+    chmodSync(scopedPackageToolPath, 0o755);
 
     expect(
-      opencodeUpdate.resolve({
-        binaryPath: "opencode",
+      scopedPackageToolUpdate.resolve({
+        binaryPath: "scoped-package-tool",
         platform: "darwin",
         env: {
           PATH: nativeBinDir,
         },
       }),
     ).toEqual({
-      provider: driver("opencode"),
-      packageName: "opencode-ai",
-      updateCommand: "opencode upgrade",
-      updateExecutable: "opencode",
+      provider: driver("scopedPackageTool"),
+      packageName: "@example/scoped-package-tool",
+      updateCommand: "scoped-package-tool upgrade",
+      updateExecutable: "scoped-package-tool",
       updateArgs: ["upgrade"],
-      updateLockKey: "opencode-native",
+      updateLockKey: "scoped-package-tool-native",
     });
   });
 
-  it("switches claude to Homebrew updates when the binary resolves through Homebrew", () => {
+  it("switches native-package-tool to Homebrew updates when the binary resolves through Homebrew", () => {
     expect(
-      claudeUpdate.resolve({
-        binaryPath: "/opt/homebrew/bin/claude",
+      nativePackageToolUpdate.resolve({
+        binaryPath: "/opt/homebrew/bin/native-package-tool",
         platform: "darwin",
         env: {
           PATH: "",
         },
       }),
     ).toEqual({
-      provider: driver("claudeAgent"),
-      packageName: "@anthropic-ai/claude-code",
-      updateCommand: "brew upgrade claude-code",
+      provider: driver("nativePackageTool"),
+      packageName: "@example/native-package-tool",
+      updateCommand: "brew upgrade native-package-tool",
       updateExecutable: "brew",
-      updateArgs: ["upgrade", "claude-code"],
+      updateArgs: ["upgrade", "native-package-tool"],
       updateLockKey: "homebrew",
     });
   });
 
-  it("switches opencode to Homebrew updates when the binary resolves through Homebrew", () => {
+  it("switches scoped-package-tool to Homebrew updates when the binary resolves through Homebrew", () => {
     expect(
-      opencodeUpdate.resolve({
-        binaryPath: "/opt/homebrew/bin/opencode",
+      scopedPackageToolUpdate.resolve({
+        binaryPath: "/opt/homebrew/bin/scoped-package-tool",
         platform: "darwin",
         env: {
           PATH: "",
         },
       }),
     ).toEqual({
-      provider: driver("opencode"),
-      packageName: "opencode-ai",
-      updateCommand: "brew upgrade anomalyco/tap/opencode",
+      provider: driver("scopedPackageTool"),
+      packageName: "@example/scoped-package-tool",
+      updateCommand: "brew upgrade example/tap/scoped-package-tool",
       updateExecutable: "brew",
-      updateArgs: ["upgrade", "anomalyco/tap/opencode"],
+      updateArgs: ["upgrade", "example/tap/scoped-package-tool"],
       updateLockKey: "homebrew",
     });
   });
@@ -305,18 +305,25 @@ describe("providerVersionLifecycle", () => {
   it("keeps npm updates for binaries symlinked into npm's global node_modules tree", async () => {
     const tempDir = path.join(os.tmpdir(), `t3-npm-lifecycle-${Date.now()}`);
     const binDir = path.join(tempDir, "bin");
-    const packageBinDir = path.join(tempDir, "lib", "node_modules", "@openai", "codex", "bin");
+    const packageBinDir = path.join(
+      tempDir,
+      "lib",
+      "node_modules",
+      "@example",
+      "package-tool",
+      "bin",
+    );
     mkdirSync(binDir, { recursive: true });
     mkdirSync(packageBinDir, { recursive: true });
-    const packageBinPath = path.join(packageBinDir, "codex.js");
-    const symlinkPath = path.join(binDir, "codex");
+    const packageBinPath = path.join(packageBinDir, "package-tool.js");
+    const symlinkPath = path.join(binDir, "package-tool");
     writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
     chmodSync(packageBinPath, 0o755);
     symlinkSync(packageBinPath, symlinkPath);
 
     await expect(
       Effect.runPromise(
-        resolveProviderVersionLifecycleEffect(codexUpdate, {
+        resolveProviderVersionLifecycleEffect(packageToolUpdate, {
           binaryPath: symlinkPath,
           platform: "darwin",
           env: {
@@ -325,11 +332,11 @@ describe("providerVersionLifecycle", () => {
         }).pipe(Effect.provide(NodeServices.layer)),
       ),
     ).resolves.toEqual({
-      provider: driver("codex"),
-      packageName: "@openai/codex",
-      updateCommand: "npm install -g @openai/codex@latest",
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
+      updateCommand: "npm install -g @example/package-tool@latest",
       updateExecutable: "npm",
-      updateArgs: ["install", "-g", "@openai/codex@latest"],
+      updateArgs: ["install", "-g", "@example/package-tool@latest"],
       updateLockKey: "npm-global",
     });
   });
@@ -345,21 +352,21 @@ describe("providerVersionLifecycle", () => {
       "global",
       "5",
       "node_modules",
-      "@openai",
-      "codex",
+      "@example",
+      "package-tool",
       "bin",
     );
     mkdirSync(binDir, { recursive: true });
     mkdirSync(packageBinDir, { recursive: true });
-    const packageBinPath = path.join(packageBinDir, "codex.js");
-    const symlinkPath = path.join(binDir, "codex");
+    const packageBinPath = path.join(packageBinDir, "package-tool.js");
+    const symlinkPath = path.join(binDir, "package-tool");
     writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
     chmodSync(packageBinPath, 0o755);
     symlinkSync(packageBinPath, symlinkPath);
 
     await expect(
       Effect.runPromise(
-        resolveProviderVersionLifecycleEffect(codexUpdate, {
+        resolveProviderVersionLifecycleEffect(packageToolUpdate, {
           binaryPath: symlinkPath,
           platform: "darwin",
           env: {
@@ -368,19 +375,19 @@ describe("providerVersionLifecycle", () => {
         }).pipe(Effect.provide(NodeServices.layer)),
       ),
     ).resolves.toEqual({
-      provider: driver("codex"),
-      packageName: "@openai/codex",
-      updateCommand: "pnpm add -g @openai/codex@latest",
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
+      updateCommand: "pnpm add -g @example/package-tool@latest",
       updateExecutable: "pnpm",
-      updateArgs: ["add", "-g", "@openai/codex@latest"],
+      updateArgs: ["add", "-g", "@example/package-tool@latest"],
       updateLockKey: "pnpm-global",
     });
   });
 
   it("disables one-click updates for explicit custom binary paths it cannot safely map", () => {
     expect(
-      codexUpdate.resolve({
-        binaryPath: "C:\\Tools\\codex\\codex.exe",
+      packageToolUpdate.resolve({
+        binaryPath: "C:\\Tools\\package-tool\\package-tool.exe",
         platform: "win32",
         env: {
           PATH: "",
@@ -388,8 +395,8 @@ describe("providerVersionLifecycle", () => {
         },
       }),
     ).toEqual({
-      provider: driver("codex"),
-      packageName: "@openai/codex",
+      provider: driver("packageTool"),
+      packageName: "@example/package-tool",
       updateCommand: null,
       updateExecutable: null,
       updateArgs: [],
