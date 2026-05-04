@@ -29,6 +29,9 @@ const host = process.env.FORMA_PREVIEW_HOST?.trim() || "127.0.0.1";
 const port = Number(process.env.FORMA_PREVIEW_PORT ?? "0");
 const framework = process.env.FORMA_PREVIEW_FRAMEWORK?.trim() || "unsupported";
 const moduleMocks = parseJsonEnv<Record<string, string>>("FORMA_PREVIEW_MODULE_MOCKS", {});
+const cacheDir =
+  process.env.FORMA_PREVIEW_CACHE_DIR?.trim() || path.join(runtimeRoot, "node_modules", ".vite");
+const warmupFiles = parseJsonEnv<string[]>("FORMA_PREVIEW_WARMUP_FILES", []);
 const extraAliases = parseJsonEnv<Array<{ find: string; replacement: string }>>(
   "FORMA_PREVIEW_ALIASES",
   [],
@@ -145,6 +148,7 @@ const aliasEntries: Alias[] = [
 export default defineConfig({
   appType: "spa",
   root: runtimeRoot,
+  cacheDir,
   publicDir: existsSync(workspacePublicDir) ? workspacePublicDir : false,
   plugins: [workspaceBareImportResolver(), tailwindSourceInjector(), react(), tailwindcss()],
   css: {
@@ -157,6 +161,9 @@ export default defineConfig({
     host,
     port,
     strictPort: true,
+    warmup: {
+      clientFiles: warmupFiles,
+    },
     fs: {
       allow: [runtimeRoot, projectRoot, workspaceRoot, harnessDir],
     },

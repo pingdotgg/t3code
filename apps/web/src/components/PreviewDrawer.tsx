@@ -37,6 +37,7 @@ import {
   normalizeSelectedScenarioId,
   upsertPreviewFileSession,
 } from "../previewSessionState";
+import { isDynamicImportFetchErrorMessage } from "../previewRecovery";
 import { selectProjectsAcrossEnvironments, selectThreadByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
@@ -604,6 +605,7 @@ export function PreviewDrawer() {
   >(null);
   const [previewViewportId, setPreviewViewportId] = useState<PreviewViewportId>("fit");
   const [previewZoomId, setPreviewZoomId] = useState<PreviewZoomId>("fit");
+  const [previewFrameReloadNonce, setPreviewFrameReloadNonce] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const previewCanvasRef = useRef<HTMLDivElement | null>(null);
   const [previewCanvasSize, setPreviewCanvasSize] = useState({ width: 0, height: 0 });
@@ -613,6 +615,7 @@ export function PreviewDrawer() {
   const pendingArgsPartialsRef = useRef<Record<string, Record<string, unknown>>>({});
   const pendingArgsTimerRef = useRef<Record<string, number>>({});
   const previousPreviewFileRelativePathRef = useRef<string | null>(null);
+  const recoveredIframeUrlRef = useRef<string | null>(null);
   const {
     drawerRef,
     drawerHeight,
@@ -966,34 +969,16 @@ export function PreviewDrawer() {
     [activeProjectRef, sendPreviewCommandForActiveRuntime],
   );
 
-  const restartPreviewRuntime = async () => {
+  const resolveCurrentTarget = useCallback(async () => {
     if (!activeProjectRef || !api) {
-      return;
-    }
-    clearPendingArgsForPreviewFile(activeProjectState?.currentPreviewFileRelativePath ?? null);
-    patchProjectState(activeProjectRef, {
-      runtimeState: {
-        kind: "runtime.starting",
-        projectId: activeProjectRef.projectId,
-      },
-      accessToken: null,
-      runtimeSnapshot: null,
-    });
-    await api.preview.stopRuntime({
-      projectId: activeProjectRef.projectId,
-    });
-  };
-
-  const resolveCurrentTarget = async () => {
-    if (!activeProjectRef || !api) {
-      return;
+      return null;
     }
     const latestProjectState =
       usePreviewWorkspaceStore.getState().projectStateByKey[
         `${activeProjectRef.environmentId}:${activeProjectRef.projectId}`
       ];
     if (!latestProjectState?.currentRelativePath) {
-      return;
+      return null;
     }
 
     try {
@@ -1033,6 +1018,7 @@ export function PreviewDrawer() {
           sessionsByPreviewFilePath: nextSessionsByPreviewFilePath,
         };
       });
+      return resolution;
     } catch (error) {
       patchProjectState(activeProjectRef, {
         resolution: null,
@@ -1043,7 +1029,72 @@ export function PreviewDrawer() {
           message: error instanceof Error ? error.message : "Failed to resolve preview target.",
         },
       });
+      return null;
     }
+  }, [activeProjectRef, api, patchProjectState, updateProjectState]);
+
+  const recoverPreviewRuntimeOnce = useCallback(
+    async (reason: "timeout" | "dynamic-import") => {
+      if (!activeProjectRef || !api || !iframeUrl) {
+        return;
+      }
+      if (recoveredIframeUrlRef.current === iframeUrl) {
+        return;
+      }
+      recoveredIframeUrlRef.current = iframeUrl;
+      patchProjectState(activeProjectRef, {
+        runtimeState: {
+          kind: "runtime.starting",
+          projectId: activeProjectRef.projectId,
+        },
+        runtimeSnapshot: null,
+      });
+      const softResolution = await resolveCurrentTarget();
+      if (softResolution?.status === "resolved") {
+        setPreviewFrameReloadNonce((current) => current + 1);
+        return;
+      }
+      if (
+        reason === "dynamic-import" ||
+        (softResolution?.status === "runtimeError" &&
+          isDynamicImportFetchErrorMessage(softResolution.message))
+      ) {
+        await api.preview.stopRuntime({
+          projectId: activeProjectRef.projectId,
+        });
+        await resolveCurrentTarget();
+        setPreviewFrameReloadNonce((current) => current + 1);
+      }
+    },
+    [activeProjectRef, api, iframeUrl, patchProjectState, resolveCurrentTarget],
+  );
+
+  const restartPreviewRuntime = async () => {
+    if (!activeProjectRef || !api) {
+      return;
+    }
+    clearPendingArgsForPreviewFile(activeProjectState?.currentPreviewFileRelativePath ?? null);
+    const softResolution = await resolveCurrentTarget();
+    if (
+      softResolution?.status !== "runtimeError" ||
+      !isDynamicImportFetchErrorMessage(softResolution.message)
+    ) {
+      setPreviewFrameReloadNonce((current) => current + 1);
+      return;
+    }
+    patchProjectState(activeProjectRef, {
+      runtimeState: {
+        kind: "runtime.starting",
+        projectId: activeProjectRef.projectId,
+      },
+      accessToken: null,
+      runtimeSnapshot: null,
+    });
+    await api.preview.stopRuntime({
+      projectId: activeProjectRef.projectId,
+    });
+    await resolveCurrentTarget();
+    setPreviewFrameReloadNonce((current) => current + 1);
   };
 
   useEffect(() => {
@@ -1387,6 +1438,7 @@ export function PreviewDrawer() {
         ) {
           return;
         }
+        recoveredIframeUrlRef.current = null;
         runtimeCommandWatermarkRef.current[message.runtimeInstanceId] = 0;
         applyRuntimeSnapshot(message, message.argOverrides);
         restoreSessionIntoRuntime(message);
@@ -1436,6 +1488,10 @@ export function PreviewDrawer() {
         ) {
           return;
         }
+        if (isDynamicImportFetchErrorMessage(message.message)) {
+          void recoverPreviewRuntimeOnce("dynamic-import");
+          return;
+        }
         patchProjectState(activeProjectRef, {
           runtimeState: {
             kind: "runtime.error",
@@ -1454,8 +1510,21 @@ export function PreviewDrawer() {
     activeProjectRef?.projectId,
     applyRuntimeSnapshot,
     patchProjectState,
+    recoverPreviewRuntimeOnce,
     restoreSessionIntoRuntime,
   ]);
+
+  useEffect(() => {
+    if (!iframeUrl || runtimeSnapshot?.runtimeInstanceId) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      void recoverPreviewRuntimeOnce("timeout");
+    }, 8_000);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [iframeUrl, recoverPreviewRuntimeOnce, runtimeSnapshot?.runtimeInstanceId]);
 
   useEffect(() => {
     syncPreviewViewportToRuntime();
@@ -1805,9 +1874,7 @@ export function PreviewDrawer() {
                 <button
                   type="button"
                   className="inline-flex h-7 w-7 items-center justify-center text-foreground/90 transition-colors hover:bg-accent"
-                  onClick={() =>
-                    void restartPreviewRuntime().then(refreshInspection).then(resolveCurrentTarget)
-                  }
+                  onClick={() => void restartPreviewRuntime().then(refreshInspection)}
                   aria-label="Refresh preview"
                   title="Refresh preview"
                 >
@@ -1945,7 +2012,7 @@ export function PreviewDrawer() {
                   >
                     <iframe
                       ref={iframeRef}
-                      key={resolved?.iframePath}
+                      key={`${resolved?.iframePath ?? "preview"}:${previewFrameReloadNonce}`}
                       className="block h-full w-full bg-transparent"
                       sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
                       src={iframeUrl}

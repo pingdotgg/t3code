@@ -36,6 +36,10 @@ import {
   type PreviewRuntimeTarget,
 } from "../Services/PreviewManager.ts";
 import { aliasEntriesFromTsconfigPaths, type AliasEntry } from "./previewAliases.ts";
+import {
+  buildPreviewRuntimeWarmupPlan,
+  parsePreviewComponentRelativePath,
+} from "./previewRuntimeWarmup.ts";
 
 interface ProjectRecord {
   readonly id: ProjectId;
@@ -73,6 +77,7 @@ interface ResolvedHarnessTarget {
   readonly initialScenarioId: string | null;
   readonly moduleMocks: Readonly<Record<string, string>>;
   readonly aliasEntries: readonly AliasEntry[];
+  readonly previewComponentRelativePath: string | null;
 }
 
 interface RuntimeRecord {
@@ -80,11 +85,15 @@ interface RuntimeRecord {
   readonly relativePath: string;
   readonly previewFileRelativePath: string;
   readonly runtimeDir: string;
+  readonly cacheDir: string;
   readonly port: number;
   readonly baseUrl: string;
   readonly iframeBasePath: string;
   readonly child: ChildProcessByStdio<null, Readable, Readable>;
   readonly logs: string[];
+  readonly readinessPaths: readonly string[];
+  readonly startedAt: string;
+  readonly lastHealthCheckAt: string | null;
 }
 
 interface PreviewManagerState {
@@ -482,6 +491,22 @@ function parseModuleMocks(
   return Object.fromEntries(entries);
 }
 
+function parsePreviewComponentPath(source: string, previewFileRelativePath: string): string | null {
+  const componentRelativePath = parsePreviewComponentRelativePath(source);
+  if (!componentRelativePath) {
+    return null;
+  }
+  if (!componentRelativePath.startsWith(".")) {
+    return normalizeProjectPath(componentRelativePath);
+  }
+  return normalizeProjectPath(
+    path.posix.join(
+      path.posix.dirname(normalizeProjectPath(previewFileRelativePath)),
+      componentRelativePath,
+    ),
+  );
+}
+
 async function inspectPreviewFile(
   projectRoot: string,
   previewFileRelativePath: string,
@@ -489,6 +514,7 @@ async function inspectPreviewFile(
   readonly scenarioChoices: readonly PreviewScenarioEntry[];
   readonly initialScenarioId: string | null;
   readonly moduleMocks: Readonly<Record<string, string>>;
+  readonly previewComponentRelativePath: string | null;
 }> {
   const source = await readTextFile(path.join(projectRoot, previewFileRelativePath));
   if (!source) {
@@ -496,6 +522,7 @@ async function inspectPreviewFile(
       scenarioChoices: [],
       initialScenarioId: null,
       moduleMocks: {},
+      previewComponentRelativePath: null,
     };
   }
   const scenarioChoices = parseScenarioChoices(source);
@@ -503,6 +530,7 @@ async function inspectPreviewFile(
     scenarioChoices,
     initialScenarioId: scenarioChoices[0]?.id ?? null,
     moduleMocks: parseModuleMocks(source, previewFileRelativePath),
+    previewComponentRelativePath: parsePreviewComponentPath(source, previewFileRelativePath),
   };
 }
 
@@ -529,25 +557,51 @@ async function allocatePort(): Promise<number> {
   });
 }
 
-async function waitForRuntimeReady(baseUrl: string, timeoutMs = 30_000): Promise<void> {
+async function fetchRuntimePath(baseUrl: string, runtimePath: string): Promise<Response> {
+  const normalizedPath = runtimePath.startsWith("/") ? runtimePath : `/${runtimePath}`;
+  return await fetch(`${baseUrl}${encodeURI(normalizedPath)}`);
+}
+
+export async function waitForRuntimeReady(
+  baseUrl: string,
+  timeoutMs = 30_000,
+  readinessPaths: readonly string[] = ["/preview.html"],
+): Promise<void> {
   const startedAt = Date.now();
+  let lastFailure: string | null = null;
   while (Date.now() - startedAt < timeoutMs) {
     try {
-      const response = await fetch(`${baseUrl}/preview.html`);
-      if (response.ok) {
+      const failedPath = await (async () => {
+        for (const readinessPath of readinessPaths) {
+          const response = await fetchRuntimePath(baseUrl, readinessPath);
+          if (!response.ok) {
+            return `${readinessPath} returned ${response.status}`;
+          }
+        }
+        return null;
+      })();
+      if (!failedPath) {
         return;
       }
-    } catch {
-      // ignore and retry
+      lastFailure = failedPath;
+    } catch (error) {
+      lastFailure = error instanceof Error ? error.message : String(error);
     }
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
-  throw new Error("Timed out waiting for the preview harness runtime.");
+  throw new Error(
+    lastFailure
+      ? `Timed out waiting for the preview harness runtime. Last readiness failure: ${lastFailure}`
+      : "Timed out waiting for the preview harness runtime.",
+  );
 }
 
-async function isRuntimeReady(baseUrl: string): Promise<boolean> {
+async function isRuntimeReady(
+  baseUrl: string,
+  readinessPaths?: readonly string[],
+): Promise<boolean> {
   try {
-    await waitForRuntimeReady(baseUrl, 1_500);
+    await waitForRuntimeReady(baseUrl, 1_500, readinessPaths);
     return true;
   } catch {
     return false;
@@ -970,7 +1024,9 @@ const makePreviewManager = Effect.gen(function* () {
           existing.relativePath === target.relativePath &&
           existing.previewFileRelativePath === target.previewFileRelativePath
         ) {
-          const healthy = yield* Effect.promise(() => isRuntimeReady(existing.baseUrl));
+          const healthy = yield* Effect.promise(() =>
+            isRuntimeReady(existing.baseUrl, existing.readinessPaths),
+          );
           if (healthy) {
             return {
               projectId: project.id,
@@ -1009,6 +1065,16 @@ const makePreviewManager = Effect.gen(function* () {
         catch: (cause) => toPreviewError("Failed to create preview runtime workspace.", cause),
       });
       const workspaceRoot = path.join(project.workspaceRoot, target.workspaceRootRelativePath);
+      const warmupPlan = buildPreviewRuntimeWarmupPlan({
+        projectRoot: project.workspaceRoot,
+        workspaceRoot,
+        runtimeDir,
+        harnessRuntimeModulePath: HARNESS_RUNTIME_MODULE_PATH,
+        componentRelativePath: target.relativePath,
+        previewFileRelativePath: target.previewFileRelativePath,
+        previewComponentRelativePath: target.previewComponentRelativePath,
+        moduleMocks: target.moduleMocks,
+      });
       const resolutionRoots = [workspaceRoot, project.workspaceRoot];
       const reactAliases = {
         react: requireResolveFromRoots(resolutionRoots, "react"),
@@ -1031,6 +1097,8 @@ const makePreviewManager = Effect.gen(function* () {
           FORMA_PREVIEW_FRAMEWORK: target.framework,
           FORMA_PREVIEW_HOST: PREVIEW_RUNTIME_HOST,
           FORMA_PREVIEW_PORT: String(port),
+          FORMA_PREVIEW_CACHE_DIR: warmupPlan.cacheDir,
+          FORMA_PREVIEW_WARMUP_FILES: JSON.stringify(warmupPlan.warmupFiles),
           FORMA_PREVIEW_MODULE_MOCKS: JSON.stringify(
             Object.fromEntries(
               Object.entries(target.moduleMocks).map(([find, replacement]) => [
@@ -1050,11 +1118,15 @@ const makePreviewManager = Effect.gen(function* () {
           relativePath: target.relativePath,
           previewFileRelativePath: target.previewFileRelativePath,
           runtimeDir,
+          cacheDir: warmupPlan.cacheDir,
           port,
           baseUrl: `http://${PREVIEW_RUNTIME_HOST}:${port}`,
           iframeBasePath: `/__preview/${project.id}`,
           child: child as ChildProcessByStdio<null, Readable, Readable>,
           logs: [],
+          readinessPaths: warmupPlan.readinessPaths,
+          startedAt: new Date().toISOString(),
+          lastHealthCheckAt: null,
         });
         return yield* failPreview("Preview runtime did not expose stdout/stderr pipes.");
       }
@@ -1075,11 +1147,15 @@ const makePreviewManager = Effect.gen(function* () {
         relativePath: target.relativePath,
         previewFileRelativePath: target.previewFileRelativePath,
         runtimeDir,
+        cacheDir: warmupPlan.cacheDir,
         port,
         baseUrl: `http://${PREVIEW_RUNTIME_HOST}:${port}`,
         iframeBasePath: `/__preview/${project.id}`,
         child: runtimeChild,
         logs,
+        readinessPaths: warmupPlan.readinessPaths,
+        startedAt: new Date().toISOString(),
+        lastHealthCheckAt: null,
       };
 
       runtimeChild.once("exit", () => {
@@ -1103,7 +1179,7 @@ const makePreviewManager = Effect.gen(function* () {
 
       yield* Effect.tryPromise({
         try: async () => {
-          await waitForRuntimeReady(runtimeRecord.baseUrl);
+          await waitForRuntimeReady(runtimeRecord.baseUrl, 30_000, runtimeRecord.readinessPaths);
         },
         catch: (cause) => {
           const lastLogs = logs.join("\n").trim();
@@ -1231,6 +1307,7 @@ const makePreviewManager = Effect.gen(function* () {
         initialScenarioId: previewFileInspection.initialScenarioId,
         moduleMocks: previewFileInspection.moduleMocks,
         aliasEntries,
+        previewComponentRelativePath: previewFileInspection.previewComponentRelativePath,
       };
       yield* Ref.update(stateRef, (state) => ({
         ...state,
@@ -1366,7 +1443,9 @@ const makePreviewManager = Effect.gen(function* () {
       const existingRuntime = (yield* Ref.get(stateRef)).runtimes.get(project.id);
       if (
         existingRuntime &&
-        (yield* Effect.promise(() => isRuntimeReady(existingRuntime.baseUrl)))
+        (yield* Effect.promise(() =>
+          isRuntimeReady(existingRuntime.baseUrl, existingRuntime.readinessPaths),
+        ))
       ) {
         return {
           projectId: project.id,
