@@ -139,9 +139,70 @@ let lastBrowserResumeReconnectAt = Number.NEGATIVE_INFINITY;
 const THREAD_DETAIL_SUBSCRIPTION_IDLE_EVICTION_MS = 15 * 60 * 1000;
 const MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS = 32;
 const BROWSER_RESUME_RECONNECT_COOLDOWN_MS = 2_000;
+const INITIAL_SERVER_CONFIG_SNAPSHOT_WAIT_MS = 150;
 const NOOP = () => undefined;
 const SSH_HTTP_STATUS_RE = /^\[ssh_http:(\d+)\]\s/u;
 
+function createDeferredPromise<T>() {
+  let resolve: ((value: T) => void) | null = null;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+
+  return {
+    promise,
+    resolve: (value: T) => {
+      resolve?.(value);
+      resolve = null;
+    },
+  };
+}
+
+async function waitForConfigSnapshot(
+  promise: Promise<ServerConfig>,
+  timeoutMs: number,
+): Promise<ServerConfig | null> {
+  return await new Promise<ServerConfig | null>((resolve) => {
+    const timeoutId = globalThis.setTimeout(() => resolve(null), timeoutMs);
+    promise.then(
+      (config) => {
+        clearTimeout(timeoutId);
+        resolve(config);
+      },
+      () => {
+        clearTimeout(timeoutId);
+        resolve(null);
+      },
+    );
+  });
+}
+
+function createSavedEnvironmentSyncScheduler() {
+  let activeSync: Promise<void> | null = null;
+  let queued = false;
+
+  const run = async (): Promise<void> => {
+    do {
+      queued = false;
+      await syncSavedEnvironmentConnections(listSavedEnvironmentRecords());
+    } while (queued);
+  };
+
+  return () => {
+    if (activeSync) {
+      queued = true;
+      return activeSync;
+    }
+
+    activeSync = run()
+      .catch(() => undefined)
+      .finally(() => {
+        activeSync = null;
+      });
+
+    return activeSync;
+  };
+}
 function compareAppliedProjectionVersion(
   left: { readonly sequence: number; readonly updatedAt: string | null },
   right: { readonly sequence: number; readonly updatedAt: string | null },
@@ -233,7 +294,6 @@ function markAppliedProjectionEvent(environmentId: EnvironmentId, sequence: numb
     updatedAt: currentVersion?.updatedAt ?? null,
   });
 }
-
 function getThreadDetailSubscriptionKey(environmentId: EnvironmentId, threadId: ThreadId): string {
   return scopedThreadKey(scopeThreadRef(environmentId, threadId));
 }
@@ -1284,6 +1344,7 @@ async function ensureSavedEnvironmentConnection(
       const client =
         options?.client ??
         createSavedEnvironmentClient(activeRecord.environmentId, activeBearerToken);
+      const initialConfigSnapshot = createDeferredPromise<ServerConfig>();
       const knownEnvironment = createKnownEnvironment({
         id: activeRecord.environmentId,
         label: activeRecord.label,
@@ -1308,6 +1369,7 @@ async function ensureSavedEnvironmentConnection(
           );
         },
         onConfigSnapshot: (config) => {
+          initialConfigSnapshot.resolve(config);
           useSavedEnvironmentRuntimeStore.getState().patch(activeRecord.environmentId, {
             descriptor: config.environment,
             serverConfig: config,
@@ -1323,12 +1385,18 @@ async function ensureSavedEnvironmentConnection(
 
       try {
         try {
+          const initialServerConfig =
+            options?.serverConfig ??
+            (await waitForConfigSnapshot(
+              initialConfigSnapshot.promise,
+              INITIAL_SERVER_CONFIG_SNAPSHOT_WAIT_MS,
+            ));
           await refreshSavedEnvironmentMetadata(
             activeRecord.environmentId,
             activeBearerToken,
             client,
             roleHint,
-            options?.serverConfig ?? null,
+            initialServerConfig,
           );
         } catch (error) {
           const isAuthError = activeRecord.desktopSsh
@@ -1699,6 +1767,7 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
       trailing: true,
     },
   );
+  const requestSavedEnvironmentSync = createSavedEnvironmentSyncScheduler();
 
   maybeCreatePrimaryEnvironmentConnection();
 
@@ -1706,11 +1775,11 @@ export function startEnvironmentConnectionService(queryClient: QueryClient): () 
     if (!hasSavedEnvironmentRegistryHydrated()) {
       return;
     }
-    void syncSavedEnvironmentConnections(listSavedEnvironmentRecords());
+    void requestSavedEnvironmentSync();
   });
 
   void waitForSavedEnvironmentRegistryHydration()
-    .then(() => syncSavedEnvironmentConnections(listSavedEnvironmentRecords()))
+    .then(() => requestSavedEnvironmentSync())
     .catch(() => undefined);
 
   const unsubscribeBrowserResumeReconnects = subscribeBrowserResumeReconnects();

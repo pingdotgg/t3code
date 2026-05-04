@@ -83,6 +83,8 @@ export function createEnvironmentConnection(
 
   let disposed = false;
   const bootstrapGate = createBootstrapGate();
+  const shouldObserveLifecycle = input.kind === "saved" || input.onWelcome !== undefined;
+  const shouldObserveConfig = input.kind === "saved" || input.onConfigSnapshot !== undefined;
 
   const observeEnvironmentIdentity = (nextEnvironmentId: EnvironmentId, source: string) => {
     if (environmentId !== nextEnvironmentId) {
@@ -92,28 +94,35 @@ export function createEnvironmentConnection(
     }
   };
 
-  const unsubLifecycle = input.client.server.subscribeLifecycle(
-    (event: Parameters<Parameters<WsRpcClient["server"]["subscribeLifecycle"]>[0]>[0]) => {
-      if (event.type !== "welcome") {
-        return;
-      }
-      observeEnvironmentIdentity(
-        event.payload.environment.environmentId,
-        "server lifecycle welcome",
-      );
-      input.onWelcome?.(event.payload);
-    },
-  );
+  const unsubLifecycle = shouldObserveLifecycle
+    ? input.client.server.subscribeLifecycle(
+        (event: Parameters<Parameters<WsRpcClient["server"]["subscribeLifecycle"]>[0]>[0]) => {
+          if (event.type !== "welcome") {
+            return;
+          }
+          observeEnvironmentIdentity(
+            event.payload.environment.environmentId,
+            "server lifecycle welcome",
+          );
+          input.onWelcome?.(event.payload);
+        },
+      )
+    : () => undefined;
 
-  const unsubConfig = input.client.server.subscribeConfig(
-    (event: Parameters<Parameters<WsRpcClient["server"]["subscribeConfig"]>[0]>[0]) => {
-      if (event.type !== "snapshot") {
-        return;
-      }
-      observeEnvironmentIdentity(event.config.environment.environmentId, "server config snapshot");
-      input.onConfigSnapshot?.(event.config);
-    },
-  );
+  const unsubConfig = shouldObserveConfig
+    ? input.client.server.subscribeConfig(
+        (event: Parameters<Parameters<WsRpcClient["server"]["subscribeConfig"]>[0]>[0]) => {
+          if (event.type !== "snapshot") {
+            return;
+          }
+          observeEnvironmentIdentity(
+            event.config.environment.environmentId,
+            "server config snapshot",
+          );
+          input.onConfigSnapshot?.(event.config);
+        },
+      )
+    : () => undefined;
 
   const unsubShell = input.client.orchestration.subscribeShell(
     (item: Parameters<Parameters<WsRpcClient["orchestration"]["subscribeShell"]>[0]>[0]) => {

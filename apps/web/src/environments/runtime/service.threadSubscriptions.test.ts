@@ -369,7 +369,9 @@ describe("retainThreadDetailSubscription", () => {
       listEnvironmentConnections().some((connection) => connection.environmentId === environmentId),
     ).toBe(false);
 
-    await reconnectSavedEnvironment(environmentId);
+    const reconnectPromise = reconnectSavedEnvironment(environmentId);
+    await vi.advanceTimersByTimeAsync(200);
+    await reconnectPromise;
     await vi.waitFor(() => {
       expect(mockCreateEnvironmentConnection).toHaveBeenCalledTimes(3);
       expect(mockSubscribeThread).toHaveBeenCalledTimes(2);

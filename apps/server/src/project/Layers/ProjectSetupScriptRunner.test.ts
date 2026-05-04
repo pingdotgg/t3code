@@ -1,53 +1,52 @@
-import { Effect, Layer, Stream } from "effect";
+import { ProjectId, type OrchestrationProject } from "@t3tools/contracts";
+import { Effect, Layer, Option } from "effect";
 import { describe, expect, it, vi } from "vitest";
-import type { OrchestrationReadModel } from "@t3tools/contracts";
 
-import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
+import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { TerminalManager } from "../../terminal/Services/Manager.ts";
 import { ProjectSetupScriptRunner } from "../Services/ProjectSetupScriptRunner.ts";
 import { ProjectSetupScriptRunnerLive } from "./ProjectSetupScriptRunner.ts";
 
-const emptySnapshot = (
-  scripts: OrchestrationReadModel["projects"][number]["scripts"],
-): OrchestrationReadModel =>
-  ({
-    snapshotSequence: 1,
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    projects: [
-      {
-        id: "project-1",
-        title: "Project",
-        workspaceRoot: "/repo/project",
-        defaultModelSelection: null,
-        scripts,
-        createdAt: "2026-01-01T00:00:00.000Z",
-        updatedAt: "2026-01-01T00:00:00.000Z",
-        deletedAt: null,
-      },
-    ],
-    threads: [],
-    providerSessions: [],
-    providerStatuses: [],
-    pendingApprovals: [],
-    latestTurnByThreadId: {},
-  }) as unknown as OrchestrationReadModel;
+const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationProject => ({
+  id: ProjectId.make("project-1"),
+  title: "Project",
+  workspaceRoot: "/repo/project",
+  defaultModelSelection: null,
+  scripts,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-01T00:00:00.000Z",
+  deletedAt: null,
+});
+
+const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
+  Layer.succeed(ProjectionSnapshotQuery, {
+    getCommandReadModel: () => Effect.die("unused"),
+    getSnapshot: () => Effect.die("unused"),
+    getShellSnapshot: () => Effect.die("unused"),
+    getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 1 }),
+    getCounts: () => Effect.die("unused"),
+    getActiveProjectByWorkspaceRoot: (workspaceRoot) =>
+      Effect.succeed(
+        workspaceRoot === project.workspaceRoot ? Option.some(project) : Option.none(),
+      ),
+    getProjectShellById: (projectId) =>
+      Effect.succeed(projectId === project.id ? Option.some(project) : Option.none()),
+    getFirstActiveThreadIdByProjectId: () => Effect.die("unused"),
+    getThreadCheckpointContext: () => Effect.die("unused"),
+    getThreadShellById: () => Effect.die("unused"),
+    getThreadDetailById: () => Effect.die("unused"),
+  });
 
 describe("ProjectSetupScriptRunner", () => {
   it("returns no-script when no setup script exists", async () => {
     const open = vi.fn();
     const write = vi.fn();
+    const project = makeProject([]);
     const runner = await Effect.runPromise(
       Effect.service(ProjectSetupScriptRunner).pipe(
         Effect.provide(
           ProjectSetupScriptRunnerLive.pipe(
-            Layer.provideMerge(
-              Layer.succeed(OrchestrationEngineService, {
-                getReadModel: () => Effect.succeed(emptySnapshot([])),
-                readEvents: () => Stream.empty,
-                dispatch: () => Effect.die(new Error("unused")),
-                streamDomainEvents: Stream.empty,
-              }),
-            ),
+            Layer.provideMerge(makeProjectionSnapshotQueryLayer(project)),
             Layer.provideMerge(
               Layer.succeed(TerminalManager, {
                 open,
@@ -93,29 +92,20 @@ describe("ProjectSetupScriptRunner", () => {
       }),
     );
     const write = vi.fn(() => Effect.void);
+    const project = makeProject([
+      {
+        id: "setup",
+        name: "Setup",
+        command: "bun install",
+        icon: "configure",
+        runOnWorktreeCreate: true,
+      },
+    ]);
     const runner = await Effect.runPromise(
       Effect.service(ProjectSetupScriptRunner).pipe(
         Effect.provide(
           ProjectSetupScriptRunnerLive.pipe(
-            Layer.provideMerge(
-              Layer.succeed(OrchestrationEngineService, {
-                getReadModel: () =>
-                  Effect.succeed(
-                    emptySnapshot([
-                      {
-                        id: "setup",
-                        name: "Setup",
-                        command: "bun install",
-                        icon: "configure",
-                        runOnWorktreeCreate: true,
-                      },
-                    ]),
-                  ),
-                readEvents: () => Stream.empty,
-                dispatch: () => Effect.die(new Error("unused")),
-                streamDomainEvents: Stream.empty,
-              }),
-            ),
+            Layer.provideMerge(makeProjectionSnapshotQueryLayer(project)),
             Layer.provideMerge(
               Layer.succeed(TerminalManager, {
                 open,

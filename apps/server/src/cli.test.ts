@@ -17,7 +17,6 @@ import { Command } from "effect/unstable/cli";
 
 import { cli } from "./cli.ts";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "./config.ts";
-import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
@@ -316,8 +315,8 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
             "--base-dir",
             baseDir,
           ]);
-          const orchestrationEngine = yield* OrchestrationEngineService;
-          const readModel = yield* orchestrationEngine.getReadModel();
+          const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+          const readModel = yield* projectionSnapshotQuery.getSnapshot();
           const addedProject = readModel.projects.find(
             (project) => project.workspaceRoot === workspaceRoot && project.deletedAt === null,
           );

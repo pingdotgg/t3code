@@ -739,9 +739,31 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           if (Option.isNone(existingRow)) {
             return;
           }
+
+          const retainedTurns = yield* projectionTurnRepository.listByThreadId({
+            threadId: event.payload.threadId,
+          });
+          let latestTurnId: ProjectionTurn["turnId"] = null;
+          let latestCheckpointTurnCount = -1;
+          for (let index = 0; index < retainedTurns.length; index += 1) {
+            const turn = retainedTurns[index];
+            if (
+              !turn ||
+              turn.turnId === null ||
+              turn.checkpointTurnCount === null ||
+              turn.checkpointTurnCount > event.payload.turnCount
+            ) {
+              continue;
+            }
+            if (turn.checkpointTurnCount > latestCheckpointTurnCount) {
+              latestCheckpointTurnCount = turn.checkpointTurnCount;
+              latestTurnId = turn.turnId;
+            }
+          }
+
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            latestTurnId: null,
+            latestTurnId,
             updatedAt: event.occurredAt,
           });
           yield* refreshThreadShellSummary(event.payload.threadId);

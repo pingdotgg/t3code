@@ -41,6 +41,7 @@ import {
   type OrchestrationEngineShape,
 } from "../Services/OrchestrationEngine.ts";
 import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
+import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -132,7 +133,14 @@ function createProviderServiceHarness(
 }
 
 async function waitForThread(
-  engine: OrchestrationEngineShape,
+  readModel: () => Promise<{
+    readonly threads: ReadonlyArray<{
+      readonly id: ThreadId;
+      readonly latestTurn: { readonly turnId: string } | null;
+      readonly checkpoints: ReadonlyArray<{ readonly checkpointTurnCount: number }>;
+      readonly activities: ReadonlyArray<{ readonly kind: string }>;
+    }>;
+  }>,
   predicate: (thread: {
     latestTurn: { turnId: string } | null;
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
@@ -146,8 +154,8 @@ async function waitForThread(
     checkpoints: ReadonlyArray<{ checkpointTurnCount: number }>;
     activities: ReadonlyArray<{ kind: string }>;
   }> => {
-    const readModel = await Effect.runPromise(engine.getReadModel());
-    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    const snapshot = await readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     if (thread && predicate(thread)) {
       return thread;
     }
@@ -231,7 +239,7 @@ async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 15_000)
 
 describe("CheckpointReactor", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | CheckpointReactor | CheckpointStore,
+    OrchestrationEngineService | CheckpointReactor | CheckpointStore | ProjectionSnapshotQuery,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -279,6 +287,10 @@ describe("CheckpointReactor", () => {
       Layer.provide(RepositoryIdentityResolverLive),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const projectionSnapshotLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+      Layer.provide(RepositoryIdentityResolverLive),
+      Layer.provide(SqlitePersistenceMemory),
+    );
 
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-checkpoint-reactor-test-",
@@ -304,6 +316,7 @@ describe("CheckpointReactor", () => {
 
     const layer = CheckpointReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(RuntimeReceiptBusLive),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
@@ -322,6 +335,7 @@ describe("CheckpointReactor", () => {
 
     runtime = ManagedRuntime.make(layer);
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(CheckpointReactor));
     const checkpointStore = await runtime.runPromise(Effect.service(CheckpointStore));
     scope = await Effect.runPromise(Scope.make("sequential"));
@@ -387,6 +401,7 @@ describe("CheckpointReactor", () => {
 
     return {
       engine,
+      readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       provider,
       cwd,
       drain,
@@ -443,7 +458,7 @@ describe("CheckpointReactor", () => {
 
     await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
     const thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) => entry.latestTurn?.turnId === "turn-1" && entry.checkpoints.length === 1,
     );
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
@@ -541,7 +556,7 @@ describe("CheckpointReactor", () => {
     });
 
     await harness.drain();
-    const midReadModel = await Effect.runPromise(harness.engine.getReadModel());
+    const midReadModel = await harness.readModel();
     const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(midThread?.checkpoints).toHaveLength(0);
 
@@ -557,7 +572,7 @@ describe("CheckpointReactor", () => {
     });
 
     const thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) => entry.latestTurn?.turnId === "turn-main" && entry.checkpoints.length === 1,
     );
     expect(thread.checkpoints[0]?.checkpointTurnCount).toBe(1);
@@ -614,7 +629,7 @@ describe("CheckpointReactor", () => {
 
     await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
     const thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) => entry.latestTurn?.turnId === "turn-claude-1" && entry.checkpoints.length === 1,
     );
 
@@ -659,7 +674,7 @@ describe("CheckpointReactor", () => {
 
     await waitForEvent(harness.engine, (event) => event.type === "thread.turn-diff-completed");
     const thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) =>
         entry.checkpoints.length === 1 &&
         entry.activities.some((activity) => activity.kind === "checkpoint.capture.failed"),
@@ -794,7 +809,7 @@ describe("CheckpointReactor", () => {
     });
 
     await harness.drain();
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.checkpoints.some((checkpoint) => checkpoint.checkpointTurnCount === 3)).toBe(
       false,
@@ -923,7 +938,10 @@ describe("CheckpointReactor", () => {
     );
 
     await waitForEvent(harness.engine, (event) => event.type === "thread.reverted");
-    const thread = await waitForThread(harness.engine, (entry) => entry.checkpoints.length === 1);
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.checkpoints.length === 1,
+    );
 
     expect(thread.latestTurn?.turnId).toBe("turn-1");
     expect(thread.checkpoints).toHaveLength(1);
@@ -1105,7 +1123,7 @@ describe("CheckpointReactor", () => {
       }),
     );
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.activities.some((activity) => activity.kind === "checkpoint.revert.failed"),
     );
 
