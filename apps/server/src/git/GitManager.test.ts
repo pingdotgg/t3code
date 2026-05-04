@@ -1961,18 +1961,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
 
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
-          prListSequence: [
-            "[]",
-            JSON.stringify([
-              {
-                number: 88,
-                title: "Existing race PR",
-                url: "https://github.com/pingdotgg/codething-mvp/pull/88",
-                baseRefName: "main",
-                headRefName: "feature/create-race",
-              },
-            ]),
-          ],
+          prListSequence: ["[]", "[]"],
           createPrError: new GitHubCliError({
             operation: "execute",
             detail:

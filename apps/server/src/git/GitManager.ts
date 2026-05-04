@@ -345,6 +345,35 @@ function gitManagerError(operation: string, detail: string, cause?: unknown): Gi
   });
 }
 
+interface PullRequestUrlInfo {
+  readonly url: string;
+  readonly number: number;
+}
+
+function parsePullRequestUrlFromText(value: string): PullRequestUrlInfo | null {
+  const match = value.match(/https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/(\d+)/);
+  if (!match) return null;
+  const [url, numberText] = match;
+  const number = Number(numberText);
+  return Number.isSafeInteger(number) && number > 0 ? { url, number } : null;
+}
+
+function parsePullRequestUrlFromUnknown(value: unknown): PullRequestUrlInfo | null {
+  if (typeof value === "string") return parsePullRequestUrlFromText(value);
+  if (value instanceof Error) {
+    return (
+      parsePullRequestUrlFromText(value.message) ??
+      ("cause" in value ? parsePullRequestUrlFromUnknown(value.cause) : null)
+    );
+  }
+  if (typeof value === "object" && value !== null) {
+    const detail = "detail" in value ? (value as { detail?: unknown }).detail : undefined;
+    const cause = "cause" in value ? (value as { cause?: unknown }).cause : undefined;
+    return parsePullRequestUrlFromUnknown(detail) ?? parsePullRequestUrlFromUnknown(cause);
+  }
+  return null;
+}
+
 function limitContext(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, maxChars)}\n\n[truncated]`;
@@ -1353,7 +1382,23 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
             Effect.flatMap((pullRequest) =>
               pullRequest !== null
                 ? Effect.succeed({ status: "opened_existing" as const, pullRequest })
-                : Effect.fail(error),
+                : (() => {
+                    const parsed = parsePullRequestUrlFromUnknown(error);
+                    return parsed !== null
+                      ? Effect.succeed({
+                          status: "opened_existing" as const,
+                          pullRequest: {
+                            number: parsed.number,
+                            title: generated.title,
+                            url: parsed.url,
+                            baseRefName: baseBranch,
+                            headRefName: headContext.headBranch,
+                            state: "open" as const,
+                            updatedAt: Option.none<DateTime.Utc>(),
+                          },
+                        })
+                      : Effect.fail(error);
+                  })(),
             ),
           ),
         ),
