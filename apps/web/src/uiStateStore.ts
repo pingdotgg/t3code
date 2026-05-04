@@ -408,11 +408,7 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
 
 export function syncThreads(state: UiState, threads: readonly SyncThreadInput[]): UiState {
   const retainedThreadIds = new Set(threads.map((thread) => thread.key));
-  const nextThreadLastVisitedAtById = Object.fromEntries(
-    Object.entries(state.threadLastVisitedAtById).filter(([threadId]) =>
-      retainedThreadIds.has(threadId),
-    ),
-  );
+  const nextThreadLastVisitedAtById = { ...state.threadLastVisitedAtById };
   for (const thread of threads) {
     if (
       nextThreadLastVisitedAtById[thread.key] === undefined &&
