@@ -3,6 +3,7 @@ import { Layer } from "effect";
 import { layer as codexAdapterLayer } from "./Adapters/CodexAdapterV2.ts";
 import { codexAppServerClientFactoryFromSettingsLayer } from "./Adapters/CodexAdapterV2.ts";
 import { layer as checkpointServiceLayer } from "./CheckpointService.ts";
+import { layer as commandPolicyLayer } from "./CommandPolicy.ts";
 import { layer as commandReceiptStoreLayer } from "./CommandReceiptStore.ts";
 import { layer as contextHandoffServiceLayer } from "./ContextHandoffService.ts";
 import { layer as eventSinkLayer } from "./EventSink.ts";
@@ -66,6 +67,7 @@ export const OrchestrationV2LayerLive = orchestratorLayer.pipe(
   Layer.provide(
     Layer.mergeAll(
       checkpointServiceProvided,
+      commandPolicyLayer,
       storesLayer,
       eventSinkProvided,
       commandReceiptStoreProvided,
