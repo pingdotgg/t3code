@@ -156,6 +156,17 @@ type PreviewParentCommandMessage =
       previewFileRelativePath: string;
       commandId: number;
       argsPartial: Record<string, unknown>;
+    }
+  | {
+      source: "forma-preview-parent";
+      kind: "preview.viewport.update";
+      runtimeInstanceId: string;
+      previewFileRelativePath: string;
+      viewport: {
+        id: PreviewViewportId;
+        width: number | null;
+        height: number | null;
+      };
     };
 
 interface PreviewRuntimeSnapshotMessage {
@@ -197,19 +208,144 @@ function buildRuntimeSnapshotFromMessage(
   };
 }
 
+const PREVIEW_VIEWPORTS = [
+  { id: "fit", label: "Fit", width: null, height: null },
+  { id: "desktop", label: "Desktop", width: 1280, height: 800 },
+  { id: "tablet", label: "Tablet", width: 768, height: 1024 },
+  { id: "mobile", label: "Mobile", width: 390, height: 844 },
+  { id: "small-mobile", label: "Small", width: 360, height: 740 },
+] as const;
+
+type PreviewViewportId = (typeof PREVIEW_VIEWPORTS)[number]["id"];
+
+const PREVIEW_ZOOM_LEVELS = [
+  { id: "fit", label: "Fit", value: null },
+  { id: "50", label: "50%", value: 0.5 },
+  { id: "75", label: "75%", value: 0.75 },
+  { id: "100", label: "100%", value: 1 },
+  { id: "125", label: "125%", value: 1.25 },
+] as const;
+
+type PreviewZoomId = (typeof PREVIEW_ZOOM_LEVELS)[number]["id"];
+
+function resolvePreviewViewport(viewportId: PreviewViewportId) {
+  return PREVIEW_VIEWPORTS.find((viewport) => viewport.id === viewportId) ?? PREVIEW_VIEWPORTS[0];
+}
+
+function resolvePreviewZoom(zoomId: PreviewZoomId) {
+  return PREVIEW_ZOOM_LEVELS.find((zoom) => zoom.id === zoomId) ?? PREVIEW_ZOOM_LEVELS[0];
+}
+
+interface NormalizedControlOption {
+  key: string;
+  label: string;
+  value: string;
+  rawValue: unknown;
+}
+
+function isControlOptionRecord(option: unknown): option is { label?: unknown; value?: unknown } {
+  return typeof option === "object" && option !== null && "value" in option;
+}
+
+function stringifyControlOptionValue(value: unknown): string {
+  if (typeof value === "string") return `string:${value}`;
+  if (typeof value === "number") return `number:${value}`;
+  if (typeof value === "boolean") return `boolean:${value}`;
+  if (value === null) return "null:null";
+  try {
+    return `json:${JSON.stringify(value)}`;
+  } catch {
+    return `string:${String(value)}`;
+  }
+}
+
+function normalizeControlOption(option: unknown): NormalizedControlOption {
+  const value = isControlOptionRecord(option) ? option.value : option;
+  const label =
+    isControlOptionRecord(option) && option.label != null ? String(option.label) : String(value);
+  return {
+    key: stringifyControlOptionValue(value),
+    label,
+    value: stringifyControlOptionValue(value),
+    rawValue: value,
+  };
+}
+
 function PreviewControlsContent(props: {
   scenarioItems: readonly { value: string; label: string }[];
   selectedScenarioId: string | null;
+  selectedViewportId: PreviewViewportId;
+  selectedZoomId: PreviewZoomId;
   controls: readonly PreviewControlDescriptor[];
   onSelectScenario: (scenarioId: string) => void;
+  onSelectViewport: (viewportId: PreviewViewportId) => void;
+  onSelectZoom: (zoomId: PreviewZoomId) => void;
   onSetControlValue: (name: string, value: unknown, mode: "debounced" | "immediate") => void;
   onFlushControl: (name: string) => void;
 }) {
+  const viewportItems = PREVIEW_VIEWPORTS.map((viewport) => ({
+    value: viewport.id,
+    label:
+      viewport.width && viewport.height
+        ? `${viewport.label} · ${viewport.width}×${viewport.height}`
+        : viewport.label,
+  }));
+  const zoomItems = PREVIEW_ZOOM_LEVELS.map((zoom) => ({
+    value: zoom.id,
+    label: zoom.label,
+  }));
+
   return (
     <div className="w-72 space-y-4">
       <div>
         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground/80">
           Controls
+        </div>
+        <div className="mt-4 flex flex-col gap-2 text-sm">
+          <span className="font-medium text-foreground">Viewport</span>
+          <Select
+            items={viewportItems}
+            value={props.selectedViewportId}
+            onValueChange={(value) => {
+              if (PREVIEW_VIEWPORTS.some((viewport) => viewport.id === value)) {
+                props.onSelectViewport(value as PreviewViewportId);
+              }
+            }}
+          >
+            <SelectTrigger size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectPopup alignItemWithTrigger={false}>
+              {viewportItems.map((item) => (
+                <SelectItem key={item.value} value={item.value} hideIndicator>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        </div>
+        <div className="mt-4 flex flex-col gap-2 text-sm">
+          <span className="font-medium text-foreground">Zoom</span>
+          <Select
+            items={zoomItems}
+            value={props.selectedZoomId}
+            onValueChange={(value) => {
+              if (PREVIEW_ZOOM_LEVELS.some((zoom) => zoom.id === value)) {
+                props.onSelectZoom(value as PreviewZoomId);
+              }
+            }}
+          >
+            <SelectTrigger size="sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectPopup alignItemWithTrigger={false}>
+              {zoomItems.map((item) => (
+                <SelectItem key={item.value} value={item.value} hideIndicator>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
         </div>
         {props.scenarioItems.length > 0 ? (
           <div className="mt-4 flex flex-col gap-2 text-sm">
@@ -282,24 +418,22 @@ function PreviewControlsContent(props: {
               control.type === "radio" ||
               control.type === "inline-radio"
             ) {
-              const selectItems = (control.options ?? []).map((option) => {
-                const optionValue = String(option);
-                return {
-                  value: optionValue,
-                  label: optionValue,
-                };
-              });
+              const selectItems = (control.options ?? []).map(normalizeControlOption);
+              const currentValue = stringifyControlOptionValue(control.value);
               return (
                 <div key={control.name} className="flex flex-col gap-2 text-sm">
                   <span className="font-medium text-foreground">{control.label}</span>
                   <Select
                     items={selectItems}
-                    value={typeof control.value === "string" ? control.value : ""}
+                    value={currentValue}
                     onValueChange={(value) => {
                       if (typeof value !== "string") {
                         return;
                       }
-                      props.onSetControlValue(control.name, value, "immediate");
+                      const selectedItem = selectItems.find((item) => item.key === value);
+                      if (selectedItem) {
+                        props.onSetControlValue(control.name, selectedItem.rawValue, "immediate");
+                      }
                     }}
                   >
                     <SelectTrigger size="sm">
@@ -307,7 +441,7 @@ function PreviewControlsContent(props: {
                     </SelectTrigger>
                     <SelectPopup alignItemWithTrigger={false}>
                       {selectItems.map((item) => (
-                        <SelectItem key={item.value} value={item.value} hideIndicator>
+                        <SelectItem key={item.key} value={item.key} hideIndicator>
                           {item.label}
                         </SelectItem>
                       ))}
@@ -322,17 +456,19 @@ function PreviewControlsContent(props: {
               control.type === "check" ||
               control.type === "inline-check"
             ) {
-              const currentValues = Array.isArray(control.value) ? control.value.map(String) : [];
+              const currentValues = Array.isArray(control.value)
+                ? control.value.map(stringifyControlOptionValue)
+                : [];
               return (
                 <div key={control.name} className="space-y-2 text-sm">
                   <div className="font-medium text-foreground">{control.label}</div>
                   <div className="space-y-2">
                     {(control.options ?? []).map((option) => {
-                      const stringValue = String(option);
-                      const checked = currentValues.includes(stringValue);
+                      const item = normalizeControlOption(option);
+                      const checked = currentValues.includes(item.key);
                       return (
                         <label
-                          key={stringValue}
+                          key={item.key}
                           className="flex items-center gap-2 text-muted-foreground"
                         >
                           <input
@@ -341,14 +477,21 @@ function PreviewControlsContent(props: {
                             onChange={(event) => {
                               const nextValues = new Set(currentValues);
                               if (event.currentTarget.checked) {
-                                nextValues.add(stringValue);
+                                nextValues.add(item.key);
                               } else {
-                                nextValues.delete(stringValue);
+                                nextValues.delete(item.key);
                               }
-                              props.onSetControlValue(control.name, [...nextValues], "immediate");
+                              props.onSetControlValue(
+                                control.name,
+                                (control.options ?? [])
+                                  .map(normalizeControlOption)
+                                  .filter((candidate) => nextValues.has(candidate.key))
+                                  .map((candidate) => candidate.rawValue),
+                                "immediate",
+                              );
                             }}
                           />
-                          {stringValue}
+                          {item.label}
                         </label>
                       );
                     })}
@@ -459,7 +602,11 @@ export function PreviewDrawer() {
   const [launchingAction, setLaunchingAction] = useState<
     "bootstrap" | "generation" | "repair" | null
   >(null);
+  const [previewViewportId, setPreviewViewportId] = useState<PreviewViewportId>("fit");
+  const [previewZoomId, setPreviewZoomId] = useState<PreviewZoomId>("fit");
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const previewCanvasRef = useRef<HTMLDivElement | null>(null);
+  const [previewCanvasSize, setPreviewCanvasSize] = useState({ width: 0, height: 0 });
   const handledPreviewTurnKeyRef = useRef<string | null>(null);
   const nextPreviewCommandIdRef = useRef(1);
   const runtimeCommandWatermarkRef = useRef<Record<string, number>>({});
@@ -566,16 +713,37 @@ export function PreviewDrawer() {
           ? resolvePreviewUrl(activeProjectRef, resolved.iframePath, activeProjectState.accessToken)
           : null
       : null;
+  const previewViewport = resolvePreviewViewport(previewViewportId);
+  const previewZoom = resolvePreviewZoom(previewZoomId);
 
   const postPreviewCommand = useCallback((message: PreviewParentCommandMessage) => {
     const contentWindow = iframeRef.current?.contentWindow;
     if (!contentWindow) {
       return null;
     }
-    runtimeCommandWatermarkRef.current[message.runtimeInstanceId] = message.commandId;
+    if ("commandId" in message) {
+      runtimeCommandWatermarkRef.current[message.runtimeInstanceId] = message.commandId;
+    }
     contentWindow.postMessage(message, "*");
-    return message.commandId;
+    return "commandId" in message ? message.commandId : null;
   }, []);
+
+  const syncPreviewViewportToRuntime = useCallback(() => {
+    if (!runtimeSnapshot?.runtimeInstanceId || !activePreviewFileRelativePath) {
+      return;
+    }
+    postPreviewCommand({
+      source: "forma-preview-parent",
+      kind: "preview.viewport.update",
+      runtimeInstanceId: runtimeSnapshot.runtimeInstanceId,
+      previewFileRelativePath: activePreviewFileRelativePath,
+      viewport: {
+        id: previewViewport.id,
+        width: previewViewport.width,
+        height: previewViewport.height,
+      },
+    });
+  }, [activePreviewFileRelativePath, postPreviewCommand, previewViewport, runtimeSnapshot]);
 
   const refreshInspection = async () => {
     if (!activeProjectRef || !api || !activeProject) {
@@ -1289,6 +1457,33 @@ export function PreviewDrawer() {
     restoreSessionIntoRuntime,
   ]);
 
+  useEffect(() => {
+    syncPreviewViewportToRuntime();
+  }, [syncPreviewViewportToRuntime]);
+
+  useEffect(() => {
+    const canvasElement = previewCanvasRef.current;
+    if (!canvasElement) {
+      return;
+    }
+
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      if (!entry) {
+        return;
+      }
+      const { width, height } = entry.contentRect;
+      setPreviewCanvasSize((currentSize) =>
+        Math.abs(currentSize.width - width) < 0.5 && Math.abs(currentSize.height - height) < 0.5
+          ? currentSize
+          : { width, height },
+      );
+    });
+    resizeObserver.observe(canvasElement);
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [iframeUrl]);
+
   const launchBootstrapAction = async () => {
     if (launchingAction) {
       return;
@@ -1496,8 +1691,6 @@ export function PreviewDrawer() {
     );
   }
 
-  const inspection = activeProjectState?.inspection ?? null;
-  const currentRelativePath = activeProjectState?.currentRelativePath ?? null;
   const runtimeErrorResolution =
     activeProjectState?.resolution?.status === "runtimeError"
       ? activeProjectState.resolution
@@ -1506,6 +1699,41 @@ export function PreviewDrawer() {
     activeProjectState?.runtimeState?.kind === "runtime.error"
       ? activeProjectState.runtimeState
       : null;
+  const hasFixedPreviewViewport = Boolean(previewViewport.width || previewViewport.height);
+  const fixedPreviewViewportWidth = previewViewport.width ?? previewCanvasSize.width;
+  const fixedPreviewViewportHeight = previewViewport.height ?? previewCanvasSize.height;
+  const previewViewportScale =
+    hasFixedPreviewViewport && fixedPreviewViewportWidth > 0 && fixedPreviewViewportHeight > 0
+      ? (previewZoom.value ??
+        Math.min(
+          1,
+          Math.max(0.1, (previewCanvasSize.width - 64) / fixedPreviewViewportWidth),
+          Math.max(0.1, (previewCanvasSize.height - 64) / fixedPreviewViewportHeight),
+        ))
+      : 1;
+  const scaledPreviewViewportWidth = fixedPreviewViewportWidth * previewViewportScale;
+  const scaledPreviewViewportHeight = fixedPreviewViewportHeight * previewViewportScale;
+  const previewViewportSlotStyle = hasFixedPreviewViewport
+    ? {
+        width: `${scaledPreviewViewportWidth}px`,
+        height: `${scaledPreviewViewportHeight}px`,
+      }
+    : undefined;
+  const previewViewportFrameStyle = hasFixedPreviewViewport
+    ? {
+        width: `${fixedPreviewViewportWidth}px`,
+        height: `${fixedPreviewViewportHeight}px`,
+        transform: `scale(${previewViewportScale})`,
+        transformOrigin: "top left",
+      }
+    : undefined;
+  const previewCanvasStyle = {
+    backgroundColor: "var(--background)",
+    backgroundImage:
+      "radial-gradient(circle, color-mix(in oklab, var(--foreground) 16%, transparent) 1px, transparent 1px)",
+    backgroundPosition: "0 0",
+    backgroundSize: "20px 20px",
+  };
 
   return (
     <div
@@ -1535,8 +1763,12 @@ export function PreviewDrawer() {
                 <PreviewControlsContent
                   scenarioItems={scenarioItems}
                   selectedScenarioId={selectedScenarioId}
+                  selectedViewportId={previewViewportId}
+                  selectedZoomId={previewZoomId}
                   controls={displayedControls}
                   onSelectScenario={handleSelectScenario}
+                  onSelectViewport={setPreviewViewportId}
+                  onSelectZoom={setPreviewZoomId}
                   onSetControlValue={handleSetControlValue}
                   onFlushControl={handleFlushControl}
                 />
@@ -1685,14 +1917,45 @@ export function PreviewDrawer() {
               </div>
             </div>
           ) : iframeUrl ? (
-            <iframe
-              ref={iframeRef}
-              key={resolved?.iframePath}
-              className="block h-full min-h-full w-full bg-background"
-              sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
-              src={iframeUrl}
-              title="Component preview canvas"
-            />
+            <div
+              ref={previewCanvasRef}
+              className="h-full min-h-0 overflow-auto"
+              style={previewCanvasStyle}
+            >
+              <div
+                className={
+                  hasFixedPreviewViewport
+                    ? "grid h-full min-h-full w-full place-items-center p-8"
+                    : "h-full min-h-full w-full"
+                }
+              >
+                <div
+                  className={
+                    hasFixedPreviewViewport
+                      ? "overflow-hidden rounded-lg"
+                      : "h-full w-full bg-transparent"
+                  }
+                  style={previewViewportSlotStyle}
+                >
+                  <div
+                    className={
+                      hasFixedPreviewViewport ? "bg-transparent" : "h-full w-full bg-transparent"
+                    }
+                    style={previewViewportFrameStyle}
+                  >
+                    <iframe
+                      ref={iframeRef}
+                      key={resolved?.iframePath}
+                      className="block h-full w-full bg-transparent"
+                      sandbox="allow-forms allow-modals allow-popups allow-same-origin allow-scripts"
+                      src={iframeUrl}
+                      style={{ backgroundColor: "transparent" }}
+                      title="Component preview canvas"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
           ) : activeProjectState?.currentRelativePath &&
             (!resolved || (!shouldUseDirectIframe && !activeProjectState.accessToken)) ? (
             <div className="flex h-full min-h-[18rem] items-center justify-center text-sm text-muted-foreground">

@@ -516,17 +516,17 @@ export default function ChatComposerPreviewHarness(input: ChatComposerPreviewArg
   return React.createElement(
     "div",
     {
-      className: "flex min-h-dvh min-w-0 flex-col text-foreground",
+      className: "w-full max-w-5xl min-w-0 text-foreground",
     },
     React.createElement(
       "div",
       {
-        className: "flex min-h-0 min-w-0 flex-1 flex-col justify-end",
+        className: "min-w-0",
       },
       React.createElement(
         "div",
         {
-          className: "px-3 pb-3 pt-1.5 sm:px-5 sm:pb-4 sm:pt-2",
+          className: "px-3 py-3 sm:px-5 sm:py-4",
         },
         React.createElement(ChatComposer, {
           ...props,

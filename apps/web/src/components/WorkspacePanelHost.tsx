@@ -4,7 +4,7 @@ import { useCallback } from "react";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { RightPanelSheet } from "./RightPanelSheet";
-import { Sidebar, SidebarProvider, SidebarRail } from "./ui/sidebar";
+import { Sidebar, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 
 const WORKSPACE_PANEL_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_workspace_panel_width";
 const WORKSPACE_PANEL_INLINE_DEFAULT_WIDTH = "clamp(28rem,48vw,44rem)";

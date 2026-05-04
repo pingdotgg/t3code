@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 
 import ThreadSidebar from "./Sidebar";
-import { Sidebar, SidebarProvider, SidebarRail, useSidebar } from "./ui/sidebar";
+import { Sidebar, SidebarProvider, SidebarRail, useSidebar } from "~/components/ui/sidebar";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { resolveShortcutCommand } from "../keybindings";
 import { useServerKeybindings } from "../rpc/serverState";

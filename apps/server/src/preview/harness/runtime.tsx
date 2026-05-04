@@ -195,6 +195,12 @@ interface PreviewReadyOrStatePayload {
   lastAppliedCommandId: number;
 }
 
+interface PreviewViewport {
+  id: string;
+  width: number | null;
+  height: number | null;
+}
+
 function buildPreviewReadyOrStatePayload(input: {
   runtimeInstanceId: string;
   previewFileRelativePath: string;
@@ -237,6 +243,27 @@ function PreviewShell(props: RuntimeOptions) {
   );
   const [componentError, setComponentError] = React.useState<string | null>(null);
   const [routerModule, setRouterModule] = React.useState<Record<string, unknown> | null>(null);
+  const [previewViewport, setPreviewViewport] = React.useState<PreviewViewport>({
+    id: "fit",
+    width: null,
+    height: null,
+  });
+
+  React.useEffect(() => {
+    const previousHtmlBackground = document.documentElement.style.background;
+    const previousBodyBackground = document.body.style.background;
+    const previousBodyMargin = document.body.style.margin;
+
+    document.documentElement.style.background = "transparent";
+    document.body.style.background = "transparent";
+    document.body.style.margin = "0";
+
+    return () => {
+      document.documentElement.style.background = previousHtmlBackground;
+      document.body.style.background = previousBodyBackground;
+      document.body.style.margin = previousBodyMargin;
+    };
+  }, []);
   const [runtimeState, dispatchRuntimeCommand] = React.useReducer(
     (
       currentState: ReturnType<typeof createPreviewRuntimeState>,
@@ -450,6 +477,20 @@ function PreviewShell(props: RuntimeOptions) {
           commandId: event.data.commandId,
           argsPartial: event.data.argsPartial as Record<string, unknown>,
         });
+        return;
+      }
+
+      if (
+        event.data.kind === "preview.viewport.update" &&
+        event.data.viewport &&
+        typeof event.data.viewport === "object"
+      ) {
+        const viewport = event.data.viewport as Record<string, unknown>;
+        setPreviewViewport({
+          id: typeof viewport.id === "string" ? viewport.id : "fit",
+          width: typeof viewport.width === "number" ? viewport.width : null,
+          height: typeof viewport.height === "number" ? viewport.height : null,
+        });
       }
     };
 
@@ -498,6 +539,7 @@ function PreviewShell(props: RuntimeOptions) {
           env: selectedScenario.env ?? null,
         }}
         previewArgs={mergedArgs}
+        previewViewport={previewViewport}
         pathname={activeEnvironment.pathname}
         searchParams={activeEnvironment.searchParams}
       >

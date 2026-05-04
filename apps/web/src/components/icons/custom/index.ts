@@ -10,6 +10,7 @@ export * from "./SettingsHexIcon";
 export * from "./SidebarArchiveIcon";
 export * from "./SidebarCompletedIcon";
 export * from "./SidebarFilterIcon";
+export * from "./SidebarGrabHandleIcon";
 export * from "./SidebarPanelIcon";
 export * from "./SidebarPlanReadyIcon";
 export * from "./TerminalToggleIcon";

@@ -148,7 +148,7 @@ import {
   SidebarMenuSubItem,
   SidebarSeparator,
   SidebarTrigger,
-} from "./ui/sidebar";
+} from "~/components/ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
@@ -179,6 +179,7 @@ import {
   SettingsHexIcon,
   SidebarArchiveIcon,
   SidebarFilterIcon,
+  SidebarGrabHandleIcon,
 } from "./icons/custom";
 import {
   derivePhysicalProjectKey,
@@ -2067,21 +2068,41 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                   MICRO_FADE_MOTION_CLASS_NAME,
                 )}
               />
-              <ChevronRightIcon
-                className={cn(
-                  "absolute inset-0 m-auto size-2.5 fill-muted-foreground/70 opacity-0 group-hover/project-header:opacity-100",
-                  MICRO_FADE_MOTION_CLASS_NAME,
-                )}
-              />
+              {isManualProjectSorting ? (
+                <SidebarGrabHandleIcon
+                  className={cn(
+                    "absolute inset-0 m-auto size-3 text-muted-foreground/70 opacity-0 group-hover/project-header:opacity-100",
+                    MICRO_FADE_MOTION_CLASS_NAME,
+                  )}
+                />
+              ) : (
+                <ChevronRightIcon
+                  className={cn(
+                    "absolute inset-0 m-auto size-2.5 fill-muted-foreground/70 opacity-0 group-hover/project-header:opacity-100",
+                    MICRO_FADE_MOTION_CLASS_NAME,
+                  )}
+                />
+              )}
             </span>
           ) : (
-            <ChevronRightIcon
-              className={cn(
-                "-ml-0.5 size-2.5 shrink-0 fill-muted-foreground/70",
-                MICRO_FADE_TRANSFORM_MOTION_CLASS_NAME,
-                projectExpanded && "rotate-90",
-              )}
-            />
+            <span className="-ml-0.5 relative size-2.5 shrink-0">
+              <ChevronRightIcon
+                className={cn(
+                  "absolute inset-0 m-auto size-2.5 fill-muted-foreground/70",
+                  MICRO_FADE_TRANSFORM_MOTION_CLASS_NAME,
+                  projectExpanded && "rotate-90",
+                  isManualProjectSorting && "group-hover/project-header:opacity-0",
+                )}
+              />
+              {isManualProjectSorting ? (
+                <SidebarGrabHandleIcon
+                  className={cn(
+                    "absolute inset-0 m-auto size-3 text-muted-foreground/70 opacity-0 group-hover/project-header:opacity-100",
+                    MICRO_FADE_MOTION_CLASS_NAME,
+                  )}
+                />
+              ) : null}
+            </span>
           )}
           <ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />
           <span className="flex min-w-0 flex-1 items-center gap-2">

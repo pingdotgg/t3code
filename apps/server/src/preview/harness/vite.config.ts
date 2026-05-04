@@ -90,7 +90,7 @@ function tailwindSourceInjector(): Plugin {
     name: "forma-tailwind-source-injector",
     enforce: "pre",
     transform(code, id) {
-      if (!id.endsWith(".css") || !code.includes('@import "tailwindcss"')) {
+      if (!id.endsWith(".css") || !/@import\s+["']tailwindcss["']\s*;/.test(code)) {
         return null;
       }
       if (sourceDirectives.length === 0) {

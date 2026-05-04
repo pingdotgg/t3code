@@ -54,7 +54,7 @@ import { AddProjectIcon, NewThreadIcon, SettingsHexIcon, SidebarArchiveIcon } fr
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./ui/menu";
-import { SidebarInset, SidebarTrigger, useSidebar } from "./ui/sidebar";
+import { SidebarInset, SidebarTrigger, useSidebar } from "~/components/ui/sidebar";
 
 const ACTION_CARD_CLASS_NAME =
   "relative isolate h-auto min-h-[11.5rem] w-full overflow-hidden rounded-[20px] border-border/60 bg-background px-5 py-5 text-left whitespace-normal shadow-sm shadow-black/5 transition-all duration-150 ease-out before:rounded-[19px] hover:-translate-y-0.5 hover:border-border/85 hover:bg-accent/16 hover:shadow-md hover:ring-4 hover:ring-foreground/5 hover:ring-offset-4 hover:ring-offset-background active:translate-y-0 active:scale-[0.985] active:shadow-sm";
