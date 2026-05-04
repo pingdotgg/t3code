@@ -727,7 +727,7 @@ export function WorkspaceFilesPanel({
                         issueNavigationRequest("back");
                       }}
                     >
-                      <XIconCircle className="size-3 fill-current" />
+                      <XIconCircle className="size-3 fill-current/50" />
                     </button>
                   </div>
                 </div>
