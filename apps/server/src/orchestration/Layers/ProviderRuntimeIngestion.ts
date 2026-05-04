@@ -81,6 +81,13 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
+const PROPOSED_PLAN_BLOCK_REGEX = /<proposed_plan>\s*[\s\S]*?\s*<\/proposed_plan>/g;
+const PROPOSED_PLAN_CAPTURE_REGEX = /<proposed_plan>\s*([\s\S]*?)\s*<\/proposed_plan>/;
+
+function extractProposedPlanMarkdown(text: string | undefined): string | undefined {
+  return text?.trim().match(PROPOSED_PLAN_CAPTURE_REGEX)?.[1]?.trim() || undefined;
+}
+
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
   if (!trimmed) {
@@ -762,6 +769,10 @@ const make = Effect.gen(function* () {
       if (!hasRenderableAssistantText(bufferedText)) {
         return false;
       }
+      if (extractProposedPlanMarkdown(bufferedText)) {
+        yield* Cache.set(bufferedAssistantTextByMessageId, input.messageId, bufferedText);
+        return false;
+      }
 
       yield* orchestrationEngine.dispatch({
         type: "thread.message.assistant.delta",
@@ -821,12 +832,14 @@ const make = Effect.gen(function* () {
   }) =>
     Effect.gen(function* () {
       const bufferedText = yield* takeBufferedAssistantText(input.messageId);
-      const text =
+      const rawText =
         bufferedText.length > 0
           ? bufferedText
           : (input.fallbackText?.trim().length ?? 0) > 0
             ? input.fallbackText!
             : "";
+      const hasProposedPlanBlock = PROPOSED_PLAN_CAPTURE_REGEX.test(rawText);
+      const text = hasProposedPlanBlock ? rawText.replace(PROPOSED_PLAN_BLOCK_REGEX, "") : rawText;
       const hasRenderableText = hasRenderableAssistantText(text);
 
       if (hasRenderableText) {
@@ -841,7 +854,7 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (input.hasProjectedMessage || hasRenderableText) {
+      if (input.hasProjectedMessage || hasRenderableText || rawText.length > 0) {
         yield* orchestrationEngine.dispatch({
           type: "thread.message.assistant.complete",
           commandId: providerCommandId(input.event, input.commandTag),
@@ -852,11 +865,18 @@ const make = Effect.gen(function* () {
         });
       }
       yield* clearAssistantMessageState(input.messageId);
+      return rawText;
     });
 
   const finalizeActiveAssistantSegmentForTurn = (input: {
     event: ProviderRuntimeEvent;
     threadId: ThreadId;
+    threadProposedPlans: ReadonlyArray<{
+      id: string;
+      createdAt: string;
+      implementedAt: string | null;
+      implementationThreadId: ThreadId | null;
+    }>;
     turnId: TurnId;
     createdAt: string;
     commandTag: string;
@@ -873,7 +893,7 @@ const make = Effect.gen(function* () {
         return;
       }
 
-      yield* finalizeAssistantMessage({
+      const completedAssistantText = yield* finalizeAssistantMessage({
         event: input.event,
         threadId: input.threadId,
         messageId: activeMessageId.value,
@@ -885,6 +905,18 @@ const make = Effect.gen(function* () {
           input.hasProjectedMessage ||
           (input.flushedMessageIds?.has(activeMessageId.value) ?? false),
       });
+      const proposedPlanFromAssistantMessage = extractProposedPlanMarkdown(completedAssistantText);
+      if (proposedPlanFromAssistantMessage) {
+        yield* finalizeBufferedProposedPlan({
+          event: input.event,
+          threadId: input.threadId,
+          threadProposedPlans: input.threadProposedPlans,
+          planId: proposedPlanIdForTurn(input.threadId, input.turnId),
+          turnId: input.turnId,
+          fallbackMarkdown: proposedPlanFromAssistantMessage,
+          updatedAt: input.createdAt,
+        });
+      }
       yield* forgetAssistantMessageId(input.threadId, input.turnId, activeMessageId.value);
 
       const state = yield* getAssistantSegmentStateForTurn(input.threadId, input.turnId);
@@ -1297,6 +1329,7 @@ const make = Effect.gen(function* () {
         yield* finalizeActiveAssistantSegmentForTurn({
           event,
           threadId: thread.id,
+          threadProposedPlans: thread.proposedPlans,
           turnId: pauseForUserTurnId,
           createdAt: now,
           commandTag:
@@ -1368,7 +1401,7 @@ const make = Effect.gen(function* () {
             yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
           }
 
-          yield* finalizeAssistantMessage({
+          const completedAssistantText = yield* finalizeAssistantMessage({
             event,
             threadId: thread.id,
             messageId: assistantMessageId,
@@ -1381,6 +1414,20 @@ const make = Effect.gen(function* () {
               ? { fallbackText: assistantCompletion.fallbackText }
               : {}),
           });
+
+          const proposedPlanFromAssistantMessage =
+            extractProposedPlanMarkdown(completedAssistantText);
+          if (proposedPlanFromAssistantMessage) {
+            yield* finalizeBufferedProposedPlan({
+              event,
+              threadId: thread.id,
+              threadProposedPlans: thread.proposedPlans,
+              planId: proposedPlanIdFromEvent(event, thread.id),
+              ...(turnId ? { turnId } : {}),
+              fallbackMarkdown: proposedPlanFromAssistantMessage,
+              updatedAt: now,
+            });
+          }
 
           if (turnId) {
             yield* forgetAssistantMessageId(thread.id, turnId, assistantMessageId);
@@ -1411,17 +1458,33 @@ const make = Effect.gen(function* () {
           yield* Effect.forEach(
             assistantMessageIds,
             (assistantMessageId) =>
-              finalizeAssistantMessage({
-                event,
-                threadId: thread.id,
-                messageId: assistantMessageId,
-                turnId,
-                createdAt: now,
-                commandTag: "assistant-complete-finalize",
-                finalDeltaCommandTag: "assistant-delta-finalize-fallback",
-                hasProjectedMessage: thread.messages.some(
-                  (entry) => entry.id === assistantMessageId,
-                ),
+              Effect.gen(function* () {
+                const completedAssistantText = yield* finalizeAssistantMessage({
+                  event,
+                  threadId: thread.id,
+                  messageId: assistantMessageId,
+                  turnId,
+                  createdAt: now,
+                  commandTag: "assistant-complete-finalize",
+                  finalDeltaCommandTag: "assistant-delta-finalize-fallback",
+                  hasProjectedMessage: thread.messages.some(
+                    (entry) => entry.id === assistantMessageId,
+                  ),
+                });
+
+                const proposedPlanFromAssistantMessage =
+                  extractProposedPlanMarkdown(completedAssistantText);
+                if (proposedPlanFromAssistantMessage) {
+                  yield* finalizeBufferedProposedPlan({
+                    event,
+                    threadId: thread.id,
+                    threadProposedPlans: thread.proposedPlans,
+                    planId: proposedPlanIdForTurn(thread.id, turnId),
+                    turnId,
+                    fallbackMarkdown: proposedPlanFromAssistantMessage,
+                    updatedAt: now,
+                  });
+                }
               }),
             { concurrency: 1 },
           ).pipe(Effect.asVoid);
