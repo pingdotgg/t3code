@@ -1,34 +1,43 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as Effect from "effect/Effect";
 
-type Disposable = { readonly dispose: () => void };
+import type { PtyAdapterShape, PtyProcess } from "../terminal/Services/PTY.ts";
 
-class MockPtyChild {
+class MockPtyChild implements PtyProcess {
   public readonly writes: string[] = [];
   public readonly kill = vi.fn();
 
   private readonly dataListeners = new Set<(data: string) => void>();
-  private readonly exitListeners = new Set<() => void>();
+  private readonly exitListeners = new Set<
+    (event: { exitCode: number; signal: number | null }) => void
+  >();
 
-  public onData(listener: (data: string) => void): Disposable {
-    this.dataListeners.add(listener);
-    return {
-      dispose: () => {
-        this.dataListeners.delete(listener);
-      },
-    };
-  }
-
-  public onExit(listener: () => void): Disposable {
-    this.exitListeners.add(listener);
-    return {
-      dispose: () => {
-        this.exitListeners.delete(listener);
-      },
-    };
+  public get pid(): number {
+    return 12345;
   }
 
   public write(data: string): void {
     this.writes.push(data);
+  }
+
+  public resize(_cols: number, _rows: number): void {
+    // no-op
+  }
+
+  public onData(listener: (data: string) => void): () => void {
+    this.dataListeners.add(listener);
+    return () => {
+      this.dataListeners.delete(listener);
+    };
+  }
+
+  public onExit(
+    listener: (event: { exitCode: number; signal: number | null }) => void,
+  ): () => void {
+    this.exitListeners.add(listener);
+    return () => {
+      this.exitListeners.delete(listener);
+    };
   }
 
   public emitData(data: string): void {
@@ -39,41 +48,31 @@ class MockPtyChild {
 
   public emitExit(): void {
     for (const listener of this.exitListeners) {
-      listener();
+      listener({ exitCode: 0, signal: null });
     }
   }
 }
 
-const spawnMock = vi.fn<
-  (file: string, args?: readonly string[], options?: Record<string, unknown>) => MockPtyChild
->(() => new MockPtyChild());
-
-vi.mock("node-pty", () => ({
-  spawn: spawnMock,
-}));
+function makeMockPtyAdapter(child: MockPtyChild): PtyAdapterShape {
+  return {
+    spawn: () => {
+      child.writes.length = 0;
+      child.kill.mockClear();
+      return Effect.succeed(child);
+    },
+  };
+}
 
 import {
+  parseClaudeRuntimeUsageLimits,
   parseClaudeUsageLimitsOutput,
   probeClaudeUsageLimits,
   shouldRequestClaudeUsageFallback,
 } from "./claudeUsageProbe.ts";
 
-async function latestSpawnedChild(): Promise<MockPtyChild> {
-  // Wait for dynamic import to resolve and spawn to be called
-  await vi.waitFor(() => {
-    const result = spawnMock.mock.results.at(-1)?.value;
-    if (!result) {
-      throw new Error("Expected node-pty spawn to be called.");
-    }
-    return result;
-  });
-  return spawnMock.mock.results.at(-1)!.value as MockPtyChild;
-}
-
 describe("claudeUsageProbe", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    spawnMock.mockClear();
   });
 
   afterEach(() => {
@@ -167,6 +166,52 @@ describe("claudeUsageProbe", () => {
     });
   });
 
+  it("parses runtime Claude rate limit telemetry when utilization is present", () => {
+    expect(
+      parseClaudeRuntimeUsageLimits({
+        checkedAt: "2026-04-17T10:00:00.000Z",
+        rateLimits: {
+          type: "rate_limit_event",
+          rate_limit_info: {
+            status: "allowed",
+            rateLimitType: "five_hour",
+            utilization: 37,
+            resetsAt: 1776448800,
+          },
+        },
+      }),
+    ).toEqual({
+      source: "claudeStatusProbe",
+      available: true,
+      checkedAt: "2026-04-17T10:00:00.000Z",
+      windows: [
+        {
+          kind: "session",
+          label: "Session",
+          usedPercent: 37,
+          windowDurationMins: 300,
+          resetsAt: "2026-04-17T18:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("ignores runtime Claude telemetry when utilization is missing", () => {
+    expect(
+      parseClaudeRuntimeUsageLimits({
+        checkedAt: "2026-04-17T10:00:00.000Z",
+        rateLimits: {
+          type: "rate_limit_event",
+          rate_limit_info: {
+            status: "allowed",
+            rateLimitType: "seven_day_opus",
+            resetsAt: 1776448800,
+          },
+        },
+      }),
+    ).toBeUndefined();
+  });
+
   it("requests the /usage fallback for short unavailable status output", () => {
     expect(
       shouldRequestClaudeUsageFallback({
@@ -195,13 +240,24 @@ describe("claudeUsageProbe", () => {
   });
 
   it("triggers /usage fallback when /status remains quiet", async () => {
-    const probePromise = probeClaudeUsageLimits({
-      binaryPath: "claude",
-      cwd: "/tmp",
-      checkedAt: "2026-04-17T10:00:00.000Z",
-    });
+    const child = new MockPtyChild();
+    const ptyAdapter = makeMockPtyAdapter(child);
+    const probePromise = Effect.runPromise(
+      probeClaudeUsageLimits(
+        {
+          binaryPath: "claude",
+          cwd: "/tmp",
+          checkedAt: "2026-04-17T10:00:00.000Z",
+        },
+        ptyAdapter,
+      ),
+    );
 
-    const child = await latestSpawnedChild();
+    await vi.waitFor(() => {
+      if (child.writes.length === 0) {
+        throw new Error("Expected PTY spawn and /status write to have been called.");
+      }
+    });
     expect(child.writes).toEqual(["/status\r"]);
 
     await vi.advanceTimersByTimeAsync(150);
@@ -213,13 +269,24 @@ describe("claudeUsageProbe", () => {
   });
 
   it("triggers /usage fallback for short non-empty status output", async () => {
-    const probePromise = probeClaudeUsageLimits({
-      binaryPath: "claude",
-      cwd: "/tmp",
-      checkedAt: "2026-04-17T10:00:00.000Z",
-    });
+    const child = new MockPtyChild();
+    const ptyAdapter = makeMockPtyAdapter(child);
+    const probePromise = Effect.runPromise(
+      probeClaudeUsageLimits(
+        {
+          binaryPath: "claude",
+          cwd: "/tmp",
+          checkedAt: "2026-04-17T10:00:00.000Z",
+        },
+        ptyAdapter,
+      ),
+    );
 
-    const child = await latestSpawnedChild();
+    await vi.waitFor(() => {
+      if (child.writes.length === 0) {
+        throw new Error("Expected PTY spawn and /status write to have been called.");
+      }
+    });
     child.emitData("Authenticated as Claude Max\n");
 
     await vi.advanceTimersByTimeAsync(150);
@@ -231,13 +298,24 @@ describe("claudeUsageProbe", () => {
   });
 
   it("skips /usage fallback when /status already returns usable quota output", async () => {
-    const probePromise = probeClaudeUsageLimits({
-      binaryPath: "claude",
-      cwd: "/tmp",
-      checkedAt: "2026-04-17T10:00:00.000Z",
-    });
+    const child = new MockPtyChild();
+    const ptyAdapter = makeMockPtyAdapter(child);
+    const probePromise = Effect.runPromise(
+      probeClaudeUsageLimits(
+        {
+          binaryPath: "claude",
+          cwd: "/tmp",
+          checkedAt: "2026-04-17T10:00:00.000Z",
+        },
+        ptyAdapter,
+      ),
+    );
 
-    const child = await latestSpawnedChild();
+    await vi.waitFor(() => {
+      if (child.writes.length === 0) {
+        throw new Error("Expected PTY spawn and /status write to have been called.");
+      }
+    });
     child.emitData("Session usage 42% resets at 2026-04-17T14:00:00Z\n");
 
     const result = await probePromise;
@@ -246,13 +324,24 @@ describe("claudeUsageProbe", () => {
   });
 
   it("times out cleanly when neither /status nor /usage yields usable quota data", async () => {
-    const probePromise = probeClaudeUsageLimits({
-      binaryPath: "claude",
-      cwd: "/tmp",
-      checkedAt: "2026-04-17T10:00:00.000Z",
-    });
+    const child = new MockPtyChild();
+    const ptyAdapter = makeMockPtyAdapter(child);
+    const probePromise = Effect.runPromise(
+      probeClaudeUsageLimits(
+        {
+          binaryPath: "claude",
+          cwd: "/tmp",
+          checkedAt: "2026-04-17T10:00:00.000Z",
+        },
+        ptyAdapter,
+      ),
+    );
 
-    const child = await latestSpawnedChild();
+    await vi.waitFor(() => {
+      if (child.writes.length === 0) {
+        throw new Error("Expected PTY spawn and /status write to have been called.");
+      }
+    });
     await vi.advanceTimersByTimeAsync(150);
     expect(child.writes).toEqual(["/status\r", "/usage\r"]);
 

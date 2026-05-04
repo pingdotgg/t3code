@@ -1,4 +1,6 @@
 import type { ServerProviderUsageLimits } from "@t3tools/contracts";
+import { Effect } from "effect";
+import type { PtyAdapterShape, PtyProcess } from "../terminal/Services/PTY.ts";
 import { makeUnavailableUsageLimits, makeUsageLimitsSnapshot } from "./providerUsageLimits.ts";
 
 const CLAUDE_USAGE_PROBE_TIMEOUT_MS = 4_000;
@@ -7,11 +9,85 @@ const ANSI_PATTERN =
   // Matches common CSI / OSC ANSI escape sequences.
   // eslint-disable-next-line no-control-regex
   /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/g;
-let nodePtyModulePromise: Promise<typeof import("node-pty")> | undefined;
 
 export interface ClaudeUsageProbeResult {
   readonly usageLimits: ServerProviderUsageLimits;
   readonly rawOutput: string;
+}
+
+export interface ClaudeUsageProbeInput {
+  readonly binaryPath: string;
+  readonly launchArgs?: string;
+  readonly cwd: string;
+  readonly checkedAt: string;
+  readonly environment?: NodeJS.ProcessEnv;
+}
+
+function readObjectRecord(value: unknown): Readonly<Record<string, unknown>> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readRateLimitDurationMins(value: unknown): number | undefined {
+  switch (value) {
+    case "five_hour":
+      return 5 * 60;
+    case "seven_day":
+    case "seven_day_opus":
+    case "seven_day_sonnet":
+      return 7 * 24 * 60;
+    default:
+      return undefined;
+  }
+}
+
+function toRateLimitResetTimestamp(value: unknown): string | undefined {
+  const timestampSeconds = readNumber(value);
+  if (timestampSeconds === undefined) {
+    return undefined;
+  }
+
+  const parsed = new Date(timestampSeconds * 1000);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+}
+
+export function parseClaudeRuntimeUsageLimits(input: {
+  readonly checkedAt: string;
+  readonly rateLimits: unknown;
+}): ServerProviderUsageLimits | undefined {
+  const eventRecord = readObjectRecord(input.rateLimits);
+  const rateLimitInfo =
+    readObjectRecord(eventRecord?.rate_limit_info) ?? readObjectRecord(input.rateLimits);
+  if (!rateLimitInfo) {
+    return undefined;
+  }
+
+  const usedPercent = readNumber(rateLimitInfo.utilization);
+  const windowDurationMins = readRateLimitDurationMins(rateLimitInfo.rateLimitType);
+  if (usedPercent === undefined || windowDurationMins === undefined) {
+    return undefined;
+  }
+
+  const resetsAt = toRateLimitResetTimestamp(rateLimitInfo.resetsAt);
+
+  return makeUsageLimitsSnapshot({
+    source: "claudeStatusProbe",
+    checkedAt: input.checkedAt,
+    windows: [
+      {
+        label: windowDurationMins === 5 * 60 ? "Session" : "Weekly",
+        usedPercent,
+        windowDurationMins,
+        ...(resetsAt === undefined ? {} : { resetsAt }),
+      },
+    ],
+    unavailableReason: "Usage limits unavailable for this Claude account.",
+  });
 }
 
 export function shouldRequestClaudeUsageFallback(input: {
@@ -29,17 +105,6 @@ export function shouldRequestClaudeUsageFallback(input: {
 
 function stripAnsi(value: string): string {
   return value.replaceAll(ANSI_PATTERN, "");
-}
-
-async function getNodePtyModule(): Promise<typeof import("node-pty")> {
-  if (!nodePtyModulePromise) {
-    nodePtyModulePromise = import("node-pty").catch((error: unknown) => {
-      nodePtyModulePromise = undefined;
-      throw error;
-    });
-  }
-
-  return await nodePtyModulePromise;
 }
 
 function parsePercent(value: string | undefined): number | undefined {
@@ -72,11 +137,15 @@ function detectClaudeUsageWindowKind(value: string): "session" | "weekly" | unde
 
 function extractResetTimestamp(value: string): string | undefined {
   const resetMatch = value.match(/\breset(?:s|ting)?(?:\s+(?:at|on|in))?[:\s-]*([^\n.;]+)/i);
-  const candidate = resetMatch?.[1]
+  const rawCandidate = resetMatch?.[1]
     ?.trim()
     .replace(/\s+/g, " ")
     .replace(/\b(?:local time|your time|time)\b.*$/i, "")
     .trim();
+  const isoCandidate = rawCandidate?.match(
+    /\b\d{4}-\d{2}-\d{2}t\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})\b/i,
+  )?.[0];
+  const candidate = isoCandidate ?? rawCandidate;
   if (!candidate) return undefined;
   if (/\b(?:today|tomorrow|tonight|next)\b/i.test(candidate)) {
     return undefined;
@@ -186,32 +255,19 @@ export function parseClaudeUsageLimitsOutput(input: {
   });
 }
 
-export async function probeClaudeUsageLimits(input: {
-  readonly binaryPath: string;
-  readonly launchArgs?: string;
-  readonly cwd: string;
-  readonly checkedAt: string;
-  readonly environment?: NodeJS.ProcessEnv;
-}): Promise<ClaudeUsageProbeResult> {
-  const nodePty = await getNodePtyModule();
-  const probeArgs = [
-    ...(input.launchArgs?.trim().split(/\s+/).filter(Boolean) ?? []),
-    "--permission-mode",
-    "plan",
-  ];
-
-  return await new Promise((resolve) => {
-    const child = nodePty.spawn(input.binaryPath, probeArgs, {
-      cwd: input.cwd,
-      cols: 120,
-      rows: 40,
-      env: input.environment ?? process.env,
-      name: process.platform === "win32" ? "xterm-color" : "xterm-256color",
-    });
+function runProbeLoop(
+  child: PtyProcess,
+  input: ClaudeUsageProbeInput,
+): Promise<ClaudeUsageProbeResult> {
+  return new Promise((resolve) => {
     let rawOutput = "";
-    let sentFallback = false;
     let settled = false;
     let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+    let sentFallback = false;
+
+    const timeout = setTimeout(() => {
+      finish();
+    }, CLAUDE_USAGE_PROBE_TIMEOUT_MS);
 
     const scheduleFallback = () => {
       if (sentFallback || settled) {
@@ -233,8 +289,8 @@ export async function probeClaudeUsageLimits(input: {
       if (fallbackTimer) {
         clearTimeout(fallbackTimer);
       }
-      offData.dispose();
-      offExit.dispose();
+      offData();
+      offExit();
       try {
         child.kill();
       } catch {
@@ -265,10 +321,6 @@ export async function probeClaudeUsageLimits(input: {
       child.write("/usage\r");
     };
 
-    const timeout = setTimeout(() => {
-      finish();
-    }, CLAUDE_USAGE_PROBE_TIMEOUT_MS);
-
     const offData = child.onData((data) => {
       rawOutput += data;
       const parsed = parseClaudeUsageLimitsOutput({
@@ -290,5 +342,41 @@ export async function probeClaudeUsageLimits(input: {
 
     child.write("/status\r");
     scheduleFallback();
+  });
+}
+
+export function probeClaudeUsageLimits(
+  input: ClaudeUsageProbeInput,
+  ptyAdapter: PtyAdapterShape,
+): Effect.Effect<ClaudeUsageProbeResult> {
+  const probeArgs = [
+    ...(input.launchArgs?.trim().split(/\s+/).filter(Boolean) ?? []),
+    "--permission-mode",
+    "plan",
+  ];
+
+  return Effect.promise(async () => {
+    const spawnResult = ptyAdapter.spawn({
+      shell: input.binaryPath,
+      args: probeArgs,
+      cwd: input.cwd,
+      cols: 120,
+      rows: 40,
+      env: input.environment ?? process.env,
+    });
+
+    const child = await Effect.runPromise(spawnResult).catch(() => null);
+    if (!child) {
+      return {
+        usageLimits: makeUnavailableUsageLimits({
+          source: "claudeStatusProbe",
+          checkedAt: input.checkedAt,
+          reason: "Failed to spawn Claude process for usage probe.",
+        }),
+        rawOutput: "",
+      };
+    }
+
+    return runProbeLoop(child, input);
   });
 }

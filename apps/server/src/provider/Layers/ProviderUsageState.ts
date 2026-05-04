@@ -7,6 +7,7 @@ import type {
 import { ProviderDriverKind as ProviderDriverKindSchema } from "@t3tools/contracts";
 import { Effect, Layer, Ref, Stream } from "effect";
 
+import { parseClaudeRuntimeUsageLimits } from "../claudeUsageProbe.ts";
 import { runtimeUsageToProviderUsageLimits } from "../runtimeUsageToProviderUsageLimits.ts";
 import {
   ProviderUsageState,
@@ -15,6 +16,7 @@ import {
 import { ProviderService } from "../Services/ProviderService.ts";
 
 const CURSOR_DRIVER = ProviderDriverKindSchema.make("cursor");
+const CLAUDE_DRIVER = ProviderDriverKindSchema.make("claudeAgent");
 
 function toCursorUsageLimits(
   event: Extract<ProviderRuntimeEvent, { readonly type: "thread.token-usage.updated" }>,
@@ -42,6 +44,37 @@ export const ProviderUsageStateLive = Layer.effect(
         Map<ThreadId, { readonly usage: ServerProviderUsageLimits; readonly updatedAtMs: number }>
       >(),
     );
+
+    const clearThreadUsage = (provider: ProviderDriverKind, threadId: ThreadId) =>
+      Ref.update(stateRef, (state) => {
+        const next = new Map(state);
+        const existingThreadMap = next.get(provider);
+        if (!existingThreadMap) {
+          return state;
+        }
+        const threadMap = new Map(existingThreadMap);
+        threadMap.delete(threadId);
+        if (threadMap.size === 0) {
+          next.delete(provider);
+        } else {
+          next.set(provider, threadMap);
+        }
+        return next;
+      });
+
+    const setThreadUsage = (
+      provider: ProviderDriverKind,
+      threadId: ThreadId,
+      usage: ServerProviderUsageLimits,
+      updatedAtMs: number,
+    ) =>
+      Ref.update(stateRef, (state) => {
+        const next = new Map(state);
+        const threadMap = new Map(next.get(provider) ?? []);
+        next.set(provider, threadMap);
+        threadMap.set(threadId, { usage, updatedAtMs });
+        return next;
+      });
 
     const service: ProviderUsageStateShape = {
       get: (provider) =>
@@ -101,51 +134,49 @@ export const ProviderUsageStateLive = Layer.effect(
 
     yield* Stream.runForEach(providerService.streamEvents, (event) =>
       Effect.gen(function* () {
-        if (event.provider !== "cursor") {
-          return;
-        }
-
         if (event.type === "session.started" || event.type === "session.exited") {
-          yield* Ref.update(stateRef, (state) => {
-            const next = new Map(state);
-            const existingThreadMap = next.get(CURSOR_DRIVER);
-            if (existingThreadMap) {
-              const threadMap = new Map(existingThreadMap);
-              next.set(CURSOR_DRIVER, threadMap);
-              threadMap.delete(event.threadId);
-              if (threadMap.size === 0) {
-                next.delete(CURSOR_DRIVER);
-              }
-            }
-            return next;
-          });
+          yield* clearThreadUsage(event.provider, event.threadId);
           return;
         }
 
-        if (event.type !== "thread.token-usage.updated") {
+        if (event.provider === "cursor" && event.type === "thread.token-usage.updated") {
+          const usage = toCursorUsageLimits(event);
+          if (usage === undefined) {
+            return;
+          }
+
+          yield* setThreadUsage(
+            CURSOR_DRIVER,
+            event.threadId,
+            usage,
+            Date.parse(event.createdAt) || Date.now(),
+          );
           return;
         }
 
-        const usage = toCursorUsageLimits(event);
+        if (event.provider !== "claudeAgent" || event.type !== "account.rate-limits.updated") {
+          return;
+        }
+
+        const usage = parseClaudeRuntimeUsageLimits({
+          checkedAt: event.createdAt,
+          rateLimits:
+            typeof event.payload === "object" &&
+            event.payload !== null &&
+            "rateLimits" in event.payload
+              ? (event.payload as { readonly rateLimits?: unknown }).rateLimits
+              : undefined,
+        });
         if (usage === undefined) {
           return;
         }
 
-        yield* Ref.update(stateRef, (state) => {
-          const next = new Map(state);
-          let threadMap = next.get(CURSOR_DRIVER);
-          if (!threadMap) {
-            threadMap = new Map();
-          } else {
-            threadMap = new Map(threadMap);
-          }
-          next.set(CURSOR_DRIVER, threadMap);
-          threadMap.set(event.threadId, {
-            usage,
-            updatedAtMs: Date.parse(event.createdAt) || Date.now(),
-          });
-          return next;
-        });
+        yield* setThreadUsage(
+          CLAUDE_DRIVER,
+          event.threadId,
+          usage,
+          Date.parse(event.createdAt) || Date.now(),
+        );
       }),
     ).pipe(Effect.forkScoped);
 

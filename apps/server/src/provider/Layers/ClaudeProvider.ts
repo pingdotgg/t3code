@@ -36,6 +36,8 @@ import { compareCliVersions } from "../cliVersion.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import { probeClaudeUsageLimits } from "../claudeUsageProbe.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
+import type { PtyAdapterShape } from "../../terminal/Services/PTY.ts";
+import type { ProviderUsageStateShape } from "../Services/ProviderUsageState.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -518,6 +520,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     claudeSettings: ClaudeSettings,
   ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
   environment: NodeJS.ProcessEnv = process.env,
+  ptyAdapter?: PtyAdapterShape,
+  providerUsageState?: ProviderUsageStateShape,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -643,26 +647,28 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   }
 
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
+  const runtimeUsageLimits = providerUsageState
+    ? yield* providerUsageState.get(PROVIDER).pipe(Effect.orElseSucceed(() => undefined))
+    : undefined;
 
-  // Run the Claude usage probe — best-effort; failures are swallowed so they
-  // never block the main provider snapshot.
-  const usageLimits = yield* Effect.tryPromise(() =>
-    probeClaudeUsageLimits({
-      binaryPath: claudeSettings.binaryPath,
-      launchArgs: claudeSettings.launchArgs,
-      cwd: process.cwd(),
-      checkedAt,
-      environment: claudeEnvironment,
-    }).then((result) => result.usageLimits),
-  ).pipe(
-    Effect.orElseSucceed(() =>
-      makeUnavailableUsageLimits({
-        source: "claudeStatusProbe",
-        checkedAt,
-        reason: "Unable to fetch usage",
-      }),
-    ),
-  );
+  const usageLimits = runtimeUsageLimits
+    ? runtimeUsageLimits
+    : ptyAdapter
+      ? yield* probeClaudeUsageLimits(
+          {
+            binaryPath: claudeSettings.binaryPath,
+            launchArgs: claudeSettings.launchArgs,
+            cwd: process.cwd(),
+            checkedAt,
+            environment: claudeEnvironment,
+          },
+          ptyAdapter,
+        ).pipe(Effect.map((result) => result.usageLimits))
+      : makeUnavailableUsageLimits({
+          source: "claudeStatusProbe",
+          checkedAt,
+          reason: "Usage limits unavailable for this Claude instance in the current runtime.",
+        });
 
   const authMetadata = claudeAuthMetadata({
     subscriptionType: capabilities.subscriptionType,

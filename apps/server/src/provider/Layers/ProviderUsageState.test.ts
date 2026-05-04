@@ -144,4 +144,79 @@ describe("ProviderUsageStateLive", () => {
 
     expect(state?.windows).toEqual([{ kind: "session", label: "Context window", usedPercent: 60 }]);
   });
+
+  it("ingests Claude runtime rate limit telemetry when utilization is present", async () => {
+    const stub = makeProviderServiceStub();
+    const state = await Effect.runPromise(
+      Effect.gen(function* () {
+        const usageState = yield* ProviderUsageState;
+
+        yield* Effect.sleep("10 millis");
+        yield* PubSub.publish(stub.pubsub, {
+          type: "account.rate-limits.updated",
+          eventId: "evt-claude-1" as never,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          threadId: "thread-claude-1" as never,
+          createdAt: "2026-04-18T00:00:00.000Z",
+          payload: {
+            rateLimits: {
+              type: "rate_limit_event",
+              rate_limit_info: {
+                status: "allowed",
+                rateLimitType: "seven_day_opus",
+                utilization: 64,
+                resetsAt: 1776448800,
+              },
+            },
+          },
+        });
+
+        yield* Effect.sleep("10 millis");
+        return yield* usageState.get(ProviderDriverKind.make("claudeAgent"));
+      }).pipe(Effect.provide(ProviderUsageStateLive.pipe(Layer.provide(stub.layer)))),
+    );
+
+    expect(state?.windows).toEqual([
+      {
+        kind: "weekly",
+        label: "Weekly",
+        usedPercent: 64,
+        windowDurationMins: 10080,
+        resetsAt: "2026-04-17T18:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("ignores Claude runtime rate limit telemetry when utilization is absent", async () => {
+    const stub = makeProviderServiceStub();
+    const state = await Effect.runPromise(
+      Effect.gen(function* () {
+        const usageState = yield* ProviderUsageState;
+
+        yield* Effect.sleep("10 millis");
+        yield* PubSub.publish(stub.pubsub, {
+          type: "account.rate-limits.updated",
+          eventId: "evt-claude-2" as never,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          threadId: "thread-claude-2" as never,
+          createdAt: "2026-04-18T00:00:00.000Z",
+          payload: {
+            rateLimits: {
+              type: "rate_limit_event",
+              rate_limit_info: {
+                status: "allowed",
+                rateLimitType: "five_hour",
+                resetsAt: 1776448800,
+              },
+            },
+          },
+        });
+
+        yield* Effect.sleep("10 millis");
+        return yield* usageState.get(ProviderDriverKind.make("claudeAgent"));
+      }).pipe(Effect.provide(ProviderUsageStateLive.pipe(Layer.provide(stub.layer)))),
+    );
+
+    expect(state).toBeUndefined();
+  });
 });
