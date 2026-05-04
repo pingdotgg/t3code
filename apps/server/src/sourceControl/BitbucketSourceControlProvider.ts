@@ -82,6 +82,10 @@ export const make = Effect.fn("makeBitbucketSourceControlProvider")(function* ()
       bitbucket
         .getRepositoryCloneUrls(input)
         .pipe(Effect.mapError((error) => providerError("getRepositoryCloneUrls", error))),
+    createRepository: (input) =>
+      bitbucket
+        .createRepository(input)
+        .pipe(Effect.mapError((error) => providerError("createRepository", error))),
     getDefaultBranch: (input) =>
       bitbucket
         .getDefaultBranch({

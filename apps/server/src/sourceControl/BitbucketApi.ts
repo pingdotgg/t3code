@@ -3,6 +3,7 @@ import {
   TrimmedNonEmptyString,
   type SourceControlProviderAuth,
   type SourceControlRepositoryCloneUrls,
+  type SourceControlRepositoryVisibility,
 } from "@t3tools/contracts";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { sanitizeBranchFragment } from "@t3tools/shared/git";
@@ -104,6 +105,11 @@ export interface BitbucketApiShape {
     readonly context?: SourceControlProviderContext;
     readonly repository: string;
   }) => Effect.Effect<SourceControlRepositoryCloneUrls, BitbucketApiError>;
+  readonly createRepository: (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly visibility: SourceControlRepositoryVisibility;
+  }) => Effect.Effect<SourceControlRepositoryCloneUrls, BitbucketApiError>;
   readonly createPullRequest: (input: {
     readonly cwd: string;
     readonly context?: SourceControlProviderContext;
@@ -192,6 +198,21 @@ function parseBitbucketRepositorySlug(value: string): BitbucketRepositoryLocator
   const workspace = parts.at(-2);
   const repoSlug = parts.at(-1);
   return workspace && repoSlug ? { workspace, repoSlug } : null;
+}
+
+function requireRepositoryLocator(
+  operation: string,
+  repository: string,
+): Effect.Effect<BitbucketRepositoryLocator, BitbucketApiError> {
+  const locator = parseBitbucketRepositorySlug(repository);
+  return locator
+    ? Effect.succeed(locator)
+    : Effect.fail(
+        new BitbucketApiError({
+          operation,
+          detail: "Bitbucket repositories must be specified as workspace/repository.",
+        }),
+      );
 }
 
 function parseBitbucketRemoteUrl(remoteUrl: string): BitbucketRepositoryLocator | null {
@@ -548,6 +569,26 @@ export const make = Effect.fn("makeBitbucketApi")(function* () {
       getRawPullRequest(input).pipe(Effect.map(normalizeBitbucketPullRequestRecord)),
     getRepositoryCloneUrls: (input) =>
       getRepository(input).pipe(Effect.map(normalizeRepositoryCloneUrls)),
+    createRepository: (input) =>
+      requireRepositoryLocator("createRepository", input.repository).pipe(
+        Effect.flatMap((repository) =>
+          executeJson(
+            "createRepository",
+            HttpClientRequest.post(
+              apiUrl(
+                `/repositories/${encodeURIComponent(repository.workspace)}/${encodeURIComponent(repository.repoSlug)}`,
+              ),
+            ).pipe(
+              HttpClientRequest.bodyJsonUnsafe({
+                scm: "git",
+                is_private: input.visibility === "private",
+              }),
+            ),
+            RawBitbucketRepositorySchema,
+          ),
+        ),
+        Effect.map(normalizeRepositoryCloneUrls),
+      ),
     createPullRequest: (input) =>
       Effect.gen(function* () {
         const repository = yield* resolveRepository(input);

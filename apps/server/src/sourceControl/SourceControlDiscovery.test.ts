@@ -155,7 +155,7 @@ Logged in to github.com account juliusmarminge (keyring)
     );
     const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
     assert.ok(bitbucket);
-    assert.strictEqual("executable" in bitbucket, false);
+    assert.strictEqual(bitbucket.executable, "Bitbucket REST API");
   }).pipe(Effect.provide(testLayer));
 });
 
@@ -250,9 +250,9 @@ Logged in to gitlab.com as gitlab-user
         },
         {
           kind: "bitbucket",
-          auth: "unknown",
-          account: Option.none(),
-          detail: Option.some("Bitbucket provider support is not available yet."),
+          auth: "authenticated",
+          account: Option.some("bitbucket-user"),
+          detail: Option.none(),
         },
       ],
     );
