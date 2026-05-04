@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  extractJsonObject,
-  extractJsonValueFromText,
-} from "../textGeneration/TextGenerationUtils.ts";
+import { extractJsonObject, extractJsonValueFromText } from "./TextGenerationUtils.ts";
 
 describe("extractJsonObject", () => {
   it("extracts the first balanced object from surrounding text", () => {

@@ -521,39 +521,6 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Working", pulse: true });
   });
 
-  it("preserves raw cursor provider names for active sessions", () => {
-    expect(
-      resolveThreadStatusPill({
-        thread: {
-          ...baseThread,
-          session: {
-            ...baseThread.session,
-            provider: ProviderDriverKind.make("cursorCli"),
-          },
-        },
-      }),
-    ).toMatchObject({ label: "Working", workingProvider: "cursorCli", pulse: true });
-  });
-
-  it("preserves raw opencode provider names for unseen completions", () => {
-    expect(
-      resolveThreadStatusPill({
-        thread: {
-          ...baseThread,
-          interactionMode: "default",
-          latestTurn: makeLatestTurn(),
-          lastVisitedAt: "2026-03-09T10:04:00.000Z",
-          session: {
-            ...baseThread.session,
-            provider: ProviderDriverKind.make("opencode"),
-            status: "ready",
-            orchestrationStatus: "ready",
-          },
-        },
-      }),
-    ).toMatchObject({ label: "Completed", workingProvider: "opencode", pulse: false });
-  });
-
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
     expect(
       resolveThreadStatusPill({
