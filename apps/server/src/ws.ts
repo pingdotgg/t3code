@@ -1,6 +1,7 @@
 import { Cause, Duration, Effect, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
 import {
   type AuthAccessStreamEvent,
+  AcpRegistryIndex,
   AuthSessionId,
   CommandId,
   EventId,
@@ -40,6 +41,7 @@ import {
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
+import { AcpRegistryClientError } from "./provider/Services/AcpRegistryClient.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "./serverSettings.ts";
@@ -74,6 +76,10 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
 import { respondToAuthError } from "./auth/http.ts";
+import {
+  installAcpRegistryBinaryAgent,
+  listAcpRegistryAgents,
+} from "./provider/acp/AcpRegistryBinaryInstaller.ts";
 
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
@@ -174,6 +180,57 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           pairingLinks: serverAuth.listPairingLinks().pipe(Effect.orDie),
           clientSessions: serverAuth.listClientSessions(currentSessionId).pipe(Effect.orDie),
         });
+
+      const loadAcpRegistryIndex = serverSettings.getSettings.pipe(
+        Effect.flatMap((settings) =>
+          Effect.tryPromise({
+            try: async () => {
+              const response = await fetch(settings.providers.acpRegistry.registryUrl);
+              if (!response.ok) {
+                throw new Error(`Registry request failed with status ${response.status}`);
+              }
+              return response.json();
+            },
+            catch: (cause) =>
+              new AcpRegistryClientError({
+                detail: cause instanceof Error ? cause.message : String(cause),
+                cause,
+              }),
+          }),
+        ),
+        Effect.flatMap((raw) => Schema.decodeUnknownEffect(AcpRegistryIndex)(raw)),
+      );
+
+      const listAcpRegistry = loadAcpRegistryIndex.pipe(
+        Effect.flatMap((registry) => listAcpRegistryAgents(registry)),
+        Effect.mapError(
+          (cause) =>
+            new AcpRegistryClientError({
+              detail: cause instanceof Error ? cause.message : String(cause),
+              cause,
+            }),
+        ),
+      );
+
+      const installAcpRegistryBinary = (input: {
+        readonly agentId: string;
+        readonly installPath?: string | undefined;
+      }) =>
+        loadAcpRegistryIndex.pipe(
+          Effect.flatMap((registry) =>
+            installAcpRegistryBinaryAgent({
+              registry,
+              agentId: input.agentId,
+              installPath: input.installPath,
+            }),
+          ),
+          Effect.catch((cause: unknown) =>
+            Effect.succeed({
+              ok: false,
+              error: cause instanceof Error ? cause.message : String(cause),
+            }),
+          ),
+        );
 
       const appendSetupScriptActivity = (input: {
         readonly threadId: ThreadId;
@@ -803,6 +860,32 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(
             WS_METHODS.serverDiscoverSourceControl,
             sourceControlDiscovery.discover,
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverListAcpRegistry]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverListAcpRegistry,
+            listAcpRegistry.pipe(
+              Effect.tapError((error) =>
+                Effect.logWarning("failed to list ACP registry agents", {
+                  error: error.message,
+                }),
+              ),
+              Effect.orElseSucceed(() => ({
+                registryVersion: "unavailable",
+                agents: [],
+              })),
+            ),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverInstallAcpRegistryBinary]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverInstallAcpRegistryBinary,
+            installAcpRegistryBinary(input),
             {
               "rpc.aggregate": "server",
             },

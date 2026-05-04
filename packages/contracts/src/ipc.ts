@@ -18,6 +18,11 @@ import type {
   VcsStatusResult,
   VcsCreateRefResult,
 } from "./git.ts";
+import type {
+  AcpRegistryInstallBinaryInput,
+  AcpRegistryInstallBinaryResult,
+  AcpRegistryListResult,
+} from "./acp.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type {
   ProjectSearchEntriesInput,
@@ -300,6 +305,10 @@ export interface LocalApi {
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
     discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
+    listAcpRegistry: () => Promise<AcpRegistryListResult>;
+    installAcpRegistryBinary: (
+      input: AcpRegistryInstallBinaryInput,
+    ) => Promise<AcpRegistryInstallBinaryResult>;
   };
 }
 

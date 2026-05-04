@@ -38,6 +38,7 @@ import {
 } from "../../modelSelection";
 import {
   deriveProviderInstanceEntries,
+  isModelPickerProviderInstanceEntry,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
@@ -514,7 +515,7 @@ export function GeneralSettingsPanel() {
   const textGenModel = textGenerationModelSelection.model;
   const textGenModelOptions = textGenerationModelSelection.options;
   const gitModelInstanceEntries = sortProviderInstanceEntries(
-    deriveProviderInstanceEntries(serverProviders),
+    deriveProviderInstanceEntries(serverProviders).filter(isModelPickerProviderInstanceEntry),
   );
   const textGenInstanceEntry = gitModelInstanceEntries.find(
     (entry) => entry.instanceId === textGenInstanceId,

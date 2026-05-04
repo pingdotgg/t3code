@@ -5,8 +5,8 @@ import {
   getDisplayModelName,
   getTriggerDisplayModelLabel,
   type ModelEsque,
-  PROVIDER_ICON_BY_PROVIDER,
 } from "./providerIconUtils";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ComboboxItem } from "../ui/combobox";
 import { Kbd } from "../ui/kbd";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -26,6 +26,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
    */
   providerDisplayName: string;
   providerAccentColor?: string | undefined;
+  providerIconUrl?: string | undefined;
   isFavorite: boolean;
   showProvider: boolean;
   preferShortName?: boolean;
@@ -34,7 +35,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
   jumpLabel?: string | null;
   onToggleFavorite: () => void;
 }) {
-  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
   const providerLabel = props.model.subProvider
     ? `${props.providerDisplayName} · ${props.model.subProvider}`
     : props.providerDisplayName;
@@ -104,7 +104,13 @@ export const ModelListRow = memo(function ModelListRow(props: {
         </div>
         {props.showProvider && (
           <div className="flex items-center gap-1 mt-0.5">
-            {ProviderIcon ? <ProviderIcon className="size-3 shrink-0" /> : null}
+            <ProviderInstanceIcon
+              driverKind={props.driverKind}
+              displayName={props.providerDisplayName}
+              iconUrl={props.providerIconUrl}
+              className="size-3"
+              iconClassName="size-3 text-muted-foreground/70"
+            />
             {props.providerAccentColor ? (
               <span
                 className="size-1.5 shrink-0 rounded-full"

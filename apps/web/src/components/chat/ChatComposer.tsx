@@ -99,6 +99,7 @@ import { proposedPlanTitle } from "../../proposedPlan";
 import { getProviderInteractionModeToggle } from "../../providerModels";
 import {
   deriveProviderInstanceEntries,
+  isModelPickerProviderInstanceEntry,
   resolveProviderDriverKindForInstanceSelection,
   sortProviderInstanceEntries,
   type ProviderInstanceEntry,
@@ -595,7 +596,12 @@ export const ChatComposer = memo(
     // configured instance (default built-in + any custom `providerInstances.*`),
     // sorted default-first per driver kind for a stable picker order.
     const providerInstanceEntries = useMemo<ReadonlyArray<ProviderInstanceEntry>>(
-      () => sortProviderInstanceEntries(deriveProviderInstanceEntries(providerStatuses)),
+      () =>
+        sortProviderInstanceEntries(
+          deriveProviderInstanceEntries(providerStatuses).filter(
+            isModelPickerProviderInstanceEntry,
+          ),
+        ),
       [providerStatuses],
     );
     const selectedProviderByThreadId = composerDraft.activeProvider ?? null;

@@ -127,6 +127,10 @@ export interface WsRpcClient {
     readonly discoverSourceControl: RpcUnaryNoArgMethod<
       typeof WS_METHODS.serverDiscoverSourceControl
     >;
+    readonly listAcpRegistry: RpcUnaryNoArgMethod<typeof WS_METHODS.serverListAcpRegistry>;
+    readonly installAcpRegistryBinary: RpcUnaryMethod<
+      typeof WS_METHODS.serverInstallAcpRegistryBinary
+    >;
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
     readonly subscribeAuthAccess: RpcStreamMethod<typeof WS_METHODS.subscribeAuthAccess>;
@@ -241,6 +245,10 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.serverUpdateSettings]({ patch })),
       discoverSourceControl: () =>
         transport.request((client) => client[WS_METHODS.serverDiscoverSourceControl]({})),
+      listAcpRegistry: () =>
+        transport.request((client) => client[WS_METHODS.serverListAcpRegistry]({})),
+      installAcpRegistryBinary: (input) =>
+        transport.request((client) => client[WS_METHODS.serverInstallAcpRegistryBinary](input)),
       subscribeConfig: (listener, options) =>
         transport.subscribe((client) => client[WS_METHODS.subscribeServerConfig]({}), listener, {
           ...options,

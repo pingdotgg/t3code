@@ -67,6 +67,7 @@ const withInstanceIdentity =
     readonly instanceId: ProviderInstance["instanceId"];
     readonly displayName: string | undefined;
     readonly accentColor: string | undefined;
+    readonly iconUrl: string | undefined;
     readonly continuationGroupKey: string;
   }) =>
   (snapshot: ServerProviderDraft): ServerProvider => ({
@@ -75,6 +76,7 @@ const withInstanceIdentity =
     driver: DRIVER_KIND,
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+    ...(input.iconUrl ? { iconUrl: input.iconUrl } : {}),
     continuation: { groupKey: input.continuationGroupKey },
   });
 
@@ -86,7 +88,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
   },
   configSchema: CodexSettings,
   defaultConfig: (): CodexSettings => Schema.decodeSync(CodexSettings)({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+  create: ({ instanceId, displayName, accentColor, iconUrl, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const eventLoggers = yield* ProviderEventLoggers;
@@ -97,6 +99,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         instanceId,
         displayName,
         accentColor,
+        iconUrl,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       yield* materializeCodexShadowHome(homeLayout).pipe(
@@ -162,6 +165,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         continuationIdentity,
         displayName,
         accentColor,
+        iconUrl,
         enabled,
         snapshot,
         adapter,

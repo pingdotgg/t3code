@@ -20,7 +20,11 @@ import {
   resolveSelectableProvider,
 } from "./providerModels";
 import { ModelEsque } from "./components/chat/providerIconUtils";
-import { type ProviderInstanceEntry, deriveProviderInstanceEntries } from "./providerInstances";
+import {
+  type ProviderInstanceEntry,
+  deriveProviderInstanceEntries,
+  isModelPickerProviderInstanceEntry,
+} from "./providerInstances";
 import { sortModelsForProviderInstance } from "./modelOrdering";
 
 const MAX_CUSTOM_MODEL_COUNT = 32;
@@ -238,9 +242,9 @@ export function resolveAppModelSelectionForInstance(
   providers: ReadonlyArray<ServerProvider>,
   selectedModel: string | null | undefined,
 ): string | null {
-  const entry = deriveProviderInstanceEntries(providers).find(
-    (candidate) => candidate.instanceId === instanceId,
-  );
+  const entry = deriveProviderInstanceEntries(providers)
+    .filter(isModelPickerProviderInstanceEntry)
+    .find((candidate) => candidate.instanceId === instanceId);
   if (!entry) return null;
   const options = getAppModelOptionsForInstance(settings, entry);
   return (
@@ -263,7 +267,9 @@ export function getCustomModelOptionsByInstance(
   _selectedModel?: string | null,
 ): ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>> {
   const out = new Map<ProviderInstanceId, ReadonlyArray<ModelEsque>>();
-  for (const entry of deriveProviderInstanceEntries(providers)) {
+  for (const entry of deriveProviderInstanceEntries(providers).filter(
+    isModelPickerProviderInstanceEntry,
+  )) {
     out.set(entry.instanceId, getAppModelOptionsForInstance(settings, entry));
   }
   return out;
@@ -277,7 +283,9 @@ export function resolveAppModelSelectionState(
     instanceId: DEFAULT_TEXT_GENERATION_INSTANCE_ID,
     model: DEFAULT_GIT_TEXT_GENERATION_MODEL,
   };
-  const entries = deriveProviderInstanceEntries(providers);
+  const entries = deriveProviderInstanceEntries(providers).filter(
+    isModelPickerProviderInstanceEntry,
+  );
   const selectedEntry = entries.find(
     (entry) => entry.instanceId === selection.instanceId && entry.enabled && entry.isAvailable,
   );

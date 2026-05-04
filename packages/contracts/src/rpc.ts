@@ -5,6 +5,11 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 import { OpenError, OpenInEditorInput } from "./editor.ts";
 import { AuthAccessStreamEvent } from "./auth.ts";
 import {
+  AcpRegistryInstallBinaryInput,
+  AcpRegistryInstallBinaryResult,
+  AcpRegistryListResult,
+} from "./acp.ts";
+import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
@@ -133,6 +138,8 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
+  serverListAcpRegistry: "server.listAcpRegistry",
+  serverInstallAcpRegistryBinary: "server.installAcpRegistryBinary",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -188,6 +195,19 @@ export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscov
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
 });
+
+export const WsServerListAcpRegistryRpc = Rpc.make(WS_METHODS.serverListAcpRegistry, {
+  payload: Schema.Struct({}),
+  success: AcpRegistryListResult,
+});
+
+export const WsServerInstallAcpRegistryBinaryRpc = Rpc.make(
+  WS_METHODS.serverInstallAcpRegistryBinary,
+  {
+    payload: AcpRegistryInstallBinaryInput,
+    success: AcpRegistryInstallBinaryResult,
+  },
+);
 
 export const WsSourceControlLookupRepositoryRpc = Rpc.make(
   WS_METHODS.sourceControlLookupRepository,
@@ -419,6 +439,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerDiscoverSourceControlRpc,
+  WsServerListAcpRegistryRpc,
+  WsServerInstallAcpRegistryBinaryRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,

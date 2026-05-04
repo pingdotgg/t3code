@@ -50,6 +50,7 @@ const withInstanceIdentity =
     readonly instanceId: ProviderInstance["instanceId"];
     readonly displayName: string | undefined;
     readonly accentColor: string | undefined;
+    readonly iconUrl: string | undefined;
     readonly continuationGroupKey: string;
   }) =>
   (snapshot: ServerProviderDraft): ServerProvider => ({
@@ -58,6 +59,7 @@ const withInstanceIdentity =
     driver: DRIVER_KIND,
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+    ...(input.iconUrl ? { iconUrl: input.iconUrl } : {}),
     continuation: { groupKey: input.continuationGroupKey },
   });
 
@@ -69,7 +71,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
   },
   configSchema: CursorSettings,
   defaultConfig: (): CursorSettings => Schema.decodeSync(CursorSettings)({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+  create: ({ instanceId, displayName, accentColor, iconUrl, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -84,6 +86,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         instanceId,
         displayName,
         accentColor,
+        iconUrl,
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
@@ -139,6 +142,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         continuationIdentity,
         displayName,
         accentColor,
+        iconUrl,
         enabled,
         snapshot,
         adapter,

@@ -33,6 +33,7 @@ export interface ProviderProbeResult {
 
 export interface ServerProviderPresentation {
   readonly displayName: string;
+  readonly iconUrl?: string | undefined;
   readonly badgeLabel?: string;
   readonly showInteractionModeToggle?: boolean;
 }
@@ -192,6 +193,7 @@ export function buildServerProvider(input: {
 }): ServerProviderDraft {
   return {
     displayName: input.presentation.displayName,
+    ...(input.presentation.iconUrl ? { iconUrl: input.presentation.iconUrl } : {}),
     ...(input.presentation.badgeLabel ? { badgeLabel: input.presentation.badgeLabel } : {}),
     ...(typeof input.presentation.showInteractionModeToggle === "boolean"
       ? { showInteractionModeToggle: input.presentation.showInteractionModeToggle }

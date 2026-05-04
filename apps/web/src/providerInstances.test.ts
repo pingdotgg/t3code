@@ -2,6 +2,7 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vitest";
 import {
   deriveProviderInstanceEntries,
+  isModelPickerProviderInstanceEntry,
   resolveSelectableProviderInstance,
   resolveProviderDriverKindForInstanceSelection,
 } from "./providerInstances";
@@ -41,6 +42,25 @@ describe("deriveProviderInstanceEntries", () => {
     expect(entry?.instanceId).toBe("codex_personal");
     expect(entry?.driverKind).toBe("codex");
     expect(entry?.isDefault).toBe(false);
+  });
+});
+
+describe("isModelPickerProviderInstanceEntry", () => {
+  it("hides the default ACP Registry catalog while keeping imported ACP agents", () => {
+    const entries = deriveProviderInstanceEntries([
+      provider({
+        provider: ProviderDriverKind.make("acpRegistry"),
+        instanceId: "acpRegistry",
+        displayName: "ACP Registry",
+      }),
+      provider({
+        provider: ProviderDriverKind.make("acpRegistry"),
+        instanceId: "acpRegistry_auggie_cli",
+        displayName: "Auggie CLI",
+      }),
+    ]);
+
+    expect(entries.map(isModelPickerProviderInstanceEntry)).toEqual([false, true]);
   });
 });
 

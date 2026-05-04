@@ -11,7 +11,8 @@ import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { isModelPickerNewModel } from "./modelPickerModelHighlights";
 import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
 import { Combobox, ComboboxEmpty, ComboboxInput, ComboboxList } from "../ui/combobox";
-import { ModelEsque, PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
+import { ModelEsque } from "./providerIconUtils";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
@@ -33,6 +34,7 @@ type ModelPickerItem = {
   driverKind: ProviderDriverKind;
   instanceDisplayName: string;
   instanceAccentColor?: string | undefined;
+  instanceIconUrl?: string | undefined;
   continuationGroupKey?: string | undefined;
 };
 
@@ -202,6 +204,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           driverKind: entry.driverKind,
           instanceDisplayName: entry.displayName,
           ...(entry.accentColor ? { instanceAccentColor: entry.accentColor } : {}),
+          ...(entry.iconUrl ? { instanceIconUrl: entry.iconUrl } : {}),
           ...(entry.continuationGroupKey
             ? { continuationGroupKey: entry.continuationGroupKey }
             : {}),
@@ -363,18 +366,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [favorites, updateSettings],
   );
 
-  const LockedProviderIcon =
-    isLocked && props.lockedProvider ? PROVIDER_ICON_BY_PROVIDER[props.lockedProvider] : null;
   // Header label for locked mode. Use the active instance's displayName
   // when the lock narrows to exactly one instance (so "Codex Personal"
   // shows instead of the generic driver label); fall back to the first
   // matching entry otherwise.
-  const lockedHeaderLabel = useMemo(() => {
+  const lockedHeaderEntry = useMemo(() => {
     if (!isLocked || !props.lockedProvider) return null;
     const matches = instanceEntries.filter((entry) => matchesLockedProvider(entry));
     if (matches.length === 0) return null;
     const active = matches.find((entry) => entry.instanceId === props.activeInstanceId);
-    return (active ?? matches[0])?.displayName ?? null;
+    return active ?? matches[0] ?? null;
   }, [
     isLocked,
     matchesLockedProvider,
@@ -524,12 +525,18 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         )}
       >
         {/* Locked provider header (only shown in locked mode) */}
-        {isLocked && !showLockedInstanceSidebar && LockedProviderIcon && lockedHeaderLabel && (
+        {isLocked && !showLockedInstanceSidebar && lockedHeaderEntry ? (
           <div className="flex items-center gap-2 px-4 py-3 border-b">
-            <LockedProviderIcon className="size-5 shrink-0" />
-            <span className="font-medium text-sm">{lockedHeaderLabel}</span>
+            <ProviderInstanceIcon
+              driverKind={lockedHeaderEntry.driverKind}
+              displayName={lockedHeaderEntry.displayName}
+              iconUrl={lockedHeaderEntry.iconUrl}
+              className="size-5"
+              iconClassName="size-5"
+            />
+            <span className="font-medium text-sm">{lockedHeaderEntry.displayName}</span>
           </div>
-        )}
+        ) : null}
 
         {/* Sidebar (only in unlocked mode) */}
         {showSidebar && (
@@ -626,6 +633,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       driverKind={model.driverKind}
                       providerDisplayName={model.instanceDisplayName}
                       providerAccentColor={model.instanceAccentColor}
+                      providerIconUrl={model.instanceIconUrl}
                       isFavorite={favoritesSet.has(modelKey)}
                       showProvider={!isLocked || showLockedInstanceSidebar}
                       preferShortName={!isLocked}

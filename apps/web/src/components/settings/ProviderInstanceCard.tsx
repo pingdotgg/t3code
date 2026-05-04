@@ -546,6 +546,7 @@ export function ProviderInstanceCard({
                   driverKind={driverKind}
                   displayName={displayName}
                   accentColor={accentColor}
+                  iconUrl={instance.iconUrl ?? liveProvider?.iconUrl}
                   showBadge={Boolean(accentColor)}
                   statusDotClassName={statusStyle.dot}
                   className="size-5"

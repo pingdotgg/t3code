@@ -24,6 +24,8 @@ import {
 
 import { formatProviderDriverKindLabel } from "./providerModels";
 
+const ACP_REGISTRY_DRIVER_KIND = "acpRegistry";
+
 /**
  * UI-facing projection of one configured provider instance. Carries the
  * snapshot verbatim for callers that need server-side fields we don't
@@ -35,6 +37,7 @@ export interface ProviderInstanceEntry {
   readonly driverKind: ProviderDriverKind;
   readonly displayName: string;
   readonly accentColor?: string | undefined;
+  readonly iconUrl?: string | undefined;
   readonly continuationGroupKey?: string | undefined;
   readonly enabled: boolean;
   readonly installed: boolean;
@@ -140,6 +143,7 @@ export function deriveProviderInstanceEntries(
       driverKind,
       displayName,
       accentColor: normalizeProviderAccentColor(snapshot.accentColor),
+      ...(snapshot.iconUrl ? { iconUrl: snapshot.iconUrl } : {}),
       continuationGroupKey: snapshot.continuation?.groupKey,
       enabled: snapshot.enabled,
       installed: snapshot.installed,
@@ -182,6 +186,15 @@ export function sortProviderInstanceEntries(
     sorted.push(...defaults, ...customs);
   }
   return sorted;
+}
+
+/**
+ * The ACP Registry default slot is a catalog/import surface, not an agent
+ * users should chat with. Registry-created provider instances share the same
+ * driver kind, but have their own non-default ids and remain selectable.
+ */
+export function isModelPickerProviderInstanceEntry(entry: ProviderInstanceEntry): boolean {
+  return !(entry.driverKind === ACP_REGISTRY_DRIVER_KIND && entry.isDefault);
 }
 
 /**

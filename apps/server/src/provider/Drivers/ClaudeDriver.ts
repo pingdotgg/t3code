@@ -52,6 +52,7 @@ const withInstanceIdentity =
     readonly instanceId: ProviderInstance["instanceId"];
     readonly displayName: string | undefined;
     readonly accentColor: string | undefined;
+    readonly iconUrl: string | undefined;
     readonly continuationGroupKey: string;
   }) =>
   (snapshot: ServerProviderDraft): ServerProvider => ({
@@ -60,6 +61,7 @@ const withInstanceIdentity =
     driver: DRIVER_KIND,
     ...(input.displayName ? { displayName: input.displayName } : {}),
     ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+    ...(input.iconUrl ? { iconUrl: input.iconUrl } : {}),
     continuation: { groupKey: input.continuationGroupKey },
   });
 
@@ -71,7 +73,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
   },
   configSchema: ClaudeSettings,
   defaultConfig: (): ClaudeSettings => Schema.decodeSync(ClaudeSettings)({}),
-  create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
+  create: ({ instanceId, displayName, accentColor, iconUrl, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const path = yield* Path.Path;
@@ -87,6 +89,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         instanceId,
         displayName,
         accentColor,
+        iconUrl,
         continuationGroupKey,
       });
 
@@ -148,6 +151,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         },
         displayName,
         accentColor,
+        iconUrl,
         enabled,
         snapshot,
         adapter,

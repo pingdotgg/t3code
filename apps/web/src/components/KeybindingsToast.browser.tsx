@@ -103,6 +103,7 @@ function createBaseServerConfig(): ServerConfig {
         model: "gpt-5.4-mini",
       },
       providers: {
+        ...DEFAULT_SERVER_SETTINGS.providers,
         codex: {
           enabled: true,
           binaryPath: "",

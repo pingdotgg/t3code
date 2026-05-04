@@ -313,6 +313,26 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
 );
 export type OpenCodeSettings = typeof OpenCodeSettings.Type;
 
+export const AcpRegistrySettings = Schema.Struct({
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  registryUrl: TrimmedString.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed("https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json"),
+    ),
+  ),
+  command: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  args: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  env: Schema.Record(Schema.String, Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  iconUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  registryAgentId: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  importedVersion: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  distributionType: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  customModels: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type AcpRegistrySettings = typeof AcpRegistrySettings.Type;
+
 export const ObservabilitySettings = Schema.Struct({
   otlpTracesUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   otlpMetricsUrl: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
@@ -345,6 +365,7 @@ export const ServerSettings = Schema.Struct({
     claudeAgent: ClaudeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     cursor: CursorSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
     opencode: OpenCodeSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+    acpRegistry: AcpRegistrySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   // New driver-agnostic instance map. Keyed by `ProviderInstanceId`; values
   // are `ProviderInstanceConfig` envelopes. The driver-specific config blob
@@ -420,6 +441,19 @@ const OpenCodeSettingsPatch = Schema.Struct({
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
+const AcpRegistrySettingsPatch = Schema.Struct({
+  enabled: Schema.optionalKey(Schema.Boolean),
+  registryUrl: Schema.optionalKey(Schema.String),
+  command: Schema.optionalKey(Schema.String),
+  args: Schema.optionalKey(Schema.Array(Schema.String)),
+  env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
+  iconUrl: Schema.optionalKey(Schema.String),
+  registryAgentId: Schema.optionalKey(Schema.String),
+  importedVersion: Schema.optionalKey(Schema.String),
+  distributionType: Schema.optionalKey(Schema.String),
+  customModels: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
@@ -438,6 +472,7 @@ export const ServerSettingsPatch = Schema.Struct({
       claudeAgent: Schema.optionalKey(ClaudeSettingsPatch),
       cursor: Schema.optionalKey(CursorSettingsPatch),
       opencode: Schema.optionalKey(OpenCodeSettingsPatch),
+      acpRegistry: Schema.optionalKey(AcpRegistrySettingsPatch),
     }),
   ),
   // Whole-map replacement for the new instance config. Patching individual

@@ -1,4 +1,5 @@
 import {
+  AcpRegistrySettings,
   ClaudeSettings,
   CodexSettings,
   CursorSettings,
@@ -6,7 +7,7 @@ import {
   ProviderDriverKind,
 } from "@t3tools/contracts";
 import type { Schema } from "effect";
-import { ClaudeAI, CursorIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
+import { ACPRegistryIcon, ClaudeAI, CursorIcon, type Icon, OpenAI, OpenCodeIcon } from "../Icons";
 
 type ProviderSettingsSchema = {
   readonly fields: Readonly<Record<string, Schema.Top>>;
@@ -58,6 +59,12 @@ export const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = 
     label: "OpenCode",
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
+  },
+  {
+    value: ProviderDriverKind.make("acpRegistry"),
+    label: "ACP Registry",
+    icon: ACPRegistryIcon,
+    settingsSchema: AcpRegistrySettings,
   },
 ];
 

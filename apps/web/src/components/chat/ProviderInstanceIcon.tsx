@@ -1,4 +1,4 @@
-import { type CSSProperties, memo } from "react";
+import { type CSSProperties, memo, useEffect, useState } from "react";
 import { type ProviderDriverKind } from "@t3tools/contracts";
 
 import { PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
@@ -18,6 +18,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
   displayName: string;
   accentColor?: string | undefined;
+  iconUrl?: string | undefined;
   showBadge?: boolean;
   className?: string;
   iconClassName?: string;
@@ -25,9 +26,16 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   statusDotClassName?: string;
 }) {
   const Icon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
+  const [imageFailed, setImageFailed] = useState(false);
+  const customIconUrl = props.iconUrl?.trim();
+  const showCustomIcon = Boolean(customIconUrl) && !imageFailed;
   const accentStyle = props.accentColor
     ? ({ "--provider-accent": props.accentColor } as CSSProperties)
     : undefined;
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [customIconUrl]);
 
   return (
     <span
@@ -38,7 +46,18 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={props.accentColor}
     >
-      {Icon ? (
+      {showCustomIcon ? (
+        <img
+          src={customIconUrl}
+          alt=""
+          className={cn(
+            "size-5 shrink-0 rounded-sm object-contain dark:invert",
+            props.iconClassName,
+          )}
+          onError={() => setImageFailed(true)}
+          draggable={false}
+        />
+      ) : Icon ? (
         <Icon className={cn("size-5 shrink-0", props.iconClassName)} aria-hidden />
       ) : (
         <span className={cn("text-[10px] font-semibold leading-none", props.iconClassName)}>

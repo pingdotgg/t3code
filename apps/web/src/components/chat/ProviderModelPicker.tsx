@@ -129,6 +129,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               driverKind={activeEntry.driverKind}
               displayName={activeEntry.displayName}
               accentColor={activeEntry.accentColor}
+              iconUrl={activeEntry.iconUrl}
               showBadge={showInstanceBadge}
               className={showInstanceBadge ? "size-5" : "size-4"}
               iconClassName={cn("size-4", props.activeProviderIconClassName)}

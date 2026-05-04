@@ -139,6 +139,14 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
         rpcClient
           ? rpcClient.server.discoverSourceControl()
           : Promise.reject(unavailableLocalBackendError()),
+      listAcpRegistry: () =>
+        rpcClient
+          ? rpcClient.server.listAcpRegistry()
+          : Promise.reject(unavailableLocalBackendError()),
+      installAcpRegistryBinary: (input) =>
+        rpcClient
+          ? rpcClient.server.installAcpRegistryBinary(input)
+          : Promise.reject(unavailableLocalBackendError()),
     },
   };
 }
