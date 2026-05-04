@@ -441,6 +441,70 @@ export interface DesktopPreviewTabState {
   updatedAt: string;
 }
 
+/**
+ * Static config a renderer needs to mount a preview `<webview>`. Returned
+ * atomically by `DesktopPreviewBridge.getPreviewConfig()` so the renderer
+ * doesn't have to wait on three separate IPC round-trips before the webview
+ * can attach.
+ */
+export interface DesktopPreviewWebviewConfig {
+  /** `persist:t3code-preview` (or whatever the desktop chose). */
+  partition: string;
+  /**
+   * Canonical `<webview webpreferences="...">` string. Encodes the security
+   * posture (sandboxed but contextIsolation off so the picker preload can
+   * read the page's React DevTools hook). Always present.
+   */
+  webPreferences: string;
+  /**
+   * Absolute `file://`-style URL to the picker preload bundle. Set to null
+   * when the bundle isn't present (older builds, broken install) — the
+   * renderer must then disable element-pick affordances.
+   */
+  preloadUrl: string | null;
+}
+
+/**
+ * Single stack frame captured by react-grab's `getElementContext`. We surface
+ * the source file/line so coding agents can jump straight to the JSX that
+ * produced the picked DOM node.
+ */
+export interface PickedElementStackFrame {
+  functionName: string | null;
+  fileName: string | null;
+  lineNumber: number | null;
+  columnNumber: number | null;
+}
+
+/**
+ * A successful element pick from the preview webview. All fields are
+ * best-effort — pages that don't ship a React fiber tree (or aren't running
+ * in dev) will still produce a usable payload (selector + html preview),
+ * just without component / source attribution.
+ */
+export interface PickedElementPayload {
+  /** URL of the page the element was picked on. */
+  pageUrl: string;
+  /** Optional `<title>` of that page (best-effort). */
+  pageTitle: string | null;
+  /** Lowercase tag name, e.g. `"button"`. */
+  tagName: string;
+  /** CSS selector resolving back to the element on a re-render. */
+  selector: string | null;
+  /** Truncated outer-HTML preview (matches react-grab's `htmlPreview`). */
+  htmlPreview: string;
+  /** Nearest React component display name, or null when unavailable. */
+  componentName: string | null;
+  /** First source-mapped stack frame (file + line of the JSX source). */
+  source: PickedElementStackFrame | null;
+  /** Full owner-stack frames; can be empty. Useful for richer context. */
+  stack: ReadonlyArray<PickedElementStackFrame>;
+  /** Author CSS only (UA defaults stripped) — react-grab's `styles`. */
+  styles: string;
+  /** Wall-clock pick time as ISO-8601 string. */
+  pickedAt: string;
+}
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
@@ -525,7 +589,21 @@ export interface DesktopPreviewBridge {
   clearCookies: () => Promise<void>;
   /** Drop the HTTP cache for the preview partition (all tabs). */
   clearCache: () => Promise<void>;
-  getBrowserPartition: () => Promise<string>;
+  /**
+   * One-shot config for mounting a preview `<webview>`. Replaces three
+   * earlier round-trip calls (`getBrowserPartition`, `getWebviewPreferences`,
+   * `getPickPreloadPath`) so adding a new field here only requires touching
+   * the contract + main, not the renderer's mount logic.
+   */
+  getPreviewConfig: () => Promise<DesktopPreviewWebviewConfig>;
+  /**
+   * Activate the in-page element picker for the given tab. Resolves with
+   * the picked payload, or `null` when the user cancels (Escape / nav). The
+   * promise rejects if the picker can't be activated (no webview, etc.).
+   */
+  pickElement: (tabId: string) => Promise<PickedElementPayload | null>;
+  /** Cancel an in-flight `pickElement(tabId)` (renderer-side teardown). */
+  cancelPickElement: (tabId: string) => Promise<void>;
   onStateChange: (listener: (tabId: string, state: DesktopPreviewTabState) => void) => () => void;
 }
 

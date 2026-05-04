@@ -46,6 +46,7 @@ import {
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
+  MousePointerClickIcon,
   MinusIcon,
   SquarePenIcon,
   TerminalIcon,
@@ -76,6 +77,10 @@ import {
   deriveDisplayedUserMessageState,
   type ParsedTerminalContextEntry,
 } from "~/lib/terminalContext";
+import {
+  extractTrailingElementContexts,
+  type ParsedElementContextEntry,
+} from "~/lib/elementContext";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
@@ -424,6 +429,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const userImages = row.message.attachments ?? [];
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
+  const elementContextState = extractTrailingElementContexts(displayedUserMessage.visibleText);
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
 
   return (
@@ -462,8 +468,18 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             ))}
           </div>
         )}
+        {elementContextState.contexts.length > 0 ? (
+          <div className="mb-2 flex flex-wrap gap-1.5">
+            {elementContextState.contexts.map((context, index) => (
+              <UserMessageElementContextChip
+                key={`${context.header}:${index}`}
+                context={context}
+              />
+            ))}
+          </div>
+        ) : null}
         <CollapsibleUserMessageBody
-          text={displayedUserMessage.visibleText}
+          text={elementContextState.promptText}
           terminalContexts={terminalContexts}
           skills={ctx.skills}
           markdownCwd={ctx.markdownCwd}
@@ -563,16 +579,10 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                 <TooltipTrigger
                   render={<p className="text-muted-foreground text-xs tabular-nums" />}
                 >
-                  {formatShortTimestamp(
-                    row.message.completedAt ?? row.message.createdAt,
-                    ctx.timestampFormat,
-                  )}
+                  {formatShortTimestamp(row.message.updatedAt, ctx.timestampFormat)}
                 </TooltipTrigger>
                 <TooltipPopup>
-                  {formatChatTimestampTooltip(
-                    row.message.completedAt ?? row.message.createdAt,
-                    ctx.timestampFormat,
-                  )}
+                  {formatChatTimestampTooltip(row.message.updatedAt, ctx.timestampFormat)}
                 </TooltipPopup>
               </Tooltip>
             )}
@@ -898,6 +908,29 @@ const UserMessageTerminalContextInlineLabel = memo(
     return <TerminalContextInlineChip label={props.context.header} tooltipText={tooltipText} />;
   },
 );
+
+const UserMessageElementContextChip = memo(function UserMessageElementContextChip(props: {
+  context: ParsedElementContextEntry;
+}) {
+  const tooltipText = props.context.body
+    ? `${props.context.header}\n${props.context.body}`
+    : props.context.header;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="inline-flex max-w-full items-center gap-1 rounded-md border border-border/70 bg-background/70 px-1.5 py-0.5 text-xs text-foreground/85">
+            <MousePointerClickIcon className="size-3 shrink-0" />
+            <span className="truncate">{props.context.header}</span>
+          </span>
+        }
+      />
+      <TooltipPopup side="top" className="max-w-96 whitespace-pre-wrap leading-tight">
+        {tooltipText}
+      </TooltipPopup>
+    </Tooltip>
+  );
+});
 
 const MAX_COLLAPSED_USER_MESSAGE_LINES = 8;
 const MAX_COLLAPSED_USER_MESSAGE_LENGTH = 600;

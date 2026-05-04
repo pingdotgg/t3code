@@ -522,6 +522,99 @@ describe("composerDraftStore terminal contexts", () => {
   });
 });
 
+describe("composerDraftStore element contexts", () => {
+  const threadId = ThreadId.make("thread-element");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+  const baseSelection = {
+    pageUrl: "https://example.com/dashboard",
+    pageTitle: "Dashboard",
+    tagName: "button",
+    selector: "button.submit",
+    htmlPreview: "<button>Save</button>",
+    componentName: "SubmitButton",
+    source: {
+      functionName: "SubmitButton",
+      fileName: "/repo/Button.tsx",
+      lineNumber: 12,
+      columnNumber: 5,
+    },
+    styles: ".submit { color: white; }",
+  } as const;
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("adds an element context and stamps id + threadId + pickedAt", () => {
+    const accepted = useComposerDraftStore.getState().addElementContext(threadRef, baseSelection);
+    expect(accepted).toBe(true);
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.elementContexts).toHaveLength(1);
+    const entry = draft?.elementContexts[0]!;
+    expect(entry.id.startsWith("el_")).toBe(true);
+    expect(entry.threadId).toBe(threadId);
+    expect(entry.pickedAt.length).toBeGreaterThan(0);
+    expect(entry.componentName).toBe("SubmitButton");
+  });
+
+  it("dedupes by selector + tag + componentName + pageUrl signature", () => {
+    const store = useComposerDraftStore.getState();
+    expect(store.addElementContext(threadRef, baseSelection)).toBe(true);
+    const second = store.addElementContext(threadRef, {
+      ...baseSelection,
+      htmlPreview: "<button>Save 2</button>",
+    });
+    expect(second).toBe(false);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.elementContexts).toHaveLength(1);
+  });
+
+  it("removeElementContext drops by id + leaves siblings intact", () => {
+    const store = useComposerDraftStore.getState();
+    store.addElementContext(threadRef, baseSelection);
+    store.addElementContext(threadRef, { ...baseSelection, selector: "button.cancel" });
+    const ids = draftFor(threadId, TEST_ENVIRONMENT_ID)!.elementContexts.map((c) => c.id);
+    store.removeElementContext(threadRef, ids[0]!);
+    const remaining = draftFor(threadId, TEST_ENVIRONMENT_ID)?.elementContexts;
+    expect(remaining?.map((c) => c.id)).toEqual([ids[1]]);
+  });
+
+  it("setElementContexts replaces the slice and clearComposerContent wipes it", () => {
+    const store = useComposerDraftStore.getState();
+    store.addElementContext(threadRef, baseSelection);
+    store.setElementContexts(threadRef, []);
+    // Fully empty draft should be removed via shouldRemoveDraft.
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+
+    store.addElementContext(threadRef, baseSelection);
+    store.clearComposerContent(threadRef);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
+  });
+
+  it("persists element contexts via the partializer (round-trippable)", () => {
+    useComposerDraftStore.getState().addElementContext(threadRef, baseSelection);
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+      };
+    };
+    const persisted = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadKey?: Record<string, { elementContexts?: Array<Record<string, unknown>> }>;
+    };
+    const entry =
+      persisted.draftsByThreadKey?.[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]
+        ?.elementContexts?.[0];
+    expect(entry).toMatchObject({
+      pageUrl: baseSelection.pageUrl,
+      tagName: baseSelection.tagName,
+      selector: baseSelection.selector,
+      componentName: baseSelection.componentName,
+    });
+    // Persistence does NOT include htmlPreview / styles oversize-clamping —
+    // that happens at normalization time, before the value reaches the store.
+    expect(typeof entry?.htmlPreview).toBe("string");
+  });
+});
+
 describe("composerDraftStore project draft thread mapping", () => {
   const projectId = ProjectId.make("project-a");
   const otherProjectId = ProjectId.make("project-b");

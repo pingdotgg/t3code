@@ -17,6 +17,10 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
+import {
+  connectionStatusText,
+  type EnvironmentConnectionPresentation,
+} from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import {
@@ -53,6 +57,8 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
+import { type ElementContextDraft } from "../../lib/elementContext";
+import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import {
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
@@ -400,6 +406,7 @@ export interface ChatComposerHandle {
     prompt: string;
     images: ComposerImageAttachment[];
     terminalContexts: TerminalContextDraft[];
+    elementContexts: ElementContextDraft[];
     selectedPromptEffort: string | null;
     selectedModelOptionsForDispatch: unknown;
     selectedModelSelection: ModelSelection;
@@ -434,7 +441,7 @@ export interface ChatComposerProps {
   isPreparingWorktree: boolean;
   environmentUnavailable: {
     readonly label: string;
-    readonly connectionState: "connecting" | "disconnected" | "error";
+    readonly connection: EnvironmentConnectionPresentation;
   } | null;
 
   // Pending approvals / inputs
@@ -486,6 +493,7 @@ export interface ChatComposerProps {
   promptRef: React.RefObject<string>;
   composerImagesRef: React.RefObject<ComposerImageAttachment[]>;
   composerTerminalContextsRef: React.RefObject<TerminalContextDraft[]>;
+  composerElementContextsRef: React.RefObject<ElementContextDraft[]>;
   composerRef: React.RefObject<ChatComposerHandle | null>;
 
   // Scroll
@@ -576,6 +584,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerRef,
     composerImagesRef,
     composerTerminalContextsRef,
+    composerElementContextsRef,
     shouldAutoScrollRef,
     scheduleStickToBottom,
     onSend,
@@ -605,6 +614,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const prompt = composerDraft.prompt;
   const composerImages = composerDraft.images;
   const composerTerminalContexts = composerDraft.terminalContexts;
+  const composerElementContexts = composerDraft.elementContexts;
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
 
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
@@ -619,6 +629,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
   const setComposerDraftTerminalContexts = useComposerDraftStore(
     (store) => store.setTerminalContexts,
+  );
+  const removeComposerDraftElementContext = useComposerDraftStore(
+    (store) => store.removeElementContext,
   );
   const clearComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.clearPersistedAttachments,
@@ -880,8 +893,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         prompt,
         imageCount: composerImages.length,
         terminalContexts: composerTerminalContexts,
+        elementContextCount: composerElementContexts.length,
       }),
-    [composerImages.length, composerTerminalContexts, prompt],
+    [composerElementContexts.length, composerImages.length, composerTerminalContexts, prompt],
   );
 
   // ------------------------------------------------------------------
@@ -1169,6 +1183,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     composerTerminalContextsRef.current = composerTerminalContexts;
   }, [composerTerminalContexts, composerTerminalContextsRef]);
+
+  useEffect(() => {
+    composerElementContextsRef.current = composerElementContexts;
+  }, [composerElementContexts, composerElementContextsRef]);
 
   // ------------------------------------------------------------------
   // Composer menu highlight sync
@@ -1969,6 +1987,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         prompt: promptRef.current,
         images: composerImagesRef.current,
         terminalContexts: composerTerminalContextsRef.current,
+        elementContexts: composerElementContextsRef.current,
         selectedPromptEffort,
         selectedModelOptionsForDispatch,
         selectedModelSelection,
@@ -1986,6 +2005,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       promptRef,
       composerImagesRef,
       composerTerminalContextsRef,
+      composerElementContextsRef,
       isConnecting,
       isComposerApprovalState,
       pendingUserInputs.length,
@@ -2226,6 +2246,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             {!isComposerCollapsedMobile &&
               !isComposerApprovalState &&
               pendingUserInputs.length === 0 &&
+              composerElementContexts.length > 0 && (
+                <ComposerPendingElementContexts
+                  contexts={composerElementContexts}
+                  onRemove={(contextId) =>
+                    removeComposerDraftElementContext(composerDraftTarget, contextId)
+                  }
+                  className="mb-3"
+                />
+              )}
+
+            {!isComposerCollapsedMobile &&
+              !isComposerApprovalState &&
+              pendingUserInputs.length === 0 &&
               composerImages.length > 0 && (
                 <div className="mb-3 flex flex-wrap gap-2">
                   {composerImages.map((image) => (
@@ -2321,11 +2354,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       : showPlanFollowUpPrompt && activeProposedPlan
                         ? "Add feedback to refine the plan, or leave this blank to implement it"
                         : environmentUnavailable
-                          ? `${environmentUnavailable.label} is ${
-                              environmentUnavailable.connectionState === "connecting"
-                                ? "connecting"
-                                : "disconnected"
-                            }`
+                          ? `${environmentUnavailable.label}: ${connectionStatusText(
+                              environmentUnavailable.connection,
+                            )}`
                           : phase === "disconnected"
                             ? "Ask for follow-up changes or attach images"
                             : "Ask anything, @tag files/folders, $use skills, or / for commands"

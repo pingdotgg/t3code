@@ -73,6 +73,30 @@ describe("deriveComposerSendState", () => {
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
   });
+
+  it("treats element contexts as sendable content (no text, no images, no terminals)", () => {
+    const state = deriveComposerSendState({
+      prompt: "",
+      imageCount: 0,
+      terminalContexts: [],
+      elementContextCount: 1,
+    });
+
+    expect(state.trimmedPrompt).toBe("");
+    expect(state.expiredTerminalContextCount).toBe(0);
+    expect(state.hasSendableContent).toBe(true);
+  });
+
+  it("does NOT treat zero element contexts as sendable", () => {
+    expect(
+      deriveComposerSendState({
+        prompt: "",
+        imageCount: 0,
+        terminalContexts: [],
+        elementContextCount: 0,
+      }).hasSendableContent,
+    ).toBe(false);
+  });
 });
 
 describe("buildExpiredTerminalContextToastCopy", () => {

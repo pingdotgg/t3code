@@ -1,5 +1,7 @@
 import { type ThreadId } from "@t3tools/contracts";
 
+import { extractTrailingElementContexts, type ParsedElementContextEntry } from "./elementContext";
+
 export interface TerminalContextSelection {
   terminalId: string;
   terminalLabel: string;
@@ -27,6 +29,12 @@ export interface DisplayedUserMessageState {
   contextCount: number;
   previewTitle: string | null;
   contexts: ParsedTerminalContextEntry[];
+  /**
+   * Element-context entries extracted from the trailing `<element_context>`
+   * block (if any). Stripped from `visibleText` so the raw block doesn't
+   * leak into the user's bubble.
+   */
+  elementContexts: ParsedElementContextEntry[];
 }
 
 export interface ParsedTerminalContextEntry {
@@ -238,13 +246,18 @@ export function extractTrailingTerminalContexts(prompt: string): ExtractedTermin
 }
 
 export function deriveDisplayedUserMessageState(prompt: string): DisplayedUserMessageState {
-  const extractedContexts = extractTrailingTerminalContexts(prompt);
+  // Order matters: send-time appends `<terminal_context>` first, then
+  // `<element_context>` last. Strip element first so the (now-trailing)
+  // terminal block can be matched by `extractTrailingTerminalContexts`.
+  const extractedElement = extractTrailingElementContexts(prompt);
+  const extractedTerminal = extractTrailingTerminalContexts(extractedElement.promptText);
   return {
-    visibleText: extractedContexts.promptText,
+    visibleText: extractedTerminal.promptText,
     copyText: prompt,
-    contextCount: extractedContexts.contextCount,
-    previewTitle: extractedContexts.previewTitle,
-    contexts: extractedContexts.contexts,
+    contextCount: extractedTerminal.contextCount,
+    previewTitle: extractedTerminal.previewTitle,
+    contexts: extractedTerminal.contexts,
+    elementContexts: extractedElement.contexts,
   };
 }
 

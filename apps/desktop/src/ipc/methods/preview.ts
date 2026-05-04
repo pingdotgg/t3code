@@ -1,7 +1,11 @@
 import * as Effect from "effect/Effect";
 import { BrowserWindow } from "electron";
+import * as NodeFileSystem from "node:fs";
+import * as NodePath from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { previewViewManager } from "../../preview-view-manager.ts";
+import { PREVIEW_WEBVIEW_PREFERENCES } from "../../preview-webview-preferences.ts";
 import * as IpcChannels from "../channels.ts";
 import type { DesktopIpcMethod } from "../DesktopIpc.ts";
 
@@ -57,5 +61,18 @@ export const previewMethods = [
   method(IpcChannels.PREVIEW_OPEN_DEVTOOLS_CHANNEL, (raw) => previewViewManager.openDevTools(tabIdFrom(raw))),
   method(IpcChannels.PREVIEW_CLEAR_COOKIES_CHANNEL, () => previewViewManager.clearCookies()),
   method(IpcChannels.PREVIEW_CLEAR_CACHE_CHANNEL, () => previewViewManager.clearCache()),
-  method(IpcChannels.PREVIEW_GET_BROWSER_PARTITION_CHANNEL, () => previewViewManager.getBrowserPartition()),
+  method(IpcChannels.PREVIEW_GET_CONFIG_CHANNEL, () => {
+    const preloadPath = NodePath.join(__dirname, "preview-pick-preload.cjs");
+    return {
+      partition: previewViewManager.getBrowserPartition(),
+      webPreferences: PREVIEW_WEBVIEW_PREFERENCES,
+      preloadUrl: NodeFileSystem.existsSync(preloadPath) ? pathToFileURL(preloadPath).href : null,
+    };
+  }),
+  method(IpcChannels.PREVIEW_PICK_ELEMENT_CHANNEL, (raw) =>
+    previewViewManager.pickElement(tabIdFrom(raw)),
+  ),
+  method(IpcChannels.PREVIEW_CANCEL_PICK_ELEMENT_CHANNEL, (raw) =>
+    previewViewManager.cancelPickElement(tabIdFrom(raw)),
+  ),
 ] as const;

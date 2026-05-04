@@ -2,9 +2,11 @@
 
 import { scopedThreadKey } from "@t3tools/client-runtime";
 import { type ScopedThreadRef } from "@t3tools/contracts";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useComposerDraftStore } from "~/composerDraftStore";
 import { ensureEnvironmentApi } from "~/environmentApi";
+import { normalizeElementContextSelection } from "~/lib/elementContext";
 import { ensureLocalApi } from "~/localApi";
 import { selectThreadPreviewState, usePreviewStateStore } from "~/previewStateStore";
 
@@ -33,12 +35,23 @@ const localApi = typeof window === "undefined" ? null : ensureLocalApi();
  */
 export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
   const [focusUrlNonce, setFocusUrlNonce] = useState(0);
+  const [pickActive, setPickActive] = useState(false);
+  const pickActiveRef = useRef(false);
+  const isMountedRef = useRef(true);
   const previewState = usePreviewStateStore((state) =>
     selectThreadPreviewState(state.byThreadKey, threadRef),
   );
   const rememberUrl = usePreviewStateStore((state) => state.rememberUrl);
+  const addElementContext = useComposerDraftStore((store) => store.addElementContext);
 
   usePreviewSession(threadRef);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   const { snapshot, desktopOverlay } = previewState;
   const tabId = snapshot?.tabId ?? null;
@@ -101,6 +114,67 @@ export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
     void localApi.shell.openExternal(url).catch(() => undefined);
   }, [url]);
 
+  const handlePickElement = useCallback(() => {
+    if (!previewBridge || !tabId) return;
+    if (pickActiveRef.current) {
+      void previewBridge.cancelPickElement(tabId).catch(() => undefined);
+      return;
+    }
+    // Snapshot whatever the user was focused on (typically the chat
+    // composer textarea or the chrome-row pick button) BEFORE main steals
+    // focus into the guest webContents. We restore it when the pick
+    // resolves so the user's typing context isn't lost — otherwise after
+    // every pick they'd have to click back into the textarea.
+    const previouslyFocused =
+      typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
+    pickActiveRef.current = true;
+    setPickActive(true);
+    void (async () => {
+      try {
+        const payload = await previewBridge.pickElement(tabId);
+        if (!payload) return;
+        const selection = normalizeElementContextSelection(payload);
+        if (!selection) return;
+        addElementContext(threadRef, selection);
+      } catch {
+        // Picker failed (e.g. webview navigated). Treat as silent cancel.
+      } finally {
+        pickActiveRef.current = false;
+        // Avoid `setState on unmounted component` if the panel/thread closed
+        // while the pick was in flight.
+        if (isMountedRef.current) setPickActive(false);
+        // Best-effort: restore focus to whatever the user had before the
+        // pick stole it into the guest webContents. Skip if the previously-
+        // focused element was unmounted or is no longer focusable.
+        if (
+          previouslyFocused &&
+          previouslyFocused.isConnected &&
+          typeof previouslyFocused.focus === "function"
+        ) {
+          try {
+            previouslyFocused.focus({ preventScroll: true });
+          } catch {
+            // Some elements throw on .focus() (detached iframes, etc.).
+          }
+        }
+      }
+    })();
+  }, [addElementContext, tabId, threadRef]);
+
+  // If the active tab changes mid-pick (close, thread switch, hot restart),
+  // tell main to tear down the in-flight session AND reset our local toggle
+  // state so the button doesn't get stuck pressed against a stale tab id.
+  useEffect(() => {
+    return () => {
+      if (!pickActiveRef.current) return;
+      pickActiveRef.current = false;
+      if (previewBridge && tabId) {
+        void previewBridge.cancelPickElement(tabId).catch(() => undefined);
+      }
+      if (isMountedRef.current) setPickActive(false);
+    };
+  }, [tabId]);
+
   // Subscribe only while visible; `toggle-panel` is owned by ChatView's
   // URL-aware handler regardless of whether the panel is currently mounted.
   useEffect(() => {
@@ -146,6 +220,15 @@ export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
         onRefresh={handleRefresh}
         onSubmit={(next) => void handleSubmitUrl(next)}
         onOpenInBrowser={tabId ? handleOpenInBrowser : undefined}
+        onPickElement={previewBridge && tabId ? handlePickElement : undefined}
+        pickActive={pickActive}
+        // Disable when there's no tab (nothing to pick on) OR the page
+        // failed to load (a React overlay covers the webview, so the
+        // user wouldn't be able to actually click anything underneath).
+        pickDisabled={!tabId || isUnreachable}
+        pickDisabledReason={
+          isUnreachable ? "Page didn't load — pick unavailable until the page renders" : undefined
+        }
         trailingActions={
           previewBridge ? (
             <PreviewMoreMenu
@@ -177,7 +260,7 @@ export function PreviewView({ threadRef, configuredUrls, visible }: Props) {
         {snapshot && desktopOverlay ? (
           <ZoomIndicator zoomFactor={desktopOverlay.zoomFactor} />
         ) : null}
-        {isUnreachable && navStatus._tag === "LoadFailed" ? (
+        {navStatus._tag === "LoadFailed" ? (
           <div className="absolute inset-0 z-10 bg-background">
             <PreviewUnreachable
               url={navStatus.url}

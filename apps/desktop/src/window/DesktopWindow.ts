@@ -198,6 +198,16 @@ const make = Effect.gen(function* () {
     });
 
     previewViewManager.setMainWindow(window);
+    window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+      if (params.partition !== previewViewManager.getBrowserPartition()) {
+        event.preventDefault();
+        return;
+      }
+      webPreferences.sandbox = true;
+      webPreferences.nodeIntegration = false;
+      webPreferences.nodeIntegrationInSubFrames = false;
+      webPreferences.contextIsolation = false;
+    });
 
     window.webContents.on("context-menu", (event, params) => {
       event.preventDefault();

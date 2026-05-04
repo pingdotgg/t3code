@@ -1,4 +1,11 @@
-import { ArrowLeft, ArrowRight, ExternalLink, Globe, RotateCw } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  ExternalLink,
+  Globe,
+  MousePointerClick,
+  RotateCw,
+} from "lucide-react";
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -30,6 +37,16 @@ interface Props {
   /** When provided, renders an "Open in browser" affordance to the right. */
   onOpenInBrowser?: (() => void) | undefined;
   /**
+   * When provided, renders a "Select element" toggle button to the right of
+   * the URL input. Pressed while a pick is active (button shows in `pressed`
+   * state). Disabled in `pickDisabled` mode.
+   */
+  onPickElement?: (() => void) | undefined;
+  pickActive?: boolean | undefined;
+  pickDisabled?: boolean | undefined;
+  /** Optional reason string surfaced in the disabled tooltip. */
+  pickDisabledReason?: string | undefined;
+  /**
    * Trailing slot rendered after the URL input. Used by the preview view
    * to mount the three-dot menu (hard reload, devtools, zoom, clear data).
    */
@@ -52,6 +69,10 @@ export function PreviewChromeRow({
   onRefresh,
   onSubmit,
   onOpenInBrowser,
+  onPickElement,
+  pickActive,
+  pickDisabled,
+  pickDisabledReason,
   trailingActions,
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -162,6 +183,32 @@ export function PreviewChromeRow({
           />
         </InputGroup>
 
+        {onPickElement ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant={pickActive ? "secondary" : "ghost"}
+                  size="icon-xs"
+                  onClick={onPickElement}
+                  disabled={pickDisabled}
+                  aria-label={pickActive ? "Cancel element pick" : "Select element from page"}
+                  aria-pressed={pickActive ? "true" : "false"}
+                  type="button"
+                />
+              }
+            >
+              <MousePointerClick className={cn(pickActive && "text-primary")} />
+            </TooltipTrigger>
+            <TooltipPopup>
+              {pickDisabled && pickDisabledReason
+                ? pickDisabledReason
+                : pickActive
+                  ? "Cancel pick (Esc)"
+                  : "Select element to attach"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         {onOpenInBrowser ? (
           <Tooltip>
             <TooltipTrigger

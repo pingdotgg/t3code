@@ -5,10 +5,22 @@
  * elements live in the renderer; we only attach listeners and forward state
  * here). Single layer-scoped browser session partition.
  */
+import type { PickedElementPayload } from "@t3tools/contracts";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { type BrowserWindow, type Session, session, webContents } from "electron";
 
+import { isPickedElementPayload } from "./picked-element-payload.ts";
+
 const PREVIEW_PARTITION = "persist:t3code-preview";
+const START_PICK_CHANNEL = "preview:start-pick";
+const CANCEL_PICK_CHANNEL = "preview:cancel-pick";
+const ELEMENT_PICKED_CHANNEL = "preview:element-picked";
+
+// Re-export the guest webview security posture from its dedicated module so
+// the constant is unit-testable in isolation. See
+// `preview-webview-preferences.ts` for the full security rationale.
+export { PREVIEW_WEBVIEW_PREFERENCES } from "./preview-webview-preferences.ts";
+import { PREVIEW_WEBVIEW_PREFERENCES } from "./preview-webview-preferences.ts";
 
 export type PreviewNavStatus =
   | { kind: "Idle" }
@@ -63,6 +75,11 @@ interface ManagedListeners {
   failed: (event: Event, code: number, description: string) => void;
 }
 
+interface PickSession {
+  readonly resolve: (payload: PickedElementPayload | null) => void;
+  readonly cleanup: () => void;
+}
+
 const APP_FORWARDED_SHORTCUTS: ReadonlyArray<{
   key: string;
   meta: boolean;
@@ -85,6 +102,8 @@ export class PreviewViewManager {
   private readonly attached = new Map<number, ManagedListeners>();
   private browserSession: Session | null = null;
   private readonly listeners = new Set<Listener>();
+  /** In-flight element-pick sessions, keyed by tabId (one pick per tab). */
+  private readonly pickSessions = new Map<string, PickSession>();
 
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window;
@@ -92,6 +111,16 @@ export class PreviewViewManager {
 
   getBrowserPartition(): string {
     return PREVIEW_PARTITION;
+  }
+
+  /**
+   * Returns the canonical `<webview webpreferences="...">` string. Renderer
+   * fetches this via the desktop bridge so the security posture for guest
+   * surfaces lives in exactly one place (here) and any future guest webview
+   * (docs panel, OAuth popup, etc.) can opt in by calling the same getter.
+   */
+  getWebviewPreferences(): string {
+    return PREVIEW_WEBVIEW_PREFERENCES;
   }
 
   getBrowserSession(): Session {
@@ -130,6 +159,7 @@ export class PreviewViewManager {
   closeTab(tabId: string): void {
     const tab = this.tabs.get(tabId);
     if (!tab) return;
+    this.cancelPickElement(tabId);
     if (tab.webContentsId != null) {
       this.detachListeners(tab.webContentsId);
     }
@@ -169,6 +199,10 @@ export class PreviewViewManager {
     }
     if (tab.webContentsId != null && tab.webContentsId !== webContentsId) {
       this.detachListeners(tab.webContentsId);
+      // Any in-flight pick is bound to the OLD WebContents via `wc.ipc.on`.
+      // Cancel it so the toggle button doesn't get stuck pressed waiting
+      // forever for a click on a webview that no longer hosts the listener.
+      this.cancelPickElement(tabId);
     }
     this.attachListeners(tabId, wc);
     // Restore the persisted zoom factor onto the freshly-attached WebContents
@@ -252,6 +286,96 @@ export class PreviewViewManager {
   async clearCache(): Promise<void> {
     const sess = this.getBrowserSession();
     await sess.clearCache();
+  }
+
+  /**
+   * Activate the in-page element picker for `tabId`. Resolves with the
+   * `PickedElementPayload` the preload script bubbles back via `ipc-message`,
+   * or `null` when the user cancels (Escape, navigation, manual cancel).
+   *
+   * Exactly one pick session may be active per tab — re-invoking while a
+   * pick is in flight cleanly resolves the old session with `null` first.
+   */
+  async pickElement(tabId: string): Promise<PickedElementPayload | null> {
+    const wc = this.requireWebContents(tabId);
+    this.cancelPickElement(tabId);
+    return new Promise<PickedElementPayload | null>((resolve) => {
+      // `wc.ipc` is the per-WebContents IpcMain that receives messages the
+      // webview's preload sends with `ipcRenderer.send(...)`. We use that
+      // (not the global `wc.on("ipc-message", ...)`, which is for
+      // `sendToHost` and only fires on the host renderer's <webview>
+      // element) so the main process actually observes the picked payload.
+      const cleanup = () => {
+        wc.ipc.removeListener(ELEMENT_PICKED_CHANNEL, onMessage);
+        wc.off("destroyed", onDestroyed);
+        wc.off("did-start-navigation", onNavigated);
+        this.pickSessions.delete(tabId);
+      };
+      const session: PickSession = { resolve, cleanup };
+      const settle = (payload: PickedElementPayload | null) => {
+        if (this.pickSessions.get(tabId) !== session) return;
+        cleanup();
+        resolve(payload);
+      };
+      const onMessage = (_event: Electron.IpcMainEvent, ...args: unknown[]): void => {
+        const payload = args[0];
+        if (payload == null) {
+          settle(null);
+          return;
+        }
+        if (!isPickedElementPayload(payload)) {
+          settle(null);
+          return;
+        }
+        settle(payload);
+      };
+      const onDestroyed = () => settle(null);
+      const onNavigated = () => settle(null);
+      wc.ipc.on(ELEMENT_PICKED_CHANNEL, onMessage);
+      wc.once("destroyed", onDestroyed);
+      // A page navigation (incl. SPA → same-document) tears down the
+      // preload's listeners, so we cancel proactively to avoid hanging.
+      wc.once("did-start-navigation", onNavigated);
+      this.pickSessions.set(tabId, session);
+      // Force-focus the guest webContents BEFORE sending start-pick. Without
+      // this, Electron's input router will deliver the user's first
+      // mousemove/click to the host renderer (where the pick button lives)
+      // instead of to the guest's window listeners — manifest as "the
+      // picker overlay never appears on remote pages I haven't clicked
+      // into yet". The renderer-side handler in `PreviewView` is responsible
+      // for restoring focus to the previously-active host element when the
+      // pick promise resolves so the user's textarea cursor isn't lost.
+      try {
+        if (!wc.isFocused()) wc.focus();
+      } catch {
+        // wc may be torn down; the next try/catch settles.
+      }
+      try {
+        wc.send(START_PICK_CHANNEL);
+      } catch {
+        settle(null);
+      }
+    });
+  }
+
+  cancelPickElement(tabId: string): void {
+    const session = this.pickSessions.get(tabId);
+    if (!session) return;
+    session.cleanup();
+    // Best-effort: tell the page to dismiss the overlay even if it's still
+    // alive — keeps the next invoke fresh.
+    const tab = this.tabs.get(tabId);
+    if (tab?.webContentsId != null) {
+      const wc = webContents.fromId(tab.webContentsId);
+      if (wc && !wc.isDestroyed()) {
+        try {
+          wc.send(CANCEL_PICK_CHANNEL);
+        } catch {
+          // wc may have been torn down; nothing to clean up.
+        }
+      }
+    }
+    session.resolve(null);
   }
 
   zoomIn(tabId: string): void {

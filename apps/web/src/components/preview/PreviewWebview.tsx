@@ -1,7 +1,7 @@
 "use client";
 
-import type { ScopedThreadRef } from "@t3tools/contracts";
-import { useEffect, useRef, useState } from "react";
+import type { DesktopPreviewWebviewConfig, ScopedThreadRef } from "@t3tools/contracts";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { isElectron } from "~/env";
 
@@ -25,7 +25,13 @@ interface Props {
 interface ElectronWebview extends HTMLElement {
   src: string;
   partition: string;
-  allowpopups: boolean;
+  preload?: string;
+  /**
+   * Comma-separated `key=value` web-preferences override. We use it to drop
+   * `contextIsolation` so the picker preload can see the guest page's
+   * `__REACT_DEVTOOLS_GLOBAL_HOOK__` and resolve component names.
+   */
+  webpreferences?: string;
   reload: () => void;
   getWebContentsId: () => number;
 }
@@ -44,7 +50,7 @@ declare global {
  * after mount throws.
  */
 export function PreviewWebview({ threadRef, tabId, initialUrl, className }: Props) {
-  const [config, setConfig] = useState<{ partition: string } | null>(null);
+  const [config, setConfig] = useState<DesktopPreviewWebviewConfig | null>(null);
   const webviewRef = useRef<ElectronWebview | null>(null);
   // Capture once at mount; never re-derived from `initialUrl` props later.
   const initialSrcRef = useRef<string>(initialUrl ?? "about:blank");
@@ -57,17 +63,32 @@ export function PreviewWebview({ threadRef, tabId, initialUrl, className }: Prop
   useEffect(() => {
     if (!bridge) return;
     let cancelled = false;
-    void bridge
-      .getBrowserPartition()
-      .then((partition) => {
+    bridge
+      .getPreviewConfig()
+      .then((next) => {
         if (cancelled) return;
-        setConfig({ partition });
+        setConfig(next);
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
   }, [bridge]);
+
+  // Stable callback ref so React doesn't re-invoke the closure on every
+  // commit (otherwise we'd be re-asserting `allowpopups` and re-storing the
+  // ref pointer per render, which is harmless but wasteful).
+  const setWebviewRef = useCallback((node: HTMLElement | null) => {
+    webviewRef.current = node as ElectronWebview | null;
+    if (node && !node.hasAttribute("allowpopups")) {
+      // React's @types declare `allowpopups` as `boolean`, but the runtime
+      // doesn't list <webview> in its boolean-attribute allowlist, so
+      // passing it via JSX triggers a "received true for a non-boolean
+      // attribute" warning. Setting it imperatively bypasses React's prop
+      // normalization entirely.
+      node.setAttribute("allowpopups", "true");
+    }
+  }, []);
 
   useEffect(() => {
     if (!bridge || !config) return;
@@ -103,12 +124,17 @@ export function PreviewWebview({ threadRef, tabId, initialUrl, className }: Prop
 
   if (!isElectron || !bridge || !config) return null;
 
+  // `preload` and `webpreferences` are HTML attributes Electron only reads
+  // at element-attach time — a state update later in the lifecycle would
+  // have no effect. The renderer-attached values are also enforced by the
+  // main-process `will-attach-webview` validator (defense in depth).
   return (
     <webview
-      ref={webviewRef}
+      ref={setWebviewRef}
       src={initialSrcRef.current}
       partition={config.partition}
-      allowpopups
+      webpreferences={config.webPreferences}
+      {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
       data-preview-tab={tabId}
       className={className}
     />
