@@ -21,13 +21,21 @@ import { type SavedRemoteConnection, bootstrapRemoteConnection } from "../lib/co
 import { terminalDebugLog } from "../features/terminal/terminalDebugLog";
 import { clearSavedConnection, loadSavedConnections, saveConnection } from "../lib/storage";
 import { appAtomRegistry } from "./atom-registry";
-import { type ConnectedEnvironmentSummary, type EnvironmentSession } from "./remote-runtime-types";
+import {
+  drainEnvironmentSessions,
+  notifyEnvironmentConnectionListeners,
+  removeEnvironmentSession,
+  setEnvironmentSession,
+} from "./environment-session-registry";
+import { type ConnectedEnvironmentSummary } from "./remote-runtime-types";
+import {
+  invalidateSourceControlDiscoveryForEnvironment,
+  resetSourceControlDiscoveryState,
+} from "./source-control-discovery-manager";
 import { environmentRuntimeManager, useEnvironmentRuntimeStates } from "./use-environment-runtime";
 import { shellSnapshotManager } from "./use-shell-snapshot";
 import { subscribeTerminalMetadata, terminalSessionManager } from "./use-terminal-session";
 
-const environmentSessions = new Map<EnvironmentId, EnvironmentSession>();
-const environmentConnectionListeners = new Set<() => void>();
 const terminalMetadataUnsubscribers = new Map<EnvironmentId, () => void>();
 
 interface RemoteEnvironmentLocalState {
@@ -56,10 +64,6 @@ const savedConnectionsByIdAtom = Atom.make<Record<EnvironmentId, SavedRemoteConn
   Atom.keepAlive,
   Atom.withLabel("mobile:saved-connections"),
 );
-
-function notifyEnvironmentConnectionListeners() {
-  for (const listener of environmentConnectionListeners) listener();
-}
 
 function getSavedConnectionsById(): Record<EnvironmentId, SavedRemoteConnection> {
   return appAtomRegistry.get(savedConnectionsByIdAtom);
@@ -121,17 +125,6 @@ function useRemoteEnvironmentLocalState(): RemoteEnvironmentLocalState {
   );
 }
 
-/**
- * Subscribe to environment-connection changes (connect / disconnect / reconnect).
- * Returns an unsubscribe function.
- */
-export function subscribeEnvironmentConnections(listener: () => void): () => void {
-  environmentConnectionListeners.add(listener);
-  return () => {
-    environmentConnectionListeners.delete(listener);
-  };
-}
-
 function setEnvironmentConnectionStatus(
   environmentId: EnvironmentId,
   state: ConnectedEnvironmentSummary["connectionState"],
@@ -144,21 +137,17 @@ function setEnvironmentConnectionStatus(
   }));
 }
 
-export function getEnvironmentClient(environmentId: EnvironmentId) {
-  return environmentSessions.get(environmentId)?.client ?? null;
-}
-
 export async function disconnectEnvironment(
   environmentId: EnvironmentId,
   options?: { readonly removeSaved?: boolean },
 ) {
-  const session = environmentSessions.get(environmentId);
-  environmentSessions.delete(environmentId);
+  const session = removeEnvironmentSession(environmentId);
   notifyEnvironmentConnectionListeners();
   await session?.connection.dispose();
   terminalMetadataUnsubscribers.get(environmentId)?.();
   terminalMetadataUnsubscribers.delete(environmentId);
   shellSnapshotManager.invalidate({ environmentId });
+  invalidateSourceControlDiscoveryForEnvironment(environmentId);
   terminalSessionManager.invalidateEnvironment(environmentId);
   environmentRuntimeManager.invalidate({ environmentId });
 
@@ -258,7 +247,7 @@ export async function connectSavedEnvironment(
     },
   });
 
-  environmentSessions.set(connection.environmentId, {
+  setEnvironmentSession(connection.environmentId, {
     client,
     connection: environmentConnection,
   });
@@ -342,16 +331,16 @@ export function useRemoteEnvironmentBootstrap() {
 
     return () => {
       cancelled = true;
-      for (const session of environmentSessions.values()) {
+      for (const session of drainEnvironmentSessions()) {
         void session.connection.dispose();
       }
-      environmentSessions.clear();
       for (const unsubscribe of terminalMetadataUnsubscribers.values()) {
         unsubscribe();
       }
       terminalMetadataUnsubscribers.clear();
       environmentRuntimeManager.invalidate();
       shellSnapshotManager.invalidate();
+      resetSourceControlDiscoveryState();
       terminalSessionManager.invalidate();
       notifyEnvironmentConnectionListeners();
     };

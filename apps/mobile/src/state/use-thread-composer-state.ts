@@ -30,9 +30,9 @@ import {
 } from "../lib/threadActivity";
 import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "../state/atom-registry";
+import { getEnvironmentClient } from "./environment-session-registry";
 import type { ConnectedEnvironmentSummary } from "../state/remote-runtime-types";
 import {
-  getEnvironmentClient,
   setPendingConnectionError,
   useRemoteConnectionStatus,
 } from "../state/use-remote-environment-registry";

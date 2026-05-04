@@ -4,7 +4,7 @@ import { memo, useCallback, useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { AppText as Text } from "../../components/AppText";
-import { getEnvironmentClient } from "../../state/use-remote-environment-registry";
+import { getEnvironmentClient } from "../../state/environment-session-registry";
 import {
   attachTerminalSession,
   useTerminalSession,

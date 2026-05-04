@@ -14,7 +14,7 @@ import { appAtomRegistry } from "./atom-registry";
 import {
   getEnvironmentClient,
   subscribeEnvironmentConnections,
-} from "./use-remote-environment-registry";
+} from "./environment-session-registry";
 
 /**
  * Singleton git status manager for the mobile app.

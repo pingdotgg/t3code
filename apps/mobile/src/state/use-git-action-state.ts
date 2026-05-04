@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
-import { getEnvironmentClient } from "./use-remote-environment-registry";
+import { getEnvironmentClient } from "./environment-session-registry";
 
 export const gitActionManager = createGitActionManager({
   getRegistry: () => appAtomRegistry,

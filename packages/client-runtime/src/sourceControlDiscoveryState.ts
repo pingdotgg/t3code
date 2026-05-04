@@ -75,6 +75,15 @@ export interface SourceControlDiscoveryManagerConfig {
 
 export function createSourceControlDiscoveryManager(config: SourceControlDiscoveryManagerConfig) {
   const refreshInFlight = new Map<string, Promise<SourceControlDiscoveryResult | null>>();
+  const refreshVersions = new Map<string, number>();
+
+  function getRefreshVersion(targetKey: string): number {
+    return refreshVersions.get(targetKey) ?? 0;
+  }
+
+  function bumpRefreshVersion(targetKey: string): void {
+    refreshVersions.set(targetKey, getRefreshVersion(targetKey) + 1);
+  }
 
   /* -- Atom helpers -------------------------------------------------- */
 
@@ -156,19 +165,50 @@ export function createSourceControlDiscoveryManager(config: SourceControlDiscove
     }
 
     markPending(targetKey);
+    const refreshVersion = getRefreshVersion(targetKey);
     const promise = resolvedClient.discoverSourceControl().then(
       (result) => {
-        setData(targetKey, result);
+        if (getRefreshVersion(targetKey) === refreshVersion) {
+          setData(targetKey, result);
+        }
         return result;
       },
       (error: unknown) => {
-        setError(targetKey, error);
+        if (getRefreshVersion(targetKey) === refreshVersion) {
+          setError(targetKey, error);
+        }
         return getSnapshot(target).data;
       },
     );
-    const tracked = promise.finally(() => refreshInFlight.delete(targetKey));
+    let tracked: Promise<SourceControlDiscoveryResult | null>;
+    tracked = promise.finally(() => {
+      if (refreshInFlight.get(targetKey) === tracked) {
+        refreshInFlight.delete(targetKey);
+      }
+    });
     refreshInFlight.set(targetKey, tracked);
     return tracked;
+  }
+
+  /**
+   * Reset discovery state for one target and ignore any currently in-flight
+   * refresh for that target. If no target is provided, every known target is
+   * invalidated.
+   */
+  function invalidate(target?: SourceControlDiscoveryTarget): void {
+    if (!target) {
+      reset();
+      return;
+    }
+
+    const targetKey = getSourceControlDiscoveryTargetKey(target);
+    if (targetKey === null) {
+      return;
+    }
+
+    bumpRefreshVersion(targetKey);
+    refreshInFlight.delete(targetKey);
+    setState(targetKey, INITIAL_SOURCE_CONTROL_DISCOVERY_STATE);
   }
 
   /**
@@ -191,16 +231,18 @@ export function createSourceControlDiscoveryManager(config: SourceControlDiscove
    * Primarily used by tests and runtime teardown.
    */
   function reset(): void {
+    const keys = new Set([...knownSourceControlDiscoveryKeys, ...refreshInFlight.keys()]);
     refreshInFlight.clear();
-    for (const key of knownSourceControlDiscoveryKeys) {
+    for (const key of keys) {
+      bumpRefreshVersion(key);
       setState(key, INITIAL_SOURCE_CONTROL_DISCOVERY_STATE);
     }
-    knownSourceControlDiscoveryKeys.clear();
   }
 
   return {
     refresh,
     getSnapshot,
+    invalidate,
     reset,
   };
 }

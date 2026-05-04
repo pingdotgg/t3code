@@ -17,11 +17,11 @@ import { buildTemporaryWorktreeBranchName, sanitizeFeatureBranchName } from "@t3
 
 import type { DraftComposerImageAttachment } from "../../lib/composerImages";
 import { uuidv4 } from "../../lib/uuid";
+import { getEnvironmentClient } from "../../state/environment-session-registry";
 import { environmentRuntimeManager } from "../../state/use-environment-runtime";
 import { gitBranchManager } from "../../state/use-git-branches";
 import { useRemoteCatalog } from "../../state/use-remote-catalog";
 import {
-  getEnvironmentClient,
   setPendingConnectionError,
   useRemoteEnvironmentState,
 } from "../../state/use-remote-environment-registry";

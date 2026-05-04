@@ -131,6 +131,13 @@ let needsProviderInvalidation = false;
 let lastBrowserHiddenAt: number | null = null;
 let lastBrowserResumeReconnectAt = Number.NEGATIVE_INFINITY;
 
+// TODO(CLIENT-RUNTIME MIGRATION - DO NOT EXPAND THIS WEB-ONLY COPY):
+// This file still owns web's legacy thread-detail subscription cache. Mobile
+// uses createThreadDetailManager from @t3tools/client-runtime for the same
+// retain/reconnect/evict lifecycle. When touching this logic, prefer migrating
+// web to the shared manager or extracting the missing adapter layer instead of
+// adding more behavior here.
+//
 // Thread detail subscription cache policy:
 // - Active consumers keep a subscription retained via refCount.
 // - Released subscriptions stay warm for a longer idle TTL to avoid churn
@@ -1078,6 +1085,11 @@ function createEnvironmentConnectionHandlers() {
   return {
     applyShellEvent,
     syncShellSnapshot: (snapshot: OrchestrationShellSnapshot, environmentId: EnvironmentId) => {
+      // TODO(CLIENT-RUNTIME MIGRATION - DO NOT EXPAND THIS WEB-ONLY COPY):
+      // Shell snapshots already have createShellSnapshotManager in
+      // @t3tools/client-runtime. Web currently projects snapshots straight into
+      // its denormalized Zustand store; future shell changes should migrate or
+      // bridge to the shared manager instead of growing this handler.
       if (
         !shouldApplyProjectionSnapshot({
           current: readLastAppliedProjectionVersion(environmentId),

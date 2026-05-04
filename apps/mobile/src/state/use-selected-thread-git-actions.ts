@@ -17,7 +17,8 @@ import {
 } from "@t3tools/shared/git";
 
 import { uuidv4 } from "../lib/uuid";
-import { getEnvironmentClient, setPendingConnectionError } from "./use-remote-environment-registry";
+import { getEnvironmentClient } from "./environment-session-registry";
+import { setPendingConnectionError } from "./use-remote-environment-registry";
 import { gitActionManager, showGitActionResult } from "./use-git-action-state";
 import { gitBranchManager } from "./use-git-branches";
 import { gitStatusManager } from "./use-git-status";

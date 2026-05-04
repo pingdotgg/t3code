@@ -35,7 +35,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
 import { useThemeColor } from "../../lib/useThemeColor";
-import { getEnvironmentClient } from "../../state/use-remote-environment-registry";
+import { getEnvironmentClient } from "../../state/environment-session-registry";
 import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { useThreadDraftForThread } from "../../state/use-thread-composer-state";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";

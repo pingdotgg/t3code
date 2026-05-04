@@ -10,7 +10,7 @@ import {
 } from "@t3tools/client-runtime";
 
 import { appAtomRegistry } from "./atom-registry";
-import { getEnvironmentClient } from "./use-remote-environment-registry";
+import { getEnvironmentClient } from "./environment-session-registry";
 
 export const gitBranchManager = createGitBranchManager({
   getRegistry: () => appAtomRegistry,

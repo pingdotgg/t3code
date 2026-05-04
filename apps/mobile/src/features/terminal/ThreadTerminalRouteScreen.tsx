@@ -14,10 +14,8 @@ import Animated, { useAnimatedKeyboard, useAnimatedStyle } from "react-native-re
 import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { buildThreadTerminalNavigation } from "../../lib/routes";
-import {
-  getEnvironmentClient,
-  useRemoteEnvironmentState,
-} from "../../state/use-remote-environment-registry";
+import { getEnvironmentClient } from "../../state/environment-session-registry";
+import { useRemoteEnvironmentState } from "../../state/use-remote-environment-registry";
 import {
   attachTerminalSession,
   useKnownTerminalSessions,

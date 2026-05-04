@@ -15,7 +15,7 @@ import { appAtomRegistry } from "./atom-registry";
 import {
   getEnvironmentClient,
   subscribeEnvironmentConnections,
-} from "./use-remote-environment-registry";
+} from "./environment-session-registry";
 import { useThreadSelection } from "./use-thread-selection";
 
 function shouldKeepThreadDetailWarm(state: ThreadDetailState): boolean {

@@ -11,7 +11,8 @@ import {
 
 import { uuidv4 } from "../lib/uuid";
 import { environmentRuntimeManager } from "./use-environment-runtime";
-import { getEnvironmentClient, useRemoteEnvironmentState } from "./use-remote-environment-registry";
+import { getEnvironmentClient } from "./environment-session-registry";
+import { useRemoteEnvironmentState } from "./use-remote-environment-registry";
 import { useThreadSelection } from "./use-thread-selection";
 
 export function useSelectedThreadCommands(input: {

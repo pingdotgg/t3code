@@ -42,8 +42,8 @@ import {
   normalizeSearchQuery,
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
-import { getEnvironmentClient } from "../../state/use-remote-environment-registry";
-import { CLAUDE_AGENT_EFFORT_OPTIONS } from "./claudeEffortOptions";
+import { getEnvironmentClient } from "../../state/environment-session-registry";
+import { CLAUDE_AGENT_EFFORT_OPTIONS, type ClaudeAgentEffort } from "./claudeEffortOptions";
 import { ComposerCommandPopover, type ComposerCommandItem } from "./ComposerCommandPopover";
 
 /**
