@@ -8,6 +8,13 @@ export interface WaitForHttpReadyOptions {
   readonly isReady?: (response: Response) => boolean;
 }
 
+/**
+ * Unauthenticated 200 from the T3 HTTP server. Avoids probing `/`, which returns 302 to the Vite
+ * dev URL when `devUrl` is configured — `response.ok` is false for redirects, so readiness would
+ * never succeed in desktop dev.
+ */
+export const T3_BACKEND_READINESS_PATH = "/.well-known/t3/environment";
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_INTERVAL_MS = 100;
 const DEFAULT_REQUEST_TIMEOUT_MS = 1_000;
@@ -59,7 +66,7 @@ export async function waitForHttpReady(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const intervalMs = options?.intervalMs ?? DEFAULT_INTERVAL_MS;
   const requestTimeoutMs = options?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  const readinessPath = options?.path ?? "/";
+  const readinessPath = options?.path ?? T3_BACKEND_READINESS_PATH;
   const isReady = options?.isReady ?? ((response: Response) => response.ok);
   const deadline = Date.now() + timeoutMs;
 

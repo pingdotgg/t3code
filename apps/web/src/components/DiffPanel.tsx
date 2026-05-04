@@ -19,6 +19,7 @@ import {
   useRef,
   useState,
 } from "react";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { openInPreferredEditor } from "../editorPreferences";
 import { useGitStatus } from "~/lib/gitStatusState";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
@@ -177,15 +178,27 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const previousDiffOpenRef = useRef(false);
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
   const [canScrollTurnStripRight, setCanScrollTurnStripRight] = useState(false);
-  const routeThreadRef = useParams({
+  const pathThreadRef = useParams({
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
   });
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
   const diffOpen = diffSearch.diff === "1";
-  const activeThreadId = routeThreadRef?.threadId ?? null;
+  const diffDisplayThreadRef: ScopedThreadRef | null = useMemo(() => {
+    if (!pathThreadRef) {
+      return null;
+    }
+    if (diffSearch.diff !== "1") {
+      return pathThreadRef;
+    }
+    if (diffSearch.diffThreadEnvironmentId && diffSearch.diffThreadId) {
+      return scopeThreadRef(diffSearch.diffThreadEnvironmentId, diffSearch.diffThreadId);
+    }
+    return pathThreadRef;
+  }, [diffSearch.diff, diffSearch.diffThreadEnvironmentId, diffSearch.diffThreadId, pathThreadRef]);
+  const activeThreadId = diffDisplayThreadRef?.threadId ?? null;
   const activeThread = useStore(
-    useMemo(() => createThreadSelectorByRef(routeThreadRef), [routeThreadRef]),
+    useMemo(() => createThreadSelectorByRef(diffDisplayThreadRef), [diffDisplayThreadRef]),
   );
   const activeProjectId = activeThread?.projectId ?? null;
   const activeProject = useStore((store) =>
@@ -344,24 +357,53 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   );
 
   const selectTurn = (turnId: TurnId) => {
-    if (!activeThread) return;
+    if (!activeThread || !pathThreadRef) {
+      return;
+    }
+    const needsDiffThreadOverride =
+      activeThread.environmentId !== pathThreadRef.environmentId ||
+      activeThread.id !== pathThreadRef.threadId;
     void navigate({
       to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
+      params: buildThreadRouteParams(pathThreadRef),
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1", diffTurnId: turnId };
+        return {
+          ...rest,
+          ...(needsDiffThreadOverride
+            ? {
+                diffThreadEnvironmentId: activeThread.environmentId,
+                diffThreadId: activeThread.id,
+              }
+            : {}),
+          diff: "1",
+          diffTurnId: turnId,
+        };
       },
     });
   };
   const selectWholeConversation = () => {
-    if (!activeThread) return;
+    if (!activeThread || !pathThreadRef) {
+      return;
+    }
+    const needsDiffThreadOverride =
+      activeThread.environmentId !== pathThreadRef.environmentId ||
+      activeThread.id !== pathThreadRef.threadId;
     void navigate({
       to: "/$environmentId/$threadId",
-      params: buildThreadRouteParams(scopeThreadRef(activeThread.environmentId, activeThread.id)),
+      params: buildThreadRouteParams(pathThreadRef),
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
-        return { ...rest, diff: "1" };
+        return {
+          ...rest,
+          ...(needsDiffThreadOverride
+            ? {
+                diffThreadEnvironmentId: activeThread.environmentId,
+                diffThreadId: activeThread.id,
+              }
+            : {}),
+          diff: "1",
+        };
       },
     });
   };

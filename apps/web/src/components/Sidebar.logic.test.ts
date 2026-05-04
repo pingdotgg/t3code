@@ -573,7 +573,7 @@ describe("resolveThreadStatusPill", () => {
 });
 
 describe("resolveThreadRowClassName", () => {
-  it("uses the darker selected palette when a thread is both selected and active", () => {
+  it("uses the primary emphasis palette when a thread is both selected and active", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: true });
     expect(className).toContain("bg-primary/22");
     expect(className).toContain("hover:bg-primary/26");
@@ -581,12 +581,13 @@ describe("resolveThreadRowClassName", () => {
     expect(className).not.toContain("bg-accent/85");
   });
 
-  it("uses selected hover colors for selected threads", () => {
+  it("uses the same primary emphasis for selected threads as for active+selected", () => {
     const className = resolveThreadRowClassName({ isActive: false, isSelected: true });
-    expect(className).toContain("bg-primary/15");
-    expect(className).toContain("hover:bg-primary/19");
-    expect(className).toContain("dark:bg-primary/22");
-    expect(className).not.toContain("hover:bg-accent");
+    expect(className).toContain("bg-primary/22");
+    expect(className).toContain("hover:bg-primary/26");
+    expect(className).toContain("dark:bg-primary/30");
+    expect(className).toContain("font-medium");
+    expect(className).not.toContain("bg-primary/15");
   });
 
   it("keeps the accent palette for active-only threads", () => {

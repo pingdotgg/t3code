@@ -151,8 +151,9 @@ const buildCmd = Command.make(
           cwd: serverDir,
           stdout: config.verbose ? "inherit" : "ignore",
           stderr: "inherit",
-          // Windows needs shell mode to resolve `.cmd` shims on PATH.
-          shell: process.platform === "win32",
+          // Avoid shell on Windows: `shell: true` routes through cmd.exe, which splits
+          // unquoted paths such as `C:\Program Files\nodejs\node.exe` at the space.
+          shell: false,
         }),
       );
 

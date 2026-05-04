@@ -94,6 +94,7 @@ import {
   resolveThreadRouteRef,
   resolveThreadRouteTarget,
 } from "../threadRoutes";
+import { writeScopedThreadToDataTransfer } from "../threadSplitDnD";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
@@ -525,6 +526,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     },
     [attemptArchiveThread, threadRef],
   );
+  const handleThreadRowDragStart = useCallback(
+    (event: React.DragEvent) => {
+      if (!event.dataTransfer) {
+        return;
+      }
+      writeScopedThreadToDataTransfer(event.dataTransfer, threadRef);
+    },
+    [threadRef],
+  );
   const rowButtonRender = useMemo(() => <div role="button" tabIndex={0} />, []);
 
   return (
@@ -546,6 +556,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         onClick={handleRowClick}
         onKeyDown={handleRowKeyDown}
         onContextMenu={handleRowContextMenu}
+        draggable={renamingThreadKey !== threadKey && !isConfirmingArchive}
+        onDragStart={handleThreadRowDragStart}
       >
         <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
           {prStatus && (

@@ -124,7 +124,7 @@ import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
-import { buildDraftThreadRouteParams } from "../threadRoutes";
+import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -325,6 +325,9 @@ type ChatViewProps =
       reserveTitleBarControlInset?: boolean;
       routeKind: "server";
       draftId?: never;
+      /** URL path thread when this pane shows a split secondary thread. */
+      pathThreadRefForRoute?: ScopedThreadRef;
+      onCloseSplitView?: () => void;
     }
   | {
       environmentId: EnvironmentId;
@@ -594,12 +597,18 @@ export default function ChatView(props: ChatViewProps) {
     onDiffPanelOpen,
     reserveTitleBarControlInset = true,
   } = props;
+  const pathThreadRefForRoute = routeKind === "server" ? props.pathThreadRefForRoute : undefined;
+  const onCloseSplitView = routeKind === "server" ? props.onCloseSplitView : undefined;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
     [environmentId, threadId],
   );
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
+  const urlPathThreadRef = useMemo(
+    () => pathThreadRefForRoute ?? routeThreadRef,
+    [pathThreadRefForRoute, routeThreadRef],
+  );
   const composerDraftTarget: ScopedThreadRef | DraftId =
     routeKind === "server" ? routeThreadRef : props.draftId;
   const serverThread = useStore(
@@ -1453,6 +1462,27 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  const composerThreadContextLabel = useMemo(() => {
+    if (!activeThread) {
+      return "";
+    }
+    const threadTitle = activeThread.title.trim() || "Untitled thread";
+    if (!activeProject) {
+      return threadTitle;
+    }
+    const named = activeProject.name?.trim();
+    if (named) {
+      return `${named}/${threadTitle}`;
+    }
+    const cwd = activeProject.cwd?.trim();
+    if (!cwd) {
+      return threadTitle;
+    }
+    const normalized = cwd.replace(/[/\\]+$/, "");
+    const sep = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+    const folder = sep === -1 ? normalized : normalized.slice(sep + 1);
+    return folder ? `${folder}/${threadTitle}` : threadTitle;
+  }, [activeProject, activeThread]);
   const activeTerminalLaunchContext =
     terminalLaunchContext?.threadId === activeThreadId
       ? terminalLaunchContext
@@ -1504,19 +1534,31 @@ export default function ChatView(props: ChatViewProps) {
     if (!diffOpen) {
       onDiffPanelOpen?.();
     }
+    const needsDiffThreadOverride =
+      routeThreadRef.environmentId !== urlPathThreadRef.environmentId ||
+      routeThreadRef.threadId !== urlPathThreadRef.threadId;
     void navigate({
       to: "/$environmentId/$threadId",
-      params: {
-        environmentId,
-        threadId,
-      },
+      params: buildThreadRouteParams(urlPathThreadRef),
       replace: true,
       search: (previous) => {
         const rest = stripDiffSearchParams(previous);
-        return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
+        if (diffOpen) {
+          return { ...rest };
+        }
+        return {
+          ...rest,
+          ...(needsDiffThreadOverride
+            ? {
+                diffThreadEnvironmentId: routeThreadRef.environmentId,
+                diffThreadId: routeThreadRef.threadId,
+              }
+            : {}),
+          diff: "1",
+        };
       },
     });
-  }, [diffOpen, environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
+  }, [diffOpen, isServerThread, navigate, onDiffPanelOpen, routeThreadRef, urlPathThreadRef]);
 
   const envLocked = Boolean(
     activeThread &&
@@ -3241,21 +3283,42 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       onDiffPanelOpen?.();
+      const needsDiffThreadOverride =
+        routeThreadRef.environmentId !== urlPathThreadRef.environmentId ||
+        routeThreadRef.threadId !== urlPathThreadRef.threadId;
       void navigate({
         to: "/$environmentId/$threadId",
-        params: {
-          environmentId,
-          threadId,
-        },
+        params: buildThreadRouteParams(urlPathThreadRef),
         search: (previous) => {
           const rest = stripDiffSearchParams(previous);
           return filePath
-            ? { ...rest, diff: "1", diffTurnId: turnId, diffFilePath: filePath }
-            : { ...rest, diff: "1", diffTurnId: turnId };
+            ? {
+                ...rest,
+                ...(needsDiffThreadOverride
+                  ? {
+                      diffThreadEnvironmentId: routeThreadRef.environmentId,
+                      diffThreadId: routeThreadRef.threadId,
+                    }
+                  : {}),
+                diff: "1",
+                diffTurnId: turnId,
+                diffFilePath: filePath,
+              }
+            : {
+                ...rest,
+                ...(needsDiffThreadOverride
+                  ? {
+                      diffThreadEnvironmentId: routeThreadRef.environmentId,
+                      diffThreadId: routeThreadRef.threadId,
+                    }
+                  : {}),
+                diff: "1",
+                diffTurnId: turnId,
+              };
         },
       });
     },
-    [environmentId, isServerThread, navigate, onDiffPanelOpen, threadId],
+    [isServerThread, navigate, onDiffPanelOpen, routeThreadRef, urlPathThreadRef],
   );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
@@ -3317,6 +3380,7 @@ export default function ChatView(props: ChatViewProps) {
           onDeleteProjectScript={deleteProjectScript}
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
+          {...(onCloseSplitView ? { onCloseSplitView } : {})}
         />
       </header>
 
@@ -3329,7 +3393,7 @@ export default function ChatView(props: ChatViewProps) {
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col @container/chat-pane">
           {/* Messages Wrapper */}
           <div className="relative flex min-h-0 flex-1 flex-col">
             {/* Messages — LegendList handles virtualization and scrolling internally */}
@@ -3382,6 +3446,19 @@ export default function ChatView(props: ChatViewProps) {
                 : "pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1rem)]",
             )}
           >
+            {composerThreadContextLabel ? (
+              <div
+                className={cn(
+                  "min-w-0 pb-1.5 text-xs leading-tight @min-[64rem]/chat-pane:hidden",
+                  "[-webkit-app-region:no-drag]",
+                )}
+                title={composerThreadContextLabel}
+              >
+                <span className="block truncate text-foreground/90">
+                  {composerThreadContextLabel}
+                </span>
+              </div>
+            ) : null}
             <ChatComposer
               ref={composerRef}
               composerDraftTarget={composerDraftTarget}

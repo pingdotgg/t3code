@@ -71,4 +71,51 @@ describe("parseDiffRouteSearch", () => {
       diff: "1",
     });
   });
+
+  it("parses split thread params independently of diff", () => {
+    expect(
+      parseDiffRouteSearch({
+        splitEnvironmentId: "env-a",
+        splitThreadId: "thread-b",
+      }),
+    ).toEqual({
+      splitEnvironmentId: "env-a",
+      splitThreadId: "thread-b",
+    });
+  });
+
+  it("ignores split params when only one side is present", () => {
+    expect(
+      parseDiffRouteSearch({
+        splitEnvironmentId: "env-a",
+      }),
+    ).toEqual({});
+
+    expect(
+      parseDiffRouteSearch({
+        splitThreadId: "thread-b",
+      }),
+    ).toEqual({});
+  });
+
+  it("parses diff thread target override only when diff is open", () => {
+    expect(
+      parseDiffRouteSearch({
+        diff: "1",
+        diffThreadEnvironmentId: "env-x",
+        diffThreadId: "thread-y",
+      }),
+    ).toEqual({
+      diff: "1",
+      diffThreadEnvironmentId: "env-x",
+      diffThreadId: "thread-y",
+    });
+
+    expect(
+      parseDiffRouteSearch({
+        diffThreadEnvironmentId: "env-x",
+        diffThreadId: "thread-y",
+      }),
+    ).toEqual({});
+  });
 });

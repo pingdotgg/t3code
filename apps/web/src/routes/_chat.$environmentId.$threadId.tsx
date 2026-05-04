@@ -15,14 +15,21 @@ import {
   type DiffRouteSearch,
   parseDiffRouteSearch,
   stripDiffSearchParams,
+  stripSplitThreadSearchParams,
 } from "../diffRouteSearch";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { selectEnvironmentState, selectThreadExistsByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
+import {
+  ChatThreadSplitDropInset,
+  resolveSplitThreadRefFromSearch,
+  ThreadSplitRow,
+  usePersistedChatSplitRatio,
+} from "../threadSplitView";
 import { RightPanelSheet } from "../components/RightPanelSheet";
-import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
+import { Sidebar, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
@@ -196,7 +203,7 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
-      search: { diff: undefined },
+      search: (previous) => stripDiffSearchParams(previous as Record<string, unknown>),
     });
   }, [navigate, threadRef]);
   const openDiff = useCallback(() => {
@@ -208,11 +215,49 @@ function ChatThreadRouteView() {
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
       search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
+        const rest = stripDiffSearchParams(previous as Record<string, unknown>);
         return { ...rest, diff: "1" };
       },
     });
   }, [markDiffOpened, navigate, threadRef]);
+
+  const splitThreadRef = threadRef ? resolveSplitThreadRefFromSearch(threadRef, search) : null;
+  const splitThreadExists = useStore((store) =>
+    splitThreadRef ? selectThreadExistsByRef(store, splitThreadRef) : true,
+  );
+  const [splitLeftRatio, setSplitLeftRatio] = usePersistedChatSplitRatio();
+  const onSplitRatioDelta = useCallback(
+    (deltaFraction: number) => {
+      setSplitLeftRatio(splitLeftRatio + deltaFraction);
+    },
+    [setSplitLeftRatio, splitLeftRatio],
+  );
+  const closeSplitView = useCallback(() => {
+    if (!threadRef) {
+      return;
+    }
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(threadRef),
+      search: (previous) => stripSplitThreadSearchParams(previous as Record<string, unknown>),
+      replace: true,
+    });
+  }, [navigate, threadRef]);
+
+  useEffect(() => {
+    if (!threadRef || !bootstrapComplete || !splitThreadRef) {
+      return;
+    }
+    if (splitThreadExists) {
+      return;
+    }
+    void navigate({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(threadRef),
+      search: (previous) => stripSplitThreadSearchParams(previous as Record<string, unknown>),
+      replace: true,
+    });
+  }, [bootstrapComplete, navigate, splitThreadExists, splitThreadRef, threadRef]);
 
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {
@@ -237,18 +282,57 @@ function ChatThreadRouteView() {
 
   const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
 
+  const primaryChatView = (options: { reserveTitleBarControlInset: boolean }) => (
+    <ChatView
+      environmentId={threadRef.environmentId}
+      threadId={threadRef.threadId}
+      onDiffPanelOpen={markDiffOpened}
+      reserveTitleBarControlInset={options.reserveTitleBarControlInset}
+      routeKind="server"
+    />
+  );
+
+  const mainColumn = (
+    <ThreadSplitRow
+      leftRatio={splitLeftRatio}
+      onRatioDelta={onSplitRatioDelta}
+      left={
+        <ChatThreadSplitDropInset
+          pathThreadRef={threadRef}
+          splitThreadRef={splitThreadRef}
+          dropRole="primary"
+          navigate={navigate}
+        >
+          {primaryChatView({ reserveTitleBarControlInset: !diffOpen })}
+        </ChatThreadSplitDropInset>
+      }
+      right={
+        splitThreadRef !== null ? (
+          <ChatThreadSplitDropInset
+            pathThreadRef={threadRef}
+            splitThreadRef={splitThreadRef}
+            dropRole="secondary"
+            navigate={navigate}
+          >
+            <ChatView
+              environmentId={splitThreadRef.environmentId}
+              threadId={splitThreadRef.threadId}
+              onDiffPanelOpen={markDiffOpened}
+              reserveTitleBarControlInset={!diffOpen}
+              routeKind="server"
+              pathThreadRefForRoute={threadRef}
+              onCloseSplitView={closeSplitView}
+            />
+          </ChatThreadSplitDropInset>
+        ) : null
+      }
+    />
+  );
+
   if (!shouldUseDiffSheet) {
     return (
       <>
-        <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-          <ChatView
-            environmentId={threadRef.environmentId}
-            threadId={threadRef.threadId}
-            onDiffPanelOpen={markDiffOpened}
-            reserveTitleBarControlInset={!diffOpen}
-            routeKind="server"
-          />
-        </SidebarInset>
+        {mainColumn}
         <DiffPanelInlineSidebar
           diffOpen={diffOpen}
           onCloseDiff={closeDiff}
@@ -261,14 +345,7 @@ function ChatThreadRouteView() {
 
   return (
     <>
-      <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-        <ChatView
-          environmentId={threadRef.environmentId}
-          threadId={threadRef.threadId}
-          onDiffPanelOpen={markDiffOpened}
-          routeKind="server"
-        />
-      </SidebarInset>
+      {mainColumn}
       <RightPanelSheet open={diffOpen} onClose={closeDiff}>
         {shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" /> : null}
       </RightPanelSheet>
@@ -279,7 +356,17 @@ function ChatThreadRouteView() {
 export const Route = createFileRoute("/_chat/$environmentId/$threadId")({
   validateSearch: (search) => parseDiffRouteSearch(search),
   search: {
-    middlewares: [retainSearchParams<DiffRouteSearch>(["diff"])],
+    middlewares: [
+      retainSearchParams<DiffRouteSearch>([
+        "diff",
+        "diffTurnId",
+        "diffFilePath",
+        // Split params are omitted so navigations can clear them (e.g. close split).
+        // Call sites merge `search: (prev) => ({ ...prev, ... })` when split must persist.
+        "diffThreadEnvironmentId",
+        "diffThreadId",
+      ]),
+    ],
   },
   component: ChatThreadRouteView,
 });

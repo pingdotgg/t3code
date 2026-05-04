@@ -22,7 +22,7 @@ describe("waitForHttpReady", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(fetchImpl).toHaveBeenNthCalledWith(
       1,
-      "http://127.0.0.1:3773/",
+      "http://127.0.0.1:3773/.well-known/t3/environment",
       expect.objectContaining({ redirect: "manual" }),
     );
   });
