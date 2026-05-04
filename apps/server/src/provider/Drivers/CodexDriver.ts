@@ -37,7 +37,7 @@ import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
-  getProviderVersionLifecycle,
+  getProviderVersionLifecycleEffect,
 } from "../providerVersionLifecycle.ts";
 import {
   codexContinuationIdentity,
@@ -119,7 +119,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         enabled,
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
-      const versionLifecycle = getProviderVersionLifecycle(DRIVER_KIND, {
+      const versionLifecycle = yield* getProviderVersionLifecycleEffect(DRIVER_KIND, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
       });
@@ -153,9 +153,9 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         initialSnapshot: (settings) => stampIdentity(makePendingCodexProvider(settings)),
         checkProvider,
         enrichSnapshot: ({ snapshot, publishSnapshot }) =>
-          Effect.promise(() =>
-            enrichProviderSnapshotWithVersionAdvisory(snapshot, versionLifecycle),
-          ).pipe(Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot))),
+          enrichProviderSnapshotWithVersionAdvisory(snapshot, versionLifecycle).pipe(
+            Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
+          ),
         refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
       }).pipe(
         Effect.mapError(

@@ -36,7 +36,7 @@ import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
-  getProviderVersionLifecycle,
+  getProviderVersionLifecycleEffect,
 } from "../providerVersionLifecycle.ts";
 import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
 
@@ -86,7 +86,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         instanceId,
       });
       const effectiveConfig = { ...config, enabled } satisfies ClaudeSettings;
-      const versionLifecycle = getProviderVersionLifecycle(DRIVER_KIND, {
+      const versionLifecycle = yield* getProviderVersionLifecycleEffect(DRIVER_KIND, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
       });
@@ -136,9 +136,9 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         initialSnapshot: (settings) => stampIdentity(makePendingClaudeProvider(settings)),
         checkProvider,
         enrichSnapshot: ({ snapshot, publishSnapshot }) =>
-          Effect.promise(() =>
-            enrichProviderSnapshotWithVersionAdvisory(snapshot, versionLifecycle),
-          ).pipe(Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot))),
+          enrichProviderSnapshotWithVersionAdvisory(snapshot, versionLifecycle).pipe(
+            Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
+          ),
         refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
       }).pipe(
         Effect.mapError(

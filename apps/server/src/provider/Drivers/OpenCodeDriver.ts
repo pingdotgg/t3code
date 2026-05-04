@@ -36,7 +36,7 @@ import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
-  getProviderVersionLifecycle,
+  getProviderVersionLifecycleEffect,
 } from "../providerVersionLifecycle.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("opencode");
@@ -91,7 +91,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
-      const versionLifecycle = getProviderVersionLifecycle(DRIVER_KIND, {
+      const versionLifecycle = yield* getProviderVersionLifecycleEffect(DRIVER_KIND, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
       });
@@ -117,9 +117,9 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         initialSnapshot: (settings) => stampIdentity(makePendingOpenCodeProvider(settings)),
         checkProvider,
         enrichSnapshot: ({ snapshot, publishSnapshot }) =>
-          Effect.promise(() =>
-            enrichProviderSnapshotWithVersionAdvisory(snapshot, versionLifecycle),
-          ).pipe(Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot))),
+          enrichProviderSnapshotWithVersionAdvisory(snapshot, versionLifecycle).pipe(
+            Effect.flatMap((enrichedSnapshot) => publishSnapshot(enrichedSnapshot)),
+          ),
         refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
       }).pipe(
         Effect.mapError(

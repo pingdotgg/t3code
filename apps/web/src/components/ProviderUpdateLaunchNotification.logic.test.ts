@@ -178,7 +178,7 @@ describe("provider update launch notification logic", () => {
     expect(canOneClickUpdateProviderCandidate(candidate, [candidate])).toBe(false);
   });
 
-  it("builds a notification key from the update advisory fields", () => {
+  it("builds a notification key from provider latest versions", () => {
     const codex = updateCandidate({
       driver: driver("codex"),
       version: "1.0.0",
@@ -190,10 +190,31 @@ describe("provider update launch notification logic", () => {
       latestVersion: "0.3.0",
     });
 
-    expect(providerUpdateNotificationKey([codex, cursor])).toBe(
-      "codex:behind_latest:1.0.0:1.1.0:Update available.|cursor:behind_latest:0.2.0:0.3.0:Update available.",
-    );
+    expect(providerUpdateNotificationKey([codex, cursor])).toBe("codex:1.1.0|cursor:0.3.0");
     expect(providerUpdateNotificationKey([])).toBeNull();
+  });
+
+  it("keeps the same notification key while the published update version is unchanged", () => {
+    const first = updateCandidate({
+      driver: driver("codex"),
+      version: "1.0.0",
+      latestVersion: "1.2.0",
+    });
+    const second = updateCandidate({
+      driver: driver("codex"),
+      version: "1.1.0",
+      latestVersion: "1.2.0",
+    });
+    const nextPublishedVersion = updateCandidate({
+      driver: driver("codex"),
+      version: "1.1.0",
+      latestVersion: "1.3.0",
+    });
+
+    expect(providerUpdateNotificationKey([first])).toBe(providerUpdateNotificationKey([second]));
+    expect(providerUpdateNotificationKey([nextPublishedVersion])).not.toBe(
+      providerUpdateNotificationKey([first]),
+    );
   });
 
   it("describes a single one-click update", () => {

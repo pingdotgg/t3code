@@ -1223,9 +1223,7 @@ export const enrichCursorSnapshot = (input: {
   const { settings, snapshot, publishSnapshot } = input;
   const stampIdentity = input.stampIdentity ?? ((value) => value);
 
-  const enrichVersionAdvisory = Effect.promise(() =>
-    enrichProviderSnapshotWithVersionAdvisory(snapshot),
-  ).pipe(
+  const enrichVersionAdvisory = enrichProviderSnapshotWithVersionAdvisory(snapshot).pipe(
     Effect.flatMap((enrichedSnapshot) =>
       publishSnapshot(stampIdentity(enrichedSnapshot)).pipe(Effect.as(enrichedSnapshot)),
     ),

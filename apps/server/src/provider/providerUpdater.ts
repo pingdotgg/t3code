@@ -16,7 +16,16 @@ import type { ProviderVersionLifecycle } from "./providerVersionLifecycle.ts";
 
 const UPDATE_TIMEOUT_MS = 5 * 60_000;
 const UPDATE_OUTPUT_MAX_BYTES = 10_000;
-const SHARED_UPDATE_LOCK_KEYS = ["npm-global", "bun-global", "cursor-agent"] as const;
+const SHARED_UPDATE_LOCK_KEYS = [
+  "npm-global",
+  "bun-global",
+  "pnpm-global",
+  "vite-plus-global",
+  "homebrew",
+  "claude-native",
+  "opencode-native",
+  "cursor-agent",
+] as const;
 
 export type ProviderUpdateRunner = (
   command: string,
@@ -155,9 +164,7 @@ export const makeProviderUpdater = Effect.fn("makeProviderUpdater")(function* (i
         return Effect.forEach(
           refreshedProviders,
           (refreshedProvider) =>
-            Effect.promise<ServerProvider>(() =>
-              enrichProviderSnapshotWithVersionAdvisory(refreshedProvider, versionLifecycle),
-            ),
+            enrichProviderSnapshotWithVersionAdvisory(refreshedProvider, versionLifecycle),
           {
             concurrency: "unbounded",
           },

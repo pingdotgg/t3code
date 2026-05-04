@@ -4,6 +4,8 @@ import {
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
 import { resolveCommandPath } from "@t3tools/shared/shell";
+import { Effect, FileSystem, Option, Schema } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import { compareCliVersions } from "./cliVersion.ts";
 
@@ -31,21 +33,38 @@ interface ProviderVersionLifecycleResolutionOptions {
   readonly binaryPath?: string | null;
   readonly env?: NodeJS.ProcessEnv;
   readonly platform?: NodeJS.Platform;
+  readonly realCommandPath?: string | null;
 }
 
 interface PackageManagedProviderVersionLifecycleDefinition {
   readonly provider: ProviderDriverKind;
-  readonly packageName: string;
+  readonly npmPackageName: string;
+  readonly homebrewFormula: string | null;
+  readonly nativeUpdate: {
+    readonly executable: string;
+    readonly args: ReadonlyArray<string>;
+    readonly lockKey: string;
+    readonly isCommandPath: (commandPath: string) => boolean;
+  } | null;
 }
 
 const PROVIDER_VERSION_LIFECYCLES = {
   codex: {
     provider: CODEX_DRIVER,
-    packageName: "@openai/codex",
+    npmPackageName: "@openai/codex",
+    homebrewFormula: "codex",
+    nativeUpdate: null,
   },
   claudeAgent: {
     provider: CLAUDE_AGENT_DRIVER,
-    packageName: "@anthropic-ai/claude-code",
+    npmPackageName: "@anthropic-ai/claude-code",
+    homebrewFormula: "claude-code",
+    nativeUpdate: {
+      executable: "claude",
+      args: ["update"],
+      lockKey: "claude-native",
+      isCommandPath: isClaudeNativeCommandPath,
+    },
   },
   cursor: {
     provider: CURSOR_DRIVER,
@@ -57,7 +76,14 @@ const PROVIDER_VERSION_LIFECYCLES = {
   },
   opencode: {
     provider: OPENCODE_DRIVER,
-    packageName: "opencode-ai",
+    npmPackageName: "opencode-ai",
+    homebrewFormula: "anomalyco/tap/opencode",
+    nativeUpdate: {
+      executable: "opencode",
+      args: ["upgrade"],
+      lockKey: "opencode-native",
+      isCommandPath: isOpenCodeNativeCommandPath,
+    },
   },
 } as const satisfies Record<
   Exclude<VersionLifecycleProvider, "cursor">,
@@ -72,6 +98,9 @@ interface LatestVersionCacheEntry {
 }
 
 const latestVersionCache = new Map<string, LatestVersionCacheEntry>();
+const NpmLatestVersionResponse = Schema.Struct({
+  version: Schema.optional(Schema.String),
+});
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -119,9 +148,9 @@ function makeNpmGlobalProviderVersionLifecycle(
 ): ProviderVersionLifecycle {
   return makeProviderVersionLifecycle({
     provider: definition.provider,
-    packageName: definition.packageName,
+    packageName: definition.npmPackageName,
     updateExecutable: "npm",
-    updateArgs: ["install", "-g", `${definition.packageName}@latest`],
+    updateArgs: ["install", "-g", `${definition.npmPackageName}@latest`],
     updateLockKey: "npm-global",
   });
 }
@@ -131,10 +160,69 @@ function makeBunGlobalProviderVersionLifecycle(
 ): ProviderVersionLifecycle {
   return makeProviderVersionLifecycle({
     provider: definition.provider,
-    packageName: definition.packageName,
+    packageName: definition.npmPackageName,
     updateExecutable: "bun",
-    updateArgs: ["add", "-g", `${definition.packageName}@latest`],
+    updateArgs: ["i", "-g", `${definition.npmPackageName}@latest`],
     updateLockKey: "bun-global",
+  });
+}
+
+function makePnpmGlobalProviderVersionLifecycle(
+  definition: PackageManagedProviderVersionLifecycleDefinition,
+): ProviderVersionLifecycle {
+  return makeProviderVersionLifecycle({
+    provider: definition.provider,
+    packageName: definition.npmPackageName,
+    updateExecutable: "pnpm",
+    updateArgs: ["add", "-g", `${definition.npmPackageName}@latest`],
+    updateLockKey: "pnpm-global",
+  });
+}
+
+function makeVitePlusGlobalProviderVersionLifecycle(
+  definition: PackageManagedProviderVersionLifecycleDefinition,
+): ProviderVersionLifecycle {
+  return makeProviderVersionLifecycle({
+    provider: definition.provider,
+    packageName: definition.npmPackageName,
+    updateExecutable: "vp",
+    updateArgs: ["i", "-g", definition.npmPackageName],
+    updateLockKey: "vite-plus-global",
+  });
+}
+
+function makeHomebrewProviderVersionLifecycle(
+  definition: PackageManagedProviderVersionLifecycleDefinition,
+): ProviderVersionLifecycle {
+  if (!definition.homebrewFormula) {
+    return makeManualOnlyProviderVersionLifecycle({
+      provider: definition.provider,
+      packageName: definition.npmPackageName,
+    });
+  }
+
+  return makeProviderVersionLifecycle({
+    provider: definition.provider,
+    packageName: definition.npmPackageName,
+    updateExecutable: "brew",
+    updateArgs: ["upgrade", definition.homebrewFormula],
+    updateLockKey: "homebrew",
+  });
+}
+
+function makeNativeProviderVersionLifecycle(
+  definition: PackageManagedProviderVersionLifecycleDefinition,
+): ProviderVersionLifecycle | null {
+  if (!definition.nativeUpdate) {
+    return null;
+  }
+
+  return makeProviderVersionLifecycle({
+    provider: definition.provider,
+    packageName: definition.npmPackageName,
+    updateExecutable: definition.nativeUpdate.executable,
+    updateArgs: definition.nativeUpdate.args,
+    updateLockKey: definition.nativeUpdate.lockKey,
   });
 }
 
@@ -142,8 +230,67 @@ function hasPathSeparator(value: string): boolean {
   return value.includes("/") || value.includes("\\");
 }
 
+function normalizeCommandPath(commandPath: string): string {
+  return commandPath.replaceAll("\\", "/").toLowerCase();
+}
+
 function isBunGlobalCommandPath(commandPath: string): boolean {
-  return commandPath.replaceAll("\\", "/").toLowerCase().includes("/.bun/bin/");
+  return normalizeCommandPath(commandPath).includes("/.bun/bin/");
+}
+
+function isVitePlusGlobalCommandPath(commandPath: string): boolean {
+  return normalizeCommandPath(commandPath).includes("/.vite-plus/bin/");
+}
+
+function isPnpmGlobalCommandPath(commandPath: string): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  return (
+    normalized.includes("/.local/share/pnpm/") ||
+    normalized.includes("/library/pnpm/") ||
+    normalized.includes("/local/share/pnpm/") ||
+    normalized.includes("/appdata/local/pnpm/") ||
+    normalized.includes("/pnpm/global/")
+  );
+}
+
+function isNpmGlobalCommandPath(commandPath: string): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  return (
+    normalized.includes("/node_modules/.bin/") ||
+    normalized.includes("/lib/node_modules/") ||
+    normalized.includes("/npm/node_modules/")
+  );
+}
+
+function isHomebrewCommandPath(commandPath: string): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  return (
+    normalized.includes("/opt/homebrew/cellar/") ||
+    normalized.includes("/usr/local/cellar/") ||
+    normalized.includes("/homebrew/cellar/") ||
+    normalized.includes("/opt/homebrew/caskroom/") ||
+    normalized.includes("/usr/local/caskroom/") ||
+    normalized.includes("/homebrew/caskroom/") ||
+    normalized.startsWith("/opt/homebrew/bin/") ||
+    normalized.startsWith("/usr/local/bin/")
+  );
+}
+
+function isClaudeNativeCommandPath(commandPath: string): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  return (
+    normalized.endsWith("/.local/bin/claude") ||
+    normalized.endsWith("/.local/bin/claude.exe") ||
+    normalized.includes("/.local/share/claude/")
+  );
+}
+
+function isOpenCodeNativeCommandPath(commandPath: string): boolean {
+  const normalized = normalizeCommandPath(commandPath);
+  return (
+    normalized.endsWith("/.opencode/bin/opencode") ||
+    normalized.endsWith("/.opencode/bin/opencode.exe")
+  );
 }
 
 function resolvePackageManagedProviderVersionLifecycle(
@@ -160,15 +307,48 @@ function resolvePackageManagedProviderVersionLifecycle(
       ...(options?.platform ? { platform: options.platform } : {}),
       ...(options?.env ? { env: options.env } : {}),
     }) ?? (hasPathSeparator(binaryPath) ? binaryPath : null);
-  if (resolvedCommandPath && isBunGlobalCommandPath(resolvedCommandPath)) {
-    return makeBunGlobalProviderVersionLifecycle(definition);
+
+  if (resolvedCommandPath) {
+    const commandPaths = [
+      resolvedCommandPath,
+      ...(options?.realCommandPath ? [options.realCommandPath] : []),
+    ];
+
+    const nativeUpdate = definition.nativeUpdate;
+    if (
+      nativeUpdate &&
+      commandPaths.some((commandPath) => nativeUpdate.isCommandPath(commandPath))
+    ) {
+      return (
+        makeNativeProviderVersionLifecycle(definition) ??
+        makeNpmGlobalProviderVersionLifecycle(definition)
+      );
+    }
+    if (commandPaths.some(isVitePlusGlobalCommandPath)) {
+      return makeVitePlusGlobalProviderVersionLifecycle(definition);
+    }
+    if (commandPaths.some(isBunGlobalCommandPath)) {
+      return makeBunGlobalProviderVersionLifecycle(definition);
+    }
+    if (commandPaths.some(isPnpmGlobalCommandPath)) {
+      return makePnpmGlobalProviderVersionLifecycle(definition);
+    }
+    if (commandPaths.some(isNpmGlobalCommandPath)) {
+      return makeNpmGlobalProviderVersionLifecycle(definition);
+    }
+    if (commandPaths.some(isHomebrewCommandPath)) {
+      return makeHomebrewProviderVersionLifecycle(definition);
+    }
   }
 
   if (!hasPathSeparator(binaryPath)) {
     return makeNpmGlobalProviderVersionLifecycle(definition);
   }
 
-  return makeManualOnlyProviderVersionLifecycle(definition);
+  return makeManualOnlyProviderVersionLifecycle({
+    provider: definition.provider,
+    packageName: definition.npmPackageName,
+  });
 }
 
 export function haveProviderVersionLifecyclesEqual(
@@ -212,6 +392,36 @@ export function getProviderVersionLifecycle(
   return makeManualOnlyProviderVersionLifecycle({
     provider,
     packageName: null,
+  });
+}
+
+export function getProviderVersionLifecycleEffect(
+  provider: ProviderDriverKind,
+  options?: Omit<ProviderVersionLifecycleResolutionOptions, "realCommandPath">,
+): Effect.Effect<ProviderVersionLifecycle, never, FileSystem.FileSystem> {
+  const binaryPath = nonEmptyString(options?.binaryPath);
+  if (!binaryPath) {
+    return Effect.succeed(getProviderVersionLifecycle(provider, options));
+  }
+
+  const resolvedCommandPath =
+    resolveCommandPath(binaryPath, {
+      ...(options?.platform ? { platform: options.platform } : {}),
+      ...(options?.env ? { env: options.env } : {}),
+    }) ?? (hasPathSeparator(binaryPath) ? binaryPath : null);
+  if (!resolvedCommandPath) {
+    return Effect.succeed(getProviderVersionLifecycle(provider, options));
+  }
+
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const realCommandPath = yield* fileSystem
+      .realPath(resolvedCommandPath)
+      .pipe(Effect.catch(() => Effect.succeed(resolvedCommandPath)));
+    return getProviderVersionLifecycle(provider, {
+      ...options,
+      realCommandPath,
+    });
   });
 }
 
@@ -259,77 +469,90 @@ export function createProviderVersionAdvisory(input: {
   };
 }
 
-async function fetchNpmLatestVersion(packageName: string): Promise<string | null> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), LATEST_VERSION_TIMEOUT_MS);
-  try {
-    const response = await fetch(
-      `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
-      {
-        signal: controller.signal,
-        headers: { accept: "application/json" },
-      },
-    );
-    if (!response.ok) {
+function fetchNpmLatestVersion(packageName: string): Effect.Effect<string | null> {
+  return Effect.gen(function* () {
+    const clientOption = yield* Effect.serviceOption(HttpClient.HttpClient);
+    if (Option.isNone(clientOption)) {
       return null;
     }
-    const payload = (await response.json()) as { version?: unknown };
-    return nonEmptyString(payload.version);
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
+    const client = clientOption.value;
+    const request = HttpClientRequest.get(
+      `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
+    ).pipe(HttpClientRequest.setHeader("accept", "application/json"));
+    const response = yield* client.execute(request).pipe(
+      Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
+      Effect.catch(() => Effect.succeed(Option.none())),
+    );
+    if (Option.isNone(response)) {
+      return null;
+    }
+    const httpResponse = response.value;
+    if (httpResponse.status < 200 || httpResponse.status >= 300) {
+      return null;
+    }
+    const payload = yield* httpResponse.json.pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(NpmLatestVersionResponse)),
+      Effect.catch(() => Effect.succeed(null)),
+    );
+    return payload ? nonEmptyString(payload.version) : null;
+  });
 }
 
-export async function resolveLatestProviderVersion(
+export function resolveLatestProviderVersion(
   provider: ProviderDriverKind,
-): Promise<string | null> {
+): Effect.Effect<string | null> {
   const lifecycle = getProviderVersionLifecycle(provider);
-  if (!lifecycle.packageName) {
-    return null;
+  const packageName = lifecycle.packageName;
+  if (!packageName) {
+    return Effect.succeed(null);
   }
 
-  const cached = latestVersionCache.get(lifecycle.packageName);
+  const cached = latestVersionCache.get(packageName);
   const now = Date.now();
   if (cached && cached.expiresAt > now) {
-    return cached.version;
+    return Effect.succeed(cached.version);
   }
 
-  const version = await fetchNpmLatestVersion(lifecycle.packageName);
-  latestVersionCache.set(lifecycle.packageName, {
-    expiresAt: now + LATEST_VERSION_CACHE_TTL_MS,
-    version,
-  });
-  return version;
+  return fetchNpmLatestVersion(packageName).pipe(
+    Effect.tap((version) =>
+      Effect.sync(() => {
+        latestVersionCache.set(packageName, {
+          expiresAt: now + LATEST_VERSION_CACHE_TTL_MS,
+          version,
+        });
+      }),
+    ),
+  );
 }
 
-export async function enrichProviderSnapshotWithVersionAdvisory(
+export function enrichProviderSnapshotWithVersionAdvisory(
   snapshot: ServerProvider,
   versionLifecycle?: ProviderVersionLifecycle,
-): Promise<ServerProvider> {
-  const lifecycle = versionLifecycle ?? getProviderVersionLifecycle(snapshot.driver);
-  if (!snapshot.enabled || !snapshot.installed || !snapshot.version) {
+): Effect.Effect<ServerProvider> {
+  return Effect.gen(function* () {
+    const lifecycle = versionLifecycle ?? getProviderVersionLifecycle(snapshot.driver);
+    if (!snapshot.enabled || !snapshot.installed || !snapshot.version) {
+      return {
+        ...snapshot,
+        versionAdvisory: createProviderVersionAdvisory({
+          driver: snapshot.driver,
+          currentVersion: snapshot.version,
+          checkedAt: snapshot.checkedAt,
+          versionLifecycle: lifecycle,
+        }),
+      };
+    }
+
+    const latestVersion = yield* resolveLatestProviderVersion(snapshot.driver);
     return {
       ...snapshot,
       versionAdvisory: createProviderVersionAdvisory({
         driver: snapshot.driver,
         currentVersion: snapshot.version,
-        checkedAt: snapshot.checkedAt,
+        latestVersion,
+        checkedAt: new Date().toISOString(),
         versionLifecycle: lifecycle,
       }),
     };
-  }
-
-  const latestVersion = await resolveLatestProviderVersion(snapshot.driver);
-  return {
-    ...snapshot,
-    versionAdvisory: createProviderVersionAdvisory({
-      driver: snapshot.driver,
-      currentVersion: snapshot.version,
-      latestVersion,
-      checkedAt: new Date().toISOString(),
-      versionLifecycle: lifecycle,
-    }),
-  };
+  });
 }

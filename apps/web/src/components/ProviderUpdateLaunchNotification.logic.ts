@@ -161,16 +161,12 @@ export function canOneClickUpdateProviderCandidate(
 export function providerUpdateNotificationKey(
   providers: ReadonlyArray<ProviderUpdateCandidate>,
 ): string | null {
-  const parts = dedupeProvidersByDriver(providers).map((provider) => {
-    const advisory = provider.versionAdvisory;
-    return [
-      provider.driver,
-      advisory.status,
-      advisory.currentVersion,
-      advisory.latestVersion,
-      advisory.message,
-    ].join(":");
-  });
+  const parts = dedupeProvidersByDriver(providers)
+    .map((provider) => {
+      const advisory = provider.versionAdvisory;
+      return [provider.driver, advisory.latestVersion].join(":");
+    })
+    .toSorted();
 
   return parts.length > 0 ? parts.join("|") : null;
 }

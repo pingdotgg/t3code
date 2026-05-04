@@ -6,7 +6,8 @@ import {
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import { ServerProviderUpdateError } from "@t3tools/contracts";
-import { Cause, Effect, Exit, Fiber, Ref, Schema, Stream } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, Ref, Schema, Stream } from "effect";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import type { ProcessRunResult } from "../processRunner.ts";
 import type { ProviderRegistryShape } from "./Services/ProviderRegistry.ts";
@@ -65,6 +66,19 @@ const failedResult = (stderr: string): ProcessRunResult => ({
   stdoutTruncated: false,
   stderrTruncated: false,
 });
+
+const latestVersionHttpClient = (version: string) =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({ version }, { headers: { "content-type": "application/json" } }),
+        ),
+      ),
+    ),
+  );
 
 function makeRegistry(
   initialProviders: ServerProvider | ReadonlyArray<ServerProvider> = baseProvider,
@@ -153,7 +167,7 @@ describe("providerUpdater", () => {
           status: "behind_latest",
           currentVersion: "2.0.14",
           latestVersion: "2.1.123",
-          updateCommand: "bun add -g @anthropic-ai/claude-code@latest",
+          updateCommand: "bun i -g @anthropic-ai/claude-code@latest",
           canUpdate: true,
           checkedAt: "2026-04-30T12:00:00.000Z",
           message: "Update available.",
@@ -167,9 +181,9 @@ describe("providerUpdater", () => {
             Effect.succeed({
               provider: CODEX_DRIVER,
               packageName: "@openai/codex",
-              updateCommand: "bun add -g @openai/codex@latest",
+              updateCommand: "bun i -g @openai/codex@latest",
               updateExecutable: "bun",
-              updateArgs: ["add", "-g", "@openai/codex@latest"],
+              updateArgs: ["i", "-g", "@openai/codex@latest"],
               updateLockKey: "bun-global",
             }),
         },
@@ -183,7 +197,7 @@ describe("providerUpdater", () => {
       assert.deepStrictEqual(calls, [
         {
           command: "bun",
-          args: ["add", "-g", "@openai/codex@latest"],
+          args: ["i", "-g", "@openai/codex@latest"],
         },
       ]);
     }),
@@ -210,32 +224,21 @@ describe("providerUpdater", () => {
     "marks successful commands as unchanged when the refreshed provider is still outdated",
     () =>
       Effect.gen(function* () {
-        const originalFetch = globalThis.fetch;
-        globalThis.fetch = (async () =>
-          new Response(JSON.stringify({ version: "9.9.9" }), {
-            headers: { "content-type": "application/json" },
-            status: 200,
-          })) as unknown as typeof fetch;
+        const { registry } = yield* makeRegistry({
+          ...baseProvider,
+          installed: true,
+          version: "0.1.0",
+        });
+        const updater = yield* makeProviderUpdater({
+          providerRegistry: registry,
+          runUpdate: async () => okResult(),
+        });
 
-        try {
-          const { registry } = yield* makeRegistry({
-            ...baseProvider,
-            installed: true,
-            version: "0.1.0",
-          });
-          const updater = yield* makeProviderUpdater({
-            providerRegistry: registry,
-            runUpdate: async () => okResult(),
-          });
+        const result = yield* updater.updateProvider(CODEX_DRIVER);
 
-          const result = yield* updater.updateProvider(CODEX_DRIVER);
-
-          assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
-          assert.include(result.providers[0]?.updateState?.message ?? "", "still detects");
-        } finally {
-          globalThis.fetch = originalFetch;
-        }
-      }),
+        assert.strictEqual(result.providers[0]?.updateState?.status, "unchanged");
+        assert.include(result.providers[0]?.updateState?.message ?? "", "still detects");
+      }).pipe(Effect.provide(latestVersionHttpClient("9.9.9"))),
   );
 
   it.effect("prevents concurrent updates for the same provider", () =>

@@ -103,7 +103,7 @@ export function ProviderUpdateLaunchNotification() {
   const navigate = useNavigate();
   const providers = useServerProviders();
   const activeToastRef = useRef<ActiveProviderUpdateToast | null>(null);
-  const { clientSettingsHydrated, dismissedNotificationKeys, dismissNotificationKey } =
+  const { dismissedNotificationKeys, dismissNotificationKey } =
     useDismissedProviderUpdateNotificationKeys();
 
   const updateProviders = useMemo(() => collectProviderUpdateCandidates(providers), [providers]);
@@ -165,7 +165,6 @@ export function ProviderUpdateLaunchNotification() {
     }
 
     if (
-      !clientSettingsHydrated ||
       !notificationKey ||
       dismissedNotificationKeys.has(notificationKey) ||
       seenProviderUpdateNotificationKeys.has(notificationKey) ||
@@ -286,7 +285,6 @@ export function ProviderUpdateLaunchNotification() {
     );
     activeToastRef.current = { kind: "prompt", key: notificationKey, toastId };
   }, [
-    clientSettingsHydrated,
     dismissNotificationKey,
     dismissedNotificationKeys,
     notificationKey,
