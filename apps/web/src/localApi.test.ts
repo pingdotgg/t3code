@@ -584,6 +584,8 @@ describe("wsApi", () => {
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,
       timestampFormat: "24-hour" as const,
+      theme: "system" as const,
+      customCSS: "",
     };
     const getClientSettings = vi.fn().mockResolvedValue({
       ...clientSettings,
@@ -645,6 +647,8 @@ describe("wsApi", () => {
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,
       timestampFormat: "24-hour" as const,
+      theme: "system" as const,
+      customCSS: "",
     };
 
     await api.persistence.setClientSettings(clientSettings);

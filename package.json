@@ -57,6 +57,9 @@
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },
+  "dependencies": {
+    "@t3tools/monorepo": "."
+  },
   "devDependencies": {
     "@types/node": "catalog:",
     "oxfmt": "^0.40.0",

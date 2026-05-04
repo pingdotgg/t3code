@@ -1,4 +1,11 @@
-import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArchiveX,
+  CheckIcon,
+  LoaderIcon,
+  PlusIcon,
+  RefreshCwIcon,
+} from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
@@ -10,7 +17,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { DEFAULT_UNIFIED_SETTINGS, type ThemeMode } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
@@ -25,7 +32,7 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
-import { useTheme } from "../../hooks/useTheme";
+import { useTheme, THEMES } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import {
@@ -74,20 +81,178 @@ import {
   useServerProviders,
 } from "../../rpc/serverState";
 
-const THEME_OPTIONS = [
-  {
-    value: "system",
-    label: "System",
-  },
-  {
-    value: "light",
-    label: "Light",
-  },
-  {
-    value: "dark",
-    label: "Dark",
-  },
+const BUILT_IN_THEME_OPTIONS = [
+  { value: "system", label: "System" },
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  ...Object.entries(THEMES).map(([value, definition]) => ({
+    value: value as Exclude<ThemeMode, "system" | "light" | "dark" | "custom">,
+    label: definition.label,
+  })),
 ] as const;
+
+function themePreviewTokens(value: ThemeMode) {
+  if (value === "system" || value === "light") {
+    return {
+      background: "0 0% 100%",
+      foreground: "220 18% 16%",
+      card: "0 0% 100%",
+      primary: "262 83% 58%",
+      secondary: "220 14% 96%",
+      accent: "220 14% 92%",
+      border: "220 13% 88%",
+    };
+  }
+
+  if (value === "dark") {
+    return {
+      background: "220 18% 10%",
+      foreground: "220 20% 92%",
+      card: "220 18% 12%",
+      primary: "262 83% 68%",
+      secondary: "220 18% 16%",
+      accent: "220 18% 22%",
+      border: "220 18% 20%",
+    };
+  }
+
+  const customTheme = THEMES[value as keyof typeof THEMES];
+  return {
+    background: customTheme?.colors.bg ?? "0 0% 10%",
+    foreground: customTheme?.colors.fg ?? "0 0% 90%",
+    card: customTheme?.colors.card ?? "0 0% 14%",
+    primary: customTheme?.colors.primary ?? "0 0% 90%",
+    secondary: customTheme?.colors.secondary ?? "0 0% 18%",
+    accent: customTheme?.colors.accent ?? "0 0% 24%",
+    border: customTheme?.colors.secondary ?? "0 0% 18%",
+  };
+}
+
+function ThemePreview({ themeMode, selected }: { themeMode: ThemeMode; selected: boolean }) {
+  const tokens = themePreviewTokens(themeMode);
+  const sidebarBackground =
+    themeMode === "light" || themeMode === "system"
+      ? "0 0% 98%"
+      : `color-mix(in srgb, hsl(${tokens.background}) 82%, black)`;
+
+  return (
+    <div
+      className="relative h-28 overflow-hidden rounded-xl border shadow-sm"
+      style={
+        {
+          backgroundColor: `hsl(${tokens.background})`,
+          borderColor: `hsl(${tokens.border})`,
+          color: `hsl(${tokens.foreground})`,
+        } as React.CSSProperties
+      }
+    >
+      <div className="absolute inset-0 opacity-[0.06] [background-image:radial-gradient(circle_at_top_right,currentColor_0,transparent_42%)]" />
+      <div className="grid h-full grid-cols-[30%_1fr]">
+        <div
+          className="border-r p-2"
+          style={{
+            backgroundColor:
+              themeMode === "light" || themeMode === "system"
+                ? `hsl(${sidebarBackground})`
+                : sidebarBackground,
+            borderColor: `hsl(${tokens.border})`,
+          }}
+        >
+          <div className="mb-2 flex items-center gap-1.5">
+            <div
+              className="size-2 rounded-full"
+              style={{ backgroundColor: `hsl(${tokens.primary})` }}
+            />
+            <div
+              className="h-1.5 w-8 rounded-full opacity-85"
+              style={{ backgroundColor: `hsl(${tokens.foreground})` }}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <div
+              className="h-4 rounded-md"
+              style={{ backgroundColor: `hsl(${tokens.secondary})` }}
+            />
+            <div
+              className="h-4 rounded-md"
+              style={{ backgroundColor: `hsl(${tokens.accent})`, opacity: 0.8 }}
+            />
+            <div
+              className="h-4 w-3/4 rounded-md opacity-70"
+              style={{ backgroundColor: `hsl(${tokens.secondary})` }}
+            />
+          </div>
+        </div>
+        <div className="p-2">
+          <div
+            className="mb-2 flex items-center justify-between rounded-md border px-2 py-1"
+            style={{
+              backgroundColor: `hsl(${tokens.card})`,
+              borderColor: `hsl(${tokens.border})`,
+            }}
+          >
+            <div
+              className="h-1.5 w-10 rounded-full opacity-70"
+              style={{ backgroundColor: `hsl(${tokens.foreground})` }}
+            />
+            <div
+              className="h-4 w-4 rounded-md"
+              style={{ backgroundColor: `hsl(${tokens.secondary})` }}
+            />
+          </div>
+          <div className="space-y-2">
+            <div
+              className="ml-auto w-3/4 rounded-lg px-2 py-1.5"
+              style={{
+                backgroundColor: `hsl(${tokens.primary})`,
+                color: `hsl(${tokens.background})`,
+              }}
+            >
+              <div className="h-1.5 w-full rounded-full bg-current opacity-35" />
+            </div>
+            <div
+              className="w-4/5 rounded-lg border px-2 py-1.5"
+              style={{
+                backgroundColor: `hsl(${tokens.card})`,
+                borderColor: `hsl(${tokens.border})`,
+              }}
+            >
+              <div
+                className="mb-1 h-1.5 w-5/6 rounded-full opacity-75"
+                style={{ backgroundColor: `hsl(${tokens.foreground})` }}
+              />
+              <div
+                className="h-1.5 w-2/3 rounded-full opacity-40"
+                style={{ backgroundColor: `hsl(${tokens.foreground})` }}
+              />
+            </div>
+          </div>
+          <div
+            className="absolute bottom-2 right-2 left-[calc(30%+0.5rem)] flex items-center gap-1 rounded-md border px-2 py-1"
+            style={{
+              backgroundColor: `hsl(${tokens.card})`,
+              borderColor: `hsl(${tokens.border})`,
+            }}
+          >
+            <div
+              className="h-1.5 flex-1 rounded-full opacity-40"
+              style={{ backgroundColor: `hsl(${tokens.foreground})` }}
+            />
+            <div
+              className="h-5 w-6 rounded-md"
+              style={{ backgroundColor: `hsl(${tokens.primary})` }}
+            />
+          </div>
+        </div>
+      </div>
+      {selected ? (
+        <div className="absolute top-2 right-2 flex size-5 items-center justify-center rounded-full border border-white/35 bg-primary text-primary-foreground shadow-sm">
+          <CheckIcon className="size-3" />
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -448,7 +613,6 @@ export function useSettingsRestore(onRestored?: () => void) {
 }
 
 export function GeneralSettingsPanel() {
-  const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const [openingPathByTarget, setOpeningPathByTarget] = useState({
@@ -794,39 +958,6 @@ export function GeneralSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection title="General">
-        <SettingsRow
-          title="Theme"
-          description="Choose how T3 Code looks across the app."
-          resetAction={
-            theme !== "system" ? (
-              <SettingResetButton label="theme" onClick={() => setTheme("system")} />
-            ) : null
-          }
-          control={
-            <Select
-              value={theme}
-              onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark") {
-                  setTheme(value);
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
-                <SelectValue>
-                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {THEME_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
-          }
-        />
-
         <SettingsRow
           title="Time format"
           description="System default follows your browser or OS clock preference."
@@ -1489,6 +1620,81 @@ export function ArchivedThreadsPanel() {
           </SettingsSection>
         ))
       )}
+    </SettingsPageContainer>
+  );
+}
+
+export function ThemesPanel() {
+  const { theme, setTheme, customCSS } = useTheme();
+  const { updateSettings } = useUpdateSettings();
+
+  const handleCustomCSSChange = useCallback(
+    (next: string) => {
+      updateSettings({ customCSS: next });
+    },
+    [updateSettings],
+  );
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection title="Theme">
+        <div className="grid grid-cols-1 gap-4 p-4 sm:grid-cols-2 xl:grid-cols-3">
+          {BUILT_IN_THEME_OPTIONS.map((t) => {
+            const isSelected = theme === t.value;
+            return (
+              <button
+                key={t.value}
+                type="button"
+                className={`flex flex-col gap-3 rounded-2xl border p-3 text-left transition-all ${
+                  isSelected
+                    ? "border-primary bg-accent/30 ring-1 ring-primary"
+                    : "border-border/60 hover:border-muted-foreground/40 hover:bg-accent/15"
+                }`}
+                onClick={() => setTheme(t.value as ThemeMode)}
+              >
+                <ThemePreview themeMode={t.value as ThemeMode} selected={isSelected} />
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-foreground">{t.label}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {t.value === "system"
+                        ? "Follows your OS appearance"
+                        : t.value === "light"
+                          ? "Default light UI"
+                          : t.value === "dark"
+                            ? "Default dark UI"
+                            : "Built-in theme"}
+                    </div>
+                  </div>
+                  {isSelected ? (
+                    <span className="rounded-full bg-primary/12 px-2 py-1 text-[11px] font-medium text-primary">
+                      Active
+                    </span>
+                  ) : null}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </SettingsSection>
+
+      <SettingsSection title="Custom CSS">
+        <div className="space-y-2 px-4 py-2">
+          <p className="text-xs text-muted-foreground">
+            Add custom CSS to further customize the theme. Use CSS variables like{" "}
+            <code className="text-[10px]">--background</code>,{" "}
+            <code className="text-[10px]">--foreground</code>,{" "}
+            <code className="text-[10px]">--primary</code>, etc.
+          </p>
+          <textarea
+            className="min-h-[200px] w-full rounded-md border border-border bg-background p-3 font-mono text-xs focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+            value={customCSS}
+            onChange={(e) => handleCustomCSSChange(e.target.value)}
+            placeholder={`/* Example: Change the primary color */\n--primary: 210 100% 50%;\n\n/* Or add custom styles */\nbody {\n  font-family: 'Fira Code', monospace;\n}`}
+            spellCheck={false}
+          />
+        </div>
+      </SettingsSection>
     </SettingsPageContainer>
   );
 }

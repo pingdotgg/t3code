@@ -12,6 +12,21 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
+export const ThemeMode = Schema.Literals([
+  "system",
+  "light",
+  "dark",
+  "dracula",
+  "one-dark",
+  "oled-dark",
+  "nord",
+  "tokyo-night",
+  "gruvbox-dark",
+  "custom",
+]);
+export type ThemeMode = typeof ThemeMode.Type;
+export const DEFAULT_THEME_MODE: ThemeMode = "system";
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -50,6 +65,8 @@ export const ClientSettingsSchema = Schema.Struct({
       model: TrimmedNonEmptyString,
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  theme: ThemeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_THEME_MODE))),
+  customCSS: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   providerModelPreferences: Schema.Record(
     ProviderInstanceId,
     Schema.Struct({
@@ -482,5 +499,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  theme: Schema.optionalKey(ThemeMode),
+  customCSS: Schema.optionalKey(Schema.String),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;
