@@ -15,7 +15,7 @@ import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts"
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { getProviderVersionLifecycle } from "../providerVersionLifecycle.ts";
-import type { TextGenerationShape } from "../../git/Services/TextGeneration.ts";
+import type { TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
