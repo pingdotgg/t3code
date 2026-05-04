@@ -60,14 +60,6 @@ import { Input } from "~/components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
-import {
-  Select,
-  SelectGroup,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "~/components/ui/select";
 import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager, type ThreadToastData } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -184,6 +176,12 @@ function publishProviderOption(provider: PublishProviderKind) {
     PUBLISH_PROVIDER_OPTIONS.find((option) => option.value === provider) ??
     PUBLISH_PROVIDER_OPTIONS[0]
   );
+}
+
+function isPublishProviderKind(
+  provider: SourceControlProviderKind,
+): provider is PublishProviderKind {
+  return PUBLISH_PROVIDER_OPTIONS.some((option) => option.value === provider);
 }
 
 function getPublishProviderReadiness(input: {
@@ -379,7 +377,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       "azure-devops": null,
     };
     for (const provider of sourceControlDiscovery.data?.sourceControlProviders ?? []) {
-      if (provider.kind === "github" || provider.kind === "gitlab") {
+      if (isPublishProviderKind(provider.kind)) {
         accounts[provider.kind] = Option.getOrNull(provider.auth.account);
       }
     }
