@@ -8,6 +8,13 @@ import {
   type TerminalEvent,
   ThreadId,
 } from "@t3tools/contracts";
+import {
+  deriveNotificationTriggers,
+  notificationSoundManager,
+  type NotificationThreadShellLike,
+  type ThreadShellMap,
+} from "~/notificationSound";
+import type { SidebarThreadSummary } from "~/types";
 import { type QueryClient } from "@tanstack/react-query";
 import { Throttler } from "@tanstack/react-pacer";
 import {
@@ -621,6 +628,28 @@ export function shouldApplyTerminalEvent(input: {
   return input.hasDraftThread;
 }
 
+function summaryToNotificationShell(summary: SidebarThreadSummary): NotificationThreadShellLike {
+  return {
+    archivedAt: summary.archivedAt,
+    session: summary.session ? { orchestrationStatus: summary.session.orchestrationStatus } : null,
+    hasPendingApprovals: summary.hasPendingApprovals,
+    hasPendingUserInput: summary.hasPendingUserInput,
+    hasActionableProposedPlan: summary.hasActionableProposedPlan,
+  };
+}
+
+function snapshotNotificationShells(environmentId: EnvironmentId): ThreadShellMap {
+  const environmentState = useStore.getState().environmentStateById[environmentId];
+  if (!environmentState) {
+    return new Map();
+  }
+  const map = new Map<ThreadId, NotificationThreadShellLike>();
+  for (const [threadId, summary] of Object.entries(environmentState.sidebarThreadSummaryById)) {
+    map.set(threadId as ThreadId, summaryToNotificationShell(summary));
+  }
+  return map;
+}
+
 function applyRecoveredEventBatch(
   events: ReadonlyArray<OrchestrationEvent>,
   environmentId: EnvironmentId,
@@ -628,6 +657,8 @@ function applyRecoveredEventBatch(
   if (events.length === 0) {
     return;
   }
+
+  const previousNotificationShells = snapshotNotificationShells(environmentId);
 
   const batchEffects = deriveOrchestrationBatchEffects(events);
   const uiEvents = coalesceOrchestrationUiEvents(events);
@@ -689,6 +720,16 @@ function applyRecoveredEventBatch(
   }
 
   reconcileThreadDetailSubscriptionEvictionForEnvironment(environmentId);
+
+  const nextNotificationShells = snapshotNotificationShells(environmentId);
+  const notificationTriggers = deriveNotificationTriggers(
+    previousNotificationShells,
+    nextNotificationShells,
+    events,
+  );
+  if (notificationTriggers.length > 0) {
+    notificationSoundManager.maybePlay(notificationTriggers, getClientSettings());
+  }
 }
 
 export function applyEnvironmentThreadDetailEvent(
@@ -716,9 +757,23 @@ function applyShellEvent(event: OrchestrationShellStreamEvent, environmentId: En
         : null;
   const threadRef = threadId ? scopeThreadRef(environmentId, threadId) : null;
   const previousThread = threadRef ? selectThreadByRef(useStore.getState(), threadRef) : undefined;
+  const previousNotificationShells =
+    event.kind === "thread-upserted" ? snapshotNotificationShells(environmentId) : null;
 
   useStore.getState().applyShellEvent(event, environmentId);
   markAppliedProjectionEvent(environmentId, event.sequence);
+
+  if (event.kind === "thread-upserted" && previousNotificationShells !== null) {
+    const nextNotificationShells = snapshotNotificationShells(environmentId);
+    const notificationTriggers = deriveNotificationTriggers(
+      previousNotificationShells,
+      nextNotificationShells,
+      [],
+    );
+    if (notificationTriggers.length > 0) {
+      notificationSoundManager.maybePlay(notificationTriggers, getClientSettings());
+    }
+  }
 
   switch (event.kind) {
     case "project-upserted":

@@ -28,6 +28,15 @@ export const SidebarProjectGroupingMode = Schema.Literals([
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
 
+export const NotificationSoundFocusRule = Schema.Literals([
+  "always",
+  "unfocused-only",
+  "unfocused-or-different-thread",
+]);
+export type NotificationSoundFocusRule = typeof NotificationSoundFocusRule.Type;
+export const DEFAULT_NOTIFICATION_SOUND_FOCUS_RULE: NotificationSoundFocusRule =
+  "unfocused-or-different-thread";
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -74,6 +83,19 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  notificationSoundEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  notificationSoundOnTurnEnd: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  notificationSoundOnApproval: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  notificationSoundOnQuestion: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  notificationSoundFocusRule: NotificationSoundFocusRule.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_NOTIFICATION_SOUND_FOCUS_RULE)),
   ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -482,5 +504,10 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  notificationSoundEnabled: Schema.optionalKey(Schema.Boolean),
+  notificationSoundOnTurnEnd: Schema.optionalKey(Schema.Boolean),
+  notificationSoundOnApproval: Schema.optionalKey(Schema.Boolean),
+  notificationSoundOnQuestion: Schema.optionalKey(Schema.Boolean),
+  notificationSoundFocusRule: Schema.optionalKey(NotificationSoundFocusRule),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

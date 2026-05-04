@@ -1,4 +1,4 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import { type ServerLifecycleWelcomePayload, type ThreadId } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
 import {
   Outlet,
@@ -49,6 +49,7 @@ import {
   startEnvironmentConnectionService,
 } from "../environments/runtime";
 import { configureClientTracing } from "../observability/clientTracing";
+import { notificationSoundManager } from "../notificationSound";
 import {
   ensurePrimaryEnvironmentReady,
   resolveInitialServerAuthGateState,
@@ -100,6 +101,7 @@ function RootRouteView() {
         <AuthenticatedTracingBootstrap />
         <ServerStateBootstrap />
         <EnvironmentConnectionManagerBootstrap />
+        <NotificationSoundBootstrap />
         <EventRouter />
         <WebSocketConnectionCoordinator />
         <SlowRpcAckToastCoordinator />
@@ -206,6 +208,30 @@ function EnvironmentConnectionManagerBootstrap() {
   useEffect(() => {
     return startEnvironmentConnectionService(queryClient);
   }, [queryClient]);
+
+  return null;
+}
+
+function NotificationSoundBootstrap() {
+  // Track the active thread route param so the notification manager can
+  // honour the "different thread" focus rule from non-React land.
+  const threadId = useLocation({
+    select: (location) => {
+      // Path layout: `/{environmentId}/{threadId}` (server) or `/draft/{draftId}`.
+      const segments = location.pathname.split("/").filter(Boolean);
+      if (segments.length < 2 || segments[0] === "draft" || segments[0] === "settings") {
+        return null;
+      }
+      return segments[1] as ThreadId;
+    },
+  });
+
+  useEffect(() => {
+    notificationSoundManager.setCurrentThreadAccessor(() => threadId);
+    return () => {
+      notificationSoundManager.setCurrentThreadAccessor(() => null);
+    };
+  }, [threadId]);
 
   return null;
 }

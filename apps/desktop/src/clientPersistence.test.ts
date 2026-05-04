@@ -55,6 +55,11 @@ const clientSettings: ClientSettings = {
   diffIgnoreWhitespace: true,
   diffWordWrap: true,
   favorites: [],
+  notificationSoundEnabled: false,
+  notificationSoundOnTurnEnd: false,
+  notificationSoundOnApproval: false,
+  notificationSoundOnQuestion: false,
+  notificationSoundFocusRule: "unfocused-or-different-thread",
   providerModelPreferences: {},
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {
