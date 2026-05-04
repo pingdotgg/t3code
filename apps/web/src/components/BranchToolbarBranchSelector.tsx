@@ -423,11 +423,11 @@ export function BranchToolbarBranchSelector({
       const previousBranch = resolvedActiveBranch;
       setOptimisticBranch(localCheckoutBranchMismatch.threadBranch);
       try {
-        const checkoutResult = await api.git.checkout({
+        const checkoutResult = await api.vcs.switchRef({
           cwd: activeProjectCwd,
-          branch: localCheckoutBranchMismatch.threadBranch,
+          refName: localCheckoutBranchMismatch.threadBranch,
         });
-        setOptimisticBranch(checkoutResult.branch ?? localCheckoutBranchMismatch.threadBranch);
+        setOptimisticBranch(checkoutResult.refName ?? localCheckoutBranchMismatch.threadBranch);
         setIsMismatchPopoverOpen(false);
         onComposerFocusRequest?.();
       } catch (error) {
