@@ -2,10 +2,47 @@ import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { DEFAULT_SERVER_SETTINGS, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import {
+  ClientSettingsPatch,
+  ClientSettingsSchema,
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "./settings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
+const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
+
+describe("ClientSettings.codexUsageIndicatorMode", () => {
+  it("defaults to the five-hour usage window", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.codexUsageIndicatorMode).toBe("five-hour");
+    expect(decodeClientSettings({}).codexUsageIndicatorMode).toBe("five-hour");
+  });
+
+  it("decodes valid patch values", () => {
+    expect(
+      decodeClientSettingsPatch({ codexUsageIndicatorMode: "five-hour" }).codexUsageIndicatorMode,
+    ).toBe("five-hour");
+    expect(
+      decodeClientSettingsPatch({ codexUsageIndicatorMode: "both" }).codexUsageIndicatorMode,
+    ).toBe("both");
+    expect(
+      decodeClientSettingsPatch({ codexUsageIndicatorMode: "off" }).codexUsageIndicatorMode,
+    ).toBe("off");
+  });
+
+  it("migrates the old weekly-only mode to both windows", () => {
+    expect(
+      decodeClientSettings({ codexUsageIndicatorMode: "weekly" }).codexUsageIndicatorMode,
+    ).toBe("both");
+    expect(
+      decodeClientSettingsPatch({ codexUsageIndicatorMode: "weekly" }).codexUsageIndicatorMode,
+    ).toBe("both");
+  });
+});
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {

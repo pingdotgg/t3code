@@ -1,11 +1,23 @@
-import { EnvironmentId, ThreadId, type EnvironmentApi } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+  type EnvironmentApi,
+  type LocalApi,
+} from "@t3tools/contracts";
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { checkpointDiffQueryOptions, providerQueryKeys } from "./providerReactQuery";
+import {
+  checkpointDiffQueryOptions,
+  codexUsageQueryOptions,
+  providerQueryKeys,
+} from "./providerReactQuery";
 import * as environmentApi from "../environmentApi";
+import * as localApi from "../localApi";
 
 const threadId = ThreadId.make("thread-id");
 const environmentId = EnvironmentId.make("environment-local");
+const codexInstanceId = ProviderInstanceId.make("codex");
 
 function mockNativeApi(input: {
   getTurnDiff: ReturnType<typeof vi.fn>;
@@ -17,6 +29,14 @@ function mockNativeApi(input: {
       getFullThreadDiff: input.getFullThreadDiff,
     },
   } as unknown as EnvironmentApi);
+}
+
+function mockLocalApi(input: { getCodexUsage: ReturnType<typeof vi.fn> }) {
+  vi.spyOn(localApi, "ensureLocalApi").mockReturnValue({
+    server: {
+      getCodexUsage: input.getCodexUsage,
+    },
+  } as unknown as LocalApi);
 }
 
 afterEach(() => {
@@ -220,5 +240,30 @@ describe("checkpointDiffQueryOptions", () => {
     expect(typeof checkpointDelay).toBe("number");
     expect(typeof genericDelay).toBe("number");
     expect((checkpointDelay ?? 0) > (genericDelay ?? 0)).toBe(true);
+  });
+});
+
+describe("codexUsageQueryOptions", () => {
+  it("loads usage for the selected Codex instance", async () => {
+    const getCodexUsage = vi.fn().mockResolvedValue({
+      providerInstanceId: codexInstanceId,
+      checkedAt: "2026-05-04T00:00:00.000Z",
+      windows: [],
+      rateLimitReachedType: null,
+      source: "read",
+    });
+    mockLocalApi({ getCodexUsage });
+
+    const queryClient = new QueryClient();
+    await queryClient.fetchQuery(codexUsageQueryOptions({ instanceId: codexInstanceId }));
+
+    expect(getCodexUsage).toHaveBeenCalledWith({ instanceId: codexInstanceId });
+  });
+
+  it("is disabled when the caller disables it or no instance is selected", () => {
+    expect(codexUsageQueryOptions({ instanceId: codexInstanceId, enabled: false }).enabled).toBe(
+      false,
+    );
+    expect(codexUsageQueryOptions({ instanceId: null }).enabled).toBe(false);
   });
 });

@@ -3685,6 +3685,8 @@ export default function ChatView(props: ChatViewProps) {
                 threadId={activeThread.id}
                 {...(routeKind === "draft" && draftId ? { draftId } : {})}
                 onEnvModeChange={onEnvModeChange}
+                providerStatuses={providerStatuses as ServerProvider[]}
+                codexUsageIndicatorMode={settings.codexUsageIndicatorMode}
                 {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
                 {...(canOverrideServerThreadEnvMode
                   ? {

@@ -1,5 +1,11 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  type EnvironmentId,
+  type ServerProvider,
+  type ThreadId,
+} from "@t3tools/contracts";
+import type { CodexUsageIndicatorMode } from "@t3tools/contracts/settings";
 import {
   ChevronDownIcon,
   CloudIcon,
@@ -25,6 +31,7 @@ import {
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
+import { CodexUsageIndicator } from "./chat/CodexUsageIndicator";
 import { Button } from "./ui/button";
 import {
   Menu,
@@ -37,6 +44,11 @@ import {
   MenuTrigger,
 } from "./ui/menu";
 import { Separator } from "./ui/separator";
+import {
+  deriveProviderInstanceEntries,
+  resolveProviderDriverKindForInstanceSelection,
+  sortProviderInstanceEntries,
+} from "../providerInstances";
 
 interface BranchToolbarProps {
   environmentId: EnvironmentId;
@@ -51,6 +63,8 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  providerStatuses: readonly ServerProvider[];
+  codexUsageIndicatorMode: CodexUsageIndicatorMode;
 }
 
 interface MobileRunContextSelectorProps {
@@ -202,6 +216,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   onComposerFocusRequest,
   availableEnvironments,
   onEnvironmentChange,
+  providerStatuses,
+  codexUsageIndicatorMode,
 }: BranchToolbarProps) {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -211,6 +227,9 @@ export const BranchToolbar = memo(function BranchToolbar({
   const serverThread = useStore(serverThreadSelector);
   const draftThread = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : store.getDraftThreadByRef(threadRef),
+  );
+  const composerDraft = useComposerDraftStore((store) =>
+    store.getComposerDraft(draftId ?? threadRef),
   );
   const activeProjectRef = serverThread
     ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
@@ -236,6 +255,30 @@ export const BranchToolbar = memo(function BranchToolbar({
   const showEnvironmentPicker = Boolean(
     availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
   );
+  const providerInstanceEntries = useMemo(
+    () => sortProviderInstanceEntries(deriveProviderInstanceEntries(providerStatuses)),
+    [providerStatuses],
+  );
+  const selectedInstanceId =
+    composerDraft?.activeProvider ??
+    serverThread?.session?.providerInstanceId ??
+    serverThread?.modelSelection.instanceId ??
+    activeProject?.defaultModelSelection?.instanceId ??
+    null;
+  const selectedProvider =
+    resolveProviderDriverKindForInstanceSelection(
+      providerInstanceEntries,
+      providerStatuses,
+      selectedInstanceId,
+    ) ?? ProviderDriverKind.make("codex");
+  const selectedEntry = selectedInstanceId
+    ? providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId)
+    : providerInstanceEntries.find(
+        (entry) => entry.driverKind === selectedProvider && entry.enabled,
+      );
+  const showCodexUsage =
+    codexUsageIndicatorMode !== "off" &&
+    selectedEntry?.driverKind === ProviderDriverKind.make("codex");
   const isMobile = useIsMobile();
 
   if (!hasActiveThread || !activeProject) return null;
@@ -273,6 +316,15 @@ export const BranchToolbar = memo(function BranchToolbar({
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
           />
+          {showCodexUsage && selectedEntry ? (
+            <>
+              <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
+              <CodexUsageIndicator
+                instanceId={selectedEntry.instanceId}
+                mode={codexUsageIndicatorMode}
+              />
+            </>
+          ) : null}
         </div>
       )}
 

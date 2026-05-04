@@ -23,6 +23,7 @@ import type {
   ProviderStopSessionInput,
   ThreadId,
   ProviderTurnStartResult,
+  CodexUsageSnapshot,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
@@ -96,6 +97,10 @@ export interface ProviderServiceShape {
   readonly getInstanceInfo: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<ProviderInstanceRoutingInfo, ProviderServiceError>;
+
+  readonly getCodexUsage: (
+    instanceId: ProviderInstanceId,
+  ) => Effect.Effect<CodexUsageSnapshot | null, ProviderServiceError>;
 
   /**
    * Roll back provider conversation state by a number of turns.

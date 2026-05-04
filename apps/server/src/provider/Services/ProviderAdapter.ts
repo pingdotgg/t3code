@@ -19,6 +19,7 @@ import type {
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
+  CodexUsageSnapshot,
 } from "@t3tools/contracts";
 import type * as Effect from "effect/Effect";
 import type * as Stream from "effect/Stream";
@@ -113,6 +114,11 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
+
+  /**
+   * Read the provider account usage snapshot when the adapter supports it.
+   */
+  readonly readCodexUsage?: () => Effect.Effect<CodexUsageSnapshot | null, TError>;
 
   /**
    * Stop all sessions owned by this adapter.

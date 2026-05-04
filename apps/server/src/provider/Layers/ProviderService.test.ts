@@ -9,6 +9,7 @@ import type {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderTurnStartResult,
+  CodexUsageSnapshot,
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
@@ -202,6 +203,24 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
         sessions.clear();
       }),
   );
+  const readCodexUsage = vi.fn(
+    (): Effect.Effect<CodexUsageSnapshot | null, ProviderAdapterError> =>
+      Effect.succeed({
+        providerInstanceId: codexInstanceId,
+        checkedAt: "2026-05-04T00:00:00.000Z",
+        windows: [
+          {
+            kind: "five-hour",
+            usedPercent: 25,
+            remainingPercent: 75,
+            resetsAt: null,
+            windowDurationMins: 300,
+          },
+        ],
+        rateLimitReachedType: null,
+        source: "read",
+      }),
+  );
 
   const adapter: ProviderAdapterShape<ProviderAdapterError> = {
     provider,
@@ -218,6 +237,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     hasSession,
     readThread,
     rollbackThread,
+    ...(provider === CODEX_DRIVER ? { readCodexUsage } : {}),
     stopAll,
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
@@ -254,6 +274,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
     readThread,
     rollbackThread,
     stopAll,
+    readCodexUsage,
   };
 }
 
@@ -783,6 +804,20 @@ it.effect(
 );
 
 routing.layer("ProviderServiceLive routing", (it) => {
+  it.effect("returns usage for Codex instances and null for non-Codex instances", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      const codexUsage = yield* provider.getCodexUsage(codexInstanceId);
+      const claudeUsage = yield* provider.getCodexUsage(claudeAgentInstanceId);
+
+      assert.equal(codexUsage?.windows[0]?.remainingPercent, 75);
+      assert.equal(routing.codex.readCodexUsage.mock.calls.length, 1);
+      assert.equal(claudeUsage, null);
+      assert.equal(routing.claude.readCodexUsage.mock.calls.length, 0);
+    }),
+  );
+
   it.effect("routes provider operations and rollback conversation", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService;
