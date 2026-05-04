@@ -3,7 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

@@ -5,10 +5,12 @@
     "": {
       "name": "@t3tools/monorepo",
       "devDependencies": {
+        "@effect/language-service": "catalog:",
         "@types/node": "catalog:",
         "oxfmt": "^0.40.0",
         "oxlint": "^1.55.0",
         "turbo": "^2.3.3",
+        "typescript": "catalog:",
         "vitest": "catalog:",
       },
     },

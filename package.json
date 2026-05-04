@@ -26,6 +26,7 @@
   },
   "type": "module",
   "scripts": {
+    "prepare": "effect-language-service patch",
     "dev": "node scripts/dev-runner.ts dev",
     "dev:server": "node scripts/dev-runner.ts dev:server",
     "dev:web": "node scripts/dev-runner.ts dev:web",
@@ -58,10 +59,12 @@
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },
   "devDependencies": {
+    "@effect/language-service": "catalog:",
     "@types/node": "catalog:",
     "oxfmt": "^0.40.0",
     "oxlint": "^1.55.0",
     "turbo": "^2.3.3",
+    "typescript": "catalog:",
     "vitest": "catalog:"
   },
   "overrides": {
