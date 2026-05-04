@@ -115,6 +115,9 @@ Logged in to github.com account juliusmarminge (keyring)
         },
       ],
     );
+    const bitbucket = result.sourceControlProviders.find((item) => item.kind === "bitbucket");
+    assert.ok(bitbucket);
+    assert.strictEqual("executable" in bitbucket, false);
   }).pipe(Effect.provide(testLayer));
 });
 
@@ -204,9 +207,9 @@ Logged in as bitbucket-user
         },
         {
           kind: "bitbucket",
-          auth: "authenticated",
-          account: Option.some("bitbucket-user"),
-          detail: Option.none(),
+          auth: "unknown",
+          account: Option.none(),
+          detail: Option.some("Bitbucket provider support is not available yet."),
         },
       ],
     );

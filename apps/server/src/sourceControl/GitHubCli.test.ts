@@ -211,6 +211,58 @@ describe("GitHubCli.layer", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("creates repositories and parses clone URLs from create output", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            "✓ Created repository octocat/codething-mvp on github.com\nhttps://github.com/octocat/codething-mvp\n",
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.createRepository({
+        cwd: "/repo",
+        repository: "octocat/codething-mvp",
+        visibility: "private",
+      });
+
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "octocat/codething-mvp",
+        url: "https://github.com/octocat/codething-mvp",
+        sshUrl: "git@github.com:octocat/codething-mvp.git",
+      });
+      expect(mockRun).toHaveBeenCalledTimes(1);
+      expect(mockRun).toHaveBeenNthCalledWith(1, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["repo", "create", "octocat/codething-mvp", "--private"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("falls back to constructed URLs when create output omits a URL", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.createRepository({
+        cwd: "/repo",
+        repository: "octocat/codething-mvp",
+        visibility: "private",
+      });
+
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "octocat/codething-mvp",
+        url: "https://github.com/octocat/codething-mvp",
+        sshUrl: "git@github.com:octocat/codething-mvp.git",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("surfaces a friendly error when the pull request is not found", () =>
     Effect.gen(function* () {
       mockRun.mockReturnValueOnce(

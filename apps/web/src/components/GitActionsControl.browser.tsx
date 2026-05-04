@@ -100,12 +100,14 @@ vi.mock("~/editorPreferences", () => ({
 vi.mock("~/lib/gitReactQuery", () => ({
   gitInitMutationOptions: vi.fn(() => ({ __kind: "init" })),
   gitMutationKeys: {
+    publishRepository: vi.fn(() => ["publish-repository"]),
     pull: vi.fn(() => ["pull"]),
     runStackedAction: vi.fn(() => ["run-stacked-action"]),
   },
   gitPullMutationOptions: vi.fn(() => ({ __kind: "pull" })),
   gitRunStackedActionMutationOptions: vi.fn(() => ({ __kind: "run-stacked-action" })),
   invalidateGitQueries: invalidateGitQueriesSpy,
+  sourceControlPublishRepositoryMutationOptions: vi.fn(() => ({ __kind: "publish-repository" })),
 }));
 
 vi.mock("~/lib/gitStatusState", () => ({

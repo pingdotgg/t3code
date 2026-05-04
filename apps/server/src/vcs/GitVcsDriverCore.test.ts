@@ -326,5 +326,41 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           assert.notEqual(badBranch.exitCode, 0);
         }),
     );
+
+    it.effect("pushes to the requested remote instead of the primary remote", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const originRemote = yield* makeTmpDir("git-origin-remote-");
+        const publishRemote = yield* makeTmpDir("git-publish-remote-");
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["branch", "-M", "main"]);
+        yield* git(originRemote, ["init", "--bare"]);
+        yield* git(publishRemote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", originRemote]);
+        yield* git(cwd, ["remote", "add", "origin-1", publishRemote]);
+
+        const pushed = yield* driver.pushCurrentBranch(cwd, null, { remoteName: "origin-1" });
+
+        assert.deepInclude(pushed, {
+          status: "pushed",
+          branch: "main",
+          upstreamBranch: "origin-1/main",
+          setUpstream: true,
+        });
+        assert.equal(
+          yield* git(publishRemote, ["log", "-1", "--pretty=%s", "main"]),
+          "initial commit",
+        );
+        const originMain = yield* driver.execute({
+          operation: "GitVcsDriver.test.originMainMissing",
+          cwd: originRemote,
+          args: ["show-ref", "--verify", "--quiet", "refs/heads/main"],
+          allowNonZeroExit: true,
+          timeoutMs: 10_000,
+        });
+        assert.notEqual(originMain.exitCode, 0);
+      }),
+    );
   });
 });

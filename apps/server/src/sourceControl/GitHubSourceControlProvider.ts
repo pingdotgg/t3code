@@ -130,6 +130,10 @@ export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {
       github
         .getRepositoryCloneUrls(input)
         .pipe(Effect.mapError((error) => providerError("getRepositoryCloneUrls", error))),
+    createRepository: (input) =>
+      github
+        .createRepository(input)
+        .pipe(Effect.mapError((error) => providerError("createRepository", error))),
     getDefaultBranch: (input) =>
       github
         .getDefaultBranch(input)

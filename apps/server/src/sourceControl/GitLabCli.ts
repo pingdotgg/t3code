@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Option, Result, Schema, SchemaIssue, type DateTime } from "effect";
 
-import { TrimmedNonEmptyString } from "@t3tools/contracts";
+import { TrimmedNonEmptyString, type SourceControlRepositoryVisibility } from "@t3tools/contracts";
 
 import {
   decodeGitLabMergeRequestJson,
@@ -64,6 +64,12 @@ export interface GitLabCliShape {
   readonly getRepositoryCloneUrls: (input: {
     readonly cwd: string;
     readonly repository: string;
+  }) => Effect.Effect<GitLabRepositoryCloneUrls, GitLabCliError>;
+
+  readonly createRepository: (input: {
+    readonly cwd: string;
+    readonly repository: string;
+    readonly visibility: SourceControlRepositoryVisibility;
   }) => Effect.Effect<GitLabRepositoryCloneUrls, GitLabCliError>;
 
   readonly createMergeRequest: (input: {
@@ -161,12 +167,16 @@ const RawGitLabDefaultBranchSchema = Schema.Struct({
   default_branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
 });
 
+const RawGitLabNamespaceSchema = Schema.Struct({
+  id: Schema.Number,
+});
+
 function normalizeRepositoryCloneUrls(
   raw: Schema.Schema.Type<typeof RawGitLabRepositoryCloneUrlsSchema>,
 ): GitLabRepositoryCloneUrls {
   return {
     nameWithOwner: raw.path_with_namespace,
-    url: raw.http_url_to_repo || raw.web_url,
+    url: raw.web_url,
     sshUrl: raw.ssh_url_to_repo,
   };
 }
@@ -174,7 +184,7 @@ function normalizeRepositoryCloneUrls(
 function decodeGitLabJson<S extends Schema.Top>(
   raw: string,
   schema: S,
-  operation: "getRepositoryCloneUrls" | "getDefaultBranch",
+  operation: "getRepositoryCloneUrls" | "getDefaultBranch" | "createRepository",
   invalidDetail: string,
 ): Effect.Effect<S["Type"], GitLabCliError, S["DecodingServices"]> {
   return Schema.decodeEffect(Schema.fromJsonString(schema))(raw).pipe(
@@ -226,6 +236,19 @@ function toSummaryWithOptionalUpdatedAt(
 ): GitLabMergeRequestSummary {
   const { updatedAt, ...summary } = record;
   return Option.isSome(updatedAt) ? { ...summary, updatedAt } : summary;
+}
+
+function parseRepositoryPath(repository: string): {
+  readonly namespacePath: string | null;
+  readonly projectPath: string;
+} {
+  const parts = repository
+    .split("/")
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  const projectPath = parts.at(-1) ?? repository.trim();
+  const namespacePath = parts.length > 1 ? parts.slice(0, -1).join("/") : null;
+  return { namespacePath, projectPath };
 }
 
 export const make = Effect.fn("makeGitLabCli")(function* () {
@@ -320,6 +343,59 @@ export const make = Effect.fn("makeGitLabCli")(function* () {
         ),
         Effect.map(normalizeRepositoryCloneUrls),
       ),
+    createRepository: (input) => {
+      const { namespacePath, projectPath } = parseRepositoryPath(input.repository);
+      const namespaceId: Effect.Effect<number | null, GitLabCliError> = namespacePath
+        ? execute({
+            cwd: input.cwd,
+            args: ["api", `namespaces/${encodeURIComponent(namespacePath)}`],
+          }).pipe(
+            Effect.map((result) => result.stdout.trim()),
+            Effect.flatMap((raw) =>
+              decodeGitLabJson(
+                raw,
+                RawGitLabNamespaceSchema,
+                "createRepository",
+                "GitLab CLI returned invalid namespace JSON.",
+              ),
+            ),
+            Effect.map((namespace) => namespace.id),
+          )
+        : Effect.succeed(null);
+
+      return namespaceId.pipe(
+        Effect.flatMap((resolvedNamespaceId) =>
+          execute({
+            cwd: input.cwd,
+            args: [
+              "api",
+              "--method",
+              "POST",
+              "projects",
+              "--raw-field",
+              `path=${projectPath}`,
+              "--raw-field",
+              `name=${projectPath}`,
+              "--raw-field",
+              `visibility=${input.visibility}`,
+              ...(resolvedNamespaceId === null
+                ? []
+                : ["--raw-field", `namespace_id=${resolvedNamespaceId}`]),
+            ],
+          }),
+        ),
+        Effect.map((result) => result.stdout.trim()),
+        Effect.flatMap((raw) =>
+          decodeGitLabJson(
+            raw,
+            RawGitLabRepositoryCloneUrlsSchema,
+            "createRepository",
+            "GitLab CLI returned invalid repository JSON.",
+          ),
+        ),
+        Effect.map(normalizeRepositoryCloneUrls),
+      );
+    },
     createMergeRequest: (input) => {
       const sourceProject = sourceProjectIdentifier(input.source);
       return execute({

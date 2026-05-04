@@ -57,6 +57,8 @@ const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
   jj: JujutsuIcon,
 };
 
+const SOURCE_CONTROL_SKELETON_ROWS = ["primary", "secondary"] as const;
+
 function optionLabel(value: Option.Option<string>): string | null {
   return Option.getOrNull(value);
 }
@@ -157,6 +159,11 @@ function itemSummary({
         </>
       );
     }
+
+    if (!item.executable) {
+      return <span>{item.installHint}</span>;
+    }
+
     if (auth.status === "unauthenticated") {
       return <span>Sign in with the {item.executable} CLI to enable pull request actions.</span>;
     }
@@ -232,8 +239,8 @@ function SourceControlSectionSkeleton({
 }) {
   return (
     <SettingsSection title={title} headerAction={headerAction}>
-      {Array.from({ length: 2 }, (_, index) => (
-        <div key={index} className="border-t border-border/60 px-4 py-3.5 first:border-t-0 sm:px-5">
+      {SOURCE_CONTROL_SKELETON_ROWS.map((row) => (
+        <div key={row} className="border-t border-border/60 px-4 py-3.5 first:border-t-0 sm:px-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1 space-y-2">
               <div className="flex items-center gap-2">

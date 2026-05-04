@@ -71,6 +71,11 @@ export interface WsRpcClient {
   readonly filesystem: {
     readonly browse: RpcUnaryMethod<typeof WS_METHODS.filesystemBrowse>;
   };
+  readonly sourceControl: {
+    readonly lookupRepository: RpcUnaryMethod<typeof WS_METHODS.sourceControlLookupRepository>;
+    readonly cloneRepository: RpcUnaryMethod<typeof WS_METHODS.sourceControlCloneRepository>;
+    readonly publishRepository: RpcUnaryMethod<typeof WS_METHODS.sourceControlPublishRepository>;
+  };
   readonly shell: {
     readonly openInEditor: (input: {
       readonly cwd: Parameters<LocalApi["shell"]["openInEditor"]>[0];
@@ -164,6 +169,14 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
     },
     filesystem: {
       browse: (input) => transport.request((client) => client[WS_METHODS.filesystemBrowse](input)),
+    },
+    sourceControl: {
+      lookupRepository: (input) =>
+        transport.request((client) => client[WS_METHODS.sourceControlLookupRepository](input)),
+      cloneRepository: (input) =>
+        transport.request((client) => client[WS_METHODS.sourceControlCloneRepository](input)),
+      publishRepository: (input) =>
+        transport.request((client) => client[WS_METHODS.sourceControlPublishRepository](input)),
     },
     shell: {
       openInEditor: (input) =>

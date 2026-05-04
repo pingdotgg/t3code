@@ -175,7 +175,7 @@ layer("GitLabCli.layer", (it) => {
 
       assert.deepStrictEqual(result, {
         nameWithOwner: "octocat/t3code",
-        url: "https://gitlab.com/octocat/t3code.git",
+        url: "https://gitlab.com/octocat/t3code",
         sshUrl: "git@gitlab.com:octocat/t3code.git",
       });
     }),
@@ -211,6 +211,67 @@ layer("GitLabCli.layer", (it) => {
             "title=Provider MR",
             "--field",
             "description=@/tmp/t3-mr-body.md",
+          ],
+        }),
+      );
+    }),
+  );
+
+  it.effect("creates repositories under an explicit namespace", () =>
+    Effect.gen(function* () {
+      mockedRun
+        .mockReturnValueOnce(Effect.succeed(processOutput(JSON.stringify({ id: 1234 }))))
+        .mockReturnValueOnce(
+          Effect.succeed(
+            processOutput(
+              JSON.stringify({
+                path_with_namespace: "octocat/t3code",
+                web_url: "https://gitlab.com/octocat/t3code",
+                http_url_to_repo: "https://gitlab.com/octocat/t3code.git",
+                ssh_url_to_repo: "git@gitlab.com:octocat/t3code.git",
+              }),
+            ),
+          ),
+        );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.createRepository({
+        cwd: "/repo",
+        repository: "octocat/t3code",
+        visibility: "public",
+      });
+
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "octocat/t3code",
+        url: "https://gitlab.com/octocat/t3code",
+        sshUrl: "git@gitlab.com:octocat/t3code.git",
+      });
+      expect(mockedRun).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          command: "glab",
+          cwd: "/repo",
+          args: ["api", "namespaces/octocat"],
+        }),
+      );
+      expect(mockedRun).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          command: "glab",
+          cwd: "/repo",
+          args: [
+            "api",
+            "--method",
+            "POST",
+            "projects",
+            "--raw-field",
+            "path=t3code",
+            "--raw-field",
+            "name=t3code",
+            "--raw-field",
+            "visibility=public",
+            "--raw-field",
+            "namespace_id=1234",
           ],
         }),
       );

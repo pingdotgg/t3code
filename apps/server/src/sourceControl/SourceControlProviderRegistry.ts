@@ -58,6 +58,7 @@ function unsupportedProvider(kind: SourceControlProviderKind): SourceControlProv
     getChangeRequest: () => unsupported("getChangeRequest"),
     createChangeRequest: () => unsupported("createChangeRequest"),
     getRepositoryCloneUrls: () => unsupported("getRepositoryCloneUrls"),
+    createRepository: () => unsupported("createRepository"),
     getDefaultBranch: () => unsupported("getDefaultBranch"),
     checkoutChangeRequest: () => unsupported("checkoutChangeRequest"),
   });

@@ -13,20 +13,22 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 
 interface DiscoveryProbe {
   readonly label: string;
-  readonly executable: string;
-  readonly versionArgs: ReadonlyArray<string>;
+  readonly executable?: string;
+  readonly versionArgs?: ReadonlyArray<string>;
   readonly implemented: boolean;
   readonly installHint: string;
 }
 
 type VcsProbe = DiscoveryProbe & {
   readonly kind: VcsDriverKind;
+  readonly executable: string;
+  readonly versionArgs: ReadonlyArray<string>;
 };
 
 type ProviderProbe = DiscoveryProbe & {
   readonly kind: SourceControlProviderKind;
-  readonly authArgs: ReadonlyArray<string>;
-  readonly parseAuth: (input: AuthProbeInput) => SourceControlProviderAuth;
+  readonly authArgs?: ReadonlyArray<string>;
+  readonly parseAuth?: (input: AuthProbeInput) => SourceControlProviderAuth;
 };
 
 interface AuthProbeInput {
@@ -38,7 +40,7 @@ interface AuthProbeInput {
 interface DiscoveryProbeResult<Kind extends string> {
   readonly kind: Kind;
   readonly label: string;
-  readonly executable: string;
+  readonly executable?: string;
   readonly implemented: boolean;
   readonly status: "available" | "missing";
   readonly version: Option.Option<string>;
@@ -101,12 +103,8 @@ const SOURCE_CONTROL_PROVIDER_PROBES: ReadonlyArray<ProviderProbe> = [
   {
     kind: "bitbucket",
     label: "Bitbucket",
-    executable: "bb",
-    versionArgs: ["--version"],
-    authArgs: ["auth", "status"],
-    parseAuth: parseBitbucketAuth,
     implemented: false,
-    installHint: "Install a Bitbucket CLI (`bb`) and authenticate it for your Bitbucket workspace.",
+    installHint: "Bitbucket provider support is not available yet.",
   },
 ];
 
@@ -266,37 +264,6 @@ function parseAzureAuth(input: AuthProbeInput): SourceControlProviderAuth {
   });
 }
 
-function parseBitbucketAuth(input: AuthProbeInput): SourceControlProviderAuth {
-  const output = combinedAuthOutput(input);
-  const account = matchFirst(output, [
-    /Logged in to .* as\s+([^\s(]+)/iu,
-    /Logged in as\s+([^\s(]+)/iu,
-    /account:\s*([^\s(]+)/iu,
-    /user:\s*([^\s(]+)/iu,
-    /username:\s*([^\s(]+)/iu,
-  ]);
-  const host = parseCliHost(output) ?? "bitbucket.org";
-
-  if (input.exitCode !== 0) {
-    return providerAuth({
-      status: "unauthenticated",
-      host,
-      detail:
-        firstSafeAuthLine(output) ?? "Authenticate the Bitbucket CLI before enabling Bitbucket.",
-    });
-  }
-
-  if (account) {
-    return providerAuth({ status: "authenticated", account, host });
-  }
-
-  return providerAuth({
-    status: "unknown",
-    host,
-    detail: firstSafeAuthLine(output) ?? "Bitbucket CLI auth status could not be parsed.",
-  });
-}
-
 export interface SourceControlDiscoveryShape {
   readonly discover: Effect.Effect<SourceControlDiscoveryResult>;
 }
@@ -314,12 +281,27 @@ export const layer = Layer.effect(
 
     const probe = <Kind extends VcsDriverKind | SourceControlProviderKind>(
       input: DiscoveryProbe & { readonly kind: Kind },
-    ): Effect.Effect<DiscoveryProbeResult<Kind>> =>
-      process
+    ): Effect.Effect<DiscoveryProbeResult<Kind>> => {
+      const executable = input.executable;
+      const versionArgs = input.versionArgs;
+
+      if (!executable || !versionArgs) {
+        return Effect.succeed({
+          kind: input.kind,
+          label: input.label,
+          implemented: input.implemented,
+          status: "missing" as const,
+          version: Option.none<string>(),
+          installHint: input.installHint,
+          detail: Option.some(input.installHint),
+        } satisfies DiscoveryProbeResult<Kind>);
+      }
+
+      return process
         .run({
           operation: "source-control.discovery.probe",
-          command: input.executable,
-          args: input.versionArgs,
+          command: executable,
+          args: versionArgs,
           cwd: config.cwd,
           timeoutMs: 5_000,
           maxOutputBytes: 8_000,
@@ -331,7 +313,7 @@ export const layer = Layer.effect(
               ({
                 kind: input.kind,
                 label: input.label,
-                executable: input.executable,
+                executable,
                 implemented: input.implemented,
                 status: "available" as const,
                 version: Option.orElse(firstNonEmptyLine(result.stdout), () =>
@@ -345,7 +327,7 @@ export const layer = Layer.effect(
             Effect.succeed({
               kind: input.kind,
               label: input.label,
-              executable: input.executable,
+              executable,
               implemented: input.implemented,
               status: "missing" as const,
               version: Option.none<string>(),
@@ -354,10 +336,22 @@ export const layer = Layer.effect(
             } satisfies DiscoveryProbeResult<Kind>),
           ),
         );
+    };
 
     const probeProvider = (input: ProviderProbe) =>
       probe(input).pipe(
         Effect.flatMap((item) => {
+          const executable = input.executable;
+          const authArgs = input.authArgs;
+          const parseAuth = input.parseAuth;
+
+          if (!executable || !authArgs || !parseAuth) {
+            return Effect.succeed({
+              ...item,
+              auth: unknownAuth(input.installHint),
+            } satisfies SourceControlProviderDiscoveryItem);
+          }
+
           if (item.status !== "available") {
             return Effect.succeed({
               ...item,
@@ -368,8 +362,8 @@ export const layer = Layer.effect(
           return process
             .run({
               operation: "source-control.discovery.auth",
-              command: input.executable,
-              args: input.authArgs,
+              command: executable,
+              args: authArgs,
               cwd: config.cwd,
               allowNonZeroExit: true,
               timeoutMs: 5_000,
@@ -381,7 +375,7 @@ export const layer = Layer.effect(
                 (result) =>
                   ({
                     ...item,
-                    auth: input.parseAuth(result),
+                    auth: parseAuth(result),
                   }) satisfies SourceControlProviderDiscoveryItem,
               ),
               Effect.catch((cause) =>

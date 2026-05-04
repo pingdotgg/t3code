@@ -55,7 +55,15 @@ import type {
 import type { EnvironmentId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
 import { ServerSettings, type ClientSettings, type ServerSettingsPatch } from "./settings.ts";
-import type { SourceControlDiscoveryResult } from "./sourceControl.ts";
+import type {
+  SourceControlCloneRepositoryInput,
+  SourceControlCloneRepositoryResult,
+  SourceControlDiscoveryResult,
+  SourceControlPublishRepositoryInput,
+  SourceControlPublishRepositoryResult,
+  SourceControlRepositoryInfo,
+  SourceControlRepositoryLookupInput,
+} from "./sourceControl.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -257,6 +265,17 @@ export interface EnvironmentApi {
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
+  };
+  sourceControl: {
+    lookupRepository: (
+      input: SourceControlRepositoryLookupInput,
+    ) => Promise<SourceControlRepositoryInfo>;
+    cloneRepository: (
+      input: SourceControlCloneRepositoryInput,
+    ) => Promise<SourceControlCloneRepositoryResult>;
+    publishRepository: (
+      input: SourceControlPublishRepositoryInput,
+    ) => Promise<SourceControlPublishRepositoryResult>;
   };
   vcs: {
     listRefs: (input: VcsListRefsInput) => Promise<VcsListRefsResult>;

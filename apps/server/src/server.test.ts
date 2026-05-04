@@ -117,6 +117,10 @@ import {
 } from "./vcs/VcsDriverRegistry.ts";
 import { layer as VcsProvisioningServiceLayer } from "./vcs/VcsProvisioningService.ts";
 import { layer as GitWorkflowServiceLayer } from "./git/GitWorkflowService.ts";
+import {
+  SourceControlRepositoryService,
+  type SourceControlRepositoryServiceShape,
+} from "./sourceControl/SourceControlRepositoryService.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 
@@ -330,6 +334,7 @@ const buildAppUnderTest = (options?: {
     vcsDriverRegistry?: Partial<VcsDriverRegistryShape>;
     gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriverShape>;
     gitManager?: Partial<GitManagerShape>;
+    sourceControlRepositoryService?: Partial<SourceControlRepositoryServiceShape>;
     vcsStatusBroadcaster?: Partial<VcsStatusBroadcasterShape>;
     projectSetupScriptRunner?: Partial<ProjectSetupScriptRunnerShape>;
     terminalManager?: Partial<TerminalManagerShape>;
@@ -545,6 +550,11 @@ const buildAppUnderTest = (options?: {
       Layer.provide(gitVcsDriverLayer),
       Layer.provide(gitWorkflowLayer),
       Layer.provide(vcsProvisioningLayer),
+      Layer.provide(
+        Layer.mock(SourceControlRepositoryService)({
+          ...options?.layers?.sourceControlRepositoryService,
+        }),
+      ),
       Layer.provideMerge(vcsStatusBroadcasterLayer),
       Layer.provide(
         Layer.mock(ProjectSetupScriptRunner)({
