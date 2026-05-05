@@ -1,122 +1,50 @@
 "use client";
 
 import { useMemo, type ReactNode } from "react";
-import { Schema } from "effect";
-import type {
-  ProviderSettingsFormAnnotation,
-  ProviderSettingsFormControl,
-  ProviderSettingsFormSchemaAnnotation,
-} from "@t3tools/contracts";
+import type { SchemaFormControl as SchemaFormControlKind } from "@t3tools/contracts/schemaForm";
 
 import { cn } from "../../lib/utils";
-import { DraftInput } from "../ui/draft-input";
-import { Input } from "../ui/input";
-import { Switch } from "../ui/switch";
-import { Textarea } from "../ui/textarea";
 import type { ProviderClientDefinition } from "./providerDriverMeta";
+import {
+  getSchemaFormFieldLayout,
+  readSchemaFormBoolean,
+  readSchemaFormFieldValue,
+  readSchemaFormString,
+  SchemaFormFieldControl,
+} from "./SchemaFormControl";
+import { deriveSchemaFormFields, type SchemaFormFieldModel } from "./schemaForm";
 
-export interface ProviderSettingsFieldModel {
+type ProviderSettingsFormControl = Extract<
+  SchemaFormControlKind,
+  "text" | "password" | "textarea" | "switch"
+>;
+
+export type ProviderSettingsFieldModel = SchemaFormFieldModel<ProviderSettingsFormControl>;
+
+interface ProviderSettingsValueField {
   readonly key: string;
   readonly control: ProviderSettingsFormControl;
-  readonly label: string;
-  readonly description?: string | undefined;
-  readonly placeholder?: string | undefined;
+  readonly label?: string | undefined;
   readonly clearWhenEmpty: "omit" | "persist";
   readonly defaultBooleanValue?: boolean | undefined;
-}
-
-function titleizeFieldKey(key: string): string {
-  return key
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .replace(/[-_]+/g, " ")
-    .replace(/^./, (char) => char.toUpperCase());
-}
-
-function readFieldAnnotations(
-  fieldSchema: ProviderClientDefinition["settingsSchema"]["fields"][string],
-) {
-  return Schema.resolveAnnotationsKey(fieldSchema) ?? Schema.resolveAnnotations(fieldSchema);
-}
-
-function readFieldAnnotationString(
-  fieldSchema: ProviderClientDefinition["settingsSchema"]["fields"][string],
-  key: "title" | "description",
-): string | undefined {
-  const annotations = readFieldAnnotations(fieldSchema);
-  const value = annotations?.[key];
-  return typeof value === "string" ? value : undefined;
-}
-
-function readProviderSettingsFormAnnotation(
-  fieldSchema: ProviderClientDefinition["settingsSchema"]["fields"][string],
-): ProviderSettingsFormAnnotation {
-  const annotation = readFieldAnnotations(fieldSchema)?.providerSettingsForm;
-  return annotation ?? {};
-}
-
-function readProviderSettingsFormSchemaAnnotation(
-  definition: ProviderClientDefinition,
-): ProviderSettingsFormSchemaAnnotation {
-  return Schema.resolveAnnotations(definition.settingsSchema)?.providerSettingsFormSchema ?? {};
-}
-
-function readFieldBooleanDefault(
-  fieldSchema: ProviderClientDefinition["settingsSchema"]["fields"][string],
-): boolean | undefined {
-  try {
-    const decoded = Schema.decodeUnknownSync(fieldSchema as Schema.Decoder<unknown>)(undefined);
-    return typeof decoded === "boolean" ? decoded : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 export function deriveProviderSettingsFields(
   definition: ProviderClientDefinition,
 ): ReadonlyArray<ProviderSettingsFieldModel> {
-  const schemaAnnotation = readProviderSettingsFormSchemaAnnotation(definition);
-  const orderedKeys = new Map(
-    (schemaAnnotation.order ?? []).map((key, index) => [key, index] as const),
-  );
-  const orderFallbackOffset = orderedKeys.size;
-
-  return Object.keys(definition.settingsSchema.fields)
-    .map((key, index) => ({ key, index }))
-    .toSorted((left, right) => {
-      return (
-        (orderedKeys.get(left.key) ?? orderFallbackOffset + left.index) -
-        (orderedKeys.get(right.key) ?? orderFallbackOffset + right.index)
-      );
-    })
-    .flatMap(({ key }) => {
-      const fieldSchema = definition.settingsSchema.fields[key]!;
-      const formAnnotation = readProviderSettingsFormAnnotation(fieldSchema);
-      if (formAnnotation.hidden) return [];
-
-      const annotatedTitle = readFieldAnnotationString(fieldSchema, "title");
-      const annotatedDescription = readFieldAnnotationString(fieldSchema, "description");
-      return [
-        {
-          key,
-          control: formAnnotation.control ?? "text",
-          label: annotatedTitle ?? titleizeFieldKey(key),
-          ...(annotatedDescription !== undefined ? { description: annotatedDescription } : {}),
-          ...(formAnnotation.placeholder !== undefined
-            ? { placeholder: formAnnotation.placeholder }
-            : {}),
-          clearWhenEmpty: formAnnotation.clearWhenEmpty ?? "omit",
-          ...(formAnnotation.control === "switch"
-            ? { defaultBooleanValue: readFieldBooleanDefault(fieldSchema) }
-            : {}),
-        } satisfies ProviderSettingsFieldModel,
-      ];
-    });
+  return deriveSchemaFormFields({
+    schemas: [definition.settingsSchema],
+    allowedControls: ["text", "password", "textarea", "switch"],
+    includeUnannotatedFields: true,
+    defaultControl: ({ inferredControl }) => {
+      return inferredControl?.control === "switch" ? "switch" : "text";
+    },
+  });
 }
 
 export function readProviderConfigString(config: unknown, key: string): string {
   if (config === null || typeof config !== "object") return "";
-  const value = (config as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : "";
+  return readSchemaFormString((config as Record<string, unknown>)[key]);
 }
 
 export function readProviderConfigBoolean(
@@ -125,13 +53,24 @@ export function readProviderConfigBoolean(
   defaultValue = false,
 ): boolean {
   if (config === null || typeof config !== "object") return defaultValue;
-  const value = (config as Record<string, unknown>)[key];
-  return typeof value === "boolean" ? value : defaultValue;
+  return readSchemaFormBoolean((config as Record<string, unknown>)[key], defaultValue);
+}
+
+function readProviderConfigFieldValue(config: unknown, field: ProviderSettingsValueField) {
+  if (config === null || typeof config !== "object") {
+    return readSchemaFormFieldValue(field, undefined, field.defaultBooleanValue);
+  }
+
+  return readSchemaFormFieldValue(
+    field,
+    (config as Record<string, unknown>)[field.key],
+    field.defaultBooleanValue,
+  );
 }
 
 export function nextProviderConfigWithFieldValue(
   config: unknown,
-  field: ProviderSettingsFieldModel,
+  field: ProviderSettingsValueField,
   value: string | boolean,
 ): Record<string, unknown> | undefined {
   const base: Record<string, unknown> =
@@ -198,8 +137,19 @@ function ProviderSettingsFieldRow({
   const description = field.description ? (
     <span className={descriptionClassName}>{field.description}</span>
   ) : null;
+  const control = (
+    <SchemaFormFieldControl
+      field={field}
+      value={readProviderConfigFieldValue(value, field)}
+      booleanDefault={field.defaultBooleanValue}
+      id={inputId}
+      className={variant === "card" ? "mt-1.5" : "bg-background"}
+      commitOnBlur={variant === "card"}
+      onChange={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
+    />
+  );
 
-  if (field.control === "switch") {
+  if (getSchemaFormFieldLayout(field) === "inline") {
     return (
       <FieldFrame variant={variant}>
         <div className="flex items-center justify-between gap-3">
@@ -207,69 +157,17 @@ function ProviderSettingsFieldRow({
             {label}
             {description}
           </div>
-          <Switch
-            checked={readProviderConfigBoolean(value, field.key, field.defaultBooleanValue)}
-            onCheckedChange={(checked) =>
-              onChange(nextProviderConfigWithFieldValue(value, field, Boolean(checked)))
-            }
-            aria-label={field.label}
-          />
+          {control}
         </div>
       </FieldFrame>
     );
   }
 
-  if (field.control === "textarea") {
-    return (
-      <FieldFrame variant={variant}>
-        <label htmlFor={inputId} className={cn(variant === "card" && "block")}>
-          {label}
-          <Textarea
-            id={inputId}
-            className={cn(variant === "card" && "mt-1.5")}
-            value={readProviderConfigString(value, field.key)}
-            onChange={(event) =>
-              onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
-            }
-            placeholder={field.placeholder}
-            spellCheck={false}
-          />
-          {description}
-        </label>
-      </FieldFrame>
-    );
-  }
-
-  const type = field.control === "password" ? "password" : undefined;
   return (
     <FieldFrame variant={variant}>
       <label htmlFor={inputId} className={cn(variant === "card" && "block")}>
         {label}
-        {variant === "card" ? (
-          <DraftInput
-            id={inputId}
-            className="mt-1.5"
-            type={type}
-            autoComplete={field.control === "password" ? "off" : undefined}
-            value={readProviderConfigString(value, field.key)}
-            onCommit={(next) => onChange(nextProviderConfigWithFieldValue(value, field, next))}
-            placeholder={field.placeholder}
-            spellCheck={false}
-          />
-        ) : (
-          <Input
-            id={inputId}
-            className="bg-background"
-            type={type}
-            autoComplete={field.control === "password" ? "off" : undefined}
-            value={readProviderConfigString(value, field.key)}
-            onChange={(event) =>
-              onChange(nextProviderConfigWithFieldValue(value, field, event.target.value))
-            }
-            placeholder={field.placeholder}
-            spellCheck={false}
-          />
-        )}
+        {control}
         {description}
       </label>
     </FieldFrame>

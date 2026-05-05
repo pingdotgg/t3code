@@ -5,6 +5,7 @@ import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
+import { schemaFormOptionLabels } from "./schemaForm.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -29,11 +30,67 @@ export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
 
 export const ClientSettingsSchema = Schema.Struct({
-  autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  autoOpenPlanSidebar: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+    Schema.annotateKey({
+      title: "Auto-open task panel",
+      description: "Open the right-side plan and task panel automatically when steps appear.",
+      schemaForm: {
+        order: 50,
+        resetLabel: "auto-open task panel",
+        ariaLabel: "Open the task panel automatically",
+      },
+    }),
+  ),
+  confirmThreadArchive: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+    Schema.annotateKey({
+      title: "Archive confirmation",
+      description:
+        "Require a second click on the inline archive action before a thread is archived.",
+      schemaForm: {
+        order: 80,
+        resetLabel: "archive confirmation",
+        ariaLabel: "Confirm thread archiving",
+      },
+    }),
+  ),
+  confirmThreadDelete: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+    Schema.annotateKey({
+      title: "Delete confirmation",
+      description: "Ask before deleting a thread and its chat history.",
+      schemaForm: {
+        order: 90,
+        resetLabel: "delete confirmation",
+        ariaLabel: "Confirm thread deletion",
+      },
+    }),
+  ),
+  diffIgnoreWhitespace: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+    Schema.annotateKey({
+      title: "Hide whitespace changes",
+      description: "Set whether the diff panel ignores whitespace-only edits by default.",
+      schemaForm: {
+        order: 30,
+        resetLabel: "diff whitespace changes",
+        ariaLabel: "Hide whitespace changes by default",
+      },
+    }),
+  ),
+  diffWordWrap: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+    Schema.annotateKey({
+      title: "Diff line wrapping",
+      description: "Set the default wrap state when the diff panel opens.",
+      schemaForm: {
+        order: 20,
+        resetLabel: "diff line wrapping",
+        ariaLabel: "Wrap diff lines by default",
+      },
+    }),
+  ),
   // Model favorites. Historically keyed by provider kind, now
   // widened to `ProviderInstanceId` so users can favorite a specific model
   // on a custom provider instance (e.g. "Codex Personal · gpt-5") without
@@ -74,6 +131,20 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+    Schema.annotateKey({
+      title: "Time format",
+      description: "System default follows your browser or OS clock preference.",
+      schemaForm: {
+        order: 10,
+        resetLabel: "time format",
+        ariaLabel: "Timestamp format",
+        optionLabels: schemaFormOptionLabels(TimestampFormat, {
+          locale: "System default",
+          "12-hour": "12-hour",
+          "24-hour": "24-hour",
+        }),
+      },
+    }),
   ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -97,28 +168,6 @@ const makeBinaryPathSetting = (fallback: string) =>
     Schema.withDecodingDefault(Effect.succeed(fallback)),
   );
 
-export type ProviderSettingsFormControl = "text" | "password" | "textarea" | "switch";
-
-export interface ProviderSettingsFormAnnotation {
-  readonly control?: ProviderSettingsFormControl | undefined;
-  readonly placeholder?: string | undefined;
-  readonly hidden?: boolean | undefined;
-  readonly clearWhenEmpty?: "omit" | "persist" | undefined;
-}
-
-export interface ProviderSettingsFormSchemaAnnotation {
-  readonly order?: readonly string[] | undefined;
-}
-
-declare module "effect/Schema" {
-  namespace Annotations {
-    interface Annotations {
-      readonly providerSettingsForm?: ProviderSettingsFormAnnotation | undefined;
-      readonly providerSettingsFormSchema?: ProviderSettingsFormSchemaAnnotation | undefined;
-    }
-  }
-}
-
 export type ProviderSettingsOrder<Fields extends Schema.Struct.Fields> = readonly Extract<
   keyof Fields,
   string
@@ -132,8 +181,7 @@ export function makeProviderSettingsSchema<const Fields extends Schema.Struct.Fi
 ): Schema.Struct<Fields> {
   return Schema.Struct(fields).pipe(
     Schema.annotate({
-      providerSettingsFormSchema:
-        options?.order === undefined ? undefined : { order: options.order },
+      schemaFormSchema: options?.order === undefined ? undefined : { order: options.order },
     }),
   );
 }
@@ -142,13 +190,13 @@ export const CodexSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      Schema.annotateKey({ schemaForm: { hidden: true } }),
     ),
     binaryPath: makeBinaryPathSetting("codex").pipe(
       Schema.annotateKey({
         title: "Binary path",
         description: "Path to the Codex binary used by this instance.",
-        providerSettingsForm: { placeholder: "codex", clearWhenEmpty: "omit" },
+        schemaForm: { placeholder: "codex", clearWhenEmpty: "omit" },
       }),
     ),
     homePath: TrimmedString.pipe(
@@ -156,7 +204,7 @@ export const CodexSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "CODEX_HOME path",
         description: "Custom Codex home and config directory.",
-        providerSettingsForm: {
+        schemaForm: {
           placeholder: "~/.codex",
           clearWhenEmpty: "omit",
         },
@@ -168,7 +216,7 @@ export const CodexSettings = makeProviderSettingsSchema(
         title: "Shadow home path",
         description:
           "Account-specific Codex home. Keeps auth.json separate while sharing state from CODEX_HOME.",
-        providerSettingsForm: {
+        schemaForm: {
           placeholder: "~/.codex-t3/personal",
           clearWhenEmpty: "omit",
         },
@@ -176,7 +224,7 @@ export const CodexSettings = makeProviderSettingsSchema(
     ),
     customModels: Schema.Array(Schema.String).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      Schema.annotateKey({ schemaForm: { hidden: true } }),
     ),
   },
   {
@@ -189,13 +237,13 @@ export const ClaudeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      Schema.annotateKey({ schemaForm: { hidden: true } }),
     ),
     binaryPath: makeBinaryPathSetting("claude").pipe(
       Schema.annotateKey({
         title: "Binary path",
         description: "Path to the Claude binary used by this instance.",
-        providerSettingsForm: { placeholder: "claude", clearWhenEmpty: "omit" },
+        schemaForm: { placeholder: "claude", clearWhenEmpty: "omit" },
       }),
     ),
     homePath: TrimmedString.pipe(
@@ -204,19 +252,19 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         title: "Claude HOME path",
         description:
           "Custom HOME used when running this Claude instance. Keeps .claude.json and .claude separate.",
-        providerSettingsForm: { placeholder: "~", clearWhenEmpty: "omit" },
+        schemaForm: { placeholder: "~", clearWhenEmpty: "omit" },
       }),
     ),
     customModels: Schema.Array(Schema.String).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      Schema.annotateKey({ schemaForm: { hidden: true } }),
     ),
     launchArgs: Schema.String.pipe(
       Schema.withDecodingDefault(Effect.succeed("")),
       Schema.annotateKey({
         title: "Launch arguments",
         description: "Additional CLI arguments passed on session start.",
-        providerSettingsForm: {
+        schemaForm: {
           placeholder: "e.g. --chrome",
           clearWhenEmpty: "omit",
         },
@@ -233,13 +281,13 @@ export const CursorSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(false)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      Schema.annotateKey({ schemaForm: { hidden: true } }),
     ),
     binaryPath: makeBinaryPathSetting("agent").pipe(
       Schema.annotateKey({
         title: "Binary path",
         description: "Path to the Cursor agent binary.",
-        providerSettingsForm: { placeholder: "agent", clearWhenEmpty: "omit" },
+        schemaForm: { placeholder: "agent", clearWhenEmpty: "omit" },
       }),
     ),
     apiEndpoint: TrimmedString.pipe(
@@ -247,7 +295,7 @@ export const CursorSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "API endpoint",
         description: "Override the Cursor API endpoint for this instance.",
-        providerSettingsForm: {
+        schemaForm: {
           placeholder: "https://...",
           clearWhenEmpty: "omit",
         },
@@ -255,7 +303,7 @@ export const CursorSettings = makeProviderSettingsSchema(
     ),
     customModels: Schema.Array(Schema.String).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      Schema.annotateKey({ schemaForm: { hidden: true } }),
     ),
   },
   {
@@ -267,13 +315,13 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
       Schema.withDecodingDefault(Effect.succeed(true)),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      Schema.annotateKey({ schemaForm: { hidden: true } }),
     ),
     binaryPath: makeBinaryPathSetting("opencode").pipe(
       Schema.annotateKey({
         title: "Binary path",
         description: "Path to the OpenCode binary.",
-        providerSettingsForm: {
+        schemaForm: {
           placeholder: "opencode",
           clearWhenEmpty: "omit",
         },
@@ -284,7 +332,7 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Server URL",
         description: "Leave blank to let T3 Code spawn the server when needed.",
-        providerSettingsForm: {
+        schemaForm: {
           placeholder: "http://127.0.0.1:4096",
           clearWhenEmpty: "omit",
         },
@@ -295,7 +343,7 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Server password",
         description: "Stored in plain text on disk.",
-        providerSettingsForm: {
+        schemaForm: {
           control: "password",
           placeholder: "Optional",
           clearWhenEmpty: "omit",
@@ -304,7 +352,7 @@ export const OpenCodeSettings = makeProviderSettingsSchema(
     ),
     customModels: Schema.Array(Schema.String).pipe(
       Schema.withDecodingDefault(Effect.succeed([])),
-      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+      Schema.annotateKey({ schemaForm: { hidden: true } }),
     ),
   },
   {
@@ -320,11 +368,47 @@ export const ObservabilitySettings = Schema.Struct({
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
 export const ServerSettings = Schema.Struct({
-  enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  enableAssistantStreaming: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+    Schema.annotateKey({
+      title: "Assistant output",
+      description: "Show token-by-token output while a response is in progress.",
+      schemaForm: {
+        order: 40,
+        resetLabel: "assistant output",
+        ariaLabel: "Stream assistant messages",
+      },
+    }),
+  ),
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
+    Schema.annotateKey({
+      title: "New threads",
+      description: "Pick the default workspace mode for newly created draft threads.",
+      schemaForm: {
+        order: 60,
+        resetLabel: "new threads",
+        ariaLabel: "Default thread mode",
+        optionLabels: schemaFormOptionLabels(ThreadEnvMode, {
+          local: "Local",
+          worktree: "New worktree",
+        }),
+      },
+    }),
   ),
-  addProjectBaseDirectory: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  addProjectBaseDirectory: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({
+      title: "Add project starts in",
+      description: 'Leave empty to use "~/" when the Add Project browser opens.',
+      schemaForm: {
+        order: 70,
+        resetLabel: "add project base directory",
+        ariaLabel: "Add project base directory",
+        placeholder: "~/",
+      },
+    }),
+  ),
   textGenerationModelSelection: ModelSelection.pipe(
     Schema.withDecodingDefault(
       Effect.succeed({
@@ -332,6 +416,16 @@ export const ServerSettings = Schema.Struct({
         model: DEFAULT_GIT_TEXT_GENERATION_MODEL,
       }),
     ),
+    Schema.annotateKey({
+      title: "Text generation model",
+      description:
+        "Configure the model used for generated commit messages, PR titles, and similar Git text.",
+      schemaForm: {
+        control: "textGenerationModelSelection",
+        order: 100,
+        resetLabel: "text generation model",
+      },
+    }),
   ),
 
   // Legacy single-instance-per-driver settings. Continues to be the source

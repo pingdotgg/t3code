@@ -10,6 +10,11 @@
   "module": "./dist/index.mjs",
   "types": "./src/index.ts",
   "exports": {
+    "./schemaForm": {
+      "types": "./src/schemaForm.ts",
+      "import": "./src/schemaForm.ts",
+      "require": "./src/schemaForm.ts"
+    },
     "./settings": {
       "types": "./src/settings.ts",
       "import": "./src/settings.ts",
