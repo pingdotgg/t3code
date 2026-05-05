@@ -417,11 +417,7 @@ export function createProviderVersionAdvisory(input: {
 }
 
 const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (packageName: string) {
-  const clientOption = yield* Effect.serviceOption(HttpClient.HttpClient);
-  if (Option.isNone(clientOption)) {
-    return null;
-  }
-  const client = clientOption.value;
+  const client = yield* HttpClient.HttpClient;
   const request = HttpClientRequest.get(
     `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
   ).pipe(HttpClientRequest.setHeader("accept", "application/json"));

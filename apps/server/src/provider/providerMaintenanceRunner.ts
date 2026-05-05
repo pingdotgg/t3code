@@ -8,6 +8,7 @@ import {
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import { Cause, Context, DateTime, Duration, Effect, Layer, Option, Ref, Schema } from "effect";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { ProviderRegistry } from "./Services/ProviderRegistry.ts";
@@ -171,6 +172,7 @@ function makeUpdateState(input: {
 export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const providerRegistry = yield* ProviderRegistry;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const httpClient = yield* HttpClient.HttpClient;
   const runMaintenanceCommand = (command: string, args: ReadonlyArray<string>) =>
     runProviderMaintenanceCommandWithSpawner({
       spawner,
@@ -223,7 +225,10 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
         return Effect.forEach(
           refreshedProviders,
           (refreshedProvider) =>
-            enrichProviderSnapshotWithVersionAdvisory(refreshedProvider, maintenanceCapabilities),
+            enrichProviderSnapshotWithVersionAdvisory(
+              refreshedProvider,
+              maintenanceCapabilities,
+            ).pipe(Effect.provideService(HttpClient.HttpClient, httpClient)),
           {
             concurrency: "unbounded",
           },

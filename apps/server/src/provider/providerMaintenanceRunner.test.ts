@@ -214,10 +214,13 @@ describe("providerMaintenanceRunner", () => {
       );
     }).pipe(
       Effect.provide(
-        mockSpawnerLayer((command, args) => {
-          calls.push({ command, args });
-          return { stdout: "updated" };
-        }),
+        Layer.mergeAll(
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
       ),
     );
   });
@@ -260,10 +263,13 @@ describe("providerMaintenanceRunner", () => {
       ]);
     }).pipe(
       Effect.provide(
-        mockSpawnerLayer((command, args) => {
-          calls.push({ command, args });
-          return { stdout: "updated" };
-        }),
+        Layer.mergeAll(
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command, args) => {
+            calls.push({ command, args });
+            return { stdout: "updated" };
+          }),
+        ),
       ),
     );
   });
@@ -287,10 +293,13 @@ describe("providerMaintenanceRunner", () => {
         assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
       }).pipe(
         Effect.provide(
-          mockSpawnerLayer((command, args) => {
-            calls.push({ command, args });
-            return { stdout: "updated" };
-          }),
+          Layer.mergeAll(
+            latestVersionHttpClient("0.0.0"),
+            mockSpawnerLayer((command, args) => {
+              calls.push({ command, args });
+              return { stdout: "updated" };
+            }),
+          ),
         ),
       );
     },
@@ -378,7 +387,14 @@ describe("providerMaintenanceRunner", () => {
       assert.strictEqual(updateState?.status, "failed");
       assert.strictEqual(updateState?.message, "Update command exited with code 1.");
       assert.include(updateState?.output ?? "", "permission denied");
-    }).pipe(Effect.provide(mockSpawnerLayer(() => ({ stderr: "permission denied", code: 1 })))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => ({ stderr: "permission denied", code: 1 })),
+        ),
+      ),
+    ),
   );
 
   it.effect(
@@ -436,15 +452,18 @@ describe("providerMaintenanceRunner", () => {
       yield* Fiber.join(first);
     }).pipe(
       Effect.provide(
-        mockSpawnerLayer(() => {
-          startedLatch.resolve();
-          return {
-            stdout: "updated",
-            exitCode: Effect.promise(() => release).pipe(
-              Effect.as(ChildProcessSpawner.ExitCode(0)),
-            ),
-          };
-        }),
+        Layer.mergeAll(
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer(() => {
+            startedLatch.resolve();
+            return {
+              stdout: "updated",
+              exitCode: Effect.promise(() => release).pipe(
+                Effect.as(ChildProcessSpawner.ExitCode(0)),
+              ),
+            };
+          }),
+        ),
       ),
     );
   });
@@ -495,19 +514,22 @@ describe("providerMaintenanceRunner", () => {
       ]);
     }).pipe(
       Effect.provide(
-        mockSpawnerLayer((_command, args) => {
-          calls.push(args.join(" "));
-          if (calls.length === 1) {
-            firstStartedLatch.resolve();
-            return {
-              stdout: "updated",
-              exitCode: Effect.promise(() => releaseFirst).pipe(
-                Effect.as(ChildProcessSpawner.ExitCode(0)),
-              ),
-            };
-          }
-          return { stdout: "updated" };
-        }),
+        Layer.mergeAll(
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((_command, args) => {
+            calls.push(args.join(" "));
+            if (calls.length === 1) {
+              firstStartedLatch.resolve();
+              return {
+                stdout: "updated",
+                exitCode: Effect.promise(() => releaseFirst).pipe(
+                  Effect.as(ChildProcessSpawner.ExitCode(0)),
+                ),
+              };
+            }
+            return { stdout: "updated" };
+          }),
+        ),
       ),
     );
   });
@@ -535,10 +557,13 @@ describe("providerMaintenanceRunner", () => {
       assert.deepStrictEqual(calls, ["install -g @openai/codex@latest"]);
     }).pipe(
       Effect.provide(
-        mockSpawnerLayer((_command, args) => {
-          calls.push(args.join(" "));
-          return { stdout: "updated" };
-        }),
+        Layer.mergeAll(
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((_command, args) => {
+            calls.push(args.join(" "));
+            return { stdout: "updated" };
+          }),
+        ),
       ),
     );
   });
@@ -584,6 +609,13 @@ describe("providerMaintenanceRunner", () => {
         if (Exit.isSuccess(second)) {
           assert.strictEqual(second.value.providers[0]?.updateState?.status, "succeeded");
         }
-      }).pipe(Effect.provide(mockSpawnerLayer(() => ({ stdout: "updated" })))),
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            latestVersionHttpClient("0.0.0"),
+            mockSpawnerLayer(() => ({ stdout: "updated" })),
+          ),
+        ),
+      ),
   );
 });

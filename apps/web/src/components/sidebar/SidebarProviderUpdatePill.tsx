@@ -1,6 +1,7 @@
 import { useNavigate } from "@tanstack/react-router";
+import type { ServerProvider } from "@t3tools/contracts";
 import { CircleCheckIcon, DownloadIcon, LoaderIcon, TriangleAlertIcon, XIcon } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 
 import { useServerProviders } from "../../rpc/serverState";
 import {
@@ -26,6 +27,16 @@ const PROVIDER_UPDATE_PILL_PROGRESS_STYLES = {
   error: "bg-destructive/14",
 } as const;
 
+function latestProviderCheckedAt(
+  providers: ReadonlyArray<Pick<ServerProvider, "checkedAt">>,
+): string | undefined {
+  return providers.reduce<string | undefined>(
+    (latest, provider) =>
+      latest === undefined || provider.checkedAt > latest ? provider.checkedAt : latest,
+    undefined,
+  );
+}
+
 export function SidebarProviderUpdatePill() {
   const navigate = useNavigate();
   const providers = useServerProviders();
@@ -34,11 +45,20 @@ export function SidebarProviderUpdatePill() {
   const [pendingView, setPendingView] = useState<ProviderUpdateSidebarPillView | null>(null);
   const [exitingKey, setExitingKey] = useState<string | null>(null);
   const [dismissAfterExitKey, setDismissAfterExitKey] = useState<string | null>(null);
-  const sessionStartedAtMs = useMemo(() => Date.now(), []);
+  const [visibleAfterIso, setVisibleAfterIso] = useState<string | undefined>();
+  const effectiveVisibleAfterIso = visibleAfterIso ?? latestProviderCheckedAt(providers);
   const view = getProviderUpdateSidebarPillView(providers, {
-    visibleAfterMs: sessionStartedAtMs,
+    ...(effectiveVisibleAfterIso !== undefined
+      ? { visibleAfterIso: effectiveVisibleAfterIso }
+      : {}),
     dismissedKeys,
   });
+
+  useEffect(() => {
+    if (visibleAfterIso === undefined && effectiveVisibleAfterIso !== undefined) {
+      setVisibleAfterIso(effectiveVisibleAfterIso);
+    }
+  }, [effectiveVisibleAfterIso, visibleAfterIso]);
 
   const openProviderSettings = useCallback(() => {
     void navigate({ to: "/settings/general", hash: "providers" });

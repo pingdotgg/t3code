@@ -14,6 +14,7 @@
  */
 import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { Duration, Effect, FileSystem, Path, Schema, Stream } from "effect";
+import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config.ts";
@@ -88,6 +89,9 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const httpClient = yield* Effect.service(HttpClient.HttpClient).pipe(
+        Effect.provide(FetchHttpClient.layer),
+      );
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -138,6 +142,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
             snapshot: currentSnapshot,
             publishSnapshot,
             stampIdentity,
+            httpClient,
           }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
         refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
       }).pipe(

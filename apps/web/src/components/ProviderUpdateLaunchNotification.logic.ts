@@ -36,7 +36,7 @@ export interface ProviderUpdateSidebarPillView {
 }
 
 interface ProviderUpdateSidebarPillOptions {
-  readonly visibleAfterMs?: number;
+  readonly visibleAfterIso?: string;
   readonly dismissedKeys?: ReadonlySet<string>;
 }
 
@@ -358,37 +358,32 @@ export function firstRejectedProviderUpdateMessage(
   return rejected.reason instanceof Error ? rejected.reason.message : "Provider update failed.";
 }
 
-function parseUpdateFinishedAtMs(provider: ServerProvider): number | null {
-  const finishedAt = provider.updateState?.finishedAt;
-  if (!finishedAt) {
-    return null;
-  }
-  const parsed = Date.parse(finishedAt);
-  return Number.isNaN(parsed) ? null : parsed;
+function getUpdateFinishedAt(provider: ServerProvider): string | null {
+  return provider.updateState?.finishedAt ?? null;
 }
 
 function isRecentTerminalProvider(
   provider: ServerProvider,
-  visibleAfterMs: number | undefined,
+  visibleAfterIso: string | undefined,
 ): boolean {
   const status = provider.updateState?.status;
   if (status !== "failed" && status !== "unchanged" && status !== "succeeded") {
     return false;
   }
-  if (visibleAfterMs === undefined) {
+  if (visibleAfterIso === undefined) {
     return true;
   }
-  const finishedAtMs = parseUpdateFinishedAtMs(provider);
-  return finishedAtMs !== null && finishedAtMs >= visibleAfterMs;
+  const finishedAt = getUpdateFinishedAt(provider);
+  return finishedAt !== null && finishedAt >= visibleAfterIso;
 }
 
-function latestFinishedAtMsForProviders(providers: ReadonlyArray<ServerProvider>): number | null {
-  return providers.reduce<number | null>((latest, provider) => {
-    const finishedAtMs = parseUpdateFinishedAtMs(provider);
-    if (finishedAtMs === null) {
+function latestFinishedAtForProviders(providers: ReadonlyArray<ServerProvider>): string | null {
+  return providers.reduce<string | null>((latest, provider) => {
+    const finishedAt = getUpdateFinishedAt(provider);
+    if (finishedAt === null) {
       return latest;
     }
-    return latest === null || finishedAtMs > latest ? finishedAtMs : latest;
+    return latest === null || finishedAt > latest ? finishedAt : latest;
   }, null);
 }
 
@@ -420,7 +415,7 @@ export function getProviderUpdateSidebarPillView(
   }
 
   const recentTerminalProviders = dedupedProviders.filter((provider) =>
-    isRecentTerminalProvider(provider, options?.visibleAfterMs),
+    isRecentTerminalProvider(provider, options?.visibleAfterIso),
   );
   const terminalCandidates: ProviderUpdateSidebarPillView[] = [];
 
@@ -512,10 +507,9 @@ export function getProviderUpdateSidebarPillView(
             : right.tone === "warning"
               ? unchangedProviders
               : succeededProviders;
-        return (
-          (latestFinishedAtMsForProviders(rightProviders) ?? 0) -
-          (latestFinishedAtMsForProviders(leftProviders) ?? 0)
-        );
+        const leftFinishedAt = latestFinishedAtForProviders(leftProviders) ?? "";
+        const rightFinishedAt = latestFinishedAtForProviders(rightProviders) ?? "";
+        return rightFinishedAt.localeCompare(leftFinishedAt);
       })
       .find((candidate) => !options?.dismissedKeys?.has(candidate.key)) ?? null
   );

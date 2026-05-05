@@ -12,6 +12,7 @@ import type {
 import { ProviderDriverKind } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Result } from "effect";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   createModelCapabilities,
@@ -1219,11 +1220,13 @@ export const enrichCursorSnapshot = (input: {
   readonly snapshot: ServerProvider;
   readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
   readonly stampIdentity?: (snapshot: ServerProvider) => ServerProvider;
+  readonly httpClient: HttpClient.HttpClient;
 }): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner> => {
   const { settings, snapshot, publishSnapshot } = input;
   const stampIdentity = input.stampIdentity ?? ((value) => value);
 
   const enrichVersionAdvisory = enrichProviderSnapshotWithVersionAdvisory(snapshot).pipe(
+    Effect.provideService(HttpClient.HttpClient, input.httpClient),
     Effect.flatMap((enrichedSnapshot) =>
       publishSnapshot(stampIdentity(enrichedSnapshot)).pipe(Effect.as(enrichedSnapshot)),
     ),

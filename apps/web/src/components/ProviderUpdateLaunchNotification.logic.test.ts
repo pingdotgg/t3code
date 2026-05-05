@@ -18,7 +18,7 @@ import {
 } from "./ProviderUpdateLaunchNotification.logic";
 
 const checkedAt = "2026-04-23T10:00:00.000Z";
-const sessionStartedAtMs = Date.parse("2026-04-23T09:59:00.000Z");
+const sessionStartedAt = "2026-04-23T09:59:00.000Z";
 const laterCheckedAt = "2026-04-23T10:01:00.000Z";
 
 const driver = (value: string) => ProviderDriverKind.make(value);
@@ -529,7 +529,7 @@ describe("provider update launch notification logic", () => {
           },
         }),
       ],
-      { visibleAfterMs: sessionStartedAtMs },
+      { visibleAfterIso: sessionStartedAt },
     );
 
     expect(view).toMatchObject({
@@ -558,7 +558,7 @@ describe("provider update launch notification logic", () => {
           },
         }),
       ],
-      { visibleAfterMs: sessionStartedAtMs },
+      { visibleAfterIso: sessionStartedAt },
     );
 
     expect(view).toMatchObject({
@@ -584,7 +584,7 @@ describe("provider update launch notification logic", () => {
           },
         }),
       ],
-      { visibleAfterMs: sessionStartedAtMs },
+      { visibleAfterIso: sessionStartedAt },
     );
 
     expect(view).toMatchObject({
@@ -610,7 +610,7 @@ describe("provider update launch notification logic", () => {
             },
           }),
         ],
-        { visibleAfterMs: Date.parse("2026-04-23T10:00:01.000Z") },
+        { visibleAfterIso: "2026-04-23T10:00:01.000Z" },
       ),
     ).toBeNull();
   });
@@ -643,7 +643,7 @@ describe("provider update launch notification logic", () => {
     ] satisfies ReadonlyArray<ServerProvider>;
 
     const successView = getProviderUpdateSidebarPillView(providers, {
-      visibleAfterMs: sessionStartedAtMs,
+      visibleAfterIso: sessionStartedAt,
     });
     expect(successView).toMatchObject({
       key: "succeeded:codex:2026-04-23T10:01:00.000Z:Provider updated.",
@@ -652,7 +652,7 @@ describe("provider update launch notification logic", () => {
     });
 
     const failureView = getProviderUpdateSidebarPillView(providers, {
-      visibleAfterMs: sessionStartedAtMs,
+      visibleAfterIso: sessionStartedAt,
       dismissedKeys: new Set(["succeeded:codex:2026-04-23T10:01:00.000Z:Provider updated."]),
     });
     expect(failureView).toMatchObject({

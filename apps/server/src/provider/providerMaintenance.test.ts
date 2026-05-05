@@ -4,7 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import os from "node:os";
 import path from "node:path";
 import { ProviderDriverKind } from "@t3tools/contracts";
-import { Effect } from "effect";
+import { Effect, Random } from "effect";
 import {
   createProviderVersionAdvisory,
   makePackageManagedProviderMaintenanceResolver,
@@ -15,6 +15,10 @@ import {
 } from "./providerMaintenance.ts";
 
 const driver = (value: string) => ProviderDriverKind.make(value);
+const makeTempDir = Effect.fn("makeTempDir")(function* (name: string) {
+  const id = yield* Random.nextUUIDv4;
+  return path.join(os.tmpdir(), `${name}-${id}`);
+});
 const isNativeTestCommandPath =
   (expectedPathSegment: string) =>
   (commandPath: string): boolean =>
@@ -121,97 +125,109 @@ describe("providerMaintenance", () => {
     });
   });
 
-  it("switches package-managed providers to vite-plus updates when the resolved binary lives in vite-plus global bin", () => {
-    const tempDir = path.join(os.tmpdir(), `t3-vite-plus-capabilities-${Date.now()}`);
-    const vitePlusBinDir = path.join(tempDir, ".vite-plus", "bin");
-    mkdirSync(vitePlusBinDir, { recursive: true });
-    const packageToolPath = path.join(vitePlusBinDir, "package-tool");
-    writeFileSync(packageToolPath, "#!/bin/sh\n");
-    chmodSync(packageToolPath, 0o755);
+  it.effect(
+    "switches package-managed providers to vite-plus updates when the resolved binary lives in vite-plus global bin",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-vite-plus-capabilities");
+        const vitePlusBinDir = path.join(tempDir, ".vite-plus", "bin");
+        mkdirSync(vitePlusBinDir, { recursive: true });
+        const packageToolPath = path.join(vitePlusBinDir, "package-tool");
+        writeFileSync(packageToolPath, "#!/bin/sh\n");
+        chmodSync(packageToolPath, 0o755);
 
-    expect(
-      packageToolUpdate.resolve({
-        binaryPath: "package-tool",
-        platform: "darwin",
-        env: {
-          PATH: vitePlusBinDir,
-        },
+        expect(
+          packageToolUpdate.resolve({
+            binaryPath: "package-tool",
+            platform: "darwin",
+            env: {
+              PATH: vitePlusBinDir,
+            },
+          }),
+        ).toEqual({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          update: {
+            command: "vp i -g @example/package-tool",
+
+            executable: "vp",
+
+            args: ["i", "-g", "@example/package-tool"],
+
+            lockKey: "vite-plus-global",
+          },
+        });
       }),
-    ).toEqual({
-      provider: driver("packageTool"),
-      packageName: "@example/package-tool",
-      update: {
-        command: "vp i -g @example/package-tool",
+  );
 
-        executable: "vp",
+  it.effect(
+    "switches package-managed providers to bun updates when the resolved binary lives in bun's global bin",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-bun-capabilities");
+        const bunBinDir = path.join(tempDir, ".bun", "bin");
+        mkdirSync(bunBinDir, { recursive: true });
+        writeFileSync(path.join(bunBinDir, "native-package-tool.exe"), "MZ");
 
-        args: ["i", "-g", "@example/package-tool"],
+        expect(
+          nativePackageToolUpdate.resolve({
+            binaryPath: "native-package-tool",
+            platform: "win32",
+            env: {
+              PATH: bunBinDir,
+              PATHEXT: ".COM;.EXE;.BAT;.CMD",
+            },
+          }),
+        ).toEqual({
+          provider: driver("nativePackageTool"),
+          packageName: "@example/native-package-tool",
+          update: {
+            command: "bun i -g @example/native-package-tool@latest",
 
-        lockKey: "vite-plus-global",
-      },
-    });
-  });
+            executable: "bun",
 
-  it("switches package-managed providers to bun updates when the resolved binary lives in bun's global bin", () => {
-    const tempDir = path.join(os.tmpdir(), `t3-bun-capabilities-${Date.now()}`);
-    const bunBinDir = path.join(tempDir, ".bun", "bin");
-    mkdirSync(bunBinDir, { recursive: true });
-    writeFileSync(path.join(bunBinDir, "native-package-tool.exe"), "MZ");
+            args: ["i", "-g", "@example/native-package-tool@latest"],
 
-    expect(
-      nativePackageToolUpdate.resolve({
-        binaryPath: "native-package-tool",
-        platform: "win32",
-        env: {
-          PATH: bunBinDir,
-          PATHEXT: ".COM;.EXE;.BAT;.CMD",
-        },
+            lockKey: "bun-global",
+          },
+        });
       }),
-    ).toEqual({
-      provider: driver("nativePackageTool"),
-      packageName: "@example/native-package-tool",
-      update: {
-        command: "bun i -g @example/native-package-tool@latest",
+  );
 
-        executable: "bun",
+  it.effect(
+    "switches package-managed providers to pnpm updates when the resolved binary lives in pnpm's global bin",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-pnpm-capabilities");
+        const pnpmHomeDir = path.join(tempDir, ".local", "share", "pnpm");
+        mkdirSync(pnpmHomeDir, { recursive: true });
+        const scopedPackageToolPath = path.join(pnpmHomeDir, "scoped-package-tool");
+        writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
+        chmodSync(scopedPackageToolPath, 0o755);
 
-        args: ["i", "-g", "@example/native-package-tool@latest"],
+        expect(
+          scopedPackageToolUpdate.resolve({
+            binaryPath: "scoped-package-tool",
+            platform: "darwin",
+            env: {
+              PATH: pnpmHomeDir,
+            },
+          }),
+        ).toEqual({
+          provider: driver("scopedPackageTool"),
+          packageName: "@example/scoped-package-tool",
+          update: {
+            command: "pnpm add -g @example/scoped-package-tool@latest",
 
-        lockKey: "bun-global",
-      },
-    });
-  });
+            executable: "pnpm",
 
-  it("switches package-managed providers to pnpm updates when the resolved binary lives in pnpm's global bin", () => {
-    const tempDir = path.join(os.tmpdir(), `t3-pnpm-capabilities-${Date.now()}`);
-    const pnpmHomeDir = path.join(tempDir, ".local", "share", "pnpm");
-    mkdirSync(pnpmHomeDir, { recursive: true });
-    const scopedPackageToolPath = path.join(pnpmHomeDir, "scoped-package-tool");
-    writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
-    chmodSync(scopedPackageToolPath, 0o755);
+            args: ["add", "-g", "@example/scoped-package-tool@latest"],
 
-    expect(
-      scopedPackageToolUpdate.resolve({
-        binaryPath: "scoped-package-tool",
-        platform: "darwin",
-        env: {
-          PATH: pnpmHomeDir,
-        },
+            lockKey: "pnpm-global",
+          },
+        });
       }),
-    ).toEqual({
-      provider: driver("scopedPackageTool"),
-      packageName: "@example/scoped-package-tool",
-      update: {
-        command: "pnpm add -g @example/scoped-package-tool@latest",
-
-        executable: "pnpm",
-
-        args: ["add", "-g", "@example/scoped-package-tool@latest"],
-
-        lockKey: "pnpm-global",
-      },
-    });
-  });
+  );
 
   it("switches package-tool to Homebrew updates when the binary resolves through Homebrew", () => {
     expect(
@@ -237,73 +253,75 @@ describe("providerMaintenance", () => {
     });
   });
 
-  it("switches native-package-tool to native updates when the binary resolves through the native installer", () => {
-    const tempDir = path.join(
-      os.tmpdir(),
-      `t3-native-package-tool-native-capabilities-${Date.now()}`,
-    );
-    const nativeBinDir = path.join(tempDir, ".local", "bin");
-    mkdirSync(nativeBinDir, { recursive: true });
-    const nativePackageToolPath = path.join(nativeBinDir, "native-package-tool");
-    writeFileSync(nativePackageToolPath, "#!/bin/sh\n");
-    chmodSync(nativePackageToolPath, 0o755);
+  it.effect(
+    "switches native-package-tool to native updates when the binary resolves through the native installer",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-native-package-tool-native-capabilities");
+        const nativeBinDir = path.join(tempDir, ".local", "bin");
+        mkdirSync(nativeBinDir, { recursive: true });
+        const nativePackageToolPath = path.join(nativeBinDir, "native-package-tool");
+        writeFileSync(nativePackageToolPath, "#!/bin/sh\n");
+        chmodSync(nativePackageToolPath, 0o755);
 
-    expect(
-      nativePackageToolUpdate.resolve({
-        binaryPath: "native-package-tool",
-        platform: "darwin",
-        env: {
-          PATH: nativeBinDir,
-        },
+        expect(
+          nativePackageToolUpdate.resolve({
+            binaryPath: "native-package-tool",
+            platform: "darwin",
+            env: {
+              PATH: nativeBinDir,
+            },
+          }),
+        ).toEqual({
+          provider: driver("nativePackageTool"),
+          packageName: "@example/native-package-tool",
+          update: {
+            command: "native-package-tool update",
+
+            executable: "native-package-tool",
+
+            args: ["update"],
+
+            lockKey: "native-package-tool-native",
+          },
+        });
       }),
-    ).toEqual({
-      provider: driver("nativePackageTool"),
-      packageName: "@example/native-package-tool",
-      update: {
-        command: "native-package-tool update",
+  );
 
-        executable: "native-package-tool",
+  it.effect(
+    "switches scoped-package-tool to native upgrades when the binary resolves through the standalone installer",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-scoped-package-tool-native-capabilities");
+        const nativeBinDir = path.join(tempDir, ".scoped-package-tool", "bin");
+        mkdirSync(nativeBinDir, { recursive: true });
+        const scopedPackageToolPath = path.join(nativeBinDir, "scoped-package-tool");
+        writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
+        chmodSync(scopedPackageToolPath, 0o755);
 
-        args: ["update"],
+        expect(
+          scopedPackageToolUpdate.resolve({
+            binaryPath: "scoped-package-tool",
+            platform: "darwin",
+            env: {
+              PATH: nativeBinDir,
+            },
+          }),
+        ).toEqual({
+          provider: driver("scopedPackageTool"),
+          packageName: "@example/scoped-package-tool",
+          update: {
+            command: "scoped-package-tool upgrade",
 
-        lockKey: "native-package-tool-native",
-      },
-    });
-  });
+            executable: "scoped-package-tool",
 
-  it("switches scoped-package-tool to native upgrades when the binary resolves through the standalone installer", () => {
-    const tempDir = path.join(
-      os.tmpdir(),
-      `t3-scoped-package-tool-native-capabilities-${Date.now()}`,
-    );
-    const nativeBinDir = path.join(tempDir, ".scoped-package-tool", "bin");
-    mkdirSync(nativeBinDir, { recursive: true });
-    const scopedPackageToolPath = path.join(nativeBinDir, "scoped-package-tool");
-    writeFileSync(scopedPackageToolPath, "#!/bin/sh\n");
-    chmodSync(scopedPackageToolPath, 0o755);
+            args: ["upgrade"],
 
-    expect(
-      scopedPackageToolUpdate.resolve({
-        binaryPath: "scoped-package-tool",
-        platform: "darwin",
-        env: {
-          PATH: nativeBinDir,
-        },
+            lockKey: "scoped-package-tool-native",
+          },
+        });
       }),
-    ).toEqual({
-      provider: driver("scopedPackageTool"),
-      packageName: "@example/scoped-package-tool",
-      update: {
-        command: "scoped-package-tool upgrade",
-
-        executable: "scoped-package-tool",
-
-        args: ["upgrade"],
-
-        lockKey: "scoped-package-tool-native",
-      },
-    });
-  });
+  );
 
   it("switches native-package-tool to Homebrew updates when the binary resolves through Homebrew", () => {
     expect(
@@ -355,7 +373,7 @@ describe("providerMaintenance", () => {
 
   it.effect("keeps npm updates for binaries symlinked into npm's global node_modules tree", () =>
     Effect.gen(function* () {
-      const tempDir = path.join(os.tmpdir(), `t3-npm-capabilities-${Date.now()}`);
+      const tempDir = yield* makeTempDir("t3-npm-capabilities");
       const binDir = path.join(tempDir, "bin");
       const packageBinDir = path.join(
         tempDir,
@@ -399,7 +417,7 @@ describe("providerMaintenance", () => {
 
   it.effect("uses Effect FileSystem realPath when detecting pnpm global symlinks", () =>
     Effect.gen(function* () {
-      const tempDir = path.join(os.tmpdir(), `t3-pnpm-realpath-capabilities-${Date.now()}`);
+      const tempDir = yield* makeTempDir("t3-pnpm-realpath-capabilities");
       const binDir = path.join(tempDir, "bin");
       const packageBinDir = path.join(
         tempDir,
