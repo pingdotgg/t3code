@@ -10,7 +10,10 @@ import {
   type DesktopUpdateChannel,
   type DesktopUpdateState,
   type LocalApi,
+  ProviderDriverKind,
+  ProviderInstanceId,
   type ServerConfig,
+  type ServerProvider,
   type SourceControlDiscoveryResult,
 } from "@t3tools/contracts";
 import { DateTime, Option } from "effect";
@@ -23,7 +26,7 @@ import { AppAtomRegistryProvider, resetAppAtomRegistryForTests } from "../../rpc
 import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
 import { useUiStateStore } from "../../uiStateStore";
 import { ConnectionsSettings } from "./ConnectionsSettings";
-import { GeneralSettingsPanel } from "./SettingsPanels";
+import { GeneralSettingsPanel, ProviderSettingsPanel } from "./SettingsPanels";
 import { SourceControlSettingsPanel } from "./SourceControlSettings";
 
 const authAccessHarness = vi.hoisted(() => {
@@ -204,6 +207,31 @@ function createBaseServerConfig(): ServerConfig {
       otlpMetricsEnabled: false,
     },
     settings: DEFAULT_SERVER_SETTINGS,
+  };
+}
+
+function createOutdatedProvider(driver: string): ServerProvider {
+  return {
+    instanceId: ProviderInstanceId.make(driver),
+    driver: ProviderDriverKind.make(driver),
+    enabled: true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-05-04T10:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    versionAdvisory: {
+      status: "behind_latest",
+      currentVersion: "1.0.0",
+      latestVersion: "1.1.0",
+      message: "Update available.",
+      checkedAt: "2026-05-04T10:00:00.000Z",
+      updateCommand: "npm install -g openai/codex@latest",
+      canUpdate: true,
+    },
   };
 }
 
@@ -1016,7 +1044,7 @@ describe("GeneralSettingsPanel observability", () => {
 
     mounted = await render(
       <AppAtomRegistryProvider>
-        <GeneralSettingsPanel />
+        <ProviderSettingsPanel />
       </AppAtomRegistryProvider>,
     );
 
@@ -1030,6 +1058,41 @@ describe("GeneralSettingsPanel observability", () => {
     await expect.element(page.getByPlaceholder("http://127.0.0.1:4096")).toBeInTheDocument();
     await expect.element(page.getByText("Server password")).toBeInTheDocument();
     await expect.element(page.getByPlaceholder("Optional")).toBeInTheDocument();
+  });
+
+  it("runs one-click provider updates from the provider card", async () => {
+    const updateProvider = vi.fn<LocalApi["server"]["updateProvider"]>().mockResolvedValue({
+      providers: [createOutdatedProvider("codex")],
+    });
+    window.nativeApi = {
+      persistence: {
+        getClientSettings: vi.fn().mockResolvedValue(null),
+        setClientSettings: vi.fn().mockResolvedValue(undefined),
+      },
+      server: {
+        updateProvider,
+      },
+    } as unknown as LocalApi;
+
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [createOutdatedProvider("codex")],
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ProviderSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByRole("button", { name: "Update available — view details" }).click();
+    await expect.element(page.getByRole("button", { name: "Update now" })).toBeInTheDocument();
+    await page.getByRole("button", { name: "Update now" }).click();
+
+    expect(updateProvider).toHaveBeenCalledWith({
+      provider: ProviderDriverKind.make("codex"),
+      instanceId: ProviderInstanceId.make("codex"),
+    });
   });
 });
 

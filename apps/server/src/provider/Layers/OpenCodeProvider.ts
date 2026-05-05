@@ -7,7 +7,6 @@ import {
 import { Cause, Data, Effect } from "effect";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
-
 import {
   buildServerProvider,
   nonEmptyTrimmed,

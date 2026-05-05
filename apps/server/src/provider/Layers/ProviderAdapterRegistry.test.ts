@@ -14,6 +14,7 @@ import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
 import type { TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -111,6 +112,10 @@ const makeFakeInstance = (
     displayName: undefined,
     enabled: true,
     snapshot: {
+      maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+        provider: driverKind,
+        packageName: null,
+      }),
       getSnapshot: Effect.succeed({} as unknown as ServerProvider),
       refresh: Effect.succeed({} as unknown as ServerProvider),
       streamChanges: Stream.empty,

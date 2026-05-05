@@ -376,23 +376,26 @@ function isExecutableFile(
   }
 }
 
-export function isCommandAvailable(
+export function resolveCommandPath(
   command: string,
   options: CommandAvailabilityOptions = {},
-): boolean {
+): string | null {
   const platform = options.platform ?? process.platform;
   const env = options.env ?? process.env;
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
   const commandCandidates = resolveCommandCandidates(command, platform, windowsPathExtensions);
 
   if (command.includes("/") || command.includes("\\")) {
-    return commandCandidates.some((candidate) =>
-      isExecutableFile(candidate, platform, windowsPathExtensions),
-    );
+    for (const candidate of commandCandidates) {
+      if (isExecutableFile(candidate, platform, windowsPathExtensions)) {
+        return candidate;
+      }
+    }
+    return null;
   }
 
   const pathValue = resolvePathEnvironmentVariable(env);
-  if (pathValue.length === 0) return false;
+  if (pathValue.length === 0) return null;
   const pathEntries = pathValue
     .split(pathDelimiterForPlatform(platform))
     .map((entry) => stripWrappingQuotes(entry.trim()))
@@ -400,12 +403,20 @@ export function isCommandAvailable(
 
   for (const pathEntry of pathEntries) {
     for (const candidate of commandCandidates) {
-      if (isExecutableFile(join(pathEntry, candidate), platform, windowsPathExtensions)) {
-        return true;
+      const candidatePath = join(pathEntry, candidate);
+      if (isExecutableFile(candidatePath, platform, windowsPathExtensions)) {
+        return candidatePath;
       }
     }
   }
-  return false;
+  return null;
+}
+
+export function isCommandAvailable(
+  command: string,
+  options: CommandAvailabilityOptions = {},
+): boolean {
+  return resolveCommandPath(command, options) !== null;
 }
 
 export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {

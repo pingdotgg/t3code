@@ -1,5 +1,12 @@
 import { useCallback, type ComponentType } from "react";
-import { ArchiveIcon, ArrowLeftIcon, GitBranchIcon, Link2Icon, Settings2Icon } from "lucide-react";
+import {
+  ArchiveIcon,
+  ArrowLeftIcon,
+  BotIcon,
+  GitBranchIcon,
+  Link2Icon,
+  Settings2Icon,
+} from "lucide-react";
 import { useCanGoBack, useNavigate } from "@tanstack/react-router";
 
 import {
@@ -15,6 +22,7 @@ import {
 
 export type SettingsSectionPath =
   | "/settings/general"
+  | "/settings/providers"
   | "/settings/source-control"
   | "/settings/connections"
   | "/settings/archived";
@@ -25,6 +33,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: ComponentType<{ className?: string }>;
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
+  { label: "Providers", to: "/settings/providers", icon: BotIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },
   { label: "Archive", to: "/settings/archived", icon: ArchiveIcon },

@@ -13,6 +13,7 @@ interface ProviderSnapshotState {
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
   Settings,
 >(input: {
+  readonly maintenanceCapabilities: ServerProviderShape["maintenanceCapabilities"];
   readonly getSettings: Effect.Effect<Settings>;
   readonly streamSettings: Stream.Stream<Settings>;
   readonly haveSettingsChanged: (previous: Settings, next: Settings) => boolean;
@@ -143,6 +144,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   );
 
   return {
+    maintenanceCapabilities: input.maintenanceCapabilities,
     getSnapshot: input.getSettings.pipe(
       Effect.flatMap(applySnapshot),
       Effect.tapError(Effect.logError),

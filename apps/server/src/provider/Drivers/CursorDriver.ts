@@ -14,6 +14,7 @@
  */
 import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
 import { Duration, Effect, FileSystem, Path, Schema, Stream } from "effect";
+import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config.ts";
@@ -34,13 +35,28 @@ import {
 } from "../ProviderDriver.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
+import {
+  makeProviderMaintenanceCapabilities,
+  makeStaticProviderMaintenanceResolver,
+  resolveProviderMaintenanceCapabilitiesEffect,
+} from "../providerMaintenance.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("cursor");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
+const UPDATE = makeStaticProviderMaintenanceResolver(
+  makeProviderMaintenanceCapabilities({
+    provider: DRIVER_KIND,
+    packageName: null,
+    updateExecutable: "agent",
+    updateArgs: ["update"],
+    updateLockKey: "cursor-agent",
+  }),
+);
 
 export type CursorDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
+  | HttpClient.HttpClient
   | Path.Path
   | ProviderEventLoggers
   | ServerConfig;
@@ -74,6 +90,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const httpClient = yield* HttpClient.HttpClient;
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
@@ -87,6 +104,10 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies CursorSettings;
+      const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
+        binaryPath: effectiveConfig.binaryPath,
+        env: processEnv,
+      });
 
       const adapter = yield* makeCursorAdapter(effectiveConfig, {
         environment: processEnv,
@@ -103,6 +124,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       );
 
       const snapshot = yield* makeManagedServerProvider<CursorSettings>({
+        maintenanceCapabilities,
         getSettings: Effect.succeed(effectiveConfig),
         streamSettings: Stream.never,
         haveSettingsChanged: () => false,
@@ -117,8 +139,10 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
             settings,
             environment: processEnv,
             snapshot: currentSnapshot,
+            maintenanceCapabilities,
             publishSnapshot,
             stampIdentity,
+            httpClient,
           }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
         refreshInterval: SNAPSHOT_REFRESH_INTERVAL,
       }).pipe(
