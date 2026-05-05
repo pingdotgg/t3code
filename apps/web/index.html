@@ -25,6 +25,20 @@
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           const isDark = theme === "dark" || (theme === "system" && prefersDark);
           document.documentElement.classList.toggle("dark", isDark);
+          const rawSettings = window.localStorage.getItem("t3code:client-settings:v1");
+          const palette = rawSettings ? JSON.parse(rawSettings).themePalette : null;
+          if (palette && /^#[0-9a-fA-F]{6}$/.test(palette.primaryColor)) {
+            document.documentElement.style.setProperty(
+              "--theme-primary-seed",
+              palette.primaryColor.toLowerCase(),
+            );
+          }
+          if (palette && /^#[0-9a-fA-F]{6}$/.test(palette.neutralColor)) {
+            document.documentElement.style.setProperty(
+              "--theme-neutral-seed",
+              palette.neutralColor.toLowerCase(),
+            );
+          }
           const chromeColor = isDark ? DARK_BACKGROUND : LIGHT_BACKGROUND;
           document.documentElement.style.backgroundColor = chromeColor;
           themeColorMeta?.setAttribute("content", chromeColor);

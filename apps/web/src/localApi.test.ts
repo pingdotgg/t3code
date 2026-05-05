@@ -1,6 +1,7 @@
 import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_THEME_PALETTE,
   type DesktopBridge,
   EnvironmentId,
   type VcsStatusResult,
@@ -584,6 +585,7 @@ describe("wsApi", () => {
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,
       timestampFormat: "24-hour" as const,
+      themePalette: DEFAULT_THEME_PALETTE,
     };
     const getClientSettings = vi.fn().mockResolvedValue({
       ...clientSettings,
@@ -645,6 +647,7 @@ describe("wsApi", () => {
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,
       timestampFormat: "24-hour" as const,
+      themePalette: DEFAULT_THEME_PALETTE,
     };
 
     await api.persistence.setClientSettings(clientSettings);

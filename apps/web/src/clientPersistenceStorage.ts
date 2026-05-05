@@ -1,5 +1,6 @@
 import {
   ClientSettingsSchema,
+  DEFAULT_THEME_PALETTE,
   EnvironmentId,
   type ClientSettings,
   type EnvironmentId as EnvironmentIdValue,
@@ -11,6 +12,19 @@ import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorag
 
 export const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
 export const SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY = "t3code:saved-environment-registry:v1";
+
+export function readBootThemePalette(): ClientSettings["themePalette"] {
+  if (!hasWindow()) {
+    return DEFAULT_THEME_PALETTE;
+  }
+
+  try {
+    const parsed = getLocalStorageItem(CLIENT_SETTINGS_STORAGE_KEY, ClientSettingsSchema);
+    return parsed?.themePalette ?? DEFAULT_THEME_PALETTE;
+  } catch {
+    return DEFAULT_THEME_PALETTE;
+  }
+}
 
 const BrowserSavedEnvironmentRecordSchema = Schema.Struct({
   environmentId: EnvironmentId,

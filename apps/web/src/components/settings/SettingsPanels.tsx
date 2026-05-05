@@ -1,6 +1,6 @@
 import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useMemo, useRef, useState } from "react";
 import {
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
@@ -10,7 +10,11 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_THEME_PALETTE,
+  DEFAULT_UNIFIED_SETTINGS,
+  type ThemePaletteSettings,
+} from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
@@ -40,7 +44,14 @@ import {
   deriveProviderInstanceEntries,
   sortProviderInstanceEntries,
 } from "../../providerInstances";
+import {
+  getThemePaletteCustomProperties,
+  normalizeThemePaletteColor,
+  THEME_PALETTE_PREVIEW_SWATCHES,
+  THEME_PALETTE_SWATCHES,
+} from "../../themePalette";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
+import { cn } from "../../lib/utils";
 import { useShallow } from "zustand/react/shallow";
 import {
   selectProjectsAcrossEnvironments,
@@ -116,6 +127,91 @@ function withoutProviderInstanceFavorites(
 const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
   provider: definition.value,
 }));
+
+function ThemePaletteColorControl({
+  label,
+  value,
+  fallbackColor,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  fallbackColor: string;
+  onChange: (value: string) => void;
+}) {
+  const normalizedValue = normalizeThemePaletteColor(value) ?? fallbackColor;
+
+  return (
+    <div className="grid min-w-0 gap-2">
+      <span className="text-xs font-medium text-foreground">{label}</span>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <input
+          type="color"
+          value={normalizedValue}
+          onChange={(event) => onChange(event.target.value)}
+          aria-label={`${label} theme color`}
+          className="h-8 w-10 cursor-pointer rounded-xl border border-input bg-background p-0.5"
+        />
+        <div className="flex flex-wrap gap-1.5">
+          {THEME_PALETTE_SWATCHES.map((swatch) => {
+            const selected = normalizedValue === swatch;
+            return (
+              <button
+                key={swatch}
+                type="button"
+                className={cn(
+                  "size-6 cursor-pointer rounded-full border transition",
+                  selected
+                    ? "scale-110 border-foreground ring-2 ring-ring ring-offset-1 ring-offset-background"
+                    : "border-black/10 hover:scale-105 dark:border-white/20",
+                )}
+                style={{ backgroundColor: swatch }}
+                onClick={() => onChange(swatch)}
+                aria-label={`Use ${swatch} ${label.toLowerCase()} theme color`}
+              />
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ThemePalettePreview({ palette }: { palette: ThemePaletteSettings }) {
+  const previewStyle = getThemePaletteCustomProperties(palette) as CSSProperties;
+
+  return (
+    <div
+      className="mt-4 rounded-xl border bg-background p-3 text-foreground"
+      style={previewStyle}
+      aria-label="Generated theme palette preview"
+    >
+      <div className="grid gap-2 sm:grid-cols-4">
+        {THEME_PALETTE_PREVIEW_SWATCHES.map((swatch) => (
+          <div key={swatch.variable} className="grid gap-1.5">
+            <span
+              className="h-9 rounded-lg border border-border shadow-xs"
+              style={{ backgroundColor: `var(${swatch.variable})` }}
+              aria-hidden
+            />
+            <span className="text-[11px] text-muted-foreground">{swatch.label}</span>
+          </div>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <span className="rounded-full bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground">
+          Primary
+        </span>
+        <span className="rounded-full bg-accent px-2.5 py-1 text-xs font-medium text-accent-foreground">
+          Accent
+        </span>
+        <span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+          Muted
+        </span>
+      </div>
+    </div>
+  );
+}
 
 function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }) {
   useRelativeTimeTick();
@@ -347,6 +443,10 @@ export function useSettingsRestore(onRestored?: () => void) {
   const settings = useSettings();
   const { resetSettings } = useUpdateSettings();
 
+  const themePaletteDirty = !Equal.equals(
+    settings.themePalette,
+    DEFAULT_UNIFIED_SETTINGS.themePalette,
+  );
   const isGitWritingModelDirty = !Equal.equals(
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
@@ -380,6 +480,7 @@ export function useSettingsRestore(onRestored?: () => void) {
   const changedSettingLabels = useMemo(
     () => [
       ...(theme !== "system" ? ["Theme"] : []),
+      ...(themePaletteDirty ? ["Theme colors"] : []),
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
@@ -413,6 +514,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     [
       areProviderSettingsDirty,
       isGitWritingModelDirty,
+      themePaletteDirty,
       settings.autoOpenPlanSidebar,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
@@ -826,6 +928,53 @@ export function GeneralSettingsPanel() {
             </Select>
           }
         />
+
+        <SettingsRow
+          title="Theme colors"
+          description="Choose brand and surface colors. T3 Code generates the palette from them."
+          resetAction={
+            !Equal.equals(settings.themePalette, DEFAULT_UNIFIED_SETTINGS.themePalette) ? (
+              <SettingResetButton
+                label="theme colors"
+                onClick={() =>
+                  updateSettings({
+                    themePalette: DEFAULT_UNIFIED_SETTINGS.themePalette,
+                  })
+                }
+              />
+            ) : null
+          }
+        >
+          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+            <ThemePaletteColorControl
+              label="Primary color"
+              value={settings.themePalette.primaryColor}
+              fallbackColor={DEFAULT_THEME_PALETTE.primaryColor}
+              onChange={(primaryColor) =>
+                updateSettings({
+                  themePalette: {
+                    ...settings.themePalette,
+                    primaryColor,
+                  },
+                })
+              }
+            />
+            <ThemePaletteColorControl
+              label="Neutral color"
+              value={settings.themePalette.neutralColor}
+              fallbackColor={DEFAULT_THEME_PALETTE.neutralColor}
+              onChange={(neutralColor) =>
+                updateSettings({
+                  themePalette: {
+                    ...settings.themePalette,
+                    neutralColor,
+                  },
+                })
+              }
+            />
+          </div>
+          <ThemePalettePreview palette={settings.themePalette} />
+        </SettingsRow>
 
         <SettingsRow
           title="Time format"

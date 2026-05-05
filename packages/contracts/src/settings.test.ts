@@ -2,10 +2,36 @@ import { describe, expect, it } from "vitest";
 import { Schema } from "effect";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { DEFAULT_SERVER_SETTINGS, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import {
+  ClientSettingsSchema,
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
+  DEFAULT_THEME_PALETTE,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "./settings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
+
+describe("ClientSettings.themePalette", () => {
+  it("defaults theme palette colors for existing client settings", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.themePalette).toEqual(DEFAULT_THEME_PALETTE);
+    expect(decodeClientSettings({}).themePalette).toEqual(DEFAULT_THEME_PALETTE);
+  });
+
+  it("rejects invalid theme palette colors", () => {
+    expect(() =>
+      decodeClientSettings({
+        themePalette: {
+          primaryColor: "rebeccapurple",
+          neutralColor: "#737373",
+        },
+      }),
+    ).toThrow();
+  });
+});
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {

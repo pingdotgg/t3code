@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import {
+  DEFAULT_THEME_PALETTE,
   EnvironmentId,
   type ClientSettings,
   type PersistedSavedEnvironmentRecord,
@@ -63,6 +64,7 @@ const clientSettings: ClientSettings = {
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
   timestampFormat: "24-hour",
+  themePalette: DEFAULT_THEME_PALETTE,
 };
 
 const savedRegistryRecord: PersistedSavedEnvironmentRecord = {

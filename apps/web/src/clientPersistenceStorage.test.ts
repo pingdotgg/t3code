@@ -1,4 +1,9 @@
-import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_THEME_PALETTE,
+  EnvironmentId,
+  type PersistedSavedEnvironmentRecord,
+} from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const testEnvironmentId = EnvironmentId.make("environment-1");
@@ -55,6 +60,46 @@ afterEach(() => {
 });
 
 describe("clientPersistenceStorage", () => {
+  it("reads the persisted theme palette for boot-time theme application", async () => {
+    const testWindow = getTestWindow();
+    const { CLIENT_SETTINGS_STORAGE_KEY, readBootThemePalette } =
+      await import("./clientPersistenceStorage");
+
+    testWindow.localStorage.setItem(
+      CLIENT_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        themePalette: {
+          primaryColor: "#db2777",
+          neutralColor: "#0f172a",
+        },
+      }),
+    );
+
+    expect(readBootThemePalette()).toEqual({
+      primaryColor: "#db2777",
+      neutralColor: "#0f172a",
+    });
+  });
+
+  it("falls back to the default theme palette when persisted data is invalid", async () => {
+    const testWindow = getTestWindow();
+    const { CLIENT_SETTINGS_STORAGE_KEY, readBootThemePalette } =
+      await import("./clientPersistenceStorage");
+
+    testWindow.localStorage.setItem(
+      CLIENT_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        themePalette: {
+          primaryColor: "pink",
+          neutralColor: "#0f172a",
+        },
+      }),
+    );
+
+    expect(readBootThemePalette()).toEqual(DEFAULT_THEME_PALETTE);
+  });
+
   it("stores browser secrets inline with the saved environment record", async () => {
     const testWindow = getTestWindow();
     const {

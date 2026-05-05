@@ -28,6 +28,23 @@ export const SidebarProjectGroupingMode = Schema.Literals([
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
 
+const ThemeColor = TrimmedNonEmptyString.check(Schema.isPattern(/^#[0-9a-fA-F]{6}$/u));
+
+export const DEFAULT_THEME_PALETTE = {
+  primaryColor: "#3b5bdb",
+  neutralColor: "#737373",
+} as const;
+
+export const ThemePaletteSettings = Schema.Struct({
+  primaryColor: ThemeColor.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THEME_PALETTE.primaryColor)),
+  ),
+  neutralColor: ThemeColor.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THEME_PALETTE.neutralColor)),
+  ),
+}).pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_THEME_PALETTE)));
+export type ThemePaletteSettings = typeof ThemePaletteSettings.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -75,6 +92,7 @@ export const ClientSettingsSchema = Schema.Struct({
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
+  themePalette: ThemePaletteSettings,
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -482,5 +500,6 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  themePalette: Schema.optionalKey(ThemePaletteSettings),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;
