@@ -197,6 +197,8 @@ try {
     },
   );
 
+  rmSync(resolve(tempRoot, "bun.lock"), { force: true });
+
   execFileSync("bun", ["install", "--ignore-scripts"], {
     cwd: tempRoot,
     stdio: "inherit",
