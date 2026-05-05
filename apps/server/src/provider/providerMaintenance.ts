@@ -4,7 +4,7 @@ import {
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
 import { resolveCommandPath } from "@t3tools/shared/shell";
-import { Effect, FileSystem, Option, Schema } from "effect";
+import { DateTime, Effect, FileSystem, Option, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import { compareCliVersions } from "./cliVersion.ts";
@@ -341,13 +341,15 @@ function makeManualProviderMaintenanceCapabilities(
   });
 }
 
-export function resolveProviderMaintenanceCapabilitiesEffect(
+export const resolveProviderMaintenanceCapabilitiesEffect = Effect.fn(
+  "resolveProviderMaintenanceCapabilitiesEffect",
+)(function* (
   resolver: ProviderMaintenanceCapabilitiesResolver,
   options?: Omit<ProviderMaintenanceCapabilityResolutionOptions, "realCommandPath">,
-): Effect.Effect<ProviderMaintenanceCapabilities, never, FileSystem.FileSystem> {
+) {
   const binaryPath = nonEmptyString(options?.binaryPath);
   if (!binaryPath) {
-    return Effect.succeed(resolver.resolve(options));
+    return resolver.resolve(options);
   }
 
   const resolvedCommandPath =
@@ -356,20 +358,18 @@ export function resolveProviderMaintenanceCapabilitiesEffect(
       ...(options?.env ? { env: options.env } : {}),
     }) ?? (hasPathSeparator(binaryPath) ? binaryPath : null);
   if (!resolvedCommandPath) {
-    return Effect.succeed(resolver.resolve(options));
+    return resolver.resolve(options);
   }
 
-  return Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const realCommandPath = yield* fileSystem
-      .realPath(resolvedCommandPath)
-      .pipe(Effect.catch(() => Effect.succeed(resolvedCommandPath)));
-    return resolver.resolve({
-      ...options,
-      realCommandPath,
-    });
+  const fileSystem = yield* FileSystem.FileSystem;
+  const realCommandPath = yield* fileSystem
+    .realPath(resolvedCommandPath)
+    .pipe(Effect.catch(() => Effect.succeed(resolvedCommandPath)));
+  return resolver.resolve({
+    ...options,
+    realCommandPath,
   });
-}
+});
 
 function deriveVersionAdvisory(input: {
   readonly currentVersion: string | null;
@@ -416,90 +416,81 @@ export function createProviderVersionAdvisory(input: {
   };
 }
 
-function fetchNpmLatestVersion(packageName: string): Effect.Effect<string | null> {
-  return Effect.gen(function* () {
-    const clientOption = yield* Effect.serviceOption(HttpClient.HttpClient);
-    if (Option.isNone(clientOption)) {
-      return null;
-    }
-    const client = clientOption.value;
-    const request = HttpClientRequest.get(
-      `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
-    ).pipe(HttpClientRequest.setHeader("accept", "application/json"));
-    const response = yield* client.execute(request).pipe(
-      Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
-      Effect.catch(() => Effect.succeed(Option.none())),
-    );
-    if (Option.isNone(response)) {
-      return null;
-    }
-    const httpResponse = response.value;
-    if (httpResponse.status < 200 || httpResponse.status >= 300) {
-      return null;
-    }
-    const payload = yield* httpResponse.json.pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(NpmLatestVersionResponse)),
-      Effect.catch(() => Effect.succeed(null)),
-    );
-    return payload ? nonEmptyString(payload.version) : null;
-  });
-}
+const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (packageName: string) {
+  const clientOption = yield* Effect.serviceOption(HttpClient.HttpClient);
+  if (Option.isNone(clientOption)) {
+    return null;
+  }
+  const client = clientOption.value;
+  const request = HttpClientRequest.get(
+    `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
+  ).pipe(HttpClientRequest.setHeader("accept", "application/json"));
+  const response = yield* client.execute(request).pipe(
+    Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
+    Effect.catch(() => Effect.succeed(Option.none())),
+  );
+  if (Option.isNone(response)) {
+    return null;
+  }
+  const httpResponse = response.value;
+  if (httpResponse.status < 200 || httpResponse.status >= 300) {
+    return null;
+  }
+  const payload = yield* httpResponse.json.pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(NpmLatestVersionResponse)),
+    Effect.catch(() => Effect.succeed(null)),
+  );
+  return payload ? nonEmptyString(payload.version) : null;
+});
 
-export function resolveLatestProviderVersion(
+export const resolveLatestProviderVersion = Effect.fn("resolveLatestProviderVersion")(function* (
   maintenanceCapabilities: ProviderMaintenanceCapabilities,
-): Effect.Effect<string | null> {
+) {
   const packageName = maintenanceCapabilities.packageName;
   if (!packageName) {
-    return Effect.succeed(null);
+    return null;
   }
 
   const cached = latestVersionCache.get(packageName);
-  const now = Date.now();
+  const now = DateTime.toEpochMillis(yield* DateTime.now);
   if (cached && cached.expiresAt > now) {
-    return Effect.succeed(cached.version);
+    return cached.version;
   }
 
-  return fetchNpmLatestVersion(packageName).pipe(
-    Effect.tap((version) =>
-      Effect.sync(() => {
-        latestVersionCache.set(packageName, {
-          expiresAt: now + LATEST_VERSION_CACHE_TTL_MS,
-          version,
-        });
-      }),
-    ),
-  );
-}
+  const version = yield* fetchNpmLatestVersion(packageName);
+  latestVersionCache.set(packageName, {
+    expiresAt: now + LATEST_VERSION_CACHE_TTL_MS,
+    version,
+  });
+  return version;
+});
 
-export function enrichProviderSnapshotWithVersionAdvisory(
-  snapshot: ServerProvider,
-  maintenanceCapabilities?: ProviderMaintenanceCapabilities,
-): Effect.Effect<ServerProvider> {
-  return Effect.gen(function* () {
-    const capabilities =
-      maintenanceCapabilities ?? makeManualProviderMaintenanceCapabilities(snapshot.driver);
-    if (!snapshot.enabled || !snapshot.installed || !snapshot.version) {
-      return {
-        ...snapshot,
-        versionAdvisory: createProviderVersionAdvisory({
-          driver: snapshot.driver,
-          currentVersion: snapshot.version,
-          checkedAt: snapshot.checkedAt,
-          maintenanceCapabilities: capabilities,
-        }),
-      };
-    }
-
-    const latestVersion = yield* resolveLatestProviderVersion(capabilities);
+export const enrichProviderSnapshotWithVersionAdvisory = Effect.fn(
+  "enrichProviderSnapshotWithVersionAdvisory",
+)(function* (snapshot: ServerProvider, maintenanceCapabilities?: ProviderMaintenanceCapabilities) {
+  const capabilities =
+    maintenanceCapabilities ?? makeManualProviderMaintenanceCapabilities(snapshot.driver);
+  if (!snapshot.enabled || !snapshot.installed || !snapshot.version) {
     return {
       ...snapshot,
       versionAdvisory: createProviderVersionAdvisory({
         driver: snapshot.driver,
         currentVersion: snapshot.version,
-        latestVersion,
-        checkedAt: new Date().toISOString(),
+        checkedAt: snapshot.checkedAt,
         maintenanceCapabilities: capabilities,
       }),
     };
-  });
-}
+  }
+
+  const latestVersion = yield* resolveLatestProviderVersion(capabilities);
+  return {
+    ...snapshot,
+    versionAdvisory: createProviderVersionAdvisory({
+      driver: snapshot.driver,
+      currentVersion: snapshot.version,
+      latestVersion,
+      checkedAt: DateTime.formatIso(yield* DateTime.now),
+      maintenanceCapabilities: capabilities,
+    }),
+  };
+});
