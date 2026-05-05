@@ -28,7 +28,7 @@ const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
 const DIFF_INLINE_DEFAULT_WIDTH = "clamp(24rem,34vw,36rem)";
 const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 22 * 16;
-const DIFF_INLINE_SIDEBAR_MAX_WIDTH = 36 * 16;
+const DIFF_INLINE_SIDEBAR_MAX_WIDTH = 256 * 16;
 const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 208;
 
 const DiffLoadingFallback = (props: { mode: DiffPanelMode }) => {
