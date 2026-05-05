@@ -268,15 +268,13 @@ interface ProcessOutput {
   readonly stderr: string;
 }
 
-function runProcess(
-  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-  input: {
+const runProcess = Effect.fn("runProcess")(
+  function* (input: {
     readonly command: string;
     readonly args: ReadonlyArray<string>;
     readonly errorMessage: string;
-  },
-): Effect.Effect<ProcessOutput, ProcessDiagnosticsError> {
-  return Effect.gen(function* () {
+  }) {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const child = yield* spawner.spawn(
       ChildProcess.make(input.command, input.args, {
         cwd: process.cwd(),
@@ -295,7 +293,7 @@ function runProcess(
           maxBytes: PROCESS_QUERY_MAX_OUTPUT_BYTES,
           truncatedMarker: "\n\n[truncated]",
         }),
-        child.exitCode.pipe(Effect.map(Number)),
+        child.exitCode,
       ],
       { concurrency: "unbounded" },
     );
@@ -305,27 +303,31 @@ function runProcess(
       stdout: stdout.text,
       stderr: stderr.text,
     } satisfies ProcessOutput;
-  }).pipe(
-    Effect.scoped,
-    Effect.timeoutOption(Duration.millis(PROCESS_QUERY_TIMEOUT_MS)),
-    Effect.flatMap((result) =>
-      Option.match(result, {
-        onNone: () => Effect.fail(toProcessDiagnosticsError(`${input.errorMessage} timed out.`)),
-        onSome: Effect.succeed,
-      }),
+  },
+  (effect, input) =>
+    effect.pipe(
+      Effect.scoped,
+      Effect.timeoutOption(Duration.millis(PROCESS_QUERY_TIMEOUT_MS)),
+      Effect.flatMap((result) =>
+        Option.match(result, {
+          onNone: () => Effect.fail(toProcessDiagnosticsError(`${input.errorMessage} timed out.`)),
+          onSome: Effect.succeed,
+        }),
+      ),
+      Effect.mapError((cause) =>
+        Schema.is(ProcessDiagnosticsError)(cause)
+          ? cause
+          : toProcessDiagnosticsError(input.errorMessage, cause),
+      ),
     ),
-    Effect.mapError((cause) =>
-      Schema.is(ProcessDiagnosticsError)(cause)
-        ? cause
-        : toProcessDiagnosticsError(input.errorMessage, cause),
-    ),
-  );
-}
+);
 
-function readPosixProcessRows(
-  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-): Effect.Effect<ReadonlyArray<ProcessRow>, ProcessDiagnosticsError> {
-  return runProcess(spawner, {
+function readPosixProcessRows(): Effect.Effect<
+  ReadonlyArray<ProcessRow>,
+  ProcessDiagnosticsError,
+  ChildProcessSpawner.ChildProcessSpawner
+> {
+  return runProcess({
     command: "ps",
     args: ["-axo", POSIX_PROCESS_QUERY_COMMAND],
     errorMessage: "Failed to query process diagnostics.",
@@ -338,9 +340,11 @@ function readPosixProcessRows(
   );
 }
 
-function readWindowsProcessRows(
-  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-): Effect.Effect<ReadonlyArray<ProcessRow>, ProcessDiagnosticsError> {
+function readWindowsProcessRows(): Effect.Effect<
+  ReadonlyArray<ProcessRow>,
+  ProcessDiagnosticsError,
+  ChildProcessSpawner.ChildProcessSpawner
+> {
   const command = [
     "$processes = Get-CimInstance Win32_Process | ForEach-Object {",
     '$perf = Get-CimInstance Win32_PerfFormattedData_PerfProc_Process -Filter "IDProcess = $($_.ProcessId)" -ErrorAction SilentlyContinue;',
@@ -349,7 +353,7 @@ function readWindowsProcessRows(
     "$processes | ConvertTo-Json -Compress -Depth 3",
   ].join(" ");
 
-  return runProcess(spawner, {
+  return runProcess({
     command: "powershell.exe",
     args: ["-NoProfile", "-NonInteractive", "-Command", command],
     errorMessage: "Failed to query process diagnostics.",
@@ -364,13 +368,8 @@ function readWindowsProcessRows(
   );
 }
 
-function readProcessRows(
-  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-): Effect.Effect<ReadonlyArray<ProcessRow>, ProcessDiagnosticsError> {
-  return process.platform === "win32"
-    ? readWindowsProcessRows(spawner)
-    : readPosixProcessRows(spawner);
-}
+const readProcessRows = (platform = process.platform) =>
+  platform === "win32" ? readWindowsProcessRows() : readPosixProcessRows();
 
 export function aggregateProcessDiagnostics(input: {
   readonly serverPid: number;
@@ -381,14 +380,13 @@ export function aggregateProcessDiagnostics(input: {
 }
 
 function assertDescendantPid(
-  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   pid: number,
-): Effect.Effect<void, ProcessDiagnosticsError> {
+): Effect.Effect<void, ProcessDiagnosticsError, ChildProcessSpawner.ChildProcessSpawner> {
   if (pid === process.pid) {
     return Effect.fail(toProcessDiagnosticsError("Refusing to signal the T3 server process."));
   }
 
-  return readProcessRows(spawner).pipe(
+  return readProcessRows().pipe(
     Effect.flatMap((rows) => {
       const filteredRows = rows.filter((row) => !isDiagnosticsQueryProcess(row, process.pid));
       const descendant = buildDescendantEntries(filteredRows, process.pid).some(
@@ -406,7 +404,8 @@ function assertDescendantPid(
 export const make = Effect.fn("makeProcessDiagnostics")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-  const read: ProcessDiagnosticsShape["read"] = readProcessRows(spawner).pipe(
+  const read: ProcessDiagnosticsShape["read"] = readProcessRows().pipe(
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
     Effect.map((rows) => makeResult({ serverPid: process.pid, rows })),
     Effect.catch((error: ProcessDiagnosticsError) =>
       Effect.succeed(makeResult({ serverPid: process.pid, rows: [], error: error.message })),
@@ -415,7 +414,8 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
 
   const signal: ProcessDiagnosticsShape["signal"] = Effect.fn("ProcessDiagnostics.signal")(
     function* (input) {
-      return yield* assertDescendantPid(spawner, input.pid).pipe(
+      return yield* assertDescendantPid(input.pid).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.flatMap(() =>
           Effect.try({
             try: () => {
@@ -449,24 +449,3 @@ export const make = Effect.fn("makeProcessDiagnostics")(function* () {
 });
 
 export const layer = Layer.effect(ProcessDiagnostics, make());
-
-export function readProcessDiagnostics(): Effect.Effect<
-  ServerProcessDiagnosticsResult,
-  never,
-  ProcessDiagnostics
-> {
-  return Effect.gen(function* () {
-    const diagnostics = yield* ProcessDiagnostics;
-    return yield* diagnostics.read;
-  });
-}
-
-export function signalProcess(input: {
-  readonly pid: number;
-  readonly signal: ServerProcessSignal;
-}): Effect.Effect<ServerSignalProcessResult, never, ProcessDiagnostics> {
-  return Effect.gen(function* () {
-    const diagnostics = yield* ProcessDiagnostics;
-    return yield* diagnostics.signal(input);
-  });
-}
