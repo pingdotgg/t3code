@@ -3,6 +3,21 @@ import { Duration, Effect, Exit, Metric, Stream } from "effect";
 import { outcomeFromExit } from "./Attributes.ts";
 import { metricAttributes, rpcRequestDuration, rpcRequestsTotal, withMetrics } from "./Metrics.ts";
 
+const RPC_SPAN_PREFIX = "ws.rpc";
+const DEFAULT_RPC_SPAN_ATTRIBUTES = {
+  "rpc.transport": "websocket",
+  "rpc.system": "effect-rpc",
+} as const;
+const RPC_METHODS_WITH_TRACING_DISABLED = new Set([
+  "server.getTraceDiagnostics",
+  "server.getProcessDiagnostics",
+  "server.signalProcess",
+]);
+
+function shouldTraceRpc(method: string): boolean {
+  return !RPC_METHODS_WITH_TRACING_DISABLED.has(method);
+}
+
 const annotateRpcSpan = (
   method: string,
   traceAttributes?: Readonly<Record<string, unknown>>,
@@ -38,8 +53,8 @@ export const observeRpcEffect = <A, E, R>(
   method: string,
   effect: Effect.Effect<A, E, R>,
   traceAttributes?: Readonly<Record<string, unknown>>,
-): Effect.Effect<A, E, R> =>
-  Effect.gen(function* () {
+): Effect.Effect<A, E, R> => {
+  const instrumented = Effect.gen(function* () {
     yield* annotateRpcSpan(method, traceAttributes);
 
     return yield* effect.pipe(
@@ -53,6 +68,18 @@ export const observeRpcEffect = <A, E, R>(
     );
   });
 
+  return shouldTraceRpc(method)
+    ? instrumented.pipe(
+        Effect.withSpan(`${RPC_SPAN_PREFIX}.${method}`, {
+          attributes: {
+            ...DEFAULT_RPC_SPAN_ATTRIBUTES,
+            ...traceAttributes,
+          },
+        }),
+      )
+    : instrumented.pipe(Effect.withTracerEnabled(false));
+};
+
 export const observeRpcStream = <A, E, R>(
   method: string,
   stream: Stream.Stream<A, E, R>,
@@ -63,7 +90,16 @@ export const observeRpcStream = <A, E, R>(
       yield* annotateRpcSpan(method, traceAttributes);
       const startedAt = Date.now();
       return stream.pipe(Stream.onExit((exit) => recordRpcStreamMetrics(method, startedAt, exit)));
-    }),
+    }).pipe(
+      shouldTraceRpc(method)
+        ? Effect.withSpan(`${RPC_SPAN_PREFIX}.${method}`, {
+            attributes: {
+              ...DEFAULT_RPC_SPAN_ATTRIBUTES,
+              ...traceAttributes,
+            },
+          })
+        : Effect.withTracerEnabled(false),
+    ),
   );
 
 export const observeRpcStreamEffect = <A, StreamError, StreamContext, EffectError, EffectContext>(
@@ -85,5 +121,14 @@ export const observeRpcStreamEffect = <A, StreamError, StreamContext, EffectErro
       return exit.value.pipe(
         Stream.onExit((streamExit) => recordRpcStreamMetrics(method, startedAt, streamExit)),
       );
-    }),
+    }).pipe(
+      shouldTraceRpc(method)
+        ? Effect.withSpan(`${RPC_SPAN_PREFIX}.${method}`, {
+            attributes: {
+              ...DEFAULT_RPC_SPAN_ATTRIBUTES,
+              ...traceAttributes,
+            },
+          })
+        : Effect.withTracerEnabled(false),
+    ),
   );
