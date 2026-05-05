@@ -35,6 +35,7 @@ describe("desktopSettings", () => {
 
   it("defaults packaged nightly builds to the nightly update channel", () => {
     expect(resolveDefaultDesktopSettings("0.0.17-nightly.20260415.1")).toEqual({
+      linuxPasswordStore: "auto",
       serverExposureMode: "local-only",
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
@@ -47,6 +48,7 @@ describe("desktopSettings", () => {
     const settingsPath = makeSettingsPath();
 
     writeDesktopSettings(settingsPath, {
+      linuxPasswordStore: "gnome-libsecret",
       serverExposureMode: "network-accessible",
       tailscaleServeEnabled: true,
       tailscaleServePort: 8443,
@@ -55,6 +57,7 @@ describe("desktopSettings", () => {
     });
 
     expect(readDesktopSettings(settingsPath, "0.0.17")).toEqual({
+      linuxPasswordStore: "gnome-libsecret",
       serverExposureMode: "network-accessible",
       tailscaleServeEnabled: true,
       tailscaleServePort: 8443,
@@ -67,6 +70,7 @@ describe("desktopSettings", () => {
     expect(
       setDesktopServerExposurePreference(
         {
+          linuxPasswordStore: "auto",
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
@@ -76,6 +80,7 @@ describe("desktopSettings", () => {
         "network-accessible",
       ),
     ).toEqual({
+      linuxPasswordStore: "auto",
       serverExposureMode: "network-accessible",
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
@@ -88,6 +93,7 @@ describe("desktopSettings", () => {
     expect(
       setDesktopTailscaleServePreference(
         {
+          linuxPasswordStore: "auto",
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
@@ -97,6 +103,7 @@ describe("desktopSettings", () => {
         { enabled: true, port: 8443 },
       ),
     ).toEqual({
+      linuxPasswordStore: "auto",
       serverExposureMode: "local-only",
       tailscaleServeEnabled: true,
       tailscaleServePort: 8443,
@@ -109,6 +116,7 @@ describe("desktopSettings", () => {
     expect(
       setDesktopTailscaleServePreference(
         {
+          linuxPasswordStore: "auto",
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 8443,
@@ -118,6 +126,7 @@ describe("desktopSettings", () => {
         { enabled: true },
       ),
     ).toEqual({
+      linuxPasswordStore: "auto",
       serverExposureMode: "local-only",
       tailscaleServeEnabled: true,
       tailscaleServePort: 8443,
@@ -130,6 +139,7 @@ describe("desktopSettings", () => {
     expect(
       setDesktopUpdateChannelPreference(
         {
+          linuxPasswordStore: "auto",
           serverExposureMode: "local-only",
           tailscaleServeEnabled: false,
           tailscaleServePort: 443,
@@ -139,6 +149,7 @@ describe("desktopSettings", () => {
         "nightly",
       ),
     ).toEqual({
+      linuxPasswordStore: "auto",
       serverExposureMode: "local-only",
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
@@ -159,6 +170,7 @@ describe("desktopSettings", () => {
     fs.writeFileSync(settingsPath, JSON.stringify({ serverExposureMode: "local-only" }), "utf8");
 
     expect(readDesktopSettings(settingsPath, "0.0.17-nightly.20260415.1")).toEqual({
+      linuxPasswordStore: "auto",
       serverExposureMode: "local-only",
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
@@ -179,6 +191,7 @@ describe("desktopSettings", () => {
     );
 
     expect(readDesktopSettings(settingsPath, "0.0.17-nightly.20260415.1")).toEqual({
+      linuxPasswordStore: "auto",
       serverExposureMode: "local-only",
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
@@ -200,6 +213,7 @@ describe("desktopSettings", () => {
     );
 
     expect(readDesktopSettings(settingsPath, "0.0.17-nightly.20260415.1")).toEqual({
+      linuxPasswordStore: "auto",
       serverExposureMode: "local-only",
       tailscaleServeEnabled: false,
       tailscaleServePort: 443,
@@ -220,6 +234,7 @@ describe("desktopSettings", () => {
     );
 
     expect(readDesktopSettings(settingsPath, "0.0.17")).toEqual({
+      linuxPasswordStore: "auto",
       serverExposureMode: "local-only",
       tailscaleServeEnabled: true,
       tailscaleServePort: 443,

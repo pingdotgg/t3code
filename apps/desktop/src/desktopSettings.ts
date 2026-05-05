@@ -2,9 +2,15 @@ import * as FS from "node:fs";
 import * as Path from "node:path";
 import type { DesktopServerExposureMode, DesktopUpdateChannel } from "@t3tools/contracts";
 
+import {
+  DEFAULT_LINUX_PASSWORD_STORE,
+  normalizeLinuxPasswordStorePreference,
+  type LinuxPasswordStorePreference,
+} from "./linuxSecretStorage.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 
 export interface DesktopSettings {
+  readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly serverExposureMode: DesktopServerExposureMode;
   readonly tailscaleServeEnabled: boolean;
   readonly tailscaleServePort: number;
@@ -15,6 +21,7 @@ export interface DesktopSettings {
 export const DEFAULT_TAILSCALE_SERVE_PORT = 443;
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
+  linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   serverExposureMode: "local-only",
   tailscaleServeEnabled: false,
   tailscaleServePort: DEFAULT_TAILSCALE_SERVE_PORT,
@@ -85,6 +92,7 @@ export function readDesktopSettings(settingsPath: string, appVersion: string): D
 
     const raw = FS.readFileSync(settingsPath, "utf8");
     const parsed = JSON.parse(raw) as {
+      readonly linuxPasswordStore?: unknown;
       readonly serverExposureMode?: unknown;
       readonly tailscaleServeEnabled?: unknown;
       readonly tailscaleServePort?: unknown;
@@ -101,6 +109,7 @@ export function readDesktopSettings(settingsPath: string, appVersion: string): D
       (isLegacySettings && parsedUpdateChannel === "nightly");
 
     return {
+      linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
       serverExposureMode:
         parsed.serverExposureMode === "network-accessible" ? "network-accessible" : "local-only",
       tailscaleServeEnabled: parsed.tailscaleServeEnabled === true,

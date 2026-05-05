@@ -84,6 +84,10 @@ import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runti
 import { resolveDesktopAppBranding } from "./appBranding.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
 import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
+import {
+  resolveLinuxPasswordStoreSwitch,
+  resolveLinuxSecretStorageUnavailableMessage,
+} from "./linuxSecretStorage.ts";
 
 syncShellEnvironment();
 
@@ -355,6 +359,29 @@ function getDesktopSecretStorage() {
     encryptString: (value: string) => safeStorage.encryptString(value),
     decryptString: (value: Buffer) => safeStorage.decryptString(value),
   } as const;
+}
+
+function getSelectedSafeStorageBackend(): string | null {
+  if (process.platform !== "linux") {
+    return null;
+  }
+  try {
+    return safeStorage.getSelectedStorageBackend();
+  } catch {
+    return null;
+  }
+}
+
+function getSavedEnvironmentSecretStorageUnavailableMessage(): string {
+  if (process.platform !== "linux") {
+    return "Unable to persist saved environment credentials.";
+  }
+
+  return resolveLinuxSecretStorageUnavailableMessage({
+    configuredPreference: desktopSettings.linuxPasswordStore,
+    selectedBackend: getSelectedSafeStorageBackend(),
+    env: process.env,
+  });
 }
 
 function resolveAdvertisedHostOverride(): string | undefined {
@@ -659,6 +686,13 @@ function captureBackendOutput(child: ChildProcess.ChildProcess): void {
 initializePackagedLogging();
 
 if (process.platform === "linux") {
+  const passwordStore = resolveLinuxPasswordStoreSwitch({
+    preference: desktopSettings.linuxPasswordStore,
+    env: process.env,
+  });
+  if (passwordStore !== null) {
+    app.commandLine.appendSwitch("password-store", passwordStore);
+  }
   app.commandLine.appendSwitch("class", LINUX_WM_CLASS);
 }
 
@@ -1710,11 +1744,16 @@ function registerIpcHandlers(): void {
         throw new Error("Invalid saved environment secret.");
       }
 
+      const secretStorage = getDesktopSecretStorage();
+      if (!secretStorage.isEncryptionAvailable()) {
+        throw new Error(getSavedEnvironmentSecretStorageUnavailableMessage());
+      }
+
       return writeSavedEnvironmentSecret({
         registryPath: SAVED_ENVIRONMENT_REGISTRY_PATH,
         environmentId: rawEnvironmentId,
         secret: rawSecret,
-        secretStorage: getDesktopSecretStorage(),
+        secretStorage,
       });
     },
   );
@@ -2238,6 +2277,11 @@ app
   .whenReady()
   .then(() => {
     writeDesktopLogHeader("app ready");
+    if (process.platform === "linux") {
+      writeDesktopLogHeader(
+        `safe storage backend=${getSelectedSafeStorageBackend() ?? "unknown"} encryptionAvailable=${safeStorage.isEncryptionAvailable()}`,
+      );
+    }
     configureAppIdentity();
     configureApplicationMenu();
     registerDesktopProtocol();

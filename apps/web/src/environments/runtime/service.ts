@@ -693,6 +693,28 @@ async function persistSavedEnvironmentRegistryRollback(
   });
 }
 
+async function persistSavedEnvironmentBearerTokenOrRollback(input: {
+  readonly environmentId: EnvironmentId;
+  readonly bearerToken: string;
+  readonly registrySnapshot: SavedEnvironmentRegistrySnapshot;
+}): Promise<void> {
+  let didPersistBearerToken = false;
+  try {
+    didPersistBearerToken = await writeSavedEnvironmentBearerToken(
+      input.environmentId,
+      input.bearerToken,
+    );
+  } catch (error) {
+    await persistSavedEnvironmentRegistryRollback(input.registrySnapshot);
+    throw error;
+  }
+
+  if (!didPersistBearerToken) {
+    await persistSavedEnvironmentRegistryRollback(input.registrySnapshot);
+    throw new Error("Unable to persist saved environment credentials.");
+  }
+}
+
 async function resolveDesktopSshEnvironmentBootstrap(
   target: DesktopSshEnvironmentTarget,
   options?: { readonly issuePairingToken?: boolean },
@@ -808,14 +830,11 @@ async function issueDesktopSshBearerSession(record: SavedEnvironmentRecord): Pro
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`${message} (${detail})`);
   });
-  const didPersistBearerToken = await writeSavedEnvironmentBearerToken(
-    prepared.record.environmentId,
-    bearerSession.sessionToken,
-  );
-  if (!didPersistBearerToken) {
-    await persistSavedEnvironmentRegistryRollback(registrySnapshot);
-    throw new Error("Unable to persist saved environment credentials.");
-  }
+  await persistSavedEnvironmentBearerTokenOrRollback({
+    environmentId: prepared.record.environmentId,
+    bearerToken: bearerSession.sessionToken,
+    registrySnapshot,
+  });
 
   return {
     record: prepared.record,
@@ -1681,14 +1700,11 @@ export async function addSavedEnvironment(input: {
   };
 
   await persistSavedEnvironmentRecord(record);
-  const didPersistBearerToken = await writeSavedEnvironmentBearerToken(
+  await persistSavedEnvironmentBearerTokenOrRollback({
     environmentId,
-    bearerSession.sessionToken,
-  );
-  if (!didPersistBearerToken) {
-    await persistSavedEnvironmentRegistryRollback(registrySnapshot);
-    throw new Error("Unable to persist saved environment credentials.");
-  }
+    bearerToken: bearerSession.sessionToken,
+    registrySnapshot,
+  });
   useSavedEnvironmentRegistryStore.getState().upsert(record);
   if (staleDesktopSshRecord) {
     await removeSavedEnvironment(staleDesktopSshRecord.environmentId);
