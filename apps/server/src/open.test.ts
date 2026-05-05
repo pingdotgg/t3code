@@ -229,6 +229,151 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
     }),
   );
 
+  it.effect("prefers a non-prerelease resolved Zed path on win32", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      const nightlyDir = path.join(dir, "Zed Nightly", "bin");
+      const stableDir = path.join(dir, "Zed Stable", "bin");
+      yield* fs.makeDirectory(nightlyDir, { recursive: true });
+      yield* fs.makeDirectory(stableDir, { recursive: true });
+      yield* fs.writeFileString(path.join(nightlyDir, "zed.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(stableDir, "zeditor.CMD"), "@echo off\r\n");
+
+      const result = yield* resolveEditorLaunch({ cwd: "C:\\workspace", editor: "zed" }, "win32", {
+        PATH: `${nightlyDir};${stableDir}`,
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      });
+
+      assert.deepEqual(result, {
+        command: "zeditor",
+        args: ["C:\\workspace"],
+      });
+    }),
+  );
+
+  it.effect(
+    "prefers a stable resolved Zed path on darwin when preview and stable are both on PATH",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+        const previewDir = path.join(dir, "Zed Preview.app", "Contents", "MacOS");
+        const stableDir = path.join(dir, "Zed.app", "Contents", "MacOS");
+        yield* fs.makeDirectory(previewDir, { recursive: true });
+        yield* fs.makeDirectory(stableDir, { recursive: true });
+        yield* fs.writeFileString(path.join(previewDir, "zed"), "#!/bin/sh\nexit 0\n");
+        yield* fs.writeFileString(path.join(stableDir, "zed"), "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(path.join(previewDir, "zed"), 0o755);
+        yield* fs.chmod(path.join(stableDir, "zed"), 0o755);
+
+        const result = yield* resolveEditorLaunch(
+          { cwd: "/tmp/workspace", editor: "zed" },
+          "darwin",
+          {
+            PATH: `${previewDir}:${stableDir}`,
+          },
+        );
+        const preferredPathPrefix = result.env?.PATH?.slice(
+          0,
+          -`:${previewDir}:${stableDir}`.length,
+        );
+
+        assert.equal(result.command, "zed");
+        assert.deepEqual(result.args, ["/tmp/workspace"]);
+        assert.equal(typeof result.env?.PATH, "string");
+        assert.ok(preferredPathPrefix?.toLowerCase().includes("zed.app"));
+        assert.ok(!preferredPathPrefix?.toLowerCase().includes("preview"));
+        assert.ok(result.env?.PATH?.endsWith(`:${previewDir}:${stableDir}`));
+      }),
+  );
+
+  it.effect(
+    "prefers a stable resolved Zed path on linux when preview and stable commands differ",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+        const previewDir = path.join(dir, "zed-preview", "bin");
+        const stableDir = path.join(dir, "zed", "bin");
+        yield* fs.makeDirectory(previewDir, { recursive: true });
+        yield* fs.makeDirectory(stableDir, { recursive: true });
+        yield* fs.writeFileString(path.join(previewDir, "zed"), "#!/bin/sh\nexit 0\n");
+        yield* fs.writeFileString(path.join(stableDir, "zeditor"), "#!/bin/sh\nexit 0\n");
+        yield* fs.chmod(path.join(previewDir, "zed"), 0o755);
+        yield* fs.chmod(path.join(stableDir, "zeditor"), 0o755);
+
+        const result = yield* resolveEditorLaunch(
+          { cwd: "/tmp/workspace", editor: "zed" },
+          "linux",
+          {
+            PATH: `${previewDir}:${stableDir}`,
+          },
+        );
+
+        assert.deepEqual(result, {
+          command: "zeditor",
+          args: ["/tmp/workspace"],
+        });
+      }),
+  );
+
+  it.effect("prefers the stable zed command on win32 when nightly and stable both expose zed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      const nightlyDir = path.join(dir, "Zed Nightly", "bin");
+      const stableDir = path.join(dir, "Zed", "bin");
+      yield* fs.makeDirectory(nightlyDir, { recursive: true });
+      yield* fs.makeDirectory(stableDir, { recursive: true });
+      yield* fs.writeFileString(path.join(nightlyDir, "zed.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(stableDir, "zed.CMD"), "@echo off\r\n");
+
+      const result = yield* resolveEditorLaunch({ cwd: "C:\\workspace", editor: "zed" }, "win32", {
+        PATH: `${nightlyDir};${stableDir}`,
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      });
+
+      assert.deepEqual(result, {
+        command: "zed",
+        args: ["C:\\workspace"],
+        env: {
+          PATH: `${stableDir};${nightlyDir};${stableDir}`,
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          Path: `${stableDir};${nightlyDir};${stableDir}`,
+        },
+      });
+    }),
+  );
+
+  it.effect("keeps the existing Zed command order on win32 when resolved paths are ambiguous", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      const firstDir = path.join(dir, "bin-a");
+      const secondDir = path.join(dir, "bin-b");
+      yield* fs.makeDirectory(firstDir, { recursive: true });
+      yield* fs.makeDirectory(secondDir, { recursive: true });
+      yield* fs.writeFileString(path.join(firstDir, "zed.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(secondDir, "zeditor.CMD"), "@echo off\r\n");
+
+      const result = yield* resolveEditorLaunch({ cwd: "C:\\workspace", editor: "zed" }, "win32", {
+        PATH: `${firstDir};${secondDir}`,
+        PATHEXT: ".COM;.EXE;.BAT;.CMD",
+      });
+
+      assert.deepEqual(result, {
+        command: "zed",
+        args: ["C:\\workspace"],
+      });
+    }),
+  );
+
   it.effect("falls back to the primary command when no alias is installed", () =>
     Effect.gen(function* () {
       const result = yield* resolveEditorLaunch({ cwd: "/tmp/workspace", editor: "zed" }, "linux", {

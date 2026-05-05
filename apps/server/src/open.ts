@@ -7,9 +7,14 @@
  * @module Open
  */
 import { spawn } from "node:child_process";
+import { dirname } from "node:path";
 
 import { EDITORS, OpenError, type EditorId } from "@t3tools/contracts";
-import { isCommandAvailable, type CommandAvailabilityOptions } from "@t3tools/shared/shell";
+import {
+  isCommandAvailable,
+  resolveCommandPaths,
+  type CommandAvailabilityOptions,
+} from "@t3tools/shared/shell";
 import { Context, Effect, Layer } from "effect";
 
 // ==============================
@@ -27,6 +32,7 @@ export interface OpenInEditorInput {
 interface EditorLaunch {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
@@ -90,6 +96,76 @@ function resolveAvailableCommand(
   return null;
 }
 
+function isLikelyPrereleaseZedPath(filePath: string): boolean {
+  const normalized = filePath.toLowerCase();
+  return normalized.includes("nightly") || normalized.includes("preview");
+}
+
+function withPreferredCommandPath(
+  command: string,
+  resolvedPath: string,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): Pick<EditorLaunch, "command" | "env"> {
+  const selectedDir = dirname(resolvedPath);
+  const existingPath = env.PATH ?? env.Path ?? env.path ?? "";
+  const nextPath =
+    existingPath.length > 0
+      ? `${selectedDir}${platform === "win32" ? ";" : ":"}${existingPath}`
+      : selectedDir;
+
+  return {
+    command,
+    env:
+      platform === "win32"
+        ? {
+            ...env,
+            PATH: nextPath,
+            Path: nextPath,
+          }
+        : {
+            ...env,
+            PATH: nextPath,
+          },
+  };
+}
+
+function resolvePreferredZedLaunch(
+  commands: ReadonlyArray<string>,
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): Pick<EditorLaunch, "command" | "env"> | null {
+  const resolvedCommands: Array<{ command: string; resolvedPath: string }> = [];
+  for (const command of commands) {
+    const resolvedPaths = resolveCommandPaths(command, { platform, env });
+    for (const resolvedPath of resolvedPaths) {
+      resolvedCommands.push({ command, resolvedPath });
+    }
+  }
+
+  if (resolvedCommands.length === 0) {
+    return null;
+  }
+
+  const preferredCommand = resolvedCommands.find(
+    ({ resolvedPath }) => !isLikelyPrereleaseZedPath(resolvedPath),
+  );
+  const selected = preferredCommand ?? resolvedCommands[0];
+  if (!selected) {
+    return null;
+  }
+
+  const firstResolvedForSelectedCommand = resolvedCommands.find(
+    ({ command }) => command === selected.command,
+  );
+
+  if (firstResolvedForSelectedCommand?.resolvedPath === selected.resolvedPath) {
+    return { command: selected.command };
+  }
+
+  return withPreferredCommandPath(selected.command, selected.resolvedPath, platform, env);
+}
+
 function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
   switch (platform) {
     case "darwin":
@@ -100,7 +176,6 @@ function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
       return "xdg-open";
   }
 }
-
 export function resolveAvailableEditors(
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
@@ -167,11 +242,16 @@ export const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.commands) {
+    const zedLaunch =
+      editorDef.id === "zed" ? resolvePreferredZedLaunch(editorDef.commands, platform, env) : null;
     const command =
-      resolveAvailableCommand(editorDef.commands, { platform, env }) ?? editorDef.commands[0];
+      zedLaunch?.command ??
+      resolveAvailableCommand(editorDef.commands, { platform, env }) ??
+      editorDef.commands[0];
     return {
       command,
       args: resolveEditorArgs(editorDef, input.cwd),
+      ...(zedLaunch?.env ? { env: zedLaunch.env } : {}),
     };
   }
 
@@ -199,6 +279,7 @@ export const launchDetached = (launch: EditorLaunch) =>
             detached: true,
             stdio: "ignore",
             shell: isWin32,
+            ...(launch.env ? { env: launch.env } : {}),
           },
         );
       } catch (error) {
