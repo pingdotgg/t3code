@@ -9,9 +9,11 @@ import type {
 import { DEFAULT_MODEL_BY_PROVIDER } from "@forma/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
+  IconApplepencilTip as AnnotationIcon,
   IconArrowClockwise as RefreshIcon,
   IconChevronDown as ChevronDownIcon,
   IconChevronUp as ChevronUpIcon,
+  IconPaperplane as SendFeedbackIcon,
   IconRectangleOnRectangle as PreviewIcon,
   IconSparkles,
   IconXmark as XIcon,
@@ -52,8 +54,196 @@ import { createThreadSelectorByRef } from "../storeSelectors";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import type { Project } from "../types";
 import { Button } from "./ui/button";
+import { SidebarArchiveIcon } from "./icons/custom";
 import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
+
+function PreviewFeedbackEyeIcon({ size = 16, isOpen = true }: { size?: number; isOpen?: boolean }) {
+  if (!isOpen) {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+        <path
+          d="M18.6025 9.28503C18.9174 8.9701 19.4364 8.99481 19.7015 9.35271C20.1484 9.95606 20.4943 10.507 20.7342 10.9199C21.134 11.6086 21.1329 12.4454 20.7303 13.1328C20.2144 14.013 19.2151 15.5225 17.7723 16.8193C16.3293 18.1162 14.3852 19.2497 12.0008 19.25C11.4192 19.25 10.8638 19.1823 10.3355 19.0613C9.77966 18.934 9.63498 18.2525 10.0382 17.8493C10.2412 17.6463 10.5374 17.573 10.8188 17.6302C11.1993 17.7076 11.5935 17.75 12.0008 17.75C13.8848 17.7497 15.4867 16.8568 16.7693 15.7041C18.0522 14.5511 18.9606 13.1867 19.4363 12.375C19.5656 12.1543 19.5659 11.8943 19.4373 11.6729C19.2235 11.3049 18.921 10.8242 18.5364 10.3003C18.3085 9.98991 18.3302 9.5573 18.6025 9.28503ZM12.0008 4.75C12.5814 4.75006 13.1358 4.81803 13.6632 4.93953C14.2182 5.06741 14.362 5.74812 13.9593 6.15091C13.7558 6.35435 13.4589 6.42748 13.1771 6.36984C12.7983 6.29239 12.4061 6.25006 12.0008 6.25C10.1167 6.25 8.51415 7.15145 7.23028 8.31543C5.94678 9.47919 5.03918 10.8555 4.56426 11.6729C4.43551 11.8945 4.43582 12.1542 4.56524 12.375C4.77587 12.7343 5.07189 13.2012 5.44718 13.7105C5.67623 14.0213 5.65493 14.4552 5.38193 14.7282C5.0671 15.0431 4.54833 15.0189 4.28292 14.6614C3.84652 14.0736 3.50813 13.5369 3.27129 13.1328C2.86831 12.4451 2.86717 11.6088 3.26739 10.9199C3.78185 10.0345 4.77959 8.51239 6.22247 7.2041C7.66547 5.89584 9.61202 4.75 12.0008 4.75Z"
+          fill="currentColor"
+        />
+        <path d="M5 19L19 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M3.91752 12.7539C3.65127 12.2996 3.65037 11.7515 3.9149 11.2962C4.9042 9.59346 7.72688 5.49994 12 5.49994C16.2731 5.49994 19.0958 9.59346 20.0851 11.2962C20.3496 11.7515 20.3487 12.2996 20.0825 12.7539C19.0908 14.4459 16.2694 18.4999 12 18.4999C7.73064 18.4999 4.90918 14.4459 3.91752 12.7539Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M12 14.8261C13.5608 14.8261 14.8261 13.5608 14.8261 12C14.8261 10.4392 13.5608 9.17392 12 9.17392C10.4392 9.17392 9.17391 10.4392 9.17391 12C9.17391 13.5608 10.4392 14.8261 12 14.8261Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function PreviewViewportIcon({
+  viewportId,
+  size = 16,
+}: {
+  viewportId: PreviewViewportId;
+  size?: number;
+}) {
+  if (viewportId === "desktop") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+        <rect
+          x="4.75"
+          y="5.75"
+          width="14.5"
+          height="10.5"
+          rx="1.5"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        />
+        <path d="M9 19.25H15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <path d="M12 16.25V19" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (viewportId === "tablet") {
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+        <rect
+          x="7.25"
+          y="3.75"
+          width="9.5"
+          height="16.5"
+          rx="2"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        />
+        <path
+          d="M11.25 17.25H12.75"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+
+  if (viewportId === "mobile" || viewportId === "small-mobile") {
+    const width = viewportId === "small-mobile" ? 7.5 : 8.5;
+    const x = (24 - width) / 2;
+    return (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+        <rect
+          x={x}
+          y="3.75"
+          width={width}
+          height="16.5"
+          rx="2"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        />
+        <path
+          d="M11.35 17.25H12.65"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <path
+        d="M8.5 4.75H5.75C5.19772 4.75 4.75 5.19772 4.75 5.75V8.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <path
+        d="M15.5 4.75H18.25C18.8023 4.75 19.25 5.19772 19.25 5.75V8.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <path
+        d="M8.5 19.25H5.75C5.19772 19.25 4.75 18.8023 4.75 18.25V15.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      <path
+        d="M15.5 19.25H18.25C18.8023 19.25 19.25 18.8023 19.25 18.25V15.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+function PreviewZoomIcon({ zoomId, size = 16 }: { zoomId: PreviewZoomId; size?: number }) {
+  if (zoomId === "fit") {
+    return <PreviewViewportIcon viewportId="fit" size={size} />;
+  }
+
+  const indicator =
+    zoomId === "50" || zoomId === "75" ? "minus" : zoomId === "125" ? "plus" : "dot";
+
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <circle
+        cx="10.75"
+        cy="10.75"
+        r={zoomId === "75" ? "4.75" : "5.75"}
+        stroke="currentColor"
+        strokeWidth="1.5"
+      />
+      <path
+        d="M15.25 15.25L19.25 19.25"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+      {indicator === "minus" ? (
+        <path d="M8.5 10.75H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      ) : indicator === "plus" ? (
+        <>
+          <path d="M8.5 10.75H13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M10.75 8.5V13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </>
+      ) : (
+        <circle cx="10.75" cy="10.75" r="1" fill="currentColor" />
+      )}
+    </svg>
+  );
+}
+
+const previewChromePillStyle = {
+  background: "color-mix(in srgb, var(--popover, var(--background)) 88%, transparent)",
+  color: "var(--foreground)",
+  border: "1px solid color-mix(in srgb, var(--border) 88%, transparent)",
+  boxShadow: "0 1px 2px color-mix(in srgb, var(--foreground) 10%, transparent)",
+  backdropFilter: "blur(12px)",
+  WebkitBackdropFilter: "blur(12px)",
+} satisfies React.CSSProperties;
+
+function previewChromeIconButtonStyle(active: boolean): React.CSSProperties {
+  return {
+    color: active ? "var(--primary)" : "color-mix(in srgb, var(--foreground) 90%, transparent)",
+    ...(active ? { backgroundColor: "color-mix(in srgb, var(--primary) 14%, transparent)" } : {}),
+  };
+}
 
 function resolvePreviewUrl(
   projectRef: ScopedProjectRef,
@@ -182,6 +372,7 @@ type PreviewParentCommandMessage =
         width: number | null;
         height: number | null;
       };
+      uiScale: number;
     }
   | {
       source: "forma-preview-parent";
@@ -189,6 +380,13 @@ type PreviewParentCommandMessage =
       runtimeInstanceId: string;
       previewFileRelativePath: string;
       enabled: boolean;
+    }
+  | {
+      source: "forma-preview-parent";
+      kind: "preview.feedback.setMarkersVisible";
+      runtimeInstanceId: string;
+      previewFileRelativePath: string;
+      visible: boolean;
     }
   | {
       source: "forma-preview-parent";
@@ -326,78 +524,16 @@ function normalizeControlOption(option: unknown): NormalizedControlOption {
 function PreviewControlsContent(props: {
   scenarioItems: readonly { value: string; label: string }[];
   selectedScenarioId: string | null;
-  selectedViewportId: PreviewViewportId;
-  selectedZoomId: PreviewZoomId;
   controls: readonly PreviewControlDescriptor[];
   onSelectScenario: (scenarioId: string) => void;
-  onSelectViewport: (viewportId: PreviewViewportId) => void;
-  onSelectZoom: (zoomId: PreviewZoomId) => void;
   onSetControlValue: (name: string, value: unknown, mode: "debounced" | "immediate") => void;
   onFlushControl: (name: string) => void;
 }) {
-  const viewportItems = PREVIEW_VIEWPORTS.map((viewport) => ({
-    value: viewport.id,
-    label:
-      viewport.width && viewport.height
-        ? `${viewport.label} · ${viewport.width}×${viewport.height}`
-        : viewport.label,
-  }));
-  const zoomItems = PREVIEW_ZOOM_LEVELS.map((zoom) => ({
-    value: zoom.id,
-    label: zoom.label,
-  }));
-
   return (
     <div className="w-72 space-y-4">
       <div>
         <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground/80">
           Controls
-        </div>
-        <div className="mt-4 flex flex-col gap-2 text-sm">
-          <span className="font-medium text-foreground">Viewport</span>
-          <Select
-            items={viewportItems}
-            value={props.selectedViewportId}
-            onValueChange={(value) => {
-              if (PREVIEW_VIEWPORTS.some((viewport) => viewport.id === value)) {
-                props.onSelectViewport(value as PreviewViewportId);
-              }
-            }}
-          >
-            <SelectTrigger size="sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectPopup alignItemWithTrigger={false}>
-              {viewportItems.map((item) => (
-                <SelectItem key={item.value} value={item.value} hideIndicator>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
-        </div>
-        <div className="mt-4 flex flex-col gap-2 text-sm">
-          <span className="font-medium text-foreground">Zoom</span>
-          <Select
-            items={zoomItems}
-            value={props.selectedZoomId}
-            onValueChange={(value) => {
-              if (PREVIEW_ZOOM_LEVELS.some((zoom) => zoom.id === value)) {
-                props.onSelectZoom(value as PreviewZoomId);
-              }
-            }}
-          >
-            <SelectTrigger size="sm">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectPopup alignItemWithTrigger={false}>
-              {zoomItems.map((item) => (
-                <SelectItem key={item.value} value={item.value} hideIndicator>
-                  {item.label}
-                </SelectItem>
-              ))}
-            </SelectPopup>
-          </Select>
         </div>
         {props.scenarioItems.length > 0 ? (
           <div className="mt-4 flex flex-col gap-2 text-sm">
@@ -620,6 +756,70 @@ function PreviewControlsContent(props: {
   );
 }
 
+function PreviewViewportControl(props: {
+  selectedViewportId: PreviewViewportId;
+  onSelectViewport: (viewportId: PreviewViewportId) => void;
+}) {
+  return (
+    <div
+      className="pointer-events-auto inline-flex h-7 items-center overflow-hidden rounded-md"
+      style={previewChromePillStyle}
+    >
+      {PREVIEW_VIEWPORTS.map((viewport) => {
+        const active = props.selectedViewportId === viewport.id;
+        const title =
+          viewport.width && viewport.height
+            ? `${viewport.label} viewport (${viewport.width}x${viewport.height})`
+            : `${viewport.label} viewport`;
+        return (
+          <button
+            key={viewport.id}
+            type="button"
+            className="inline-flex size-7 items-center justify-center rounded-none border-0 bg-transparent transition-colors hover:bg-accent active:scale-[0.92]"
+            style={previewChromeIconButtonStyle(active)}
+            onClick={() => props.onSelectViewport(viewport.id)}
+            aria-label={title}
+            aria-pressed={active}
+            title={title}
+          >
+            <PreviewViewportIcon viewportId={viewport.id} size={16} />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function PreviewZoomControl(props: {
+  selectedZoomId: PreviewZoomId;
+  onSelectZoom: (zoomId: PreviewZoomId) => void;
+}) {
+  return (
+    <div
+      className="pointer-events-auto inline-flex h-7 items-center overflow-hidden rounded-md"
+      style={previewChromePillStyle}
+    >
+      {PREVIEW_ZOOM_LEVELS.map((zoom) => {
+        const active = props.selectedZoomId === zoom.id;
+        return (
+          <button
+            key={zoom.id}
+            type="button"
+            className="inline-flex size-7 items-center justify-center rounded-none border-0 bg-transparent transition-colors hover:bg-accent active:scale-[0.92]"
+            style={previewChromeIconButtonStyle(active)}
+            onClick={() => props.onSelectZoom(zoom.id)}
+            aria-label={`Zoom ${zoom.label}`}
+            aria-pressed={active}
+            title={`Zoom ${zoom.label}`}
+          >
+            <PreviewZoomIcon zoomId={zoom.id} size={16} />
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function PreviewDrawer() {
   const navigate = useNavigate();
   const routeTarget = useParams({
@@ -658,6 +858,7 @@ export function PreviewDrawer() {
   const [previewZoomId, setPreviewZoomId] = useState<PreviewZoomId>("fit");
   const [previewFrameReloadNonce, setPreviewFrameReloadNonce] = useState(0);
   const [feedbackEnabled, setFeedbackEnabled] = useState(false);
+  const [feedbackMarkersVisible, setFeedbackMarkersVisible] = useState(true);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const previewCanvasRef = useRef<HTMLDivElement | null>(null);
   const [previewCanvasSize, setPreviewCanvasSize] = useState({ width: 0, height: 0 });
@@ -773,6 +974,27 @@ export function PreviewDrawer() {
   const [previewFeedbackPrimaryColor, setPreviewFeedbackPrimaryColor] = useState(
     resolveDocumentPrimaryColor,
   );
+  const previewUiScale = useMemo(() => {
+    const hasFixedPreviewViewport = Boolean(previewViewport.width || previewViewport.height);
+    const fixedPreviewViewportWidth = previewViewport.width ?? previewCanvasSize.width;
+    const fixedPreviewViewportHeight = previewViewport.height ?? previewCanvasSize.height;
+    return hasFixedPreviewViewport &&
+      fixedPreviewViewportWidth > 0 &&
+      fixedPreviewViewportHeight > 0
+      ? (previewZoom.value ??
+          Math.min(
+            1,
+            Math.max(0.1, (previewCanvasSize.width - 64) / fixedPreviewViewportWidth),
+            Math.max(0.1, (previewCanvasSize.height - 64) / fixedPreviewViewportHeight),
+          ))
+      : 1;
+  }, [
+    previewCanvasSize.height,
+    previewCanvasSize.width,
+    previewViewport.height,
+    previewViewport.width,
+    previewZoom.value,
+  ]);
   const activeFeedbackScope = useMemo<PreviewFeedbackScope>(
     () => ({
       scenarioId: selectedScenarioId,
@@ -860,11 +1082,19 @@ export function PreviewDrawer() {
         previewFileRelativePath: activePreviewFileRelativePath,
         enabled: feedbackEnabled,
       });
+      postPreviewCommand({
+        source: "forma-preview-parent",
+        kind: "preview.feedback.setMarkersVisible",
+        runtimeInstanceId: runtimeSnapshot.runtimeInstanceId,
+        previewFileRelativePath: activePreviewFileRelativePath,
+        visible: feedbackMarkersVisible,
+      });
     },
     [
       activeFeedbackAnnotations,
       activePreviewFileRelativePath,
       feedbackEnabled,
+      feedbackMarkersVisible,
       postPreviewCommand,
       previewFeedbackPrimaryColor,
       runtimeSnapshot?.runtimeInstanceId,
@@ -898,8 +1128,15 @@ export function PreviewDrawer() {
         width: previewViewport.width,
         height: previewViewport.height,
       },
+      uiScale: previewUiScale,
     });
-  }, [activePreviewFileRelativePath, postPreviewCommand, previewViewport, runtimeSnapshot]);
+  }, [
+    activePreviewFileRelativePath,
+    postPreviewCommand,
+    previewViewport,
+    previewUiScale,
+    runtimeSnapshot,
+  ]);
 
   const refreshInspection = async () => {
     if (!activeProjectRef || !api || !activeProject) {
@@ -2137,7 +2374,7 @@ export function PreviewDrawer() {
       }
     : undefined;
   const previewCanvasStyle = {
-    backgroundColor: "var(--background)",
+    backgroundColor: "var(--app-chrome-background, var(--background))",
     backgroundImage:
       "radial-gradient(circle, color-mix(in oklab, var(--foreground) 16%, transparent) 1px, transparent 1px)",
     backgroundPosition: "0 0",
@@ -2173,22 +2410,13 @@ export function PreviewDrawer() {
                   <PreviewControlsContent
                     scenarioItems={scenarioItems}
                     selectedScenarioId={selectedScenarioId}
-                    selectedViewportId={previewViewportId}
-                    selectedZoomId={previewZoomId}
                     controls={displayedControls}
                     onSelectScenario={handleSelectScenario}
-                    onSelectViewport={setPreviewViewportId}
-                    onSelectZoom={setPreviewZoomId}
                     onSetControlValue={handleSetControlValue}
                     onFlushControl={handleFlushControl}
                   />
                 </PopoverPopup>
               </Popover>
-              {activeFeedbackAnnotations.length > 0 ? (
-                <span className="inline-flex h-7 items-center rounded-md border border-border/70 bg-background/88 px-2 text-xs text-muted-foreground shadow-sm backdrop-blur-md">
-                  {unsentFeedbackCount} unsent feedback
-                </span>
-              ) : null}
             </div>
           ) : null}
           <div className="inline-flex h-6 items-center overflow-hidden rounded-md border border-border/70 bg-background/88 shadow-sm backdrop-blur-md">
@@ -2231,6 +2459,105 @@ export function PreviewDrawer() {
             ) : null}
           </div>
         </div>
+
+        {iframeUrl ? (
+          <>
+            <div className="pointer-events-none absolute bottom-3 left-4 z-30 flex items-center gap-1.5">
+              <div className="pointer-events-auto flex items-center gap-1.5">
+                <PreviewViewportControl
+                  selectedViewportId={previewViewportId}
+                  onSelectViewport={setPreviewViewportId}
+                />
+                <PreviewZoomControl
+                  selectedZoomId={previewZoomId}
+                  onSelectZoom={setPreviewZoomId}
+                />
+              </div>
+            </div>
+
+            <div className="pointer-events-none absolute bottom-3 right-4 z-30 flex items-center gap-1.5">
+              <div
+                className="pointer-events-auto inline-flex h-7 items-center overflow-visible rounded-md"
+                style={previewChromePillStyle}
+              >
+                <button
+                  type="button"
+                  className="inline-flex size-7 items-center justify-center rounded-none rounded-l-md border-0 bg-transparent transition-colors hover:bg-accent active:scale-[0.92]"
+                  style={previewChromeIconButtonStyle(feedbackEnabled)}
+                  onClick={() => setFeedbackEnabled((current) => !current)}
+                  aria-label="Annotate preview"
+                  title="Annotate preview"
+                >
+                  <AnnotationIcon className="size-3.5 fill-current" />
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex size-7 items-center justify-center rounded-none border-0 bg-transparent transition-colors hover:bg-accent active:scale-[0.92]"
+                  style={previewChromeIconButtonStyle(feedbackMarkersVisible)}
+                  onClick={() => setFeedbackMarkersVisible((current) => !current)}
+                  aria-label="Show feedback markers"
+                  title="Show feedback markers"
+                >
+                  <PreviewFeedbackEyeIcon size={16} isOpen={feedbackMarkersVisible} />
+                </button>
+                <button
+                  type="button"
+                  className="relative inline-flex size-7 items-center justify-center rounded-none border-0 bg-transparent transition-colors hover:bg-accent active:scale-[0.92] disabled:cursor-not-allowed disabled:opacity-35"
+                  style={previewChromeIconButtonStyle(false)}
+                  disabled={unsentFeedbackCount === 0}
+                  onClick={() => void openPreviewFeedbackThread()}
+                  aria-label="Send feedback to agent"
+                  title="Send feedback to agent"
+                >
+                  <SendFeedbackIcon className="size-3.5 fill-current" />
+                  {unsentFeedbackCount > 0 ? (
+                    <span
+                      className="pointer-events-none absolute right-0 top-0 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-semibold text-white"
+                      style={{
+                        backgroundColor: "var(--primary)",
+                        boxShadow:
+                          "0 0 0 2px var(--popover, var(--background)), 0 1px 3px color-mix(in srgb, var(--foreground) 20%, transparent)",
+                      }}
+                    >
+                      {unsentFeedbackCount}
+                    </span>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex size-7 items-center justify-center rounded-none border-0 bg-transparent transition-colors hover:bg-accent active:scale-[0.92] disabled:cursor-not-allowed disabled:opacity-35"
+                  style={previewChromeIconButtonStyle(false)}
+                  disabled={activeFeedbackAnnotations.length === 0}
+                  onClick={() => {
+                    if (!activeProjectRef || !activePreviewFileRelativePath) {
+                      return;
+                    }
+                    updateProjectState(activeProjectRef, (currentState) => ({
+                      ...currentState,
+                      sessionsByPreviewFilePath: upsertPreviewFileSession(
+                        currentState.sessionsByPreviewFilePath,
+                        activePreviewFileRelativePath,
+                        (session) => ({
+                          ...session,
+                          feedbackAnnotations: session.feedbackAnnotations.filter(
+                            (annotation) =>
+                              buildPreviewFeedbackScopeKey(annotation.scope) !==
+                              buildPreviewFeedbackScopeKey(activeFeedbackScope),
+                          ),
+                          updatedAt: new Date().toISOString(),
+                        }),
+                      ),
+                    }));
+                  }}
+                  aria-label="Clear feedback"
+                  title="Clear feedback"
+                >
+                  <SidebarArchiveIcon className="size-3.5" />
+                </button>
+              </div>
+            </div>
+          </>
+        ) : null}
 
         <div className="h-full min-h-0 overflow-auto">
           {activeProjectState?.resolution?.status === "needsBootstrap" ? (

@@ -65,6 +65,30 @@ export default defineComponentPreview({
       },
     },
   ],
-  controls: [],
+  controls: [
+    {
+      name: "variant",
+      label: "State",
+      type: "select",
+      options: [
+        { label: "Default", value: "default" },
+        { label: "Slash Command Menu", value: "slash-command-menu" },
+        { label: "Plan Follow-up", value: "plan-follow-up" },
+        { label: "Pending Approval", value: "pending-approval" },
+        { label: "Pending User Input", value: "pending-user-input" },
+      ],
+      defaultValue: "default",
+    },
+    {
+      name: "resolvedTheme",
+      label: "Component Theme",
+      type: "inline-radio",
+      options: [
+        { label: "Light", value: "light" },
+        { label: "Dark", value: "dark" },
+      ],
+      defaultValue: "light",
+    },
+  ],
   moduleMocks: {},
 });

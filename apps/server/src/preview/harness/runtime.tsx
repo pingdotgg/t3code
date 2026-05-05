@@ -275,6 +275,7 @@ function PreviewShell(props: RuntimeOptions) {
     height: null,
   });
   const [feedbackEnabled, setFeedbackEnabled] = React.useState(false);
+  const [feedbackMarkersVisible, setFeedbackMarkersVisible] = React.useState(true);
   const [feedbackAnnotations, setFeedbackAnnotations] = React.useState<PreviewFeedbackAnnotation[]>(
     [],
   );
@@ -284,17 +285,40 @@ function PreviewShell(props: RuntimeOptions) {
     const previousHtmlBackground = document.documentElement.style.background;
     const previousBodyBackground = document.body.style.background;
     const previousBodyMargin = document.body.style.margin;
+    const mountElement = document.getElementById(props.mountElementId);
+    const previousMountBackground = mountElement?.style.background ?? "";
+    const styleElement = document.createElement("style");
+    styleElement.dataset.formaPreviewTransparency = "true";
+    styleElement.textContent = `
+html, body, #${CSS.escape(props.mountElementId)} {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+body::after {
+  content: none !important;
+  display: none !important;
+}
+`;
+    document.head.append(styleElement);
 
-    document.documentElement.style.background = "transparent";
-    document.body.style.background = "transparent";
+    document.documentElement.style.setProperty("background", "transparent", "important");
+    document.documentElement.style.setProperty("background-color", "transparent", "important");
+    document.body.style.setProperty("background", "transparent", "important");
+    document.body.style.setProperty("background-color", "transparent", "important");
     document.body.style.margin = "0";
+    mountElement?.style.setProperty("background", "transparent", "important");
+    mountElement?.style.setProperty("background-color", "transparent", "important");
 
     return () => {
       document.documentElement.style.background = previousHtmlBackground;
       document.body.style.background = previousBodyBackground;
       document.body.style.margin = previousBodyMargin;
+      if (mountElement) {
+        mountElement.style.background = previousMountBackground;
+      }
+      styleElement.remove();
     };
-  }, []);
+  }, [props.mountElementId]);
   const [runtimeState, dispatchRuntimeCommand] = React.useReducer(
     (
       currentState: ReturnType<typeof createPreviewRuntimeState>,
@@ -530,6 +554,11 @@ function PreviewShell(props: RuntimeOptions) {
         return;
       }
 
+      if (event.data.kind === "preview.feedback.setMarkersVisible") {
+        setFeedbackMarkersVisible(event.data.visible !== false);
+        return;
+      }
+
       if (event.data.kind === "preview.feedback.syncAnnotations") {
         setFeedbackAnnotations(
           Array.isArray(event.data.annotations)
@@ -588,16 +617,8 @@ function PreviewShell(props: RuntimeOptions) {
       }}
       annotations={feedbackAnnotations}
       accentColor={feedbackPrimaryColor}
+      showMarkers={feedbackMarkersVisible}
       enabled={feedbackEnabled}
-      onEnabledChange={(enabled) => {
-        setFeedbackEnabled(enabled);
-        postToParent({
-          kind: "preview.feedback.enabledChanged",
-          runtimeInstanceId,
-          previewFileRelativePath: props.previewFileRelativePath,
-          enabled,
-        });
-      }}
       onAnnotationCreate={(annotation) => {
         setFeedbackAnnotations((current) => [...current, annotation]);
         postToParent({
@@ -607,20 +628,6 @@ function PreviewShell(props: RuntimeOptions) {
           annotation,
         });
       }}
-      onSubmitRequested={() =>
-        postToParent({
-          kind: "preview.feedback.submitRequested",
-          runtimeInstanceId,
-          previewFileRelativePath: props.previewFileRelativePath,
-        })
-      }
-      onClearRequested={() =>
-        postToParent({
-          kind: "preview.feedback.clearRequested",
-          runtimeInstanceId,
-          previewFileRelativePath: props.previewFileRelativePath,
-        })
-      }
     >
       <PreviewErrorBoundary
         onError={(error) =>

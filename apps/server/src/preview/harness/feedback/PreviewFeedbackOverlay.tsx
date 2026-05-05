@@ -2,12 +2,6 @@ import * as React from "react";
 
 import { AnnotationPopupCSS } from "./primitives/components/annotation-popup-css/index.tsx";
 import {
-  IconEyeAnimated,
-  IconListSparkle,
-  IconSendArrow,
-  IconSidebarArchive,
-} from "./primitives/components/icons.tsx";
-import {
   AnnotationMarker,
   PendingMarker,
 } from "./primitives/components/page-toolbar-css/annotation-marker/index.tsx";
@@ -54,11 +48,9 @@ export interface PreviewFeedbackOverlayProps {
   scope: PreviewFeedbackScope;
   annotations: readonly PreviewFeedbackAnnotation[];
   accentColor?: string;
+  showMarkers: boolean;
   enabled: boolean;
-  onEnabledChange: (enabled: boolean) => void;
   onAnnotationCreate: (annotation: PreviewFeedbackAnnotation) => void;
-  onSubmitRequested: () => void;
-  onClearRequested: () => void;
 }
 
 function createAnnotationId(): string {
@@ -158,11 +150,7 @@ function isFeedbackUiTarget(target: EventTarget | null): boolean {
 export function PreviewFeedbackOverlay(props: PreviewFeedbackOverlayProps) {
   const [hoverTarget, setHoverTarget] = React.useState<PreviewFeedbackElementTarget | null>(null);
   const [pendingTarget, setPendingTarget] = React.useState<PendingTarget | null>(null);
-  const [showMarkers, setShowMarkers] = React.useState(true);
   const [hoveredAnnotationId, setHoveredAnnotationId] = React.useState<string | null>(null);
-  const unsentCount = props.annotations.filter(
-    (annotation) => annotation.status === "unsent",
-  ).length;
   const accentColor = props.accentColor?.trim() || DEFAULT_ACCENT_COLOR;
 
   React.useEffect(() => {
@@ -335,7 +323,7 @@ export function PreviewFeedbackOverlay(props: PreviewFeedbackOverlayProps) {
         </>
       ) : null}
 
-      {showMarkers ? (
+      {props.showMarkers ? (
         <>
           <div className={toolbarStyles.markersLayer} data-forma-preview-feedback-ui>
             {scrollAnnotations.map((annotation, index) => (
@@ -414,62 +402,6 @@ export function PreviewFeedbackOverlay(props: PreviewFeedbackOverlayProps) {
           </div>
         </>
       ) : null}
-
-      <div
-        className={toolbarStyles.toolbar}
-        data-preview-feedback-theme="light"
-        data-forma-preview-feedback-ui
-      >
-        <div className={`${toolbarStyles.toolbarContainer} ${toolbarStyles.expanded}`}>
-          {props.annotations.length > 0 ? (
-            <div className={toolbarStyles.badge}>
-              {unsentCount > 0 ? unsentCount : props.annotations.length}
-            </div>
-          ) : null}
-          <div className={`${toolbarStyles.controlsContent} ${toolbarStyles.visible}`}>
-            <button
-              className={toolbarStyles.controlButton}
-              data-active={props.enabled ? "true" : "false"}
-              title="Annotate preview"
-              type="button"
-              onClick={() => props.onEnabledChange(!props.enabled)}
-            >
-              <IconListSparkle size={16} />
-            </button>
-            <button
-              className={toolbarStyles.controlButton}
-              data-active={showMarkers ? "true" : "false"}
-              title="Show feedback markers"
-              type="button"
-              onClick={() => setShowMarkers((current) => !current)}
-            >
-              <IconEyeAnimated size={16} isOpen={showMarkers} />
-            </button>
-            <button
-              className={toolbarStyles.controlButton}
-              disabled={unsentCount === 0}
-              title="Send feedback to agent"
-              type="button"
-              onClick={props.onSubmitRequested}
-            >
-              <IconSendArrow size={16} />
-              {unsentCount > 0 ? (
-                <span className={toolbarStyles.buttonBadge}>{unsentCount}</span>
-              ) : null}
-            </button>
-            <button
-              className={toolbarStyles.controlButton}
-              data-danger
-              disabled={props.annotations.length === 0}
-              title="Clear feedback"
-              type="button"
-              onClick={props.onClearRequested}
-            >
-              <IconSidebarArchive size={14} />
-            </button>
-          </div>
-        </div>
-      </div>
     </>
   );
 }

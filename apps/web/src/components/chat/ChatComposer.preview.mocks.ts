@@ -3,6 +3,7 @@ import type {
   ApprovalRequestId,
   EnvironmentId,
   ProjectId,
+  ProviderOptionDescriptor,
   ProviderInteractionMode,
   ResolvedKeybindingsConfig,
   ServerLocalAgentInventory,
@@ -46,8 +47,62 @@ const PREVIEW_TURN_ID = "preview-turn" as TurnId;
 
 const PREVIEW_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const PREVIEW_SETTINGS = DEFAULT_UNIFIED_SETTINGS;
-const PREVIEW_MODEL_CAPABILITIES = createModelCapabilities({
-  optionDescriptors: [],
+
+function selectDescriptor(
+  id: string,
+  label: string,
+  options: ReadonlyArray<{ id: string; label: string; isDefault?: boolean }>,
+  promptInjectedValues?: ReadonlyArray<string>,
+): Extract<ProviderOptionDescriptor, { type: "select" }> {
+  const defaultOption = options.find((option) => option.isDefault);
+  return {
+    id,
+    label,
+    type: "select",
+    options: [...options],
+    ...(defaultOption ? { currentValue: defaultOption.id } : {}),
+    ...(promptInjectedValues && promptInjectedValues.length > 0
+      ? { promptInjectedValues: [...promptInjectedValues] }
+      : {}),
+  };
+}
+
+function booleanDescriptor(
+  id: string,
+  label: string,
+): Extract<ProviderOptionDescriptor, { type: "boolean" }> {
+  return {
+    id,
+    label,
+    type: "boolean",
+  };
+}
+
+const PREVIEW_CODEX_MODEL_CAPABILITIES = createModelCapabilities({
+  optionDescriptors: [
+    selectDescriptor("reasoningEffort", "Reasoning", [
+      { id: "low", label: "Low" },
+      { id: "medium", label: "Medium", isDefault: true },
+      { id: "high", label: "High" },
+      { id: "xhigh", label: "X High" },
+    ]),
+    booleanDescriptor("fastMode", "Fast Mode"),
+  ],
+});
+const PREVIEW_CLAUDE_MODEL_CAPABILITIES = createModelCapabilities({
+  optionDescriptors: [
+    selectDescriptor(
+      "effort",
+      "Reasoning",
+      [
+        { id: "low", label: "Low" },
+        { id: "medium", label: "Medium" },
+        { id: "high", label: "High", isDefault: true },
+        { id: "ultrathink", label: "Ultrathink" },
+      ],
+      ["ultrathink"],
+    ),
+  ],
 });
 const PREVIEW_PROVIDERS: ServerProvider[] = [
   {
@@ -69,14 +124,14 @@ const PREVIEW_PROVIDERS: ServerProvider[] = [
         name: "GPT-5.1",
         shortName: "GPT-5.1",
         isCustom: false,
-        capabilities: PREVIEW_MODEL_CAPABILITIES,
+        capabilities: PREVIEW_CODEX_MODEL_CAPABILITIES,
       },
       {
         slug: "gpt-5.3-codex",
         name: "GPT-5.3 Codex",
         shortName: "GPT-5.3",
         isCustom: false,
-        capabilities: PREVIEW_MODEL_CAPABILITIES,
+        capabilities: PREVIEW_CODEX_MODEL_CAPABILITIES,
       },
     ],
     slashCommands: [
@@ -127,7 +182,7 @@ const PREVIEW_PROVIDERS: ServerProvider[] = [
         name: "Claude Sonnet 4.5",
         shortName: "Sonnet 4.5",
         isCustom: false,
-        capabilities: PREVIEW_MODEL_CAPABILITIES,
+        capabilities: PREVIEW_CLAUDE_MODEL_CAPABILITIES,
       },
     ],
     slashCommands: [],

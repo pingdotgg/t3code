@@ -689,9 +689,12 @@ startPreviewRuntime({
       html, body, #app {
         height: 100%;
         margin: 0;
+        background: transparent !important;
+        background-color: transparent !important;
       }
       body {
-        background: white;
+        background: transparent !important;
+        background-color: transparent !important;
       }
     </style>
   </head>
