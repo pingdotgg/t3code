@@ -390,7 +390,8 @@ function assertDescendantPid(
 
   return readProcessRows(spawner).pipe(
     Effect.flatMap((rows) => {
-      const descendant = buildDescendantEntries(rows, process.pid).some(
+      const filteredRows = rows.filter((row) => !isDiagnosticsQueryProcess(row, process.pid));
+      const descendant = buildDescendantEntries(filteredRows, process.pid).some(
         (entry) => entry.pid === pid,
       );
       return descendant

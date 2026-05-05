@@ -204,4 +204,33 @@ describe("TraceDiagnostics", () => {
       assert.deepStrictEqual(diagnostics.scannedFilePaths, [`${traceFilePath}.1`, traceFilePath]);
     }),
   );
+
+  it.effect("keeps only the slowest span occurrences while aggregating large inputs", () =>
+    Effect.sync(() => {
+      const diagnostics = TraceDiagnostics.aggregateTraceDiagnostics({
+        traceFilePath: "/tmp/server.trace.ndjson",
+        files: [
+          {
+            path: "/tmp/server.trace.ndjson",
+            text: Array.from({ length: 25 }, (_, index) =>
+              record({
+                name: `span-${index}`,
+                traceId: `trace-${index}`,
+                spanId: `span-${index}`,
+                startMs: index * 1_000,
+                durationMs: index,
+              }),
+            ).join("\n"),
+          },
+        ],
+      });
+
+      assert.equal(diagnostics.recordCount, 25);
+      assert.equal(diagnostics.slowestSpans.length, 10);
+      assert.deepStrictEqual(
+        diagnostics.slowestSpans.map((span) => span.durationMs),
+        [24, 23, 22, 21, 20, 19, 18, 17, 16, 15],
+      );
+    }),
+  );
 });

@@ -150,6 +150,24 @@ function platformErrorMessage(error: PlatformError.PlatformError): string {
   return error.message || String(error);
 }
 
+function insertBoundedSlowestSpan(
+  slowestSpans: ServerTraceDiagnosticsSpanOccurrence[],
+  span: ServerTraceDiagnosticsSpanOccurrence,
+): void {
+  if (
+    slowestSpans.length >= TOP_LIMIT &&
+    span.durationMs <= slowestSpans[slowestSpans.length - 1]!.durationMs
+  ) {
+    return;
+  }
+
+  slowestSpans.push(span);
+  slowestSpans.sort((left, right) => right.durationMs - left.durationMs);
+  if (slowestSpans.length > TOP_LIMIT) {
+    slowestSpans.length = TOP_LIMIT;
+  }
+}
+
 export function aggregateTraceDiagnostics(
   input: TraceDiagnosticsInput,
 ): ServerTraceDiagnosticsResult {
@@ -247,7 +265,7 @@ export function aggregateTraceDiagnostics(
       if (durationMs >= slowSpanThresholdMs) {
         slowSpanCount += 1;
       }
-      slowestSpans.push(spanItem);
+      insertBoundedSlowestSpan(slowestSpans, spanItem);
 
       if (isFailure) {
         const cause = readExitCause(parsed.exit);
@@ -331,9 +349,7 @@ export function aggregateTraceDiagnostics(
     slowSpanCount,
     logLevelCounts,
     topSpansByCount,
-    slowestSpans: slowestSpans
-      .toSorted((left, right) => right.durationMs - left.durationMs)
-      .slice(0, TOP_LIMIT),
+    slowestSpans,
     commonFailures: [...failuresByKey.values()]
       .toSorted(
         (left, right) =>

@@ -213,4 +213,35 @@ describe("ProcessDiagnostics", () => {
       ]);
     }),
   );
+
+  it.effect("does not allow signaling the diagnostics query process", () =>
+    Effect.gen(function* () {
+      const spawnerLayer = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            mockHandle({
+              stdout: [
+                ` ${process.pid}     1 ${process.pid} Ss 0.0 1024 01:02.03 t3 server`,
+                ` 4242 ${process.pid} ${process.pid} R  1.5 2048 00:00 ps -axo pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command=`,
+              ].join("\n"),
+            }),
+          ),
+        ),
+      );
+      const layer = ProcessDiagnostics.layer.pipe(Layer.provide(spawnerLayer));
+
+      const result = yield* ProcessDiagnostics.signalProcess({
+        pid: 4242,
+        signal: "SIGINT",
+      }).pipe(Effect.provide(layer));
+
+      expect(result).toEqual({
+        pid: 4242,
+        signal: "SIGINT",
+        signaled: false,
+        message: "Process 4242 is not a live descendant of the T3 server.",
+      });
+    }),
+  );
 });
