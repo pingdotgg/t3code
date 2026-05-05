@@ -1,27 +1,11 @@
 import * as React from "react";
 
-import { AnnotationPopupCSS } from "./primitives/components/annotation-popup-css/index.tsx";
-import {
-  AnnotationMarker,
-  PendingMarker,
-} from "./primitives/components/page-toolbar-css/annotation-marker/index.tsx";
-import toolbarStyles from "./primitives/components/page-toolbar-css/styles.module.scss";
-import {
-  getAccessibilityInfo,
-  getDetailedComputedStyles,
-  getElementClasses,
-  getForensicComputedStyles,
-  getFullElementPath,
-  getNearbyElements,
-  getNearbyText,
-  identifyElement,
-} from "./primitives/utils/element-identification.ts";
-import { getReactComponentName } from "./primitives/utils/react-detection.ts";
-import {
-  findNearestComponentSource,
-  formatSourceLocation,
-  getSourceLocation,
-} from "./primitives/utils/source-location.ts";
+import { FeedbackComposer } from "./components/FeedbackComposer.tsx";
+import { FeedbackHoverFrame } from "./components/FeedbackHoverFrame.tsx";
+import { FeedbackMarker, PendingFeedbackMarker } from "./components/FeedbackMarker.tsx";
+import overlayStyles from "./components/feedbackOverlay.module.scss";
+import { buildFeedbackTarget } from "./utils/buildFeedbackTarget.ts";
+import { getPopupPosition } from "./utils/positioning.ts";
 import type {
   PreviewFeedbackAnnotation,
   PreviewFeedbackElementTarget,
@@ -60,80 +44,6 @@ function createAnnotationId(): string {
   return `preview-feedback-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
-function isElementFixed(element: HTMLElement): boolean {
-  let current: HTMLElement | null = element;
-  while (current && current !== document.body) {
-    const position = window.getComputedStyle(current).position;
-    if (position === "fixed" || position === "sticky") {
-      return true;
-    }
-    current = current.parentElement;
-  }
-  return false;
-}
-
-function getPopupPosition(rect: DOMRect): PendingTarget["popup"] {
-  return {
-    left: Math.min(Math.max(rect.left + rect.width / 2, 150), window.innerWidth - 150),
-    top: Math.min(Math.max(rect.bottom + 12, 12), window.innerHeight - 220),
-  };
-}
-
-function getSourceFile(element: HTMLElement): string | null {
-  const exact = getSourceLocation(element);
-  const nearest = exact.found ? exact : findNearestComponentSource(element);
-  return nearest.found && nearest.source ? formatSourceLocation(nearest.source, "path") : null;
-}
-
-function normalizeComputedStyles(styles: Record<string, string>): string | null {
-  const entries = Object.entries(styles);
-  if (entries.length === 0) {
-    return null;
-  }
-  return entries
-    .slice(0, 8)
-    .map(([key, value]) => `${key.replace(/([A-Z])/g, "-$1").toLowerCase()}: ${value}`)
-    .join("; ");
-}
-
-function buildElementTarget(
-  element: HTMLElement,
-  rectOverride?: DOMRect,
-): PreviewFeedbackElementTarget {
-  const rect = rectOverride ?? element.getBoundingClientRect();
-  const identified = identifyElement(element);
-  const detailedStyles = getDetailedComputedStyles(element);
-  const reactInfo = getReactComponentName(element, { mode: "filtered" });
-  const isFixed = isElementFixed(element);
-
-  return {
-    kind: "element",
-    element: reactInfo.path ? `${reactInfo.path} ${identified.name}` : identified.name,
-    elementPath: identified.path,
-    fullPath: getFullElementPath(element) || null,
-    cssClasses: getElementClasses(element) || null,
-    computedStyles:
-      normalizeComputedStyles(detailedStyles) ?? getForensicComputedStyles(element) ?? null,
-    computedStyleMap: detailedStyles,
-    accessibility: getAccessibilityInfo(element) || null,
-    nearbyText: getNearbyText(element) || null,
-    nearbyElements: getNearbyElements(element) || null,
-    reactComponents: reactInfo.path || null,
-    sourceFile: getSourceFile(element),
-    boundingBox: {
-      x: rect.left,
-      y: rect.top,
-      width: rect.width,
-      height: rect.height,
-    },
-    marker: {
-      xPercent: ((rect.left + rect.width / 2) / Math.max(window.innerWidth, 1)) * 100,
-      yDocument: isFixed ? rect.top + rect.height / 2 : rect.top + window.scrollY + rect.height / 2,
-      isFixed,
-    },
-  };
-}
-
 function findSelectionElement(selection: Selection): HTMLElement | null {
   if (selection.rangeCount === 0) {
     return null;
@@ -144,7 +54,7 @@ function findSelectionElement(selection: Selection): HTMLElement | null {
 }
 
 function isFeedbackUiTarget(target: EventTarget | null): boolean {
-  return target instanceof Element && Boolean(target.closest(FEEDBACK_UI_SELECTOR));
+  return target instanceof Element && target.closest(FEEDBACK_UI_SELECTOR) !== null;
 }
 
 export function PreviewFeedbackOverlay(props: PreviewFeedbackOverlayProps) {
@@ -182,7 +92,7 @@ export function PreviewFeedbackOverlay(props: PreviewFeedbackOverlayProps) {
         setHoverTarget(null);
         return;
       }
-      setHoverTarget(buildElementTarget(target));
+      setHoverTarget(buildFeedbackTarget(target));
     };
 
     const handleClick = (event: MouseEvent) => {
@@ -195,10 +105,9 @@ export function PreviewFeedbackOverlay(props: PreviewFeedbackOverlayProps) {
       }
       event.preventDefault();
       event.stopPropagation();
-      const feedbackTarget = buildElementTarget(target);
       const rect = target.getBoundingClientRect();
       setPendingTarget({
-        target: feedbackTarget,
+        target: buildFeedbackTarget(target, rect),
         selectedText: null,
         popup: getPopupPosition(rect),
       });
@@ -225,7 +134,7 @@ export function PreviewFeedbackOverlay(props: PreviewFeedbackOverlayProps) {
       event.preventDefault();
       event.stopPropagation();
       setPendingTarget({
-        target: buildElementTarget(element, rect),
+        target: buildFeedbackTarget(element, rect),
         selectedText,
         popup: getPopupPosition(rect),
       });
@@ -294,78 +203,38 @@ export function PreviewFeedbackOverlay(props: PreviewFeedbackOverlayProps) {
       {props.children}
 
       {hoverTarget && props.enabled ? (
-        <>
-          <div
-            className={`${toolbarStyles.hoverHighlight} ${toolbarStyles.enter}`}
-            data-forma-preview-feedback-ui
-            style={{
-              left: hoverTarget.boundingBox.x,
-              top: hoverTarget.boundingBox.y,
-              width: hoverTarget.boundingBox.width,
-              height: hoverTarget.boundingBox.height,
-              zIndex: 99997,
-            }}
-          />
-          <div
-            className={`${toolbarStyles.hoverTooltip} ${toolbarStyles.enter}`}
-            data-forma-preview-feedback-ui
-            style={{
-              left: Math.min(hoverTarget.boundingBox.x, window.innerWidth - 300),
-              top: Math.max(hoverTarget.boundingBox.y - 34, 8),
-              zIndex: 100000,
-            }}
-          >
-            {hoverTarget.reactComponents ? (
-              <div className={toolbarStyles.hoverReactPath}>{hoverTarget.reactComponents}</div>
-            ) : null}
-            <div className={toolbarStyles.hoverElementName}>{hoverTarget.element}</div>
-          </div>
-        </>
+        <FeedbackHoverFrame target={hoverTarget} className={overlayStyles.themeScope} />
       ) : null}
 
       {props.showMarkers ? (
         <>
-          <div className={toolbarStyles.markersLayer} data-forma-preview-feedback-ui>
+          <div
+            className={`${overlayStyles.markerLayer} ${overlayStyles.scrollLayer} ${overlayStyles.themeScope}`}
+            data-forma-preview-feedback-ui
+            data-preview-feedback-layer="scroll"
+          >
             {scrollAnnotations.map((annotation, index) => (
-              <AnnotationMarker
+              <FeedbackMarker
                 key={annotation.id}
                 annotation={annotation}
-                globalIndex={index}
-                layerIndex={index}
-                layerSize={scrollAnnotations.length}
-                isExiting={false}
-                isClearing={false}
-                isAnimated
-                isHovered={hoveredAnnotationId === annotation.id}
-                isDeleting={false}
-                isEditingAny={false}
-                renumberFrom={null}
-                markerClickBehavior="edit"
-                onHoverEnter={(next) => setHoveredAnnotationId(next.id)}
-                onHoverLeave={() => setHoveredAnnotationId(null)}
-                onClick={() => undefined}
+                index={index}
+                hovered={hoveredAnnotationId === annotation.id}
+                onHoverChange={(hovered) => setHoveredAnnotationId(hovered ? annotation.id : null)}
               />
             ))}
           </div>
-          <div className={toolbarStyles.fixedMarkersLayer} data-forma-preview-feedback-ui>
+          <div
+            className={`${overlayStyles.markerLayer} ${overlayStyles.fixedLayer} ${overlayStyles.themeScope}`}
+            data-forma-preview-feedback-ui
+            data-preview-feedback-layer="fixed"
+          >
             {fixedAnnotations.map((annotation, index) => (
-              <AnnotationMarker
+              <FeedbackMarker
                 key={annotation.id}
                 annotation={annotation}
-                globalIndex={scrollAnnotations.length + index}
-                layerIndex={index}
-                layerSize={fixedAnnotations.length}
-                isExiting={false}
-                isClearing={false}
-                isAnimated
-                isHovered={hoveredAnnotationId === annotation.id}
-                isDeleting={false}
-                isEditingAny={false}
-                renumberFrom={null}
-                markerClickBehavior="edit"
-                onHoverEnter={(next) => setHoveredAnnotationId(next.id)}
-                onHoverLeave={() => setHoveredAnnotationId(null)}
-                onClick={() => undefined}
+                index={scrollAnnotations.length + index}
+                hovered={hoveredAnnotationId === annotation.id}
+                onHoverChange={(hovered) => setHoveredAnnotationId(hovered ? annotation.id : null)}
               />
             ))}
           </div>
@@ -374,32 +243,32 @@ export function PreviewFeedbackOverlay(props: PreviewFeedbackOverlayProps) {
 
       {pendingTarget ? (
         <>
-          <div className={toolbarStyles.fixedMarkersLayer} data-forma-preview-feedback-ui>
-            <PendingMarker
-              x={pendingTarget.target.marker.xPercent}
+          <div
+            className={`${overlayStyles.markerLayer} ${overlayStyles.fixedLayer} ${overlayStyles.themeScope}`}
+            data-forma-preview-feedback-ui
+            data-preview-feedback-layer="pending"
+          >
+            <PendingFeedbackMarker
+              xPercent={pendingTarget.target.marker.xPercent}
               y={
                 pendingTarget.target.marker.isFixed
                   ? pendingTarget.target.marker.yDocument
                   : pendingTarget.target.marker.yDocument - window.scrollY
               }
-              isExiting={false}
             />
           </div>
-          <div data-forma-preview-feedback-ui>
-            <AnnotationPopupCSS
-              element={pendingTarget.target.element}
-              selectedText={pendingTarget.selectedText ?? undefined}
-              computedStyles={pendingTarget.target.computedStyleMap}
-              accentColor={accentColor}
-              submitLabel="Add"
-              style={pendingTarget.popup}
-              onSubmit={submitPendingAnnotation}
-              onCancel={() => {
-                setPendingTarget(null);
-                window.getSelection()?.removeAllRanges();
-              }}
-            />
-          </div>
+          <FeedbackComposer
+            accentColor={accentColor}
+            computedStyles={pendingTarget.target.computedStyleMap}
+            element={pendingTarget.target.element}
+            selectedText={pendingTarget.selectedText ?? undefined}
+            style={pendingTarget.popup}
+            onCancel={() => {
+              setPendingTarget(null);
+              window.getSelection()?.removeAllRanges();
+            }}
+            onSubmit={submitPendingAnnotation}
+          />
         </>
       ) : null}
     </>

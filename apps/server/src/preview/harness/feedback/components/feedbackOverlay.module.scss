@@ -1,0 +1,115 @@
+:global(:root) {
+  --preview-feedback-color-accent: var(--primary, var(--ring, #2563eb));
+}
+
+.themeScope {
+  svg[fill="none"] {
+    fill: none !important;
+  }
+
+  svg[fill="none"] :not([fill]) {
+    fill: none !important;
+  }
+}
+
+@keyframes hoverFrameIn {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes hoverTooltipIn {
+  from {
+    opacity: 0;
+    transform: translateY(3px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.enter {
+  animation-duration: 120ms;
+  animation-fill-mode: both;
+  animation-timing-function: ease-out;
+}
+
+.hoverFrame {
+  position: fixed;
+  z-index: 99997;
+  pointer-events: none !important;
+  box-sizing: border-box;
+  border: 2px solid color-mix(in srgb, var(--preview-feedback-color-accent) 52%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--preview-feedback-color-accent) 7%, transparent);
+  will-change: opacity, transform;
+  animation-name: hoverFrameIn;
+}
+
+.hoverTooltip {
+  position: fixed;
+  z-index: 100000;
+  max-width: 320px;
+  padding: 0.45rem 0.65rem;
+  border-radius: 0.5rem;
+  background: rgba(10, 15, 25, 0.92);
+  color: #f8fafc;
+  box-shadow:
+    0 10px 30px rgba(2, 6, 23, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  pointer-events: none !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation-name: hoverTooltipIn;
+}
+
+.hoverPath {
+  margin-bottom: 0.15rem;
+  font-size: 0.625rem;
+  color: rgba(241, 245, 249, 0.68);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hoverLabel {
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.markerLayer {
+  z-index: 99998;
+  pointer-events: none;
+
+  > * {
+    pointer-events: auto;
+  }
+}
+
+.scrollLayer {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 100%;
+  height: 0;
+}
+
+.fixedLayer {
+  position: fixed;
+  inset: 0;
+}
