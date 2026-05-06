@@ -1,6 +1,33 @@
-export type KanbanConsoleLocale = "en" | "ar";
+import type {
+  KanbanColumnId,
+  KanbanConsoleAgentWorkflow,
+  KanbanConsoleArtifact,
+  KanbanConsoleCommandRun,
+  KanbanConsoleGitOpsPolicy,
+  KanbanConsoleGitStatusSnapshot,
+  KanbanConsoleLocale,
+  KanbanConsoleManagedRepo,
+  KanbanConsolePrWatchHealth,
+  KanbanConsoleProjectBoard,
+  KanbanConsolePullRequestWatch,
+  KanbanConsoleReleaseReadiness,
+  KanbanConsoleSnapshot,
+  KanbanConsoleSuggestedFix,
+  KanbanConsoleTask,
+  KanbanConsoleTaskTransitionRequest,
+  KanbanConsoleTaskTransitionResult,
+} from "@t3tools/contracts";
 
-export type KanbanColumnId = "backlog" | "ready" | "in-progress" | "review" | "blocked" | "done";
+export type {
+  KanbanColumnId,
+  KanbanConsoleLocale,
+  KanbanConsolePrWatchHealth,
+  KanbanConsolePullRequestWatch,
+  KanbanConsoleSnapshot,
+  KanbanConsoleSuggestedFix,
+  KanbanConsoleTaskTransitionRequest,
+  KanbanConsoleTaskTransitionResult,
+};
 
 export type ConsoleStateId = "empty" | "loading" | "permission" | "missing-auth" | "error";
 
@@ -15,36 +42,8 @@ export type ConsoleViewId =
   | "settings"
   | "states";
 
-export interface KanbanTaskMock {
-  id: string;
-  issue: string;
-  title: string;
-  titleAr: string;
-  repo: string;
-  column: KanbanColumnId;
-  priority: "P0" | "P1" | "P2";
-  assignee: string;
-  pr?: string;
-  checks: {
-    passing: number;
-    pending: number;
-    failing: number;
-  };
-  agent: "Codex" | "Claude" | "Human";
-  updated: string;
-  comments: number;
-}
-
-export interface MonorepoMock {
-  name: string;
-  path: string;
-  branch: string;
-  ahead: number;
-  behind: number;
-  openPrs: number;
-  activeTasks: number;
-  status: "healthy" | "attention" | "blocked";
-}
+export type KanbanTaskMock = KanbanConsoleTask;
+export type MonorepoMock = KanbanConsoleManagedRepo;
 
 export const kanbanColumns: Array<{
   id: KanbanColumnId;
@@ -176,11 +175,13 @@ export const kanbanConsoleMessages = {
   },
 } as const;
 
-export const monorepos: MonorepoMock[] = [
+const managedRepos: MonorepoMock[] = [
   {
+    id: "repo-kanban-console",
     name: "kanban-console",
+    owner: "MohAnghabo",
     path: "/Users/mohanghabo/Projects/kanban-console",
-    branch: "feature/t3-kanban-phase-2-mock-console",
+    branch: "feature/t3-kanban-phase-3-contracts",
     ahead: 1,
     behind: 0,
     openPrs: 1,
@@ -188,7 +189,9 @@ export const monorepos: MonorepoMock[] = [
     status: "healthy",
   },
   {
+    id: "repo-ai-starter-pro",
     name: "ai-starter-pro",
+    owner: "MohAnghabo",
     path: "/Users/mohanghabo/Projects/ai-starter-pro",
     branch: "main",
     ahead: 0,
@@ -198,7 +201,9 @@ export const monorepos: MonorepoMock[] = [
     status: "attention",
   },
   {
+    id: "repo-docs-product",
     name: "docs-product",
+    owner: "MohAnghabo",
     path: "/Users/mohanghabo/Projects/docs-product",
     branch: "release/product-artifacts",
     ahead: 2,
@@ -209,7 +214,17 @@ export const monorepos: MonorepoMock[] = [
   },
 ];
 
-export const kanbanTasks: KanbanTaskMock[] = [
+const projectBoards: KanbanConsoleProjectBoard[] = [
+  {
+    id: "board-kanban-console",
+    owner: "MohAnghabo",
+    title: "Kanban Project Console",
+    source: "github-projects",
+    columns: kanbanColumns.map((column) => column.id),
+  },
+];
+
+const tasks: KanbanTaskMock[] = [
   {
     id: "t3-p2-1",
     issue: "ai-starter-pro#43",
@@ -298,6 +313,225 @@ export const kanbanTasks: KanbanTaskMock[] = [
   },
 ];
 
+const prWatches: KanbanConsolePullRequestWatch[] = [
+  {
+    id: "watch-pr-2",
+    repo: "kanban-console",
+    pr: "kanban-console#2",
+    title: "Add phase 2 mock Kanban console",
+    taskId: "t3-p2-1",
+    checks: [
+      { id: "check-validate", name: "Validate", status: "passing" },
+      { id: "check-release-smoke", name: "Release Smoke", status: "pending" },
+    ],
+    reviewSignals: [
+      {
+        id: "signal-rtl",
+        kind: "approval",
+        source: "maintainer",
+        summary: "Browser mock was approved after RTL smoke.",
+        fingerprint: "approval:phase-2:rtl",
+        createdAt: "2026-05-06T12:50:00.000Z",
+      },
+    ],
+    lastSeenAt: "2026-05-06T13:00:00.000Z",
+  },
+  {
+    id: "watch-pr-1",
+    repo: "kanban-console",
+    pr: "kanban-console#1",
+    title: "Adopt governance baseline",
+    taskId: "t3-p2-3",
+    checks: [
+      { id: "check-validate-1", name: "Validate", status: "failing" },
+      { id: "check-smoke-1", name: "Release Smoke", status: "passing" },
+    ],
+    reviewSignals: [
+      {
+        id: "signal-ci",
+        kind: "ci-failure",
+        source: "GitHub Actions",
+        summary: "Required check failed in a synthetic fixture.",
+        fingerprint: "ci:validate:failure",
+        createdAt: "2026-05-06T11:35:00.000Z",
+      },
+    ],
+    lastSeenAt: "2026-05-06T11:40:00.000Z",
+  },
+];
+
+const suggestedFixes: KanbanConsoleSuggestedFix[] = [
+  {
+    id: "fix-pr-1-validate",
+    taskId: "t3-p2-3",
+    prWatchId: "watch-pr-1",
+    title: "Inspect failing Validate check",
+    command: "/ship t3-kanban-project-console",
+    status: "eligible",
+    guardrails: ["requires-confirmation", "redact-logs", "no-project-write"],
+  },
+  {
+    id: "fix-release-policy",
+    taskId: "t3-p2-5",
+    prWatchId: "watch-pr-2",
+    title: "Release branch policy needs maintainer confirmation",
+    command: "/orchestrate t3-kanban-project-console",
+    status: "blocked",
+    guardrails: ["protected-branch", "requires-human"],
+  },
+];
+
+const commandRuns: KanbanConsoleCommandRun[] = [
+  {
+    id: "command-phase-3",
+    label: "Phase 3 contracts",
+    command: "/phase t3-kanban-project-console phase-3",
+    status: "queued",
+  },
+  {
+    id: "command-ship",
+    label: "Ship readiness",
+    command: "/ship t3-kanban-project-console",
+    status: "blocked",
+  },
+];
+
+const gitStatuses: KanbanConsoleGitStatusSnapshot[] = [
+  {
+    repoId: "repo-kanban-console",
+    branch: "feature/t3-kanban-phase-3-contracts",
+    upstream: "origin/feature/t3-kanban-phase-3-contracts",
+    ahead: 1,
+    behind: 0,
+    files: [
+      {
+        path: "apps/web/src/components/KanbanConsoleMock.tsx",
+        status: "unstaged",
+        additions: 42,
+        deletions: 3,
+      },
+      {
+        path: "packages/contracts/src/kanbanConsole.ts",
+        status: "untracked",
+        additions: 250,
+        deletions: 0,
+      },
+    ],
+  },
+];
+
+const artifacts: KanbanConsoleArtifact[] = [
+  {
+    id: "artifact-plan",
+    repoId: "repo-kanban-console",
+    path: "docs/tasks/t3-kanban-project-console.md",
+    title: "Kanban console task plan",
+    status: "dirty",
+    updatedAt: "2026-05-06T13:20:00.000Z",
+  },
+  {
+    id: "artifact-product",
+    repoId: "repo-kanban-console",
+    path: "docs/product/project-console.md",
+    title: "Project console product notes",
+    status: "clean",
+    updatedAt: "2026-05-06T10:00:00.000Z",
+  },
+];
+
+const gitOpsPolicy: KanbanConsoleGitOpsPolicy = {
+  protectedBranches: ["main", "release/*"],
+  allowedWorkBranchPrefixes: [
+    "feature/",
+    "fix/",
+    "chore/",
+    "docs/",
+    "ops/",
+    "refactor/",
+    "test/",
+    "perf/",
+  ],
+  destructiveActionsRequireSecondConfirmation: true,
+};
+
+const releaseReadiness: KanbanConsoleReleaseReadiness = {
+  branch: "release/product-artifacts",
+  gates: [
+    { id: "gate-validate", label: "Validate", status: "passing" },
+    { id: "gate-smoke", label: "Release smoke", status: "pending" },
+    { id: "gate-policy", label: "Protected branch policy", status: "blocked" },
+  ],
+};
+
+const agentWorkflows: KanbanConsoleAgentWorkflow[] = [
+  {
+    id: "workflow-phase",
+    label: "Implement phase",
+    agent: "Codex",
+    command: "/phase t3-kanban-project-console phase-3",
+    available: true,
+  },
+  {
+    id: "workflow-ship",
+    label: "Ship readiness",
+    agent: "Claude",
+    command: "/ship t3-kanban-project-console",
+    available: true,
+  },
+];
+
+export const kanbanConsoleMockSnapshot: KanbanConsoleSnapshot = {
+  version: 1,
+  generatedAt: "2026-05-06T13:30:00.000Z",
+  locale: "en",
+  repos: managedRepos,
+  boards: projectBoards,
+  tasks,
+  prWatches,
+  suggestedFixes,
+  commandRuns,
+  gitStatuses,
+  artifacts,
+  gitOpsPolicy,
+  releaseReadiness,
+  agentWorkflows,
+};
+
+export interface KanbanConsoleProvider {
+  readSnapshot(): KanbanConsoleSnapshot;
+  previewTaskTransition(
+    request: KanbanConsoleTaskTransitionRequest,
+  ): KanbanConsoleTaskTransitionResult;
+  listPrWatches(): readonly KanbanConsolePullRequestWatch[];
+  listSuggestedFixes(): readonly KanbanConsoleSuggestedFix[];
+  getPrWatchHealth(watch: KanbanConsolePullRequestWatch): KanbanConsolePrWatchHealth;
+  isSuggestedFixEligible(fix: KanbanConsoleSuggestedFix): boolean;
+}
+
+export const kanbanConsoleMockProvider: KanbanConsoleProvider = {
+  readSnapshot() {
+    return kanbanConsoleMockSnapshot;
+  },
+  previewTaskTransition(request) {
+    return previewTaskTransition(request);
+  },
+  listPrWatches() {
+    return kanbanConsoleMockSnapshot.prWatches;
+  },
+  listSuggestedFixes() {
+    return kanbanConsoleMockSnapshot.suggestedFixes;
+  },
+  getPrWatchHealth(watch) {
+    return getPrWatchHealth(watch);
+  },
+  isSuggestedFixEligible(fix) {
+    return isSuggestedFixEligible(fix);
+  },
+};
+
+export const monorepos = kanbanConsoleMockProvider.readSnapshot().repos;
+export const kanbanTasks = kanbanConsoleMockProvider.readSnapshot().tasks;
+
 export function getLocaleDirection(locale: KanbanConsoleLocale): "ltr" | "rtl" {
   return locale === "ar" ? "rtl" : "ltr";
 }
@@ -306,7 +540,7 @@ export function getMessages(locale: KanbanConsoleLocale) {
   return kanbanConsoleMessages[locale];
 }
 
-export function getTasksByColumn(tasks: KanbanTaskMock[] = kanbanTasks) {
+export function getTasksByColumn(tasks: readonly KanbanTaskMock[] = kanbanTasks) {
   return kanbanColumns.map((column) => ({
     id: column.id,
     labelKey: column.labelKey,
@@ -315,11 +549,75 @@ export function getTasksByColumn(tasks: KanbanTaskMock[] = kanbanTasks) {
 }
 
 export function moveTaskToColumn(
-  tasks: KanbanTaskMock[],
+  tasks: readonly KanbanTaskMock[],
   taskId: string,
   nextColumn: KanbanColumnId,
 ): KanbanTaskMock[] {
   return tasks.map((task) => (task.id === taskId ? { ...task, column: nextColumn } : task));
+}
+
+export function previewTaskTransition(
+  request: KanbanConsoleTaskTransitionRequest,
+): KanbanConsoleTaskTransitionResult {
+  if (request.fromColumn === request.toColumn) {
+    return {
+      taskId: request.taskId,
+      fromColumn: request.fromColumn,
+      toColumn: request.toColumn,
+      action: "none",
+      requiresConfirmation: false,
+      duplicateSuppressed: true,
+      message: "Task is already in the requested column.",
+    };
+  }
+
+  if (request.toColumn === "done" && !request.confirmed) {
+    return {
+      taskId: request.taskId,
+      fromColumn: request.fromColumn,
+      toColumn: request.toColumn,
+      action: "open-action-sheet",
+      requiresConfirmation: true,
+      duplicateSuppressed: false,
+      message: "Completion requires release and PR readiness confirmation.",
+    };
+  }
+
+  if (request.toColumn === "blocked") {
+    return {
+      taskId: request.taskId,
+      fromColumn: request.fromColumn,
+      toColumn: request.toColumn,
+      action: "open-action-sheet",
+      requiresConfirmation: true,
+      duplicateSuppressed: false,
+      message: "Blocked transitions require a clear blocker reason.",
+    };
+  }
+
+  return {
+    taskId: request.taskId,
+    fromColumn: request.fromColumn,
+    toColumn: request.toColumn,
+    action: "queue-agent-workflow",
+    requiresConfirmation: !request.confirmed,
+    duplicateSuppressed: false,
+    message: "Transition can queue a confirmed agent workflow.",
+  };
+}
+
+export function getPrWatchHealth(watch: KanbanConsolePullRequestWatch): KanbanConsolePrWatchHealth {
+  if (watch.checks.some((check) => check.status === "failing")) {
+    return "attention";
+  }
+  if (watch.checks.some((check) => check.status === "pending")) {
+    return "pending";
+  }
+  return "green";
+}
+
+export function isSuggestedFixEligible(fix: KanbanConsoleSuggestedFix): boolean {
+  return fix.status === "eligible" && !fix.guardrails.includes("protected-branch");
 }
 
 export function getTaskTitle(task: KanbanTaskMock, locale: KanbanConsoleLocale): string {

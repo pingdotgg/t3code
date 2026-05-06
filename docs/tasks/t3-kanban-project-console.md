@@ -460,10 +460,10 @@ template repo.
   - Stabilize typed contracts behind the UI so real integrations can replace mocks incrementally.
 - Dependencies: Phase 2.
 - Tasks:
-  - [ ] Define contracts for managed repos, project boards, Kanban tasks, task transitions, PR watches, check runs, review signals, suggested fixes, command runs, git status, artifacts, GitOps policy, release readiness, and agent workflows.
-  - [ ] Add Zod schemas for runtime boundaries.
-  - [ ] Add mock providers behind real API-shaped interfaces.
-  - [ ] Add transition tests for Kanban, PR watch, and auto-fix eligibility.
+  - [x] Define contracts for managed repos, project boards, Kanban tasks, task transitions, PR watches, check runs, review signals, suggested fixes, command runs, git status, artifacts, GitOps policy, release readiness, and agent workflows.
+  - [x] Add Zod schemas for runtime boundaries.
+  - [x] Add mock providers behind real API-shaped interfaces.
+  - [x] Add transition tests for Kanban, PR watch, and auto-fix eligibility.
 - Validation:
   - Typecheck passes.
   - Unit tests cover transition and classification rules.
@@ -901,3 +901,37 @@ Append one entry per implementation pass.
   - Phase 2 remains mock-only. The UI uses local React state and static fixtures; no GitHub Project state, git, CLI, provider, or docs/product writes were performed.
   - Browser validation is component-level Vitest Browser/Playwright coverage across major mock views plus RTL toggle. Persistent desktop/mobile screenshot artifacts were not committed; visual review remains available by running the web app or browser test locally.
   - GitHub Projects remains the live status board, but no Project state writes were made because that requires explicit user approval.
+
+### 2026-05-06 17:35 - phase 3 contracts and mock runtime
+
+- Summary:
+  - Added Kanban Console contracts for managed repos, GitHub Projects boards, tasks, transitions, PR watches, checks, review signals, suggested fixes, command runs, git status snapshots, artifacts, GitOps policy, release readiness, and agent workflows.
+  - Moved the web mock data behind a provider-shaped runtime interface so future GitHub, git, CLI, artifact, and agent providers can replace individual mock methods incrementally.
+  - Added a dedicated `/kanban` route for stable browser PR review and wired board cards to drag/drop between columns while keeping the existing move sheet.
+  - Added transition, PR-watch classification, auto-fix eligibility, and contract-boundary tests.
+- Files changed:
+  - `packages/contracts/src/kanbanConsole.ts`
+  - `packages/contracts/src/kanbanConsole.test.ts`
+  - `packages/contracts/src/index.ts`
+  - `apps/web/src/kanbanConsoleMock.ts`
+  - `apps/web/src/kanbanConsoleMock.test.ts`
+  - `apps/web/src/components/KanbanConsoleMock.tsx`
+  - `apps/web/src/routes/kanban.tsx`
+  - `apps/web/src/routeTree.gen.ts`
+  - `docs/tasks/t3-kanban-project-console.md`
+- Validation run:
+  - Command: `bun run --cwd packages/contracts test -- kanbanConsole`
+  - Result: PASS
+  - Command: `bun run --cwd packages/contracts typecheck`
+  - Result: PASS
+  - Command: `bun run --cwd apps/web test -- kanbanConsoleMock`
+  - Result: PASS
+  - Command: `bun run --cwd apps/web typecheck`
+  - Result: PASS
+  - Command: `bun check`
+  - Result: PASS
+- Notes/deviations:
+  - The original plan said Zod schemas, but this T3 Code fork keeps shared runtime contracts in `packages/contracts` as Effect Schema. Phase 3 therefore uses Effect Schema to preserve the repo's schema-only contract boundary.
+  - Phase 3 remains mock-only. No GitHub Project state, git index, CLI, provider, or `docs/product` writes were performed.
+  - GitHub Projects remains the live status board, but no Project state writes were made because that requires explicit user approval.
+  - Well-Architected tradeoff: the mock provider returns in-memory static snapshots for speed and deterministic tests; real provider retries, redaction, persistence, and rate-limit handling remain future-phase work.

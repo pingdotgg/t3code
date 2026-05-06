@@ -3,10 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   getLocaleDirection,
   getMessages,
+  getPrWatchHealth,
   getTasksByColumn,
+  isSuggestedFixEligible,
+  kanbanConsoleMockProvider,
   kanbanConsoleMessages,
   kanbanTasks,
   moveTaskToColumn,
+  previewTaskTransition,
   type KanbanColumnId,
 } from "./kanbanConsoleMock";
 
@@ -51,5 +55,50 @@ describe("kanbanConsoleMock", () => {
   it("returns locale-specific labels", () => {
     expect(getMessages("en").consoleTitle).toBe("Kanban Project Console");
     expect(getMessages("ar").consoleTitle).toBe("وحدة تحكم مشروع كانبان");
+  });
+
+  it("previews Kanban transitions before mutating external state", () => {
+    const targetTask = kanbanTasks[0];
+    expect(targetTask).toBeDefined();
+
+    if (!targetTask) {
+      throw new Error("mock task fixture is incomplete");
+    }
+
+    expect(
+      previewTaskTransition({
+        taskId: targetTask.id,
+        fromColumn: targetTask.column,
+        toColumn: "done",
+        confirmed: false,
+      }),
+    ).toMatchObject({
+      action: "open-action-sheet",
+      requiresConfirmation: true,
+    });
+
+    expect(
+      previewTaskTransition({
+        taskId: targetTask.id,
+        fromColumn: targetTask.column,
+        toColumn: targetTask.column,
+        confirmed: true,
+      }),
+    ).toMatchObject({
+      action: "none",
+      duplicateSuppressed: true,
+    });
+  });
+
+  it("classifies PR watch health from check runs", () => {
+    const watches = kanbanConsoleMockProvider.listPrWatches();
+
+    expect(watches.map((watch) => getPrWatchHealth(watch))).toEqual(["pending", "attention"]);
+  });
+
+  it("gates suggested auto-fixes with guardrails", () => {
+    const fixes = kanbanConsoleMockProvider.listSuggestedFixes();
+
+    expect(fixes.map((fix) => isSuggestedFixEligible(fix))).toEqual([true, false]);
   });
 });
