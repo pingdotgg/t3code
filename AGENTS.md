@@ -114,7 +114,9 @@ PR-readiness CI enforcement note:
 - The readiness checker validates required GitHub check-runs via
   `PR_READINESS_REQUIRED_CHECKS` (default: `validate`)
 - Derived repos should set this env var in `.github/workflows/pr-readiness.yml`
-  to their actual required checks (comma-separated), for example:
+  to their actual required checks (comma-separated). Required check names must
+  not contain commas because the readiness script uses comma-separated parsing.
+  For example:
   `PR_READINESS_REQUIRED_CHECKS: "validate,preflight,env-audit,security"`
 - Do not include the `pr-readiness` job name itself in this list, or the check
   creates a circular dependency by waiting for itself.

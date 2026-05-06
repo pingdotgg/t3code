@@ -8,7 +8,7 @@ on:
 
 jobs:
   quality:
-    name: Format, Lint, Typecheck, Test, Browser Test, Build
+    name: Validate
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:

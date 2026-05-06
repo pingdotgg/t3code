@@ -32,5 +32,5 @@ jobs:
           PR_READINESS_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_READINESS_BODY: ${{ github.event.pull_request.body }}
           PR_READINESS_SKIP_CI: "0"
-          PR_READINESS_REQUIRED_CHECKS: "Format, Lint, Typecheck, Test, Browser Test, Build,Release Smoke"
+          PR_READINESS_REQUIRED_CHECKS: "Validate,Release Smoke"
         run: bash scripts/check-pr-readiness.sh

@@ -827,3 +827,20 @@ Append one entry per implementation pass.
   - Result: PASS
 - Notes/deviations:
   - These changes address actionable CodeRabbit findings on PR #1 and keep scope limited to Phase 1 governance automation.
+
+### 2026-05-06 16:00 - phase 1 PR readiness check names
+
+- Summary:
+  - Renamed the required aggregate CI check from `Format, Lint, Typecheck, Test, Browser Test, Build` to `Validate`.
+  - Updated PR readiness required checks to `Validate,Release Smoke`.
+  - Documented that required check names must not contain commas because `PR_READINESS_REQUIRED_CHECKS` is comma-separated.
+- Files changed:
+  - `.github/workflows/ci.yml`
+  - `.github/workflows/pr-readiness.yml`
+  - `AGENTS.md`
+  - `docs/tasks/t3-kanban-project-console.md`
+- Validation run:
+  - Command: `bun run fmt:check`
+  - Result: PASS
+- Notes/deviations:
+  - This fixes the PR #1 readiness failure where the checker split the former check name into nonexistent checks such as `Build`.
