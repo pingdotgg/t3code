@@ -4,6 +4,7 @@ import {
   ArrowLeftIcon,
   BotIcon,
   GitBranchIcon,
+  KeyboardIcon,
   Link2Icon,
   Settings2Icon,
 } from "lucide-react";
@@ -22,6 +23,7 @@ import {
 
 export type SettingsSectionPath =
   | "/settings/general"
+  | "/settings/keybindings"
   | "/settings/providers"
   | "/settings/source-control"
   | "/settings/connections"
@@ -33,6 +35,7 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   icon: ComponentType<{ className?: string }>;
 }> = [
   { label: "General", to: "/settings/general", icon: Settings2Icon },
+  { label: "Keybindings", to: "/settings/keybindings", icon: KeyboardIcon },
   { label: "Providers", to: "/settings/providers", icon: BotIcon },
   { label: "Source Control", to: "/settings/source-control", icon: GitBranchIcon },
   { label: "Connections", to: "/settings/connections", icon: Link2Icon },

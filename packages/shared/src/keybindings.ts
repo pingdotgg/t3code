@@ -162,7 +162,7 @@ function tokenizeWhenExpression(expression: string): WhenToken[] | null {
   return tokens;
 }
 
-function parseKeybindingWhenExpression(expression: string): KeybindingWhenNode | null {
+export function parseKeybindingWhenExpression(expression: string): KeybindingWhenNode | null {
   const tokens = tokenizeWhenExpression(expression);
   if (!tokens || tokens.length === 0) return null;
   let index = 0;

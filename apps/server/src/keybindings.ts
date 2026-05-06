@@ -15,6 +15,8 @@ import {
   MAX_KEYBINDINGS_COUNT,
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
+  type ServerRemoveKeybindingInput,
+  type ServerUpsertKeybindingInput,
   type ServerConfigIssue,
 } from "@t3tools/contracts";
 import {
@@ -122,6 +124,25 @@ function hasSameShortcutContext(left: KeybindingRule, right: KeybindingRule): bo
   const rightContext = keybindingShortcutContext(right);
   if (!leftContext || !rightContext) return false;
   return leftContext === rightContext;
+}
+
+function keybindingRuleFromUpsertInput(input: ServerUpsertKeybindingInput): KeybindingRule {
+  return input.when === undefined
+    ? { key: input.key, command: input.command }
+    : { key: input.key, command: input.command, when: input.when };
+}
+
+function replaceTargetFromUpsertInput(input: ServerUpsertKeybindingInput): KeybindingRule | null {
+  if (!input.replace) return null;
+  return input.replace.when === undefined
+    ? { key: input.replace.key, command: input.replace.command }
+    : { key: input.replace.key, command: input.replace.command, when: input.replace.when };
+}
+
+function keybindingRuleFromRemoveInput(input: ServerRemoveKeybindingInput): KeybindingRule {
+  return input.when === undefined
+    ? { key: input.key, command: input.command }
+    : { key: input.key, command: input.command, when: input.when };
 }
 
 function encodeShortcut(shortcut: KeybindingShortcut): string | null {
@@ -259,7 +280,14 @@ export interface KeybindingsShape {
    * oldest entries when needed.
    */
   readonly upsertKeybindingRule: (
-    rule: KeybindingRule,
+    input: ServerUpsertKeybindingInput,
+  ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
+
+  /**
+   * Remove a single persisted keybinding rule by exact key/command/when match.
+   */
+  readonly removeKeybindingRule: (
+    input: ServerRemoveKeybindingInput,
   ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
 }
 
@@ -616,12 +644,19 @@ const makeKeybindings = Effect.gen(function* () {
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
-    upsertKeybindingRule: (rule) =>
+    upsertKeybindingRule: (input) =>
       upsertSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const customConfig = yield* loadWritableCustomKeybindingsConfig();
+          const rule = keybindingRuleFromUpsertInput(input);
+          const replaceTarget = replaceTargetFromUpsertInput(input);
           const nextConfig = [
-            ...customConfig.filter((entry) => entry.command !== rule.command),
+            ...customConfig.filter((entry) => {
+              if (replaceTarget) {
+                return !isSameKeybindingRule(entry, replaceTarget);
+              }
+              return !isSameKeybindingRule(entry, rule);
+            }),
             rule,
           ];
           const cappedConfig =
@@ -637,6 +672,27 @@ const makeKeybindings = Effect.gen(function* () {
           yield* writeConfigAtomically(cappedConfig);
           const nextResolved = mergeWithDefaultKeybindings(
             compileResolvedKeybindingsConfig(cappedConfig),
+          );
+          yield* Cache.set(resolvedConfigCache, resolvedConfigCacheKey, {
+            keybindings: nextResolved,
+            issues: [],
+          });
+          yield* emitChange({
+            keybindings: nextResolved,
+            issues: [],
+          });
+          return nextResolved;
+        }),
+      ),
+    removeKeybindingRule: (input) =>
+      upsertSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const customConfig = yield* loadWritableCustomKeybindingsConfig();
+          const target = keybindingRuleFromRemoveInput(input);
+          const nextConfig = customConfig.filter((entry) => !isSameKeybindingRule(entry, target));
+          yield* writeConfigAtomically(nextConfig);
+          const nextResolved = mergeWithDefaultKeybindings(
+            compileResolvedKeybindingsConfig(nextConfig),
           );
           yield* Cache.set(resolvedConfigCache, resolvedConfigCacheKey, {
             keybindings: nextResolved,
