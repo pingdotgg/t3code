@@ -1007,7 +1007,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   const nextEventId = Effect.map(Random.nextUUIDv4, (id) => EventId.make(id));
-  const makeEventStamp = () => Effect.all({ eventId: nextEventId, createdAt: nowIso });
+  const makeEventStamp = () =>
+    Effect.map(Effect.all({ eventId: nextEventId, createdAt: nowIso }), (stamp) => ({
+      ...stamp,
+      providerInstanceId: boundInstanceId,
+    }));
 
   const offerRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Queue.offer(runtimeEventQueue, event).pipe(Effect.asVoid);

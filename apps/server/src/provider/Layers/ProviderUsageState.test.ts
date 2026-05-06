@@ -34,12 +34,17 @@ describe("ProviderUsageStateLive", () => {
       Effect.gen(function* () {
         const usageState = yield* ProviderUsageState;
 
-        yield* usageState.set(ProviderDriverKind.make("cursor"), "thread-probe" as ThreadId, {
-          source: "cursorAcp",
-          available: true,
-          checkedAt: "2026-04-18T00:00:00.000Z",
-          windows: [{ kind: "session", label: "Context window", usedPercent: 25 }],
-        });
+        yield* usageState.set(
+          ProviderDriverKind.make("cursor"),
+          undefined,
+          "thread-probe" as ThreadId,
+          {
+            source: "cursorAcp",
+            available: true,
+            checkedAt: "2026-04-18T00:00:00.000Z",
+            windows: [{ kind: "session", label: "Context window", usedPercent: 25 }],
+          },
+        );
         const first = yield* usageState.get(ProviderDriverKind.make("cursor"));
         yield* usageState.clear(ProviderDriverKind.make("cursor"));
         const second = yield* usageState.get(ProviderDriverKind.make("cursor"));

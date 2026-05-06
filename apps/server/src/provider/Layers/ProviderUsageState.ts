@@ -1,5 +1,6 @@
 import type {
   ProviderDriverKind,
+  ProviderInstanceId,
   ProviderRuntimeEvent,
   ServerProviderUsageLimits,
   ThreadId,
@@ -34,53 +35,71 @@ function toCursorUsageLimits(
   });
 }
 
+function makeProviderInstanceKey(
+  provider: ProviderDriverKind,
+  providerInstanceId: ProviderInstanceId | undefined,
+): string {
+  if (providerInstanceId === undefined || providerInstanceId === null) {
+    return provider;
+  }
+  return `${provider}_${providerInstanceId}`;
+}
+
 export const ProviderUsageStateLive = Layer.effect(
   ProviderUsageState,
   Effect.gen(function* () {
     const providerService = yield* ProviderService;
     const stateRef = yield* Ref.make(
       new Map<
-        ProviderDriverKind,
+        string,
         Map<ThreadId, { readonly usage: ServerProviderUsageLimits; readonly updatedAtMs: number }>
       >(),
     );
 
-    const clearThreadUsage = (provider: ProviderDriverKind, threadId: ThreadId) =>
+    const clearThreadUsage = (
+      provider: ProviderDriverKind,
+      providerInstanceId: ProviderInstanceId | undefined,
+      threadId: ThreadId,
+    ) =>
       Ref.update(stateRef, (state) => {
         const next = new Map(state);
-        const existingThreadMap = next.get(provider);
+        const key = makeProviderInstanceKey(provider, providerInstanceId);
+        const existingThreadMap = next.get(key);
         if (!existingThreadMap) {
           return state;
         }
         const threadMap = new Map(existingThreadMap);
         threadMap.delete(threadId);
         if (threadMap.size === 0) {
-          next.delete(provider);
+          next.delete(key);
         } else {
-          next.set(provider, threadMap);
+          next.set(key, threadMap);
         }
         return next;
       });
 
     const setThreadUsage = (
       provider: ProviderDriverKind,
+      providerInstanceId: ProviderInstanceId | undefined,
       threadId: ThreadId,
       usage: ServerProviderUsageLimits,
       updatedAtMs: number,
     ) =>
       Ref.update(stateRef, (state) => {
         const next = new Map(state);
-        const threadMap = new Map(next.get(provider) ?? []);
-        next.set(provider, threadMap);
+        const key = makeProviderInstanceKey(provider, providerInstanceId);
+        const threadMap = new Map(next.get(key) ?? []);
+        next.set(key, threadMap);
         threadMap.set(threadId, { usage, updatedAtMs });
         return next;
       });
 
     const service: ProviderUsageStateShape = {
-      get: (provider) =>
+      get: (provider, providerInstanceId) =>
         Ref.get(stateRef).pipe(
           Effect.map((state) => {
-            const threadMap = state.get(provider);
+            const key = makeProviderInstanceKey(provider, providerInstanceId);
+            const threadMap = state.get(key);
             if (!threadMap || threadMap.size === 0) {
               return undefined;
             }
@@ -95,47 +114,43 @@ export const ProviderUsageStateLive = Layer.effect(
             return latest?.usage;
           }),
         ),
-      set: (provider, threadId, usage) =>
+      set: (provider, providerInstanceId, threadId, usage) =>
         Ref.update(stateRef, (state) => {
           const next = new Map(state);
+          const key = makeProviderInstanceKey(provider, providerInstanceId);
           if (usage === undefined) {
-            const existingThreadMap = next.get(provider);
+            const existingThreadMap = next.get(key);
             if (existingThreadMap) {
               const newThreadMap = new Map(existingThreadMap);
               newThreadMap.delete(threadId);
               if (newThreadMap.size === 0) {
-                next.delete(provider);
+                next.delete(key);
               } else {
-                next.set(provider, newThreadMap);
+                next.set(key, newThreadMap);
               }
             }
           } else {
-            let threadMap = next.get(provider);
-            if (!threadMap) {
-              threadMap = new Map();
-            } else {
-              threadMap = new Map(threadMap);
-            }
-            next.set(provider, threadMap);
+            const threadMap = new Map(next.get(key) ?? []);
+            next.set(key, threadMap);
             threadMap.set(threadId, { usage, updatedAtMs: Date.now() });
           }
           return next;
         }),
-      clear: (provider) =>
+      clear: (provider, providerInstanceId) =>
         Ref.update(stateRef, (state) => {
-          if (!state.has(provider)) {
-            return state;
-          }
           const next = new Map(state);
-          next.delete(provider);
+          const key = makeProviderInstanceKey(provider, providerInstanceId);
+          next.delete(key);
           return next;
         }),
     };
 
     yield* Stream.runForEach(providerService.streamEvents, (event) =>
       Effect.gen(function* () {
+        const providerInstanceId = event.providerInstanceId;
+
         if (event.type === "session.started" || event.type === "session.exited") {
-          yield* clearThreadUsage(event.provider, event.threadId);
+          yield* clearThreadUsage(event.provider, providerInstanceId, event.threadId);
           return;
         }
 
@@ -147,6 +162,7 @@ export const ProviderUsageStateLive = Layer.effect(
 
           yield* setThreadUsage(
             CURSOR_DRIVER,
+            providerInstanceId,
             event.threadId,
             usage,
             Date.parse(event.createdAt) || Date.now(),
@@ -173,6 +189,7 @@ export const ProviderUsageStateLive = Layer.effect(
 
         yield* setThreadUsage(
           CLAUDE_DRIVER,
+          providerInstanceId,
           event.threadId,
           usage,
           Date.parse(event.createdAt) || Date.now(),

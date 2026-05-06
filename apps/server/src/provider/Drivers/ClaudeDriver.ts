@@ -155,6 +155,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         () => Cache.get(capabilitiesProbeCache, capabilitiesCacheKey),
         processEnv,
         ptyAdapter ?? undefined,
+        instanceId,
         providerUsageState,
       ).pipe(
         Effect.map(stampIdentity),

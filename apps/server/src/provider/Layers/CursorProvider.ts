@@ -4,10 +4,12 @@ import type {
   CursorSettings,
   ModelCapabilities,
   ProviderOptionSelection,
+  ProviderInstanceId,
   ServerProvider,
   ServerProviderAuth,
   ServerProviderModel,
   ServerProviderState,
+  ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
@@ -35,6 +37,7 @@ import {
   enrichProviderSnapshotWithVersionAdvisory,
   type ProviderMaintenanceCapabilities,
 } from "../providerMaintenance.ts";
+import { type ProviderUsageStateShape } from "../Services/ProviderUsageState.ts";
 import { AcpSessionRuntime } from "../acp/AcpSessionRuntime.ts";
 
 const PROVIDER = ProviderDriverKind.make("cursor");
@@ -741,16 +744,9 @@ export function buildCursorProviderSnapshot(input: {
   readonly parsed: CursorAboutResult;
   readonly discoveredModels?: ReadonlyArray<ServerProviderModel>;
   readonly discoveryWarning?: string;
+  readonly usageLimits?: ServerProviderUsageLimits;
 }): ServerProviderDraft {
   const message = joinProviderMessages(input.parsed.message, input.discoveryWarning);
-  const usageLimits =
-    input.parsed.auth.status === "authenticated"
-      ? makeUnavailableUsageLimits({
-          source: "cursorAcp",
-          checkedAt: input.checkedAt,
-          reason: "Cursor Agent CLI does not expose usage information",
-        })
-      : undefined;
   return buildServerProvider({
     presentation: CURSOR_PRESENTATION,
     enabled: input.cursorSettings.enabled,
@@ -768,7 +764,7 @@ export function buildCursorProviderSnapshot(input: {
         input.discoveryWarning && input.parsed.status === "ready" ? "warning" : input.parsed.status,
       auth: input.parsed.auth,
       ...(message ? { message } : {}),
-      ...(usageLimits ? { usageLimits } : {}),
+      ...(input.usageLimits ? { usageLimits: input.usageLimits } : {}),
     },
   });
 }
@@ -1106,6 +1102,8 @@ const runCursorAboutCommand = (
 export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(function* (
   cursorSettings: CursorSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  instanceId?: ProviderInstanceId,
+  providerUsageState?: ProviderUsageStateShape,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -1217,6 +1215,23 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       discoveredModels = discoveryExit.value;
     }
   }
+
+  const runtimeUsageLimits = providerUsageState
+    ? yield* providerUsageState
+        .get(PROVIDER, instanceId)
+        .pipe(Effect.orElseSucceed(() => undefined))
+    : undefined;
+
+  const usageLimits =
+    runtimeUsageLimits ??
+    (parsed.auth.status !== "unauthenticated"
+      ? makeUnavailableUsageLimits({
+          source: "cursorAcp",
+          checkedAt,
+          reason: "Cursor does not expose subscription usage",
+        })
+      : undefined);
+
   return buildCursorProviderSnapshot({
     checkedAt,
     cursorSettings,
@@ -1226,6 +1241,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
       () => [] as const,
     ),
     ...(discoveryWarning ? { discoveryWarning } : {}),
+    ...(usageLimits ? { usageLimits } : {}),
   });
 });
 

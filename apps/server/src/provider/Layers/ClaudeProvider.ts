@@ -3,6 +3,7 @@ import {
   type ModelCapabilities,
   type ModelSelection,
   ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
@@ -522,6 +523,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   ) => Effect.Effect<ClaudeCapabilitiesProbe | undefined>,
   environment: NodeJS.ProcessEnv = process.env,
   ptyAdapter?: PtyAdapterShape,
+  instanceId?: ProviderInstanceId,
   providerUsageState?: ProviderUsageStateShape,
 ): Effect.fn.Return<
   ServerProviderDraft,
@@ -649,7 +651,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const runtimeUsageLimits = providerUsageState
-    ? yield* providerUsageState.get(PROVIDER).pipe(Effect.orElseSucceed(() => undefined))
+    ? yield* providerUsageState
+        .get(PROVIDER, instanceId)
+        .pipe(Effect.orElseSucceed(() => undefined))
     : undefined;
 
   const usageLimits = runtimeUsageLimits
