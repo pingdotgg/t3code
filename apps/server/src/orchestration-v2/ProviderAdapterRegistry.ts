@@ -29,22 +29,37 @@ export class ProviderAdapterRegistryV2 extends Context.Service<
   ProviderAdapterRegistryV2Shape
 >()("t3/orchestration-v2/ProviderAdapterRegistry") {}
 
+function makeRegistry(
+  adapters: ReadonlyArray<ProviderAdapterV2Shape>,
+): ProviderAdapterRegistryV2Shape {
+  return {
+    get: (provider) =>
+      Effect.gen(function* () {
+        const adapter = adapters.find((candidate) => candidate.provider === provider);
+        if (!adapter) {
+          return yield* new ProviderAdapterRegistryLookupError({ provider });
+        }
+        return adapter;
+      }),
+    list: () => Effect.succeed(adapters.map((adapter) => adapter.provider as ProviderKind)),
+  };
+}
+
 export function makeLayer(
   adapters: ReadonlyArray<ProviderAdapterV2Shape>,
 ): Layer.Layer<ProviderAdapterRegistryV2> {
   return Layer.succeed(
     ProviderAdapterRegistryV2,
-    ProviderAdapterRegistryV2.of({
-      get: (provider) =>
-        Effect.gen(function* () {
-          const adapter = adapters.find((candidate) => candidate.provider === provider);
-          if (!adapter) {
-            return yield* new ProviderAdapterRegistryLookupError({ provider });
-          }
-          return adapter;
-        }),
-      list: () => Effect.succeed(adapters.map((adapter) => adapter.provider as ProviderKind)),
-    } satisfies ProviderAdapterRegistryV2Shape),
+    ProviderAdapterRegistryV2.of(makeRegistry(adapters)),
+  );
+}
+
+export function makeLayerEffect<R, E>(
+  adapters: Effect.Effect<ReadonlyArray<ProviderAdapterV2Shape>, E, R>,
+): Layer.Layer<ProviderAdapterRegistryV2, E, R> {
+  return Layer.effect(
+    ProviderAdapterRegistryV2,
+    adapters.pipe(Effect.map((entries) => ProviderAdapterRegistryV2.of(makeRegistry(entries)))),
   );
 }
 
