@@ -34,8 +34,7 @@
     "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "generate": "bun run scripts/generate.ts",
-    "probe": "bun run test/examples/codex-app-server-probe.ts"
+    "generate": "bun run scripts/generate.ts"
   },
   "dependencies": {
     "effect": "catalog:"
