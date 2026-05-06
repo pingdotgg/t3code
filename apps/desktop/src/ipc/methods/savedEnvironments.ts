@@ -9,8 +9,8 @@ import {
   writeSavedEnvironmentRegistryEffect,
   writeSavedEnvironmentSecretEffect,
 } from "../../clientPersistence.ts";
-import { DesktopEnvironment } from "../../desktopEnvironment.ts";
-import { DesktopSecretStorage } from "../../electron/DesktopSecretStorage.ts";
+import * as DesktopEnvironment from "../../desktopEnvironment.ts";
+import * as ElectronSafeStorage from "../../electron/ElectronSafeStorage.ts";
 import {
   GET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL,
   GET_SAVED_ENVIRONMENT_SECRET_CHANNEL,
@@ -38,7 +38,7 @@ export const getSavedEnvironmentRegistry = makeIpcMethod({
   result: SavedEnvironmentRegistryPayload,
   handler: () =>
     Effect.gen(function* () {
-      const environment = yield* DesktopEnvironment;
+      const environment = yield* DesktopEnvironment.DesktopEnvironment;
       return yield* readSavedEnvironmentRegistryEffect(environment.savedEnvironmentRegistryPath);
     }),
 });
@@ -49,7 +49,7 @@ export const setSavedEnvironmentRegistry = makeIpcMethod({
   result: Schema.Void,
   handler: (records) =>
     Effect.gen(function* () {
-      const environment = yield* DesktopEnvironment;
+      const environment = yield* DesktopEnvironment.DesktopEnvironment;
       yield* writeSavedEnvironmentRegistryEffect(environment.savedEnvironmentRegistryPath, records);
     }),
 });
@@ -60,8 +60,8 @@ export const getSavedEnvironmentSecret = makeIpcMethod({
   result: Schema.NullOr(Schema.String),
   handler: (environmentId) =>
     Effect.gen(function* () {
-      const environment = yield* DesktopEnvironment;
-      const secretStorage = yield* DesktopSecretStorage;
+      const environment = yield* DesktopEnvironment.DesktopEnvironment;
+      const secretStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
       return yield* readSavedEnvironmentSecretEffect({
         registryPath: environment.savedEnvironmentRegistryPath,
         environmentId,
@@ -76,8 +76,8 @@ export const setSavedEnvironmentSecret = makeIpcMethod({
   result: Schema.Boolean,
   handler: ({ environmentId, secret }) =>
     Effect.gen(function* () {
-      const environment = yield* DesktopEnvironment;
-      const secretStorage = yield* DesktopSecretStorage;
+      const environment = yield* DesktopEnvironment.DesktopEnvironment;
+      const secretStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
       return yield* writeSavedEnvironmentSecretEffect({
         registryPath: environment.savedEnvironmentRegistryPath,
         environmentId,
@@ -93,7 +93,7 @@ export const removeSavedEnvironmentSecret = makeIpcMethod({
   result: Schema.Void,
   handler: (environmentId) =>
     Effect.gen(function* () {
-      const environment = yield* DesktopEnvironment;
+      const environment = yield* DesktopEnvironment.DesktopEnvironment;
       yield* removeSavedEnvironmentSecretEffect({
         registryPath: environment.savedEnvironmentRegistryPath,
         environmentId,

@@ -22,6 +22,10 @@ export interface ElectronDialogShape {
     input: ElectronDialogPickFolderInput,
   ) => Effect.Effect<Option.Option<string>>;
   readonly confirm: (input: ElectronDialogConfirmInput) => Effect.Effect<boolean>;
+  readonly showMessageBox: (
+    options: Electron.MessageBoxOptions,
+  ) => Effect.Effect<Electron.MessageBoxReturnValue>;
+  readonly showErrorBox: (title: string, content: string) => Effect.Effect<void>;
 }
 
 export class ElectronDialog extends Context.Service<ElectronDialog, ElectronDialogShape>()(
@@ -53,6 +57,11 @@ const make = ElectronDialog.of({
     }),
   confirm: (input) =>
     Effect.promise(() => showDesktopConfirmDialog(input.message, Option.getOrNull(input.owner))),
+  showMessageBox: (options) => Effect.promise(() => Electron.dialog.showMessageBox(options)),
+  showErrorBox: (title, content) =>
+    Effect.sync(() => {
+      Electron.dialog.showErrorBox(title, content);
+    }),
 });
 
 export const layer = Layer.succeed(ElectronDialog, make);

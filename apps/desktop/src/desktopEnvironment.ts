@@ -107,7 +107,7 @@ export const makeDesktopEnvironment = (
     const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
     const resourcesPath = input.resourcesPath;
 
-    const environment: DesktopEnvironmentShape = {
+    return DesktopEnvironment.of({
       path,
       dirname: input.dirname,
       platform: input.platform,
@@ -183,7 +183,5 @@ export const makeDesktopEnvironment = (
         path.join(resourcesPath, fileName),
       ],
       developmentDockIconPath: path.join(rootDir, "assets", "dev", "blueprint-macos-1024.png"),
-    };
-
-    return environment;
+    });
   });

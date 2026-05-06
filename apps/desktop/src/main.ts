@@ -19,15 +19,12 @@ import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
-  app,
   BrowserWindow,
   type BrowserWindowConstructorOptions,
+  ipcMain,
   type MenuItemConstructorOptions,
-  dialog,
   Menu,
   nativeTheme,
-  protocol,
-  safeStorage,
 } from "electron";
 import { autoUpdater } from "electron-updater";
 
@@ -74,9 +71,11 @@ import {
   makeDesktopEnvironment,
   type DesktopEnvironmentShape,
 } from "./desktopEnvironment.ts";
-import * as DesktopSecretStorage from "./electron/DesktopSecretStorage.ts";
+import * as DesktopSecretStorage from "./electron/ElectronSafeStorage.ts";
+import * as ElectronApp from "./electron/ElectronApp.ts";
 import * as ElectronDialog from "./electron/ElectronDialog.ts";
 import * as ElectronMenu from "./electron/ElectronMenu.ts";
+import * as ElectronProtocol from "./electron/ElectronProtocol.ts";
 import * as ElectronShell from "./electron/ElectronShell.ts";
 import * as ElectronTheme from "./electron/ElectronTheme.ts";
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
@@ -123,7 +122,6 @@ import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider
 import * as DesktopLocalEnvironment from "./main/DesktopLocalEnvironment.ts";
 import * as DesktopState from "./main/DesktopState.ts";
 
-const DESKTOP_SCHEME = "t3";
 const COMMIT_HASH_PATTERN = /^[0-9a-f]{7,40}$/i;
 const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const AppPackageMetadata = Schema.Struct({
@@ -144,9 +142,6 @@ type WindowTitleBarOptions = Pick<
 >;
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
-type LinuxDesktopNamedApp = Electron.App & {
-  setDesktopName?: (desktopName: string) => void;
-};
 interface BackendObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
   readonly otlpMetricsUrl: string | undefined;
@@ -157,7 +152,6 @@ let backendBootstrapToken = "";
 let backendHttpUrl: Option.Option<URL> = Option.none();
 let backendEndpointUrl: string | null = null;
 let backendAdvertisedHost: string | null = null;
-let desktopProtocolRegistered = false;
 let appUpdateYmlConfig: Option.Option<Record<string, string>> = Option.none();
 let aboutCommitHashCache: Option.Option<string> | undefined;
 let desktopIconPaths: Readonly<Record<"ico" | "icns" | "png", Option.Option<string>>> = {
@@ -180,10 +174,14 @@ interface DesktopEffectRunner {
 type DesktopWindowBoundaryServices =
   | DesktopEnvironment
   | DesktopSshEnvironmentBridge
+  | ElectronDialog.ElectronDialog
   | ElectronShell.ElectronShell
   | DesktopState.DesktopState
   | ElectronWindow.ElectronWindow;
-type DesktopLifecycleBoundaryServices = DesktopShutdown | DesktopWindowBoundaryServices;
+type DesktopLifecycleBoundaryServices =
+  | DesktopShutdown
+  | DesktopWindowBoundaryServices
+  | ElectronApp.ElectronApp;
 
 function makeDesktopEffectRunner<R>(context: Context.Context<R>): DesktopEffectRunner {
   return <A, E, R2>(effect: Effect.Effect<A, E, R2>) =>
@@ -438,6 +436,7 @@ function applyDesktopTailscaleServeEnabled(
   unknown,
   | FileSystem.FileSystem
   | EffectPath.Path
+  | ElectronApp.ElectronApp
   | DesktopEnvironment
   | DesktopShutdown
   | DesktopState.DesktopState
@@ -457,12 +456,17 @@ function applyDesktopTailscaleServeEnabled(
 
 function relaunchDesktopAppEffect(
   reason: string,
-): Effect.Effect<void, never, DesktopEnvironment | DesktopShutdown | DesktopState.DesktopState> {
+): Effect.Effect<
+  void,
+  never,
+  ElectronApp.ElectronApp | DesktopEnvironment | DesktopShutdown | DesktopState.DesktopState
+> {
   return Effect.gen(function* () {
+    const electronApp = yield* ElectronApp.ElectronApp;
     const environment = yield* DesktopEnvironment;
     const state = yield* DesktopState.DesktopState;
     const context = yield* Effect.context<
-      DesktopEnvironment | DesktopShutdown | DesktopState.DesktopState
+      ElectronApp.ElectronApp | DesktopEnvironment | DesktopShutdown | DesktopState.DesktopState
     >();
     const runEffect = makeDesktopEffectRunner(context);
     yield* logDesktopInfo("desktop relaunch requested", { reason });
@@ -472,14 +476,17 @@ function relaunchDesktopAppEffect(
           Ref.set(state.quitting, true).pipe(Effect.andThen(requestDesktopShutdownAndWait())),
         ).finally(() => {
           if (environment.isDevelopment) {
-            app.exit(75);
+            void runEffect(electronApp.exit(75));
             return;
           }
-          app.relaunch({
-            execPath: process.execPath,
-            args: process.argv.slice(1),
-          });
-          app.exit(0);
+          void runEffect(
+            electronApp
+              .relaunch({
+                execPath: process.execPath,
+                args: process.argv.slice(1),
+              })
+              .pipe(Effect.andThen(electronApp.exit(0))),
+          );
         });
       });
     });
@@ -587,19 +594,19 @@ const randomHexString = (length: number): Effect.Effect<string> =>
 
 const desktopEnvironmentLayer = Layer.effect(
   DesktopEnvironment,
-  makeDesktopEnvironment({
-    dirname: __dirname,
-    env: process.env,
-    cwd: process.cwd(),
-    platform: process.platform,
-    processArch: process.arch,
-    appVersion: app.getVersion(),
-    appPath: app.getAppPath(),
-    isPackaged: app.isPackaged,
-    resourcesPath: process.resourcesPath,
-    runningUnderArm64Translation: app.runningUnderARM64Translation === true,
+  Effect.gen(function* () {
+    const electronApp = yield* ElectronApp.ElectronApp;
+    const metadata = yield* electronApp.metadata;
+    return yield* makeDesktopEnvironment({
+      dirname: __dirname,
+      env: process.env,
+      cwd: process.cwd(),
+      platform: process.platform,
+      processArch: process.arch,
+      ...metadata,
+    });
   }),
-).pipe(Layer.provide(EffectPath.layer));
+).pipe(Layer.provide(Layer.mergeAll(EffectPath.layer, ElectronApp.layer)));
 
 const desktopLoggerLayer = DesktopLoggerLive.pipe(Layer.provide(NodeServices.layer));
 
@@ -713,6 +720,7 @@ const desktopShellEnvironmentLayer = DesktopShellEnvironmentLive.pipe(
 type DesktopServerExposureIpcActionServices =
   | FileSystem.FileSystem
   | EffectPath.Path
+  | ElectronApp.ElectronApp
   | DesktopEnvironment
   | DesktopState.DesktopState
   | DesktopNetworkInterfacesService
@@ -843,15 +851,6 @@ const desktopUpdateIpcActionsLayer = Layer.effect(
   }),
 );
 
-const desktopSecretStorageLayer = Layer.succeed(
-  DesktopSecretStorage.DesktopSecretStorage,
-  DesktopSecretStorage.DesktopSecretStorage.of({
-    isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
-    encryptString: (value) => safeStorage.encryptString(value),
-    decryptString: (value) => safeStorage.decryptString(value),
-  }),
-);
-
 const desktopBackendDependenciesLayer = Layer.mergeAll(
   NodeServices.layer,
   NodeHttpClient.layerUndici,
@@ -878,19 +877,21 @@ const desktopRuntimeLayer = Layer.mergeAll(
   NetService.layer,
   desktopShellEnvironmentLayer,
   desktopSshEnvironmentLayer,
-  Layer.succeed(DesktopIpc.DesktopIpc, DesktopIpc.make(Electron.ipcMain)),
+  Layer.succeed(DesktopIpc.DesktopIpc, DesktopIpc.make(ipcMain)),
   desktopServerExposureIpcActionsLayer,
   desktopUpdateIpcActionsLayer,
   DesktopWindowIpcActionsLive.layer,
-  desktopSecretStorageLayer,
+  DesktopSecretStorage.layer,
 ).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeHttpClient.layerUndici),
   Layer.provideMerge(DesktopNetworkInterfacesLive),
   Layer.provideMerge(desktopBackendRuntimeLayer),
   Layer.provideMerge(desktopElectronWindowLayer),
+  Layer.provideMerge(ElectronApp.layer),
   Layer.provideMerge(ElectronDialog.layer),
   Layer.provideMerge(ElectronMenu.layer),
+  Layer.provideMerge(ElectronProtocol.layer),
   Layer.provideMerge(ElectronShell.layer),
   Layer.provideMerge(ElectronTheme.layer),
   Layer.provideMerge(desktopEnvironmentLayer),
@@ -938,18 +939,6 @@ function addScopedListener<Args extends ReadonlyArray<unknown>>(
       }),
   ).pipe(Effect.asVoid);
 }
-
-protocol.registerSchemesAsPrivileged([
-  {
-    scheme: DESKTOP_SCHEME,
-    privileges: {
-      standard: true,
-      secure: true,
-      supportFetchAPI: true,
-      corsEnabled: true,
-    },
-  },
-]);
 
 function parseAppUpdateYml(raw: string): Option.Option<Record<string, string>> {
   // The YAML is simple key-value pairs — avoid pulling in a YAML parser by
@@ -1048,93 +1037,22 @@ function resolveAboutCommitHash(): Effect.Effect<
   });
 }
 
-function resolveDesktopStaticDir(): Effect.Effect<
-  Option.Option<string>,
-  never,
-  FileSystem.FileSystem | DesktopEnvironment
-> {
-  return Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const environment = yield* DesktopEnvironment;
-    const candidates = [
-      environment.path.join(environment.appRoot, "apps/server/dist/client"),
-      environment.path.join(environment.appRoot, "apps/web/dist"),
-    ];
-    for (const candidate of candidates) {
-      const hasIndex = yield* fileSystem
-        .exists(environment.path.join(candidate, "index.html"))
-        .pipe(Effect.orElseSucceed(() => false));
-      if (hasIndex) {
-        return Option.some(candidate);
-      }
-    }
-    return Option.none<string>();
-  });
-}
-
-function normalizeDesktopProtocolPathname(rawPath: string): Option.Option<string> {
-  const segments: string[] = [];
-  for (const segment of rawPath.split("/")) {
-    if (segment.length === 0 || segment === ".") {
-      continue;
-    }
-    if (segment === "..") {
-      return Option.none();
-    }
-    segments.push(segment);
-  }
-  return Option.some(segments.join("/"));
-}
-
-function resolveDesktopStaticPath(
-  staticRoot: string,
-  requestUrl: string,
-): Effect.Effect<string, never, FileSystem.FileSystem | DesktopEnvironment> {
-  return Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const environment = yield* DesktopEnvironment;
-    const url = new URL(requestUrl);
-    const rawPath = decodeURIComponent(url.pathname);
-    const normalizedPath = normalizeDesktopProtocolPathname(rawPath);
-    if (Option.isNone(normalizedPath)) {
-      return environment.path.join(staticRoot, "index.html");
-    }
-
-    const requestedPath = normalizedPath.value.length > 0 ? normalizedPath.value : "index.html";
-    const resolvedPath = environment.path.join(staticRoot, requestedPath);
-
-    if (environment.path.extname(resolvedPath)) {
-      return resolvedPath;
-    }
-
-    const nestedIndex = environment.path.join(resolvedPath, "index.html");
-    const nestedIndexExists = yield* fileSystem
-      .exists(nestedIndex)
-      .pipe(Effect.orElseSucceed(() => false));
-    if (nestedIndexExists) {
-      return nestedIndex;
-    }
-
-    return environment.path.join(staticRoot, "index.html");
-  });
-}
-
-function isStaticAssetRequest(requestUrl: string, environment: DesktopEnvironmentShape): boolean {
-  try {
-    const url = new URL(requestUrl);
-    return environment.path.extname(url.pathname).length > 0;
-  } catch {
-    return false;
-  }
-}
-
 function handleFatalStartupError(
   stage: string,
   error: unknown,
-): Effect.Effect<void, never, DesktopShutdown | DesktopState.DesktopState> {
+): Effect.Effect<
+  void,
+  never,
+  | DesktopShutdown
+  | DesktopState.DesktopState
+  | ElectronApp.ElectronApp
+  | ElectronDialog.ElectronDialog
+> {
   return Effect.gen(function* () {
     const shutdown = yield* DesktopShutdown;
     const state = yield* DesktopState.DesktopState;
+    const electronApp = yield* ElectronApp.ElectronApp;
+    const electronDialog = yield* ElectronDialog.ElectronDialog;
     const message = formatErrorMessage(error);
     const detail =
       error instanceof Error && typeof error.stack === "string" ? `\n${error.stack}` : "";
@@ -1144,68 +1062,25 @@ function handleFatalStartupError(
       ...(detail.length > 0 ? { detail } : {}),
     });
     const wasQuitting = yield* Ref.getAndSet(state.quitting, true);
-    yield* Effect.sync(() => {
-      if (!wasQuitting) {
-        dialog.showErrorBox("T3 Code failed to start", `Stage: ${stage}\n${message}${detail}`);
-      }
-    });
+    if (!wasQuitting) {
+      yield* electronDialog.showErrorBox(
+        "T3 Code failed to start",
+        `Stage: ${stage}\n${message}${detail}`,
+      );
+    }
     yield* shutdown.request;
-    yield* Effect.sync(() => {
-      app.quit();
-    });
+    yield* electronApp.quit;
   });
 }
 
 function registerDesktopProtocol(): Effect.Effect<
   void,
   unknown,
-  FileSystem.FileSystem | DesktopEnvironment
+  FileSystem.FileSystem | DesktopEnvironment | ElectronProtocol.ElectronProtocol | Scope.Scope
 > {
   return Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment;
-    if (environment.isDevelopment || desktopProtocolRegistered) return;
-    const context = yield* Effect.context<FileSystem.FileSystem | DesktopEnvironment>();
-    const runProtocolEffect = makeDesktopEffectRunner(context);
-
-    const staticRoot = yield* resolveDesktopStaticDir();
-    if (Option.isNone(staticRoot)) {
-      return yield* Effect.fail(
-        new Error("Desktop static bundle missing. Build apps/server (with bundled client) first."),
-      );
-    }
-
-    const staticRootResolved = environment.path.resolve(staticRoot.value);
-    const staticRootPrefix = `${staticRootResolved}${environment.path.sep}`;
-    const fallbackIndex = environment.path.join(staticRootResolved, "index.html");
-
-    yield* Effect.sync(() => {
-      protocol.registerFileProtocol(DESKTOP_SCHEME, (request, callback) => {
-        const resolution = Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const candidate = yield* resolveDesktopStaticPath(staticRootResolved, request.url);
-          const environment = yield* DesktopEnvironment;
-          const resolvedCandidate = environment.path.resolve(candidate);
-          const isInRoot =
-            resolvedCandidate === fallbackIndex || resolvedCandidate.startsWith(staticRootPrefix);
-          const isAssetRequest = isStaticAssetRequest(request.url, environment);
-          const exists = yield* fileSystem
-            .exists(resolvedCandidate)
-            .pipe(Effect.orElseSucceed(() => false));
-
-          if (!isInRoot || !exists) {
-            return isAssetRequest ? ({ error: -6 } as const) : ({ path: fallbackIndex } as const);
-          }
-
-          return { path: resolvedCandidate } as const;
-        }).pipe(Effect.catch(() => Effect.succeed({ path: fallbackIndex } as const)));
-
-        void runProtocolEffect(resolution).then(callback, () => {
-          callback({ path: fallbackIndex });
-        });
-      });
-
-      desktopProtocolRegistered = true;
-    });
+    const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
+    yield* electronProtocol.registerDesktopFileProtocol;
   });
 }
 
@@ -1245,7 +1120,7 @@ function handleCheckForUpdatesMenuClick(
 ): void {
   const disabledReason = getAutoUpdateDisabledReason({
     isDevelopment: environment.isDevelopment,
-    isPackaged: app.isPackaged,
+    isPackaged: environment.isPackaged,
     platform: process.platform,
     appImage: process.env.APPIMAGE,
     disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
@@ -1257,13 +1132,18 @@ function handleCheckForUpdatesMenuClick(
         disabledReason,
       }),
     );
-    void dialog.showMessageBox({
-      type: "info",
-      title: "Updates unavailable",
-      message: "Automatic updates are not available right now.",
-      detail: disabledReason,
-      buttons: ["OK"],
-    });
+    void runEffect(
+      Effect.gen(function* () {
+        const electronDialog = yield* ElectronDialog.ElectronDialog;
+        yield* electronDialog.showMessageBox({
+          type: "info",
+          title: "Updates unavailable",
+          message: "Automatic updates are not available right now.",
+          detail: disabledReason,
+          buttons: ["OK"],
+        });
+      }),
+    );
     return;
   }
 
@@ -1284,43 +1164,52 @@ function hasDesktopUpdateFeedConfig(): boolean {
   return Option.isSome(appUpdateYmlConfig) || Boolean(process.env.T3CODE_DESKTOP_MOCK_UPDATES);
 }
 
-function checkForUpdatesFromMenu(): Effect.Effect<void, never, DesktopState.DesktopState> {
+function checkForUpdatesFromMenu(): Effect.Effect<
+  void,
+  never,
+  DesktopState.DesktopState | ElectronDialog.ElectronDialog
+> {
   return Effect.gen(function* () {
+    const electronDialog = yield* ElectronDialog.ElectronDialog;
     yield* checkForUpdates("menu");
 
     if (updateState.status === "up-to-date") {
-      yield* Effect.promise(() =>
-        dialog.showMessageBox({
-          type: "info",
-          title: "You're up to date!",
-          message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
-          buttons: ["OK"],
-        }),
-      );
+      yield* electronDialog.showMessageBox({
+        type: "info",
+        title: "You're up to date!",
+        message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
+        buttons: ["OK"],
+      });
     } else if (updateState.status === "error") {
-      yield* Effect.promise(() =>
-        dialog.showMessageBox({
-          type: "warning",
-          title: "Update check failed",
-          message: "Could not check for updates.",
-          detail: updateState.message ?? "An unknown error occurred. Please try again later.",
-          buttons: ["OK"],
-        }),
-      );
+      yield* electronDialog.showMessageBox({
+        type: "warning",
+        title: "Update check failed",
+        message: "Could not check for updates.",
+        detail: updateState.message ?? "An unknown error occurred. Please try again later.",
+        buttons: ["OK"],
+      });
     }
   });
 }
 
-function configureApplicationMenu(): Effect.Effect<void, never, DesktopWindowBoundaryServices> {
+function configureApplicationMenu(): Effect.Effect<
+  void,
+  never,
+  ElectronApp.ElectronApp | DesktopWindowBoundaryServices
+> {
   return Effect.gen(function* () {
+    const electronApp = yield* ElectronApp.ElectronApp;
     const environment = yield* DesktopEnvironment;
-    const context = yield* Effect.context<DesktopWindowBoundaryServices>();
+    const appName = yield* electronApp.name;
+    const context = yield* Effect.context<
+      ElectronApp.ElectronApp | DesktopWindowBoundaryServices
+    >();
     const runEffect = makeDesktopEffectRunner(context);
     const template: MenuItemConstructorOptions[] = [];
 
     if (process.platform === "darwin") {
       template.push({
-        label: app.name,
+        label: appName,
         submenu: [
           { role: "about" },
           {
@@ -1492,34 +1381,33 @@ function resolveUserDataPath(): Effect.Effect<
 function configureAppIdentity(): Effect.Effect<
   void,
   never,
-  FileSystem.FileSystem | DesktopEnvironment
+  FileSystem.FileSystem | ElectronApp.ElectronApp | DesktopEnvironment
 > {
   return Effect.gen(function* () {
+    const electronApp = yield* ElectronApp.ElectronApp;
     const environment = yield* DesktopEnvironment;
     const commitHash = yield* resolveAboutCommitHash();
-    yield* Effect.sync(() => {
-      app.setName(environment.displayName);
-      app.setAboutPanelOptions({
-        applicationName: environment.displayName,
-        applicationVersion: environment.appVersion,
-        version: Option.getOrElse(commitHash, () => "unknown"),
-      });
-
-      if (process.platform === "win32") {
-        app.setAppUserModelId(environment.appUserModelId);
-      }
-
-      if (process.platform === "linux") {
-        (app as LinuxDesktopNamedApp).setDesktopName?.(environment.linuxDesktopEntryName);
-      }
-
-      if (process.platform === "darwin" && app.dock) {
-        const iconPath = Option.getOrUndefined(desktopIconPaths.png);
-        if (iconPath) {
-          app.dock.setIcon(iconPath);
-        }
-      }
+    yield* electronApp.setName(environment.displayName);
+    yield* electronApp.setAboutPanelOptions({
+      applicationName: environment.displayName,
+      applicationVersion: environment.appVersion,
+      version: Option.getOrElse(commitHash, () => "unknown"),
     });
+
+    if (process.platform === "win32") {
+      yield* electronApp.setAppUserModelId(environment.appUserModelId);
+    }
+
+    if (process.platform === "linux") {
+      yield* electronApp.setDesktopName(environment.linuxDesktopEntryName);
+    }
+
+    if (process.platform === "darwin") {
+      yield* Option.match(desktopIconPaths.png, {
+        onNone: () => Effect.void,
+        onSome: electronApp.setDockIcon,
+      });
+    }
   });
 }
 
@@ -1604,7 +1492,7 @@ function shouldEnableAutoUpdates(environment: DesktopEnvironmentShape): boolean 
   return (
     getAutoUpdateDisabledReason({
       isDevelopment: environment.isDevelopment,
-      isPackaged: app.isPackaged,
+      isPackaged: environment.isPackaged,
       platform: process.platform,
       appImage: process.env.APPIMAGE,
       disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
@@ -1910,18 +1798,15 @@ function requestDesktopShutdownAndWait(): Effect.Effect<void, never, DesktopShut
 function quitFromSignal(signal: "SIGINT" | "SIGTERM", runEffect: DesktopEffectRunner): void {
   void runEffect(
     Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
       const state = yield* DesktopState.DesktopState;
       const wasQuitting = yield* Ref.getAndSet(state.quitting, true);
-      if (wasQuitting) return false;
+      if (wasQuitting) return;
       yield* logDesktopInfo("process signal received", { signal });
       yield* requestDesktopShutdownAndWait();
-      return true;
+      yield* electronApp.quit;
     }),
-  ).then((shouldQuit) => {
-    if (shouldQuit) {
-      app.quit();
-    }
-  });
+  );
 }
 
 function getIconOption(): { icon: string } | Record<string, never> {
@@ -2193,7 +2078,12 @@ function handleBeforeQuit(
     }),
   ).finally(() => {
     markQuitAllowed();
-    app.quit();
+    void runEffect(
+      Effect.gen(function* () {
+        const electronApp = yield* ElectronApp.ElectronApp;
+        yield* electronApp.quit;
+      }),
+    );
   });
 }
 
@@ -2218,13 +2108,16 @@ function handleActivate(
   });
 }
 
-function handleWindowAllClosed(): Effect.Effect<void, never, DesktopState.DesktopState> {
+function handleWindowAllClosed(): Effect.Effect<
+  void,
+  never,
+  ElectronApp.ElectronApp | DesktopState.DesktopState
+> {
   return Effect.gen(function* () {
+    const electronApp = yield* ElectronApp.ElectronApp;
     const state = yield* DesktopState.DesktopState;
     if (process.platform !== "darwin" && !(yield* Ref.get(state.quitting))) {
-      yield* Effect.sync(() => {
-        app.quit();
-      });
+      yield* electronApp.quit;
     }
   });
 }
@@ -2236,6 +2129,7 @@ function registerDesktopLifecycleHandlers(): Effect.Effect<
 > {
   return Effect.gen(function* () {
     const environment = yield* DesktopEnvironment;
+    const electronApp = yield* ElectronApp.ElectronApp;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const context = yield* Effect.context<DesktopLifecycleBoundaryServices>();
     const runEffect = makeDesktopEffectRunner(context);
@@ -2243,7 +2137,7 @@ function registerDesktopLifecycleHandlers(): Effect.Effect<
     yield* addScopedListener(nativeTheme, "updated", () => {
       void runEffect(electronWindow.syncAllAppearance(syncWindowAppearance));
     });
-    yield* addScopedListener(app, "before-quit", (event: Electron.Event) => {
+    yield* electronApp.on("before-quit", (event: Electron.Event) => {
       handleBeforeQuit(
         event,
         runEffect,
@@ -2253,10 +2147,10 @@ function registerDesktopLifecycleHandlers(): Effect.Effect<
         },
       );
     });
-    yield* addScopedListener(app, "activate", () => {
+    yield* electronApp.on("activate", () => {
       void runEffect(handleActivate(environment));
     });
-    yield* addScopedListener(app, "window-all-closed", () => {
+    yield* electronApp.on("window-all-closed", () => {
       void runEffect(handleWindowAllClosed());
     });
 
@@ -2277,13 +2171,20 @@ function fatalStartupCause(stage: string, cause: Cause.Cause<unknown>) {
   );
 }
 
-const waitForElectronReady = Effect.promise(() => app.whenReady()).pipe(Effect.asVoid);
+const waitForElectronReady = Effect.gen(function* () {
+  const electronApp = yield* ElectronApp.ElectronApp;
+  yield* electronApp.whenReady;
+});
 
 const program = Effect.scoped(
   Effect.gen(function* () {
     const shutdown = yield* makeDesktopShutdown;
 
     yield* Effect.gen(function* () {
+      const electronApp = yield* ElectronApp.ElectronApp;
+      const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
+      yield* electronProtocol.registerDesktopSchemePrivileges;
+
       const environment = yield* DesktopEnvironment;
       appRunId = (yield* Random.nextUUIDv4).replace(/-/g, "").slice(0, 12);
       const backendManager = yield* DesktopBackendManager;
@@ -2300,11 +2201,9 @@ const program = Effect.scoped(
 
       yield* shellEnvironment.sync;
       const userDataPath = yield* resolveUserDataPath();
-      yield* Effect.sync(() => {
-        // Must happen before Electron's ready event so Chromium profile data
-        // lands in the desktop-specific userData directory.
-        app.setPath("userData", userDataPath);
-      });
+      // Must happen before Electron's ready event so Chromium profile data
+      // lands in the desktop-specific userData directory.
+      yield* electronApp.setPath("userData", userDataPath);
       appUpdateYmlConfig = yield* readAppUpdateYmlEffect();
       yield* resolveDesktopIconPaths();
       yield* logDesktopInfo("runtime logging configured", { logDir: environment.logDir });
@@ -2316,7 +2215,7 @@ const program = Effect.scoped(
       updateState = initialUpdateState(environment);
 
       if (process.platform === "linux") {
-        app.commandLine.appendSwitch("class", environment.linuxWmClass);
+        yield* electronApp.appendCommandLineSwitch("class", environment.linuxWmClass);
       }
 
       yield* configureAppIdentity();
