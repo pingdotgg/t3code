@@ -27,12 +27,27 @@ import { IdAllocatorV2, type IdAllocatorV2Error } from "../../IdAllocator.ts";
 import type { RuntimePolicyV2Override } from "../../RuntimePolicy.ts";
 
 export const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok";
+export const MULTI_TURN_FIRST_PROMPT = "Respond with exactly: first fixture turn complete";
+export const MULTI_TURN_SECOND_PROMPT = "Respond with exactly: second fixture turn complete";
+export const PROVIDER_THREAD_RESUME_FIRST_PROMPT =
+  "Respond with exactly: provider thread resume fixture first turn complete";
+export const PROVIDER_THREAD_RESUME_SECOND_PROMPT =
+  "Using the conversation history available in this resumed thread, first repeat the exact final answer you gave in the previous turn. Then on a new line write exactly: provider thread resume fixture second turn complete";
+export const TOOL_CALL_READ_ONLY_PROMPT =
+  "Read package.json and tsconfig.json from the current workspace, then answer exactly: read only tool fixture complete";
 export const TOOL_CALL_WRITE_PROMPT =
   "Create or overwrite .codex-probe-write-action.txt with exactly this text: codex app-server approval fixture. Use a local shell command or file edit only, then briefly report what happened. Do not read package metadata, use GitHub, use web, or use MCP.";
 export const SUBAGENT_PROMPT =
   "Spawn 2 subagents, one to read package.json and one to read tsconfig.json";
 export const TURN_INTERRUPT_PROMPT =
   "Do not answer immediately. First run the local shell command `sleep 30`, then respond with exactly: interrupt fixture should not finish naturally.";
+export const MESSAGE_STEERING_STEER_PROMPT =
+  "Actually, respond with exactly: steering fixture observed";
+export const THREAD_ROLLBACK_FIRST_PROMPT =
+  "Respond with exactly: rollback fixture first turn complete";
+export const THREAD_ROLLBACK_SECOND_PROMPT =
+  "Respond with exactly: rollback fixture second turn complete";
+export const THREAD_ROLLBACK_AFTER_PROMPT = "Repeat the conversation verbatim.";
 export const TODO_LIST_PROMPT =
   "Use the update_plan tool to track exactly three steps: inspect package.json, inspect tsconfig.json, report completion. Then read package.json and tsconfig.json, and answer exactly: todo list fixture complete";
 export const PLAN_QUESTIONS_PROMPT =
