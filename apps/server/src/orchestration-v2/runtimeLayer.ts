@@ -1,5 +1,9 @@
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 
+import {
+  claudeAgentSdkQueryRunnerLiveLayer,
+  layer as claudeAdapterLayer,
+} from "./Adapters/ClaudeAdapterV2.ts";
 import { layer as codexAdapterLayer } from "./Adapters/CodexAdapterV2.ts";
 import { codexAppServerClientFactoryFromSettingsLayer } from "./Adapters/CodexAdapterV2.ts";
 import { layer as checkpointServiceLayer } from "./CheckpointService.ts";
@@ -11,7 +15,8 @@ import { layer as eventStoreLayer } from "./EventStore.ts";
 import { layer as idAllocatorLayer } from "./IdAllocator.ts";
 import { layer as orchestratorLayer } from "./Orchestrator.ts";
 import { layer as projectionStoreLayer } from "./ProjectionStore.ts";
-import { layerFromProviderAdapter } from "./ProviderAdapterRegistry.ts";
+import { ProviderAdapterV2 } from "./ProviderAdapter.ts";
+import { makeLayerEffect as providerAdapterRegistryLayerFromEffect } from "./ProviderAdapterRegistry.ts";
 import { layer as providerEventIngestorLayer } from "./ProviderEventIngestor.ts";
 import { layer as providerSessionManagerLayer } from "./ProviderSessionManager.ts";
 import { layer as runExecutionServiceLayer } from "./RunExecutionService.ts";
@@ -37,8 +42,16 @@ const codexAdapterProvided = codexAdapterLayer.pipe(
   Layer.provide(idAllocatorLayer),
 );
 
-const providerAdapterRegistryProvided = layerFromProviderAdapter.pipe(
-  Layer.provide(codexAdapterProvided),
+const claudeAdapterProvided = claudeAdapterLayer.pipe(
+  Layer.provide(claudeAgentSdkQueryRunnerLiveLayer),
+  Layer.provide(idAllocatorLayer),
+);
+
+const providerAdapterRegistryProvided = providerAdapterRegistryLayerFromEffect(
+  Effect.all([
+    Effect.service(ProviderAdapterV2).pipe(Effect.provide(codexAdapterProvided)),
+    Effect.service(ProviderAdapterV2).pipe(Effect.provide(claudeAdapterProvided)),
+  ]),
 );
 
 const providerSessionManagerProvided = providerSessionManagerLayer.pipe(
