@@ -10,6 +10,9 @@ import {
   assertUserMessagesInclude,
   assertVisibleTurnItemsMirrorLocalTurnItems,
   projectionFor,
+  THREAD_ROLLBACK_AFTER_PROMPT,
+  THREAD_ROLLBACK_FIRST_PROMPT,
+  THREAD_ROLLBACK_SECOND_PROMPT,
 } from "../shared.ts";
 
 export function assertThreadRollbackOutput(
@@ -29,9 +32,9 @@ export function assertThreadRollbackOutput(
   assertRunOrdinals(projection, [1, 2, 3]);
   assertTurnItemTypes(projection, ["user_message", "assistant_message", "checkpoint"]);
   assertUserMessagesInclude(projection, [
-    "Respond with exactly: rollback fixture first turn complete",
-    "Respond with exactly: rollback fixture second turn complete",
-    "Repeat the conversation verbatim.",
+    THREAD_ROLLBACK_FIRST_PROMPT,
+    THREAD_ROLLBACK_SECOND_PROMPT,
+    THREAD_ROLLBACK_AFTER_PROMPT,
   ]);
   assert.isAtLeast(projection.checkpoints.length, 2);
   assert.isTrue(

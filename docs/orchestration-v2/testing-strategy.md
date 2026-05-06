@@ -116,11 +116,20 @@ Codex replay transcript
   -> consumed by CodexAdapter
 
 Claude replay transcript
-  -> Claude SDK/API stream events and command responses
+  -> Claude Agent SDK query() outbound options and yielded SDKMessage chunks
   -> consumed by ClaudeAdapter
 ```
 
 Fixtures should preserve raw provider evidence as closely as possible. Expected V2 events or projections are assertions, not fixture input.
+
+For Claude, the initial replay boundary is the async iterable returned by the Agent SDK `query()`
+call. A transcript should include the `query` prompt/options we sent and then replay the raw
+`SDKMessage` chunks in provider order. This intentionally tests the V2 adapter against real Claude
+SDK output; it does not test the SDK's own subprocess or transport parser.
+
+Provider transcript recorders live with the server orchestration testkit, not with provider client
+packages. Use `bun run record:codex-replay -- --scenario <name>` for Codex app-server transcripts
+and `bun run record:claude-replay -- --scenario <name>` for Claude Agent SDK transcripts.
 
 ## Contract Test Levels
 
@@ -192,7 +201,7 @@ Testing infrastructure should be built before production rewrites:
 2. Effect service definitions.
 3. provider runtime transport abstraction.
 4. generic replay runtime.
-5. Codex transcript loader for existing probe NDJSON files.
+5. Codex and Claude transcript loaders for app-owned provider replay fixtures.
 6. projection reducer tests for core invariants.
 7. full command-to-projection integration tests.
 8. production layers.
