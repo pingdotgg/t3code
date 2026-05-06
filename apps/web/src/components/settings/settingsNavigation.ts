@@ -17,6 +17,7 @@ export type SettingsSectionPath =
   | "/settings/threads"
   | "/settings/notifications"
   | "/settings/providers"
+  | "/settings/source-control"
   | "/settings/connections"
   | "/settings/advanced";
 
@@ -61,6 +62,13 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
     icon: ProvidersIcon,
     iconUsesFill: true,
     restoreScope: "providers",
+  },
+  {
+    label: "Source Control",
+    to: "/settings/source-control",
+    icon: ConnectionsIcon,
+    iconUsesFill: true,
+    restoreScope: null,
   },
   {
     label: "Connections",

@@ -179,6 +179,29 @@ it.effect("decodes project.meta-updated payloads with explicit default provider"
   }),
 );
 
+it.effect("normalizes legacy instanceId-shaped modelSelection on decode", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadCreatedPayload({
+      threadId: "thread-1",
+      projectId: "project-1",
+      title: "Legacy thread",
+      modelSelection: {
+        instanceId: "codex",
+        model: "gpt-5.4",
+      },
+      branch: null,
+      worktreePath: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.deepStrictEqual(parsed.modelSelection, {
+      provider: "codex",
+      model: "gpt-5.4",
+    });
+  }),
+);
+
 it.effect("rejects command fields that become empty after trim", () =>
   Effect.gen(function* () {
     const result = yield* Effect.exit(

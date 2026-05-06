@@ -318,6 +318,7 @@ function createMockEnvironmentApi(input: {
     filesystem: {
       browse: input.browse,
     },
+    sourceControl: {} as EnvironmentApi["sourceControl"],
     git: {} as EnvironmentApi["git"],
     orchestration: {
       dispatchCommand: input.dispatchCommand,

@@ -11,6 +11,17 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
   if (existingApi) {
     return existingApi;
   }
+  const sourceControl = rpcClient.sourceControl ?? {
+    lookupRepository: async () => {
+      throw new Error("Source control is unavailable.");
+    },
+    cloneRepository: async () => {
+      throw new Error("Source control is unavailable.");
+    },
+    publishRepository: async () => {
+      throw new Error("Source control is unavailable.");
+    },
+  };
 
   const api: EnvironmentApi = {
     terminal: {
@@ -44,6 +55,11 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     },
     filesystem: {
       browse: rpcClient.filesystem.browse,
+    },
+    sourceControl: {
+      lookupRepository: sourceControl.lookupRepository,
+      cloneRepository: sourceControl.cloneRepository,
+      publishRepository: sourceControl.publishRepository,
     },
     git: {
       pull: rpcClient.git.pull,

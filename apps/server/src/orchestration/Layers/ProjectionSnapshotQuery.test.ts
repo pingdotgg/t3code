@@ -89,7 +89,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'thread-1',
           'project-1',
           'Thread 1',
-          '{"provider":"codex","model":"gpt-5-codex"}',
+          '{"instanceId":"codex","model":"gpt-5-codex"}',
           'full-access',
           'default',
           NULL,

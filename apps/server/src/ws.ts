@@ -57,6 +57,8 @@ import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptR
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { ProjectAgentInventory } from "./project/Services/ProjectAgentInventory.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
+import { SourceControlDiscovery } from "./sourceControl/SourceControlDiscovery.ts";
+import { SourceControlRepositoryService } from "./sourceControl/SourceControlRepositoryService.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { PreviewManager } from "./preview/Services/PreviewManager.ts";
 import {
@@ -157,6 +159,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
       const projectAgentInventory = yield* ProjectAgentInventory;
       const serverEnvironment = yield* ServerEnvironment;
+      const sourceControlDiscovery = yield* SourceControlDiscovery;
+      const sourceControlRepositoryService = yield* SourceControlRepositoryService;
       const serverAuth = yield* ServerAuth;
       const previewManager = yield* PreviewManager;
       const bootstrapCredentials = yield* BootstrapCredentialService;
@@ -776,6 +780,32 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.serverUpdateSettings, serverSettings.updateSettings(patch), {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverDiscoverSourceControl,
+            sourceControlDiscovery.discover,
+            {
+              "rpc.aggregate": "sourceControl",
+            },
+          ),
+        [WS_METHODS.sourceControlLookupRepository]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlLookupRepository,
+            sourceControlRepositoryService.lookupRepository(input),
+            { "rpc.aggregate": "sourceControl" },
+          ),
+        [WS_METHODS.sourceControlCloneRepository]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlCloneRepository,
+            sourceControlRepositoryService.cloneRepository(input),
+            { "rpc.aggregate": "sourceControl" },
+          ),
+        [WS_METHODS.sourceControlPublishRepository]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlPublishRepository,
+            sourceControlRepositoryService.publishRepository(input),
+            { "rpc.aggregate": "sourceControl" },
+          ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchEntries,

@@ -57,6 +57,10 @@ import { ProjectAgentInventoryLive } from "./project/Layers/ProjectAgentInventor
 import { PreviewManagerLive } from "./preview/Layers/PreviewManager.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
 import { ServerEnvironmentLive } from "./environment/Layers/ServerEnvironment.ts";
+import { GitLabCliLive } from "./sourceControl/GitLabCli.ts";
+import { SourceControlDiscoveryLive } from "./sourceControl/SourceControlDiscovery.ts";
+import { SourceControlProviderRegistryLive } from "./sourceControl/SourceControlProviderRegistry.ts";
+import { SourceControlRepositoryServiceLive } from "./sourceControl/SourceControlRepositoryService.ts";
 import {
   authBearerBootstrapRouteLayer,
   authBootstrapRouteLayer,
@@ -202,6 +206,20 @@ const GitLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitCoreLive),
 );
 
+const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistryLive.pipe(
+  Layer.provideMerge(GitHubCliLive),
+  Layer.provideMerge(GitLabCliLive),
+);
+
+const SourceControlLayerLive = Layer.mergeAll(
+  SourceControlProviderRegistryLayerLive,
+  SourceControlDiscoveryLive.pipe(Layer.provide(SourceControlProviderRegistryLayerLive)),
+  SourceControlRepositoryServiceLive.pipe(
+    Layer.provideMerge(SourceControlProviderRegistryLayerLive),
+    Layer.provideMerge(GitCoreLive),
+  ),
+);
+
 const TerminalLayerLive = TerminalManagerLive.pipe(Layer.provide(PtyAdapterLive));
 
 const WorkspaceEntriesLayerLive = WorkspaceEntriesLive.pipe(
@@ -234,6 +252,7 @@ const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(GitLayerLive),
+  Layer.provideMerge(SourceControlLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
   Layer.provideMerge(TerminalLayerLive),
   Layer.provideMerge(PersistenceLayerLive),
