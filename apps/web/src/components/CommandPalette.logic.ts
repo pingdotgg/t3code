@@ -52,6 +52,66 @@ export interface CommandPaletteView {
 
 export type CommandPaletteMode = "root" | "root-browse" | "submenu" | "submenu-browse";
 
+export type BrowseTabCompletion =
+  | {
+      readonly _tag: "enterDirectory";
+      readonly name: string;
+    }
+  | {
+      readonly _tag: "replaceLeaf";
+      readonly leaf: string;
+    };
+
+function commonPrefix(values: ReadonlyArray<string>): string {
+  const [firstValue, ...restValues] = values;
+  if (!firstValue) {
+    return "";
+  }
+
+  let prefixLength = firstValue.length;
+  for (const value of restValues) {
+    let index = 0;
+    const maxLength = Math.min(prefixLength, value.length);
+    while (index < maxLength && firstValue[index]?.toLowerCase() === value[index]?.toLowerCase()) {
+      index += 1;
+    }
+    prefixLength = index;
+    if (prefixLength === 0) {
+      break;
+    }
+  }
+
+  return firstValue.slice(0, prefixLength);
+}
+
+export function resolveBrowseTabCompletion(input: {
+  filteredEntries: ReadonlyArray<FilesystemBrowseEntry>;
+  browseFilterQuery: string;
+  highlightedEntry: FilesystemBrowseEntry | null;
+  exactEntry: FilesystemBrowseEntry | null;
+}): BrowseTabCompletion | null {
+  const preferredEntry =
+    input.highlightedEntry ??
+    input.exactEntry ??
+    (input.filteredEntries.length === 1 ? (input.filteredEntries[0] ?? null) : null);
+
+  if (preferredEntry) {
+    return { _tag: "enterDirectory", name: preferredEntry.name };
+  }
+
+  if (input.filteredEntries.length === 0) {
+    return null;
+  }
+
+  const prefix = commonPrefix(input.filteredEntries.map((entry) => entry.name));
+  if (prefix.length > input.browseFilterQuery.length) {
+    return { _tag: "replaceLeaf", leaf: prefix };
+  }
+
+  const firstEntry = input.filteredEntries[0];
+  return firstEntry ? { _tag: "enterDirectory", name: firstEntry.name } : null;
+}
+
 export function filterBrowseEntries(input: {
   browseEntries: ReadonlyArray<FilesystemBrowseEntry>;
   browseFilterQuery: string;

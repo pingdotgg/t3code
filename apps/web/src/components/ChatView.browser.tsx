@@ -4572,6 +4572,79 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("completes browse directories with Tab while typing a path", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-command-palette-add-project-tab" as MessageId,
+        targetText: "command palette add project tab",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.filesystemBrowse) {
+          if (body.partialPath === "~/Development/") {
+            return {
+              parentPath: "~/Development/",
+              entries: [{ name: "codex", fullPath: "~/Development/codex" }],
+            };
+          }
+
+          return {
+            parentPath: "~/",
+            entries: [
+              { name: "Desktop", fullPath: "~/Desktop" },
+              { name: "Development", fullPath: "~/Development" },
+            ],
+          };
+        }
+
+        return undefined;
+      },
+    });
+
+    try {
+      await Promise.all([waitForServerConfigToApply(), waitForCommandPaletteShortcutLabel()]);
+      const palette = page.getByTestId("command-palette");
+      await openCommandPaletteFromTrigger();
+
+      await expect.element(palette).toBeInTheDocument();
+      await palette.getByText("Add project", { exact: true }).click();
+      await palette.getByText("Local folder", { exact: true }).click();
+
+      const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
+      await page.getByPlaceholder(ADD_PROJECT_SUBMENU_PLACEHOLDER).fill("~/Dev");
+      await dispatchInputKey(browseInput, { key: "Tab" });
+      await expect.element(browseInput).toHaveValue("~/Development/");
+
+      await page.getByPlaceholder(ADD_PROJECT_SUBMENU_PLACEHOLDER).fill("~/Development/co");
+      await dispatchInputKey(browseInput, { key: "Tab" });
+      await expect.element(browseInput).toHaveValue("~/Development/codex/");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("shows clone destination controls after resolving an add project repository", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

@@ -4,11 +4,14 @@ import type { Thread } from "../types";
 import {
   buildThreadActionItems,
   filterCommandPaletteGroups,
+  resolveBrowseTabCompletion,
   type CommandPaletteGroup,
 } from "./CommandPalette.logic";
 
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
 const PROJECT_ID = ProjectId.make("project-1");
+
+const browseEntry = (name: string) => ({ name, fullPath: `~/Development/${name}` });
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -162,5 +165,41 @@ describe("buildThreadActionItems", () => {
     });
 
     expect(items.map((item) => item.value)).toEqual(["thread:thread-active"]);
+  });
+});
+
+describe("resolveBrowseTabCompletion", () => {
+  it("enters a single matching directory", () => {
+    expect(
+      resolveBrowseTabCompletion({
+        filteredEntries: [browseEntry("Documents")],
+        browseFilterQuery: "doc",
+        highlightedEntry: null,
+        exactEntry: null,
+      }),
+    ).toEqual({ _tag: "enterDirectory", name: "Documents" });
+  });
+
+  it("extends to the common prefix when multiple directories match", () => {
+    expect(
+      resolveBrowseTabCompletion({
+        filteredEntries: [browseEntry("Projects"), browseEntry("ProjectTemplates")],
+        browseFilterQuery: "pr",
+        highlightedEntry: null,
+        exactEntry: null,
+      }),
+    ).toEqual({ _tag: "replaceLeaf", leaf: "Project" });
+  });
+
+  it("prefers the highlighted directory over common-prefix completion", () => {
+    const projects = browseEntry("Projects");
+    expect(
+      resolveBrowseTabCompletion({
+        filteredEntries: [projects, browseEntry("ProjectTemplates")],
+        browseFilterQuery: "pr",
+        highlightedEntry: projects,
+        exactEntry: null,
+      }),
+    ).toEqual({ _tag: "enterDirectory", name: "Projects" });
   });
 });
