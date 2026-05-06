@@ -4,29 +4,29 @@ import { Deferred, FileSystem, Path, PlatformError } from "effect";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 
-import * as CodexClient from "../../src/client.ts";
-import type * as CodexRpc from "../../src/_generated/meta.gen.ts";
-import type * as CodexSchema from "../../src/schema.ts";
+import * as CodexClient from "effect-codex-app-server/client";
+import type * as CodexSchema from "effect-codex-app-server/schema";
 
-const DEFAULT_OUT_DIR = "test/fixtures/codex-app-server-probes";
-const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok";
-const TOOL_CALL_WRITE_PROMPT =
-  "Create or overwrite .codex-probe-write-action.txt with exactly this text: codex app-server approval fixture. Use a local shell command or file edit only, then briefly report what happened. Do not read package metadata, use GitHub, use web, or use MCP.";
-const SUBAGENT_PROMPT = "Spawn 2 subagents, one to read package.json and one to read tsconfig.json";
-const TURN_INTERRUPT_PROMPT =
-  "Do not answer immediately. First run the local shell command `sleep 30`, then respond with exactly: interrupt fixture should not finish naturally.";
-const PROVIDER_THREAD_RESUME_FIRST_PROMPT =
-  "Respond with exactly: provider thread resume fixture first turn complete";
-const PROVIDER_THREAD_RESUME_SECOND_PROMPT =
-  "Using the conversation history available in this resumed thread, first repeat the exact final answer you gave in the previous turn. Then on a new line write exactly: provider thread resume fixture second turn complete";
-const TODO_LIST_PROMPT =
-  "Use the update_plan tool to track exactly three steps: inspect package.json, inspect tsconfig.json, report completion. Then read package.json and tsconfig.json, and answer exactly: todo list fixture complete";
-const PLAN_QUESTIONS_PROMPT =
-  "Use request_user_input to ask one multiple-choice clarifying question about whether this fixture should prefer strict schemas or UI flexibility. After receiving the answer, respond exactly: plan questions fixture complete";
-const PROPOSED_PLAN_PROMPT =
-  "Create a short implementation plan for adding deterministic replay fixtures. Do not ask questions. Present the final plan in a proposed plan block.";
-const PROBE_PLAN_MODE_DEVELOPER_INSTRUCTIONS =
-  process.env.CODEX_PROBE_PLAN_DEVELOPER_INSTRUCTIONS ??
+import {
+  MESSAGE_STEERING_STEER_PROMPT,
+  MULTI_TURN_FIRST_PROMPT,
+  MULTI_TURN_SECOND_PROMPT,
+  PLAN_QUESTIONS_PROMPT,
+  PROPOSED_PLAN_PROMPT,
+  PROVIDER_THREAD_RESUME_FIRST_PROMPT,
+  PROVIDER_THREAD_RESUME_SECOND_PROMPT,
+  SIMPLE_PROMPT,
+  SUBAGENT_PROMPT,
+  THREAD_ROLLBACK_AFTER_PROMPT,
+  THREAD_ROLLBACK_FIRST_PROMPT,
+  THREAD_ROLLBACK_SECOND_PROMPT,
+  TODO_LIST_PROMPT,
+  TOOL_CALL_WRITE_PROMPT,
+  TURN_INTERRUPT_PROMPT,
+} from "../src/orchestration-v2/testkit/fixtures/shared.ts";
+
+const CODEX_REPLAY_PLAN_MODE_DEVELOPER_INSTRUCTIONS =
+  process.env.T3_CODEX_REPLAY_PLAN_DEVELOPER_INSTRUCTIONS ??
   "You are in Plan mode. Prefer request_user_input for clarifying questions. When presenting a complete plan, wrap it in <proposed_plan> and </proposed_plan>.";
 const CODEX_CLIENT_INFO = {
   name: "t3code_desktop",
@@ -54,23 +54,23 @@ const SCENARIO_NAMES = [
 ] as const;
 
 type ScenarioName = (typeof SCENARIO_NAMES)[number];
-type TurnStartParams = CodexRpc.ClientRequestParamsByMethod["turn/start"] & {
+type TurnStartParams = CodexSchema.ClientRequestParamsByMethod["turn/start"] & {
   readonly collaborationMode?: CodexSchema.V2TurnStartParams__CollaborationMode;
 };
 type TurnStartInput = TurnStartParams["input"];
-type TurnStartResponse = CodexRpc.ClientRequestResponsesByMethod["turn/start"];
+type TurnStartResponse = CodexSchema.ClientRequestResponsesByMethod["turn/start"];
 type SandboxPolicy = NonNullable<TurnStartParams["sandboxPolicy"]>;
 type ApprovalPolicy = NonNullable<TurnStartParams["approvalPolicy"]>;
 
-interface ProbeRun {
+interface ReplayRun {
   readonly name: string;
   readonly prompt?: string;
   readonly description: string;
-  readonly steps: ReadonlyArray<ProbeStep>;
+  readonly steps: ReadonlyArray<ReplayStep>;
   readonly turnDefaults?: Omit<TurnStartParams, "input" | "threadId">;
 }
 
-type ProbeStep =
+type ReplayStep =
   | {
       readonly type: "turn";
       readonly label: string;
@@ -96,13 +96,13 @@ type ProbeStep =
       readonly label: string;
       readonly numTurns: number;
     };
-type TurnProbeStep = Exclude<ProbeStep, { readonly type: "rollback" }>;
+type TurnReplayStep = Exclude<ReplayStep, { readonly type: "rollback" }>;
 
-interface ProbeScenario {
+interface ReplayScenario {
   readonly name: ScenarioName;
   readonly fileName: `${ScenarioName}.ndjson`;
   readonly description: string;
-  readonly runs: ReadonlyArray<ProbeRun>;
+  readonly runs: ReadonlyArray<ReplayRun>;
 }
 
 interface Recorder {
@@ -125,6 +125,13 @@ function readArgValues(name: string): ReadonlyArray<string> {
   return args.flatMap((arg, index) => (arg === name && args[index + 1] ? [args[index + 1]!] : []));
 }
 
+function defaultTranscriptPath(scenario: ReplayScenario): string {
+  return new URL(
+    `../src/orchestration-v2/testkit/fixtures/${scenario.name}/codex_transcript.ndjson`,
+    import.meta.url,
+  ).pathname;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -132,9 +139,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function parseScenarios(): ReadonlyArray<ScenarioName> {
   const rawValues = [
     ...readArgValues("--scenario"),
-    ...(process.env.CODEX_PROBE_SCENARIOS ? [process.env.CODEX_PROBE_SCENARIOS] : []),
+    ...(process.env.T3_CODEX_REPLAY_SCENARIOS ? [process.env.T3_CODEX_REPLAY_SCENARIOS] : []),
   ];
-  const requested = rawValues.length > 0 ? rawValues : ["all"];
+  const requested = rawValues.length > 0 ? rawValues : ["simple"];
   const names = requested.flatMap((value) =>
     value
       .split(",")
@@ -207,7 +214,7 @@ function inferCodexVersion(payload: unknown): string | undefined {
   }
 
   if (typeof result.userAgent === "string") {
-    const match = result.userAgent.match(/effect-codex-app-server-probe\/(\S+)/u);
+    const match = result.userAgent.match(/\/([0-9][^\s)]*)/u);
     if (match?.[1]) {
       return match[1];
     }
@@ -272,14 +279,14 @@ function collaborationMode(
   return {
     mode,
     settings: {
-      developer_instructions: PROBE_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+      developer_instructions: CODEX_REPLAY_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
       model: "gpt-5.4",
       reasoning_effort: "medium",
     },
   };
 }
 
-function scenarios(): ReadonlyArray<ProbeScenario> {
+function scenarios(): ReadonlyArray<ReplayScenario> {
   return [
     {
       name: "simple",
@@ -298,7 +305,7 @@ function scenarios(): ReadonlyArray<ProbeScenario> {
       name: "tool_call_read_only_on_request",
       fileName: "tool_call_read_only_on_request.ndjson",
       description:
-        "Write a small probe file with read-only full filesystem visibility and on-request approvals.",
+        "Write a small fixture file with read-only full filesystem visibility and on-request approvals.",
       runs: [
         {
           name: "read-only-on-request",
@@ -309,7 +316,7 @@ function scenarios(): ReadonlyArray<ProbeScenario> {
             approvalPolicy: "on-request",
             sandboxPolicy: readOnlyFullAccessSandbox(),
           },
-          steps: [{ type: "turn", label: "write-probe-file", prompt: TOOL_CALL_WRITE_PROMPT }],
+          steps: [{ type: "turn", label: "write-fixture-file", prompt: TOOL_CALL_WRITE_PROMPT }],
         },
       ],
     },
@@ -317,7 +324,7 @@ function scenarios(): ReadonlyArray<ProbeScenario> {
       name: "tool_call_workspace_never",
       fileName: "tool_call_workspace_never.ndjson",
       description:
-        "Write a small probe file with workspace-write sandbox policy and never approvals.",
+        "Write a small fixture file with workspace-write sandbox policy and never approvals.",
       runs: [
         {
           name: "workspace-never",
@@ -328,7 +335,7 @@ function scenarios(): ReadonlyArray<ProbeScenario> {
             approvalPolicy: "never",
             sandboxPolicy: workspaceWriteSandbox(),
           },
-          steps: [{ type: "turn", label: "write-probe-file", prompt: TOOL_CALL_WRITE_PROMPT }],
+          steps: [{ type: "turn", label: "write-fixture-file", prompt: TOOL_CALL_WRITE_PROMPT }],
         },
       ],
     },
@@ -336,7 +343,7 @@ function scenarios(): ReadonlyArray<ProbeScenario> {
       name: "tool_call_restricted_granular",
       fileName: "tool_call_restricted_granular.ndjson",
       description:
-        "Write a small probe file with restricted read access and granular approval flags enabled.",
+        "Write a small fixture file with restricted read access and granular approval flags enabled.",
       runs: [
         {
           name: "restricted-granular",
@@ -350,7 +357,7 @@ function scenarios(): ReadonlyArray<ProbeScenario> {
           steps: [
             {
               type: "turn",
-              label: "write-probe-file",
+              label: "write-fixture-file",
               prompt: TOOL_CALL_WRITE_PROMPT,
             },
           ],
@@ -386,12 +393,12 @@ function scenarios(): ReadonlyArray<ProbeScenario> {
             {
               type: "turn",
               label: "first",
-              prompt: "Respond with exactly: first fixture turn complete",
+              prompt: MULTI_TURN_FIRST_PROMPT,
             },
             {
               type: "turn",
               label: "second",
-              prompt: "Respond with exactly: second fixture turn complete",
+              prompt: MULTI_TURN_SECOND_PROMPT,
             },
           ],
         },
@@ -493,7 +500,7 @@ function scenarios(): ReadonlyArray<ProbeScenario> {
               type: "steeredTurn",
               label: "steered",
               prompt: TOOL_CALL_WRITE_PROMPT,
-              steer: "Actually, respond with exactly: steering fixture observed",
+              steer: MESSAGE_STEERING_STEER_PROMPT,
               turnOverrides: {
                 approvalPolicy: "on-request",
                 sandboxPolicy: readOnlyFullAccessSandbox(),
@@ -541,12 +548,12 @@ function scenarios(): ReadonlyArray<ProbeScenario> {
             {
               type: "turn",
               label: "first-before-rollback",
-              prompt: "Respond with exactly: rollback fixture first turn complete",
+              prompt: THREAD_ROLLBACK_FIRST_PROMPT,
             },
             {
               type: "turn",
               label: "second-before-rollback",
-              prompt: "Respond with exactly: rollback fixture second turn complete",
+              prompt: THREAD_ROLLBACK_SECOND_PROMPT,
             },
             {
               type: "rollback",
@@ -556,7 +563,7 @@ function scenarios(): ReadonlyArray<ProbeScenario> {
             {
               type: "turn",
               label: "post-rollback",
-              prompt: "Repeat the conversation verbatim.",
+              prompt: THREAD_ROLLBACK_AFTER_PROMPT,
             },
           ],
         },
@@ -570,7 +577,7 @@ function makeRecorder({
   scenario,
 }: {
   readonly outPath: string;
-  readonly scenario: ProbeScenario;
+  readonly scenario: ReplayScenario;
 }): Effect.Effect<Recorder, PlatformError.PlatformError, FileSystem.FileSystem> {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -595,7 +602,7 @@ function makeRecorder({
             version,
             scenario: scenario.name,
             metadata: {
-              source: "codex-app-server-probe",
+              source: "record-codex-app-server-replay-fixture",
               fileName: scenario.fileName,
               description: scenario.description,
             },
@@ -615,7 +622,7 @@ function makeCodexLayer({ recorder }: { readonly recorder: Recorder }) {
   const serverRequestMethodById = new Map<string, string>();
 
   return CodexClient.layerCommand({
-    command: process.env.CODEX_BIN ?? "codex",
+    command: process.env.T3_CODEX_BIN ?? process.env.CODEX_BIN ?? "codex",
     args: ["app-server"],
     cwd: process.cwd(),
     logIncoming: true,
@@ -675,7 +682,7 @@ function makeCodexLayer({ recorder }: { readonly recorder: Recorder }) {
   });
 }
 
-function installProbeHandlers({
+function installReplayHandlers({
   client,
   startTurn,
   completeTurn,
@@ -724,7 +731,7 @@ function installProbeHandlers({
         Effect.succeed({
           contentItems: [
             {
-              text: `Probe dynamic tool handler did not execute external tool: ${payload.tool}`,
+              text: `Replay dynamic tool handler did not execute external tool: ${payload.tool}`,
               type: "inputText" as const,
             },
           ],
@@ -738,7 +745,7 @@ function installProbeHandlers({
         Effect.succeed({ decision: "approved" }),
       ),
       client.handleUnknownServerRequest((method) =>
-        Effect.die(new Error(`Unhandled Codex app-server request in probe: ${method}`)),
+        Effect.die(new Error(`Unhandled Codex app-server request in replay recorder: ${method}`)),
       ),
       client.handleServerNotification("turn/started", (payload) =>
         startTurn(payload.turn.id).pipe(Effect.ignore),
@@ -751,14 +758,13 @@ function installProbeHandlers({
   );
 }
 
-function runProbeSession({
+function runReplaySession({
   scenario,
   run,
   recorder,
 }: {
-  readonly scenario: ProbeScenario;
-  readonly run: ProbeRun;
-  readonly runIndex: number;
+  readonly scenario: ReplayScenario;
+  readonly run: ReplayRun;
   readonly recorder: Recorder;
 }) {
   return Effect.gen(function* () {
@@ -793,7 +799,7 @@ function runProbeSession({
     const initializeClient = Effect.gen(function* () {
       const client = yield* CodexClient.CodexAppServerClient;
 
-      yield* installProbeHandlers({ client, startTurn, completeTurn, beforeApprovalResponse });
+      yield* installReplayHandlers({ client, startTurn, completeTurn, beforeApprovalResponse });
 
       yield* client.request("initialize", {
         clientInfo: CODEX_CLIENT_INFO,
@@ -808,7 +814,7 @@ function runProbeSession({
     const runTurnStep = (
       client: CodexClient.CodexAppServerClientShape,
       threadId: string,
-      step: TurnProbeStep,
+      step: TurnReplayStep,
     ) =>
       Effect.gen(function* () {
         const turnParams: TurnStartParams = {
@@ -861,7 +867,7 @@ function runProbeSession({
         firstStep.type === "rollback" ||
         secondStep.type === "rollback"
       ) {
-        throw new Error("provider_thread_resume probe requires two turn steps.");
+        throw new Error("provider_thread_resume replay recording requires two turn steps.");
       }
 
       const firstThread = yield* Effect.gen(function* () {
@@ -928,19 +934,20 @@ function runScenario({
   scenario,
   outPath,
 }: {
-  readonly scenario: ProbeScenario;
+  readonly scenario: ReplayScenario;
   readonly outPath: string;
 }) {
   return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const recorder = yield* makeRecorder({ outPath, scenario });
 
-    yield* Console.log(`Writing ${scenario.name} probe events to ${recorder.path}`);
+    yield* fs.makeDirectory(path.dirname(outPath), { recursive: true });
+    yield* Console.log(`Writing ${scenario.name} Codex replay events to ${recorder.path}`);
 
-    yield* Effect.forEach(
-      scenario.runs,
-      (run, runIndex) => runProbeSession({ scenario, run, runIndex, recorder }),
-      { concurrency: 1 },
-    );
+    yield* Effect.forEach(scenario.runs, (run) => runReplaySession({ scenario, run, recorder }), {
+      concurrency: 1,
+    });
 
     yield* recorder.writeRecord({
       type: "runtime_exit",
@@ -951,32 +958,28 @@ function runScenario({
 }
 
 const program = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const requestedScenarios = parseScenarios();
   const allScenarios = scenarios();
-  const outDir =
-    readArgValue("--out-dir") ??
-    process.env.CODEX_PROBE_OUT_DIR ??
-    path.join(process.cwd(), DEFAULT_OUT_DIR);
-  const singleOutPath = readArgValue("--out") ?? process.env.CODEX_PROBE_OUT;
+  const outDir = readArgValue("--out-dir") ?? process.env.T3_CODEX_REPLAY_OUT_DIR;
+  const singleOutPath = readArgValue("--out") ?? process.env.T3_CODEX_REPLAY_OUT;
   const selected = allScenarios.filter((scenario) => requestedScenarios.includes(scenario.name));
 
   if (selected.length === 0) {
-    throw new Error("No probe scenarios selected.");
+    throw new Error("No replay scenarios selected.");
   }
   if (singleOutPath && selected.length !== 1) {
-    throw new Error("--out / CODEX_PROBE_OUT can only be used with exactly one --scenario.");
+    throw new Error("--out / T3_CODEX_REPLAY_OUT can only be used with exactly one --scenario.");
   }
-
-  yield* fs.makeDirectory(outDir, { recursive: true });
 
   yield* Effect.forEach(
     selected,
     (scenario) =>
       runScenario({
         scenario,
-        outPath: singleOutPath ?? path.join(outDir, scenario.fileName),
+        outPath:
+          singleOutPath ??
+          (outDir ? path.join(outDir, scenario.fileName) : defaultTranscriptPath(scenario)),
       }),
     { concurrency: 1 },
   );
