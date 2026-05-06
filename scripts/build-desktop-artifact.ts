@@ -495,7 +495,9 @@ function resolveDesktopRuntimeDependencies(
   }
 
   const runtimeDependencies = Object.fromEntries(
-    Object.entries(dependencies).filter(([dependencyName]) => dependencyName !== "electron"),
+    Object.entries(dependencies).filter(
+      ([dependencyName, spec]) => dependencyName !== "electron" && !spec.startsWith("workspace:"),
+    ),
   );
 
   return resolveCatalogDependencies(runtimeDependencies, catalog, "apps/desktop");

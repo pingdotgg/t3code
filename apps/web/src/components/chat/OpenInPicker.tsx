@@ -5,7 +5,8 @@ import { usePreferredEditor } from "../../editorPreferences";
 import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
-import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Shortcut } from "../ui/kbd";
 import {
   AntigravityIcon,
   CursorIcon,
@@ -221,7 +222,9 @@ export const OpenInPicker = memo(function OpenInPicker({
               <Icon aria-hidden="true" className="text-muted-foreground" />
               {label}
               {value === preferredEditor && openFavoriteEditorShortcutLabel && (
-                <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+                <Shortcut className="ms-auto h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
+                  {openFavoriteEditorShortcutLabel}
+                </Shortcut>
               )}
             </MenuItem>
           ))}

@@ -25,6 +25,7 @@ import {
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
+import { SelectedModelBadge } from "./chat/SelectedModelBadge";
 import { Button } from "./ui/button";
 import {
   Menu,
@@ -164,23 +165,39 @@ const MobileRunContextSelector = memo(function MobileRunContextSelector({
             value={effectiveEnvMode}
             onValueChange={(value) => onEnvModeChange(value as EnvMode)}
           >
-            <MenuRadioItem disabled={envModeLocked} value="local">
-              <span className="flex min-w-0 items-center gap-1.5">
-                {activeWorktreePath ? (
-                  <FolderGitIcon className="size-3" />
-                ) : (
-                  <FolderIcon className="size-3" />
-                )}
-                <span className="min-w-0 truncate">
-                  {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+            <MenuRadioItem
+              disabled={envModeLocked}
+              value="local"
+              hideIndicator
+              className="ps-2 pe-2"
+            >
+              <div className="flex w-full min-w-0 items-center justify-between gap-2">
+                <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
+                  {activeWorktreePath ? (
+                    <FolderGitIcon className="size-3 shrink-0" />
+                  ) : (
+                    <FolderIcon className="size-3 shrink-0" />
+                  )}
+                  <span className="min-w-0 truncate">
+                    {resolveCurrentWorkspaceLabel(activeWorktreePath)}
+                  </span>
                 </span>
-              </span>
+                {effectiveEnvMode === "local" ? <SelectedModelBadge /> : null}
+              </div>
             </MenuRadioItem>
-            <MenuRadioItem disabled={envModeLocked} value="worktree">
-              <span className="flex min-w-0 items-center gap-1.5">
-                <FolderGit2Icon className="size-3" />
-                <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
-              </span>
+            <MenuRadioItem
+              disabled={envModeLocked}
+              value="worktree"
+              hideIndicator
+              className="ps-2 pe-2"
+            >
+              <div className="flex w-full min-w-0 items-center justify-between gap-2">
+                <span className="inline-flex min-w-0 flex-1 items-center gap-1.5">
+                  <FolderGit2Icon className="size-3 shrink-0" />
+                  <span className="min-w-0 truncate">{resolveEnvModeLabel("worktree")}</span>
+                </span>
+                {effectiveEnvMode === "worktree" ? <SelectedModelBadge /> : null}
+              </div>
             </MenuRadioItem>
           </MenuRadioGroup>
         </MenuGroup>

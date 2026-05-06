@@ -44,6 +44,75 @@ export function formatTimestamp(isoDate: string, timestampFormat: TimestampForma
   return getTimestampFormatter(timestampFormat, true).format(new Date(isoDate));
 }
 
+const monthNameFormatter = new Intl.DateTimeFormat(undefined, { month: "long" });
+
+function ordinalSuffix(day: number): string {
+  const lastTwo = day % 100;
+  if (lastTwo >= 11 && lastTwo <= 13) return "th";
+  switch (day % 10) {
+    case 1:
+      return "st";
+    case 2:
+      return "nd";
+    case 3:
+      return "rd";
+    default:
+      return "th";
+  }
+}
+
+/**
+ * Long-form tooltip label, e.g. `12:04, 4th June`.
+ * Renders the wall-clock time without seconds followed by the ordinal day and month name.
+ */
+export function formatChatTimestampTooltip(
+  isoDate: string,
+  timestampFormat: TimestampFormat,
+): string {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return "";
+  const time = formatShortTimestamp(isoDate, timestampFormat);
+  const day = date.getDate();
+  const month = monthNameFormatter.format(date);
+  const year = date.getFullYear();
+  return `${time}, ${day}${ordinalSuffix(day)} ${month} ${year}`;
+}
+
+/**
+ * Chat-style relative timestamp.
+ *
+ *   < 1 minute      → `Ns ago`
+ *   < 1 hour        → `Nm ago`
+ *   < 24 hours      → `Nh ago`
+ *   < 2 days        → `a day ago`
+ *   < 7 days        → `N days ago`
+ *   < 14 days       → `a week ago`
+ *   < 30 days       → `N weeks ago`
+ *   < 60 days       → `a month ago`
+ *   < 365 days      → `N months ago`
+ *   ≥ 1 year        → `a year ago` / `N years ago`
+ */
+export function formatChatTimestamp(isoDate: string): string {
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) return "";
+  const diffMs = Date.now() - date.getTime();
+  const seconds = Math.max(0, Math.floor(diffMs / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 2) return "a day ago";
+  if (days < 7) return `${days} days ago`;
+  if (days < 14) return "a week ago";
+  if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
+  if (days < 60) return "a month ago";
+  if (days < 365) return `${Math.floor(days / 30)} months ago`;
+  const years = Math.floor(days / 365);
+  return years === 1 ? "a year ago" : `${years} years ago`;
+}
+
 export function formatShortTimestamp(isoDate: string, timestampFormat: TimestampFormat): string {
   return getTimestampFormatter(timestampFormat, false).format(new Date(isoDate));
 }

@@ -97,7 +97,7 @@ import {
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
-import { Kbd } from "./ui/kbd";
+import { Shortcut } from "./ui/kbd";
 import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
@@ -206,6 +206,8 @@ const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> =
   repository_path: "Group by repository path",
   separate: "Keep separate",
 };
+const SIDEBAR_ICON_ACTION_BUTTON_CLASS =
+  "inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring";
 
 function formatProjectMemberActionLabel(
   member: SidebarProjectGroupMember,
@@ -626,13 +628,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               </button>
             ) : !isThreadRunning ? (
               appSettingsConfirmThreadArchive ? (
-                <div className="pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
+                <div className="pointer-events-none absolute top-1/2 right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
                   <button
                     type="button"
                     data-thread-selection-safe
                     data-testid={`thread-archive-${thread.id}`}
                     aria-label={`Archive ${thread.title}`}
-                    className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                    className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
                     onPointerDown={stopPropagationOnPointerDown}
                     onClick={handleStartArchiveConfirmation}
                   >
@@ -643,13 +645,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <div className="pointer-events-none absolute top-1/2 right-1 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
+                      <div className="pointer-events-none absolute top-1/2 right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/menu-sub-item:pointer-events-auto group-hover/menu-sub-item:opacity-100 group-focus-within/menu-sub-item:pointer-events-auto group-focus-within/menu-sub-item:opacity-100">
                         <button
                           type="button"
                           data-thread-selection-safe
                           data-testid={`thread-archive-${thread.id}`}
                           aria-label={`Archive ${thread.title}`}
-                          className="inline-flex size-5 cursor-pointer items-center justify-center text-muted-foreground/60 transition-colors hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                          className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
                           onPointerDown={stopPropagationOnPointerDown}
                           onClick={handleArchiveImmediateClick}
                         >
@@ -680,15 +682,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   </Tooltip>
                 )}
                 {jumpLabel ? (
-                  <span
-                    className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-[10px] font-medium tracking-tight text-foreground shadow-sm"
-                    title={jumpLabel}
-                  >
+                  <Shortcut className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]" title={jumpLabel}>
                     {jumpLabel}
-                  </span>
+                  </Shortcut>
                 ) : (
                   <span
-                    className={`text-[10px] ${
+                    className={`text-[10px] tabular-nums ${
                       isHighlighted
                         ? "text-foreground/72 dark:text-foreground/82"
                         : "text-muted-foreground/40"
@@ -1456,6 +1455,13 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           };
         };
 
+        const iconForAction: Record<"rename" | "grouping" | "copy-path" | "delete", string> = {
+          rename: "pencil",
+          grouping: "folder-tree",
+          "copy-path": "copy",
+          delete: "trash",
+        };
+
         const buildTargetedItem = (
           action: "rename" | "grouping" | "copy-path" | "delete",
           label: string,
@@ -1472,12 +1478,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 ...(options?.isDisabled?.(singleMember) ? { disabled: true } : {}),
               }),
               label,
+              icon: iconForAction[action],
             };
           }
 
           return {
             id: `${action}:submenu`,
             label,
+            icon: iconForAction[action],
             children: project.memberProjects.map((member) =>
               makeLeaf(action, member, {
                 ...(options?.destructive ? { destructive: true } : {}),
@@ -1489,10 +1497,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const clicked = await api.contextMenu.show(
           [
-            buildTargetedItem("rename", "Rename project"),
-            buildTargetedItem("grouping", "Project grouping…"),
-            buildTargetedItem("copy-path", "Copy Project Path"),
-            buildTargetedItem("delete", "Remove project", {
+            buildTargetedItem("rename", "Rename"),
+            buildTargetedItem("grouping", "Group into..."),
+            buildTargetedItem("copy-path", "Copy Path"),
+            buildTargetedItem("delete", "Remove", {
               destructive: true,
             }),
           ],
@@ -2044,12 +2052,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         <Tooltip>
           <TooltipTrigger
             render={
-              <div className="pointer-events-none absolute top-1 right-1.5 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
+              <div className="pointer-events-none absolute top-[calc(50%+1px)] right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
                 <button
                   type="button"
                   aria-label={`Create new thread in ${project.displayName}`}
                   data-testid="new-thread-button"
-                  className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 hover:bg-secondary hover:text-foreground focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring"
+                  className={SIDEBAR_ICON_ACTION_BUTTON_CLASS}
                   onClick={handleCreateThreadClick}
                 >
                   <SquarePenIcon className="size-3.5" />
@@ -2269,7 +2277,7 @@ function ProjectSortMenu({
       <Tooltip>
         <TooltipTrigger
           render={
-            <MenuTrigger className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground" />
+            <MenuTrigger className="inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground" />
           }
         >
           <ArrowUpDownIcon className="size-3.5" />
@@ -2563,12 +2571,12 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 />
               }
             >
-              <SearchIcon className="size-3.5" />
+              <SearchIcon className="size-3.5 text-muted-foreground/70" />
               <span className="flex-1 truncate text-left text-xs">Search</span>
               {commandPaletteShortcutLabel ? (
-                <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
+                <Shortcut className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
                   {commandPaletteShortcutLabel}
-                </Kbd>
+                </Shortcut>
               ) : null}
             </CommandDialogTrigger>
           </SidebarMenuItem>
@@ -2618,7 +2626,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                     type="button"
                     aria-label="Add project"
                     data-testid="sidebar-add-project-trigger"
-                    className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                    className="inline-flex h-6 min-w-6 cursor-pointer items-center justify-center rounded-md px-[calc(--spacing(1)-1px)] text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
                     onClick={openAddProject}
                   />
                 }

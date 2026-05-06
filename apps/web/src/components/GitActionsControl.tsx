@@ -16,14 +16,17 @@ import { Option } from "effect";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
+  AlertTriangleIcon,
   CheckIcon,
   ChevronDownIcon,
   CloudUploadIcon,
   ExternalLinkIcon,
+  GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
   LockIcon,
   GlobeIcon,
+  PencilIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "~/components/Icons";
@@ -46,6 +49,7 @@ import {
 import { AnimatedHeight } from "./AnimatedHeight";
 import { Button } from "~/components/ui/button";
 import { Checkbox } from "~/components/ui/checkbox";
+import { DiffStatLabel } from "~/components/chat/DiffStatLabel";
 import {
   Dialog,
   DialogDescription,
@@ -303,6 +307,15 @@ function getMenuActionDisabledReason({
 const COMMIT_DIALOG_TITLE = "Commit changes";
 const COMMIT_DIALOG_DESCRIPTION =
   "Review and confirm your commit. Leave the message blank to auto-generate one.";
+function splitFilePath(path: string): { dir: string; base: string } {
+  const normalized = path.replaceAll("\\", "/");
+  const lastSlash = normalized.lastIndexOf("/");
+  if (lastSlash === -1) return { dir: "", base: normalized };
+  return {
+    dir: `${normalized.slice(0, lastSlash + 1)}`,
+    base: normalized.slice(lastSlash + 1),
+  };
+}
 
 function GitActionItemIcon({
   icon,
@@ -1073,6 +1086,9 @@ export default function GitActionsControl({
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
   const allSelected = excludedFiles.size === 0;
   const noneSelected = selectedFiles.length === 0;
+  const totalInsertions = selectedFiles.reduce((sum, f) => sum + f.insertions, 0);
+  const totalDeletions = selectedFiles.reduce((sum, f) => sum + f.deletions, 0);
+  const totalChangeMagnitude = totalInsertions + totalDeletions;
 
   const initMutation = useMutation(
     gitInitMutationOptions({ environmentId: activeEnvironmentId, cwd: gitCwd, queryClient }),
@@ -1626,7 +1642,10 @@ export default function GitActionsControl({
           disabled={initMutation.isPending}
           onClick={() => initMutation.mutate()}
         >
-          {initMutation.isPending ? "Initializing..." : "Initialize Git"}
+          <GitBranchPlusIcon className="size-3.5" aria-hidden />
+          <span className="ml-0.5">
+            {initMutation.isPending ? "Initializing..." : "Initialize Git"}
+          </span>
         </Button>
       ) : (
         <Group aria-label="Git actions" className="shrink-0">
@@ -1774,7 +1793,7 @@ export default function GitActionsControl({
           }
         }}
       >
-        <DialogPopup>
+        <DialogPopup className="max-w-xl">
           <DialogHeader>
             <DialogTitle>{COMMIT_DIALOG_TITLE}</DialogTitle>
             <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
@@ -1794,10 +1813,59 @@ export default function GitActionsControl({
                   )}
                 </span>
               </div>
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {isEditingFiles && allFiles.length > 0 && (
+              {isDefaultRef && (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning">
+                  <AlertTriangleIcon className="size-3" />
+                  Default branch
+                </span>
+              )}
+            </div>
+
+            {/* Changes section */}
+            <section className="space-y-2.5">
+              <header className="flex items-center justify-between gap-3">
+                <div className="flex items-baseline gap-2">
+                  <h3 className="text-sm font-medium text-foreground">Changes</h3>
+                  {allFiles.length > 0 && (
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      {isEditingFiles || !allSelected
+                        ? `${selectedFiles.length} of ${allFiles.length}`
+                        : `${allFiles.length} ${allFiles.length === 1 ? "file" : "files"}`}
+                    </span>
+                  )}
+                </div>
+                {selectedFiles.length > 0 && (
+                  <DiffStatLabel
+                    additions={totalInsertions}
+                    deletions={totalDeletions}
+                    className="text-xs"
+                  />
+                )}
+              </header>
+
+              {/* Aggregate diff bar */}
+              {selectedFiles.length > 0 && totalChangeMagnitude > 0 && (
+                <div
+                  className="relative h-1.5 overflow-hidden rounded-full bg-destructive/80"
+                  aria-hidden="true"
+                >
+                  <div
+                    className="absolute inset-y-0 left-0 bg-success/80"
+                    style={{
+                      width: `${(totalInsertions / totalChangeMagnitude) * 100}%`,
+                    }}
+                  />
+                </div>
+              )}
+
+              {!gitStatusForActions || allFiles.length === 0 ? (
+                <div className="rounded-lg border border-dashed bg-muted/20 px-3 py-6 text-center text-xs text-muted-foreground">
+                  No changes detected
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-lg border bg-background/40">
+                  {isEditingFiles && (
+                    <div className="flex items-center gap-2 border-b bg-muted/30 px-2.5 py-1.5">
                       <Checkbox
                         checked={allSelected}
                         indeterminate={!allSelected && !noneSelected}
@@ -1807,106 +1875,106 @@ export default function GitActionsControl({
                           );
                         }}
                       />
-                    )}
-                    <span className="text-muted-foreground">Files</span>
-                    {!allSelected && !isEditingFiles && (
-                      <span className="text-muted-foreground">
-                        ({selectedFiles.length} of {allFiles.length})
-                      </span>
-                    )}
-                  </div>
-                  {allFiles.length > 0 && (
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => setIsEditingFiles((prev) => !prev)}
-                    >
-                      {isEditingFiles ? "Done" : "Edit"}
-                    </Button>
-                  )}
-                </div>
-                {!gitStatusForActions || allFiles.length === 0 ? (
-                  <p className="font-medium">none</p>
-                ) : (
-                  <div className="space-y-2">
-                    <ScrollArea className="h-44 rounded-md border border-input bg-background">
-                      <div className="space-y-1 p-1">
-                        {allFiles.map((file) => {
-                          const isExcluded = excludedFiles.has(file.path);
-                          return (
-                            <div
-                              key={file.path}
-                              className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono text-xs transition-colors hover:bg-accent/50"
-                            >
-                              {isEditingFiles && (
-                                <Checkbox
-                                  checked={!excludedFiles.has(file.path)}
-                                  onCheckedChange={() => {
-                                    setExcludedFiles((prev) => {
-                                      const next = new Set(prev);
-                                      if (next.has(file.path)) {
-                                        next.delete(file.path);
-                                      } else {
-                                        next.add(file.path);
-                                      }
-                                      return next;
-                                    });
-                                  }}
-                                />
-                              )}
-                              <button
-                                type="button"
-                                className="flex flex-1 items-center justify-between gap-3 text-left truncate"
-                                onClick={() => openChangedFileInEditor(file.path)}
-                              >
-                                <span
-                                  className={`truncate${isExcluded ? " text-muted-foreground" : ""}`}
-                                >
-                                  {file.path}
-                                </span>
-                                <span className="shrink-0">
-                                  {isExcluded ? (
-                                    <span className="text-muted-foreground">Excluded</span>
-                                  ) : (
-                                    <>
-                                      <span className="text-success">+{file.insertions}</span>
-                                      <span className="text-muted-foreground"> / </span>
-                                      <span className="text-destructive">-{file.deletions}</span>
-                                    </>
-                                  )}
-                                </span>
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </ScrollArea>
-                    <div className="flex justify-end font-mono">
-                      <span className="text-success">
-                        +{selectedFiles.reduce((sum, f) => sum + f.insertions, 0)}
-                      </span>
-                      <span className="text-muted-foreground"> / </span>
-                      <span className="text-destructive">
-                        -{selectedFiles.reduce((sum, f) => sum + f.deletions, 0)}
+                      <span className="text-[11px] text-muted-foreground">
+                        {allSelected
+                          ? "All files selected"
+                          : noneSelected
+                            ? "Nothing selected"
+                            : `${selectedFiles.length} selected`}
                       </span>
                     </div>
-                  </div>
-                )}
+                  )}
+                  <ScrollArea className="h-48">
+                    <ul className="divide-y divide-border/40">
+                      {allFiles.map((file) => {
+                        const isExcluded = excludedFiles.has(file.path);
+                        const { dir, base } = splitFilePath(file.path);
+                        return (
+                          <li
+                            key={file.path}
+                            className={cn(
+                              "group flex items-center gap-2 px-2.5 py-1.5 text-xs transition-colors hover:bg-accent/40",
+                              isExcluded && "opacity-50",
+                            )}
+                          >
+                            {isEditingFiles && (
+                              <Checkbox
+                                checked={!isExcluded}
+                                onCheckedChange={() => {
+                                  setExcludedFiles((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(file.path)) {
+                                      next.delete(file.path);
+                                    } else {
+                                      next.add(file.path);
+                                    }
+                                    return next;
+                                  });
+                                }}
+                              />
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => openChangedFileInEditor(file.path)}
+                              className="flex min-w-0 flex-1 items-center justify-between gap-3 text-left"
+                            >
+                              <span className="truncate font-mono">
+                                {dir && <span className="text-muted-foreground/70">{dir}</span>}
+                                <span className="text-foreground">{base}</span>
+                              </span>
+                              <DiffStatLabel
+                                additions={file.insertions}
+                                deletions={file.deletions}
+                                className="text-[11px] shrink-0"
+                              />
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </ScrollArea>
+                </div>
+              )}
+
+              {allFiles.length > 0 && (
+                <div className="flex justify-start pt-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setIsEditingFiles((prev) => !prev)}
+                  >
+                    <PencilIcon className="size-3.5" />
+                    {isEditingFiles ? "Done" : "Edit"}
+                  </Button>
+                </div>
+              )}
+            </section>
+
+            {/* Commit message */}
+            <div className="space-y-1.5">
+              <div className="flex items-baseline justify-between">
+                <label
+                  htmlFor="commit-dialog-message"
+                  className="text-sm font-medium text-foreground"
+                >
+                  Message
+                </label>
+                <span className="text-[11px] text-muted-foreground">
+                  Optional, auto-generated if empty
+                </span>
               </div>
-            </div>
-            <div className="space-y-1">
-              <p className="text-xs font-medium">Commit message (optional)</p>
               <Textarea
+                id="commit-dialog-message"
                 value={dialogCommitMessage}
                 onChange={(event) => setDialogCommitMessage(event.target.value)}
-                placeholder="Leave empty to auto-generate"
+                placeholder="Describe what changed and why…"
                 size="sm"
               />
             </div>
           </DialogPanel>
           <DialogFooter>
             <Button
-              variant="outline"
+              variant="ghost"
               size="sm"
               onClick={() => {
                 setIsCommitDialogOpen(false);
@@ -1917,6 +1985,7 @@ export default function GitActionsControl({
             >
               Cancel
             </Button>
+            <div className="hidden flex-1 sm:block" />
             <Button
               variant="outline"
               size="sm"
@@ -1926,6 +1995,7 @@ export default function GitActionsControl({
               Commit on new refName
             </Button>
             <Button size="sm" disabled={noneSelected} onClick={runDialogAction}>
+              <GitCommitIcon className="size-3.5" />
               Commit
             </Button>
           </DialogFooter>

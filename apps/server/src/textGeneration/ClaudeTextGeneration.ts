@@ -20,6 +20,7 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildToolWorkLogSummaryPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
@@ -87,7 +88,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateToolWorkLogSummary";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -315,10 +317,36 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     };
   });
 
+  const generateToolWorkLogSummary: TextGenerationShape["generateToolWorkLogSummary"] = Effect.fn(
+    "ClaudeTextGeneration.generateToolWorkLogSummary",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildToolWorkLogSummaryPrompt({
+      label: input.label,
+      toolTitle: input.toolTitle,
+      itemType: input.itemType,
+      requestKind: input.requestKind,
+      command: input.command,
+      detailSnippet: input.detailSnippet,
+    });
+
+    const generated = yield* runClaudeJson({
+      operation: "generateToolWorkLogSummary",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      line: generated.line,
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateToolWorkLogSummary,
   } satisfies TextGenerationShape;
 });

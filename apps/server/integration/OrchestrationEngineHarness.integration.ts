@@ -316,6 +316,7 @@ export const makeOrchestrationIntegrationHarness = (
     const textGenerationLayer = Layer.succeed(TextGeneration, {
       generateBranchName: () => Effect.succeed({ branch: "update" }),
       generateThreadTitle: () => Effect.succeed({ title: "New thread" }),
+      generateToolWorkLogSummary: () => Effect.succeed({ line: "Example activity" }),
     } as unknown as TextGenerationShape);
     const providerCommandReactorLayer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(runtimeServicesLayer),

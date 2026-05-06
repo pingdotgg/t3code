@@ -1,6 +1,6 @@
 import {
   type ProviderInstanceId,
-  type ProviderDriverKind,
+  ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import { resolveSelectableModel } from "@t3tools/shared/model";
@@ -11,7 +11,7 @@ import { ModelPickerSidebar } from "./ModelPickerSidebar";
 import { isModelPickerNewModel } from "./modelPickerModelHighlights";
 import { buildModelPickerSearchText, scoreModelPickerSearch } from "./modelPickerSearch";
 import { Combobox, ComboboxEmpty, ComboboxInput, ComboboxList } from "../ui/combobox";
-import { ModelEsque, PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
+import { getOpenCodeModelLane, ModelEsque, type OpenCodeModelLane } from "./providerIconUtils";
 import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
@@ -20,6 +20,7 @@ import {
 } from "../../keybindings";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
+import { Tabs, TabsList, TabsTrigger } from "../ui/tabs";
 import { TooltipProvider } from "../ui/tooltip";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
@@ -37,6 +38,7 @@ type ModelPickerItem = {
 };
 
 const EMPTY_MODEL_JUMP_LABELS = new Map<string, string>();
+const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 
 // Split a `${instanceId}:${slug}` combobox key back into its pieces. Slugs
 // can contain colons (e.g. some vendor model ids), so we only split on the
@@ -104,6 +106,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return favorites.length > 0 ? "favorites" : props.activeInstanceId;
     },
   );
+  const [openCodeLane, setOpenCodeLane] = useState<OpenCodeModelLane>("go");
   const keybindings = useMemo<ResolvedKeybindingsConfig>(
     () => providedKeybindings ?? [],
     [providedKeybindings],
@@ -156,6 +159,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => new Map(instanceEntries.map((entry) => [entry.instanceId, entry])),
     [instanceEntries],
   );
+  const selectedInstanceEntry =
+    selectedInstanceId === "favorites" ? null : (entryByInstanceId.get(selectedInstanceId) ?? null);
   const matchesLockedProvider = useCallback(
     (entry: Pick<ProviderInstanceEntry, "driverKind" | "continuationGroupKey">): boolean => {
       if (props.lockedProvider === null) return true;
@@ -213,20 +218,81 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
-  const lockedInstanceEntries = useMemo(
+  const lockedDisabledInstanceIds = useMemo(() => {
+    if (!isLocked) {
+      return undefined;
+    }
+    const disabled = new Set<ProviderInstanceId>();
+    for (const entry of instanceEntries) {
+      if (!matchesLockedProvider(entry)) {
+        disabled.add(entry.instanceId);
+      }
+    }
+    return disabled;
+  }, [instanceEntries, isLocked, matchesLockedProvider]);
+  const sidebarInstanceEntries = useMemo(() => {
+    if (!isLocked) {
+      return instanceEntries;
+    }
+    const available: ProviderInstanceEntry[] = [];
+    const disabled: ProviderInstanceEntry[] = [];
+    for (const entry of instanceEntries) {
+      if (matchesLockedProvider(entry)) {
+        available.push(entry);
+      } else {
+        disabled.push(entry);
+      }
+    }
+    return [...available, ...disabled];
+  }, [instanceEntries, isLocked, matchesLockedProvider]);
+  const showSidebar = !isSearching && sidebarInstanceEntries.length > 0;
+  const openCodeContextInstanceId =
+    props.lockedProvider === OPENCODE_DRIVER_KIND
+      ? props.activeInstanceId
+      : selectedInstanceEntry?.driverKind === OPENCODE_DRIVER_KIND
+        ? selectedInstanceEntry.instanceId
+        : null;
+  const openCodeContextModels = useMemo(
     () =>
-      props.lockedProvider ? instanceEntries.filter((entry) => matchesLockedProvider(entry)) : [],
-    [instanceEntries, matchesLockedProvider, props.lockedProvider],
+      openCodeContextInstanceId
+        ? flatModels.filter(
+            (model) =>
+              model.instanceId === openCodeContextInstanceId &&
+              model.driverKind === OPENCODE_DRIVER_KIND,
+          )
+        : [],
+    [flatModels, openCodeContextInstanceId],
   );
-  const showLockedInstanceSidebar = isLocked && lockedInstanceEntries.length > 1;
-  const showSidebar = !isSearching && (!isLocked || showLockedInstanceSidebar);
-  const sidebarInstanceEntries = showLockedInstanceSidebar
-    ? lockedInstanceEntries
-    : instanceEntries;
+  const showOpenCodeTabs = openCodeContextModels.length > 0;
+  const matchesOpenCodeLane = useCallback(
+    (model: ModelPickerItem) => {
+      if (!showOpenCodeTabs || !openCodeContextInstanceId) {
+        return true;
+      }
+      return (
+        model.instanceId === openCodeContextInstanceId &&
+        getOpenCodeModelLane(model) === openCodeLane
+      );
+    },
+    [openCodeContextInstanceId, openCodeLane, showOpenCodeTabs],
+  );
   const instanceOrder = useMemo(
     () => instanceEntries.map((entry) => entry.instanceId),
     [instanceEntries],
   );
+
+  useEffect(() => {
+    if (!showOpenCodeTabs) {
+      return;
+    }
+    const activeOpenCodeModel =
+      openCodeContextModels.find(
+        (model) => model.instanceId === props.activeInstanceId && model.slug === props.model,
+      ) ?? openCodeContextModels[0];
+    if (activeOpenCodeModel) {
+      setOpenCodeLane(getOpenCodeModelLane(activeOpenCodeModel));
+    }
+  }, [openCodeContextModels, props.activeInstanceId, props.model, showOpenCodeTabs]);
 
   // Filter models based on search query and selected instance
   const filteredModels = useMemo(() => {
@@ -271,8 +337,13 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       // When searching, we only respect locked provider (by driver kind),
       // ignoring sidebar selection so account-scoped searches can find a
       // model before the user chooses a specific instance rail item.
+      const openCodeScopedMatches =
+        showOpenCodeTabs && !searchQuery.trim()
+          ? rankedMatches.filter((rankedModel) => matchesOpenCodeLane(rankedModel.model))
+          : rankedMatches;
+
       if (props.lockedProvider !== null) {
-        return rankedMatches
+        return openCodeScopedMatches
           .filter((rankedModel) => matchesLockedProvider(rankedModel.model))
           .toSorted((a, b) => {
             const scoreDelta = a.score - b.score;
@@ -287,7 +358,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           .map((rankedModel) => rankedModel.model);
       }
 
-      return rankedMatches
+      return openCodeScopedMatches
         .toSorted((a, b) => {
           const scoreDelta = a.score - b.score;
           if (scoreDelta !== 0) {
@@ -303,13 +374,19 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
     if (props.lockedProvider !== null) {
       result = result.filter((m) => matchesLockedProvider(m));
-      if (showLockedInstanceSidebar) {
+      if (selectedInstanceId === "favorites") {
+        result = result.filter((m) => favoritesSet.has(providerModelKey(m.instanceId, m.slug)));
+      } else {
         result = result.filter((m) => m.instanceId === selectedInstanceId);
       }
     } else if (selectedInstanceId === "favorites") {
       result = result.filter((m) => favoritesSet.has(providerModelKey(m.instanceId, m.slug)));
     } else {
       result = result.filter((m) => m.instanceId === selectedInstanceId);
+    }
+
+    if (showOpenCodeTabs) {
+      result = result.filter(matchesOpenCodeLane);
     }
 
     return sortProviderModelItems(result, {
@@ -321,10 +398,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     favoritesSet,
     flatModels,
     instanceOrder,
+    matchesOpenCodeLane,
     matchesLockedProvider,
     props.lockedProvider,
     searchQuery,
-    showLockedInstanceSidebar,
+    showOpenCodeTabs,
     selectedInstanceId,
   ]);
 
@@ -363,25 +441,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [favorites, updateSettings],
   );
 
-  const LockedProviderIcon =
-    isLocked && props.lockedProvider ? PROVIDER_ICON_BY_PROVIDER[props.lockedProvider] : null;
-  // Header label for locked mode. Use the active instance's displayName
-  // when the lock narrows to exactly one instance (so "Codex Personal"
-  // shows instead of the generic driver label); fall back to the first
-  // matching entry otherwise.
-  const lockedHeaderLabel = useMemo(() => {
-    if (!isLocked || !props.lockedProvider) return null;
-    const matches = instanceEntries.filter((entry) => matchesLockedProvider(entry));
-    if (matches.length === 0) return null;
-    const active = matches.find((entry) => entry.instanceId === props.activeInstanceId);
-    return (active ?? matches[0])?.displayName ?? null;
-  }, [
-    isLocked,
-    matchesLockedProvider,
-    props.lockedProvider,
-    props.activeInstanceId,
-    instanceEntries,
-  ]);
   const modelJumpCommandByKey = useMemo(() => {
     const mapping = new Map<
       string,
@@ -518,27 +577,24 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   return (
     <TooltipProvider delay={0}>
       <div
-        className={cn(
-          "relative flex h-screen max-h-96 w-screen max-w-100 overflow-hidden rounded-lg border bg-popover not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
-          isLocked && !showLockedInstanceSidebar ? "flex-col" : "flex-row",
-        )}
+        className="relative flex h-screen max-h-96 w-screen max-w-100 flex-row overflow-hidden rounded-lg border bg-popover not-dark:bg-clip-padding text-popover-foreground shadow-lg/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]"
+        data-model-picker-content="true"
       >
-        {/* Locked provider header (only shown in locked mode) */}
-        {isLocked && !showLockedInstanceSidebar && LockedProviderIcon && lockedHeaderLabel && (
-          <div className="flex items-center gap-2 px-4 py-3 border-b">
-            <LockedProviderIcon className="size-5 shrink-0" />
-            <span className="font-medium text-sm">{lockedHeaderLabel}</span>
-          </div>
-        )}
-
-        {/* Sidebar (only in unlocked mode) */}
+        {/* Sidebar */}
         {showSidebar && (
           <ModelPickerSidebar
             selectedInstanceId={selectedInstanceId}
             onSelectInstance={handleSelectInstance}
             instanceEntries={sidebarInstanceEntries}
-            showFavorites={!isLocked}
-            showComingSoon={!isLocked}
+            showFavorites
+            showComingSoon
+            {...(lockedDisabledInstanceIds
+              ? {
+                  disabledInstanceIds: lockedDisabledInstanceIds,
+                  getDisabledInstanceTooltip: (entry: ProviderInstanceEntry) =>
+                    `${entry.displayName} is unavailable in this thread. Start a new thread to switch providers.`,
+                }
+              : {})}
           />
         )}
 
@@ -565,45 +621,61 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           <div
             className={cn(
               "flex min-h-0 flex-1 flex-col overflow-hidden",
-              isLocked && !showLockedInstanceSidebar ? "min-w-0" : showSidebar && "border-l",
+              showSidebar && "border-l",
             )}
           >
             {/* Search bar */}
             <div className="border-b px-3 py-2">
-              <ComboboxInput
-                ref={searchInputRef}
-                className="[&_input]:font-sans rounded-md"
-                inputClassName="border-0 shadow-none ring-0 focus-visible:ring-0"
-                placeholder="Search models..."
-                showTrigger={false}
-                startAddon={<SearchIcon className="size-4 shrink-0 text-muted-foreground/50" />}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    props.onRequestClose?.();
-                    return;
-                  }
-                  if (e.key === "Enter" && highlightedModelKeyRef.current) {
-                    (
-                      e as typeof e & { preventBaseUIHandler?: () => void }
-                    ).preventBaseUIHandler?.();
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const { instanceId, slug } = splitInstanceModelKey(
-                      highlightedModelKeyRef.current,
-                    );
-                    handleModelSelect(slug, instanceId);
-                    return;
-                  }
-                  e.stopPropagation();
-                }}
-                onMouseDown={(e) => e.stopPropagation()}
-                onTouchStart={(e) => e.stopPropagation()}
-                size="sm"
-              />
+              <div className="flex min-h-8 items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <ComboboxInput
+                    ref={searchInputRef}
+                    className="[&_input]:font-sans rounded-md"
+                    inputClassName="border-0 shadow-none ring-0 focus-visible:ring-0"
+                    placeholder="Search models..."
+                    showTrigger={false}
+                    startAddon={<SearchIcon className="size-4 shrink-0 text-muted-foreground/50" />}
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        props.onRequestClose?.();
+                        return;
+                      }
+                      if (e.key === "Enter" && highlightedModelKeyRef.current) {
+                        (
+                          e as typeof e & { preventBaseUIHandler?: () => void }
+                        ).preventBaseUIHandler?.();
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const { instanceId, slug } = splitInstanceModelKey(
+                          highlightedModelKeyRef.current,
+                        );
+                        handleModelSelect(slug, instanceId);
+                        return;
+                      }
+                      e.stopPropagation();
+                    }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onTouchStart={(e) => e.stopPropagation()}
+                    size="sm"
+                  />
+                </div>
+                {showOpenCodeTabs ? (
+                  <Tabs
+                    value={openCodeLane}
+                    onValueChange={(value) => setOpenCodeLane(value as OpenCodeModelLane)}
+                    className="shrink-0"
+                  >
+                    <TabsList aria-label="OpenCode model source">
+                      <TabsTrigger value="go">Go</TabsTrigger>
+                      <TabsTrigger value="zen">Zen</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                ) : null}
+              </div>
             </div>
 
             {/* Model list */}
@@ -611,7 +683,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               ref={listRegionRef}
               className="relative min-h-0 flex-1 before:pointer-events-none before:absolute before:inset-0 before:bg-muted/40"
             >
-              <ComboboxList className="model-picker-list size-full divide-y px-2 py-1">
+              <ComboboxList className="model-picker-list size-full px-2 py-2">
                 {filteredModelKeys.map((modelKey, index) => {
                   const model = filteredModelByKey.get(modelKey);
                   if (!model) {
@@ -627,9 +699,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       providerDisplayName={model.instanceDisplayName}
                       providerAccentColor={model.instanceAccentColor}
                       isFavorite={favoritesSet.has(modelKey)}
-                      showProvider={!isLocked || showLockedInstanceSidebar}
+                      isSelected={modelKey === `${props.activeInstanceId}:${props.model}`}
+                      showProvider
                       preferShortName={!isLocked}
-                      useTriggerLabel={isLocked && !showLockedInstanceSidebar}
+                      useTriggerLabel={false}
                       showNewBadge={isModelPickerNewModel(model.driverKind, model.slug)}
                       jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
                       onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}

@@ -3,6 +3,9 @@ import ReactDOM from "react-dom/client";
 import { RouterProvider } from "@tanstack/react-router";
 import { createHashHistory, createBrowserHistory } from "@tanstack/react-router";
 
+import "@fontsource-variable/dm-sans";
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/500.css";
 import "@xterm/xterm/css/xterm.css";
 import "./index.css";
 

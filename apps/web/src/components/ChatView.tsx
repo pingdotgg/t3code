@@ -1636,7 +1636,11 @@ export default function ChatView(props: ChatViewProps) {
   // `codex_personal`) surfaces its own status/message in the banner rather
   // than the default Codex's. Falls back to first-match-by-kind when no
   // saved instance id is available or the instance no longer exists.
+  const selectedProviderInstanceId =
+    providerStatuses.find((status) => status.instanceId === selectedProviderByThreadId)
+      ?.instanceId ?? null;
   const activeProviderInstanceId =
+    selectedProviderInstanceId ??
     activeThread?.session?.providerInstanceId ??
     activeThread?.modelSelection.instanceId ??
     activeProject?.defaultModelSelection?.instanceId ??
@@ -3017,8 +3021,6 @@ export default function ChatView(props: ChatViewProps) {
           },
         };
       });
-      promptRef.current = "";
-      composerRef.current?.resetCursorState({ cursor: 0 });
     },
     [activePendingProgress?.activeQuestion, activePendingUserInput],
   );

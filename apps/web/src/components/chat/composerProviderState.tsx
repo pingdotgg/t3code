@@ -65,7 +65,7 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
     ...(ultrathinkActive
       ? {
           composerFrameClassName: "ultrathink-frame",
-          composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]",
+          composerSurfaceClassName: "shadow-[0_0_0_1px_rgba(255,255,255,0.07)_inset]",
           modelPickerIconClassName: "ultrathink-chroma",
         }
       : {}),
@@ -81,7 +81,14 @@ function renderTraitsControl(
   const hasTarget = threadRef !== undefined || draftId !== undefined;
   if (
     !hasTarget ||
-    !shouldRenderTraitsControls({ provider, models, model, modelOptions, prompt })
+    !shouldRenderTraitsControls({
+      provider,
+      models,
+      model,
+      modelOptions,
+      prompt,
+      hiddenDescriptorIds: ["agent"],
+    })
   ) {
     return null;
   }
@@ -95,6 +102,7 @@ function renderTraitsControl(
       modelOptions={modelOptions}
       prompt={prompt}
       onPromptChange={onPromptChange}
+      hiddenDescriptorIds={["agent"]}
     />
   );
 }

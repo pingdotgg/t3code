@@ -18,6 +18,7 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildToolWorkLogSummaryPrompt,
 } from "./TextGenerationPrompts.ts";
 import {
   normalizeCliError,
@@ -97,7 +98,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle",
+      | "generateThreadTitle"
+      | "generateToolWorkLogSummary",
     attachments: BranchNameGenerationInput["attachments"],
   ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> {
     if (!attachments || attachments.length === 0) {
@@ -141,7 +143,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateToolWorkLogSummary";
     cwd: string;
     prompt: string;
     outputSchemaJson: S;
@@ -379,10 +382,36 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     } satisfies ThreadTitleGenerationResult;
   });
 
+  const generateToolWorkLogSummary: TextGenerationShape["generateToolWorkLogSummary"] = Effect.fn(
+    "CodexTextGeneration.generateToolWorkLogSummary",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildToolWorkLogSummaryPrompt({
+      label: input.label,
+      toolTitle: input.toolTitle,
+      itemType: input.itemType,
+      requestKind: input.requestKind,
+      command: input.command,
+      detailSnippet: input.detailSnippet,
+    });
+
+    const generated = yield* runCodexJson({
+      operation: "generateToolWorkLogSummary",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      line: generated.line,
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateToolWorkLogSummary,
   } satisfies TextGenerationShape;
 });

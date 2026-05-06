@@ -216,3 +216,53 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Tool work log summary (chat activity list)
+// ---------------------------------------------------------------------------
+
+export interface ToolWorkLogSummaryPromptInput {
+  label: string;
+  toolTitle?: string | undefined;
+  itemType?: string | undefined;
+  requestKind?: "command" | "file-read" | "file-change" | undefined;
+  command?: string | undefined;
+  detailSnippet?: string | undefined;
+}
+
+export function buildToolWorkLogSummaryPrompt(input: ToolWorkLogSummaryPromptInput) {
+  const lines: string[] = [
+    "You rewrite coding-agent tool and shell activity into one short, friendly log line.",
+    "Return a JSON object with key: line (a single string).",
+    "Rules:",
+    "- Plain English, sentence case, no trailing period",
+    "- Start with a short category word when obvious: Bash, Read, Write, Search, MCP, Task, Plan, or similar",
+    "- Describe what is being done in a few words (aim for ~12 words or fewer), not raw parameters",
+    "- Do not include XML/JSON dumps, stack traces, or long paths (a single filename is okay)",
+    "- Do not prefix with >_ or shell prompts — only the readable phrase",
+    "",
+    `Activity label: ${limitSection(input.label, 500)}`,
+  ];
+  if (input.toolTitle) {
+    lines.push("", `Tool title: ${limitSection(input.toolTitle, 400)}`);
+  }
+  if (input.itemType) {
+    lines.push("", `Item type: ${limitSection(input.itemType, 120)}`);
+  }
+  if (input.requestKind) {
+    lines.push("", `Approval/kind: ${input.requestKind}`);
+  }
+  if (input.command) {
+    lines.push("", `Command (may be truncated):`, limitSection(input.command, 1_500));
+  }
+  if (input.detailSnippet) {
+    lines.push("", `Detail (may be truncated):`, limitSection(input.detailSnippet, 2_500));
+  }
+
+  const prompt = lines.join("\n");
+  const outputSchema = Schema.Struct({
+    line: Schema.String,
+  });
+
+  return { prompt, outputSchema };
+}

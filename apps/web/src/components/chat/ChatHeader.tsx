@@ -9,7 +9,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { DiffIcon, TerminalSquareIcon } from "lucide-react";
+import { DiffIcon, FolderIcon, GitMergeIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
@@ -99,13 +99,21 @@ export const ChatHeader = memo(function ChatHeader({
           {activeThreadTitle}
         </h2>
         {activeProjectName && (
-          <Badge variant="outline" className="min-w-0 shrink overflow-hidden">
-            <span className="min-w-0 truncate">{activeProjectName}</span>
+          <Badge
+            variant="outline"
+            className="inline-flex h-auto min-h-0 min-w-0 shrink items-center justify-center overflow-hidden px-2 py-1 text-center leading-none sm:h-auto sm:min-h-0 sm:min-w-0"
+          >
+            <FolderIcon className="size-3 shrink-0 text-muted-foreground/70" aria-hidden />
+            <span className="min-w-0 max-w-full truncate leading-none">{activeProjectName}</span>
           </Badge>
         )}
         {activeProjectName && !isGitRepo && (
-          <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
-            No Git
+          <Badge
+            variant="outline"
+            className="inline-flex h-auto min-h-0 shrink-0 items-center justify-center gap-1 px-2 py-1 text-center text-[10px] leading-none text-amber-700 sm:h-auto sm:min-h-0 sm:min-w-0"
+          >
+            <GitMergeIcon className="size-3 shrink-0 opacity-90" aria-hidden />
+            Git not present
           </Badge>
         )}
       </div>
@@ -143,7 +151,7 @@ export const ChatHeader = memo(function ChatHeader({
                 pressed={terminalOpen}
                 onPressedChange={onToggleTerminal}
                 aria-label="Toggle terminal drawer"
-                variant="outline"
+                variant="ghost"
                 size="xs"
                 disabled={!terminalAvailable}
               >
@@ -167,7 +175,7 @@ export const ChatHeader = memo(function ChatHeader({
                 pressed={diffOpen}
                 onPressedChange={onToggleDiff}
                 aria-label="Toggle diff panel"
-                variant="outline"
+                variant="ghost"
                 size="xs"
                 disabled={!isGitRepo && !diffOpen}
               >

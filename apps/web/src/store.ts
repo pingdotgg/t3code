@@ -1447,34 +1447,62 @@ function applyEnvironmentOrchestrationEvent(
       });
 
     case "thread.session-set":
-      return updateThreadState(state, event.payload.threadId, (thread) => ({
-        ...thread,
-        session: mapSession(event.payload.session),
-        error: sanitizeThreadErrorMessage(event.payload.session.lastError),
-        latestTurn:
-          event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
+      return updateThreadState(state, event.payload.threadId, (thread) => {
+        const mappedSession = mapSession(event.payload.session);
+        const sessionWasRunning =
+          thread.session?.orchestrationStatus === "running" &&
+          thread.latestTurn?.state === "running";
+        const sessionIsRunning =
+          mappedSession.orchestrationStatus === "running" && mappedSession.activeTurnId != null;
+        const settledState = (() => {
+          if (mappedSession.status === "error") return "error" as const;
+          if (mappedSession.orchestrationStatus === "stopped") return "interrupted" as const;
+          return "completed" as const;
+        })();
+        const latestTurn =
+          sessionIsRunning && mappedSession.activeTurnId != null
             ? buildLatestTurn({
                 previous: thread.latestTurn,
-                turnId: event.payload.session.activeTurnId,
+                turnId: mappedSession.activeTurnId,
                 state: "running",
                 requestedAt:
-                  thread.latestTurn?.turnId === event.payload.session.activeTurnId
-                    ? thread.latestTurn.requestedAt
-                    : event.payload.session.updatedAt,
+                  thread.latestTurn?.turnId === mappedSession.activeTurnId
+                    ? thread.latestTurn!.requestedAt
+                    : mappedSession.updatedAt,
                 startedAt:
-                  thread.latestTurn?.turnId === event.payload.session.activeTurnId
-                    ? (thread.latestTurn.startedAt ?? event.payload.session.updatedAt)
-                    : event.payload.session.updatedAt,
+                  thread.latestTurn?.turnId === mappedSession.activeTurnId
+                    ? (thread.latestTurn!.startedAt ?? mappedSession.updatedAt)
+                    : mappedSession.updatedAt,
                 completedAt: null,
                 assistantMessageId:
-                  thread.latestTurn?.turnId === event.payload.session.activeTurnId
-                    ? thread.latestTurn.assistantMessageId
+                  thread.latestTurn?.turnId === mappedSession.activeTurnId
+                    ? thread.latestTurn!.assistantMessageId
                     : null,
                 sourceProposedPlan: thread.pendingSourceProposedPlan,
               })
-            : thread.latestTurn,
-        updatedAt: event.occurredAt,
-      }));
+            : sessionWasRunning && thread.latestTurn !== null
+              ? buildLatestTurn({
+                  previous: thread.latestTurn,
+                  turnId: thread.latestTurn.turnId,
+                  state: settledState,
+                  requestedAt: thread.latestTurn.requestedAt,
+                  startedAt: thread.latestTurn.startedAt ?? mappedSession.updatedAt,
+                  completedAt: thread.latestTurn.completedAt ?? mappedSession.updatedAt,
+                  assistantMessageId: thread.latestTurn.assistantMessageId,
+                })
+              : thread.latestTurn;
+        const pendingSourceProposedPlan = sessionIsRunning
+          ? thread.pendingSourceProposedPlan
+          : undefined;
+        return {
+          ...thread,
+          session: mappedSession,
+          error: sanitizeThreadErrorMessage(event.payload.session.lastError),
+          latestTurn,
+          pendingSourceProposedPlan,
+          updatedAt: event.occurredAt,
+        };
+      });
 
     case "thread.session-stop-requested":
       return updateThreadState(state, event.payload.threadId, (thread) =>

@@ -27,6 +27,7 @@ import {
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import { type OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
+import { withCustomUserInputOption } from "../userInputOptions.ts";
 import {
   buildOpenCodePermissionRules,
   OpenCodeRuntime,
@@ -272,10 +273,12 @@ function normalizeQuestionRequest(request: QuestionRequest): ReadonlyArray<UserI
     id: openCodeQuestionId(index, question),
     header: question.header,
     question: question.question,
-    options: question.options.map((option) => ({
-      label: option.label,
-      description: option.description,
-    })),
+    options: withCustomUserInputOption(
+      question.options.map((option) => ({
+        label: option.label,
+        description: option.description,
+      })),
+    ),
     ...(question.multiple ? { multiSelect: true } : {}),
   }));
 }
@@ -1183,7 +1186,7 @@ export function makeOpenCodeAdapter(
       const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
 
       context.activeTurnId = turnId;
-      context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
+      context.activeAgent = input.interactionMode === "plan" ? "plan" : agent;
       context.activeVariant = variant;
       updateProviderSession(
         context,

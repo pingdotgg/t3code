@@ -78,6 +78,7 @@ export const ClientSettingsSchema = Schema.Struct({
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
+  toolCallSummaries: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
 
@@ -485,5 +486,6 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  toolCallSummaries: Schema.optionalKey(Schema.Boolean),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

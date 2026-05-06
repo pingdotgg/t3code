@@ -27,14 +27,30 @@ export type ModelEsque = {
   subProvider?: string | undefined;
 };
 
+export type OpenCodeModelLane = "go" | "zen";
+
+const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function stripLeadingQualifier(value: string, qualifier: string | null | undefined): string {
+  const trimmedQualifier = qualifier?.trim();
+  if (!trimmedQualifier) {
+    return value;
+  }
+
+  const pattern = new RegExp(`^${escapeRegExp(trimmedQualifier)}(?:\\s*[.:/-]\\s*|\\s+)`, "iu");
+  return value.replace(pattern, "").trim() || value;
+}
+
 export function getDisplayModelName(
   model: ModelEsque,
   options?: { preferShortName?: boolean },
 ): string {
-  if (options?.preferShortName && model.shortName) {
-    return model.shortName;
-  }
-  return model.name;
+  const name = options?.preferShortName && model.shortName ? model.shortName : model.name;
+  return stripLeadingQualifier(name, model.subProvider);
 }
 
 export function getTriggerDisplayModelName(model: ModelEsque): string {
@@ -42,6 +58,24 @@ export function getTriggerDisplayModelName(model: ModelEsque): string {
 }
 
 export function getTriggerDisplayModelLabel(model: ModelEsque): string {
-  const title = getTriggerDisplayModelName(model);
-  return model.subProvider ? `${model.subProvider} · ${title}` : title;
+  return getTriggerDisplayModelName(model);
+}
+
+export function getOpenCodeModelLane(
+  model: Pick<ModelEsque, "slug" | "subProvider">,
+): OpenCodeModelLane {
+  const providerId = model.slug.split("/", 1)[0] ?? "";
+  const source = `${model.subProvider ?? ""} ${providerId}`.toLowerCase();
+  return /(^|[^a-z0-9])zen([^a-z0-9]|$)/u.test(source) ? "zen" : "go";
+}
+
+export function getModelProviderDisplayName(
+  driverKind: ProviderDriverKind,
+  providerDisplayName: string,
+  model: ModelEsque,
+): string {
+  if (driverKind === OPENCODE_DRIVER_KIND) {
+    return getOpenCodeModelLane(model) === "zen" ? "OpenCode Zen" : "OpenCode Go";
+  }
+  return model.subProvider ? `${providerDisplayName} · ${model.subProvider}` : providerDisplayName;
 }

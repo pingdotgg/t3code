@@ -62,6 +62,7 @@ import {
 } from "../composerFooterLayout";
 import { type ComposerPromptEditorHandle, ComposerPromptEditor } from "../ComposerPromptEditor";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { SelectedModelBadge } from "./SelectedModelBadge";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
@@ -89,6 +90,7 @@ import {
   BotIcon,
   CircleAlertIcon,
   ListTodoIcon,
+  PencilRulerIcon,
   type LucideIcon,
   LockIcon,
   LockOpenIcon,
@@ -96,7 +98,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
-import { getProviderInteractionModeToggle } from "../../providerModels";
+import { getProviderDisplayName, getProviderInteractionModeToggle } from "../../providerModels";
 import {
   deriveProviderInstanceEntries,
   resolveProviderDriverKindForInstanceSelection,
@@ -108,7 +110,10 @@ import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
 import type { PendingApproval, PendingUserInput } from "../../session-logic";
-import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  formatProviderDisplayName,
+} from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
@@ -193,33 +198,41 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
   const RuntimeModeIcon = runtimeModeOption.icon;
 
+  const interactionModeToggle = props.showInteractionModeToggle ? (
+    <>
+      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+      <Button
+        variant="ghost"
+        className={cn(
+          "shrink-0 whitespace-nowrap px-2 sm:px-3",
+          props.interactionMode === "plan"
+            ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/15 hover:text-blue-300"
+            : "text-muted-foreground/70 hover:text-foreground/80",
+        )}
+        size="sm"
+        type="button"
+        onClick={props.onToggleInteractionMode}
+        title={
+          props.interactionMode === "plan"
+            ? "Plan mode - click to return to normal build mode"
+            : "Default mode - click to enter plan mode"
+        }
+      >
+        {props.interactionMode === "plan" ? (
+          <PencilRulerIcon className="text-current opacity-100" />
+        ) : (
+          <BotIcon />
+        )}
+        <span className="sr-only sm:not-sr-only">
+          {props.interactionMode === "plan" ? "Plan" : "Build"}
+        </span>
+      </Button>
+    </>
+  ) : null;
+
   return (
     <>
       <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-
-      {props.showInteractionModeToggle ? (
-        <>
-          <Button
-            variant="ghost"
-            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-            size="sm"
-            type="button"
-            onClick={props.onToggleInteractionMode}
-            title={
-              props.interactionMode === "plan"
-                ? "Plan mode — click to return to normal build mode"
-                : "Default mode — click to enter plan mode"
-            }
-          >
-            <BotIcon />
-            <span className="sr-only sm:not-sr-only">
-              {props.interactionMode === "plan" ? "Plan" : "Build"}
-            </span>
-          </Button>
-
-          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-        </>
-      ) : null}
 
       <Select
         value={props.runtimeMode}
@@ -236,15 +249,17 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           <SelectValue>{runtimeModeOption.label}</SelectValue>
         </SelectTrigger>
         <SelectPopup alignItemWithTrigger={false}>
+          <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Permissions</div>
           {runtimeModeOptions.map((mode) => {
             const option = runtimeModeConfig[mode];
             const OptionIcon = option.icon;
             return (
-              <SelectItem key={mode} value={mode} className="min-w-64 py-2">
+              <SelectItem key={mode} value={mode} className="min-w-64 py-2" hideIndicator>
                 <div className="grid min-w-0 gap-0.5">
                   <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
                     <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
                     {option.label}
+                    {mode === props.runtimeMode ? <SelectedModelBadge /> : null}
                   </span>
                   <span className="text-muted-foreground text-xs leading-4">
                     {option.description}
@@ -256,6 +271,8 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
         </SelectPopup>
       </Select>
 
+      {interactionModeToggle}
+
       {props.showPlanToggle ? (
         <>
           <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
@@ -264,7 +281,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             className={cn(
               "shrink-0 whitespace-nowrap px-2 sm:px-3",
               props.planSidebarOpen
-                ? "text-blue-400 hover:text-blue-300"
+                ? "bg-blue-500/10 text-blue-400 hover:bg-blue-500/15 hover:text-blue-300"
                 : "text-muted-foreground/70 hover:text-foreground/80",
             )}
             size="sm"
@@ -276,7 +293,9 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
                 : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`
             }
           >
-            <ListTodoIcon />
+            <ListTodoIcon
+              className={props.planSidebarOpen ? "text-current opacity-100" : undefined}
+            />
             <span className="sr-only sm:not-sr-only">{props.planSidebarLabel}</span>
           </Button>
         </>
@@ -288,6 +307,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(props: {
   compact: boolean;
   activeContextWindow: ReturnType<typeof deriveLatestContextWindowSnapshot>;
+  activeThreadProviderDisplayName: string | null;
   isPreparingWorktree: boolean;
   pendingAction: {
     questionIndex: number;
@@ -310,7 +330,12 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
 }) {
   return (
     <>
-      {props.activeContextWindow ? <ContextWindowMeter usage={props.activeContextWindow} /> : null}
+      {props.activeContextWindow ? (
+        <ContextWindowMeter
+          usage={props.activeContextWindow}
+          providerDisplayName={props.activeThreadProviderDisplayName}
+        />
+      ) : null}
       {props.isPreparingWorktree ? (
         <span className="text-muted-foreground/70 text-xs">Preparing worktree...</span>
       ) : null}
@@ -777,6 +802,16 @@ export const ChatComposer = memo(
       () => deriveLatestContextWindowSnapshot(activeThreadActivities ?? []),
       [activeThreadActivities],
     );
+    const activeThreadProviderDisplayName = useMemo(() => {
+      if (!activeThreadModelSelection) return null;
+      const entry = providerStatuses.find(
+        (p) => p.instanceId === activeThreadModelSelection.instanceId,
+      );
+      if (entry) {
+        return getProviderDisplayName(providerStatuses, entry.driver);
+      }
+      return formatProviderDisplayName(activeThreadModelSelection.instanceId);
+    }, [providerStatuses, activeThreadModelSelection]);
 
     // ------------------------------------------------------------------
     // Composer-local state
@@ -954,6 +989,7 @@ export const ChatComposer = memo(
 
     const isComposerApprovalState = activePendingApproval !== null;
     const activePendingUserInput = pendingUserInputs[0] ?? null;
+    const pendingUserInputsForDisplay = pendingUserInputs;
     const hasComposerHeader =
       isComposerApprovalState ||
       pendingUserInputs.length > 0 ||
@@ -1157,51 +1193,6 @@ export const ChatComposer = memo(
       composerMenuSearchKey,
     ]);
 
-    const lastSyncedPendingInputRef = useRef<{
-      requestId: string | null;
-      questionId: string | null;
-    } | null>(null);
-
-    useEffect(() => {
-      const nextCustomAnswer = activePendingProgress?.customAnswer;
-      if (typeof nextCustomAnswer !== "string") {
-        lastSyncedPendingInputRef.current = null;
-        return;
-      }
-
-      const nextRequestId = activePendingUserInput?.requestId ?? null;
-      const nextQuestionId = activePendingProgress?.activeQuestion?.id ?? null;
-      const questionChanged =
-        lastSyncedPendingInputRef.current?.requestId !== nextRequestId ||
-        lastSyncedPendingInputRef.current?.questionId !== nextQuestionId;
-      const textChangedExternally = promptRef.current !== nextCustomAnswer;
-
-      lastSyncedPendingInputRef.current = {
-        requestId: nextRequestId,
-        questionId: nextQuestionId,
-      };
-
-      if (!questionChanged && !textChangedExternally) {
-        return;
-      }
-
-      promptRef.current = nextCustomAnswer;
-      const nextCursor = collapseExpandedComposerCursor(nextCustomAnswer, nextCustomAnswer.length);
-      setComposerCursor(nextCursor);
-      setComposerTrigger(
-        detectComposerTrigger(
-          nextCustomAnswer,
-          expandCollapsedComposerCursor(nextCustomAnswer, nextCursor),
-        ),
-      );
-      setComposerHighlightedItemId(null);
-    }, [
-      activePendingProgress?.customAnswer,
-      activePendingProgress?.activeQuestion?.id,
-      activePendingUserInput?.requestId,
-      promptRef,
-    ]);
-
     // ------------------------------------------------------------------
     // Reset compositor state on thread/draft change
     // ------------------------------------------------------------------
@@ -1352,13 +1343,18 @@ export const ChatComposer = memo(
         cursorAdjacentToMention: boolean,
         terminalContextIds: string[],
       ) => {
-        if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
+        const activePendingQuestion = activePendingProgress?.activeQuestion;
+        if (activePendingQuestion && activePendingUserInput) {
+          // While a pending user input is active the composer doubles as the
+          // "Other"/custom answer field so @ and / mentions keep working.
+          // Route prompt edits to the pending input draft instead of the
+          // regular composer draft.
           setComposerCursor(nextCursor);
           setComposerTrigger(
             cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
           );
           onChangeActivePendingUserInputCustomAnswer(
-            activePendingProgress.activeQuestion.id,
+            activePendingQuestion.id,
             nextPrompt,
             nextCursor,
             expandedCursor,
@@ -1381,7 +1377,7 @@ export const ChatComposer = memo(
       },
       [
         activePendingProgress?.activeQuestion,
-        pendingUserInputs.length,
+        activePendingUserInput,
         onChangeActivePendingUserInputCustomAnswer,
         promptRef,
         setPrompt,
@@ -1964,7 +1960,7 @@ export const ChatComposer = memo(
             ref={composerSurfaceRef}
             data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
             className={cn(
-              "rounded-[20px] border bg-card transition-colors duration-200 has-focus-visible:border-ring/45",
+              "rounded-[20px] border bg-card ring-foreground/5 transition-[box-shadow,border-color,background-color] duration-200 has-focus-visible:border-foreground/25 has-focus-visible:ring-[2px]",
               isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border",
               environmentUnavailable ? "opacity-75" : null,
               composerProviderState.composerSurfaceClassName,
@@ -2039,7 +2035,7 @@ export const ChatComposer = memo(
                 data-chat-composer-collapsed-controls="true"
               >
                 <ComposerPendingUserInputPanel
-                  pendingUserInputs={pendingUserInputs}
+                  pendingUserInputs={pendingUserInputsForDisplay}
                   respondingRequestIds={respondingRequestIds}
                   answers={activePendingDraftAnswers}
                   questionIndex={activePendingQuestionIndex}
@@ -2143,7 +2139,7 @@ export const ChatComposer = memo(
               )}
             >
               {composerMenuOpen && !isComposerApprovalState && (
-                <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
+                <div className="absolute inset-x-0 bottom-full z-20 mb-2">
                   <ComposerCommandMenu
                     items={composerMenuItems}
                     resolvedTheme={resolvedTheme}
@@ -2316,6 +2312,7 @@ export const ChatComposer = memo(
                 data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
                 className={cn(
                   "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 sm:px-3 sm:pb-3",
+                  pendingUserInputs.length > 0 && "pt-2",
                   isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                   showMobilePendingAnswerActions && "hidden sm:flex",
                 )}
@@ -2396,6 +2393,7 @@ export const ChatComposer = memo(
                   <ComposerFooterPrimaryActions
                     compact={isComposerPrimaryActionsCompact}
                     activeContextWindow={activeContextWindow}
+                    activeThreadProviderDisplayName={activeThreadProviderDisplayName}
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     showPlanFollowUpPrompt={

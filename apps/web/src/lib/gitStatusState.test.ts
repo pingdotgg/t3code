@@ -109,6 +109,7 @@ function createRegisteredGitStatusClient(environmentId: EnvironmentId) {
       runStackedAction: vi.fn(async () => ({}) as any),
       resolvePullRequest: vi.fn(async () => undefined),
       preparePullRequestThread: vi.fn(async () => undefined),
+      summarizeToolWorkLog: vi.fn(async () => ({ line: "Test summary" })),
     },
     server: {
       getConfig: vi.fn(async () => ({

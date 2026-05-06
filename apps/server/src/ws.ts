@@ -29,6 +29,7 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { ServerConfig } from "./config.ts";
+import { TextGeneration } from "./textGeneration/TextGeneration.ts";
 import { Keybindings } from "./keybindings.ts";
 import { Open, resolveAvailableEditors } from "./open.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
@@ -153,6 +154,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const gitWorkflow = yield* GitWorkflowService;
       const vcsProvisioning = yield* VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
+      const textGeneration = yield* TextGeneration;
       const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
@@ -998,6 +1000,21 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             gitWorkflow
               .preparePullRequestThread(input)
               .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "git" },
+          ),
+        [WS_METHODS.gitSummarizeToolWorkLog]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.gitSummarizeToolWorkLog,
+            textGeneration.generateToolWorkLogSummary({
+              cwd: input.cwd,
+              label: input.label,
+              modelSelection: input.modelSelection,
+              ...(input.toolTitle !== undefined ? { toolTitle: input.toolTitle } : {}),
+              ...(input.itemType !== undefined ? { itemType: input.itemType } : {}),
+              ...(input.requestKind !== undefined ? { requestKind: input.requestKind } : {}),
+              ...(input.command !== undefined ? { command: input.command } : {}),
+              ...(input.detailSnippet !== undefined ? { detailSnippet: input.detailSnippet } : {}),
+            }),
             { "rpc.aggregate": "git" },
           ),
         [WS_METHODS.vcsListRefs]: (input) =>

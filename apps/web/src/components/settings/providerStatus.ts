@@ -21,6 +21,11 @@ export const PROVIDER_STATUS_STYLES = {
 
 export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 
+function punctuateProviderMessage(message: string): string {
+  const trimmed = message.trim();
+  return /[.!?]$/u.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
 /**
  * Derive the headline + detail copy shown under a provider's name in the
  * settings page. Prefers `provider.message` for server-supplied detail and
@@ -31,52 +36,66 @@ export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
 export function getProviderSummary(provider: ServerProvider | undefined) {
   if (!provider) {
     return {
-      headline: "Checking provider status",
+      headline: punctuateProviderMessage("Checking provider status"),
       detail: "Waiting for the server to report installation and authentication details.",
     };
   }
   if (!provider.enabled) {
     return {
-      headline: "Disabled",
-      detail:
+      headline: punctuateProviderMessage("Disabled"),
+      detail: punctuateProviderMessage(
         provider.message ?? "This provider is installed but disabled for new sessions in T3 Code.",
+      ),
     };
   }
   if (!provider.installed) {
     return {
-      headline: "Not found",
-      detail: provider.message ?? "CLI not detected on PATH.",
+      headline: punctuateProviderMessage("Not found"),
+      detail: punctuateProviderMessage(provider.message ?? "CLI not detected on PATH."),
     };
   }
   if (provider.auth.status === "authenticated") {
+    if (provider.auth.type === "opencode" && provider.message) {
+      return {
+        headline: punctuateProviderMessage(provider.message),
+        detail: null,
+      };
+    }
     const authLabel = provider.auth.label ?? provider.auth.type;
     return {
-      headline: authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
-      detail: provider.message ?? null,
+      headline: punctuateProviderMessage(
+        authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
+      ),
+      detail: provider.message ? punctuateProviderMessage(provider.message) : null,
     };
   }
   if (provider.auth.status === "unauthenticated") {
     return {
-      headline: "Not authenticated",
-      detail: provider.message ?? null,
+      headline: punctuateProviderMessage("Not authenticated"),
+      detail: provider.message ? punctuateProviderMessage(provider.message) : null,
     };
   }
   if (provider.status === "warning") {
     return {
-      headline: "Needs attention",
-      detail:
+      headline: punctuateProviderMessage("Needs attention"),
+      detail: punctuateProviderMessage(
         provider.message ?? "The provider is installed, but the server could not fully verify it.",
+      ),
     };
   }
   if (provider.status === "error") {
     return {
-      headline: "Unavailable",
-      detail: provider.message ?? "The provider failed its startup checks.",
+      headline: punctuateProviderMessage("Unavailable"),
+      detail: punctuateProviderMessage(
+        provider.message ?? "The provider failed its startup checks.",
+      ),
     };
   }
   return {
-    headline: "Available",
-    detail: provider.message ?? "Installed and ready, but authentication could not be verified.",
+    headline: punctuateProviderMessage("Available"),
+    detail: punctuateProviderMessage(
+      provider.message ?? "Installed and ready, but authentication could not be verified.",
+    ),
   };
 }
 

@@ -43,6 +43,7 @@ import {
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
+import { withCustomUserInputOption } from "../userInputOptions.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import {
@@ -159,9 +160,7 @@ function normalizeCodexTokenUsage(
 
   return {
     usedTokens,
-    ...(totalProcessedTokens !== undefined && totalProcessedTokens > usedTokens
-      ? { totalProcessedTokens }
-      : {}),
+    ...(totalProcessedTokens !== undefined ? { totalProcessedTokens } : {}),
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(inputTokens !== undefined ? { inputTokens } : {}),
     ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
@@ -342,7 +341,7 @@ function toUserInputQuestions(questions: ReadonlyArray<CodexToolUserInputQuestio
         id,
         header,
         question: prompt,
-        options,
+        options: withCustomUserInputOption(options),
         multiSelect: false,
       };
     })

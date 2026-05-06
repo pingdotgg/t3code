@@ -135,8 +135,7 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
     <span className="text-[11px] text-muted-foreground/60">
       {lastCheckedRelative.suffix ? (
         <>
-          Checked <span className="font-mono tabular-nums">{lastCheckedRelative.value}</span>{" "}
-          {lastCheckedRelative.suffix}
+          Checked {lastCheckedRelative.value} {lastCheckedRelative.suffix}
         </>
       ) : (
         <>Checked {lastCheckedRelative.value}</>
@@ -777,8 +776,33 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          title="Tool call summaries"
+          description="Use the text generation model to write a friendly one-line summary for each tool call in the chat work log. When off, tool calls show their raw heading and details."
+          resetAction={
+            settings.toolCallSummaries !== DEFAULT_UNIFIED_SETTINGS.toolCallSummaries ? (
+              <SettingResetButton
+                label="tool call summaries"
+                onClick={() =>
+                  updateSettings({
+                    toolCallSummaries: DEFAULT_UNIFIED_SETTINGS.toolCallSummaries,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.toolCallSummaries}
+              onCheckedChange={(checked) => updateSettings({ toolCallSummaries: Boolean(checked) })}
+              aria-label="Tool call summaries"
+            />
+          }
+        />
+
+        <SettingsRow
           title="Text generation model"
-          description="Configure the model used for generated commit messages, PR titles, and similar Git text."
+          description="Configure the model used for generated commit messages, PR titles, friendly chat work-log lines (tool activity summaries), and similar Git text."
+          descriptionMinLines={2}
           resetAction={
             isGitWritingModelDirty ? (
               <SettingResetButton
@@ -828,6 +852,8 @@ export function GeneralSettingsPanel() {
                 onPromptChange={() => {}}
                 modelOptions={textGenModelOptions}
                 allowPromptInjectedEffort={false}
+                hiddenDescriptorIds={["agent"]}
+                showTriggerSeparators={false}
                 triggerVariant="outline"
                 triggerClassName="min-w-0 max-w-none shrink-0 text-foreground/90 hover:text-foreground"
                 onModelOptionsChange={(nextOptions) => {

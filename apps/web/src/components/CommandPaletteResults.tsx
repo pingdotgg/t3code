@@ -12,8 +12,8 @@ import {
   CommandGroupLabel,
   CommandItem,
   CommandList,
-  CommandShortcut,
 } from "./ui/command";
+import { Shortcut } from "./ui/kbd";
 import { cn } from "~/lib/utils";
 
 interface CommandPaletteResultsProps {
@@ -137,10 +137,12 @@ function CommandPaletteResultRow(props: {
           {props.item.timestamp}
         </span>
       ) : null}
-      {shortcutLabel ? <CommandShortcut>{shortcutLabel}</CommandShortcut> : null}
-      {props.item.kind === "submenu" ? (
-        <ChevronRightIcon className="ml-auto size-4 shrink-0 text-muted-foreground/50" />
-      ) : null}
+      <span className="ms-auto inline-flex shrink-0 items-center gap-1">
+        {shortcutLabel ? <Shortcut>{shortcutLabel}</Shortcut> : null}
+        {props.item.kind === "submenu" ? (
+          <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground/50" />
+        ) : null}
+      </span>
     </CommandItem>
   );
 }

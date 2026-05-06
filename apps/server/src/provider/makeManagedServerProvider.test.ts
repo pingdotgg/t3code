@@ -10,7 +10,7 @@ const fastModeCapabilities = createModelCapabilities({
   optionDescriptors: [
     {
       id: "fastMode",
-      label: "Fast Mode",
+      label: "Speed",
       type: "boolean",
     },
   ],

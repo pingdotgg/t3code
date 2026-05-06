@@ -125,7 +125,7 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
               { id: "medium", label: "medium", isDefault: true },
               { id: "high", label: "high" },
             ]),
-            booleanDescriptor("fastMode", "Fast Mode"),
+            booleanDescriptor("fastMode", "Speed"),
           ],
         }),
       },
@@ -140,7 +140,7 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
               { id: "medium", label: "medium", isDefault: true },
               { id: "high", label: "high" },
             ]),
-            booleanDescriptor("fastMode", "Fast Mode"),
+            booleanDescriptor("fastMode", "Speed"),
           ],
         }),
       },
@@ -363,8 +363,8 @@ describe("ProviderModelPicker", () => {
       await vi.waitFor(() => {
         expect(getSidebarProviderOrder().slice(0, 3)).toEqual([
           "favorites",
-          "codex",
           "claudeAgent",
+          "codex",
         ]);
       });
     } finally {
@@ -461,7 +461,7 @@ describe("ProviderModelPicker", () => {
     }
   });
 
-  it("shows locked provider header and only its models in locked mode", async () => {
+  it("keeps the full provider rail in locked mode and only lists compatible models", async () => {
     localStorage.setItem(
       "t3code:client-settings:v1",
       JSON.stringify({
@@ -484,8 +484,20 @@ describe("ProviderModelPicker", () => {
 
       await vi.waitFor(() => {
         const text = document.body.textContent ?? "";
-        // Should show locked provider label
         expect(text).toContain("Claude");
+        expect(getSidebarProviderOrder().slice(0, 3)).toEqual([
+          "favorites",
+          "codex",
+          "claudeAgent",
+        ]);
+        expect(
+          document.querySelector<HTMLButtonElement>('[data-model-picker-provider="codex"]')
+            ?.disabled,
+        ).toBe(true);
+        expect(
+          document.querySelector<HTMLButtonElement>('[data-model-picker-provider="claudeAgent"]')
+            ?.disabled,
+        ).toBe(false);
         expect(getVisibleModelNames()).toEqual([
           "Claude Sonnet 4.6",
           "Claude Opus 4.6",
@@ -559,7 +571,21 @@ describe("ProviderModelPicker", () => {
       await page.getByRole("button").click();
 
       await vi.waitFor(() => {
-        expect(getSidebarProviderOrder()).toEqual(["codex", "codex_personal"]);
+        expect(getSidebarProviderOrder()).toEqual([
+          "favorites",
+          "codex",
+          "codex_personal",
+          "codex_isolated",
+          "claudeAgent",
+        ]);
+        expect(
+          document.querySelector<HTMLButtonElement>('[data-model-picker-provider="codex_isolated"]')
+            ?.disabled,
+        ).toBe(true);
+        expect(
+          document.querySelector<HTMLButtonElement>('[data-model-picker-provider="claudeAgent"]')
+            ?.disabled,
+        ).toBe(true);
         expect(getModelPickerListText()).not.toContain("Codex Isolated");
         expect(
           document.querySelector<HTMLElement>('[data-model-picker-provider="codex_personal"]')
@@ -837,7 +863,7 @@ describe("ProviderModelPicker", () => {
                 { id: "medium", label: "medium", isDefault: true },
                 { id: "high", label: "high" },
               ]),
-              booleanDescriptor("fastMode", "Fast Mode"),
+              booleanDescriptor("fastMode", "Speed"),
             ],
           }),
         },
@@ -935,12 +961,76 @@ describe("ProviderModelPicker", () => {
 
       await vi.waitFor(() => {
         const listText = getModelPickerListText();
-        expect(listText).toContain("OpenCode · GitHub Copilot");
+        expect(listText).toContain("OpenCode Go");
         expect(listText).toContain("Claude");
         expect(listText).not.toContain("OpenCodeClaude Opus 4.6");
       });
     } finally {
       await mounted.cleanup();
+    }
+  });
+
+  it("filters OpenCode models by Go and Zen tabs", async () => {
+    localStorage.removeItem("t3code:client-settings:v1");
+
+    const providers: ReadonlyArray<ServerProvider> = [
+      buildOpenCodeProvider([
+        {
+          slug: "opencode/gpt-5",
+          name: "GPT-5",
+          subProvider: "OpenCode Go",
+          isCustom: false,
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("variant", "Variant", [
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+            ],
+          }),
+        },
+        {
+          slug: "opencode-zen/claude-opus-4.7",
+          name: "Claude Opus 4.7",
+          subProvider: "OpenCode Zen",
+          isCustom: false,
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("variant", "Variant", [
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+            ],
+          }),
+        },
+      ]),
+    ];
+    const mounted = await mountPicker({
+      activeInstanceId: OPENCODE_INSTANCE_ID,
+      model: "opencode/gpt-5",
+      lockedProvider: null,
+      providers,
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        expect(getModelPickerListText()).toContain("GPT-5");
+        expect(getModelPickerListText()).not.toContain("Claude Opus 4.7");
+      });
+
+      await page.getByRole("tab", { name: "Zen" }).click();
+
+      await vi.waitFor(() => {
+        const listText = getModelPickerListText();
+        expect(listText).toContain("Claude Opus 4.7");
+        expect(listText).toContain("OpenCode Zen");
+        expect(listText).not.toContain("GPT-5");
+      });
+    } finally {
+      await mounted.cleanup();
+      localStorage.removeItem("t3code:client-settings:v1");
     }
   });
 
@@ -1050,6 +1140,38 @@ describe("ProviderModelPicker", () => {
     }
   });
 
+  it("filters favorites to compatible models in locked mode", async () => {
+    localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        favorites: [
+          { provider: "codex", model: "gpt-5.3-codex" },
+          { provider: "claudeAgent", model: "claude-sonnet-4-6" },
+        ],
+      }),
+    );
+
+    const mounted = await mountPicker({
+      activeInstanceId: CLAUDE_INSTANCE_ID,
+      model: "claude-opus-4-6",
+      lockedProvider: ProviderDriverKind.make("claudeAgent"),
+    });
+
+    try {
+      await page.getByRole("button").click();
+      await page.getByRole("button", { name: "Favorites" }).click();
+
+      await vi.waitFor(() => {
+        expect(getVisibleModelNames()).toEqual(["Claude Sonnet 4.6"]);
+        expect(getModelPickerListText()).not.toContain("GPT-5.3 Codex");
+      });
+    } finally {
+      await mounted.cleanup();
+      localStorage.removeItem("t3code:client-settings:v1");
+    }
+  });
+
   it("dispatches callback with correct provider and model when selected", async () => {
     const mounted = await mountPicker({
       activeInstanceId: CLAUDE_INSTANCE_ID,
@@ -1093,7 +1215,7 @@ describe("ProviderModelPicker", () => {
                 { id: "medium", label: "medium", isDefault: true },
                 { id: "high", label: "high" },
               ]),
-              booleanDescriptor("fastMode", "Fast Mode"),
+              booleanDescriptor("fastMode", "Speed"),
             ],
           }),
         },
@@ -1113,7 +1235,7 @@ describe("ProviderModelPicker", () => {
                 { id: "medium", label: "medium", isDefault: true },
                 { id: "high", label: "high" },
               ]),
-              booleanDescriptor("fastMode", "Fast Mode"),
+              booleanDescriptor("fastMode", "Speed"),
             ],
           }),
         },
@@ -1128,7 +1250,7 @@ describe("ProviderModelPicker", () => {
                 { id: "medium", label: "medium", isDefault: true },
                 { id: "high", label: "high" },
               ]),
-              booleanDescriptor("fastMode", "Fast Mode"),
+              booleanDescriptor("fastMode", "Speed"),
             ],
           }),
         },

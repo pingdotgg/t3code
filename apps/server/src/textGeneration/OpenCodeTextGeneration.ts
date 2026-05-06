@@ -17,6 +17,7 @@ import {
   buildCommitMessagePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
+  buildToolWorkLogSummaryPrompt,
 } from "./TextGenerationPrompts.ts";
 import { type TextGenerationShape } from "./TextGeneration.ts";
 import {
@@ -156,7 +157,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateToolWorkLogSummary";
   }) =>
     sharedServerMutex.withPermit(
       Effect.gen(function* () {
@@ -266,7 +268,8 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
       | "generateCommitMessage"
       | "generatePrContent"
       | "generateBranchName"
-      | "generateThreadTitle";
+      | "generateThreadTitle"
+      | "generateToolWorkLogSummary";
     readonly cwd: string;
     readonly prompt: string;
     readonly outputSchemaJson: S;
@@ -455,10 +458,35 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
     };
   });
 
+  const generateToolWorkLogSummary: TextGenerationShape["generateToolWorkLogSummary"] = Effect.fn(
+    "OpenCodeTextGeneration.generateToolWorkLogSummary",
+  )(function* (input) {
+    const { prompt, outputSchema } = buildToolWorkLogSummaryPrompt({
+      label: input.label,
+      toolTitle: input.toolTitle,
+      itemType: input.itemType,
+      requestKind: input.requestKind,
+      command: input.command,
+      detailSnippet: input.detailSnippet,
+    });
+    const generated = yield* runOpenCodeJson({
+      operation: "generateToolWorkLogSummary",
+      cwd: input.cwd,
+      prompt,
+      outputSchemaJson: outputSchema,
+      modelSelection: input.modelSelection,
+    });
+
+    return {
+      line: generated.line,
+    };
+  });
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
+    generateToolWorkLogSummary,
   } satisfies TextGenerationShape;
 });

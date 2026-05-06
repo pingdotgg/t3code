@@ -96,7 +96,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
         }),
         buildBooleanOptionDescriptor({
           id: "fastMode",
-          label: "Fast Mode",
+          label: "Speed",
         }),
         buildSelectOptionDescriptor({
           id: "contextWindow",
@@ -127,7 +127,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
         }),
         buildBooleanOptionDescriptor({
           id: "fastMode",
-          label: "Fast Mode",
+          label: "Speed",
         }),
       ],
     }),
@@ -356,6 +356,75 @@ type ClaudeCapabilitiesProbe = {
   readonly tokenSource: string | undefined;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 };
+
+type ClaudeAuthStatusProbe = {
+  readonly authenticated: boolean | undefined;
+  readonly authMethod: string | undefined;
+  readonly email: string | undefined;
+};
+
+function booleanFromUnknown(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function stringFromUnknown(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function parseClaudeAuthStatusOutput(output: string): ClaudeAuthStatusProbe | undefined {
+  const trimmed = output.trim();
+  if (!trimmed) return undefined;
+
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    const account =
+      parsed.account && typeof parsed.account === "object"
+        ? (parsed.account as Record<string, unknown>)
+        : undefined;
+    return {
+      authenticated:
+        booleanFromUnknown(parsed.loggedIn) ??
+        booleanFromUnknown(parsed.authenticated) ??
+        booleanFromUnknown(parsed.isAuthenticated) ??
+        booleanFromUnknown(parsed.isLoggedIn),
+      authMethod:
+        stringFromUnknown(parsed.authMethod) ??
+        stringFromUnknown(parsed.tokenSource) ??
+        stringFromUnknown(parsed.type),
+      email: stringFromUnknown(account?.email) ?? stringFromUnknown(parsed.email),
+    };
+  } catch {
+    const lower = trimmed.toLowerCase();
+    if (lower.includes("not logged in") || lower.includes("not authenticated")) {
+      return { authenticated: false, authMethod: undefined, email: undefined };
+    }
+    if (lower.includes("logged in") || lower.includes("authenticated")) {
+      return { authenticated: true, authMethod: undefined, email: undefined };
+    }
+    return undefined;
+  }
+}
+
+function claudeUnauthenticatedProvider(input: {
+  readonly claudeSettings: ClaudeSettings;
+  readonly checkedAt: string;
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly version: string | null;
+}) {
+  return buildServerProvider({
+    presentation: CLAUDE_PRESENTATION,
+    enabled: input.claudeSettings.enabled,
+    checkedAt: input.checkedAt,
+    models: input.models,
+    probe: {
+      installed: true,
+      version: input.version,
+      status: "error",
+      auth: { status: "unauthenticated" },
+      message: "Claude CLI is not authenticated. Run `claude login` and try again.",
+    },
+  });
+}
 
 function parseClaudeInitializationCommands(
   commands: ReadonlyArray<ClaudeSlashCommand> | undefined,
@@ -616,6 +685,31 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const opus47UpgradeMessage = supportsClaudeOpus47(parsedVersion)
     ? undefined
     : formatClaudeOpus47UpgradeMessage(parsedVersion);
+
+  const authStatusProbe = yield* runClaudeCommand(
+    claudeSettings,
+    ["auth", "status"],
+    environment,
+  ).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.catchCause(() => Effect.succeed(Option.none())),
+    Effect.result,
+  );
+
+  if (Result.isSuccess(authStatusProbe) && Option.isSome(authStatusProbe.success)) {
+    const authStatusResult = authStatusProbe.success.value;
+    const parsedAuthStatus = parseClaudeAuthStatusOutput(
+      `${authStatusResult.stdout}\n${authStatusResult.stderr}`,
+    );
+    if (parsedAuthStatus?.authenticated === false) {
+      return claudeUnauthenticatedProvider({
+        claudeSettings,
+        checkedAt,
+        models,
+        version: parsedVersion,
+      });
+    }
+  }
 
   const capabilities = resolveCapabilities
     ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))

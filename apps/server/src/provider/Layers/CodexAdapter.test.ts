@@ -906,6 +906,12 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           assert.equal(events[0].requestId, "req-user-input-1");
           assert.equal(events[0].payload.questions[0]?.id, "sandbox_mode");
           assert.equal(events[0].payload.questions[0]?.multiSelect, false);
+          assert.deepEqual(events[0].payload.questions[0]?.options, [
+            {
+              label: "workspace-write",
+              description: "Allow workspace writes only",
+            },
+          ]);
         }
 
         assert.equal(events[1]?.type, "user-input.resolved");

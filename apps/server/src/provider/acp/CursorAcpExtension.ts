@@ -5,6 +5,8 @@
 import type { UserInputQuestion } from "@t3tools/contracts";
 import { Schema } from "effect";
 
+import { withCustomUserInputOption } from "../userInputOptions.ts";
+
 const CursorAskQuestionOption = Schema.Struct({
   id: Schema.String,
   label: Schema.String,
@@ -61,13 +63,14 @@ export function extractAskQuestions(
     header: "Question",
     question: question.prompt,
     multiSelect: question.allowMultiple === true,
-    options:
+    options: withCustomUserInputOption(
       question.options.length > 0
         ? question.options.map((option) => ({
             label: option.label,
             description: option.label,
           }))
         : [{ label: "OK", description: "Continue" }],
+    ),
   }));
 }
 

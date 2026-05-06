@@ -1,6 +1,191 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { Schema } from "effect";
+import { TextGenerationError } from "@t3tools/contracts";
 
 export function isGitRepository(cwd: string): boolean {
   return existsSync(join(cwd, ".git"));
+}
+
+/** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
+export function toJsonSchemaObject(schema: Schema.Top): unknown {
+  const document = Schema.toJsonSchemaDocument(schema);
+  if (document.definitions && Object.keys(document.definitions).length > 0) {
+    return { ...document.schema, $defs: document.definitions };
+  }
+  return document.schema;
+}
+
+/** Truncate a text section to `maxChars`, appending a `[truncated]` marker when needed. */
+export function limitSection(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  const truncated = value.slice(0, maxChars);
+  return `${truncated}\n\n[truncated]`;
+}
+
+export function extractJsonObject(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return trimmed;
+  }
+
+  const start = trimmed.indexOf("{");
+  if (start < 0) {
+    return trimmed;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaping = false;
+  for (let index = start; index < trimmed.length; index += 1) {
+    const char = trimmed[index];
+    if (inString) {
+      if (escaping) {
+        escaping = false;
+      } else if (char === "\\") {
+        escaping = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return trimmed.slice(start, index + 1);
+      }
+    }
+  }
+
+  return trimmed.slice(start);
+}
+
+/** Normalise a raw commit subject to imperative-mood, ≤72 chars, no trailing period. */
+export function sanitizeCommitSubject(raw: string): string {
+  const singleLine = raw.trim().split(/\r?\n/g)[0]?.trim() ?? "";
+  const withoutTrailingPeriod = singleLine.replace(/[.]+$/g, "").trim();
+  if (withoutTrailingPeriod.length === 0) {
+    return "Update project files";
+  }
+
+  if (withoutTrailingPeriod.length <= 72) {
+    return withoutTrailingPeriod;
+  }
+  return withoutTrailingPeriod.slice(0, 72).trimEnd();
+}
+
+/** Normalise a raw PR title to a single line with a sensible fallback. */
+export function sanitizePrTitle(raw: string): string {
+  const singleLine = raw.trim().split(/\r?\n/g)[0]?.trim() ?? "";
+  if (singleLine.length > 0) {
+    return singleLine;
+  }
+  return "Update project changes";
+}
+
+/** Normalise a raw thread title to a compact single-line sidebar-safe label. */
+export function sanitizeThreadTitle(raw: string): string {
+  const normalized = raw
+    .trim()
+    .split(/\r?\n/g)[0]
+    ?.trim()
+    .replace(/^['"`]+|['"`]+$/g, "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  if (!normalized || normalized.trim().length === 0) {
+    return "New thread";
+  }
+
+  if (normalized.length <= 50) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 47).trimEnd()}...`;
+}
+
+/** Normalise model output for tool work-log rows (UI adds the >_ prefix). */
+export function sanitizeToolWorkLogSummaryLine(raw: string, fallbackLabel: string): string {
+  const stripped = raw
+    .trim()
+    .split(/\r?\n/g)[0]
+    ?.replace(/^>\s*[_＿]\s*/i, "")
+    .replace(/^>\s*/, "")
+    .trim()
+    .replace(/\s+/g, " ");
+
+  const base =
+    stripped && stripped.length > 0
+      ? stripped
+      : (fallbackLabel.trim().split(/\r?\n/g)[0]?.trim() ?? "").replace(/\s+/g, " ");
+
+  if (!base || base.length === 0) {
+    return "Working";
+  }
+
+  const withoutTrailingPeriod = base.replace(/[.]+$/g, "").trim();
+  const singleLine = withoutTrailingPeriod.length > 0 ? withoutTrailingPeriod : base;
+  if (singleLine.length <= 160) {
+    return singleLine;
+  }
+  return `${singleLine.slice(0, 157).trimEnd()}...`;
+}
+
+/** CLI name to human-readable label, e.g. "codex" → "Codex CLI (`codex`)" */
+function cliLabel(cliName: string): string {
+  const capitalized = cliName.charAt(0).toUpperCase() + cliName.slice(1);
+  return `${capitalized} CLI (\`${cliName}\`)`;
+}
+
+/**
+ * Normalize an unknown error from a CLI text generation process into a
+ * typed `TextGenerationError`. Parameterized by CLI name so both Codex
+ * and Claude (and future providers) can share the same logic.
+ */
+export function normalizeCliError(
+  cliName: string,
+  operation: string,
+  error: unknown,
+  fallback: string,
+): TextGenerationError {
+  if (Schema.is(TextGenerationError)(error)) {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    const lower = error.message.toLowerCase();
+    if (
+      error.message.includes(`Command not found: ${cliName}`) ||
+      lower.includes(`spawn ${cliName}`) ||
+      lower.includes("enoent")
+    ) {
+      return new TextGenerationError({
+        operation,
+        detail: `${cliLabel(cliName)} is required but not available on PATH.`,
+        cause: error,
+      });
+    }
+    return new TextGenerationError({
+      operation,
+      detail: `${fallback}: ${error.message}`,
+      cause: error,
+    });
+  }
+
+  return new TextGenerationError({
+    operation,
+    detail: fallback,
+    cause: error,
+  });
 }

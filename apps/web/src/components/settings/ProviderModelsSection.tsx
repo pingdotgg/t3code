@@ -23,6 +23,7 @@ import { sortModelsForProviderInstance } from "../../modelOrdering";
 import { MAX_CUSTOM_MODEL_LENGTH } from "../../modelSelection";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /**
@@ -204,7 +205,7 @@ export function ProviderModelsSection({
             nextModel !== undefined && favoriteModelSet.has(nextModel.slug) === isFavorite;
           const descriptors = caps?.optionDescriptors ?? [];
           if (descriptors.some((descriptor) => descriptor.id === "fastMode")) {
-            capLabels.push("Fast mode");
+            capLabels.push("Speed");
           }
           if (descriptors.some((descriptor) => descriptor.id === "thinking")) {
             capLabels.push("Thinking");
@@ -241,20 +242,21 @@ export function ProviderModelsSection({
                   {model.name}
                 </span>
                 {hasDetails ? (
-                  <Tooltip>
-                    <TooltipTrigger
+                  <Popover>
+                    <PopoverTrigger
                       render={
                         <Button
+                          type="button"
                           size="icon-xs"
                           variant="ghost"
                           className="size-5 rounded-sm p-0 text-muted-foreground/60 hover:text-muted-foreground"
                           aria-label={`Details for ${model.name}`}
-                        />
+                        >
+                          <InfoIcon className="size-3" aria-hidden />
+                        </Button>
                       }
-                    >
-                      <InfoIcon className="size-3" />
-                    </TooltipTrigger>
-                    <TooltipPopup side="top" className="max-w-56">
+                    />
+                    <PopoverPopup side="top" align="start" tooltipStyle className="max-w-56">
                       <div className="space-y-1">
                         <code className="block text-[11px] text-foreground">{model.slug}</code>
                         {capLabels.length > 0 ? (
@@ -267,11 +269,8 @@ export function ProviderModelsSection({
                           </div>
                         ) : null}
                       </div>
-                    </TooltipPopup>
-                  </Tooltip>
-                ) : null}
-                {isHidden ? (
-                  <span className="text-[10px] text-muted-foreground">hidden</span>
+                    </PopoverPopup>
+                  </Popover>
                 ) : null}
                 {model.isCustom ? (
                   <span className="text-[10px] text-muted-foreground">custom</span>

@@ -100,7 +100,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
             ],
             ["ultrathink"],
           ),
-          booleanDescriptor("fastMode", "Fast Mode"),
+          booleanDescriptor("fastMode", "Speed"),
         ],
       }),
     },
@@ -181,7 +181,7 @@ describe("CompactComposerControlsMenu", () => {
     });
   });
 
-  it("shows fast mode controls for Opus", async () => {
+  it("shows speed controls for Opus", async () => {
     await using _ = await mountMenu({
       modelSelection: createModelSelection(
         ProviderInstanceId.make("claudeAgent"),
@@ -193,13 +193,13 @@ describe("CompactComposerControlsMenu", () => {
 
     await vi.waitFor(() => {
       const text = document.body.textContent ?? "";
-      expect(text).toContain("Fast Mode");
-      expect(text).toContain("On");
-      expect(text).toContain("Off");
+      expect(text).toContain("Speed");
+      expect(text).toContain("Normal");
+      expect(text).toContain("Fast");
     });
   });
 
-  it("hides fast mode controls for non-Opus Claude models", async () => {
+  it("hides speed controls for non-Opus Claude models", async () => {
     await using _ = await mountMenu({
       modelSelection: createModelSelection(
         ProviderInstanceId.make("claudeAgent"),
@@ -210,7 +210,7 @@ describe("CompactComposerControlsMenu", () => {
     await page.getByLabelText("More composer controls").click();
 
     await vi.waitFor(() => {
-      expect(document.body.textContent ?? "").not.toContain("Fast Mode");
+      expect(document.body.textContent ?? "").not.toContain("Speed");
     });
   });
 

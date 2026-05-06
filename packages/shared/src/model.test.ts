@@ -37,7 +37,7 @@ const codexCaps: ModelCapabilities = createModelCapabilities({
     },
     {
       id: "fastMode",
-      label: "Fast Mode",
+      label: "Speed",
       type: "boolean",
     },
   ],

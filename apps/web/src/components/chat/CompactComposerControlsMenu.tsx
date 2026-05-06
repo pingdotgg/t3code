@@ -11,6 +11,15 @@ import {
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
+import { SelectedModelBadge } from "./SelectedModelBadge";
+
+const runtimeModeLabels: Record<RuntimeMode, string> = {
+  "approval-required": "Supervised",
+  "auto-accept-edits": "Auto-accept edits",
+  "full-access": "Full access",
+};
+
+const runtimeModeOptions = Object.keys(runtimeModeLabels) as RuntimeMode[];
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   activePlan: boolean;
@@ -69,9 +78,14 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             props.onRuntimeModeChange(value as RuntimeMode);
           }}
         >
-          <MenuRadioItem value="approval-required">Supervised</MenuRadioItem>
-          <MenuRadioItem value="auto-accept-edits">Auto-accept edits</MenuRadioItem>
-          <MenuRadioItem value="full-access">Full access</MenuRadioItem>
+          {runtimeModeOptions.map((mode) => (
+            <MenuRadioItem key={mode} value={mode} hideIndicator>
+              <span className="inline-flex items-center gap-1.5">
+                {runtimeModeLabels[mode]}
+                {mode === props.runtimeMode ? <SelectedModelBadge /> : null}
+              </span>
+            </MenuRadioItem>
+          ))}
         </MenuRadioGroup>
         {props.activePlan ? (
           <>

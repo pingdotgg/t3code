@@ -7,6 +7,7 @@ import {
   type ProviderInstanceRegistryShape,
 } from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
+import { sanitizeToolWorkLogSummaryLine } from "../git/Utils.ts";
 
 export type TextGenerationProvider = "codex" | "claudeAgent" | "cursor" | "opencode";
 
@@ -68,6 +69,21 @@ export interface ThreadTitleGenerationResult {
   title: string;
 }
 
+export interface ToolWorkLogSummaryGenerationInput {
+  cwd: string;
+  label: string;
+  toolTitle?: string | undefined;
+  itemType?: string | undefined;
+  requestKind?: "command" | "file-read" | "file-change" | undefined;
+  command?: string | undefined;
+  detailSnippet?: string | undefined;
+  modelSelection: ModelSelection;
+}
+
+export interface ToolWorkLogSummaryGenerationResult {
+  line: string;
+}
+
 export interface TextGenerationService {
   generateCommitMessage(
     input: CommitMessageGenerationInput,
@@ -108,6 +124,13 @@ export interface TextGenerationShape {
   readonly generateThreadTitle: (
     input: ThreadTitleGenerationInput,
   ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+  /**
+   * Rewrite tool / work-log activity metadata into one short human-readable line.
+   */
+  readonly generateToolWorkLogSummary: (
+    input: ToolWorkLogSummaryGenerationInput,
+  ) => Effect.Effect<ToolWorkLogSummaryGenerationResult, TextGenerationError>;
 }
 
 /**
@@ -121,7 +144,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateToolWorkLogSummary";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistryShape,
@@ -159,6 +183,11 @@ export const makeTextGenerationFromRegistry = (
   generateThreadTitle: (input) =>
     resolveInstance(registry, "generateThreadTitle", input.modelSelection.instanceId).pipe(
       Effect.flatMap((textGeneration) => textGeneration.generateThreadTitle(input)),
+    ),
+  generateToolWorkLogSummary: (input) =>
+    resolveInstance(registry, "generateToolWorkLogSummary", input.modelSelection.instanceId).pipe(
+      Effect.flatMap((textGeneration) => textGeneration.generateToolWorkLogSummary(input)),
+      Effect.map((r) => ({ line: sanitizeToolWorkLogSummaryLine(r.line, input.label) })),
     ),
 });
 

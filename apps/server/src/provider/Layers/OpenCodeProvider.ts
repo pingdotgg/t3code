@@ -25,7 +25,7 @@ import type { Agent, ProviderListResponse } from "@opencode-ai/sdk/v2";
 const PROVIDER = ProviderDriverKind.make("opencode");
 const OPENCODE_PRESENTATION = {
   displayName: "OpenCode",
-  showInteractionModeToggle: false,
+  showInteractionModeToggle: true,
 } as const;
 const MINIMUM_OPENCODE_VERSION = "1.14.19";
 
@@ -461,7 +461,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
       },
       message:
         connectedCount > 0
-          ? `${connectedCount} upstream provider${connectedCount === 1 ? "" : "s"} connected through ${isExternalServer ? "the configured OpenCode server" : "OpenCode"}.`
+          ? `Authenticated through ${isExternalServer ? "the configured OpenCode server" : "OpenCode"} with ${connectedCount} connected model provider${connectedCount === 1 ? "" : "s"}.`
           : isExternalServer
             ? "Connected to the configured OpenCode server, but it did not report any connected upstream providers."
             : "OpenCode is available, but it did not report any connected upstream providers.",

@@ -67,7 +67,14 @@ export class BrowserWsRpcHarness {
   async reset(options?: BrowserWsRpcHarnessOptions): Promise<void> {
     await this.disconnect();
     this.requests.length = 0;
-    this.resolveUnary = options?.resolveUnary ?? (() => ({}));
+    this.resolveUnary =
+      options?.resolveUnary ??
+      ((request) => {
+        if (request._tag === WS_METHODS.gitSummarizeToolWorkLog) {
+          return { line: "Harness tool summary" };
+        }
+        return {};
+      });
     this.getInitialStreamValues = options?.getInitialStreamValues ?? (() => []);
     this.initializeStreamPubSubs();
   }

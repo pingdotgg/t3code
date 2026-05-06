@@ -20,20 +20,17 @@ function DraftChatThreadRouteView() {
     ),
   );
   const serverThreadStarted = threadHasStarted(serverThread);
-  const canonicalThreadRef = useMemo(
-    () =>
-      draftSession?.promotedTo
-        ? serverThreadStarted
-          ? draftSession.promotedTo
-          : null
-        : serverThread
-          ? {
-              environmentId: serverThread.environmentId,
-              threadId: serverThread.id,
-            }
-          : null,
-    [draftSession?.promotedTo, serverThread, serverThreadStarted],
-  );
+  const canonicalThreadRef = useMemo(() => {
+    if (!draftSession || !serverThreadStarted) {
+      return null;
+    }
+    return (
+      draftSession.promotedTo ?? {
+        environmentId: draftSession.environmentId,
+        threadId: draftSession.threadId,
+      }
+    );
+  }, [draftSession, serverThreadStarted]);
 
   useEffect(() => {
     if (!canonicalThreadRef) {
@@ -52,18 +49,6 @@ function DraftChatThreadRouteView() {
     }
     void navigate({ to: "/", replace: true });
   }, [canonicalThreadRef, draftSession, navigate]);
-
-  if (canonicalThreadRef) {
-    return (
-      <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-        <ChatView
-          environmentId={canonicalThreadRef.environmentId}
-          threadId={canonicalThreadRef.threadId}
-          routeKind="server"
-        />
-      </SidebarInset>
-    );
-  }
 
   if (!draftSession) {
     return null;

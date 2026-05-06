@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ModelSelection } from "./orchestration.ts";
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
@@ -152,6 +153,25 @@ export const GitPreparePullRequestThreadInput = Schema.Struct({
   threadId: Schema.optional(ThreadId),
 });
 export type GitPreparePullRequestThreadInput = typeof GitPreparePullRequestThreadInput.Type;
+
+const WorkLogRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
+
+export const GitSummarizeToolWorkLogInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  modelSelection: ModelSelection,
+  label: TrimmedNonEmptyStringSchema,
+  toolTitle: Schema.optional(TrimmedNonEmptyStringSchema),
+  itemType: Schema.optional(Schema.String),
+  requestKind: Schema.optional(WorkLogRequestKind),
+  command: Schema.optional(Schema.String.check(Schema.isMaxLength(4_000))),
+  detailSnippet: Schema.optional(Schema.String.check(Schema.isMaxLength(6_000))),
+});
+export type GitSummarizeToolWorkLogInput = typeof GitSummarizeToolWorkLogInput.Type;
+
+export const GitSummarizeToolWorkLogResult = Schema.Struct({
+  line: TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(400)),
+});
+export type GitSummarizeToolWorkLogResult = typeof GitSummarizeToolWorkLogResult.Type;
 
 export const VcsRemoveWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,

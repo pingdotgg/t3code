@@ -2,11 +2,12 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import type { EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, GitBranchIcon } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useOptimistic,
   useRef,
@@ -33,6 +34,7 @@ import {
   shouldIncludeBranchPickerItem,
 } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
+import { Badge } from "./ui/badge";
 import {
   Combobox,
   ComboboxEmpty,
@@ -61,6 +63,33 @@ interface BranchToolbarBranchSelectorProps {
 
 function toBranchActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
+}
+
+type BranchRowKind = "current" | "worktree" | "remote" | "default";
+
+function BranchRowKindBadge({ kind }: { kind: BranchRowKind }) {
+  const label =
+    kind === "current"
+      ? "Current"
+      : kind === "remote"
+        ? "Remote"
+        : kind === "worktree"
+          ? "Worktree"
+          : "Default";
+  const isCurrent = kind === "current";
+  return (
+    <Badge
+      variant="outline"
+      className={cn(
+        "inline-flex h-4 w-fit min-w-0 shrink-0 items-center justify-center gap-0 ps-1.5 pe-1.5 py-0 text-[10px] font-semibold leading-none sm:h-4",
+        isCurrent
+          ? "border-blue-500/30 bg-blue-500/10 text-blue-400"
+          : "border-border/70 bg-muted/60 text-muted-foreground",
+      )}
+    >
+      {label}
+    </Badge>
+  );
 }
 
 function getBranchTriggerLabel(input: {
@@ -432,7 +461,8 @@ export function BranchToolbarBranchSelector({
     [branchCwd, environmentId, queryClient],
   );
 
-  const branchListScrollElementRef = useRef<HTMLDivElement | null>(null);
+  const branchListScrollElementRef = useRef<HTMLElement | null>(null);
+  const [branchListBottomFadeVisible, setBranchListBottomFadeVisible] = useState(false);
   const maybeFetchNextBranchPage = useCallback(() => {
     if (!isBranchMenuOpen || !hasNextPage || isFetchingNextPage) {
       return;
@@ -451,10 +481,53 @@ export function BranchToolbarBranchSelector({
 
     void fetchNextPage().catch(() => undefined);
   }, [fetchNextPage, hasNextPage, isBranchMenuOpen, isFetchingNextPage]);
+
+  const syncBranchListScrollChrome = useCallback((scrollEl: HTMLElement | null) => {
+    if (!scrollEl) {
+      setBranchListBottomFadeVisible(false);
+      return;
+    }
+    const { scrollTop, scrollHeight, clientHeight } = scrollEl;
+    const canScroll = scrollHeight > clientHeight + 1;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    setBranchListBottomFadeVisible(canScroll && distanceFromBottom > 6);
+  }, []);
+
   const branchListRef = useRef<LegendListRef | null>(null);
   const setBranchListRef = useCallback((element: HTMLDivElement | null) => {
-    branchListScrollElementRef.current = (element?.parentElement as HTMLDivElement | null) ?? null;
+    branchListScrollElementRef.current = element?.parentElement ?? null;
   }, []);
+
+  useEffect(() => {
+    if (isBranchMenuOpen) {
+      return;
+    }
+    setBranchListBottomFadeVisible(false);
+  }, [isBranchMenuOpen]);
+
+  useLayoutEffect(() => {
+    if (!isBranchMenuOpen || !shouldVirtualizeBranchList) {
+      return;
+    }
+
+    let frame = 0;
+    const measure = () => {
+      const el = branchListRef.current?.getScrollableNode?.();
+      if (el instanceof HTMLElement) {
+        branchListScrollElementRef.current = el;
+        syncBranchListScrollChrome(el);
+        return;
+      }
+      frame = requestAnimationFrame(measure);
+    };
+    frame = requestAnimationFrame(measure);
+    return () => cancelAnimationFrame(frame);
+  }, [
+    isBranchMenuOpen,
+    shouldVirtualizeBranchList,
+    filteredBranchPickerItems.length,
+    syncBranchListScrollChrome,
+  ]);
 
   useEffect(() => {
     if (!isBranchMenuOpen) {
@@ -470,7 +543,7 @@ export function BranchToolbarBranchSelector({
 
   useEffect(() => {
     const scrollElement = branchListScrollElementRef.current;
-    if (!scrollElement || !isBranchMenuOpen) {
+    if (!scrollElement || !isBranchMenuOpen || shouldVirtualizeBranchList) {
       return;
     }
 
@@ -483,7 +556,7 @@ export function BranchToolbarBranchSelector({
     return () => {
       scrollElement.removeEventListener("scroll", handleScroll);
     };
-  }, [isBranchMenuOpen, maybeFetchNextBranchPage]);
+  }, [isBranchMenuOpen, maybeFetchNextBranchPage, shouldVirtualizeBranchList]);
 
   useEffect(() => {
     if (shouldVirtualizeBranchList) return;
@@ -504,6 +577,7 @@ export function BranchToolbarBranchSelector({
           key={itemValue}
           index={index}
           value={itemValue}
+          className="pe-2"
           onClick={() => {
             if (!prReference || !onCheckoutPullRequestRequest) {
               return;
@@ -562,9 +636,9 @@ export function BranchToolbarBranchSelector({
         value={itemValue}
         onClick={() => selectBranch(refName)}
       >
-        <div className="flex w-full items-center justify-between gap-2">
-          <span className="truncate">{itemValue}</span>
-          {badge && <span className="shrink-0 text-[10px] text-muted-foreground/45">{badge}</span>}
+        <div className="flex w-full min-w-0 items-center justify-between gap-2">
+          <span className="min-w-0 flex-1 truncate">{itemValue}</span>
+          {badge ? <BranchRowKindBadge kind={badge as BranchRowKind} /> : null}
         </div>
       </ComboboxItem>
     );
@@ -594,11 +668,12 @@ export function BranchToolbarBranchSelector({
         className={cn("min-w-0 text-muted-foreground/70 hover:text-foreground/80", className)}
         disabled={(isBranchesSearchPending && refs.length === 0) || isBranchActionPending}
       >
+        <GitBranchIcon className="size-3 shrink-0 opacity-70" />
         <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
-        <ChevronDownIcon className="shrink-0" />
+        <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
       </ComboboxTrigger>
-      <ComboboxPopup align="end" side="top" className="w-80">
-        <div className="border-b p-1">
+      <ComboboxPopup align="end" side="top" className="flex w-80 flex-col">
+        <div className="shrink-0 p-1">
           <ComboboxInput
             className="[&_input]:font-sans rounded-md"
             inputClassName="ring-0"
@@ -609,33 +684,56 @@ export function BranchToolbarBranchSelector({
             onChange={(event) => setBranchQuery(event.target.value)}
           />
         </div>
-        <ComboboxEmpty>No refs found.</ComboboxEmpty>
-
-        {shouldVirtualizeBranchList ? (
-          <ComboboxListVirtualized>
-            <LegendList<string>
-              ref={branchListRef}
-              data={filteredBranchPickerItems}
-              keyExtractor={(item) => item}
-              renderItem={({ item, index }) => renderPickerItem(item, index)}
-              estimatedItemSize={28}
-              drawDistance={336}
-              onEndReached={() => {
-                if (hasNextPage && !isFetchingNextPage) {
-                  void fetchNextPage().catch(() => undefined);
-                }
-              }}
-              style={{ maxHeight: "14rem" }}
-            />
-          </ComboboxListVirtualized>
-        ) : (
-          <ComboboxList ref={setBranchListRef} className="max-h-56">
-            {filteredBranchPickerItems.map((itemValue, index) =>
-              renderPickerItem(itemValue, index),
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <ComboboxEmpty>No refs found.</ComboboxEmpty>
+          <div className="relative min-h-0 w-full max-h-56 flex-1 overflow-hidden">
+            {shouldVirtualizeBranchList ? (
+              <>
+                <ComboboxListVirtualized className="not-empty:ps-1 not-empty:pe-0 not-empty:py-1">
+                  <LegendList<string>
+                    ref={branchListRef}
+                    data={filteredBranchPickerItems}
+                    keyExtractor={(item) => item}
+                    renderItem={({ item, index }) => renderPickerItem(item, index)}
+                    estimatedItemSize={28}
+                    drawDistance={336}
+                    onEndReached={() => {
+                      if (hasNextPage && !isFetchingNextPage) {
+                        void fetchNextPage().catch(() => undefined);
+                      }
+                    }}
+                    onScroll={() => {
+                      const target = branchListRef.current?.getScrollableNode?.();
+                      if (target instanceof HTMLElement) {
+                        branchListScrollElementRef.current = target;
+                        syncBranchListScrollChrome(target);
+                      }
+                      maybeFetchNextBranchPage();
+                    }}
+                    style={{ maxHeight: "14rem" }}
+                  />
+                </ComboboxListVirtualized>
+                <div
+                  aria-hidden
+                  className={cn(
+                    "pointer-events-none absolute inset-x-0 bottom-0 z-10 h-8 bg-gradient-to-t from-popover to-transparent transition-opacity duration-150",
+                    branchListBottomFadeVisible ? "opacity-100" : "opacity-0",
+                  )}
+                />
+              </>
+            ) : (
+              <ComboboxList
+                ref={setBranchListRef}
+                className="h-full max-h-56 min-h-0 not-empty:ps-1 not-empty:pe-0 not-empty:py-1"
+              >
+                {filteredBranchPickerItems.map((itemValue, index) =>
+                  renderPickerItem(itemValue, index),
+                )}
+              </ComboboxList>
             )}
-          </ComboboxList>
-        )}
-        {branchStatusText ? <ComboboxStatus>{branchStatusText}</ComboboxStatus> : null}
+          </div>
+          {branchStatusText ? <ComboboxStatus>{branchStatusText}</ComboboxStatus> : null}
+        </div>
       </ComboboxPopup>
     </Combobox>
   );

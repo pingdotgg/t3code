@@ -20,6 +20,9 @@ import {
   hasActionableProposedPlan,
   hasToolActivityForTurn,
   isLatestTurnSettled,
+  workEntryIndicatesToolFailure,
+  workEntryIndicatesToolNeutralStatus,
+  workEntryIndicatesToolSuccess,
 } from "./session-logic";
 
 function makeActivity(overrides: {
@@ -570,6 +573,123 @@ describe("findSidebarProposedPlan", () => {
   });
 });
 
+describe("workEntryIndicatesToolFailure", () => {
+  const base = {
+    id: "w1",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    label: "Read",
+  };
+
+  it("is true for error tone", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        tone: "error",
+        detail: "nothing special",
+      }),
+    ).toBe(true);
+  });
+
+  it("is true when lifecycle says failed even if detail is empty", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "failed",
+      }),
+    ).toBe(true);
+  });
+
+  it("detects file-not-found style tool output with completed lifecycle", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "completed",
+        detail: "File not found: C:\\foo\\nonexistent.ts",
+      }),
+    ).toBe(true);
+  });
+
+  it("detects glob no files and PowerShell command errors", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        label: "Glob",
+        tone: "tool",
+        detail: "No files found",
+      }),
+    ).toBe(true);
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        label: "Bash",
+        tone: "tool",
+        detail:
+          "The term 'this_is_not_a_command' is not recognized as the name of a cmdlet, function, script file, or operable program.",
+      }),
+    ).toBe(true);
+  });
+
+  it("is false for successful completed tools", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "completed",
+        detail: "Found 3 matching files",
+      }),
+    ).toBe(false);
+  });
+
+  it("treats successful tool rows as success candidates", () => {
+    expect(
+      workEntryIndicatesToolSuccess({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "completed",
+        detail: "ok",
+      }),
+    ).toBe(true);
+    expect(
+      workEntryIndicatesToolSuccess({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "inProgress",
+        detail: "…",
+      }),
+    ).toBe(false);
+    expect(workEntryIndicatesToolSuccess({ ...base, tone: "thinking", detail: "…" })).toBe(false);
+    expect(
+      workEntryIndicatesToolNeutralStatus({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "inProgress",
+        detail: "…",
+      }),
+    ).toBe(true);
+    expect(
+      workEntryIndicatesToolNeutralStatus({
+        ...base,
+        tone: "tool",
+        toolLifecycleStatus: "completed",
+        detail: "ok",
+      }),
+    ).toBe(false);
+  });
+
+  it("does not run heuristics on non-tool info rows", () => {
+    expect(
+      workEntryIndicatesToolFailure({
+        ...base,
+        label: "Context compacted",
+        tone: "info",
+        detail: "File not found in conversation",
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("deriveWorkLogEntries", () => {
   it("omits tool started entries and keeps completed entries", () => {
     const activities: OrchestrationThreadActivity[] = [
@@ -767,6 +887,43 @@ describe("deriveWorkLogEntries", () => {
 
     const [entry] = deriveWorkLogEntries(activities, undefined);
     expect(entry?.command).toBe("bun run lint");
+  });
+
+  it("extracts failed tool lifecycle status from item payloads", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-failed",
+        kind: "tool.updated",
+        summary: "Glob",
+        tone: "tool",
+        payload: {
+          itemType: "mcp_tool_call",
+          status: "failed",
+          detail: "No files found",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.toolLifecycleStatus).toBe("failed");
+  });
+
+  it("defaults tool.completed entries to completed lifecycle status", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "tool-done",
+        kind: "tool.completed",
+        summary: "Glob",
+        tone: "tool",
+        payload: {
+          itemType: "mcp_tool_call",
+          detail: "Found 3 files",
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities, undefined);
+    expect(entry?.toolLifecycleStatus).toBe("completed");
   });
 
   it("unwraps PowerShell command wrappers for displayed command text", () => {
