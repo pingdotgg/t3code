@@ -311,7 +311,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p release-publish
+          asset_dir="release-artifacts/desktop-${{ matrix.platform }}-${{ matrix.arch }}"
+          rm -rf "$asset_dir"
+          mkdir -p "$asset_dir"
 
           shopt -s nullglob
           for pattern in \
@@ -322,13 +324,13 @@ jobs:
             "release/*.blockmap" \
             "release/*.yml"; do
             for file in $pattern; do
-              cp "$file" release-publish/
+              cp "$file" "$asset_dir"/
             done
           done
 
           if [[ "${{ matrix.platform }}" == "mac" && "${{ matrix.arch }}" != "arm64" ]]; then
             shopt -s nullglob
-            for manifest in release-publish/*-mac.yml; do
+            for manifest in "$asset_dir"/*-mac.yml; do
               mv "$manifest" "${manifest%.yml}-${{ matrix.arch }}.yml"
             done
           fi
@@ -340,17 +342,23 @@ jobs:
           # canonical manifest per channel.
           # if [[ "${{ matrix.platform }}" == "win" ]]; then
           #   shopt -s nullglob
-          #   for manifest in release-publish/*.yml; do
+          #   for manifest in "$asset_dir"/*.yml; do
           #     mv "$manifest" "${manifest%.yml}-win-${{ matrix.arch }}.yml"
           #   done
           # fi
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
+          assets=("$asset_dir"/*)
+          if (( ${#assets[@]} == 0 )); then
+            echo "No release assets were collected for ${{ matrix.platform }} ${{ matrix.arch }}." >&2
+            exit 1
+          fi
+
+      - name: Save build artifacts
+        uses: actions/cache/save@v5
         with:
-          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
-          path: release-publish/*
-          if-no-files-found: error
+          path: release-artifacts/desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          key: release-assets-${{ github.run_id }}-${{ matrix.platform }}-${{ matrix.arch }}-${{ github.run_attempt }}
+          enableCrossOsArchive: true
 
   publish_cli:
     name: Publish CLI to npm
@@ -423,12 +431,70 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile --filter=@t3tools/scripts
 
-      - name: Download all desktop artifacts
-        uses: actions/download-artifact@v8
+      # Keep these restore steps in sync with the desktop build matrix.
+      # Cache restore cannot enumerate a key pattern like download-artifact did.
+      - name: Restore macOS arm64 desktop assets
+        uses: actions/cache/restore@v5
         with:
-          pattern: desktop-*
-          merge-multiple: true
-          path: release-assets
+          path: release-artifacts/desktop-mac-arm64
+          key: release-assets-${{ github.run_id }}-mac-arm64-${{ github.run_attempt }}
+          restore-keys: |
+            release-assets-${{ github.run_id }}-mac-arm64-
+          fail-on-cache-miss: true
+          enableCrossOsArchive: true
+
+      - name: Restore macOS x64 desktop assets
+        uses: actions/cache/restore@v5
+        with:
+          path: release-artifacts/desktop-mac-x64
+          key: release-assets-${{ github.run_id }}-mac-x64-${{ github.run_attempt }}
+          restore-keys: |
+            release-assets-${{ github.run_id }}-mac-x64-
+          fail-on-cache-miss: true
+          enableCrossOsArchive: true
+
+      - name: Restore Linux x64 desktop assets
+        uses: actions/cache/restore@v5
+        with:
+          path: release-artifacts/desktop-linux-x64
+          key: release-assets-${{ github.run_id }}-linux-x64-${{ github.run_attempt }}
+          restore-keys: |
+            release-assets-${{ github.run_id }}-linux-x64-
+          fail-on-cache-miss: true
+          enableCrossOsArchive: true
+
+      - name: Restore Windows x64 desktop assets
+        uses: actions/cache/restore@v5
+        with:
+          path: release-artifacts/desktop-win-x64
+          key: release-assets-${{ github.run_id }}-win-x64-${{ github.run_attempt }}
+          restore-keys: |
+            release-assets-${{ github.run_id }}-win-x64-
+          fail-on-cache-miss: true
+          enableCrossOsArchive: true
+
+      - name: Stage desktop assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf release-assets
+          mkdir -p release-assets
+
+          shopt -s nullglob
+          for dir in release-artifacts/desktop-*; do
+            files=("$dir"/*)
+            if (( ${#files[@]} == 0 )); then
+              echo "No release assets were restored from $dir." >&2
+              exit 1
+            fi
+            cp "${files[@]}" release-assets/
+          done
+
+          assets=(release-assets/*)
+          if (( ${#assets[@]} == 0 )); then
+            echo "No desktop release assets were staged." >&2
+            exit 1
+          fi
 
       - name: Merge macOS updater manifests
         run: |
