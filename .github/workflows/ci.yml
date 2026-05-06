@@ -25,9 +25,8 @@ jobs:
         with:
           node-version-file: package.json
 
-      - id: bun_turbo_cache
-        name: Restore Bun and Turbo cache
-        uses: actions/cache/restore@v5
+      - name: Cache Bun and Turbo
+        uses: actions/cache@v5
         with:
           path: |
             ~/.bun/install/cache
@@ -36,9 +35,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}-
 
-      - id: playwright_cache
-        name: Restore Playwright browsers
-        uses: actions/cache/restore@v5
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ hashFiles('bun.lock') }}
@@ -70,22 +68,6 @@ jobs:
 
       - name: Build desktop pipeline
         run: bun run build:desktop
-
-      - name: Save Playwright browsers
-        if: steps.playwright_cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('bun.lock') }}
-
-      - name: Save Bun and Turbo cache
-        if: steps.bun_turbo_cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: |
-            ~/.bun/install/cache
-            .turbo
-          key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}-${{ hashFiles('turbo.json') }}
 
       - name: Verify preload bundle output
         run: |
