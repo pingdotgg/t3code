@@ -1,7 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as Effect from "effect/Effect";
 
+import { PtySpawnError } from "../terminal/Services/PTY.ts";
+import type { PtySpawnInput } from "../terminal/Services/PTY.ts";
 import type { PtyAdapterShape, PtyProcess } from "../terminal/Services/PTY.ts";
+
+import {
+  parseClaudeRuntimeUsageLimits,
+  parseClaudeUsageLimitsOutput,
+  probeClaudeUsageLimits,
+  shouldRequestClaudeUsageFallback,
+  type ProbeClock,
+} from "./claudeUsageProbe.ts";
 
 class MockPtyChild implements PtyProcess {
   public readonly writes: string[] = [];
@@ -55,30 +65,71 @@ class MockPtyChild implements PtyProcess {
 
 function makeMockPtyAdapter(child: MockPtyChild): PtyAdapterShape {
   return {
-    spawn: () => {
-      child.writes.length = 0;
-      child.kill.mockClear();
-      return Effect.succeed(child);
+    spawn: () => Effect.succeed(child),
+  };
+}
+
+function makeCapturingPtyAdapter(input: {
+  readonly child: MockPtyChild;
+  readonly onSpawn: (spawnInput: PtySpawnInput) => void;
+}): PtyAdapterShape {
+  return {
+    spawn: (spawnInput) => {
+      input.onSpawn(spawnInput);
+      return Effect.succeed(input.child);
     },
   };
 }
 
-import {
-  parseClaudeRuntimeUsageLimits,
-  parseClaudeUsageLimitsOutput,
-  probeClaudeUsageLimits,
-  shouldRequestClaudeUsageFallback,
-} from "./claudeUsageProbe.ts";
+function createFakeClock(): ProbeClock & { advance(ms: number): void } {
+  const timers: Array<{
+    id: number;
+    ms: number;
+    fn: () => void;
+    fired: boolean;
+    cancelled: boolean;
+  }> = [];
+  let nextId = 1;
+
+  const fakeSetTimeout = ((fn: () => void, ms?: number) => {
+    const id = nextId++;
+    timers.push({
+      id,
+      ms: ms ?? 0,
+      fn,
+      fired: false,
+      cancelled: false,
+    });
+    return id as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+
+  const fakeClearTimeout = ((id: ReturnType<typeof setTimeout>) => {
+    const numericId = typeof id === "number" ? id : (id as unknown as number);
+    const entry = timers.find((t) => t.id === numericId);
+    if (entry) {
+      entry.cancelled = true;
+    }
+  }) as typeof clearTimeout;
+
+  const advance = (ms: number) => {
+    for (const timer of timers) {
+      if (timer.fired || timer.cancelled) continue;
+      timer.ms -= ms;
+      if (timer.ms <= 0) {
+        timer.fired = true;
+        timer.fn();
+      }
+    }
+  };
+
+  return {
+    setTimeout: fakeSetTimeout,
+    clearTimeout: fakeClearTimeout,
+    advance,
+  };
+}
 
 describe("claudeUsageProbe", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
   it("parses session and weekly windows from status output", () => {
     expect(
       parseClaudeUsageLimitsOutput({
@@ -239,9 +290,11 @@ describe("claudeUsageProbe", () => {
     ).toBe(false);
   });
 
-  it("triggers /usage fallback when /status remains quiet", async () => {
+  it("resolves immediately when /status returns usable quota output", async () => {
     const child = new MockPtyChild();
     const ptyAdapter = makeMockPtyAdapter(child);
+    const clock = createFakeClock();
+
     const probePromise = Effect.runPromise(
       probeClaudeUsageLimits(
         {
@@ -250,67 +303,25 @@ describe("claudeUsageProbe", () => {
           checkedAt: "2026-04-17T10:00:00.000Z",
         },
         ptyAdapter,
+        clock,
       ),
     );
 
     expect(child.writes).toEqual(["/status\r"]);
-
-    await vi.advanceTimersByTimeAsync(150);
-    expect(child.writes).toEqual(["/status\r", "/usage\r"]);
-
-    child.emitExit();
-    const result = await probePromise;
-    expect(result.usageLimits.available).toBe(false);
-  });
-
-  it("triggers /usage fallback for short non-empty status output", async () => {
-    const child = new MockPtyChild();
-    const ptyAdapter = makeMockPtyAdapter(child);
-    const probePromise = Effect.runPromise(
-      probeClaudeUsageLimits(
-        {
-          binaryPath: "claude",
-          cwd: "/tmp",
-          checkedAt: "2026-04-17T10:00:00.000Z",
-        },
-        ptyAdapter,
-      ),
-    );
-
-    child.emitData("Authenticated as Claude Max\n");
-
-    await vi.advanceTimersByTimeAsync(150);
-    expect(child.writes).toEqual(["/status\r", "/usage\r"]);
-
-    child.emitExit();
-    const result = await probePromise;
-    expect(result.usageLimits.available).toBe(false);
-  });
-
-  it("skips /usage fallback when /status already returns usable quota output", async () => {
-    const child = new MockPtyChild();
-    const ptyAdapter = makeMockPtyAdapter(child);
-    const probePromise = Effect.runPromise(
-      probeClaudeUsageLimits(
-        {
-          binaryPath: "claude",
-          cwd: "/tmp",
-          checkedAt: "2026-04-17T10:00:00.000Z",
-        },
-        ptyAdapter,
-      ),
-    );
 
     child.emitData("Session usage 42% resets at 2026-04-17T14:00:00Z\n");
 
     const result = await probePromise;
     expect(result.usageLimits.available).toBe(true);
     expect(child.writes).toEqual(["/status\r"]);
+    expect(child.kill).toHaveBeenCalled();
   });
 
-  it("times out cleanly when neither /status nor /usage yields usable quota data", async () => {
+  it("sends /usage fallback when /status output is not enough", async () => {
     const child = new MockPtyChild();
     const ptyAdapter = makeMockPtyAdapter(child);
+    const clock = createFakeClock();
+
     const probePromise = Effect.runPromise(
       probeClaudeUsageLimits(
         {
@@ -319,17 +330,141 @@ describe("claudeUsageProbe", () => {
           checkedAt: "2026-04-17T10:00:00.000Z",
         },
         ptyAdapter,
+        clock,
       ),
     );
 
-    await vi.advanceTimersByTimeAsync(150);
+    expect(child.writes).toEqual(["/status\r"]);
+
+    child.emitData("Authenticated as Claude Max\n");
+    clock.advance(200);
     expect(child.writes).toEqual(["/status\r", "/usage\r"]);
 
-    await vi.advanceTimersByTimeAsync(4_000);
+    child.emitData("Session usage 55% resets at 2026-04-17T15:00:00Z\n");
+    const result = await probePromise;
+    expect(result.usageLimits.available).toBe(true);
+    expect(child.kill).toHaveBeenCalled();
+  });
+
+  it("resolves unavailable when process exits with no usable data", async () => {
+    const child = new MockPtyChild();
+    const ptyAdapter = makeMockPtyAdapter(child);
+    const clock = createFakeClock();
+
+    const probePromise = Effect.runPromise(
+      probeClaudeUsageLimits(
+        {
+          binaryPath: "claude",
+          cwd: "/tmp",
+          checkedAt: "2026-04-17T10:00:00.000Z",
+        },
+        ptyAdapter,
+        clock,
+      ),
+    );
+
+    expect(child.writes).toEqual(["/status\r"]);
+
+    child.emitData("Authenticated as Claude Max\n");
+    clock.advance(200);
+    expect(child.writes).toEqual(["/status\r", "/usage\r"]);
+
+    child.emitExit();
+    const result = await probePromise;
+    expect(result.usageLimits.available).toBe(false);
+    expect(child.kill).toHaveBeenCalled();
+  });
+
+  it("resolves unavailable on timeout with no usable data", async () => {
+    const child = new MockPtyChild();
+    const ptyAdapter = makeMockPtyAdapter(child);
+    const clock = createFakeClock();
+
+    const probePromise = Effect.runPromise(
+      probeClaudeUsageLimits(
+        {
+          binaryPath: "claude",
+          cwd: "/tmp",
+          checkedAt: "2026-04-17T10:00:00.000Z",
+        },
+        ptyAdapter,
+        clock,
+      ),
+    );
+
+    clock.advance(200);
+    expect(child.writes).toEqual(["/status\r", "/usage\r"]);
+
+    clock.advance(4_000);
     const result = await probePromise;
 
     expect(result.usageLimits.available).toBe(false);
     expect(result.rawOutput).toBe("");
     expect(child.writes.filter((entry) => entry === "/usage\r")).toHaveLength(1);
+    expect(child.kill).toHaveBeenCalled();
+  });
+
+  it("returns unavailable result when spawn fails", async () => {
+    const failingAdapter: PtyAdapterShape = {
+      spawn: () =>
+        Effect.fail(
+          new PtySpawnError({
+            adapter: "mock",
+            message: "spawn failed",
+          }),
+        ),
+    };
+
+    const result = await Effect.runPromise(
+      probeClaudeUsageLimits(
+        {
+          binaryPath: "claude",
+          cwd: "/tmp",
+          checkedAt: "2026-04-17T10:00:00.000Z",
+        },
+        failingAdapter,
+      ),
+    );
+
+    expect(result.usageLimits.available).toBe(false);
+    expect(result.usageLimits.reason).toBe("Failed to spawn Claude process for usage probe.");
+    expect(result.rawOutput).toBe("");
+  });
+
+  it("preserves quoted launch arguments when spawning the probe process", async () => {
+    const child = new MockPtyChild();
+    let capturedSpawnInput: PtySpawnInput | undefined;
+    const ptyAdapter = makeCapturingPtyAdapter({
+      child,
+      onSpawn: (spawnInput) => {
+        capturedSpawnInput = spawnInput;
+      },
+    });
+
+    const probePromise = Effect.runPromise(
+      probeClaudeUsageLimits(
+        {
+          binaryPath: "claude",
+          launchArgs: '--model "claude sonnet" --cwd "/tmp/with spaces" --note "say \\"hi\\""',
+          cwd: "/tmp",
+          checkedAt: "2026-04-17T10:00:00.000Z",
+        },
+        ptyAdapter,
+      ),
+    );
+
+    child.emitExit();
+    await probePromise;
+
+    expect(capturedSpawnInput?.args).toEqual([
+      "--model",
+      "claude sonnet",
+      "--cwd",
+      "/tmp/with spaces",
+      "--note",
+      'say "hi"',
+      "--permission-mode",
+      "plan",
+    ]);
   });
 });

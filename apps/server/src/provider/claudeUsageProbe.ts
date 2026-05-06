@@ -255,9 +255,76 @@ export function parseClaudeUsageLimitsOutput(input: {
   });
 }
 
+export interface ProbeClock {
+  readonly setTimeout: typeof setTimeout;
+  readonly clearTimeout: typeof clearTimeout;
+}
+
+const defaultClock: ProbeClock = { setTimeout, clearTimeout };
+
+function splitLaunchArgs(launchArgs?: string): string[] {
+  if (!launchArgs?.trim()) {
+    return [];
+  }
+
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | null = null;
+  let escaping = false;
+
+  const pushCurrent = () => {
+    if (current.length > 0) {
+      tokens.push(current);
+      current = "";
+    }
+  };
+
+  for (const character of launchArgs) {
+    if (escaping) {
+      current += character;
+      escaping = false;
+      continue;
+    }
+
+    if (character === "\\") {
+      escaping = true;
+      continue;
+    }
+
+    if (quote) {
+      if (character === quote) {
+        quote = null;
+      } else {
+        current += character;
+      }
+      continue;
+    }
+
+    if (character === "'" || character === '"') {
+      quote = character;
+      continue;
+    }
+
+    if (/\s/.test(character)) {
+      pushCurrent();
+      continue;
+    }
+
+    current += character;
+  }
+
+  if (escaping) {
+    current += "\\";
+  }
+
+  pushCurrent();
+  return tokens;
+}
+
 function runProbeLoop(
   child: PtyProcess,
   input: ClaudeUsageProbeInput,
+  clock: ProbeClock,
 ): Promise<ClaudeUsageProbeResult> {
   return new Promise((resolve) => {
     let rawOutput = "";
@@ -265,7 +332,7 @@ function runProbeLoop(
     let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
     let sentFallback = false;
 
-    const timeout = setTimeout(() => {
+    const timeout = clock.setTimeout(() => {
       finish();
     }, CLAUDE_USAGE_PROBE_TIMEOUT_MS);
 
@@ -274,9 +341,9 @@ function runProbeLoop(
         return;
       }
       if (fallbackTimer) {
-        clearTimeout(fallbackTimer);
+        clock.clearTimeout(fallbackTimer);
       }
-      fallbackTimer = setTimeout(() => {
+      fallbackTimer = clock.setTimeout(() => {
         fallbackTimer = undefined;
         maybeRequestFallback();
       }, CLAUDE_USAGE_FALLBACK_IDLE_MS);
@@ -285,9 +352,9 @@ function runProbeLoop(
     const finish = () => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      clock.clearTimeout(timeout);
       if (fallbackTimer) {
-        clearTimeout(fallbackTimer);
+        clock.clearTimeout(fallbackTimer);
       }
       offData();
       offExit();
@@ -348,24 +415,22 @@ function runProbeLoop(
 export function probeClaudeUsageLimits(
   input: ClaudeUsageProbeInput,
   ptyAdapter: PtyAdapterShape,
+  clock: ProbeClock = defaultClock,
 ): Effect.Effect<ClaudeUsageProbeResult> {
-  const probeArgs = [
-    ...(input.launchArgs?.trim().split(/\s+/).filter(Boolean) ?? []),
-    "--permission-mode",
-    "plan",
-  ];
+  const probeArgs = [...splitLaunchArgs(input.launchArgs), "--permission-mode", "plan"];
 
-  return Effect.promise(async () => {
-    const spawnResult = ptyAdapter.spawn({
-      shell: input.binaryPath,
-      args: probeArgs,
-      cwd: input.cwd,
-      cols: 120,
-      rows: 40,
-      env: input.environment ?? process.env,
-    });
+  return Effect.gen(function* () {
+    const child = yield* ptyAdapter
+      .spawn({
+        shell: input.binaryPath,
+        args: probeArgs,
+        cwd: input.cwd,
+        cols: 120,
+        rows: 40,
+        env: input.environment ?? process.env,
+      })
+      .pipe(Effect.orElseSucceed(() => null as PtyProcess | null));
 
-    const child = await Effect.runPromise(spawnResult).catch(() => null);
     if (!child) {
       return {
         usageLimits: makeUnavailableUsageLimits({
@@ -377,6 +442,6 @@ export function probeClaudeUsageLimits(
       };
     }
 
-    return runProbeLoop(child, input);
+    return yield* Effect.promise(() => runProbeLoop(child, input, clock));
   });
 }
