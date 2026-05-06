@@ -1,6 +1,4 @@
-import { type OrchestratorFixtureInput } from "../shared.ts";
-
-const SUBAGENT_PROMPT = "Spawn 2 subagents, one to read package.json and one to read tsconfig.json";
+import { SUBAGENT_PROMPT, type OrchestratorFixtureInput } from "../shared.ts";
 
 export function subagentInput(): OrchestratorFixtureInput {
   return {

@@ -12,6 +12,8 @@ import {
   assertUserMessageInputIntents,
   assertUserMessagesInclude,
   assertVisibleTurnItemsMirrorLocalTurnItems,
+  MULTI_TURN_FIRST_PROMPT,
+  MULTI_TURN_SECOND_PROMPT,
   projectionFor,
 } from "../shared.ts";
 
@@ -32,10 +34,7 @@ export function assertQueuedTurnOutput(
   assertRunOrdinals(projection, [1, 2]);
   assertConversationMessageRoles(projection, ["user", "assistant", "user", "assistant"]);
   assertTurnItemTypes(projection, ["user_message", "assistant_message"]);
-  assertUserMessagesInclude(projection, [
-    "Respond with exactly: first fixture turn complete",
-    "Respond with exactly: second fixture turn complete",
-  ]);
+  assertUserMessagesInclude(projection, [MULTI_TURN_FIRST_PROMPT, MULTI_TURN_SECOND_PROMPT]);
   assertUserMessageInputIntents(projection, ["turn_start", "queued_turn"]);
   assert.equal(projection.turnItems.filter((item) => item.type === "user_message").length, 2);
   assertAssistantTextIncludes(projection, "first fixture turn complete");
