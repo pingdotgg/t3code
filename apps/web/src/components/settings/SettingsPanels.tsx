@@ -159,7 +159,7 @@ function getUsageRemainingLabel(usedPercent: number): string {
 function getUsageTrackClass(usedPercent: number): string {
   if (usedPercent >= 90) return "bg-destructive/12";
   if (usedPercent >= 70) return "bg-warning/12";
-  return "bg-white/6 dark:bg-white/6";
+  return "bg-black/5 dark:bg-white/6";
 }
 
 function getUsageResetLabel(resetsAt: string | undefined): string | null {
