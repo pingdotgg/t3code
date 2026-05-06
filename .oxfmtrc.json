@@ -13,6 +13,7 @@
     "apps/web/src/lib/vendor/qrcodegen.ts",
     "*.icon/**",
     ".local",
+    ".codex",
     ".github/workflows/ai-fix-executor-claude.yml",
     ".github/ai-loop.yml"
   ],

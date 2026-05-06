@@ -418,8 +418,8 @@ template repo.
   - [x] Record the fork URL and default branch.
   - [x] Adopt `AGENTS.md`, `.ai/rules`, PR readiness, review guidance, PDPL, i18n, secret-management, Well-Architected, GitHub Projects workflow, and agent orchestration rules.
   - [x] Add project-specific GitOps rules for feature, fix, chore, docs, ops, main, release, and tag flows.
-  - [ ] Add Claude workflow templates from `.claude/commands`.
-  - [ ] Add Codex-equivalent workflow recipes.
+  - [x] Add Claude workflow templates from `.claude/commands`.
+  - [x] Add Codex-equivalent workflow recipes.
   - [x] Configure the fork's validation command.
 - Validation:
   - Governance files exist in the fork.
@@ -772,3 +772,23 @@ Append one entry per implementation pass.
   - Result: PASS
 - Notes/deviations:
   - Stack A/B rules remain intentionally inactive unless a future phase explicitly adopts that architecture.
+
+### 2026-05-06 14:45 - phase 1 workflow templates
+
+- Summary:
+  - Added the full Claude command template set from the governance source.
+  - Added generated Codex command wrappers that delegate to the canonical Claude runbooks.
+  - Added Codex command/environment sync scripts and package scripts so `bun check` verifies the Codex surface stays aligned.
+- Files changed:
+  - `.claude/commands/*.md`
+  - `.codex/commands/*.md`
+  - `.codex/environments/environment.toml`
+  - `scripts/sync-codex-commands.ts`
+  - `scripts/sync-codex-environment.ts`
+  - `package.json`
+  - `docs/tasks/t3-kanban-project-console.md`
+- Validation run:
+  - Command: `bun codex:sync`
+  - Result: PASS
+- Notes/deviations:
+  - The Codex command files are generated wrappers; update `.claude/commands/*.md` first, then run `bun codex:sync`.

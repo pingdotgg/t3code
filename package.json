@@ -58,13 +58,15 @@
     "release:smoke": "node scripts/release-smoke.ts",
     "clean": "rm -rf node_modules apps/*/node_modules packages/*/node_modules apps/*/dist apps/*/dist-electron packages/*/dist .turbo apps/*/.turbo packages/*/.turbo",
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs",
-    "check": "bun run fmt:check && bun run lint && bun run typecheck && bun run test",
+    "check": "bun run fmt:check && bun run codex:check && bun run lint && bun run typecheck && bun run test",
     "validate:local": "bun run check && bun run build:desktop",
     "preflight": "bun run scripts/preflight/runner.ts",
     "env-audit": "bun preflight --only=env/*",
     "pr:check": "bun run check && bun preflight --cache-only --json >/dev/null && bash scripts/check-pr-readiness.sh",
     "adopt:check": "bash scripts/verify-template-adoption.sh --profile minimal",
-    "security:audit": "bash scripts/security-audit.sh"
+    "security:audit": "bash scripts/security-audit.sh",
+    "codex:sync": "bun run scripts/sync-codex-commands.ts && bun run scripts/sync-codex-environment.ts",
+    "codex:check": "bun run scripts/sync-codex-commands.ts --check && bun run scripts/sync-codex-environment.ts --check"
   },
   "dependencies": {
     "zod": "^4.4.2"
