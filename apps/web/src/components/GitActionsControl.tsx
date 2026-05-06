@@ -51,6 +51,7 @@ import {
   gitMutationKeys,
   gitPullMutationOptions,
   gitRunStackedActionMutationOptions,
+  sourceControlPublishRepositoryMutationOptions,
 } from "~/lib/gitReactQuery";
 import { refreshGitStatus, useGitStatus } from "~/lib/gitStatusState";
 import { newCommandId, randomUUID } from "~/lib/utils";
@@ -61,6 +62,7 @@ import { readLocalApi } from "~/localApi";
 import { useStore } from "~/store";
 import { createThreadSelectorByRef } from "~/storeSelectors";
 import { topBarButtonLabelClassName, topBarGroupSeparatorClassName } from "./topBarActionStyles";
+import { Input } from "./ui/input";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -252,6 +254,10 @@ export default function GitActionsControl({
   const [isEditingFiles, setIsEditingFiles] = useState(false);
   const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
     useState<PendingDefaultBranchAction | null>(null);
+  const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
+  const [publishProvider, setPublishProvider] = useState<"github" | "gitlab">("github");
+  const [publishRepository, setPublishRepository] = useState("");
+  const [publishPrivate, setPublishPrivate] = useState(true);
   const activeGitActionProgressRef = useRef<ActiveGitActionProgress | null>(null);
   const primaryButtonLabelClassName = topBarButtonLabelClassName(compact);
   const groupSeparatorClassName = topBarGroupSeparatorClassName(compact);
@@ -358,6 +364,13 @@ export default function GitActionsControl({
   );
   const pullMutation = useMutation(
     gitPullMutationOptions({ environmentId: activeEnvironmentId, cwd: gitCwd, queryClient }),
+  );
+  const publishRepositoryMutation = useMutation(
+    sourceControlPublishRepositoryMutationOptions({
+      environmentId: activeEnvironmentId,
+      cwd: gitCwd,
+      queryClient,
+    }),
   );
 
   const isRunStackedActionRunning =
@@ -834,6 +847,42 @@ export default function GitActionsControl({
     setIsCommitDialogOpen(true);
   };
 
+  const openPublishDialog = () => {
+    setPublishRepository("");
+    setPublishProvider("github");
+    setPublishPrivate(true);
+    setIsPublishDialogOpen(true);
+  };
+
+  const runPublishRepository = () => {
+    if (!gitCwd || !publishRepository.trim()) return;
+    const repository = publishRepository.trim();
+    const promise = publishRepositoryMutation.mutateAsync({
+      cwd: gitCwd,
+      provider: publishProvider,
+      repository,
+      visibility: publishPrivate ? "private" : "public",
+      protocol: "auto",
+    });
+    setIsPublishDialogOpen(false);
+    void toastManager.promise(promise, {
+      loading: { title: `Publishing ${repository}...`, data: threadToastData },
+      success: (result) => ({
+        title: `Published to ${publishProvider === "github" ? "GitHub" : "GitLab"}`,
+        description: `Pushed ${result.branch} to ${result.remoteName}.`,
+        data: threadToastData,
+      }),
+      error: (err) => ({
+        title: "Publish failed",
+        description: err instanceof Error ? err.message : "An error occurred.",
+        data: threadToastData,
+      }),
+    });
+    void promise
+      .then(() => refreshGitStatus({ environmentId: activeEnvironmentId, cwd: gitCwd }))
+      .catch(() => undefined);
+  };
+
   const runDialogAction = () => {
     if (!isCommitDialogOpen) return;
     const commitMessage = dialogCommitMessage.trim();
@@ -881,6 +930,12 @@ export default function GitActionsControl({
     </MenuItem>
   ) : (
     <>
+      {!hasOriginRemote ? (
+        <MenuItem disabled={publishRepositoryMutation.isPending} onClick={openPublishDialog}>
+          <CloudUploadIcon className="size-4" />
+          {publishRepositoryMutation.isPending ? "Publishing..." : "Publish repository"}
+        </MenuItem>
+      ) : null}
       {gitActionMenuItems.map((item) => {
         const disabledReason = getMenuActionDisabledReason({
           item,
@@ -1187,6 +1242,75 @@ export default function GitActionsControl({
             </Button>
             <Button size="sm" disabled={noneSelected} onClick={runDialogAction}>
               Commit
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+
+      <Dialog
+        open={isPublishDialogOpen}
+        onOpenChange={(open) => {
+          setIsPublishDialogOpen(open);
+          if (!open) {
+            setPublishRepository("");
+          }
+        }}
+      >
+        <DialogPopup className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Publish repository</DialogTitle>
+            <DialogDescription>
+              Create a remote repository, add it as origin, and push.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel className="space-y-4">
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                type="button"
+                variant={publishProvider === "github" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setPublishProvider("github")}
+              >
+                <GitHubIcon className="size-3.5" />
+                GitHub
+              </Button>
+              <Button
+                type="button"
+                variant={publishProvider === "gitlab" ? "default" : "outline"}
+                size="sm"
+                onClick={() => setPublishProvider("gitlab")}
+              >
+                GitLab
+              </Button>
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium">Repository path</p>
+              <Input
+                value={publishRepository}
+                onChange={(event) => setPublishRepository(event.target.value)}
+                placeholder={publishProvider === "github" ? "owner/repo" : "group/project"}
+              />
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={publishPrivate}
+                onCheckedChange={(checked) => setPublishPrivate(checked === true)}
+              />
+              Private repository
+            </label>
+          </DialogPanel>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setIsPublishDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={
+                publishRepositoryMutation.isPending || publishRepository.trim().length === 0
+              }
+              onClick={runPublishRepository}
+            >
+              Publish
             </Button>
           </DialogFooter>
         </DialogPopup>

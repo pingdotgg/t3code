@@ -15,7 +15,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@forma/contracts": "workspace:*"
+    "@forma/contracts": "workspace:*",
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",

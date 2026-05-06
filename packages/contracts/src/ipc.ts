@@ -58,6 +58,15 @@ import type {
   ServerUpsertKeybindingResult,
 } from "./server.ts";
 import type {
+  SourceControlCloneRepositoryInput,
+  SourceControlCloneRepositoryResult,
+  SourceControlDiscoveryResult,
+  SourceControlRepositoryInfo,
+  SourceControlRepositoryLookupInput,
+  SourceControlPublishRepositoryInput,
+  SourceControlPublishRepositoryResult,
+} from "./sourceControl.ts";
+import type {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
@@ -268,6 +277,7 @@ export interface LocalApi {
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
+    discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
   };
 }
 
@@ -329,6 +339,17 @@ export interface EnvironmentApi {
   };
   filesystem: {
     browse: (input: FilesystemBrowseInput) => Promise<FilesystemBrowseResult>;
+  };
+  sourceControl: {
+    lookupRepository: (
+      input: SourceControlRepositoryLookupInput,
+    ) => Promise<SourceControlRepositoryInfo>;
+    cloneRepository: (
+      input: SourceControlCloneRepositoryInput,
+    ) => Promise<SourceControlCloneRepositoryResult>;
+    publishRepository: (
+      input: SourceControlPublishRepositoryInput,
+    ) => Promise<SourceControlPublishRepositoryResult>;
   };
   git: {
     listBranches: (input: GitListBranchesInput) => Promise<GitListBranchesResult>;

@@ -2,6 +2,9 @@ import {
   type EnvironmentId,
   type GitActionProgressEvent,
   type GitStackedAction,
+  type SourceControlCloneRepositoryInput,
+  type SourceControlPublishRepositoryInput,
+  type SourceControlRepositoryLookupInput,
   type ThreadId,
 } from "@forma/contracts";
 import {
@@ -23,6 +26,23 @@ export const gitQueryKeys = {
     ["git", "branches", environmentId ?? null, cwd] as const,
   branchSearch: (environmentId: EnvironmentId | null, cwd: string | null, query: string) =>
     ["git", "branches", environmentId ?? null, cwd, "search", query] as const,
+};
+
+export const sourceControlQueryKeys = {
+  discovery: (environmentId: EnvironmentId | null) =>
+    ["source-control", "discovery", environmentId ?? null] as const,
+  repositoryLookup: (
+    environmentId: EnvironmentId | null,
+    provider: SourceControlRepositoryLookupInput["provider"] | null,
+    repository: string | null,
+  ) => ["source-control", "lookup", environmentId ?? null, provider, repository] as const,
+};
+
+export const sourceControlMutationKeys = {
+  cloneRepository: (environmentId: EnvironmentId | null) =>
+    ["source-control", "mutation", "clone", environmentId ?? null] as const,
+  publishRepository: (environmentId: EnvironmentId | null, cwd: string | null) =>
+    ["source-control", "mutation", "publish", environmentId ?? null, cwd] as const,
 };
 
 export const gitMutationKeys = {
@@ -118,6 +138,76 @@ export function gitResolvePullRequestQueryOptions(input: {
     staleTime: 30_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+  });
+}
+
+export function sourceControlDiscoveryQueryOptions(input: { environmentId: EnvironmentId | null }) {
+  return queryOptions({
+    queryKey: sourceControlQueryKeys.discovery(input.environmentId),
+    queryFn: async () => {
+      if (!input.environmentId) throw new Error("Source control discovery is unavailable.");
+      return requireEnvironmentConnection(
+        input.environmentId,
+      ).client.server.discoverSourceControl();
+    },
+    enabled: input.environmentId !== null,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function sourceControlRepositoryLookupQueryOptions(input: {
+  environmentId: EnvironmentId | null;
+  lookup: SourceControlRepositoryLookupInput | null;
+}) {
+  return queryOptions({
+    queryKey: sourceControlQueryKeys.repositoryLookup(
+      input.environmentId,
+      input.lookup?.provider ?? null,
+      input.lookup?.repository ?? null,
+    ),
+    queryFn: async () => {
+      if (!input.environmentId || !input.lookup) {
+        throw new Error("Repository lookup is unavailable.");
+      }
+      return ensureEnvironmentApi(input.environmentId).sourceControl.lookupRepository(input.lookup);
+    },
+    enabled: input.environmentId !== null && input.lookup !== null,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function sourceControlCloneRepositoryMutationOptions(input: {
+  environmentId: EnvironmentId | null;
+}) {
+  return mutationOptions({
+    mutationKey: sourceControlMutationKeys.cloneRepository(input.environmentId),
+    mutationFn: async (cloneInput: SourceControlCloneRepositoryInput) => {
+      if (!input.environmentId) throw new Error("Repository clone is unavailable.");
+      return ensureEnvironmentApi(input.environmentId).sourceControl.cloneRepository(cloneInput);
+    },
+  });
+}
+
+export function sourceControlPublishRepositoryMutationOptions(input: {
+  environmentId: EnvironmentId | null;
+  cwd: string | null;
+  queryClient: QueryClient;
+}) {
+  return mutationOptions({
+    mutationKey: sourceControlMutationKeys.publishRepository(input.environmentId, input.cwd),
+    mutationFn: async (publishInput: SourceControlPublishRepositoryInput) => {
+      if (!input.environmentId || !input.cwd) {
+        throw new Error("Repository publish is unavailable.");
+      }
+      return ensureEnvironmentApi(input.environmentId).sourceControl.publishRepository(
+        publishInput,
+      );
+    },
+    onSuccess: async () => {
+      await invalidateGitBranchQueries(input.queryClient, input.environmentId, input.cwd);
+    },
   });
 }
 

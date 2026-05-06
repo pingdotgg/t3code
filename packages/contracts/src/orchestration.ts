@@ -1,4 +1,4 @@
-import { Effect, Option, Schema, SchemaIssue, Struct } from "effect";
+import { Effect, Option, Schema, SchemaIssue, SchemaTransformation, Struct } from "effect";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity } from "./environment.ts";
 import { ProjectPreviewWorkspaceRecord } from "./preview.ts";
@@ -71,13 +71,68 @@ export const OpenCodeModelSelection = Schema.Struct({
 });
 export type OpenCodeModelSelection = typeof OpenCodeModelSelection.Type;
 
-export const ModelSelection = Schema.Union([
+const ProviderModelSelection = Schema.Union([
   CodexModelSelection,
   ClaudeModelSelection,
   CursorModelSelection,
   OpenCodeModelSelection,
 ]);
+type ProviderModelSelection = typeof ProviderModelSelection.Type;
+
+const LegacyInstanceModelSelection = Schema.Struct({
+  instanceId: TrimmedNonEmptyString,
+  model: TrimmedNonEmptyString,
+  options: Schema.optionalKey(ProviderOptionSelections),
+});
+
+const ModelSelectionFromLegacyInstance = LegacyInstanceModelSelection.pipe(
+  Schema.decodeTo(
+    Schema.toType(ProviderModelSelection),
+    SchemaTransformation.transformOrFail({
+      decode: (selection) => {
+        const provider = providerKindFromLegacyInstanceId(selection.instanceId);
+        if (provider === null) {
+          return Effect.fail(
+            new SchemaIssue.InvalidValue(Option.some(selection.instanceId), {
+              message: "Unknown provider instance id",
+            }),
+          );
+        }
+
+        return Effect.succeed({
+          provider,
+          model: selection.model,
+          ...(selection.options ? { options: selection.options } : {}),
+        } satisfies ProviderModelSelection);
+      },
+      encode: (selection) =>
+        Effect.succeed({
+          instanceId: selection.provider,
+          model: selection.model,
+          ...(selection.options ? { options: selection.options } : {}),
+        }),
+    }),
+  ),
+);
+
+export const ModelSelection = Schema.Union([
+  ProviderModelSelection,
+  ModelSelectionFromLegacyInstance,
+]);
 export type ModelSelection = typeof ModelSelection.Type;
+
+function providerKindFromLegacyInstanceId(instanceId: string): ProviderKind | null {
+  const trimmed = instanceId.trim();
+  switch (trimmed) {
+    case "codex":
+    case "claudeAgent":
+    case "cursor":
+    case "opencode":
+      return trimmed;
+    default:
+      return null;
+  }
+}
 
 export const RuntimeMode = Schema.Literals([
   "approval-required",

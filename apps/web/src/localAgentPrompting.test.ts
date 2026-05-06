@@ -8,6 +8,7 @@ const makeApi = (files: Record<string, string>): EnvironmentApi =>
   ({
     terminal: {} as EnvironmentApi["terminal"],
     filesystem: {} as EnvironmentApi["filesystem"],
+    sourceControl: {} as EnvironmentApi["sourceControl"],
     git: {} as EnvironmentApi["git"],
     orchestration: {} as EnvironmentApi["orchestration"],
     preview: {} as EnvironmentApi["preview"],

@@ -107,6 +107,16 @@ import {
   ServerUpsertKeybindingResult,
 } from "./server.ts";
 import { ServerSettings, ServerSettingsError, ServerSettingsPatch } from "./settings.ts";
+import {
+  SourceControlCloneRepositoryInput,
+  SourceControlCloneRepositoryResult,
+  SourceControlDiscoveryResult,
+  SourceControlRepositoryError,
+  SourceControlRepositoryInfo,
+  SourceControlRepositoryLookupInput,
+  SourceControlPublishRepositoryInput,
+  SourceControlPublishRepositoryResult,
+} from "./sourceControl.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -161,6 +171,12 @@ export const WS_METHODS = {
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
+  serverDiscoverSourceControl: "server.discoverSourceControl",
+
+  // Source control
+  sourceControlLookupRepository: "sourceControl.lookupRepository",
+  sourceControlCloneRepository: "sourceControl.cloneRepository",
+  sourceControlPublishRepository: "sourceControl.publishRepository",
 
   // Streaming subscriptions
   subscribeGitStatus: "subscribeGitStatus",
@@ -199,6 +215,36 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
   success: ServerSettings,
   error: ServerSettingsError,
 });
+
+export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
+  payload: Schema.Struct({}),
+  success: SourceControlDiscoveryResult,
+  error: SourceControlRepositoryError,
+});
+
+export const WsSourceControlLookupRepositoryRpc = Rpc.make(
+  WS_METHODS.sourceControlLookupRepository,
+  {
+    payload: SourceControlRepositoryLookupInput,
+    success: SourceControlRepositoryInfo,
+    error: SourceControlRepositoryError,
+  },
+);
+
+export const WsSourceControlCloneRepositoryRpc = Rpc.make(WS_METHODS.sourceControlCloneRepository, {
+  payload: SourceControlCloneRepositoryInput,
+  success: SourceControlCloneRepositoryResult,
+  error: SourceControlRepositoryError,
+});
+
+export const WsSourceControlPublishRepositoryRpc = Rpc.make(
+  WS_METHODS.sourceControlPublishRepository,
+  {
+    payload: SourceControlPublishRepositoryInput,
+    success: SourceControlPublishRepositoryResult,
+    error: SourceControlRepositoryError,
+  },
+);
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   payload: ProjectSearchEntriesInput,
@@ -496,6 +542,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerUpsertKeybindingRpc,
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
+  WsServerDiscoverSourceControlRpc,
+  WsSourceControlLookupRepositoryRpc,
+  WsSourceControlCloneRepositoryRpc,
+  WsSourceControlPublishRepositoryRpc,
   WsProjectsListEntriesRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsGetLocalAgentInventoryRpc,

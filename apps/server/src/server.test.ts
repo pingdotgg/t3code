@@ -21,6 +21,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   ProjectId,
   ResolvedKeybindingRule,
+  SourceControlRepositoryError,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
@@ -108,6 +109,14 @@ import {
   type ServerEnvironmentShape,
 } from "./environment/Services/ServerEnvironment.ts";
 import { PreviewManager, type PreviewManagerShape } from "./preview/Services/PreviewManager.ts";
+import {
+  SourceControlDiscovery,
+  type SourceControlDiscoveryShape,
+} from "./sourceControl/SourceControlDiscovery.ts";
+import {
+  SourceControlRepositoryService,
+  type SourceControlRepositoryServiceShape,
+} from "./sourceControl/SourceControlRepositoryService.ts";
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
@@ -346,6 +355,8 @@ const buildAppUnderTest = (options?: {
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
     serverEnvironment?: Partial<ServerEnvironmentShape>;
     repositoryIdentityResolver?: Partial<RepositoryIdentityResolverShape>;
+    sourceControlDiscovery?: Partial<SourceControlDiscoveryShape>;
+    sourceControlRepositoryService?: Partial<SourceControlRepositoryServiceShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -581,6 +592,44 @@ const buildAppUnderTest = (options?: {
           authenticateAccessToken: () => Effect.succeed(false),
           ...options?.layers?.previewManager,
         } satisfies Partial<PreviewManagerShape>),
+      ),
+      Layer.provide(
+        Layer.mock(SourceControlDiscovery)({
+          discover: Effect.succeed({
+            versionControlSystems: [],
+            sourceControlProviders: [],
+          }),
+          ...options?.layers?.sourceControlDiscovery,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(SourceControlRepositoryService)({
+          lookupRepository: () =>
+            Effect.fail(
+              new SourceControlRepositoryError({
+                provider: "unknown",
+                operation: "lookupRepository",
+                detail: "Not implemented in server route test.",
+              }),
+            ),
+          cloneRepository: () =>
+            Effect.fail(
+              new SourceControlRepositoryError({
+                provider: "unknown",
+                operation: "cloneRepository",
+                detail: "Not implemented in server route test.",
+              }),
+            ),
+          publishRepository: () =>
+            Effect.fail(
+              new SourceControlRepositoryError({
+                provider: "unknown",
+                operation: "publishRepository",
+                detail: "Not implemented in server route test.",
+              }),
+            ),
+          ...options?.layers?.sourceControlRepositoryService,
+        }),
       ),
     );
 
