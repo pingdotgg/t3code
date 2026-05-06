@@ -1,10 +1,14 @@
-import * as ChildProcess from "node:child_process";
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Crypto from "node:crypto";
 import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
-import * as Option from "effect/Option";
 import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import {
   app,
@@ -58,7 +62,7 @@ import {
   writeSavedEnvironmentRegistry,
   writeSavedEnvironmentSecret,
 } from "./clientPersistence.ts";
-import { BackendReadinessAbortedError, waitForHttpReady } from "./backendReadiness.ts";
+import { runBackendProcess } from "./backendProcess.ts";
 import { showDesktopConfirmDialog } from "./confirmDialog.ts";
 import {
   resolveDesktopCoreAdvertisedEndpoints,
@@ -66,10 +70,8 @@ import {
 } from "./serverExposure.ts";
 import { DesktopSshEnvironmentBridge, resolveRemoteT3CliPackageSpec } from "./sshEnvironment.ts";
 import { syncShellEnvironment } from "./syncShellEnvironment.ts";
-import { waitForBackendStartupReady } from "./backendStartupReadiness.ts";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState.ts";
 import { doesVersionMatchDesktopUpdateChannel } from "./updateChannels.ts";
-import { ServerListeningDetector } from "./serverListeningDetector.ts";
 import {
   createInitialDesktopUpdateState,
   reduceDesktopUpdateStateOnCheckFailure,
@@ -217,9 +219,9 @@ type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 type LinuxDesktopNamedApp = Electron.App & {
   setDesktopName?: (desktopName: string) => void;
 };
-
 let mainWindow: BrowserWindow | null = null;
-let backendProcess: ChildProcess.ChildProcess | null = null;
+let backendProcessFiber: Fiber.Fiber<void, never> | null = null;
+let backendReady = false;
 let backendPort = 0;
 let backendBindHost = DESKTOP_LOOPBACK_HOST;
 let backendBootstrapToken = "";
@@ -227,9 +229,6 @@ let backendHttpUrl: Option.Option<URL> = Option.none();
 let backendWsUrl = "";
 let backendEndpointUrl: string | null = null;
 let backendAdvertisedHost: string | null = null;
-let backendReadinessAbortController: AbortController | null = null;
-let backendInitialWindowOpenInFlight: Promise<void> | null = null;
-let backendListeningDetector: ServerListeningDetector | null = null;
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let isQuitting = false;
@@ -243,7 +242,7 @@ let desktopSettings = readDesktopSettings(DESKTOP_SETTINGS_PATH, app.getVersion(
 let desktopServerExposureMode: DesktopServerExposureMode = desktopSettings.serverExposureMode;
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
-const expectedBackendExitChildren = new WeakSet<ChildProcess.ChildProcess>();
+const backendProcessLayer = Layer.merge(NodeServices.layer, NodeHttpClient.layerUndici);
 
 function requireBackendHttpUrl(): URL {
   return Option.getOrThrowWith(
@@ -445,7 +444,6 @@ function relaunchDesktopApp(reason: string): void {
   setImmediate(() => {
     isQuitting = true;
     clearUpdatePollTimer();
-    cancelBackendReadinessWait();
     void stopBackendAndWaitForExit()
       .catch((error) => {
         writeDesktopLogHeader(
@@ -515,73 +513,24 @@ function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
   return null;
 }
 
-async function waitForBackendHttpReady(
-  baseUrl: URL,
-  options?: Parameters<typeof waitForHttpReady>[1],
-): Promise<void> {
-  cancelBackendReadinessWait();
-  const controller = new AbortController();
-  backendReadinessAbortController = controller;
+function handleBackendReady(): void {
+  backendReady = true;
+  writeDesktopLogHeader("bootstrap backend ready source=http");
 
-  try {
-    await waitForHttpReady(baseUrl, {
-      ...options,
-      signal: controller.signal,
-    });
-  } finally {
-    if (backendReadinessAbortController === controller) {
-      backendReadinessAbortController = null;
-    }
-  }
-}
-
-function cancelBackendReadinessWait(): void {
-  backendReadinessAbortController?.abort();
-  backendReadinessAbortController = null;
-}
-
-async function waitForBackendWindowReady(baseUrl: URL): Promise<"listening" | "http"> {
-  return await waitForBackendStartupReady({
-    listeningPromise: backendListeningDetector?.promise ?? null,
-    waitForHttpReady: () =>
-      waitForBackendHttpReady(baseUrl, {
-        timeout: Duration.minutes(1),
-      }),
-    cancelHttpWait: cancelBackendReadinessWait,
-  });
-}
-
-function ensureInitialBackendWindowOpen(): void {
   const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
-  if (isDevelopment || existingWindow !== null || backendInitialWindowOpenInFlight !== null) {
+  if (isDevelopment || existingWindow !== null) {
     return;
   }
 
-  const nextOpen = waitForBackendWindowReady(requireBackendHttpUrl())
-    .then((source) => {
-      writeDesktopLogHeader(`bootstrap backend ready source=${source}`);
-      if (mainWindow ?? BrowserWindow.getAllWindows()[0]) {
-        return;
-      }
-      mainWindow = createWindow();
-      writeDesktopLogHeader("bootstrap main window created");
-    })
-    .catch((error) => {
-      if (BackendReadinessAbortedError.is(error)) {
-        return;
-      }
-      writeDesktopLogHeader(
-        `bootstrap backend readiness warning message=${formatErrorMessage(error)}`,
-      );
-      console.warn("[desktop] backend readiness check timed out during packaged bootstrap", error);
-    })
-    .finally(() => {
-      if (backendInitialWindowOpenInFlight === nextOpen) {
-        backendInitialWindowOpenInFlight = null;
-      }
-    });
+  mainWindow = createWindow();
+  writeDesktopLogHeader("bootstrap main window created");
+}
 
-  backendInitialWindowOpenInFlight = nextOpen;
+function createBackendWindowIfReady(): void {
+  if (!backendReady) return;
+  const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
+  if (existingWindow !== null) return;
+  mainWindow = createWindow();
 }
 
 function writeDesktopStreamChunk(
@@ -660,17 +609,8 @@ function initializePackagedLogging(): void {
   }
 }
 
-function captureBackendOutput(child: ChildProcess.ChildProcess): void {
-  const attachStream = (stream: NodeJS.ReadableStream | null | undefined): void => {
-    stream?.on("data", (chunk: unknown) => {
-      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), "utf8");
-      backendLogSink?.write(buffer);
-      backendListeningDetector?.push(buffer);
-    });
-  };
-
-  attachStream(child.stdout);
-  attachStream(child.stderr);
+function writeBackendOutputChunk(_streamName: "stdout" | "stderr", chunk: Uint8Array): void {
+  backendLogSink?.write(Buffer.from(chunk));
 }
 
 initializePackagedLogging();
@@ -1471,9 +1411,17 @@ function scheduleBackendRestart(reason: string): void {
   }, delayMs);
 }
 
-function startBackend(): void {
-  if (isQuitting || backendProcess) return;
+function clearBackendRestartTimer(): void {
+  if (restartTimer) {
+    clearTimeout(restartTimer);
+    restartTimer = null;
+  }
+}
 
+function startBackend(): void {
+  if (isQuitting || backendProcessFiber !== null) return;
+
+  backendReady = false;
   backendObservabilitySettings = readPersistedBackendObservabilitySettings();
   const backendEntry = resolveBackendEntry();
   if (!FS.existsSync(backendEntry)) {
@@ -1482,22 +1430,38 @@ function startBackend(): void {
   }
 
   const captureBackendLogs = !isDevelopment;
-  const child = ChildProcess.spawn(process.execPath, [backendEntry, "--bootstrap-fd", "3"], {
-    cwd: resolveBackendCwd(),
-    // In Electron main, process.execPath points to the Electron binary.
-    // Run the child in Node mode so this backend process does not become a GUI app instance.
-    env: {
-      ...backendChildEnv(),
-      ELECTRON_RUN_AS_NODE: "1",
-    },
-    stdio: captureBackendLogs
-      ? ["ignore", "pipe", "pipe", "pipe"]
-      : ["ignore", "inherit", "inherit", "pipe"],
-  });
-  const bootstrapStream = child.stdio[3];
-  if (bootstrapStream && "write" in bootstrapStream) {
-    bootstrapStream.write(
-      `${JSON.stringify({
+  let backendSessionClosed = false;
+  let backendSessionStarted = false;
+  let backendPid: number | null = null;
+  let startedFiber: Fiber.Fiber<void, never> | null = null;
+  const closeBackendSession = (details: string) => {
+    if (backendSessionClosed || !backendSessionStarted) return;
+    backendSessionClosed = true;
+    writeBackendSessionBoundary("END", details);
+  };
+
+  const clearStartedBackendState = (): void => {
+    if (backendProcessFiber === startedFiber) {
+      backendProcessFiber = null;
+    }
+    backendReady = false;
+  };
+
+  const finalizeBackendSession = (details: string): void => {
+    clearStartedBackendState();
+    closeBackendSession(details);
+  };
+
+  const program = Effect.scoped(
+    runBackendProcess({
+      executablePath: process.execPath,
+      entryPath: backendEntry,
+      cwd: resolveBackendCwd(),
+      env: {
+        ...backendChildEnv(),
+        ELECTRON_RUN_AS_NODE: "1",
+      },
+      bootstrap: {
         mode: "desktop",
         noBrowser: true,
         port: backendPort,
@@ -1512,147 +1476,89 @@ function startBackend(): void {
         ...(backendObservabilitySettings.otlpMetricsUrl
           ? { otlpMetricsUrl: backendObservabilitySettings.otlpMetricsUrl }
           : {}),
-      })}\n`,
-    );
-    bootstrapStream.end();
-  } else {
-    child.kill("SIGTERM");
-    scheduleBackendRestart("missing desktop bootstrap pipe");
-    return;
-  }
-  const listeningDetector = new ServerListeningDetector();
-  backendListeningDetector = listeningDetector;
-  backendProcess = child;
-  let backendSessionClosed = false;
-  const closeBackendSession = (details: string) => {
-    if (backendSessionClosed) return;
-    backendSessionClosed = true;
-    writeBackendSessionBoundary("END", details);
-  };
-  writeBackendSessionBoundary(
-    "START",
-    `pid=${child.pid ?? "unknown"} port=${backendPort} cwd=${resolveBackendCwd()}`,
+      },
+      httpBaseUrl: requireBackendHttpUrl(),
+      captureOutput: captureBackendLogs,
+      onStarted: (pid) =>
+        Effect.sync(() => {
+          backendPid = pid;
+          backendSessionStarted = true;
+          restartAttempt = 0;
+          writeBackendSessionBoundary(
+            "START",
+            `pid=${pid} port=${backendPort} cwd=${resolveBackendCwd()}`,
+          );
+        }),
+      onReady: () => Effect.sync(handleBackendReady),
+      onReadinessFailure: (error) =>
+        Effect.sync(() => {
+          writeDesktopLogHeader(
+            `bootstrap backend readiness warning message=${formatErrorMessage(error)}`,
+          );
+          console.warn("[desktop] backend readiness check failed during bootstrap", error);
+        }),
+      onOutput: (streamName, chunk) =>
+        Effect.sync(() => {
+          writeBackendOutputChunk(streamName, chunk);
+        }),
+    }).pipe(
+      Effect.match({
+        onFailure: (error) => {
+          const message = formatErrorMessage(error);
+          finalizeBackendSession(`pid=${backendPid ?? "unknown"} error=${message}`);
+          if (isQuitting) {
+            return;
+          }
+          scheduleBackendRestart(message);
+        },
+        onSuccess: (exit) => {
+          finalizeBackendSession(`pid=${backendPid ?? "unknown"} ${exit.reason}`);
+          if (isQuitting) {
+            return;
+          }
+          scheduleBackendRestart(exit.reason);
+        },
+      }),
+    ),
+  ).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        finalizeBackendSession(`pid=${backendPid ?? "unknown"} interrupted`);
+      }),
+    ),
+    Effect.provide(backendProcessLayer),
   );
-  captureBackendOutput(child);
 
-  child.once("spawn", () => {
-    restartAttempt = 0;
-  });
-
-  child.on("error", (error) => {
-    if (backendListeningDetector === listeningDetector) {
-      listeningDetector.fail(error);
-      backendListeningDetector = null;
-    }
-    const wasExpected = expectedBackendExitChildren.has(child);
-    if (backendProcess === child) {
-      backendProcess = null;
-    }
-    closeBackendSession(`pid=${child.pid ?? "unknown"} error=${error.message}`);
-    if (wasExpected) {
-      return;
-    }
-    scheduleBackendRestart(error.message);
-  });
-
-  child.on("exit", (code, signal) => {
-    if (backendListeningDetector === listeningDetector) {
-      listeningDetector.fail(
-        new Error(
-          `backend exited before logging readiness (code=${code ?? "null"} signal=${signal ?? "null"})`,
-        ),
-      );
-      backendListeningDetector = null;
-    }
-    const wasExpected = expectedBackendExitChildren.has(child);
-    if (backendProcess === child) {
-      backendProcess = null;
-    }
-    closeBackendSession(
-      `pid=${child.pid ?? "unknown"} code=${code ?? "null"} signal=${signal ?? "null"}`,
-    );
-    if (isQuitting || wasExpected) return;
-    const reason = `code=${code ?? "null"} signal=${signal ?? "null"}`;
-    scheduleBackendRestart(reason);
-  });
-
-  ensureInitialBackendWindowOpen();
+  startedFiber = Effect.runFork(program);
+  backendProcessFiber = startedFiber;
 }
 
 function stopBackend(): void {
-  cancelBackendReadinessWait();
-  backendListeningDetector = null;
-  if (restartTimer) {
-    clearTimeout(restartTimer);
-    restartTimer = null;
-  }
+  clearBackendRestartTimer();
+  backendReady = false;
 
-  const child = backendProcess;
-  backendProcess = null;
-  if (!child) return;
-
-  if (child.exitCode === null && child.signalCode === null) {
-    expectedBackendExitChildren.add(child);
-    child.kill("SIGTERM");
-    setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill("SIGKILL");
-      }
-    }, 2_000).unref();
+  const fiber = backendProcessFiber;
+  backendProcessFiber = null;
+  if (fiber !== null) {
+    Effect.runFork(Fiber.interrupt(fiber).pipe(Effect.ignore));
   }
 }
 
 async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
-  cancelBackendReadinessWait();
-  if (restartTimer) {
-    clearTimeout(restartTimer);
-    restartTimer = null;
-  }
+  clearBackendRestartTimer();
+  backendReady = false;
 
-  const child = backendProcess;
-  backendProcess = null;
-  if (!child) return;
-  const backendChild = child;
-  if (backendChild.exitCode !== null || backendChild.signalCode !== null) return;
-  expectedBackendExitChildren.add(backendChild);
+  const fiber = backendProcessFiber;
+  backendProcessFiber = null;
+  if (fiber === null) return;
 
-  await new Promise<void>((resolve) => {
-    let settled = false;
-    let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
-    let exitTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
-
-    function settle(): void {
-      if (settled) return;
-      settled = true;
-      backendChild.off("exit", onExit);
-      if (forceKillTimer) {
-        clearTimeout(forceKillTimer);
-      }
-      if (exitTimeoutTimer) {
-        clearTimeout(exitTimeoutTimer);
-      }
-      resolve();
-    }
-
-    function onExit(): void {
-      settle();
-    }
-
-    backendChild.once("exit", onExit);
-    backendChild.kill("SIGTERM");
-
-    forceKillTimer = setTimeout(() => {
-      if (backendChild.exitCode === null && backendChild.signalCode === null) {
-        backendChild.kill("SIGKILL");
-      }
-    }, 2_000);
-    forceKillTimer.unref();
-
-    exitTimeoutTimer = setTimeout(() => {
-      settle();
-    }, timeoutMs);
-    exitTimeoutTimer.unref();
-  });
+  await Effect.runPromise(
+    Fiber.interrupt(fiber).pipe(
+      Effect.timeoutOption(Duration.millis(timeoutMs)),
+      Effect.asVoid,
+      Effect.ignore,
+    ),
+  );
 }
 
 function registerIpcHandlers(): void {
@@ -2221,23 +2127,7 @@ async function bootstrap(): Promise<void> {
   if (isDevelopment) {
     mainWindow = createWindow();
     writeDesktopLogHeader("bootstrap main window created");
-    void waitForBackendWindowReady(requireBackendHttpUrl())
-      .then((source) => {
-        writeDesktopLogHeader(`bootstrap backend ready source=${source}`);
-      })
-      .catch((error) => {
-        if (BackendReadinessAbortedError.is(error)) {
-          return;
-        }
-        writeDesktopLogHeader(
-          `bootstrap backend readiness warning message=${formatErrorMessage(error)}`,
-        );
-        console.warn("[desktop] backend readiness check timed out during dev bootstrap", error);
-      });
-    return;
   }
-
-  ensureInitialBackendWindowOpen();
 }
 
 app.on("before-quit", () => {
@@ -2245,7 +2135,6 @@ app.on("before-quit", () => {
   updateInstallInFlight = false;
   writeDesktopLogHeader("before-quit received");
   clearUpdatePollTimer();
-  cancelBackendReadinessWait();
   stopBackend();
   void desktopSshEnvironmentBridge.dispose().catch(() => undefined);
   restoreStdIoCapture?.();
@@ -2260,9 +2149,6 @@ app
     registerDesktopProtocol();
     configureAutoUpdater();
     void bootstrap().catch((error) => {
-      if (BackendReadinessAbortedError.is(error) && isQuitting) {
-        return;
-      }
       handleFatalStartupError("bootstrap", error);
     });
 
@@ -2276,7 +2162,7 @@ app
         mainWindow = createWindow();
         return;
       }
-      ensureInitialBackendWindowOpen();
+      createBackendWindowIfReady();
     });
   })
   .catch((error) => {
@@ -2295,7 +2181,6 @@ if (process.platform !== "win32") {
     isQuitting = true;
     writeDesktopLogHeader("SIGINT received");
     clearUpdatePollTimer();
-    cancelBackendReadinessWait();
     stopBackend();
     void desktopSshEnvironmentBridge.dispose().catch(() => undefined);
     restoreStdIoCapture?.();

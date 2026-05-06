@@ -3,7 +3,7 @@ import { Duration, Effect, Fiber, Layer, Result } from "effect";
 import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
-import { BackendReadinessAbortedError, waitForHttpReadyEffect } from "./backendReadiness.ts";
+import { waitForHttpReadyEffect } from "./backendReadiness.ts";
 
 function responseForRequest(
   request: HttpClientRequest.HttpClientRequest,
@@ -110,11 +110,4 @@ describe("waitForHttpReadyEffect", () => {
       }
     }).pipe(Effect.provide(layer));
   });
-
-  it.effect("recognizes aborted readiness errors", () =>
-    Effect.sync(() => {
-      assert.equal(BackendReadinessAbortedError.is(new BackendReadinessAbortedError()), true);
-      assert.equal(BackendReadinessAbortedError.is(new Error("nope")), false);
-    }),
-  );
 });

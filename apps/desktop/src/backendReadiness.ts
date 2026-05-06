@@ -1,9 +1,6 @@
-import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
-import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Predicate from "effect/Predicate";
 import * as Schedule from "effect/Schedule";
 import { HttpClient } from "effect/unstable/http";
 
@@ -14,24 +11,9 @@ export interface WaitForHttpReadyEffectOptions {
   readonly path?: string;
 }
 
-export interface WaitForHttpReadyOptions extends WaitForHttpReadyEffectOptions {
-  readonly signal?: AbortSignal;
-}
-
 const DEFAULT_TIMEOUT = Duration.seconds(30);
 const DEFAULT_INTERVAL = Duration.millis(100);
 const DEFAULT_REQUEST_TIMEOUT = Duration.seconds(1);
-
-export class BackendReadinessAbortedError extends Data.TaggedError(
-  "BackendReadinessAbortedError",
-)<{}> {
-  static is = (u: unknown): u is BackendReadinessAbortedError =>
-    Predicate.isTagged(u, "BackendReadinessAbortedError");
-
-  override get message() {
-    return "Backend readiness wait was aborted.";
-  }
-}
 
 export class BackendTimeoutError extends Data.TaggedError("BackendTimeoutError")<{
   readonly url: URL;
@@ -63,21 +45,3 @@ export const waitForHttpReadyEffect = Effect.fn("waitForHttpReadyEffect")(functi
     Effect.mapError(() => new BackendTimeoutError({ url: baseUrl })),
   );
 });
-
-/**
- * @deprecated - Temporary promise shim until remaining desktop entrypoint is ported to Effect
- */
-export async function waitForHttpReady(
-  baseUrl: URL,
-  options?: WaitForHttpReadyOptions,
-): Promise<void> {
-  const signal = options?.signal;
-
-  const exit = await Effect.runPromiseExit(
-    waitForHttpReadyEffect(baseUrl, options).pipe(Effect.provide(NodeHttpClient.layerUndici)),
-    { signal },
-  );
-  if (exit._tag === "Success") return;
-  if (Cause.hasInterrupts(exit.cause)) throw new BackendReadinessAbortedError();
-  throw Cause.squash(exit.cause);
-}
