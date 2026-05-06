@@ -90,7 +90,14 @@ import { resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { CommandPaletteResults } from "./CommandPaletteResults";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
-import { AddProjectIcon, NewThreadIcon, PreviewTriggerIcon, SettingsHexIcon } from "./icons/custom";
+import {
+  AddProjectFolderIcon,
+  AddProjectIcon,
+  GitHubRepoIcon,
+  GitUrlIcon,
+  NewThreadIcon,
+  SettingsHexIcon,
+} from "./icons/custom";
 import { useServerKeybindings } from "../rpc/serverState";
 import { resolveShortcutCommand } from "../keybindings";
 import {
@@ -112,7 +119,6 @@ import {
   sourceControlDiscoveryQueryOptions,
 } from "../lib/gitReactQuery";
 import { getSourceControlProviderPresentation } from "../sourceControlPresentation";
-import { GitHubIcon } from "./Icons";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const BROWSE_STALE_TIME_MS = 30_000;
@@ -641,7 +647,7 @@ function OpenCommandPaletteDialog() {
       pushPaletteView({
         addonIcon:
           source.kind === "provider" && source.provider === "github" ? (
-            <GitHubIcon className={ADDON_ICON_CLASS} />
+            <GitHubRepoIcon className={ADDON_ICON_CLASS} />
           ) : (
             <FolderPlusIcon className={ADDON_ICON_CLASS} />
           ),
@@ -652,90 +658,83 @@ function OpenCommandPaletteDialog() {
     [],
   );
 
-  const openSourceControlSettings = useCallback(async () => {
-    setOpen(false);
-    await navigate({ to: "/settings/source-control" });
-  }, [navigate, setOpen]);
-
   const buildSourceControlProviderItem = useCallback(
     (
       environmentId: EnvironmentId,
       provider: Extract<SourceControlProviderKind, "github" | "gitlab">,
-    ): CommandPaletteActionItem => {
+    ): CommandPaletteActionItem | null => {
       const presentation = getSourceControlProviderPresentation(provider);
       const discoveryItem = sourceControlDiscoveryQuery.data?.sourceControlProviders.find(
         (item) => item.kind === provider,
       );
       const isReady =
-        discoveryItem === undefined ||
-        (discoveryItem.status === "available" && discoveryItem.auth.status === "authenticated");
-      const setupDetail =
-        discoveryItem?.status === "missing"
-          ? `${presentation.label} CLI is not installed.`
-          : discoveryItem?.auth.status === "unauthenticated"
-            ? `${presentation.label} CLI is not authenticated.`
-            : null;
+        discoveryItem?.status === "available" && discoveryItem.auth.status === "authenticated";
+      if (!isReady) {
+        return null;
+      }
 
       return {
         kind: "action",
         value: `action:add-project:${provider}`,
         searchTerms: ["add project", provider, presentation.label, "repository", "clone"],
-        title: isReady ? `${presentation.label} repository` : `Set up ${presentation.label}`,
-        description: setupDetail ?? presentation.repositoryPlaceholder,
+        title: `${presentation.label} repository`,
+        description: presentation.repositoryPlaceholder,
         icon:
           provider === "github" ? (
-            <GitHubIcon className={ITEM_ICON_CLASS} />
+            <GitHubRepoIcon className={ITEM_ICON_CLASS} />
           ) : (
             <FolderPlusIcon className={ITEM_ICON_CLASS} />
           ),
         keepOpen: true,
         run: async () => {
-          if (!isReady) {
-            await openSourceControlSettings();
-            return;
-          }
           startAddProjectClone(environmentId, { kind: "provider", provider });
         },
       };
     },
-    [openSourceControlSettings, sourceControlDiscoveryQuery.data, startAddProjectClone],
+    [sourceControlDiscoveryQuery.data, startAddProjectClone],
   );
 
   const buildAddProjectSourceGroups = useCallback(
-    (environmentId: EnvironmentId): CommandPaletteView["groups"] => [
-      {
-        value: "project-sources",
-        label: "Sources",
-        items: [
-          {
-            kind: "action",
-            value: "action:add-project:local",
-            searchTerms: ["add project", "local", "folder", "directory", "browse"],
-            title: "Local folder",
-            description: "Browse this environment",
-            icon: <FolderIcon className={ITEM_ICON_CLASS} />,
-            keepOpen: true,
-            run: async () => {
-              startAddProjectBrowse(environmentId);
+    (environmentId: EnvironmentId): CommandPaletteView["groups"] => {
+      const providerItems = [
+        buildSourceControlProviderItem(environmentId, "github"),
+        buildSourceControlProviderItem(environmentId, "gitlab"),
+      ].filter((item): item is CommandPaletteActionItem => item !== null);
+
+      return [
+        {
+          value: "project-sources",
+          label: "Sources",
+          items: [
+            {
+              kind: "action",
+              value: "action:add-project:local",
+              searchTerms: ["add project", "local", "folder", "directory", "browse"],
+              title: "Local folder",
+              description: "Browse this environment",
+              icon: <AddProjectFolderIcon className="size-4 text-muted-foreground/80" />,
+              keepOpen: true,
+              run: async () => {
+                startAddProjectBrowse(environmentId);
+              },
             },
-          },
-          {
-            kind: "action",
-            value: "action:add-project:git-url",
-            searchTerms: ["add project", "git", "url", "remote", "clone"],
-            title: "Git URL",
-            description: "Clone any accessible Git remote",
-            icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
-            keepOpen: true,
-            run: async () => {
-              startAddProjectClone(environmentId, { kind: "url" });
+            {
+              kind: "action",
+              value: "action:add-project:git-url",
+              searchTerms: ["add project", "git", "url", "remote", "clone"],
+              title: "Git URL",
+              description: "Clone any accessible Git remote",
+              icon: <GitUrlIcon className={ITEM_ICON_CLASS} />,
+              keepOpen: true,
+              run: async () => {
+                startAddProjectClone(environmentId, { kind: "url" });
+              },
             },
-          },
-          buildSourceControlProviderItem(environmentId, "github"),
-          buildSourceControlProviderItem(environmentId, "gitlab"),
-        ],
-      },
-    ],
+            ...providerItems,
+          ],
+        },
+      ];
+    },
     [buildSourceControlProviderItem, startAddProjectBrowse, startAddProjectClone],
   );
 
@@ -911,21 +910,6 @@ function OpenCommandPaletteDialog() {
       },
     });
   }
-
-  actionItems.push({
-    kind: "action",
-    value: "action:open-preview",
-    searchTerms: ["preview", "component", "canvas"],
-    title: "Open component preview",
-    icon: <PreviewTriggerIcon className={ITEM_ICON_CLASS} />,
-    run: async () => {
-      openPreviewDrawer(
-        currentProjectEnvironmentId && currentProjectId
-          ? scopeProjectRef(currentProjectEnvironmentId, currentProjectId)
-          : null,
-      );
-    },
-  });
 
   actionItems.push({
     kind: "action",
