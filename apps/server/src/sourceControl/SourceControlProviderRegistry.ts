@@ -1,7 +1,9 @@
-import { Cache, Context, Duration, Effect, Exit, Layer } from "effect";
+import { Cache, Context, Duration, Effect, Exit, Layer, Option } from "effect";
 import {
   SourceControlProviderError,
+  type ProjectRemoteOverride,
   type SourceControlProviderDiscoveryItem,
+  type SourceControlProviderInfo,
 } from "@t3tools/contracts";
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
@@ -13,6 +15,8 @@ import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as SourceControlProviderDiscovery from "./SourceControlProviderDiscovery.ts";
 import { ServerConfig } from "../config.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 
@@ -108,6 +112,75 @@ function selectProviderContext(
   );
 }
 
+function parseRemoteHost(remoteUrl: string): string | null {
+  const trimmed = remoteUrl.trim();
+  if (trimmed.startsWith("git@")) {
+    const hostWithPath = trimmed.slice("git@".length);
+    const separatorIndex = hostWithPath.search(/[:/]/);
+    return separatorIndex > 0 ? hostWithPath.slice(0, separatorIndex).toLowerCase() : null;
+  }
+
+  try {
+    return new URL(trimmed).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function parseBaseUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    const host = parseRemoteHost(value);
+    return host ? `https://${host}` : null;
+  }
+}
+
+function providerName(kind: SourceControlProviderKind, baseUrl: string | null): string {
+  switch (kind) {
+    case "github":
+      return baseUrl === "https://github.com" ? "GitHub" : "GitHub Self-Hosted";
+    case "gitlab":
+      return baseUrl === "https://gitlab.com" ? "GitLab" : "GitLab Self-Hosted";
+    case "azure-devops":
+      return "Azure DevOps";
+    case "bitbucket":
+      return baseUrl === "https://bitbucket.org" ? "Bitbucket" : "Bitbucket Self-Hosted";
+    case "unknown":
+      return parseRemoteHost(baseUrl ?? "") ?? "Source control";
+  }
+}
+
+function providerInfoFromOverride(
+  override: ProjectRemoteOverride,
+): SourceControlProviderInfo | null {
+  const baseUrl = override.webUrl
+    ? parseBaseUrl(override.webUrl)
+    : parseBaseUrl(override.remoteUrl);
+  if (!baseUrl) {
+    return null;
+  }
+  return {
+    kind: override.provider,
+    name: providerName(override.provider, baseUrl),
+    baseUrl,
+  };
+}
+
+function providerContextFromOverride(
+  override: ProjectRemoteOverride,
+): SourceControlProvider.SourceControlProviderContext | null {
+  const provider = providerInfoFromOverride(override);
+  return provider
+    ? {
+        provider,
+        remoteName: override.remoteName ?? "origin",
+        remoteUrl: override.remoteUrl,
+      }
+    : null;
+}
+
 function bindProviderContext(
   provider: SourceControlProvider.SourceControlProviderShape,
   context: SourceControlProvider.SourceControlProviderContext | null,
@@ -155,6 +228,8 @@ function bindProviderContext(
 export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWithProviders")(
   function* (registrations: ReadonlyArray<SourceControlProviderRegistration>) {
     const config = yield* ServerConfig;
+    const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+    const serverSettings = yield* ServerSettingsService;
     const process = yield* VcsProcess.VcsProcess;
     const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
     const providers = new Map<
@@ -171,6 +246,30 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         const handle = yield* vcsRegistry
           .resolve({ cwd })
           .pipe(Effect.mapError((error) => providerDetectionError("detectProvider", cwd, error)));
+        const repository = yield* handle.driver
+          .detectRepository(cwd)
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        const projectOption = yield* projectionSnapshotQuery
+          .getActiveProjectByWorkspaceRoot(cwd)
+          .pipe(
+            Effect.flatMap((project) =>
+              Option.isSome(project) || repository === null || repository.rootPath === cwd
+                ? Effect.succeed(project)
+                : projectionSnapshotQuery.getActiveProjectByWorkspaceRoot(repository.rootPath),
+            ),
+            Effect.catch(() => Effect.succeed(Option.none())),
+          );
+        if (Option.isSome(projectOption)) {
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.mapError((error) => providerDetectionError("detectProvider", cwd, error)),
+          );
+          const override = settings.projectSettings[projectOption.value.id]?.remoteOverride ?? null;
+          const overrideContext = override ? providerContextFromOverride(override) : null;
+          if (overrideContext) {
+            return overrideContext;
+          }
+        }
+
         const remotes = yield* handle.driver
           .listRemotes(cwd)
           .pipe(Effect.mapError((error) => providerDetectionError("detectProvider", cwd, error)));

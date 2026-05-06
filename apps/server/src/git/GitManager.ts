@@ -790,6 +790,14 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     cwd: string,
     branch: string | null,
   ) {
+    const providerFromProjectSettings = yield* sourceControlProviders.resolveHandle({ cwd }).pipe(
+      Effect.map((handle) => handle.context?.provider ?? null),
+      Effect.catch(() => Effect.succeed(null)),
+    );
+    if (providerFromProjectSettings) {
+      return providerFromProjectSettings;
+    }
+
     const preferredRemoteName =
       branch === null
         ? "origin"

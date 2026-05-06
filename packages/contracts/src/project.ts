@@ -1,5 +1,7 @@
-import { Schema } from "effect";
-import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { Effect, Schema } from "effect";
+import { PositiveInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { RepositoryIdentity } from "./environment.ts";
+import { SourceControlProviderInfo, SourceControlProviderKind } from "./sourceControl.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
@@ -48,6 +50,82 @@ export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
 
 export class ProjectWriteFileError extends Schema.TaggedErrorClass<ProjectWriteFileError>()(
   "ProjectWriteFileError",
+  {
+    message: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export const ProjectRemoteOverride = Schema.Struct({
+  provider: SourceControlProviderKind,
+  remoteName: Schema.optional(TrimmedNonEmptyString),
+  remoteUrl: TrimmedNonEmptyString,
+  webUrl: Schema.optional(TrimmedNonEmptyString),
+});
+export type ProjectRemoteOverride = typeof ProjectRemoteOverride.Type;
+
+export const ProjectSettings = Schema.Struct({
+  remoteOverride: Schema.NullOr(ProjectRemoteOverride).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+});
+export type ProjectSettings = typeof ProjectSettings.Type;
+
+export const ProjectSettingsPatch = Schema.Struct({
+  remoteOverride: Schema.optionalKey(Schema.NullOr(ProjectRemoteOverride)),
+});
+export type ProjectSettingsPatch = typeof ProjectSettingsPatch.Type;
+
+export const ProjectDetailsInput = Schema.Struct({
+  projectId: ProjectId,
+});
+export type ProjectDetailsInput = typeof ProjectDetailsInput.Type;
+
+export const ProjectUpdateSettingsInput = Schema.Struct({
+  projectId: ProjectId,
+  patch: ProjectSettingsPatch,
+});
+export type ProjectUpdateSettingsInput = typeof ProjectUpdateSettingsInput.Type;
+
+export const ProjectDetectedRemote = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  url: TrimmedNonEmptyString,
+  pushUrl: Schema.optional(TrimmedNonEmptyString),
+  provider: Schema.NullOr(SourceControlProviderInfo),
+});
+export type ProjectDetectedRemote = typeof ProjectDetectedRemote.Type;
+
+export const ProjectEffectiveRemote = Schema.Struct({
+  source: Schema.Literals(["override", "detected"]),
+  provider: SourceControlProviderKind,
+  remoteName: TrimmedNonEmptyString,
+  remoteUrl: TrimmedNonEmptyString,
+  webUrl: Schema.optional(TrimmedNonEmptyString),
+  providerInfo: Schema.NullOr(SourceControlProviderInfo),
+});
+export type ProjectEffectiveRemote = typeof ProjectEffectiveRemote.Type;
+
+export const ProjectDetails = Schema.Struct({
+  id: ProjectId,
+  title: TrimmedNonEmptyString,
+  workspaceRoot: TrimmedNonEmptyString,
+  repositoryIdentity: Schema.NullOr(RepositoryIdentity),
+  settings: ProjectSettings,
+  detected: Schema.Struct({
+    gitRoot: Schema.NullOr(TrimmedNonEmptyString),
+    branch: Schema.NullOr(TrimmedNonEmptyString),
+    remotes: Schema.Array(ProjectDetectedRemote),
+    primaryRemote: Schema.NullOr(ProjectDetectedRemote),
+  }),
+  effective: Schema.Struct({
+    title: TrimmedNonEmptyString,
+    remote: Schema.NullOr(ProjectEffectiveRemote),
+  }),
+});
+export type ProjectDetails = typeof ProjectDetails.Type;
+
+export class ProjectDetailsError extends Schema.TaggedErrorClass<ProjectDetailsError>()(
+  "ProjectDetailsError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect),

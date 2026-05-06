@@ -22,6 +22,10 @@ import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem
 import type {
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
+  ProjectDetails,
+  ProjectDetailsInput,
+  ProjectSettings,
+  ProjectUpdateSettingsInput,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project.ts";
@@ -323,6 +327,8 @@ export interface EnvironmentApi {
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
   };
   projects: {
+    getDetails: (input: ProjectDetailsInput) => Promise<ProjectDetails>;
+    updateSettings: (input: ProjectUpdateSettingsInput) => Promise<ProjectSettings>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };

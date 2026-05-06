@@ -3,6 +3,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { DateTime, Effect, Layer, Option } from "effect";
 
 import { ServerConfig } from "../config.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ServerSettingsService } from "../serverSettings.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -21,6 +23,17 @@ function makeRegistry(input: {
   }>;
 }) {
   const driver = {
+    detectRepository: () =>
+      Effect.succeed({
+        kind: "git" as const,
+        rootPath: "/repo",
+        metadataPath: null,
+        freshness: {
+          source: "live-local" as const,
+          observedAt: TEST_EPOCH,
+          expiresAt: Option.none(),
+        },
+      }),
     listRemotes: () =>
       Effect.succeed({
         remotes: input.remotes.map((remote) => ({
@@ -64,6 +77,10 @@ function makeRegistry(input: {
         Layer.mock(GitHubCli.GitHubCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
         Layer.mock(VcsProcess.VcsProcess)({}),
+        Layer.mock(ProjectionSnapshotQuery)({
+          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+        }),
+        ServerSettingsService.layerTest(),
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-registry-test-" }).pipe(
           Layer.provide(NodeServices.layer),
         ),

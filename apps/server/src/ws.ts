@@ -14,15 +14,24 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
+  ProjectDetailsError,
   ProjectSearchEntriesError,
+  type ProjectDetectedRemote,
+  type ProjectEffectiveRemote,
+  type ProjectRemoteOverride,
+  type ProjectSettings,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
+  type ProjectId,
   ThreadId,
+  type SourceControlProviderInfo,
+  type SourceControlProviderKind,
   type TerminalEvent,
   WS_METHODS,
   WsRpcGroup,
 } from "@t3tools/contracts";
+import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 import { clamp } from "effect/Number";
 import { HttpRouter, HttpServerRequest } from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
@@ -99,6 +108,134 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
+function parseGitRemoteVerboseOutput(stdout: string): ProjectDetectedRemote[] {
+  const remotes = new Map<string, { url?: string; pushUrl?: string }>();
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) continue;
+    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)$/.exec(trimmed);
+    if (!match) continue;
+    const [, name = "", url = "", direction = ""] = match;
+    if (name.length === 0 || url.length === 0) continue;
+    const remote = remotes.get(name) ?? {};
+    if (direction === "fetch") {
+      remote.url = url;
+    } else if (direction === "push") {
+      remote.pushUrl = url;
+    }
+    remotes.set(name, remote);
+  }
+
+  return [...remotes.entries()].flatMap(([name, remote]) =>
+    remote.url
+      ? [
+          {
+            name,
+            url: remote.url,
+            ...(remote.pushUrl ? { pushUrl: remote.pushUrl } : {}),
+            provider: detectSourceControlProviderFromRemoteUrl(remote.url),
+          },
+        ]
+      : [],
+  );
+}
+
+function parseRemoteHost(remoteUrl: string): string | null {
+  const trimmed = remoteUrl.trim();
+  if (trimmed.startsWith("git@")) {
+    const hostWithPath = trimmed.slice("git@".length);
+    const separatorIndex = hostWithPath.search(/[:/]/);
+    return separatorIndex > 0 ? hostWithPath.slice(0, separatorIndex).toLowerCase() : null;
+  }
+
+  try {
+    return new URL(trimmed).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function parseBaseUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    const host = parseRemoteHost(value);
+    return host ? `https://${host}` : null;
+  }
+}
+
+function providerName(kind: SourceControlProviderKind, baseUrl: string | null): string {
+  switch (kind) {
+    case "github":
+      return baseUrl === "https://github.com" ? "GitHub" : "GitHub Self-Hosted";
+    case "gitlab":
+      return baseUrl === "https://gitlab.com" ? "GitLab" : "GitLab Self-Hosted";
+    case "azure-devops":
+      return "Azure DevOps";
+    case "bitbucket":
+      return baseUrl === "https://bitbucket.org" ? "Bitbucket" : "Bitbucket Self-Hosted";
+    case "unknown":
+      return parseRemoteHost(baseUrl ?? "") ?? "Source control";
+  }
+}
+
+function providerInfoFromOverride(
+  override: ProjectRemoteOverride,
+): SourceControlProviderInfo | null {
+  const baseUrl = override.webUrl
+    ? parseBaseUrl(override.webUrl)
+    : parseBaseUrl(override.remoteUrl);
+  if (!baseUrl) {
+    return null;
+  }
+  return {
+    kind: override.provider,
+    name: providerName(override.provider, baseUrl),
+    baseUrl,
+  };
+}
+
+function effectiveRemoteFromOverride(override: ProjectRemoteOverride): ProjectEffectiveRemote {
+  const providerInfo = providerInfoFromOverride(override);
+  return {
+    source: "override",
+    provider: override.provider,
+    remoteName: override.remoteName ?? "origin",
+    remoteUrl: override.remoteUrl,
+    ...(override.webUrl ? { webUrl: override.webUrl } : {}),
+    providerInfo,
+  };
+}
+
+function effectiveRemoteFromDetected(
+  remote: ProjectDetectedRemote | null,
+): ProjectEffectiveRemote | null {
+  if (!remote) {
+    return null;
+  }
+  return {
+    source: "detected",
+    provider: remote.provider?.kind ?? "unknown",
+    remoteName: remote.name,
+    remoteUrl: remote.url,
+    providerInfo: remote.provider,
+  };
+}
+
+function pickPrimaryRemote(remotes: ReadonlyArray<ProjectDetectedRemote>) {
+  return (
+    remotes.find((remote) => remote.name === "origin") ??
+    remotes.find((remote) => remote.provider?.kind !== "unknown") ??
+    remotes[0] ??
+    null
+  );
+}
+
+const emptyProjectSettings: ProjectSettings = {
+  remoteOverride: null,
+};
+
 function toAuthAccessStreamEvent(
   change: BootstrapCredentialChange | SessionCredentialChange,
   revision: number,
@@ -147,6 +284,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const keybindings = yield* Keybindings;
       const open = yield* Open;
+      const gitCore = yield* GitVcsDriver.GitVcsDriver;
       const gitWorkflow = yield* GitWorkflowService;
       const vcsProvisioning = yield* VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
@@ -561,6 +699,91 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
+      const detectProjectGitDetails = (cwd: string) =>
+        Effect.gen(function* () {
+          const [gitRootResult, branchResult, remoteResult] = yield* Effect.all(
+            [
+              gitCore.execute({
+                operation: "projects.getDetails.gitRoot",
+                cwd,
+                args: ["rev-parse", "--show-toplevel"],
+                allowNonZeroExit: true,
+                timeoutMs: 5_000,
+                maxOutputBytes: 16 * 1024,
+              }),
+              gitCore.execute({
+                operation: "projects.getDetails.branch",
+                cwd,
+                args: ["branch", "--show-current"],
+                allowNonZeroExit: true,
+                timeoutMs: 5_000,
+                maxOutputBytes: 16 * 1024,
+              }),
+              gitCore.execute({
+                operation: "projects.getDetails.remotes",
+                cwd,
+                args: ["remote", "-v"],
+                allowNonZeroExit: true,
+                timeoutMs: 5_000,
+                maxOutputBytes: 64 * 1024,
+              }),
+            ],
+            { concurrency: "unbounded" },
+          );
+          const remotes =
+            remoteResult.exitCode === 0 ? parseGitRemoteVerboseOutput(remoteResult.stdout) : [];
+          return {
+            gitRoot: gitRootResult.exitCode === 0 ? gitRootResult.stdout.trim() || null : null,
+            branch: branchResult.exitCode === 0 ? branchResult.stdout.trim() || null : null,
+            remotes,
+            primaryRemote: pickPrimaryRemote(remotes),
+          };
+        }).pipe(
+          Effect.catch(() =>
+            Effect.succeed({
+              gitRoot: null,
+              branch: null,
+              remotes: [],
+              primaryRemote: null,
+            }),
+          ),
+        );
+
+      const getProjectSettings = (projectId: ProjectId) =>
+        serverSettings.getSettings.pipe(
+          Effect.map((settings) => settings.projectSettings[projectId] ?? emptyProjectSettings),
+        );
+
+      const updateProjectSettings = (input: {
+        readonly projectId: ProjectId;
+        readonly patch: Partial<ProjectSettings>;
+      }) =>
+        serverSettings.getSettings.pipe(
+          Effect.flatMap((settings) => {
+            const current = settings.projectSettings[input.projectId] ?? emptyProjectSettings;
+            const nextProjectSettings = {
+              ...current,
+              ...input.patch,
+            };
+            return serverSettings.updateSettings({
+              projectSettings: {
+                ...settings.projectSettings,
+                [input.projectId]: nextProjectSettings,
+              },
+            });
+          }),
+          Effect.map(
+            (settings) => settings.projectSettings[input.projectId] ?? emptyProjectSettings,
+          ),
+          Effect.mapError(
+            (cause) =>
+              new ProjectDetailsError({
+                message: "Failed to update project settings.",
+                cause,
+              }),
+          ),
+        );
+
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
@@ -843,6 +1066,79 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             {
               "rpc.aggregate": "source-control",
             },
+          ),
+        [WS_METHODS.projectsGetDetails]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsGetDetails,
+            Effect.gen(function* () {
+              const projectOption = yield* projectionSnapshotQuery.getProjectShellById(
+                input.projectId,
+              );
+              if (Option.isNone(projectOption)) {
+                return yield* new ProjectDetailsError({
+                  message: "Project was not found.",
+                });
+              }
+
+              const project = projectOption.value;
+              const [settings, detected] = yield* Effect.all(
+                [getProjectSettings(project.id), detectProjectGitDetails(project.workspaceRoot)],
+                { concurrency: "unbounded" },
+              );
+              const remote = settings.remoteOverride
+                ? effectiveRemoteFromOverride(settings.remoteOverride)
+                : effectiveRemoteFromDetected(detected.primaryRemote);
+
+              return {
+                id: project.id,
+                title: project.title,
+                workspaceRoot: project.workspaceRoot,
+                repositoryIdentity: project.repositoryIdentity ?? null,
+                settings,
+                detected,
+                effective: {
+                  title: project.title,
+                  remote,
+                },
+              };
+            }).pipe(
+              Effect.mapError((cause) =>
+                Schema.is(ProjectDetailsError)(cause)
+                  ? cause
+                  : new ProjectDetailsError({
+                      message: "Failed to load project details.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "project" },
+          ),
+        [WS_METHODS.projectsUpdateSettings]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsUpdateSettings,
+            projectionSnapshotQuery.getProjectShellById(input.projectId).pipe(
+              Effect.flatMap((projectOption) =>
+                Option.isNone(projectOption)
+                  ? Effect.fail(
+                      new ProjectDetailsError({
+                        message: "Project was not found.",
+                      }),
+                    )
+                  : updateProjectSettings({
+                      projectId: input.projectId,
+                      patch: input.patch,
+                    }),
+              ),
+              Effect.mapError((cause) =>
+                Schema.is(ProjectDetailsError)(cause)
+                  ? cause
+                  : new ProjectDetailsError({
+                      message: "Failed to update project settings.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "project" },
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(
