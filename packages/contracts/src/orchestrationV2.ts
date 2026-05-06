@@ -307,6 +307,7 @@ export const OrchestrationV2Run = Schema.Struct({
   threadId: ThreadId,
   ordinal: PositiveInt,
   provider: ProviderKind,
+  modelSelection: ModelSelection,
   providerThreadId: Schema.NullOr(ProviderThreadId),
   userMessageId: MessageId,
   rootNodeId: Schema.NullOr(NodeId),
