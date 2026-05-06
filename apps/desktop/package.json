@@ -21,6 +21,7 @@
     "electron-updater": "^6.6.2"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",

@@ -1,107 +1,87 @@
-export interface WaitForHttpReadyOptions {
-  readonly timeoutMs?: number;
-  readonly intervalMs?: number;
-  readonly requestTimeoutMs?: number;
-  readonly fetchImpl?: typeof fetch;
-  readonly signal?: AbortSignal;
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
+import * as Cause from "effect/Cause";
+import * as Data from "effect/Data";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Predicate from "effect/Predicate";
+import * as Schedule from "effect/Schedule";
+import { HttpClient } from "effect/unstable/http";
+
+export interface WaitForHttpReadyEffectOptions {
+  readonly timeout?: Duration.Duration;
+  readonly interval?: Duration.Duration;
+  readonly requestTimeout?: Duration.Duration;
   readonly path?: string;
-  readonly isReady?: (response: Response) => boolean;
 }
 
-const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_INTERVAL_MS = 100;
-const DEFAULT_REQUEST_TIMEOUT_MS = 1_000;
+export interface WaitForHttpReadyOptions extends WaitForHttpReadyEffectOptions {
+  readonly signal?: AbortSignal;
+}
 
-export class BackendReadinessAbortedError extends Error {
-  constructor() {
-    super("Backend readiness wait was aborted.");
-    this.name = "BackendReadinessAbortedError";
+const DEFAULT_TIMEOUT = Duration.seconds(30);
+const DEFAULT_INTERVAL = Duration.millis(100);
+const DEFAULT_REQUEST_TIMEOUT = Duration.seconds(1);
+
+export class BackendReadinessAbortedError extends Data.TaggedError(
+  "BackendReadinessAbortedError",
+)<{}> {
+  static is = (u: unknown): u is BackendReadinessAbortedError =>
+    Predicate.isTagged(u, "BackendReadinessAbortedError");
+
+  override get message() {
+    return "Backend readiness wait was aborted.";
   }
 }
 
-function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, ms);
-
-    const onAbort = () => {
-      cleanup();
-      reject(new BackendReadinessAbortedError());
-    };
-
-    const cleanup = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-    };
-
-    if (signal?.aborted) {
-      cleanup();
-      reject(new BackendReadinessAbortedError());
-      return;
-    }
-
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
+export class BackendTimeoutError extends Data.TaggedError("BackendTimeoutError")<{
+  readonly url: URL;
+}> {
+  override get message() {
+    return `Timed out waiting for backend readiness at ${this.url.href}.`;
+  }
 }
 
-export function isBackendReadinessAborted(error: unknown): error is BackendReadinessAbortedError {
-  return error instanceof BackendReadinessAbortedError;
-}
+export const waitForHttpReadyEffect = Effect.fn("waitForHttpReadyEffect")(function* (
+  baseUrl: URL,
+  options?: WaitForHttpReadyEffectOptions,
+): Effect.fn.Return<void, Error, HttpClient.HttpClient> {
+  const timeout = options?.timeout ?? DEFAULT_TIMEOUT;
+  const interval = options?.interval ?? DEFAULT_INTERVAL;
+  const requestTimeout = options?.requestTimeout ?? DEFAULT_REQUEST_TIMEOUT;
+  const readinessPath = options?.path ?? "/";
+  const requestUrl = new URL(readinessPath, baseUrl);
 
+  const client = (yield* HttpClient.HttpClient).pipe(
+    HttpClient.filterStatusOk,
+    HttpClient.transformResponse(Effect.timeout(requestTimeout)),
+    HttpClient.retry(Schedule.spaced(interval)),
+  );
+
+  yield* client.get(requestUrl).pipe(
+    Effect.asVoid,
+    Effect.timeoutOption(timeout),
+    Effect.catchTags({
+      TimeoutError: () => Effect.fail(new BackendTimeoutError({ url: baseUrl })),
+      // Maybe map this to different error kind?
+      HttpClientError: () => Effect.fail(new BackendTimeoutError({ url: baseUrl })),
+    }),
+  );
+});
+
+/**
+ * @deprecated - Temporary promise shim until remaining desktop entrypoint is ported to Effect
+ */
 export async function waitForHttpReady(
-  baseUrl: string,
+  baseUrl: URL,
   options?: WaitForHttpReadyOptions,
 ): Promise<void> {
-  const fetchImpl = options?.fetchImpl ?? fetch;
   const signal = options?.signal;
-  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const intervalMs = options?.intervalMs ?? DEFAULT_INTERVAL_MS;
-  const requestTimeoutMs = options?.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  const readinessPath = options?.path ?? "/";
-  const isReady = options?.isReady ?? ((response: Response) => response.ok);
-  const deadline = Date.now() + timeoutMs;
 
-  for (;;) {
-    if (signal?.aborted) {
-      throw new BackendReadinessAbortedError();
-    }
-
-    const requestController = new AbortController();
-    const requestTimeout = setTimeout(() => {
-      requestController.abort();
-    }, requestTimeoutMs);
-    const abortRequest = () => {
-      requestController.abort();
-    };
-    signal?.addEventListener("abort", abortRequest, { once: true });
-
-    try {
-      const response = await fetchImpl(new URL(readinessPath, baseUrl).toString(), {
-        redirect: "manual",
-        signal: requestController.signal,
-      });
-      if (isReady(response)) {
-        return;
-      }
-    } catch (error) {
-      if (isBackendReadinessAborted(error)) {
-        throw error;
-      }
-      if (signal?.aborted) {
-        throw new BackendReadinessAbortedError();
-      }
-      // Retry until the backend becomes reachable or the deadline expires.
-    } finally {
-      clearTimeout(requestTimeout);
-      signal?.removeEventListener("abort", abortRequest);
-    }
-
-    if (Date.now() >= deadline) {
-      throw new Error(`Timed out waiting for backend readiness at ${baseUrl}.`);
-    }
-
-    await delay(intervalMs, signal);
-  }
+  const exit = await Effect.runPromiseExit(
+    waitForHttpReadyEffect(baseUrl, options).pipe(Effect.provide(NodeHttpClient.layerUndici)),
+    { signal },
+  );
+  if (exit._tag === "Success") return;
+  if (Cause.hasInterrupts(exit.cause)) throw new BackendReadinessAbortedError();
+  throw Cause.squash(exit.cause);
 }

@@ -3,6 +3,8 @@ import * as Crypto from "node:crypto";
 import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
+import * as Option from "effect/Option";
+import * as Duration from "effect/Duration";
 
 import {
   app,
@@ -56,7 +58,7 @@ import {
   writeSavedEnvironmentRegistry,
   writeSavedEnvironmentSecret,
 } from "./clientPersistence.ts";
-import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness.ts";
+import { BackendReadinessAbortedError, waitForHttpReady } from "./backendReadiness.ts";
 import { showDesktopConfirmDialog } from "./confirmDialog.ts";
 import {
   resolveDesktopCoreAdvertisedEndpoints,
@@ -221,7 +223,7 @@ let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
 let backendBindHost = DESKTOP_LOOPBACK_HOST;
 let backendBootstrapToken = "";
-let backendHttpUrl = "";
+let backendHttpUrl: Option.Option<URL> = Option.none();
 let backendWsUrl = "";
 let backendEndpointUrl: string | null = null;
 let backendAdvertisedHost: string | null = null;
@@ -242,6 +244,21 @@ let desktopServerExposureMode: DesktopServerExposureMode = desktopSettings.serve
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const expectedBackendExitChildren = new WeakSet<ChildProcess.ChildProcess>();
+
+function requireBackendHttpUrl(): URL {
+  return Option.getOrThrowWith(
+    backendHttpUrl,
+    () => new Error("Desktop backend HTTP URL has not been resolved."),
+  );
+}
+
+function getBackendHttpUrlHref(): string | null {
+  return Option.match(backendHttpUrl, {
+    onNone: () => null,
+    onSome: (url) => url.href,
+  });
+}
+
 const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
   platform: process.platform,
   processArch: process.arch,
@@ -400,7 +417,7 @@ async function applyDesktopServerExposureMode(
   desktopServerExposureMode = exposure.mode;
   desktopSettings = setDesktopServerExposurePreference(desktopSettings, requestedMode);
   backendBindHost = exposure.bindHost;
-  backendHttpUrl = exposure.localHttpUrl;
+  backendHttpUrl = Option.some(new URL(exposure.localHttpUrl));
   backendWsUrl = exposure.localWsUrl;
   backendEndpointUrl = exposure.endpointUrl;
   backendAdvertisedHost = exposure.advertisedHost;
@@ -499,7 +516,7 @@ function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
 }
 
 async function waitForBackendHttpReady(
-  baseUrl: string,
+  baseUrl: URL,
   options?: Parameters<typeof waitForHttpReady>[1],
 ): Promise<void> {
   cancelBackendReadinessWait();
@@ -523,12 +540,12 @@ function cancelBackendReadinessWait(): void {
   backendReadinessAbortController = null;
 }
 
-async function waitForBackendWindowReady(baseUrl: string): Promise<"listening" | "http"> {
+async function waitForBackendWindowReady(baseUrl: URL): Promise<"listening" | "http"> {
   return await waitForBackendStartupReady({
     listeningPromise: backendListeningDetector?.promise ?? null,
     waitForHttpReady: () =>
       waitForBackendHttpReady(baseUrl, {
-        timeoutMs: 60_000,
+        timeout: Duration.minutes(1),
       }),
     cancelHttpWait: cancelBackendReadinessWait,
   });
@@ -540,7 +557,7 @@ function ensureInitialBackendWindowOpen(): void {
     return;
   }
 
-  const nextOpen = waitForBackendWindowReady(backendHttpUrl)
+  const nextOpen = waitForBackendWindowReady(requireBackendHttpUrl())
     .then((source) => {
       writeDesktopLogHeader(`bootstrap backend ready source=${source}`);
       if (mainWindow ?? BrowserWindow.getAllWindows()[0]) {
@@ -550,7 +567,7 @@ function ensureInitialBackendWindowOpen(): void {
       writeDesktopLogHeader("bootstrap main window created");
     })
     .catch((error) => {
-      if (isBackendReadinessAborted(error)) {
+      if (BackendReadinessAbortedError.is(error)) {
         return;
       }
       writeDesktopLogHeader(
@@ -1648,7 +1665,7 @@ function registerIpcHandlers(): void {
   ipcMain.on(GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL, (event) => {
     event.returnValue = {
       label: "Local environment",
-      httpBaseUrl: backendHttpUrl || null,
+      httpBaseUrl: getBackendHttpUrlHref(),
       wsBaseUrl: backendWsUrl || null,
       bootstrapToken: backendBootstrapToken || undefined,
     } as const;
@@ -2132,7 +2149,7 @@ function createWindow(): BrowserWindow {
     void window.loadURL(resolveDesktopDevServerUrl());
     window.webContents.openDevTools({ mode: "detach" });
   } else {
-    void window.loadURL(backendHttpUrl);
+    void window.loadURL(requireBackendHttpUrl().href);
   }
 
   window.on("closed", () => {
@@ -2185,7 +2202,7 @@ async function bootstrap(): Promise<void> {
       persist: desktopSettings.serverExposureMode !== DEFAULT_DESKTOP_SETTINGS.serverExposureMode,
     },
   );
-  writeDesktopLogHeader(`bootstrap resolved backend endpoint baseUrl=${backendHttpUrl}`);
+  writeDesktopLogHeader(`bootstrap resolved backend endpoint baseUrl=${getBackendHttpUrlHref()}`);
   if (serverExposureState.endpointUrl) {
     writeDesktopLogHeader(
       `bootstrap enabled network access endpointUrl=${serverExposureState.endpointUrl}`,
@@ -2204,12 +2221,12 @@ async function bootstrap(): Promise<void> {
   if (isDevelopment) {
     mainWindow = createWindow();
     writeDesktopLogHeader("bootstrap main window created");
-    void waitForBackendWindowReady(backendHttpUrl)
+    void waitForBackendWindowReady(requireBackendHttpUrl())
       .then((source) => {
         writeDesktopLogHeader(`bootstrap backend ready source=${source}`);
       })
       .catch((error) => {
-        if (isBackendReadinessAborted(error)) {
+        if (BackendReadinessAbortedError.is(error)) {
           return;
         }
         writeDesktopLogHeader(
@@ -2243,7 +2260,7 @@ app
     registerDesktopProtocol();
     configureAutoUpdater();
     void bootstrap().catch((error) => {
-      if (isBackendReadinessAborted(error) && isQuitting) {
+      if (BackendReadinessAbortedError.is(error) && isQuitting) {
         return;
       }
       handleFatalStartupError("bootstrap", error);

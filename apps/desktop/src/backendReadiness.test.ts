@@ -1,114 +1,120 @@
-import { describe, expect, it, vi } from "vitest";
+import { assert, describe, it } from "@effect/vitest";
+import { Duration, Effect, Fiber, Layer, Result } from "effect";
+import { TestClock } from "effect/testing";
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
-import {
-  BackendReadinessAbortedError,
-  isBackendReadinessAborted,
-  waitForHttpReady,
-} from "./backendReadiness.ts";
+import { BackendReadinessAbortedError, waitForHttpReadyEffect } from "./backendReadiness.ts";
 
-describe("waitForHttpReady", () => {
-  it("returns once the backend serves the requested readiness path", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(null, { status: 503 }))
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+function responseForRequest(
+  request: HttpClientRequest.HttpClientRequest,
+  status: number,
+): HttpClientResponse.HttpClientResponse {
+  return HttpClientResponse.fromWeb(request, new Response(null, { status }));
+}
 
-    await waitForHttpReady("http://127.0.0.1:3773", {
-      fetchImpl,
-      timeoutMs: 1_000,
-      intervalMs: 0,
-    });
+function httpClientLayer(
+  handler: (
+    request: HttpClientRequest.HttpClientRequest,
+  ) => Effect.Effect<HttpClientResponse.HttpClientResponse>,
+) {
+  return Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) => handler(request)),
+  );
+}
 
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(fetchImpl).toHaveBeenNthCalledWith(
-      1,
-      "http://127.0.0.1:3773/",
-      expect.objectContaining({ redirect: "manual" }),
-    );
-  });
-
-  it("retries after a readiness request stalls past the per-request timeout", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockImplementationOnce(
-        (_input, init) =>
-          new Promise((_resolve, reject) => {
-            init?.signal?.addEventListener(
-              "abort",
-              () => {
-                reject(new Error("request timed out"));
-              },
-              { once: true },
-            );
-          }) as ReturnType<typeof fetch>,
-      )
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
-
-    await waitForHttpReady("http://127.0.0.1:3773", {
-      fetchImpl,
-      timeoutMs: 100,
-      intervalMs: 0,
-      requestTimeoutMs: 1,
-    });
-
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-  });
-
-  it("aborts an in-flight readiness wait", async () => {
-    const controller = new AbortController();
-    const fetchImpl = vi.fn<typeof fetch>().mockImplementation(
-      () =>
-        new Promise((_resolve, reject) => {
-          controller.signal.addEventListener(
-            "abort",
-            () => {
-              reject(new BackendReadinessAbortedError());
-            },
-            { once: true },
-          );
-        }) as ReturnType<typeof fetch>,
+describe("waitForHttpReadyEffect", () => {
+  it.effect("returns once the backend serves the requested readiness path", () => {
+    const requestUrls: Array<string> = [];
+    const statuses = [503, 200];
+    const layer = Layer.merge(
+      TestClock.layer(),
+      httpClientLayer((request) =>
+        Effect.sync(() => {
+          const status = statuses.shift();
+          assert.isDefined(status);
+          requestUrls.push(request.url);
+          return responseForRequest(request, status);
+        }),
+      ),
     );
 
-    const waitPromise = waitForHttpReady("http://127.0.0.1:3773", {
-      fetchImpl,
-      timeoutMs: 1_000,
-      intervalMs: 0,
-      signal: controller.signal,
-    });
+    return Effect.gen(function* () {
+      const fiber = yield* waitForHttpReadyEffect(new URL("http://127.0.0.1:3773"), {
+        timeout: Duration.seconds(1),
+        interval: Duration.millis(100),
+      }).pipe(Effect.forkChild);
 
-    controller.abort();
+      yield* Effect.yieldNow;
+      assert.deepEqual(requestUrls, ["http://127.0.0.1:3773/"]);
 
-    await expect(waitPromise).rejects.toBeInstanceOf(BackendReadinessAbortedError);
+      yield* TestClock.adjust(Duration.millis(100));
+      yield* Fiber.join(fiber);
+
+      assert.deepEqual(requestUrls, ["http://127.0.0.1:3773/", "http://127.0.0.1:3773/"]);
+    }).pipe(Effect.provide(layer));
   });
 
-  it("recognizes aborted readiness errors", () => {
-    expect(isBackendReadinessAborted(new BackendReadinessAbortedError())).toBe(true);
-    expect(isBackendReadinessAborted(new Error("nope"))).toBe(false);
-  });
-
-  it("supports custom readiness predicates", async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(null, { status: 200 }))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
-
-    await waitForHttpReady("http://127.0.0.1:3773", {
-      fetchImpl,
-      timeoutMs: 1_000,
-      intervalMs: 0,
-      path: "/api/healthz",
-      isReady: (response) => response.status === 204,
-    });
-
-    expect(fetchImpl).toHaveBeenNthCalledWith(
-      1,
-      "http://127.0.0.1:3773/api/healthz",
-      expect.objectContaining({ redirect: "manual" }),
+  it.effect("retries after a readiness request stalls past the per-request timeout", () => {
+    let calls = 0;
+    const layer = Layer.merge(
+      TestClock.layer(),
+      httpClientLayer((request) => {
+        calls += 1;
+        return calls === 1 ? Effect.never : Effect.succeed(responseForRequest(request, 200));
+      }),
     );
-    expect(fetchImpl).toHaveBeenNthCalledWith(
-      2,
-      "http://127.0.0.1:3773/api/healthz",
-      expect.objectContaining({ redirect: "manual" }),
-    );
+
+    return Effect.gen(function* () {
+      const fiber = yield* waitForHttpReadyEffect(new URL("http://127.0.0.1:3773"), {
+        timeout: Duration.seconds(1),
+        interval: Duration.millis(100),
+        requestTimeout: Duration.millis(250),
+      }).pipe(Effect.forkChild);
+
+      yield* Effect.yieldNow;
+      assert.equal(calls, 1);
+
+      yield* TestClock.adjust(Duration.millis(350));
+      yield* Fiber.join(fiber);
+
+      assert.equal(calls, 2);
+    }).pipe(Effect.provide(layer));
   });
+
+  it.effect("times out using the Effect clock when readiness never succeeds", () => {
+    const layer = Layer.merge(
+      TestClock.layer(),
+      httpClientLayer(() => Effect.never),
+    );
+
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.result(
+        waitForHttpReadyEffect(new URL("http://127.0.0.1:3773"), {
+          timeout: Duration.seconds(1),
+          interval: Duration.millis(100),
+          requestTimeout: Duration.millis(250),
+        }),
+      ).pipe(Effect.forkChild);
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.millis(1_000));
+      const result = yield* Fiber.join(fiber);
+
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.include(
+          result.failure.message,
+          "Timed out waiting for backend readiness at http://127.0.0.1:3773/.",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("recognizes aborted readiness errors", () =>
+    Effect.sync(() => {
+      assert.equal(BackendReadinessAbortedError.is(new BackendReadinessAbortedError()), true);
+      assert.equal(BackendReadinessAbortedError.is(new Error("nope")), false);
+    }),
+  );
 });
