@@ -1,7 +1,4 @@
-import { type OrchestratorFixtureInput } from "../shared.ts";
-
-const TURN_INTERRUPT_PROMPT =
-  "Do not answer immediately. First run the local shell command `sleep 30`, then respond with exactly: interrupt fixture should not finish naturally.";
+import { TURN_INTERRUPT_PROMPT, type OrchestratorFixtureInput } from "../shared.ts";
 
 export function turnInterruptInput(): OrchestratorFixtureInput {
   return {
