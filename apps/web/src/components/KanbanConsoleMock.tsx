@@ -1,5 +1,15 @@
 import { useMemo, useState, type ReactNode } from "react";
 import {
+  DndContext,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import { CSS } from "@dnd-kit/utilities";
+import {
   ActivityIcon,
   AlertTriangleIcon,
   CheckCircle2Icon,
@@ -29,6 +39,7 @@ import {
   getMessages,
   getTasksByColumn,
   getTaskTitle,
+  kanbanConsoleMockProvider,
   kanbanColumns,
   kanbanTasks,
   monorepos,
@@ -85,22 +96,53 @@ const stateTone: Record<ConsoleStateId, string> = {
 export function KanbanConsoleMock() {
   const [locale, setLocale] = useState<KanbanConsoleLocale>("en");
   const [activeView, setActiveView] = useState<ConsoleViewId>("board");
-  const [tasks, setTasks] = useState(kanbanTasks);
+  const [tasks, setTasks] = useState<KanbanTaskMock[]>(() => [...kanbanTasks]);
   const [selectedTaskId, setSelectedTaskId] = useState(kanbanTasks[0]?.id ?? "");
   const [moveTaskId, setMoveTaskId] = useState<string | null>(null);
-  const [queuedCommand, setQueuedCommand] = useState("/phase t3-kanban-project-console phase-2");
+  const [queuedCommand, setQueuedCommand] = useState("/phase t3-kanban-project-console phase-3");
+  const snapshot = kanbanConsoleMockProvider.readSnapshot();
 
   const messages = getMessages(locale);
   const direction = getLocaleDirection(locale);
   const selectedTask = tasks.find((task) => task.id === selectedTaskId) ?? tasks[0];
   const moveTask = moveTaskId ? tasks.find((task) => task.id === moveTaskId) : undefined;
   const groupedTasks = useMemo(() => getTasksByColumn(tasks), [tasks]);
+  const dragSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: {
+        distance: 8,
+      },
+    }),
+  );
 
   const moveSelectedTask = (nextColumn: KanbanColumnId) => {
     if (!moveTask) return;
     setTasks((currentTasks) => moveTaskToColumn(currentTasks, moveTask.id, nextColumn));
     setSelectedTaskId(moveTask.id);
     setMoveTaskId(null);
+  };
+
+  const moveDraggedTask = (event: DragEndEvent) => {
+    const taskId = String(event.active.id);
+    const nextColumn = event.over?.id;
+
+    if (!nextColumn || typeof nextColumn !== "string") {
+      return;
+    }
+
+    if (!kanbanColumns.some((column) => column.id === nextColumn)) {
+      return;
+    }
+
+    const targetTask = tasks.find((task) => task.id === taskId);
+    if (!targetTask || targetTask.column === nextColumn) {
+      return;
+    }
+
+    setTasks((currentTasks) =>
+      moveTaskToColumn(currentTasks, taskId, nextColumn as KanbanColumnId),
+    );
+    setSelectedTaskId(taskId);
   };
 
   return (
@@ -146,17 +188,23 @@ export function KanbanConsoleMock() {
               <ViewTabs activeView={activeView} locale={locale} onViewChange={setActiveView} />
               <section className="min-h-0 flex-1 overflow-auto p-3 sm:p-4">
                 {activeView === "board" ? (
-                  <BoardView
-                    groupedTasks={groupedTasks}
-                    locale={locale}
-                    onMoveTask={setMoveTaskId}
-                    onSelectTask={setSelectedTaskId}
-                    selectedTaskId={selectedTask?.id ?? null}
-                  />
+                  <DndContext sensors={dragSensors} onDragEnd={moveDraggedTask}>
+                    <BoardView
+                      groupedTasks={groupedTasks}
+                      locale={locale}
+                      onMoveTask={setMoveTaskId}
+                      onSelectTask={setSelectedTaskId}
+                      selectedTaskId={selectedTask?.id ?? null}
+                    />
+                  </DndContext>
                 ) : null}
-                {activeView === "git" ? <GitView locale={locale} /> : null}
-                {activeView === "artifacts" ? <ArtifactsView locale={locale} /> : null}
-                {activeView === "prs" ? <PrWatcherView locale={locale} /> : null}
+                {activeView === "git" ? <GitView locale={locale} snapshot={snapshot} /> : null}
+                {activeView === "artifacts" ? (
+                  <ArtifactsView locale={locale} snapshot={snapshot} />
+                ) : null}
+                {activeView === "prs" ? (
+                  <PrWatcherView locale={locale} snapshot={snapshot} />
+                ) : null}
                 {activeView === "timeline" ? <TimelineView locale={locale} /> : null}
                 {activeView === "cli" ? (
                   <CliView
@@ -165,8 +213,12 @@ export function KanbanConsoleMock() {
                     onQueueCommand={setQueuedCommand}
                   />
                 ) : null}
-                {activeView === "gitops" ? <GitOpsView locale={locale} /> : null}
-                {activeView === "settings" ? <SettingsView locale={locale} /> : null}
+                {activeView === "gitops" ? (
+                  <GitOpsView locale={locale} snapshot={snapshot} />
+                ) : null}
+                {activeView === "settings" ? (
+                  <SettingsView locale={locale} snapshot={snapshot} />
+                ) : null}
                 {activeView === "states" ? <StatePreviewView locale={locale} /> : null}
               </section>
             </div>
@@ -303,35 +355,68 @@ function BoardView({
       <SectionHeading icon={KanbanSquareIcon} title={messages.boardHeading} />
       <div className="grid auto-cols-[minmax(16rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-2">
         {groupedTasks.map((column) => (
-          <section
+          <KanbanColumn
             key={column.id}
-            className="min-h-[34rem] rounded-md border border-border bg-card/50"
-          >
-            <div className="flex items-center justify-between border-b border-border px-3 py-2">
-              <h2 className="text-sm font-semibold">{messages[column.labelKey]}</h2>
-              <Badge variant="outline">{column.tasks.length}</Badge>
-            </div>
-            <div className="space-y-2 p-2">
-              {column.tasks.length === 0 ? (
-                <div className="rounded-md border border-dashed border-border p-4 text-xs text-muted-foreground">
-                  {messages.emptyState}
-                </div>
-              ) : null}
-              {column.tasks.map((task) => (
-                <TaskCard
-                  key={task.id}
-                  locale={locale}
-                  selected={selectedTaskId === task.id}
-                  task={task}
-                  onMoveTask={onMoveTask}
-                  onSelectTask={onSelectTask}
-                />
-              ))}
-            </div>
-          </section>
+            column={column}
+            locale={locale}
+            onMoveTask={onMoveTask}
+            onSelectTask={onSelectTask}
+            selectedTaskId={selectedTaskId}
+          />
         ))}
       </div>
     </div>
+  );
+}
+
+function KanbanColumn({
+  column,
+  locale,
+  onMoveTask,
+  onSelectTask,
+  selectedTaskId,
+}: {
+  column: ReturnType<typeof getTasksByColumn>[number];
+  locale: KanbanConsoleLocale;
+  onMoveTask: (taskId: string) => void;
+  onSelectTask: (taskId: string) => void;
+  selectedTaskId: string | null;
+}) {
+  const messages = getMessages(locale);
+  const { isOver, setNodeRef } = useDroppable({
+    id: column.id,
+  });
+
+  return (
+    <section
+      ref={setNodeRef}
+      className={cn(
+        "min-h-[34rem] rounded-md border bg-card/50 transition-colors",
+        isOver ? "border-primary/70 bg-primary/6" : "border-border",
+      )}
+    >
+      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+        <h2 className="text-sm font-semibold">{messages[column.labelKey]}</h2>
+        <Badge variant="outline">{column.tasks.length}</Badge>
+      </div>
+      <div className="space-y-2 p-2">
+        {column.tasks.length === 0 ? (
+          <div className="rounded-md border border-dashed border-border p-4 text-xs text-muted-foreground">
+            {messages.emptyState}
+          </div>
+        ) : null}
+        {column.tasks.map((task) => (
+          <TaskCard
+            key={task.id}
+            locale={locale}
+            selected={selectedTaskId === task.id}
+            task={task}
+            onMoveTask={onMoveTask}
+            onSelectTask={onSelectTask}
+          />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -349,13 +434,24 @@ function TaskCard({
   task: KanbanTaskMock;
 }) {
   const messages = getMessages(locale);
+  const { attributes, isDragging, listeners, setNodeRef, transform } = useDraggable({
+    id: task.id,
+  });
+  const style = {
+    transform: CSS.Translate.toString(transform),
+  };
 
   return (
     <article
+      ref={setNodeRef}
       className={cn(
-        "rounded-md border bg-background p-3 shadow-xs/5",
+        "touch-none rounded-md border bg-background p-3 shadow-xs/5 transition-shadow",
+        isDragging ? "z-20 cursor-grabbing opacity-80 shadow-lg" : "cursor-grab",
         selected ? "border-primary/60 ring-1 ring-primary/30" : "border-border",
       )}
+      style={style}
+      {...attributes}
+      {...listeners}
     >
       <button className="w-full text-start" type="button" onClick={() => onSelectTask(task.id)}>
         <div className="flex items-center justify-between gap-2">
@@ -432,25 +528,28 @@ function TaskDetailPanel({
   );
 }
 
-function GitView({ locale }: { locale: KanbanConsoleLocale }) {
+function GitView({
+  locale,
+  snapshot,
+}: {
+  locale: KanbanConsoleLocale;
+  snapshot: ReturnType<typeof kanbanConsoleMockProvider.readSnapshot>;
+}) {
   const messages = getMessages(locale);
-  const files = [
-    "apps/web/src/components/KanbanConsoleMock.tsx",
-    "apps/web/src/kanbanConsoleMock.ts",
-  ];
+  const gitStatus = snapshot.gitStatuses[0];
 
   return (
     <MockPanel icon={GitBranchIcon} title={messages.gitHeading}>
       <div className="grid gap-3 lg:grid-cols-2">
         <DetailBlock title="Branch status">
-          <DetailRow label="Current" value="feature/t3-kanban-phase-2-mock-console" />
-          <DetailRow label="Upstream" value="origin/main" />
+          <DetailRow label="Current" value={gitStatus?.branch ?? "unknown"} />
+          <DetailRow label="Upstream" value={gitStatus?.upstream ?? "none"} />
           <DetailRow label="Mode" value="mock read-only" />
         </DetailBlock>
         <DetailBlock title="Changed files">
-          {files.map((file) => (
-            <div key={file} className="rounded border border-border bg-card px-2 py-1 text-xs">
-              {file}
+          {gitStatus?.files.map((file) => (
+            <div key={file.path} className="rounded border border-border bg-card px-2 py-1 text-xs">
+              {file.path}
             </div>
           ))}
         </DetailBlock>
@@ -459,25 +558,26 @@ function GitView({ locale }: { locale: KanbanConsoleLocale }) {
   );
 }
 
-function ArtifactsView({ locale }: { locale: KanbanConsoleLocale }) {
+function ArtifactsView({
+  locale,
+  snapshot,
+}: {
+  locale: KanbanConsoleLocale;
+  snapshot: ReturnType<typeof kanbanConsoleMockProvider.readSnapshot>;
+}) {
   const messages = getMessages(locale);
-  const artifacts = [
-    "docs/product/console-map.md",
-    "docs/product/release-brief.md",
-    "docs/product/agent-runbook.md",
-  ];
 
   return (
     <MockPanel icon={FileTextIcon} title={messages.artifactsHeading}>
       <div className="grid gap-3 lg:grid-cols-[18rem_1fr]">
         <div className="space-y-2">
-          {artifacts.map((artifact) => (
+          {snapshot.artifacts.map((artifact) => (
             <button
-              key={artifact}
+              key={artifact.id}
               className="w-full rounded-md border border-border bg-card p-2 text-start text-sm"
               type="button"
             >
-              {artifact}
+              {artifact.path}
             </button>
           ))}
         </div>
@@ -502,25 +602,36 @@ function ArtifactsView({ locale }: { locale: KanbanConsoleLocale }) {
   );
 }
 
-function PrWatcherView({ locale }: { locale: KanbanConsoleLocale }) {
+function PrWatcherView({
+  locale,
+  snapshot,
+}: {
+  locale: KanbanConsoleLocale;
+  snapshot: ReturnType<typeof kanbanConsoleMockProvider.readSnapshot>;
+}) {
   const messages = getMessages(locale);
 
   return (
     <MockPanel icon={GitPullRequestIcon} title={messages.prsHeading}>
       <div className="grid gap-3 lg:grid-cols-3">
-        {["kanban-console#2", "kanban-console#1", "ai-starter-pro#43"].map((pr, index) => (
-          <div key={pr} className="rounded-md border border-border bg-card p-3">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="text-sm font-semibold">{pr}</h3>
-              <Badge variant={index === 1 ? "error" : "success"}>
-                {index === 1 ? "attention" : "green"}
-              </Badge>
+        {snapshot.prWatches.map((watch) => {
+          const health = kanbanConsoleMockProvider.getPrWatchHealth(watch);
+          return (
+            <div key={watch.id} className="rounded-md border border-border bg-card p-3">
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">{watch.pr}</h3>
+                <Badge
+                  variant={
+                    health === "attention" ? "error" : health === "pending" ? "warning" : "success"
+                  }
+                >
+                  {health}
+                </Badge>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">{watch.title}</p>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              Comments, required checks, review state, and safe auto-fix eligibility are mocked.
-            </p>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </MockPanel>
   );
@@ -564,11 +675,7 @@ function CliView({
   queuedCommand: string;
 }) {
   const messages = getMessages(locale);
-  const commands = [
-    "/orchestrate t3-kanban-project-console",
-    "/phase t3-kanban-project-console phase-2",
-    "/ship t3-kanban-project-console",
-  ];
+  const commands = kanbanConsoleMockProvider.readSnapshot().commandRuns.map((run) => run.command);
 
   return (
     <MockPanel icon={TerminalSquareIcon} title={messages.cliHeading}>
@@ -593,18 +700,32 @@ function CliView({
   );
 }
 
-function GitOpsView({ locale }: { locale: KanbanConsoleLocale }) {
+function GitOpsView({
+  locale,
+  snapshot,
+}: {
+  locale: KanbanConsoleLocale;
+  snapshot: ReturnType<typeof kanbanConsoleMockProvider.readSnapshot>;
+}) {
   const messages = getMessages(locale);
 
   return (
     <MockPanel icon={RocketIcon} title={messages.gitopsHeading}>
       <div className="grid gap-3 md:grid-cols-3">
-        {["CI parity", "Release smoke", "Rollback path"].map((item, index) => (
-          <div key={item} className="rounded-md border border-border bg-card p-3">
-            <Badge variant={index === 1 ? "warning" : "success"}>
-              {index === 1 ? "queued" : "ready"}
+        {snapshot.releaseReadiness.gates.map((gate) => (
+          <div key={gate.id} className="rounded-md border border-border bg-card p-3">
+            <Badge
+              variant={
+                gate.status === "blocked"
+                  ? "error"
+                  : gate.status === "pending"
+                    ? "warning"
+                    : "success"
+              }
+            >
+              {gate.status}
             </Badge>
-            <h3 className="mt-3 text-sm font-semibold">{item}</h3>
+            <h3 className="mt-3 text-sm font-semibold">{gate.label}</h3>
             <p className="mt-1 text-xs text-muted-foreground">
               Mock health signal for release readiness.
             </p>
@@ -615,13 +736,19 @@ function GitOpsView({ locale }: { locale: KanbanConsoleLocale }) {
   );
 }
 
-function SettingsView({ locale }: { locale: KanbanConsoleLocale }) {
+function SettingsView({
+  locale,
+  snapshot,
+}: {
+  locale: KanbanConsoleLocale;
+  snapshot: ReturnType<typeof kanbanConsoleMockProvider.readSnapshot>;
+}) {
   const messages = getMessages(locale);
   const settings = [
-    "Organization: MohAnghabo",
+    `Organization: ${snapshot.boards[0]?.owner ?? "MohAnghabo"}`,
     "Trusted bots: CodeRabbit, GitHub Actions",
     "Polling: 60 seconds",
-    "Command permissions: ask before Project writes",
+    `Protected branches: ${snapshot.gitOpsPolicy.protectedBranches.join(", ")}`,
   ];
 
   return (
