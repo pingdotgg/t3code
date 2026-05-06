@@ -39,7 +39,7 @@ const withRpcEffectTracing = <A, E, R>(
           attributes: rpcSpanAttributes(method, traceAttributes),
         }),
       )
-    : effect.pipe(Effect.withTracerEnabled(false));
+    : effect.pipe(Effect.provideService(References.TracerEnabled, false));
 
 const withRpcStreamTracing = <A, E, R>(
   method: string,
