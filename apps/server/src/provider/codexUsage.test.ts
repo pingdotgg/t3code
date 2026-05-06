@@ -52,6 +52,20 @@ describe("normalizeCodexUsageSnapshot", () => {
     ]);
   });
 
+  it("accepts a direct rate-limit snapshot payload", () => {
+    const snapshot = normalizeCodexUsageSnapshot({
+      providerInstanceId: instanceId,
+      source: "notification",
+      payload: {
+        primary: { usedPercent: 42, windowDurationMins: 300 },
+        secondary: { usedPercent: 70, windowDurationMins: 10_080 },
+      },
+    });
+
+    expect(snapshot?.windows.map((window) => window.usedPercent)).toEqual([42, 70]);
+    expect(snapshot?.source).toBe("notification");
+  });
+
   it("maps the 5h and weekly windows", () => {
     const snapshot = normalizeCodexUsageSnapshot({
       providerInstanceId: instanceId,

@@ -23,6 +23,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, vi } from "@effect/vitest";
 
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -433,6 +434,48 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
         kind: "five-hour",
         usedPercent: 45,
         remainingPercent: 55,
+        resetsAt: null,
+        windowDurationMins: 300,
+      });
+    }),
+  );
+
+  it.effect("caches direct account rate-limit notification snapshots", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("usage-notification-thread"),
+        runtimeMode: "full-access",
+      });
+      const runtime = sessionRuntimeFactory.lastRuntime;
+      assert.ok(runtime);
+      const firstEventFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-rate-limit-direct"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: DateTime.formatIso(yield* DateTime.now),
+        method: "account/rateLimits/updated",
+        threadId: asThreadId("usage-notification-thread"),
+        payload: {
+          primary: { usedPercent: 33, windowDurationMins: 300 },
+        },
+      } satisfies ProviderEvent);
+      const firstEvent = yield* Fiber.join(firstEventFiber);
+      runtime.readAccountRateLimitsImpl.mockResolvedValueOnce({
+        rateLimits: {},
+      });
+
+      const snapshot = yield* adapter.readCodexUsage!();
+
+      assert.equal(firstEvent._tag, "Some");
+      assert.equal(snapshot?.source, "cache");
+      assert.deepStrictEqual(snapshot?.windows[0], {
+        kind: "five-hour",
+        usedPercent: 33,
+        remainingPercent: 67,
         resetsAt: null,
         windowDurationMins: 300,
       });

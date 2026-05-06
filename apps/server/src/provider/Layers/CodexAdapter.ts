@@ -144,6 +144,28 @@ function readPayload<A>(
   return isPayload(payload) ? payload : undefined;
 }
 
+type AccountRateLimitsUpdatedPayload =
+  | EffectCodexSchema.V2AccountRateLimitsUpdatedNotification
+  | EffectCodexSchema.V2AccountRateLimitsUpdatedNotification__RateLimitSnapshot;
+
+function readAccountRateLimitsUpdatedPayload(
+  payload: ProviderEvent["payload"],
+): AccountRateLimitsUpdatedPayload | undefined {
+  return (
+    readPayload(EffectCodexSchema.V2AccountRateLimitsUpdatedNotification, payload) ??
+    readPayload(
+      EffectCodexSchema.V2AccountRateLimitsUpdatedNotification__RateLimitSnapshot,
+      payload,
+    )
+  );
+}
+
+function unwrapAccountRateLimitsUpdatedPayload(
+  payload: AccountRateLimitsUpdatedPayload,
+): EffectCodexSchema.V2AccountRateLimitsUpdatedNotification__RateLimitSnapshot {
+  return "rateLimits" in payload ? payload.rateLimits : payload;
+}
+
 function trimText(value: string | undefined | null): string | undefined {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
@@ -1117,7 +1139,8 @@ function mapToRuntimeEvents(
   }
 
   if (event.method === "account/rateLimits/updated") {
-    if (!readPayload(EffectCodexSchema.V2AccountRateLimitsUpdatedNotification, event.payload)) {
+    const payload = readAccountRateLimitsUpdatedPayload(event.payload);
+    if (!payload) {
       return [];
     }
     return [
@@ -1125,7 +1148,7 @@ function mapToRuntimeEvents(
         type: "account.rate-limits.updated",
         ...runtimeEventBase(event, canonicalThreadId),
         payload: {
-          rateLimits: event.payload ?? {},
+          rateLimits: unwrapAccountRateLimitsUpdatedPayload(payload),
         },
       },
     ];
@@ -1425,10 +1448,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           Effect.gen(function* () {
             yield* writeNativeEvent(event);
             if (event.method === "account/rateLimits/updated") {
-              const payload = readPayload(
-                EffectCodexSchema.V2AccountRateLimitsUpdatedNotification,
-                event.payload,
-              );
+              const payload = readAccountRateLimitsUpdatedPayload(event.payload);
               if (payload) {
                 const snapshot = normalizeCodexUsageSnapshot({
                   providerInstanceId: boundInstanceId,

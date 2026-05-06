@@ -23,6 +23,13 @@ type RateLimitBucket = {
 };
 
 type RateLimitPayload = {
+  readonly credits?: unknown;
+  readonly limitId?: string | null;
+  readonly limitName?: string | null;
+  readonly planType?: string | null;
+  readonly primary?: RateLimitWindow | null;
+  readonly secondary?: RateLimitWindow | null;
+  readonly rateLimitReachedType?: string | null;
   readonly rateLimits?: RateLimitBucket | null;
   readonly rateLimitsByLimitId?: Record<string, RateLimitBucket> | null;
 };
@@ -103,7 +110,22 @@ function normalizeWindow(
   };
 }
 
+function isRateLimitBucketPayload(payload: RateLimitPayload): boolean {
+  return (
+    "primary" in payload ||
+    "secondary" in payload ||
+    "limitId" in payload ||
+    "limitName" in payload ||
+    "credits" in payload ||
+    "planType" in payload ||
+    "rateLimitReachedType" in payload
+  );
+}
+
 function selectCodexBucket(payload: RateLimitPayload): RateLimitBucket | null {
+  if (isRateLimitBucketPayload(payload)) {
+    return payload;
+  }
   return payload.rateLimitsByLimitId?.codex ?? payload.rateLimits ?? null;
 }
 
