@@ -16,6 +16,11 @@ import {
   type ClientSettings,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
+  NotificationLevel,
+  NotificationLevelSchema,
+  SidebarProjectSortOrder,
+  SidebarThreadSortOrder,
+  TimestampFormat,
   UnifiedSettings,
 } from "@t3tools/contracts/settings";
 import { ensureLocalApi } from "~/localApi";
@@ -221,6 +226,140 @@ export function useUpdateSettings() {
     updateSettings,
     resetSettings,
   };
+}
+
+// ── One-time migration from localStorage ─────────────────────────────
+
+export function buildLegacyServerSettingsMigrationPatch(legacySettings: Record<string, unknown>) {
+  const patch: DeepMutable<ServerSettingsPatch> = {};
+
+  if (Predicate.isBoolean(legacySettings.enableAssistantStreaming)) {
+    patch.enableAssistantStreaming = legacySettings.enableAssistantStreaming;
+  }
+
+  if (Schema.is(ThreadEnvMode)(legacySettings.defaultThreadEnvMode)) {
+    patch.defaultThreadEnvMode = legacySettings.defaultThreadEnvMode;
+  }
+
+  if (Schema.is(ModelSelection)(legacySettings.textGenerationModelSelection)) {
+    patch.textGenerationModelSelection = legacySettings.textGenerationModelSelection;
+  }
+
+  if (typeof legacySettings.codexBinaryPath === "string") {
+    patch.providers ??= {};
+    patch.providers.codex ??= {};
+    patch.providers.codex.binaryPath = legacySettings.codexBinaryPath;
+  }
+
+  if (typeof legacySettings.codexHomePath === "string") {
+    patch.providers ??= {};
+    patch.providers.codex ??= {};
+    patch.providers.codex.homePath = legacySettings.codexHomePath;
+  }
+
+  if (Array.isArray(legacySettings.customCodexModels)) {
+    patch.providers ??= {};
+    patch.providers.codex ??= {};
+    patch.providers.codex.customModels = normalizeCustomModelSlugs(
+      legacySettings.customCodexModels,
+      new Set<string>(),
+      "codex",
+    );
+  }
+
+  if (Predicate.isString(legacySettings.claudeBinaryPath)) {
+    patch.providers ??= {};
+    patch.providers.claudeAgent ??= {};
+    patch.providers.claudeAgent.binaryPath = legacySettings.claudeBinaryPath;
+  }
+
+  if (Array.isArray(legacySettings.customClaudeModels)) {
+    patch.providers ??= {};
+    patch.providers.claudeAgent ??= {};
+    patch.providers.claudeAgent.customModels = normalizeCustomModelSlugs(
+      legacySettings.customClaudeModels,
+      new Set<string>(),
+      "claudeAgent",
+    );
+  }
+
+  return patch;
+}
+
+export function buildLegacyClientSettingsMigrationPatch(
+  legacySettings: Record<string, unknown>,
+): Partial<DeepMutable<ClientSettings>> {
+  const patch: Partial<DeepMutable<ClientSettings>> = {};
+
+  if (Predicate.isBoolean(legacySettings.confirmThreadArchive)) {
+    patch.confirmThreadArchive = legacySettings.confirmThreadArchive;
+  }
+
+  if (Predicate.isBoolean(legacySettings.confirmThreadDelete)) {
+    patch.confirmThreadDelete = legacySettings.confirmThreadDelete;
+  }
+
+  if (Predicate.isBoolean(legacySettings.diffWordWrap)) {
+    patch.diffWordWrap = legacySettings.diffWordWrap;
+  }
+
+  if (Schema.is(SidebarProjectSortOrder)(legacySettings.sidebarProjectSortOrder)) {
+    patch.sidebarProjectSortOrder = legacySettings.sidebarProjectSortOrder;
+  }
+
+  if (Schema.is(SidebarThreadSortOrder)(legacySettings.sidebarThreadSortOrder)) {
+    patch.sidebarThreadSortOrder = legacySettings.sidebarThreadSortOrder;
+  }
+
+  if (Schema.is(TimestampFormat)(legacySettings.timestampFormat)) {
+    patch.timestampFormat = legacySettings.timestampFormat;
+  }
+
+  if (Schema.is(NotificationLevelSchema)(legacySettings.notificationLevel)) {
+    patch.notificationLevel = legacySettings.notificationLevel as NotificationLevel;
+  }
+
+  return patch;
+}
+
+/**
+ * Call once on app startup.
+ * If the legacy localStorage key exists, migrate its values to the new server
+ * and client storage formats, then remove the legacy key so this only runs once.
+ */
+export function migrateLocalSettingsToServer(): void {
+  if (typeof window === "undefined") return;
+
+  const raw = localStorage.getItem(OLD_SETTINGS_KEY);
+  if (!raw) return;
+
+  try {
+    const old = JSON.parse(raw);
+    if (!Predicate.isObject(old)) return;
+
+    // Migrate server-relevant keys via RPC
+    const serverPatch = buildLegacyServerSettingsMigrationPatch(old);
+    if (Object.keys(serverPatch).length > 0) {
+      const api = ensureNativeApi();
+      void api.server.updateSettings(serverPatch);
+    }
+
+    // Migrate client-only keys to the new localStorage key
+    const clientPatch = buildLegacyClientSettingsMigrationPatch(old);
+    if (Object.keys(clientPatch).length > 0) {
+      const existing = localStorage.getItem(CLIENT_SETTINGS_STORAGE_KEY);
+      const current = existing ? (JSON.parse(existing) as Record<string, unknown>) : {};
+      localStorage.setItem(
+        CLIENT_SETTINGS_STORAGE_KEY,
+        JSON.stringify({ ...current, ...clientPatch }),
+      );
+    }
+  } catch (error) {
+    console.error("[MIGRATION] Error migrating local settings:", error);
+  } finally {
+    // Remove the legacy key regardless to keep migration one-shot behavior.
+    localStorage.removeItem(OLD_SETTINGS_KEY);
+  }
 }
 
 export function __resetClientSettingsPersistenceForTests(): void {

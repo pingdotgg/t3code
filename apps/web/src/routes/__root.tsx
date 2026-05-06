@@ -1,4 +1,9 @@
-import { type ServerLifecycleWelcomePayload } from "@t3tools/contracts";
+import {
+  OrchestrationEvent,
+  ThreadId,
+  type OrchestrationSessionStatus,
+  type ServerLifecycleWelcomePayload,
+} from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
 import {
   Outlet,
@@ -28,8 +33,10 @@ import {
   toastManager,
 } from "../components/ui/toast";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
-import { readLocalApi } from "../localApi";
+import { readNativeApi } from "../nativeApi";
+import { NotificationLevel } from "@t3tools/contracts/settings";
 import { useSettings } from "../hooks/useSettings";
+import { readLocalApi } from "../localApi";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -44,6 +51,21 @@ import {
 } from "../rpc/serverState";
 import { useStore } from "../store";
 import { useUiStateStore } from "../uiStateStore";
+import { useTerminalStateStore } from "../terminalStateStore";
+import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
+import { migrateLocalSettingsToServer } from "../hooks/useSettings";
+import { providerQueryKeys } from "../lib/providerReactQuery";
+import { projectQueryKeys } from "../lib/projectReactQuery";
+import { collectActiveTerminalThreadIds } from "../lib/terminalStateCleanup";
+import { deriveOrchestrationBatchEffects } from "../orchestrationEventEffects";
+import { createOrchestrationRecoveryCoordinator } from "../orchestrationRecovery";
+import {
+  isAppBackgrounded,
+  resolveAttentionNotification,
+  resolveTurnCompletionNotification,
+  showNativeNotification,
+  type NotifiableThread,
+} from "../lib/nativeNotifications";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import {
   ensureEnvironmentConnectionBootstrapped,
@@ -278,6 +300,17 @@ function EnvironmentConnectionManagerBootstrap() {
 }
 
 function EventRouter() {
+  const applyOrchestrationEvents = useStore((store) => store.applyOrchestrationEvents);
+  const syncServerReadModel = useStore((store) => store.syncServerReadModel);
+  const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
+  const syncProjects = useUiStateStore((store) => store.syncProjects);
+  const syncThreads = useUiStateStore((store) => store.syncThreads);
+  const clearThreadUi = useUiStateStore((store) => store.clearThreadUi);
+  const removeTerminalState = useTerminalStateStore((store) => store.removeTerminalState);
+  const removeOrphanedTerminalStates = useTerminalStateStore(
+    (store) => store.removeOrphanedTerminalStates,
+  );
+  const notificationLevel = useSettings((state) => state.notificationLevel);
   const setActiveEnvironmentId = useStore((store) => store.setActiveEnvironmentId);
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
@@ -291,10 +324,75 @@ function EventRouter() {
   const lastKeybindingsSuccessToastAtRef = useRef(0);
   const disposedRef = useRef(false);
   const serverConfig = useServerConfig();
+  const lastSessionByThreadRef = useRef(
+    new Map<string, { status: OrchestrationSessionStatus; activeTurnId: string | null }>(),
+  );
+  const lastNotifiedTurnByThreadRef = useRef(new Map<string, string>());
+  const lastNotifiedActivityByThreadRef = useRef(new Map<string, string>());
 
-  const handleWelcome = useEffectEvent((payload: ServerLifecycleWelcomePayload | null) => {
-    if (!payload) return;
+  const maybeNotifyForThreads = useEffectEvent((threads: ReadonlyArray<NotifiableThread>) => {
+    // Only notify when the app is backgrounded and notifications are enabled.
+    const shouldNotify = isAppBackgrounded() && notificationLevel !== NotificationLevel.Off;
+    const seenThreadIds = new Set<string>();
+    for (const thread of threads) {
+      seenThreadIds.add(thread.id);
+      const session = thread.session;
+      const previous = lastSessionByThreadRef.current.get(thread.id);
 
+      const completionNotification = resolveTurnCompletionNotification({
+        shouldNotify,
+        level: notificationLevel,
+        thread,
+        previous,
+        lastNotifiedTurnId: lastNotifiedTurnByThreadRef.current.get(thread.id),
+      });
+
+      if (completionNotification) {
+        const { title, body, tag, turnId } = completionNotification;
+        if (showNativeNotification({ title, body, tag })) {
+          lastNotifiedTurnByThreadRef.current.set(thread.id, turnId);
+        }
+      }
+
+      const attentionNotification = resolveAttentionNotification({
+        shouldNotify,
+        level: notificationLevel,
+        thread,
+        lastNotifiedActivityId: lastNotifiedActivityByThreadRef.current.get(thread.id),
+      });
+
+      if (attentionNotification) {
+        const { title, body, tag, activityId } = attentionNotification;
+        if (showNativeNotification({ title, body, tag })) {
+          lastNotifiedActivityByThreadRef.current.set(thread.id, activityId);
+        }
+      }
+
+      if (session) {
+        // Persist latest session state so we can detect transitions next time.
+        const status =
+          "orchestrationStatus" in session ? session.orchestrationStatus : session.status;
+        lastSessionByThreadRef.current.set(thread.id, {
+          status,
+          activeTurnId: session.activeTurnId ?? null,
+        });
+      } else {
+        lastSessionByThreadRef.current.delete(thread.id);
+      }
+    }
+
+    // Drop state for threads that no longer exist in the snapshot.
+    for (const threadId of lastSessionByThreadRef.current.keys()) {
+      if (!seenThreadIds.has(threadId)) {
+        lastSessionByThreadRef.current.delete(threadId);
+        lastNotifiedTurnByThreadRef.current.delete(threadId);
+        lastNotifiedActivityByThreadRef.current.delete(threadId);
+      }
+    }
+  });
+
+  const handleWelcome = useEffectEvent((payload: ServerLifecycleWelcomePayload) => {
+    migrateLocalSettingsToServer();
     updatePrimaryEnvironmentDescriptor(payload.environment);
     setActiveEnvironmentId(payload.environment.environmentId);
     void (async () => {
@@ -302,7 +400,6 @@ function EventRouter() {
       if (disposedRef.current) {
         return;
       }
-
       if (!payload.bootstrapProjectId || !payload.bootstrapThreadId) {
         return;
       }
@@ -408,6 +505,163 @@ function EventRouter() {
   );
 
   useEffect(() => {
+    const api = readNativeApi();
+    if (!api) return;
+    let disposed = false;
+    disposedRef.current = false;
+    const recovery = createOrchestrationRecoveryCoordinator();
+    let needsProviderInvalidation = false;
+    const pendingDomainEvents: OrchestrationEvent[] = [];
+    let flushPendingDomainEventsScheduled = false;
+
+    const reconcileSnapshotDerivedState = () => {
+      const threads = useStore.getState().threads;
+      const projects = useStore.getState().projects;
+      syncProjects(projects.map((project) => ({ id: project.id, cwd: project.cwd })));
+      syncThreads(
+        threads.map((thread) => ({
+          id: thread.id,
+          seedVisitedAt: thread.updatedAt ?? thread.createdAt,
+        })),
+      );
+      clearPromotedDraftThreads(threads.map((thread) => thread.id));
+      const draftThreadIds = Object.keys(
+        useComposerDraftStore.getState().draftThreadsByThreadId,
+      ) as ThreadId[];
+      const activeThreadIds = collectActiveTerminalThreadIds({
+        snapshotThreads: threads.map((thread) => ({ id: thread.id, deletedAt: null })),
+        draftThreadIds,
+      });
+      removeOrphanedTerminalStates(activeThreadIds);
+    };
+
+    const queryInvalidationThrottler = new Throttler(
+      () => {
+        if (!needsProviderInvalidation) {
+          return;
+        }
+        needsProviderInvalidation = false;
+        void queryClient.invalidateQueries({ queryKey: providerQueryKeys.all });
+        // Invalidate workspace entry queries so the @-mention file picker
+        // reflects files created, deleted, or restored during this turn.
+        void queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+      },
+      {
+        wait: 100,
+        leading: false,
+        trailing: true,
+      },
+    );
+
+    const applyEventBatch = (events: ReadonlyArray<OrchestrationEvent>) => {
+      const nextEvents = recovery.markEventBatchApplied(events);
+      if (nextEvents.length === 0) {
+        return;
+      }
+
+      const batchEffects = deriveOrchestrationBatchEffects(nextEvents);
+      const uiEvents = coalesceOrchestrationUiEvents(nextEvents);
+      const needsProjectUiSync = nextEvents.some(
+        (event) =>
+          event.type === "project.created" ||
+          event.type === "project.meta-updated" ||
+          event.type === "project.deleted",
+      );
+
+      if (batchEffects.needsProviderInvalidation) {
+        needsProviderInvalidation = true;
+        void queryInvalidationThrottler.maybeExecute();
+      }
+
+      applyOrchestrationEvents(uiEvents);
+      if (needsProjectUiSync) {
+        const projects = useStore.getState().projects;
+        syncProjects(projects.map((project) => ({ id: project.id, cwd: project.cwd })));
+      }
+      const needsThreadUiSync = nextEvents.some(
+        (event) => event.type === "thread.created" || event.type === "thread.deleted",
+      );
+      if (needsThreadUiSync) {
+        const threads = useStore.getState().threads;
+        syncThreads(
+          threads.map((thread) => ({
+            id: thread.id,
+            seedVisitedAt: thread.updatedAt ?? thread.createdAt,
+          })),
+        );
+      }
+      const draftStore = useComposerDraftStore.getState();
+      for (const threadId of batchEffects.clearPromotedDraftThreadIds) {
+        clearPromotedDraftThread(threadId);
+      }
+      for (const threadId of batchEffects.clearDeletedThreadIds) {
+        draftStore.clearDraftThread(threadId);
+        clearThreadUi(threadId);
+      }
+      for (const threadId of batchEffects.removeTerminalStateThreadIds) {
+        removeTerminalState(threadId);
+      }
+      maybeNotifyForThreads(useStore.getState().threads);
+    };
+    const flushPendingDomainEvents = () => {
+      flushPendingDomainEventsScheduled = false;
+      if (disposed || pendingDomainEvents.length === 0) {
+        return;
+      }
+
+      const events = pendingDomainEvents.splice(0, pendingDomainEvents.length);
+      applyEventBatch(events);
+    };
+    const schedulePendingDomainEventFlush = () => {
+      if (flushPendingDomainEventsScheduled) {
+        return;
+      }
+
+      flushPendingDomainEventsScheduled = true;
+      queueMicrotask(flushPendingDomainEvents);
+    };
+
+    const recoverFromSequenceGap = async (): Promise<void> => {
+      if (!recovery.beginReplayRecovery("sequence-gap")) {
+        return;
+      }
+
+      try {
+        const events = await api.orchestration.replayEvents(recovery.getState().latestSequence);
+        if (!disposed) {
+          applyEventBatch(events);
+        }
+      } catch {
+        recovery.failReplayRecovery();
+        void fallbackToSnapshotRecovery();
+        return;
+      }
+
+      if (!disposed && recovery.completeReplayRecovery()) {
+        void recoverFromSequenceGap();
+      }
+    };
+
+    const runSnapshotRecovery = async (reason: "bootstrap" | "replay-failed"): Promise<void> => {
+      if (!recovery.beginSnapshotRecovery(reason)) {
+        return;
+      }
+
+      try {
+        const snapshot = await api.orchestration.getSnapshot();
+        if (!disposed) {
+          syncServerReadModel(snapshot);
+          reconcileSnapshotDerivedState();
+          maybeNotifyForThreads(snapshot.threads);
+          if (recovery.completeSnapshotRecovery(snapshot.snapshotSequence)) {
+            void recoverFromSequenceGap();
+          }
+        }
+      } catch {
+        // Keep prior state and wait for welcome or a later replay attempt.
+        recovery.failSnapshotRecovery();
+      }
+    };
     if (!serverConfig) {
       return;
     }

@@ -10,8 +10,9 @@ import {
   type ProviderInstanceId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS, NotificationLevel } from "@t3tools/contracts/settings";
+import { normalizeModelSlug } from "@t3tools/shared/model";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
@@ -27,6 +28,7 @@ import { TraitsPicker } from "../chat/TraitsPicker";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
 import { useTheme } from "../../hooks/useTheme";
+import { useNotification } from "../../hooks/useNotification";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import {
@@ -49,6 +51,8 @@ import {
   useStore,
 } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
+import { cn } from "../../lib/utils";
+import { showNativeNotification } from "../../lib/nativeNotifications";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { DraftInput } from "../ui/draft-input";
@@ -101,6 +105,29 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const NOTIFICATION_LEVELS = [
+  {
+    value: NotificationLevel.Off,
+    label: "Off",
+    description: "Disable all OS notifications.",
+  },
+  {
+    value: NotificationLevel.Important,
+    label: "Important",
+    description: "Approval/input required and failed tasks only.",
+  },
+  {
+    value: NotificationLevel.Normal,
+    label: "Normal",
+    description: "Important plus completed tasks.",
+  },
+  {
+    value: NotificationLevel.Verbose,
+    label: "Verbose",
+    description: "Normal plus task activity updates.",
+  },
+] as const;
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
@@ -442,6 +469,25 @@ export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
+  const { permission: notificationPermission, requestPermission } = useNotification();
+  const [openProviderDetails, setOpenProviderDetails] = useState<Record<ProviderKind, boolean>>({
+    codex: Boolean(
+      settings.providers.codex.binaryPath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.binaryPath ||
+      settings.providers.codex.homePath !== DEFAULT_UNIFIED_SETTINGS.providers.codex.homePath ||
+      settings.providers.codex.customModels.length > 0,
+    ),
+    claudeAgent: Boolean(
+      settings.providers.claudeAgent.binaryPath !==
+        DEFAULT_UNIFIED_SETTINGS.providers.claudeAgent.binaryPath ||
+      settings.providers.claudeAgent.customModels.length > 0,
+    ),
+  });
+  const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
+    Record<ProviderKind, string>
+  >({
+    codex: "",
+    claudeAgent: "",
+  });
   const [openingPathByTarget, setOpeningPathByTarget] = useState({
     logsDirectory: false,
   });
@@ -681,6 +727,117 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          title="Notifications"
+          description="Allow T3 Code to show OS notifications when a task completes."
+          resetAction={
+            settings.notificationLevel !== DEFAULT_UNIFIED_SETTINGS.notificationLevel ? (
+              <SettingResetButton
+                label="notifications"
+                onClick={() =>
+                  updateSettings({
+                    notificationLevel: DEFAULT_UNIFIED_SETTINGS.notificationLevel,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.notificationLevel}
+              onValueChange={(value) => {
+                if (
+                  value === NotificationLevel.Off ||
+                  value === NotificationLevel.Important ||
+                  value === NotificationLevel.Normal ||
+                  value === NotificationLevel.Verbose
+                ) {
+                  updateSettings({ notificationLevel: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Notification level">
+                <SelectValue>
+                  {NOTIFICATION_LEVELS.find((option) => option.value === settings.notificationLevel)
+                    ?.label ?? "Normal"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {NOTIFICATION_LEVELS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+          status={
+            NOTIFICATION_LEVELS.find((option) => option.value === settings.notificationLevel)
+              ?.description ?? null
+          }
+        >
+          <div className="mt-3 flex flex-col gap-3 border-t border-border/60 pt-3">
+            <div className="flex flex-col gap-2 rounded-lg border border-border/70 bg-background/70 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium text-foreground">Permission status</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {isElectron
+                    ? "Desktop app permissions are managed by your OS."
+                    : notificationPermission === "unsupported"
+                      ? "Notifications are not supported by this browser."
+                      : notificationPermission === "granted"
+                        ? "Allowed"
+                        : notificationPermission === "denied"
+                          ? "Blocked"
+                          : "Not yet requested"}
+                </p>
+              </div>
+              {isElectron ? null : (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  disabled={
+                    notificationPermission === "unsupported" || notificationPermission === "granted"
+                  }
+                  onClick={requestPermission}
+                >
+                  Request permission
+                </Button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={
+                  settings.notificationLevel === NotificationLevel.Off ||
+                  (!isElectron && notificationPermission !== "granted")
+                }
+                onClick={() => {
+                  showNativeNotification({
+                    title: "T3 Code",
+                    body: "Notification test from settings.",
+                    tag: "t3code:test",
+                  });
+                }}
+              >
+                Send test notification
+              </Button>
+              {!isElectron && notificationPermission === "denied" ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Enable notifications in your browser site settings to allow OS alerts.
+                </p>
+              ) : null}
+              {isElectron || notificationPermission === "granted" ? (
+                <p className="text-[11px] text-muted-foreground">
+                  If notifications still do not appear, check OS notification settings.
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </SettingsRow>
+
+        <SettingsRow
           title="Auto-open task panel"
           description="Open the right-side plan and task panel automatically when steps appear."
           resetAction={
@@ -705,7 +862,6 @@ export function GeneralSettingsPanel() {
             />
           }
         />
-
         <SettingsRow
           title="New threads"
           description="Pick the default workspace mode for newly created draft threads."
