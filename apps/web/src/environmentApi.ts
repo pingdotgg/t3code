@@ -38,11 +38,11 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       createRef: rpcClient.vcs.createRef,
       switchRef: rpcClient.vcs.switchRef,
       init: rpcClient.vcs.init,
+      summarizeToolWorkLog: rpcClient.git.summarizeToolWorkLog,
     },
     git: {
       resolvePullRequest: rpcClient.git.resolvePullRequest,
       preparePullRequestThread: rpcClient.git.preparePullRequestThread,
-      summarizeToolWorkLog: rpcClient.git.summarizeToolWorkLog,
     },
     orchestration: {
       dispatchCommand: rpcClient.orchestration.dispatchCommand,

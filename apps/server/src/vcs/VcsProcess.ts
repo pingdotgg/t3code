@@ -8,6 +8,7 @@ import {
   VcsProcessSpawnError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
+import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 
 export interface VcsProcessInput {
   readonly operation: string;
@@ -86,44 +87,12 @@ export const collectText = Effect.fn("VcsProcess.collectText")(function* (input:
   readonly maxOutputBytes?: number;
   readonly truncateOutputAtMaxBytes?: boolean;
 }) {
-  const decoder = new TextDecoder();
-  let text = "";
-  let bytes = 0;
-  let truncated = false;
   const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-  const truncateOutputAtMaxBytes = input.truncateOutputAtMaxBytes ?? false;
-
-  yield* Stream.runForEach(input.stream, (chunk) =>
-    Effect.sync(() => {
-      if (truncated) return;
-
-      const remainingBytes = maxOutputBytes - bytes;
-      if (remainingBytes <= 0) {
-        truncated = true;
-        if (truncateOutputAtMaxBytes) {
-          text += OUTPUT_TRUNCATED_MARKER;
-        }
-        return;
-      }
-
-      const nextChunk = chunk.byteLength > remainingBytes ? chunk.slice(0, remainingBytes) : chunk;
-      text += decoder.decode(nextChunk, { stream: true });
-      bytes += nextChunk.byteLength;
-
-      if (chunk.byteLength > remainingBytes) {
-        truncated = true;
-        if (truncateOutputAtMaxBytes) {
-          text += OUTPUT_TRUNCATED_MARKER;
-        }
-      }
-    }),
-  );
-
-  if (!truncated) {
-    text += decoder.decode();
-  }
-
-  return { text, truncated } satisfies VcsProcessCollectedText;
+  return yield* collectUint8StreamText({
+    stream: input.stream,
+    maxBytes: maxOutputBytes,
+    truncatedMarker: input.truncateOutputAtMaxBytes ? OUTPUT_TRUNCATED_MARKER : null,
+  });
 });
 
 export const make = Effect.fn("makeVcsProcess")(function* () {

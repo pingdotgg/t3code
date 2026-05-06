@@ -25,7 +25,11 @@ import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { useTheme } from "../hooks/useTheme";
-import { resolveMarkdownFileLinkMeta, rewriteMarkdownFileUriHref } from "../markdown-links";
+import {
+  normalizeMarkdownLinkDestination,
+  resolveMarkdownFileLinkMeta,
+  rewriteMarkdownFileUriHref,
+} from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
@@ -292,7 +296,8 @@ function extractMarkdownLinkHrefs(text: string): string[] {
 }
 
 function normalizeMarkdownLinkHrefKey(href: string): string {
-  return rewriteMarkdownFileUriHref(href.trim()) ?? href.trim();
+  const normalizedHref = normalizeMarkdownLinkDestination(href);
+  return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
 }
 
 const MarkdownFileLink = memo(function MarkdownFileLink({
@@ -469,7 +474,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
 
         return (
           <MarkdownFileLink
-            href={href ?? fileLinkMeta.targetPath}
+            href={fileLinkMeta.targetPath}
             targetPath={fileLinkMeta.targetPath}
             displayPath={fileLinkMeta.displayPath}
             label={labelParts.join(" @ ")}

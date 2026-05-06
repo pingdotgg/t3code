@@ -602,7 +602,7 @@ describe("ProviderRuntimeIngestion", () => {
     );
   });
 
-  it("ignores non-active turn completion when runtime omits thread id", async () => {
+  it("ignores non-active turn completion when runtime reports a stale turn id", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
 
@@ -645,6 +645,41 @@ describe("ProviderRuntimeIngestion", () => {
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-guarded-main"),
+      status: "completed",
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+    );
+  });
+
+  it("force-clears an active turn when completion omits the turn id", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-turn-started-missing-completion-turn-id"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-missing-completion-turn-id"),
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (thread) =>
+        thread.session?.status === "running" &&
+        thread.session?.activeTurnId === "turn-missing-completion-turn-id",
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-completed-missing-turn-id"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
       status: "completed",
     });
 
@@ -2303,7 +2338,7 @@ describe("ProviderRuntimeIngestion", () => {
       harness.readModel,
       (entry) =>
         entry.session?.status === "error" &&
-        entry.session?.activeTurnId === "turn-3" &&
+        entry.session?.activeTurnId === null &&
         entry.session?.lastError === "runtime exploded",
     );
     expect(thread.session?.status).toBe("error");
@@ -2960,7 +2995,7 @@ describe("ProviderRuntimeIngestion", () => {
       harness.readModel,
       (entry) =>
         entry.session?.status === "error" &&
-        entry.session?.activeTurnId === "turn-after-failure" &&
+        entry.session?.activeTurnId === null &&
         entry.session?.lastError === "runtime still processed",
     );
     expect(thread.session?.status).toBe("error");

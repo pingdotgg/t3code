@@ -532,16 +532,20 @@ describe("Keybindings update toast", () => {
     document.body.innerHTML = "";
   });
 
-  it("shows a toast for each consecutive keybinding update with no issues", async () => {
+  it("coalesces rapid consecutive keybinding update toasts with no issues", async () => {
     const mounted = await mountApp();
 
     try {
       sendServerConfigUpdatedPush([]);
       await waitForToast("Keybindings updated", 1);
 
-      // Each server push represents a distinct file change, so it should produce its own toast.
+      // A single edit can produce several reload notifications as the direct update and
+      // filesystem watcher settle, so avoid stacking identical success toasts.
       sendServerConfigUpdatedPush([]);
-      await waitForToast("Keybindings updated", 2);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      const titles = queryToastTitles();
+      expect(titles.filter((title) => title === "Keybindings updated")).toHaveLength(1);
     } finally {
       await mounted.cleanup();
     }

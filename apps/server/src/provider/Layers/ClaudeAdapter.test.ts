@@ -1565,8 +1565,10 @@ describe("ClaudeAdapterLive", () => {
           usage: {
             usedTokens: 321,
             lastUsedTokens: 321,
+            totalProcessedTokens: 321,
             toolUses: 2,
             durationMs: 654,
+            compactsAutomatically: true,
           },
         });
       }
@@ -1635,9 +1637,11 @@ describe("ClaudeAdapterLive", () => {
           usage: {
             usedTokens: 24542,
             lastUsedTokens: 24542,
+            totalProcessedTokens: 24542,
             inputTokens: 23863,
             outputTokens: 679,
             maxTokens: 200000,
+            compactsAutomatically: true,
           },
         });
       }
@@ -1701,6 +1705,7 @@ describe("ClaudeAdapterLive", () => {
             lastUsedTokens: 200000,
             totalProcessedTokens: 535000,
             maxTokens: 200000,
+            compactsAutomatically: true,
           },
         });
       }
@@ -1781,6 +1786,7 @@ describe("ClaudeAdapterLive", () => {
               lastUsedTokens: 190000,
               totalProcessedTokens: 535000,
               maxTokens: 200000,
+              compactsAutomatically: true,
             },
           });
         }

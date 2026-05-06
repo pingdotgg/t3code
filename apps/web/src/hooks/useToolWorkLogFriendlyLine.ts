@@ -62,7 +62,7 @@ async function loadFriendlyLine(
       return cached;
     }
     const line = await ensureEnvironmentApi(environmentId)
-      .git.summarizeToolWorkLog(input)
+      .vcs.summarizeToolWorkLog(input)
       .then((result) => result.line);
     await writeToolWorkLogSummaryCache(key, line);
     return line;
@@ -88,10 +88,7 @@ export function useToolWorkLogFriendlyLine(
 ): string | null {
   const modelSelection = useSettings((settings) => settings.textGenerationModelSelection);
   const toolCallSummaries = useSettings((settings) => settings.toolCallSummaries);
-  const modelKey = useMemo(
-    () => modelSelectionWireKey(modelSelection),
-    [modelSelection.instanceId, modelSelection.model, JSON.stringify(modelSelection.options ?? [])],
-  );
+  const modelKey = useMemo(() => modelSelectionWireKey(modelSelection), [modelSelection]);
   const modelSelectionRef = useRef(modelSelection);
   modelSelectionRef.current = modelSelection;
   const workEntryRef = useRef(workEntry);

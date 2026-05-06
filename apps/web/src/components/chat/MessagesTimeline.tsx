@@ -81,11 +81,6 @@ import { useToolWorkLogFriendlyLine } from "../../hooks/useToolWorkLogFriendlyLi
 // ---------------------------------------------------------------------------
 
 interface TimelineRowSharedState {
-  activeTurnInProgress: boolean;
-  activeTurnId: TurnId | null | undefined;
-  isWorking: boolean;
-  isRevertingCheckpoint: boolean;
-  completionSummary: string | null;
   timestampFormat: TimestampFormat;
   routeThreadKey: string;
   markdownCwd: string | undefined;
@@ -97,7 +92,16 @@ interface TimelineRowSharedState {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }
 
+interface TimelineRowActivityState {
+  activeTurnInProgress: boolean;
+  activeTurnId: TurnId | null;
+  isWorking: boolean;
+  isRevertingCheckpoint: boolean;
+  completionSummary: string | null;
+}
+
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
+const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 
@@ -204,15 +208,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     };
   }, [listRef, onIsAtEndChange, rows.length]);
 
-  // Memoised context value — only changes on state transitions, NOT on
-  // every streaming chunk. Callbacks from ChatView are useCallback-stable.
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
-      activeTurnInProgress,
-      activeTurnId: activeTurnId ?? null,
-      isWorking,
-      isRevertingCheckpoint,
-      completionSummary,
       timestampFormat,
       routeThreadKey,
       markdownCwd,
@@ -224,11 +221,6 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onOpenTurnDiff,
     }),
     [
-      activeTurnInProgress,
-      activeTurnId,
-      isWorking,
-      isRevertingCheckpoint,
-      completionSummary,
       timestampFormat,
       routeThreadKey,
       markdownCwd,
@@ -239,6 +231,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onImageExpand,
       onOpenTurnDiff,
     ],
+  );
+  const activityState = useMemo<TimelineRowActivityState>(
+    () => ({
+      activeTurnInProgress,
+      activeTurnId: activeTurnId ?? null,
+      isWorking,
+      isRevertingCheckpoint,
+      completionSummary,
+    }),
+    [activeTurnInProgress, activeTurnId, completionSummary, isRevertingCheckpoint, isWorking],
   );
 
   // Stable renderItem — no closure deps. Row components read shared state
@@ -264,21 +266,23 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   return (
     <TimelineRowCtx.Provider value={sharedState}>
-      <LegendList<MessagesTimelineRow>
-        ref={listRef}
-        data={rows}
-        keyExtractor={keyExtractor}
-        renderItem={renderItem}
-        estimatedItemSize={90}
-        initialScrollAtEnd
-        maintainScrollAtEnd
-        maintainScrollAtEndThreshold={0.1}
-        maintainVisibleContentPosition
-        onScroll={handleScroll}
-        className="h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
-        ListHeaderComponent={TIMELINE_LIST_HEADER}
-        ListFooterComponent={TIMELINE_LIST_FOOTER}
-      />
+      <TimelineRowActivityCtx.Provider value={activityState}>
+        <LegendList<MessagesTimelineRow>
+          ref={listRef}
+          data={rows}
+          keyExtractor={keyExtractor}
+          renderItem={renderItem}
+          estimatedItemSize={90}
+          initialScrollAtEnd
+          maintainScrollAtEnd
+          maintainScrollAtEndThreshold={0.1}
+          maintainVisibleContentPosition
+          onScroll={handleScroll}
+          className="h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
+          ListHeaderComponent={TIMELINE_LIST_HEADER}
+          ListFooterComponent={TIMELINE_LIST_FOOTER}
+        />
+      </TimelineRowActivityCtx.Provider>
     </TimelineRowCtx.Provider>
   );
 });
@@ -296,9 +300,7 @@ type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
 
-function TimelineRowContent({ row }: { row: TimelineRow }) {
-  const ctx = use(TimelineRowCtx);
-
+const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   return (
     <div
       className={cn(
@@ -310,193 +312,222 @@ function TimelineRowContent({ row }: { row: TimelineRow }) {
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
-      {row.kind === "work" && <WorkGroupSection groupedEntries={row.groupedEntries} />}
+      {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
+      {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
+      {row.kind === "message" && row.message.role === "assistant" ? (
+        <AssistantTimelineRow row={row} />
+      ) : null}
+      {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
+      {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
+    </div>
+  );
+});
 
-      {row.kind === "message" &&
-        row.message.role === "user" &&
-        (() => {
-          const userImages = row.message.attachments ?? [];
-          const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
-          const terminalContexts = displayedUserMessage.contexts;
-          const canRevertAgentWork = typeof row.revertTurnCount === "number";
-          return (
-            <div className="group flex flex-col items-end gap-1">
-              <div className="relative max-w-[80%] rounded-2xl border border-border bg-secondary p-3">
-                {userImages.length > 0 && (
-                  <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
-                    {userImages.map(
-                      (image: NonNullable<TimelineMessage["attachments"]>[number]) => (
-                        <div
-                          key={image.id}
-                          className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
-                        >
-                          {image.previewUrl ? (
-                            <button
-                              type="button"
-                              className="h-full w-full cursor-zoom-in"
-                              aria-label={`Preview ${image.name}`}
-                              onClick={() => {
-                                const preview = buildExpandedImagePreview(userImages, image.id);
-                                if (!preview) return;
-                                ctx.onImageExpand(preview);
-                              }}
-                            >
-                              <img
-                                src={image.previewUrl}
-                                alt={image.name}
-                                className="block h-auto max-h-[220px] w-full object-cover"
-                              />
-                            </button>
-                          ) : (
-                            <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
-                              {image.name}
-                            </div>
-                          )}
-                        </div>
-                      ),
-                    )}
+function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const userImages = row.message.attachments ?? [];
+  const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
+  const terminalContexts = displayedUserMessage.contexts;
+  const canRevertAgentWork = typeof row.revertTurnCount === "number";
+
+  return (
+    <div className="group flex flex-col items-end gap-1">
+      <div className="relative max-w-[80%] rounded-2xl border border-border bg-secondary p-3">
+        {userImages.length > 0 && (
+          <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
+            {userImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (
+              <div
+                key={image.id}
+                className="overflow-hidden rounded-lg border border-border/80 bg-background/70"
+              >
+                {image.previewUrl ? (
+                  <button
+                    type="button"
+                    className="h-full w-full cursor-zoom-in"
+                    aria-label={`Preview ${image.name}`}
+                    onClick={() => {
+                      const preview = buildExpandedImagePreview(userImages, image.id);
+                      if (!preview) return;
+                      ctx.onImageExpand(preview);
+                    }}
+                  >
+                    <img
+                      src={image.previewUrl}
+                      alt={image.name}
+                      className="block h-auto max-h-[220px] w-full object-cover"
+                    />
+                  </button>
+                ) : (
+                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-[11px] text-muted-foreground/70">
+                    {image.name}
                   </div>
                 )}
-                {(displayedUserMessage.visibleText.trim().length > 0 ||
-                  terminalContexts.length > 0) && (
-                  <UserMessageBody
-                    text={displayedUserMessage.visibleText}
-                    terminalContexts={terminalContexts}
-                  />
-                )}
               </div>
-              <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
-                <div className="flex shrink-0 items-center gap-2">
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={<p className="text-muted-foreground text-xs tabular-nums" />}
-                    >
-                      {formatChatTimestamp(row.message.createdAt)}
-                    </TooltipTrigger>
-                    <TooltipPopup>
-                      {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
-                    </TooltipPopup>
-                  </Tooltip>
-                  <div className="flex items-center gap-0.5">
-                    {canRevertAgentWork && (
-                      <Button
-                        type="button"
-                        size="xs"
-                        variant="ghost"
-                        disabled={ctx.isRevertingCheckpoint || ctx.isWorking}
-                        onClick={() => ctx.onRevertUserMessage(row.message.id)}
-                        title="Revert to this message"
-                      >
-                        <Undo2Icon className="size-3" />
-                      </Button>
-                    )}
-                    {displayedUserMessage.copyText && (
-                      <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          );
-        })()}
-
-      {row.kind === "message" &&
-        row.message.role === "assistant" &&
-        (() => {
-          const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
-          const assistantTurnStillInProgress =
-            ctx.activeTurnInProgress &&
-            ctx.activeTurnId !== null &&
-            ctx.activeTurnId !== undefined &&
-            row.message.turnId === ctx.activeTurnId;
-          const assistantCopyState = resolveAssistantMessageCopyState({
-            text: row.message.text ?? null,
-            showCopyButton: row.showAssistantCopyButton,
-            streaming: row.message.streaming || assistantTurnStillInProgress,
-          });
-          return (
-            <>
-              {row.showCompletionDivider && (
-                <div className="my-3 flex items-center gap-3">
-                  <span className="h-px flex-1 bg-border" />
-                  <span className="text-xs text-muted-foreground tabular-nums">
-                    {row.completionDividerDuration
-                      ? `Worked for ${row.completionDividerDuration}`
-                      : "Worked for 0s"}
-                  </span>
-                  <span className="h-px flex-1 bg-border" />
-                </div>
-              )}
-              <div className="relative min-w-0 px-1 py-0.5">
-                <ChatMarkdown
-                  text={messageText}
-                  cwd={ctx.markdownCwd}
-                  isStreaming={Boolean(row.message.streaming)}
-                />
-                <AssistantChangedFilesSection
-                  turnSummary={row.assistantTurnDiffSummary}
-                  routeThreadKey={ctx.routeThreadKey}
-                  resolvedTheme={ctx.resolvedTheme}
-                  onOpenTurnDiff={ctx.onOpenTurnDiff}
-                />
-                {row.showAssistantMeta ? (
-                  <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
-                    {assistantCopyState.visible ? (
-                      <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />
-                    ) : null}
-                    {!row.message.streaming && (
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={<p className="text-muted-foreground text-xs tabular-nums" />}
-                        >
-                          {formatChatTimestamp(row.message.completedAt ?? row.message.createdAt)}
-                        </TooltipTrigger>
-                        <TooltipPopup>
-                          {formatChatTimestampTooltip(
-                            row.message.completedAt ?? row.message.createdAt,
-                            ctx.timestampFormat,
-                          )}
-                        </TooltipPopup>
-                      </Tooltip>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            </>
-          );
-        })()}
-
-      {row.kind === "proposed-plan" && (
-        <div className="min-w-0 px-1 py-0.5">
-          <ProposedPlanCard
-            planMarkdown={row.proposedPlan.planMarkdown}
-            environmentId={ctx.activeThreadEnvironmentId}
-            cwd={ctx.markdownCwd}
-            workspaceRoot={ctx.workspaceRoot}
+            ))}
+          </div>
+        )}
+        {(displayedUserMessage.visibleText.trim().length > 0 || terminalContexts.length > 0) && (
+          <UserMessageBody
+            text={displayedUserMessage.visibleText}
+            terminalContexts={terminalContexts}
           />
-        </div>
-      )}
-
-      {row.kind === "working" && (
-        <div className="py-0.5 pl-1.5">
-          <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70 tabular-nums">
-            <span className="inline-flex items-center gap-[3px]">
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
-              <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
-            </span>
-            <span>
-              {row.createdAt ? (
-                <>
-                  Working for <WorkingTimer createdAt={row.createdAt} />
-                </>
-              ) : (
-                "Working..."
-              )}
-            </span>
+        )}
+      </div>
+      <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover:opacity-100">
+        <div className="flex shrink-0 items-center gap-2">
+          <Tooltip>
+            <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
+              {formatChatTimestamp(row.message.createdAt)}
+            </TooltipTrigger>
+            <TooltipPopup>
+              {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
+            </TooltipPopup>
+          </Tooltip>
+          <div className="flex items-center gap-0.5">
+            {canRevertAgentWork && <RevertUserMessageButton messageId={row.message.id} />}
+            {displayedUserMessage.copyText && (
+              <MessageCopyButton text={displayedUserMessage.copyText} variant="ghost" />
+            )}
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
+  const ctx = use(TimelineRowCtx);
+  const activity = use(TimelineRowActivityCtx);
+
+  return (
+    <Button
+      type="button"
+      size="xs"
+      variant="ghost"
+      disabled={activity.isRevertingCheckpoint || activity.isWorking}
+      onClick={() => ctx.onRevertUserMessage(messageId)}
+      title="Revert to this message"
+    >
+      <Undo2Icon className="size-3" />
+    </Button>
+  );
+}
+
+function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const ctx = use(TimelineRowCtx);
+  const messageText = row.message.text || (row.message.streaming ? "" : "(empty response)");
+
+  return (
+    <>
+      {row.showCompletionDivider && (
+        <AssistantCompletionDivider duration={row.completionDividerDuration} />
       )}
+      <div className="relative min-w-0 px-1 py-0.5">
+        <ChatMarkdown
+          text={messageText}
+          cwd={ctx.markdownCwd}
+          isStreaming={Boolean(row.message.streaming)}
+        />
+        <AssistantChangedFilesSection
+          turnSummary={row.assistantTurnDiffSummary}
+          routeThreadKey={ctx.routeThreadKey}
+          resolvedTheme={ctx.resolvedTheme}
+          onOpenTurnDiff={ctx.onOpenTurnDiff}
+        />
+        {row.showAssistantMeta ? (
+          <div className="mt-1.5 flex items-center gap-2 text-xs tabular-nums opacity-0 transition-opacity duration-200 focus-within:opacity-100 group-hover/assistant:opacity-100">
+            <AssistantCopyButton row={row} />
+            {!row.message.streaming && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={<p className="text-muted-foreground text-xs tabular-nums" />}
+                >
+                  {formatChatTimestamp(row.message.completedAt ?? row.message.createdAt)}
+                </TooltipTrigger>
+                <TooltipPopup>
+                  {formatChatTimestampTooltip(
+                    row.message.completedAt ?? row.message.createdAt,
+                    ctx.timestampFormat,
+                  )}
+                </TooltipPopup>
+              </Tooltip>
+            )}
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+function AssistantCompletionDivider({ duration }: { duration: string | null | undefined }) {
+  return (
+    <div className="my-3 flex items-center gap-3">
+      <span className="h-px flex-1 bg-border" />
+      <span className="text-xs text-muted-foreground tabular-nums">
+        {duration ? `Worked for ${duration}` : "Worked for 0s"}
+      </span>
+      <span className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
+function AssistantCopyButton({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
+  const activity = use(TimelineRowActivityCtx);
+  const assistantTurnStillInProgress =
+    activity.activeTurnInProgress &&
+    activity.activeTurnId !== null &&
+    row.message.turnId === activity.activeTurnId;
+  const assistantCopyState = resolveAssistantMessageCopyState({
+    text: row.message.text ?? null,
+    showCopyButton: row.showAssistantCopyButton,
+    streaming: row.message.streaming || assistantTurnStillInProgress,
+  });
+
+  if (!assistantCopyState.visible) {
+    return null;
+  }
+
+  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+}
+
+function ProposedPlanTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "proposed-plan" }>;
+}) {
+  const ctx = use(TimelineRowCtx);
+
+  return (
+    <div className="min-w-0 px-1 py-0.5">
+      <ProposedPlanCard
+        planMarkdown={row.proposedPlan.planMarkdown}
+        environmentId={ctx.activeThreadEnvironmentId}
+        cwd={ctx.markdownCwd}
+        workspaceRoot={ctx.workspaceRoot}
+      />
+    </div>
+  );
+}
+
+function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
+  return (
+    <div className="py-0.5 pl-1.5">
+      <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70 tabular-nums">
+        <span className="inline-flex items-center gap-[3px]">
+          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
+          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
+          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
+        </span>
+        <span>
+          {row.createdAt ? (
+            <>
+              Working for <WorkingTimer createdAt={row.createdAt} />
+            </>
+          ) : (
+            "Working..."
+          )}
+        </span>
+      </div>
     </div>
   );
 }
@@ -544,8 +575,12 @@ const WorkGroupSection = memo(function WorkGroupSection({
       ? nonEmptyEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
       : nonEmptyEntries;
   const hiddenCount = nonEmptyEntries.length - visibleEntries.length;
-  const headerTitle =
-    nonEmptyEntries.length === 1 ? "1 tool call" : `${nonEmptyEntries.length} tool calls`;
+  const onlyToolEntries = nonEmptyEntries.every((entry) => workLogEntryIsToolLike(entry));
+  const headerTitle = onlyToolEntries
+    ? nonEmptyEntries.length === 1
+      ? "1 tool call"
+      : `${nonEmptyEntries.length} tool calls`
+    : "work log";
 
   if (nonEmptyEntries.length === 0) return null;
 
@@ -927,6 +962,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
 }) {
   const { workEntry, workspaceRoot } = props;
   const ctx = use(TimelineRowCtx);
+  const activity = use(TimelineRowActivityCtx);
   const friendlySummary = useToolWorkLogFriendlyLine(
     ctx.activeThreadEnvironmentId,
     workspaceRoot ?? ctx.markdownCwd,
@@ -954,7 +990,6 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const expandedBody = buildToolCallExpandedBody(workEntry);
   const canExpand = expandedBody !== null;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
-  const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
   const showFailedIndicator = workEntryIndicatesToolFailure(workEntry);
   const showDestructiveRowStyle =
     showFailedIndicator &&
@@ -974,7 +1009,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
     : showDestructiveRowStyle
       ? "font-medium text-destructive"
       : "font-medium text-foreground";
-  const turnSettled = !ctx.activeTurnInProgress;
+  const turnSettled = !activity.activeTurnInProgress;
   const showNeutralIndicator = !turnSettled && workEntryIndicatesToolNeutralStatus(workEntry);
   const showSuccessIndicator =
     workEntryIndicatesToolSuccess(workEntry) ||
@@ -1106,7 +1141,12 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
               {showFailedIndicator ? (
                 <Tooltip>
                   <TooltipTrigger
-                    render={<span className="flex size-5 items-center justify-center" />}
+                    render={
+                      <span
+                        className="flex size-5 items-center justify-center"
+                        aria-label="Tool call failed"
+                      />
+                    }
                   >
                     <XIcon className="block size-3.5 shrink-0 text-destructive" aria-hidden />
                   </TooltipTrigger>
@@ -1155,7 +1195,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
           </pre>
         </div>
       ) : null}
-      {hasChangedFiles && !previewIsChangedFiles && (
+      {hasChangedFiles && (
         <div
           className="mt-1 flex flex-wrap gap-1"
           onClick={stopRowToggle}

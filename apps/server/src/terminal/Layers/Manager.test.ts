@@ -238,9 +238,7 @@ const createManager = (
         ...(options.subprocessPollIntervalMs !== undefined
           ? { subprocessPollIntervalMs: options.subprocessPollIntervalMs }
           : {}),
-        ...(options.processKillGraceMs !== undefined
-          ? { processKillGraceMs: options.processKillGraceMs }
-          : {}),
+        processKillGraceMs: options.processKillGraceMs ?? 1,
         ...(options.maxRetainedInactiveSessions !== undefined
           ? { maxRetainedInactiveSessions: options.maxRetainedInactiveSessions }
           : {}),

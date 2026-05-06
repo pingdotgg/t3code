@@ -15,7 +15,6 @@ import type {
 import { ServerSettingsError } from "@t3tools/contracts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
-
 import { buildServerProvider, type ServerProviderDraft } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { scopedSafeTeardown } from "./scopedSafeTeardown.ts";

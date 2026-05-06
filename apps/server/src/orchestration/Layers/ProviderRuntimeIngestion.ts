@@ -1220,7 +1220,7 @@ const make = Effect.gen(function* () {
 
       const shouldForceClearActiveTurn = shouldApplyThreadLifecycle
         ? false
-        : event.type === "turn.completed" && activeTurnId !== null;
+        : event.type === "turn.completed" && activeTurnId !== null && missingTurnForActiveTurn;
       const acceptedTurnStartedSourcePlan =
         event.type === "turn.started" && shouldApplyThreadLifecycle
           ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)
@@ -1572,35 +1572,6 @@ const make = Effect.gen(function* () {
           yield* orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: providerCommandId(event, "runtime-error-session-set"),
-            threadId: thread.id,
-            session: {
-              threadId: thread.id,
-              status: "error",
-              providerName: event.provider,
-              ...(event.providerInstanceId !== undefined
-                ? { providerInstanceId: event.providerInstanceId }
-                : {}),
-              runtimeMode: thread.session?.runtimeMode ?? "full-access",
-              activeTurnId: null,
-              lastError: runtimeErrorMessage,
-              updatedAt: now,
-            },
-            createdAt: now,
-          });
-        } else if (activeTurnId !== null) {
-          yield* Effect.logWarning(
-            "provider runtime ingestion: lifecycle guard blocked runtime.error but active turn is stuck — force-clearing",
-            {
-              eventId: event.eventId,
-              eventType: event.type,
-              threadId: thread.id,
-              activeTurnId: activeTurnId ?? undefined,
-              eventTurnId: eventTurnId ?? undefined,
-            },
-          );
-          yield* orchestrationEngine.dispatch({
-            type: "thread.session.set",
-            commandId: providerCommandId(event, "runtime-error-session-set-force-clear"),
             threadId: thread.id,
             session: {
               threadId: thread.id,
