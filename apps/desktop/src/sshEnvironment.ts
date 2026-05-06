@@ -40,19 +40,22 @@ import {
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import {
+  BOOTSTRAP_SSH_BEARER_SESSION_CHANNEL,
+  DISCONNECT_SSH_ENVIRONMENT_CHANNEL,
+  DISCOVER_SSH_HOSTS_CHANNEL,
+  ENSURE_SSH_ENVIRONMENT_CHANNEL,
+  FETCH_SSH_ENVIRONMENT_DESCRIPTOR_CHANNEL,
+  FETCH_SSH_SESSION_STATE_CHANNEL,
+  ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL,
+  RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL,
+  SSH_PASSWORD_PROMPT_CANCELLED_RESULT,
+  SSH_PASSWORD_PROMPT_CHANNEL,
+} from "./ipc/channels.ts";
+
 export { resolveRemoteT3CliPackageSpec } from "@t3tools/ssh/command";
 
-const DISCOVER_SSH_HOSTS_CHANNEL = "desktop:discover-ssh-hosts";
-const ENSURE_SSH_ENVIRONMENT_CHANNEL = "desktop:ensure-ssh-environment";
-const DISCONNECT_SSH_ENVIRONMENT_CHANNEL = "desktop:disconnect-ssh-environment";
-const FETCH_SSH_ENVIRONMENT_DESCRIPTOR_CHANNEL = "desktop:fetch-ssh-environment-descriptor";
-const BOOTSTRAP_SSH_BEARER_SESSION_CHANNEL = "desktop:bootstrap-ssh-bearer-session";
-const FETCH_SSH_SESSION_STATE_CHANNEL = "desktop:fetch-ssh-session-state";
-const ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL = "desktop:issue-ssh-websocket-token";
-const SSH_PASSWORD_PROMPT_CHANNEL = "desktop:ssh-password-prompt";
-const RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL = "desktop:resolve-ssh-password-prompt";
 const DEFAULT_SSH_PASSWORD_PROMPT_TIMEOUT_MS = 3 * 60 * 1000;
-const SSH_PASSWORD_PROMPT_CANCELLED_RESULT = "ssh-password-prompt-cancelled";
 const SSH_HANDLED_IPC_CHANNELS = [
   DISCOVER_SSH_HOSTS_CHANNEL,
   ENSURE_SSH_ENVIRONMENT_CHANNEL,

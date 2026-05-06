@@ -1,41 +1,43 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopBridge } from "@t3tools/contracts";
 
-const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
-const CONFIRM_CHANNEL = "desktop:confirm";
-const SET_THEME_CHANNEL = "desktop:set-theme";
-const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
-const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
-const MENU_ACTION_CHANNEL = "desktop:menu-action";
-const UPDATE_STATE_CHANNEL = "desktop:update-state";
-const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
-const UPDATE_SET_CHANNEL_CHANNEL = "desktop:update-set-channel";
-const UPDATE_CHECK_CHANNEL = "desktop:update-check";
-const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
-const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
-const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
-const GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL = "desktop:get-local-environment-bootstrap";
-const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
-const SET_CLIENT_SETTINGS_CHANNEL = "desktop:set-client-settings";
-const GET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL = "desktop:get-saved-environment-registry";
-const SET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL = "desktop:set-saved-environment-registry";
-const GET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:get-saved-environment-secret";
-const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secret";
-const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
-const DISCOVER_SSH_HOSTS_CHANNEL = "desktop:discover-ssh-hosts";
-const ENSURE_SSH_ENVIRONMENT_CHANNEL = "desktop:ensure-ssh-environment";
-const DISCONNECT_SSH_ENVIRONMENT_CHANNEL = "desktop:disconnect-ssh-environment";
-const FETCH_SSH_ENVIRONMENT_DESCRIPTOR_CHANNEL = "desktop:fetch-ssh-environment-descriptor";
-const BOOTSTRAP_SSH_BEARER_SESSION_CHANNEL = "desktop:bootstrap-ssh-bearer-session";
-const FETCH_SSH_SESSION_STATE_CHANNEL = "desktop:fetch-ssh-session-state";
-const ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL = "desktop:issue-ssh-websocket-token";
-const SSH_PASSWORD_PROMPT_CHANNEL = "desktop:ssh-password-prompt";
-const RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL = "desktop:resolve-ssh-password-prompt";
-const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
-const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
-const SET_TAILSCALE_SERVE_ENABLED_CHANNEL = "desktop:set-tailscale-serve-enabled";
-const GET_ADVERTISED_ENDPOINTS_CHANNEL = "desktop:get-advertised-endpoints";
-const SSH_PASSWORD_PROMPT_CANCELLED_RESULT = "ssh-password-prompt-cancelled";
+import {
+  BOOTSTRAP_SSH_BEARER_SESSION_CHANNEL,
+  CONFIRM_CHANNEL,
+  CONTEXT_MENU_CHANNEL,
+  DISCONNECT_SSH_ENVIRONMENT_CHANNEL,
+  DISCOVER_SSH_HOSTS_CHANNEL,
+  ENSURE_SSH_ENVIRONMENT_CHANNEL,
+  FETCH_SSH_ENVIRONMENT_DESCRIPTOR_CHANNEL,
+  FETCH_SSH_SESSION_STATE_CHANNEL,
+  GET_ADVERTISED_ENDPOINTS_CHANNEL,
+  GET_APP_BRANDING_CHANNEL,
+  GET_CLIENT_SETTINGS_CHANNEL,
+  GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL,
+  GET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL,
+  GET_SAVED_ENVIRONMENT_SECRET_CHANNEL,
+  GET_SERVER_EXPOSURE_STATE_CHANNEL,
+  ISSUE_SSH_WEBSOCKET_TOKEN_CHANNEL,
+  MENU_ACTION_CHANNEL,
+  OPEN_EXTERNAL_CHANNEL,
+  PICK_FOLDER_CHANNEL,
+  REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL,
+  RESOLVE_SSH_PASSWORD_PROMPT_CHANNEL,
+  SET_CLIENT_SETTINGS_CHANNEL,
+  SET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL,
+  SET_SAVED_ENVIRONMENT_SECRET_CHANNEL,
+  SET_SERVER_EXPOSURE_MODE_CHANNEL,
+  SET_TAILSCALE_SERVE_ENABLED_CHANNEL,
+  SET_THEME_CHANNEL,
+  SSH_PASSWORD_PROMPT_CANCELLED_RESULT,
+  SSH_PASSWORD_PROMPT_CHANNEL,
+  UPDATE_CHECK_CHANNEL,
+  UPDATE_DOWNLOAD_CHANNEL,
+  UPDATE_GET_STATE_CHANNEL,
+  UPDATE_INSTALL_CHANNEL,
+  UPDATE_SET_CHANNEL_CHANNEL,
+  UPDATE_STATE_CHANNEL,
+} from "./ipc/channels.ts";
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -76,7 +78,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getSavedEnvironmentSecret: (environmentId) =>
     ipcRenderer.invoke(GET_SAVED_ENVIRONMENT_SECRET_CHANNEL, environmentId),
   setSavedEnvironmentSecret: (environmentId, secret) =>
-    ipcRenderer.invoke(SET_SAVED_ENVIRONMENT_SECRET_CHANNEL, environmentId, secret),
+    ipcRenderer.invoke(SET_SAVED_ENVIRONMENT_SECRET_CHANNEL, { environmentId, secret }),
   removeSavedEnvironmentSecret: (environmentId) =>
     ipcRenderer.invoke(REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL, environmentId),
   discoverSshHosts: () => ipcRenderer.invoke(DISCOVER_SSH_HOSTS_CHANNEL),
@@ -115,7 +117,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   pickFolder: (options) => ipcRenderer.invoke(PICK_FOLDER_CHANNEL, options),
   confirm: (message) => ipcRenderer.invoke(CONFIRM_CHANNEL, message),
   setTheme: (theme) => ipcRenderer.invoke(SET_THEME_CHANNEL, theme),
-  showContextMenu: (items, position) => ipcRenderer.invoke(CONTEXT_MENU_CHANNEL, items, position),
+  showContextMenu: (items, position) =>
+    ipcRenderer.invoke(CONTEXT_MENU_CHANNEL, {
+      items,
+      ...(position === undefined ? {} : { position }),
+    }),
   openExternal: (url: string) => ipcRenderer.invoke(OPEN_EXTERNAL_CHANNEL, url),
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
