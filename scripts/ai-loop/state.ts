@@ -88,7 +88,11 @@ export const parseStickyState = (
     return null;
   }
 
-  return migrateStickyState(JSON.parse(match[1]) as unknown, fallback);
+  try {
+    return migrateStickyState(JSON.parse(match[1]) as unknown, fallback);
+  } catch {
+    return fallback;
+  }
 };
 
 export const renderStickyState = (state: StickyAiLoopState): string =>

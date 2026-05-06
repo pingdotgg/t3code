@@ -5,7 +5,7 @@ import type { StickyAiLoopState } from "./schema";
 
 export interface PullRequestSummary {
   number: number;
-  body: string;
+  body: string | null;
   head: {
     sha: string;
     ref: string;
@@ -107,38 +107,62 @@ export class GitHubRepoClient {
     return (await response.json()) as T;
   }
 
+  private async listPages<T>(path: string): Promise<T[]> {
+    const records: T[] = [];
+    let page = 1;
+
+    while (true) {
+      const separator = path.includes("?") ? "&" : "?";
+      const pageRecords = await this.request<T[]>(`${path}${separator}per_page=100&page=${page}`);
+      if (pageRecords.length === 0) {
+        return records;
+      }
+
+      records.push(...pageRecords);
+      page += 1;
+    }
+  }
+
   async getPullRequest(number: number): Promise<PullRequestSummary> {
     return this.request<PullRequestSummary>(`/repos/${this.repository}/pulls/${number}`);
   }
 
   async listIssueComments(number: number): Promise<IssueCommentSummary[]> {
-    return this.request<IssueCommentSummary[]>(
-      `/repos/${this.repository}/issues/${number}/comments?per_page=100`,
+    return this.listPages<IssueCommentSummary>(
+      `/repos/${this.repository}/issues/${number}/comments`,
     );
   }
 
   async listReviewComments(number: number): Promise<ReviewCommentSummary[]> {
-    return this.request<ReviewCommentSummary[]>(
-      `/repos/${this.repository}/pulls/${number}/comments?per_page=100`,
+    return this.listPages<ReviewCommentSummary>(
+      `/repos/${this.repository}/pulls/${number}/comments`,
     );
   }
 
   async listReviews(number: number): Promise<ReviewSummary[]> {
-    return this.request<ReviewSummary[]>(
-      `/repos/${this.repository}/pulls/${number}/reviews?per_page=100`,
-    );
+    return this.listPages<ReviewSummary>(`/repos/${this.repository}/pulls/${number}/reviews`);
   }
 
   async listCheckRuns(sha: string): Promise<CheckRunSummary[]> {
-    const payload = await this.request<{ check_runs: CheckRunSummary[] }>(
-      `/repos/${this.repository}/commits/${sha}/check-runs?per_page=100`,
-    );
-    return payload.check_runs;
+    const records: CheckRunSummary[] = [];
+    let page = 1;
+
+    while (true) {
+      const payload = await this.request<{ check_runs: CheckRunSummary[] }>(
+        `/repos/${this.repository}/commits/${sha}/check-runs?per_page=100&page=${page}`,
+      );
+      if (payload.check_runs.length === 0) {
+        return records;
+      }
+
+      records.push(...payload.check_runs);
+      page += 1;
+    }
   }
 
   async listPullRequestCommits(number: number): Promise<PullRequestCommitSummary[]> {
-    return this.request<PullRequestCommitSummary[]>(
-      `/repos/${this.repository}/pulls/${number}/commits?per_page=100`,
+    return this.listPages<PullRequestCommitSummary>(
+      `/repos/${this.repository}/pulls/${number}/commits`,
     );
   }
 

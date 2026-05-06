@@ -183,6 +183,8 @@ const updateStateForNewGeneration = (
   attempts_used: 0,
   last_signal_fingerprint: "",
   last_result_fingerprint: "",
+  last_signal_at: "",
+  burst_started_at: "",
   blocked_reason: null,
   executor_run_id: null,
 });
@@ -210,7 +212,7 @@ const main = async (): Promise<void> => {
 
   const github = new GitHubRepoClient(repository, token);
   const pullRequest = await github.getPullRequest(prNumber);
-  const prMetadata = parseAiLoopPrMetadata(pullRequest.body);
+  const prMetadata = parseAiLoopPrMetadata(pullRequest.body ?? "");
   if (!prMetadata.enabled || prMetadata.owner !== config.executor_owner) {
     console.log("[ai-loop] PR metadata disabled or unsupported owner; exiting.");
     return;
@@ -428,19 +430,31 @@ const main = async (): Promise<void> => {
     return;
   }
 
-  await github.dispatchWorkflow(
-    "ai-fix-executor-claude.yml",
-    livePullRequest.head.ref,
-    {
-      pr_number: String(prNumber),
-      head_ref: livePullRequest.head.ref,
-      head_sha: livePullRequest.head.sha,
-      generation_sha: state.generation_sha,
-      finding_set_fingerprint: findingSetFingerprint,
-      findings_b64: toBase64(JSON.stringify(findings)),
-    },
-    dispatchToken,
-  );
+  try {
+    await github.dispatchWorkflow(
+      "ai-fix-executor-claude.yml",
+      livePullRequest.head.ref,
+      {
+        pr_number: String(prNumber),
+        head_ref: livePullRequest.head.ref,
+        head_sha: livePullRequest.head.sha,
+        generation_sha: state.generation_sha,
+        finding_set_fingerprint: findingSetFingerprint,
+        findings_b64: toBase64(JSON.stringify(findings)),
+      },
+      dispatchToken,
+    );
+  } catch (error) {
+    state = {
+      ...state,
+      status: "blocked",
+      blocked_reason: "executor_dispatch_failed",
+      last_processed_at: new Date().toISOString(),
+      executor_run_id: null,
+    };
+    await github.upsertStickyComment(prNumber, state);
+    throw error;
+  }
 };
 
 await main();

@@ -38,6 +38,14 @@ const tests = [
     },
   },
   {
+    name: "PR metadata falls back when the hidden marker is malformed",
+    run: () => {
+      const parsed = parseAiLoopPrMetadata('<!-- ai-loop-pr-metadata-v1\n{"owner":\n-->');
+      assertEqual(parsed.owner, "unset", "malformed metadata should use default owner.");
+      assertEqual(parsed.enabled, false, "malformed metadata should be disabled.");
+    },
+  },
+  {
     name: "Sticky state recreates and migrates safely",
     run: () => {
       const fallback = createDefaultStickyState("claude", "sha-1");
@@ -50,6 +58,16 @@ const tests = [
       assert(parsed !== null, "sticky state should parse.");
       assertEqual(parsed?.status, "blocked", "status should persist.");
       assertEqual(parsed?.blocked_reason, "executor_timeout", "blocked reason should persist.");
+    },
+  },
+  {
+    name: "Sticky state falls back when the hidden marker is malformed",
+    run: () => {
+      const fallback = createDefaultStickyState("claude", "sha-1");
+      const parsed = parseStickyState('<!-- ai-loop-state-v1\n{"status":\n-->', fallback);
+      assert(parsed !== null, "malformed sticky state should return the fallback.");
+      assertEqual(parsed?.status, "idle", "fallback status should be used.");
+      assertEqual(parsed?.current_sha, "sha-1", "fallback sha should be used.");
     },
   },
   {

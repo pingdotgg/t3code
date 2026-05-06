@@ -29,7 +29,13 @@ export const parseAiLoopPrMetadata = (body: string): AiLoopPrMetadata => {
     return createDefaultPrMetadata();
   }
 
-  const record = assertRecord(JSON.parse(match[1]) as unknown);
+  let record: Record<string, unknown>;
+  try {
+    record = assertRecord(JSON.parse(match[1]) as unknown);
+  } catch {
+    return createDefaultPrMetadata();
+  }
+
   const owner = typeof record.owner === "string" ? record.owner : "unset";
   const enabled = record.enabled === true;
 

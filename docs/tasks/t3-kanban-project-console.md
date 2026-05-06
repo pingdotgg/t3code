@@ -844,3 +844,29 @@ Append one entry per implementation pass.
   - Result: PASS
 - Notes/deviations:
   - This fixes the PR #1 readiness failure where the checker split the former check name into nonexistent checks such as `Build`.
+
+### 2026-05-06 16:20 - phase 1 PR review hardening
+
+- Summary:
+  - Checked PR #1 review comments after the readiness fix.
+  - Confirmed inline CodeRabbit threads were already resolved.
+  - Hardened the non-threaded AI-loop review findings around malformed metadata, nullable PR bodies, paginated GitHub list reads, generation debounce reset, dispatch failure persistence, and stale executor blocked reasons.
+- Files changed:
+  - `scripts/ai-loop/state.ts`
+  - `scripts/ai-loop/pr-metadata.ts`
+  - `scripts/ai-loop/router.ts`
+  - `scripts/ai-loop/executor-state.ts`
+  - `scripts/ai-loop/github.ts`
+  - `scripts/tests/ai-loop.spec.ts`
+  - `docs/tasks/t3-kanban-project-console.md`
+- Validation run:
+  - Command: `bun run fmt:check`
+  - Result: PASS
+  - Command: `bun run --filter=@t3tools/scripts typecheck`
+  - Result: PASS
+  - Command: `bun run --filter=@t3tools/scripts test`
+  - Result: PASS
+  - Command: `bun check`
+  - Result: PASS
+- Notes/deviations:
+  - Scope is limited to actionable CodeRabbit review hardening in the Phase 1 automation layer.

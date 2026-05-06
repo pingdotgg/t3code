@@ -24,7 +24,7 @@ const main = async (): Promise<void> => {
   const config = await loadAiLoopConfig();
   const github = new GitHubRepoClient(repository, token);
   const pullRequest = await github.getPullRequest(prNumber);
-  const prMetadata = parseAiLoopPrMetadata(pullRequest.body);
+  const prMetadata = parseAiLoopPrMetadata(pullRequest.body ?? "");
   const fallbackState = createDefaultStickyState(prMetadata.owner, pullRequest.head.sha);
   const state = await github.loadOrCreateStickyState(prNumber, fallbackState);
 
@@ -53,7 +53,7 @@ const main = async (): Promise<void> => {
     last_result_fingerprint:
       process.env.AI_LOOP_FINDING_SET_FINGERPRINT ?? state.last_result_fingerprint,
     blocked_reason:
-      process.env.AI_LOOP_BLOCKED_REASON || (finalStatus === "blocked" ? "executor_blocked" : null),
+      finalStatus === "blocked" ? process.env.AI_LOOP_BLOCKED_REASON || "executor_blocked" : null,
     last_processed_at: new Date().toISOString(),
     executor_run_id: process.env.GITHUB_RUN_ID ?? state.executor_run_id,
   });
