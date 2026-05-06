@@ -1,0 +1,36 @@
+name: pr-readiness
+
+on:
+  pull_request:
+    types:
+      - opened
+      - edited
+      - reopened
+      - synchronize
+      - ready_for_review
+
+concurrency:
+  group: pr-readiness-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr-readiness:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate PR docs and test readiness
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_READINESS_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_READINESS_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_READINESS_BODY: ${{ github.event.pull_request.body }}
+          PR_READINESS_SKIP_CI: "0"
+          PR_READINESS_REQUIRED_CHECKS: "Format, Lint, Typecheck, Test, Browser Test, Build,Release Smoke"
+        run: bash scripts/check-pr-readiness.sh

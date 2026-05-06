@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "enabled": false,
+  "trusted_review_bots": ["coderabbitai[bot]"],
+  "trusted_humans": [],
+  "human_trigger_phrase": "/autofix",
+  "executor_owner": "claude",
+  "executor_bot_login": "",
+  "attempt_budget_per_generation": 1,
+  "debounce_seconds": 90,
+  "debounce_max_seconds": 300,
+  "dispatch_grace_seconds": 120,
+  "executor_timeout_seconds": 1200,
+  "pause_label": "ai-fix:paused",
+  "required_ci_checks": ["validate"],
+  "prepush_commands": ["bun check"],
+  "legacy_workflows_present": []
+}

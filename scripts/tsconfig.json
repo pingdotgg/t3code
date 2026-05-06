@@ -10,5 +10,6 @@
       }
     ]
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  "exclude": ["ai-loop/**", "preflight/**", "tests/**", "test.ts"]
 }

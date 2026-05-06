@@ -1,5 +1,5 @@
 import * as path from "node:path";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
   resolve: {
@@ -8,6 +8,13 @@ export default defineConfig({
         find: /^@t3tools\/contracts$/,
         replacement: path.resolve(import.meta.dirname, "./packages/contracts/src/index.ts"),
       },
+    ],
+  },
+  test: {
+    exclude: [
+      ...configDefaults.exclude,
+      "scripts/tests/ai-loop.spec.ts",
+      "scripts/tests/port-policy.spec.ts",
     ],
   },
 });

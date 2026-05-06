@@ -1,0 +1,50 @@
+name: ai-review
+
+on:
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - ready_for_review
+      - reopened
+
+concurrency:
+  group: ai-review-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Read AI loop gate
+        id: gate
+        shell: bash
+        run: |
+          echo "enabled=$(jq -r '.enabled' .github/ai-loop.yml)" >> "$GITHUB_OUTPUT"
+          echo "executor_bot_login=$(jq -r '.executor_bot_login' .github/ai-loop.yml)" >> "$GITHUB_OUTPUT"
+          if git log -1 --pretty=%B | grep -q 'X-Autofix-Executor: claude'; then
+            echo "skip_for_fixer_child=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip_for_fixer_child=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Review PR with Claude
+        if: steps.gate.outputs.enabled == 'true' && steps.gate.outputs.skip_for_fixer_child != 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          use_sticky_comment: true
+          prompt: |
+            Review this pull request for bugs, regressions, CI risks, docs drift, and missing tests.
+            Prioritize correctness and release risk over style comments.
+            Do not repeat issues that are already obvious from failing CI.

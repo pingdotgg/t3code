@@ -1,0 +1,67 @@
+name: ai-fix-router
+
+on:
+  workflow_run:
+    workflows:
+      - ci
+      - pr-readiness
+    types:
+      - completed
+  pull_request_review:
+    types:
+      - submitted
+  pull_request_review_comment:
+    types:
+      - created
+  issue_comment:
+    types:
+      - created
+
+concurrency:
+  group: ai-fix-router-pr-${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  ai-fix-router:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Read AI loop gate
+        id: gate
+        shell: bash
+        env:
+          APP_ID: ${{ secrets.AI_FIX_APP_ID }}
+          APP_KEY: ${{ secrets.AI_FIX_APP_PRIVATE_KEY }}
+        run: |
+          echo "enabled=$(jq -r '.enabled' .github/ai-loop.yml)" >> "$GITHUB_OUTPUT"
+          if [ -n "$APP_ID" ] && [ -n "$APP_KEY" ]; then
+            echo "has_app_credentials=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_app_credentials=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub App token
+        id: app-token
+        if: steps.gate.outputs.enabled == 'true' && steps.gate.outputs.has_app_credentials == 'true'
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.AI_FIX_APP_ID }}
+          private-key: ${{ secrets.AI_FIX_APP_PRIVATE_KEY }}
+
+      - name: Route AI findings
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          AI_LOOP_DISPATCH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: bun run scripts/ai-loop/router.ts

@@ -1,0 +1,25 @@
+Before non-trivial work, read `AGENTS.md`, `docs/project.md`, `review.md`,
+`.cursor/BUGBOT.md`, `.ai/rules/00-constitution.md`,
+`.ai/rules/17-aws-well-architected.md`, `.ai/rules/18-pr-readiness.md`,
+`.ai/rules/21-agent-orchestration.md`,
+then read the selected stack rule:
+`.ai/rules/01-stack-a-nestjs.md` or `.ai/rules/01-stack-b-convex.md`.
+For financial statements, accounting records, ledgers, revenue recognition,
+leases, impairments, audit exports, or accounting reports, also read
+`.ai/rules/19-ifrs-compliance.md`.
+
+If `docs/project.md`, `review.md`, or `.cursor/BUGBOT.md` still has template
+placeholders, stop and initialize them first.
+
+Exception: template-maintenance updates that are intentionally product-agnostic
+(for example shared repo rules, workflow automation, scaffolding templates, and
+agent guidance) may proceed before these files are initialized, as long as the
+change does not implement product/app-specific behavior.
+
+Before approving or merging a PR:
+- relevant Markdown docs must be updated or explicitly marked no-impact
+- tests must be added/updated or explicitly marked no-impact
+- required CI checks must be green
+- use `/open-pr` for branch → commit → push → PR + CI/comments follow-up, then `/ship` before merge
+
+See `AGENTS.md` and `.ai/rules/` for the full policy.

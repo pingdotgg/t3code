@@ -1,0 +1,14 @@
+{
+  "preflight.passed": {
+    "en": "Preflight passed",
+    "ar": "اكتمل الفحص المسبق"
+  },
+  "envAudit.passed": {
+    "en": "Env audit passed",
+    "ar": "اكتمل تدقيق البيئات"
+  },
+  "initProject.environmentTiers.prompt": {
+    "en": "How many environment tiers should this project use: 2 or 3?",
+    "ar": "كم عدد طبقات البيئة التي يجب أن يستخدمها هذا المشروع: 2 أم 3؟"
+  }
+}

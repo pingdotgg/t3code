@@ -1,33 +1,33 @@
-<!--
-⚠️ READ BEFORE OPENING ⚠️
+## Summary
 
-We are not actively accepting contributions right now.
+- What changed:
+- Why it changed:
 
-You can still open a PR, but please do so knowing there is a high chance
-we may close it without merging it, or never review it.
+## Testing
 
-- Small, focused PRs are strongly preferred. Bug fixes are most likely to be merged.
-- New features will most likely just annoy us.
-- 1,000+ line PRs with a bunch of new features will probably get you banned from the repo.
+- Commands run:
+- Result:
+
+## Risks
+
+- Risks:
+- Rollback:
+
+## Readiness Checklist
+
+- [ ] Relevant Markdown docs updated where needed (`README*`, `CONTRIBUTING*`, `SECURITY*`, `.github/**/*.md`, `docs/**`, `AGENTS.md`, `CLAUDE.md`, `review.md`, `.cursor/BUGBOT.md`)
+- [ ] No documentation impact
+- [ ] Tests added or updated for this change
+- [ ] No test impact
+- [ ] `bun check` passes locally
+- [ ] All required CI checks are green
+
+<!-- ai-loop-pr-metadata-v1
+{
+  "schema_version": 1,
+  "owner": "unset",
+  "enabled": false,
+  "mode": "same-branch",
+  "human_comments_policy": "pr-author-only"
+}
 -->
-
-## What Changed
-
-<!-- Describe the change clearly and keep scope tight. -->
-
-## Why
-
-<!-- Explain the problem being solved and why this approach is the right one. -->
-
-## UI Changes
-
-<!-- If this PR changes UI, include clear before/after screenshots.
-     If the change involves motion or interaction, include a short video.
-     Delete this section if not applicable. -->
-
-## Checklist
-
-- [ ] This PR is small and focused
-- [ ] I explained what changed and why
-- [ ] I included before/after screenshots for any UI changes
-- [ ] I included a video for animation/interaction changes
