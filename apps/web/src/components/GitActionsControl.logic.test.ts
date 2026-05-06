@@ -1150,13 +1150,7 @@ describe("when: autoCreatePr is disabled", () => {
   });
 
   it("downgrades feature-branch ahead-with-upstream from create PR to plain push", () => {
-    const quick = resolveQuickAction(
-      status({ aheadCount: 2 }),
-      false,
-      false,
-      true,
-      false,
-    );
+    const quick = resolveQuickAction(status({ aheadCount: 2 }), false, false, true, false);
     assert.deepInclude(quick, {
       kind: "run_action",
       action: "push",
