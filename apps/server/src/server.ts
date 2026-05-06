@@ -148,6 +148,10 @@ const ReactorLayerLive = Layer.empty.pipe(
   Layer.provideMerge(ProviderUsageStateLive),
 );
 
+const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
+  Layer.provide(VcsProjectConfig.layer),
+);
+
 const CheckpointingLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointDiffQueryLive),
   Layer.provideMerge(CheckpointStoreLive.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
@@ -169,10 +173,6 @@ const ProviderLayerLive = ProviderServiceLive.pipe(
 );
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
-
-const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
-  Layer.provide(VcsProjectConfig.layer),
-);
 
 const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.layer.pipe(
   Layer.provide(
@@ -211,11 +211,6 @@ const VcsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitWorkflowLayerLive),
   Layer.provideMerge(SourceControlRepositoryServiceLayerLive),
   Layer.provideMerge(VcsStatusBroadcaster.layer.pipe(Layer.provide(GitWorkflowLayerLive))),
-);
-
-const CheckpointingLayerLive = Layer.empty.pipe(
-  Layer.provideMerge(CheckpointDiffQueryLive),
-  Layer.provideMerge(CheckpointStoreLive.pipe(Layer.provide(VcsDriverRegistryLayerLive))),
 );
 
 const TerminalLayerLive = Layer.mergeAll(

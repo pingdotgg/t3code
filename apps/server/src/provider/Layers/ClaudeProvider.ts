@@ -6,7 +6,7 @@ import {
   type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import { Effect, Option, Path, Result } from "effect";
+import { Effect, Layer, Option, Path, Ref, Result, Cache, Duration, Stream, Equal } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   createModelCapabilities,
@@ -34,10 +34,11 @@ import {
 } from "../providerSnapshot.ts";
 import { compareCliVersions } from "../cliVersion.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
-import { probeClaudeUsageLimits } from "../claudeUsageProbe.ts";
+import { probeClaudeUsageLimits, parseClaudeUsageLimitsOutput } from "../claudeUsageProbe.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import type { PtyAdapterShape } from "../../terminal/Services/PTY.ts";
 import type { ProviderUsageStateShape } from "../Services/ProviderUsageState.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
@@ -736,135 +737,3 @@ export const makePendingClaudeProvider = (claudeSettings: ClaudeSettings): Serve
 };
 
 export { probeClaudeCapabilities };
-
-export const ClaudeProviderLive = Layer.effect(
-  ClaudeProvider,
-  Effect.gen(function* () {
-    const serverSettings = yield* ServerSettingsService;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const usageProbeStateRef = yield* Ref.make(
-      new Map<string, { rawOutput: string; fetchedAtMs: number; inFlight: boolean }>(),
-    );
-    const usageProbeTtlMs = 5 * 60 * 1000;
-
-    const subscriptionProbeCache = yield* Cache.make({
-      capacity: 1,
-      timeToLive: Duration.minutes(5),
-      lookup: (binaryPath: string) => probeClaudeCapabilities(binaryPath),
-    });
-    const refreshUsageProbe = (key: string, binaryPath: string, launchArgs: string) =>
-      Effect.gen(function* () {
-        yield* Ref.update(usageProbeStateRef, (current) => {
-          const next = new Map(current);
-          const existing = next.get(key);
-          next.set(key, {
-            rawOutput: existing?.rawOutput ?? "",
-            fetchedAtMs: existing?.fetchedAtMs ?? 0,
-            inFlight: true,
-          });
-          return next;
-        });
-
-        const checkedAt = new Date().toISOString();
-        const rawOutput = yield* Effect.tryPromise(() =>
-          probeClaudeUsageLimits({
-            binaryPath,
-            launchArgs,
-            cwd: process.cwd(),
-            checkedAt,
-          }),
-        ).pipe(
-          Effect.map((result) => result.rawOutput),
-          Effect.orElseSucceed(() => ""),
-        );
-
-        yield* Ref.update(usageProbeStateRef, (current) => {
-          const next = new Map(current);
-          next.set(key, {
-            rawOutput,
-            fetchedAtMs: Date.now(),
-            inFlight: false,
-          });
-          return next;
-        });
-      }).pipe(
-        Effect.ensuring(
-          Ref.update(usageProbeStateRef, (current) => {
-            const next = new Map(current);
-            const existing = next.get(key);
-            if (existing) {
-              next.set(key, { ...existing, inFlight: false });
-            }
-            return next;
-          }),
-        ),
-      );
-
-    const checkProvider = checkClaudeProviderStatus(
-      (binaryPath) =>
-        Cache.get(subscriptionProbeCache, binaryPath).pipe(
-          Effect.map((probe) => probe?.subscriptionType),
-        ),
-      (binaryPath) =>
-        Cache.get(subscriptionProbeCache, binaryPath).pipe(
-          Effect.map((probe) => probe?.slashCommands),
-        ),
-      (input) =>
-        Effect.gen(function* () {
-          const key = input.binaryPath;
-          const currentEntry = (yield* Ref.get(usageProbeStateRef)).get(key);
-          const isFresh =
-            currentEntry !== undefined && Date.now() - currentEntry.fetchedAtMs < usageProbeTtlMs;
-
-          if ((!currentEntry || !isFresh) && !currentEntry?.inFlight) {
-            yield* Ref.update(usageProbeStateRef, (current) => {
-              const next = new Map(current);
-              const existing = next.get(key);
-              next.set(key, {
-                rawOutput: existing?.rawOutput ?? "",
-                fetchedAtMs: existing?.fetchedAtMs ?? 0,
-                inFlight: true,
-              });
-              return next;
-            });
-            yield* Effect.sync(() => {
-              void Effect.runPromiseExit(
-                refreshUsageProbe(key, input.binaryPath, input.launchArgs),
-              );
-            });
-          }
-
-          const latestEntry = (yield* Ref.get(usageProbeStateRef)).get(key);
-
-          if (!latestEntry || (latestEntry.inFlight && latestEntry.rawOutput.trim().length === 0)) {
-            return makeUnavailableUsageLimits({
-              source: "claudeStatusProbe",
-              checkedAt: input.checkedAt,
-              reason: "Usage limits are still loading for this Claude account.",
-            });
-          }
-
-          return parseClaudeUsageLimitsOutput({
-            output: latestEntry.rawOutput,
-            checkedAt: input.checkedAt,
-          });
-        }),
-    ).pipe(
-      Effect.provideService(ServerSettingsService, serverSettings),
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    );
-
-    return yield* makeManagedServerProvider<ClaudeSettings>({
-      getSettings: serverSettings.getSettings.pipe(
-        Effect.map((settings) => settings.providers.claudeAgent),
-        Effect.orDie,
-      ),
-      streamSettings: serverSettings.streamChanges.pipe(
-        Stream.map((settings) => settings.providers.claudeAgent),
-      ),
-      haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
-      initialSnapshot: makePendingClaudeProvider,
-      checkProvider,
-    });
-  }),
-);

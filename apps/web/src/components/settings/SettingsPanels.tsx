@@ -1,7 +1,7 @@
 import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import {
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
@@ -10,11 +10,13 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceId,
   type ScopedThreadRef,
+  type ServerProvider,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import { Equal } from "effect";
+import { cn } from "../../lib/utils";
 import { APP_VERSION } from "../../branding";
 import {
   canCheckForUpdate,
@@ -48,7 +50,11 @@ import {
   selectThreadShellsAcrossEnvironments,
   useStore,
 } from "../../store";
-import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
+import {
+  formatRelativeTime,
+  formatRelativeTimeLabel,
+  formatRelativeTimeUntilLabel,
+} from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { DraftInput } from "../ui/draft-input";
