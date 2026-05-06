@@ -805,3 +805,25 @@ Append one entry per implementation pass.
   - Result: PASS
 - Notes/deviations:
   - Blacksmith-specific release workflow labels remain outside this PR's required checks and can be revisited when release infrastructure is configured.
+
+### 2026-05-06 15:45 - phase 1 review fixes
+
+- Summary:
+  - Fixed the AI-fix executor prompt step so the workflow YAML parses correctly.
+  - Added a production-write guard to the Better Auth auto-derive fixer before writing `BETTER_AUTH_URL` through Doppler.
+  - Hardened production URL derivation against malformed project URLs.
+- Files changed:
+  - `.github/workflows/ai-fix-executor-claude.yml`
+  - `scripts/preflight/fix/auto-derive.ts`
+  - `docs/tasks/t3-kanban-project-console.md`
+- Validation run:
+  - Command: `bun run fmt:check`
+  - Result: PASS
+  - Command: `bun run --filter=@t3tools/scripts typecheck`
+  - Result: PASS
+  - Command: `bun run --filter=@t3tools/scripts test`
+  - Result: PASS
+  - Command: `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/ai-fix-executor-claude.yml"); YAML.load_file(".github/workflows/ci.yml"); puts "yaml ok"'`
+  - Result: PASS
+- Notes/deviations:
+  - These changes address actionable CodeRabbit findings on PR #1 and keep scope limited to Phase 1 governance automation.
