@@ -4436,6 +4436,85 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("creates a manual branch from the branch picker", async () => {
+    const activeDraftId = draftIdFromPath("/draft/draft-manual-branch-session");
+
+    useComposerDraftStore.setState({
+      draftThreadsByThreadKey: {
+        [activeDraftId]: {
+          threadId: THREAD_ID,
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          logicalProjectKey: PROJECT_DRAFT_KEY,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {
+        [PROJECT_DRAFT_KEY]: activeDraftId,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialPath: `/draft/${activeDraftId}`,
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.gitListBranches) {
+          return {
+            isRepo: true,
+            hasOriginRemote: true,
+            nextCursor: null,
+            totalCount: 1,
+            branches: [
+              {
+                name: "main",
+                current: true,
+                isDefault: true,
+                worktreePath: null,
+              },
+            ],
+          };
+        }
+        if (body._tag === WS_METHODS.gitCreateBranch) {
+          return { branch: body.branch };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await page.getByText("main", { exact: true }).click();
+      await page.getByRole("button", { name: "New branch" }).click();
+      await page.getByLabelText("Branch name", { exact: true }).fill("feature/manual-branch");
+      await page.getByRole("button", { name: "Create branch" }).click();
+
+      await vi.waitFor(
+        () => {
+          const createRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.gitCreateBranch,
+          );
+          expect(createRequest).toMatchObject({
+            _tag: WS_METHODS.gitCreateBranch,
+            cwd: "/repo/project",
+            branch: "feature/manual-branch",
+            checkout: true,
+          });
+          expect(useComposerDraftStore.getState().getDraftSession(activeDraftId)?.branch).toBe(
+            "feature/manual-branch",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps the new worktree branch picker anchored at the top when opening with a preselected branch", async () => {
     const draftId = DraftId.make("draft-branch-picker-scroll-regression");
     const branches = [

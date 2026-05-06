@@ -2,7 +2,7 @@ import { scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
 import type { EnvironmentId, GitBranch, ThreadId } from "@forma/contracts";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { IconChevronDown as ChevronDownIcon } from "symbols-react";
+import { IconChevronDown as ChevronDownIcon, IconPlus as PlusIcon } from "symbols-react";
 import {
   useCallback,
   useDeferredValue,
@@ -13,6 +13,7 @@ import {
   useState,
   useTransition,
 } from "react";
+import type { FormEvent } from "react";
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
@@ -42,6 +43,17 @@ import {
   ComboboxStatus,
   ComboboxTrigger,
 } from "./ui/combobox";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
 interface BranchToolbarBranchSelectorProps {
@@ -195,6 +207,8 @@ export function BranchToolbarBranchSelector({
   const queryClient = useQueryClient();
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
+  const [isCreateBranchDialogOpen, setIsCreateBranchDialogOpen] = useState(false);
+  const [manualBranchName, setManualBranchName] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
   const branchStatusQuery = useGitStatus({ environmentId, cwd: branchCwd });
@@ -245,6 +259,7 @@ export function BranchToolbarBranchSelector({
   const checkoutPullRequestItemValue =
     prReference && onCheckoutPullRequestRequest ? `__checkout_pull_request__:${prReference}` : null;
   const canCreateBranch = !isSelectingWorktreeBase && trimmedBranchQuery.length > 0;
+  const canOpenCreateBranchDialog = !isSelectingWorktreeBase && branchCwd !== null;
   const hasExactBranchMatch = branchByName.has(trimmedBranchQuery);
   const createBranchItemValue = canCreateBranch
     ? `__create_new_branch__:${trimmedBranchQuery}`
@@ -392,6 +407,20 @@ export function BranchToolbarBranchSelector({
         );
       }
     });
+  };
+
+  const openCreateBranchDialog = () => {
+    setManualBranchName(trimmedBranchQuery);
+    setIsBranchMenuOpen(false);
+    setIsCreateBranchDialogOpen(true);
+  };
+
+  const submitCreateBranchDialog = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = manualBranchName.trim();
+    if (!name) return;
+    setIsCreateBranchDialogOpen(false);
+    createBranch(name);
   };
 
   useEffect(() => {
@@ -557,72 +586,133 @@ export function BranchToolbarBranchSelector({
   }
 
   return (
-    <Combobox
-      items={branchPickerItems}
-      filteredItems={filteredBranchPickerItems}
-      autoHighlight
-      virtualized={shouldVirtualizeBranchList}
-      onItemHighlighted={(_value, eventDetails) => {
-        if (!isBranchMenuOpen || eventDetails.index < 0 || eventDetails.reason !== "keyboard") {
-          return;
-        }
-        branchListRef.current?.scrollIndexIntoView?.({
-          index: eventDetails.index,
-          animated: false,
-        });
-      }}
-      onOpenChange={handleOpenChange}
-      open={isBranchMenuOpen}
-      value={resolvedActiveBranch}
-    >
-      <ComboboxTrigger
-        render={<Button variant="ghost" size="xs" />}
-        className="text-muted-foreground/70 hover:text-foreground/80 [&_svg]:fill-current"
-        disabled={(isBranchesSearchPending && branches.length === 0) || isBranchActionPending}
+    <>
+      <Combobox
+        items={branchPickerItems}
+        filteredItems={filteredBranchPickerItems}
+        autoHighlight
+        virtualized={shouldVirtualizeBranchList}
+        onItemHighlighted={(_value, eventDetails) => {
+          if (!isBranchMenuOpen || eventDetails.index < 0 || eventDetails.reason !== "keyboard") {
+            return;
+          }
+          branchListRef.current?.scrollIndexIntoView?.({
+            index: eventDetails.index,
+            animated: false,
+          });
+        }}
+        onOpenChange={handleOpenChange}
+        open={isBranchMenuOpen}
+        value={resolvedActiveBranch}
       >
-        <span className="max-w-[240px] truncate">{triggerLabel}</span>
-        <ChevronDownIcon className="size-2.5 fill-current" />
-      </ComboboxTrigger>
-      <ComboboxPopup align="end" side="top" className="w-80">
-        <div className="border-b p-1">
-          <ComboboxInput
-            className="[&_input]:font-sans rounded-md"
-            inputClassName="ring-0"
-            placeholder="Search branches..."
-            showTrigger={false}
-            size="sm"
-            value={branchQuery}
-            onChange={(event) => setBranchQuery(event.target.value)}
-          />
-        </div>
-        <ComboboxEmpty>No branches found.</ComboboxEmpty>
-
-        {shouldVirtualizeBranchList ? (
-          <ComboboxListVirtualized>
-            <LegendList<string>
-              ref={branchListRef}
-              data={filteredBranchPickerItems}
-              keyExtractor={(item) => item}
-              renderItem={({ item, index }) => renderPickerItem(item, index)}
-              estimatedItemSize={28}
-              drawDistance={336}
-              onEndReached={() => {
-                if (hasNextPage && !isFetchingNextPage) {
-                  void fetchNextPage().catch(() => undefined);
-                }
-              }}
-              style={{ maxHeight: "14rem" }}
+        <ComboboxTrigger
+          render={<Button variant="ghost" size="xs" />}
+          className="gap-1.5 text-muted-foreground/70 hover:text-foreground/80 [&_svg]:fill-current"
+          disabled={(isBranchesSearchPending && branches.length === 0) || isBranchActionPending}
+        >
+          <span className="max-w-[240px] truncate">{triggerLabel}</span>
+          <ChevronDownIcon className="size-2.5 fill-current" />
+        </ComboboxTrigger>
+        <ComboboxPopup align="start" side="top" className="w-80">
+          <div className="flex items-center gap-1 border-b p-1">
+            <ComboboxInput
+              className="[&_input]:font-sans min-w-0 flex-1 rounded-md"
+              inputClassName="ring-0"
+              placeholder="Search branches..."
+              showTrigger={false}
+              size="sm"
+              value={branchQuery}
+              onChange={(event) => setBranchQuery(event.target.value)}
             />
-          </ComboboxListVirtualized>
-        ) : (
-          <ComboboxList ref={setBranchListRef} className="max-h-56">
-            {filteredBranchPickerItems.map((itemValue, index) =>
-              renderPickerItem(itemValue, index),
-            )}
-          </ComboboxList>
-        )}
-        {branchStatusText ? <ComboboxStatus>{branchStatusText}</ComboboxStatus> : null}
-      </ComboboxPopup>
-    </Combobox>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label="New branch"
+              disabled={!canOpenCreateBranchDialog || isBranchActionPending}
+              onClick={openCreateBranchDialog}
+            >
+              <PlusIcon className="size-3.5" />
+            </Button>
+          </div>
+          <ComboboxEmpty>No branches found.</ComboboxEmpty>
+
+          {shouldVirtualizeBranchList ? (
+            <ComboboxListVirtualized>
+              <LegendList<string>
+                ref={branchListRef}
+                data={filteredBranchPickerItems}
+                keyExtractor={(item) => item}
+                renderItem={({ item, index }) => renderPickerItem(item, index)}
+                estimatedItemSize={28}
+                drawDistance={336}
+                onEndReached={() => {
+                  if (hasNextPage && !isFetchingNextPage) {
+                    void fetchNextPage().catch(() => undefined);
+                  }
+                }}
+                style={{ maxHeight: "14rem" }}
+              />
+            </ComboboxListVirtualized>
+          ) : (
+            <ComboboxList ref={setBranchListRef} className="max-h-56">
+              {filteredBranchPickerItems.map((itemValue, index) =>
+                renderPickerItem(itemValue, index),
+              )}
+            </ComboboxList>
+          )}
+          {branchStatusText ? <ComboboxStatus>{branchStatusText}</ComboboxStatus> : null}
+        </ComboboxPopup>
+      </Combobox>
+
+      <Dialog
+        open={isCreateBranchDialogOpen}
+        onOpenChange={(open) => {
+          setIsCreateBranchDialogOpen(open);
+          if (!open) {
+            setManualBranchName("");
+          }
+        }}
+      >
+        <DialogPopup>
+          <DialogHeader>
+            <DialogTitle>New branch</DialogTitle>
+            <DialogDescription>
+              Create a branch from the current checkout and switch this thread to it.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogPanel>
+            <form id="branch-toolbar-create-branch-form" onSubmit={submitCreateBranchDialog}>
+              <div className="space-y-1.5">
+                <Label htmlFor="branch-toolbar-create-branch-name">Branch name</Label>
+                <Input
+                  id="branch-toolbar-create-branch-name"
+                  autoFocus
+                  value={manualBranchName}
+                  onChange={(event) => setManualBranchName(event.target.value)}
+                  placeholder="feature/my-change"
+                />
+              </div>
+            </form>
+          </DialogPanel>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setIsCreateBranchDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              form="branch-toolbar-create-branch-form"
+              disabled={manualBranchName.trim().length === 0 || isBranchActionPending}
+            >
+              Create branch
+            </Button>
+          </DialogFooter>
+        </DialogPopup>
+      </Dialog>
+    </>
   );
 }
