@@ -1,6 +1,4 @@
-import { type OrchestratorFixtureInput } from "../shared.ts";
-
-const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok";
+import { SIMPLE_PROMPT, type OrchestratorFixtureInput } from "../shared.ts";
 
 export function simpleInput(): OrchestratorFixtureInput {
   return {
