@@ -13,8 +13,6 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
-import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   BrowserWindow,
@@ -25,19 +23,12 @@ import {
   nativeTheme,
 } from "electron";
 
-import type { DesktopServerExposureMode, DesktopServerExposureState } from "@t3tools/contracts";
 import * as NetService from "@t3tools/shared/Net";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 
 import { DEFAULT_DESKTOP_BACKEND_PORT, resolveDesktopBackendPortEffect } from "./backendPort.ts";
-import {
-  type DesktopSettings,
-  DEFAULT_DESKTOP_SETTINGS,
-  setDesktopServerExposurePreference,
-  setDesktopTailscaleServePreference,
-  writeDesktopSettingsEffect,
-} from "./desktopSettings.ts";
+import { type DesktopSettings } from "./desktopSettings.ts";
 import {
   DesktopBackendConfiguration,
   DesktopBackendEvents,
@@ -47,10 +38,7 @@ import {
   type DesktopBackendManagerShape,
   type DesktopBackendStartConfig,
 } from "./desktopBackendManager.ts";
-import {
-  DesktopNetworkInterfacesLive,
-  DesktopNetworkInterfacesService,
-} from "./desktopNetworkInterfaces.ts";
+import * as DesktopNetworkInterfaces from "./desktopNetworkInterfaces.ts";
 import {
   DesktopBackendOutputLog,
   DesktopBackendOutputLogLive,
@@ -78,10 +66,6 @@ import { DesktopServerExposureIpcActions } from "./ipc/methods/serverExposure.ts
 import { DesktopUpdateIpcActions } from "./ipc/methods/updates.ts";
 import * as DesktopWindowIpcActionsLive from "./ipc/methods/windowLive.ts";
 import {
-  resolveDesktopCoreAdvertisedEndpoints,
-  resolveDesktopServerExposure,
-} from "./serverExposure.ts";
-import {
   DesktopSshEnvironmentBridge,
   DesktopSshEnvironmentManager,
   type DesktopSshEnvironmentBridgeShape,
@@ -94,9 +78,9 @@ import {
   DesktopShellEnvironmentProbeLive,
 } from "./syncShellEnvironment.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
-import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
 import { formatErrorMessage } from "./main/DesktopErrors.ts";
 import * as DesktopLocalEnvironment from "./main/DesktopLocalEnvironment.ts";
+import * as DesktopServerExposure from "./main/DesktopServerExposure.ts";
 import * as DesktopSettingsState from "./main/DesktopSettingsState.ts";
 import * as DesktopState from "./main/DesktopState.ts";
 import * as DesktopUpdates from "./main/DesktopUpdates.ts";
@@ -106,8 +90,6 @@ const COMMIT_HASH_DISPLAY_LENGTH = 12;
 const AppPackageMetadata = Schema.Struct({
   t3codeCommitHash: Schema.optional(Schema.String),
 });
-const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
-const DESKTOP_REQUIRED_PORT_PROBE_HOSTS = ["0.0.0.0", "::"] as const;
 const TITLEBAR_HEIGHT = 40;
 const TITLEBAR_COLOR = "#01000000"; // #00000000 does not work correctly on Linux
 const TITLEBAR_LIGHT_SYMBOL_COLOR = "#1f2937";
@@ -122,12 +104,7 @@ interface BackendObservabilitySettings {
   readonly otlpTracesUrl: string | undefined;
   readonly otlpMetricsUrl: string | undefined;
 }
-let backendPort = 0;
-let backendBindHost = DESKTOP_LOOPBACK_HOST;
 let backendBootstrapToken = "";
-let backendHttpUrl: Option.Option<URL> = Option.none();
-let backendEndpointUrl: string | null = null;
-let backendAdvertisedHost: string | null = null;
 let aboutCommitHashCache: Option.Option<string> | undefined;
 let desktopIconPaths: Readonly<Record<"ico" | "icns" | "png", Option.Option<string>>> = {
   ico: Option.none(),
@@ -139,8 +116,6 @@ let backendObservabilitySettings: BackendObservabilitySettings = {
   otlpTracesUrl: undefined,
   otlpMetricsUrl: undefined,
 };
-let desktopSettings = DEFAULT_DESKTOP_SETTINGS;
-let desktopServerExposureMode: DesktopServerExposureMode = desktopSettings.serverExposureMode;
 
 interface DesktopEffectRunner {
   <A, E, R>(effect: Effect.Effect<A, E, R>): Promise<A>;
@@ -153,7 +128,8 @@ type DesktopWindowBoundaryServices =
   | ElectronShell.ElectronShell
   | DesktopState.DesktopState
   | DesktopUpdates.DesktopUpdates
-  | ElectronWindow.ElectronWindow;
+  | ElectronWindow.ElectronWindow
+  | DesktopServerExposure.DesktopServerExposure;
 type DesktopLifecycleBoundaryServices =
   | DesktopShutdown
   | DesktopWindowBoundaryServices
@@ -162,20 +138,6 @@ type DesktopLifecycleBoundaryServices =
 function makeDesktopEffectRunner<R>(context: Context.Context<R>): DesktopEffectRunner {
   return <A, E, R2>(effect: Effect.Effect<A, E, R2>) =>
     Effect.runPromiseWith(context as unknown as Context.Context<R2>)(effect);
-}
-
-function requireBackendHttpUrl(): URL {
-  return Option.getOrThrowWith(
-    backendHttpUrl,
-    () => new Error("Desktop backend HTTP URL has not been resolved."),
-  );
-}
-
-function getBackendHttpUrlHref(): string | null {
-  return Option.match(backendHttpUrl, {
-    onNone: () => null,
-    onSome: (url) => url.href,
-  });
 }
 
 const withDesktopLogAnnotations = (
@@ -287,129 +249,6 @@ function backendChildEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-function getDesktopServerExposureState(): DesktopServerExposureState {
-  return {
-    mode: desktopServerExposureMode,
-    endpointUrl: backendEndpointUrl,
-    advertisedHost: backendAdvertisedHost,
-    tailscaleServeEnabled: desktopSettings.tailscaleServeEnabled,
-    tailscaleServePort: desktopSettings.tailscaleServePort,
-  };
-}
-
-function getDesktopAdvertisedEndpoints() {
-  return Effect.gen(function* () {
-    const networkInterfaces = yield* (yield* DesktopNetworkInterfacesService).read;
-    const exposure = resolveDesktopServerExposure({
-      mode: desktopServerExposureMode,
-      port: backendPort,
-      networkInterfaces,
-      ...(backendAdvertisedHost ? { advertisedHostOverride: backendAdvertisedHost } : {}),
-    });
-    const coreEndpoints = resolveDesktopCoreAdvertisedEndpoints({
-      port: backendPort,
-      exposure,
-      customHttpsEndpointUrls: resolveCustomHttpsEndpointUrls(),
-    });
-    const tailscaleEndpoints = yield* resolveTailscaleAdvertisedEndpoints({
-      port: backendPort,
-      serveEnabled: desktopSettings.tailscaleServeEnabled,
-      servePort: desktopSettings.tailscaleServePort,
-      networkInterfaces,
-    });
-    return [...coreEndpoints, ...tailscaleEndpoints];
-  });
-}
-
-function resolveAdvertisedHostOverride(): string | undefined {
-  const override = process.env.T3CODE_DESKTOP_LAN_HOST?.trim();
-  return override && override.length > 0 ? override : undefined;
-}
-
-function resolveCustomHttpsEndpointUrls(): readonly string[] {
-  return (process.env.T3CODE_DESKTOP_HTTPS_ENDPOINTS ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0);
-}
-
-function applyDesktopServerExposureMode(
-  mode: DesktopServerExposureMode,
-  options?: {
-    readonly persist?: boolean;
-    readonly rejectIfUnavailable?: boolean;
-  },
-): Effect.Effect<
-  DesktopServerExposureState,
-  unknown,
-  FileSystem.FileSystem | EffectPath.Path | DesktopEnvironment | DesktopNetworkInterfacesService
-> {
-  return Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment;
-    const networkInterfaces = yield* (yield* DesktopNetworkInterfacesService).read;
-    const advertisedHostOverride = resolveAdvertisedHostOverride();
-    const requestedMode = mode;
-    let exposure = resolveDesktopServerExposure({
-      mode,
-      port: backendPort,
-      networkInterfaces,
-      ...(advertisedHostOverride ? { advertisedHostOverride } : {}),
-    });
-
-    if (requestedMode === "network-accessible" && exposure.endpointUrl === null) {
-      if (options?.rejectIfUnavailable) {
-        return yield* Effect.fail(
-          new Error("No reachable network address is available for this desktop right now."),
-        );
-      }
-      exposure = resolveDesktopServerExposure({
-        mode: "local-only",
-        port: backendPort,
-        networkInterfaces,
-        ...(advertisedHostOverride ? { advertisedHostOverride } : {}),
-      });
-    }
-
-    desktopServerExposureMode = exposure.mode;
-    desktopSettings = setDesktopServerExposurePreference(desktopSettings, requestedMode);
-    backendBindHost = exposure.bindHost;
-    backendHttpUrl = Option.some(new URL(exposure.localHttpUrl));
-    backendEndpointUrl = exposure.endpointUrl;
-    backendAdvertisedHost = exposure.advertisedHost;
-
-    if (options?.persist) {
-      yield* writeDesktopSettingsEffect(environment.desktopSettingsPath, desktopSettings);
-    }
-
-    return getDesktopServerExposureState();
-  });
-}
-
-function applyDesktopTailscaleServeEnabled(
-  nextSettings: DesktopSettings,
-): Effect.Effect<
-  DesktopServerExposureState,
-  unknown,
-  | FileSystem.FileSystem
-  | EffectPath.Path
-  | ElectronApp.ElectronApp
-  | DesktopEnvironment
-  | DesktopShutdown
-  | DesktopState.DesktopState
-> {
-  return Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment;
-    desktopSettings = nextSettings;
-    yield* writeDesktopSettingsEffect(environment.desktopSettingsPath, desktopSettings);
-    yield* relaunchDesktopAppEffect(
-      desktopSettings.tailscaleServeEnabled
-        ? "tailscale-serve-enabled"
-        : "tailscale-serve-disabled",
-    );
-    return getDesktopServerExposureState();
-  });
-}
-
 function relaunchDesktopAppEffect(
   reason: string,
 ): Effect.Effect<
@@ -455,17 +294,27 @@ function handleBackendReady(
 ): Effect.Effect<
   void,
   never,
-  DesktopState.DesktopState | ElectronShell.ElectronShell | ElectronWindow.ElectronWindow
+  | DesktopState.DesktopState
+  | ElectronShell.ElectronShell
+  | ElectronWindow.ElectronWindow
+  | DesktopServerExposure.DesktopServerExposure
 > {
   return Effect.gen(function* () {
     const state = yield* DesktopState.DesktopState;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     yield* Ref.set(state.backendReady, true);
     yield* logDesktopInfo("bootstrap backend ready", { source: "http" });
 
     const existingWindow = yield* electronWindow.currentMainOrFirst;
     if (!environment.isDevelopment && Option.isNone(existingWindow)) {
-      const window = createWindow(runEffect, environment, electronWindow);
+      const backendConfig = yield* serverExposure.backendConfig;
+      const window = createWindow(
+        runEffect,
+        environment,
+        electronWindow,
+        backendConfig.httpBaseUrl,
+      );
       yield* electronWindow.setMain(window);
       yield* logDesktopInfo("bootstrap main window created");
     }
@@ -478,16 +327,21 @@ function createBackendWindowIfReady(
 ): Effect.Effect<
   void,
   never,
-  DesktopState.DesktopState | ElectronShell.ElectronShell | ElectronWindow.ElectronWindow
+  | DesktopState.DesktopState
+  | ElectronShell.ElectronShell
+  | ElectronWindow.ElectronWindow
+  | DesktopServerExposure.DesktopServerExposure
 > {
   return Effect.gen(function* () {
     const state = yield* DesktopState.DesktopState;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     const backendReady = yield* Ref.get(state.backendReady);
     if (!backendReady) return;
     const existingWindow = yield* electronWindow.currentMainOrFirst;
     if (Option.isSome(existingWindow)) return;
-    const window = createWindow(runEffect, environment, electronWindow);
+    const backendConfig = yield* serverExposure.backendConfig;
+    const window = createWindow(runEffect, environment, electronWindow, backendConfig.httpBaseUrl);
     yield* electronWindow.setMain(window);
   });
 }
@@ -495,9 +349,11 @@ function createBackendWindowIfReady(
 const resolveBackendStartConfig: Effect.Effect<
   DesktopBackendStartConfig,
   never,
-  FileSystem.FileSystem | DesktopEnvironment
+  FileSystem.FileSystem | DesktopEnvironment | DesktopServerExposure.DesktopServerExposure
 > = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment;
+  const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+  const backendExposure = yield* serverExposure.backendConfig;
   backendObservabilitySettings = yield* readPersistedBackendObservabilitySettings();
   const captureBackendLogs = !environment.isDevelopment;
 
@@ -512,12 +368,12 @@ const resolveBackendStartConfig: Effect.Effect<
     bootstrap: {
       mode: "desktop",
       noBrowser: true,
-      port: backendPort,
+      port: backendExposure.port,
       t3Home: environment.baseDir,
-      host: backendBindHost,
+      host: backendExposure.bindHost,
       desktopBootstrapToken: backendBootstrapToken,
-      tailscaleServeEnabled: desktopSettings.tailscaleServeEnabled,
-      tailscaleServePort: desktopSettings.tailscaleServePort,
+      tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
+      tailscaleServePort: backendExposure.tailscaleServePort,
       ...(backendObservabilitySettings.otlpTracesUrl
         ? { otlpTracesUrl: backendObservabilitySettings.otlpTracesUrl }
         : {}),
@@ -525,7 +381,7 @@ const resolveBackendStartConfig: Effect.Effect<
         ? { otlpMetricsUrl: backendObservabilitySettings.otlpMetricsUrl }
         : {}),
     },
-    httpBaseUrl: requireBackendHttpUrl(),
+    httpBaseUrl: backendExposure.httpBaseUrl,
     captureOutput: captureBackendLogs,
   };
 });
@@ -565,9 +421,11 @@ const desktopBackendConfigurationLayer = Layer.effect(
   DesktopBackendConfiguration,
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment;
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     return {
       resolve: resolveBackendStartConfig.pipe(
         Effect.provideService(DesktopEnvironment, environment),
+        Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
       ),
     };
   }),
@@ -588,6 +446,7 @@ const desktopBackendEventsLayer = Layer.effect(
     const state = yield* DesktopState.DesktopState;
     const context = yield* Effect.context<
       | DesktopEnvironment
+      | DesktopServerExposure.DesktopServerExposure
       | DesktopSshEnvironmentBridge
       | DesktopState.DesktopState
       | ElectronShell.ElectronShell
@@ -670,47 +529,47 @@ const desktopShellEnvironmentLayer = DesktopShellEnvironmentLive.pipe(
   ),
 );
 
+const desktopServerExposureLayer = DesktopServerExposure.layer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeHttpClient.layerUndici),
+  Layer.provideMerge(DesktopNetworkInterfaces.layer),
+  Layer.provideMerge(DesktopSettingsState.layer),
+  Layer.provideMerge(desktopEnvironmentLayer),
+);
+
 type DesktopServerExposureIpcActionServices =
-  | FileSystem.FileSystem
-  | EffectPath.Path
   | ElectronApp.ElectronApp
   | DesktopEnvironment
-  | DesktopState.DesktopState
-  | DesktopNetworkInterfacesService
-  | ChildProcessSpawner.ChildProcessSpawner
-  | HttpClient.HttpClient;
+  | DesktopState.DesktopState;
 
 const desktopServerExposureIpcActionsLayer = Layer.effect(
   DesktopServerExposureIpcActions,
   Effect.gen(function* () {
     const context = yield* Effect.context<DesktopServerExposureIpcActionServices>();
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     return DesktopServerExposureIpcActions.of({
-      getState: Effect.sync(getDesktopServerExposureState),
+      getState: serverExposure.getState,
       setMode: (nextMode) =>
         Effect.gen(function* () {
-          if (nextMode === desktopServerExposureMode) {
-            return getDesktopServerExposureState();
+          const change = yield* serverExposure.setMode(nextMode);
+          if (change.requiresRelaunch) {
+            yield* relaunchDesktopAppEffect(`serverExposureMode=${nextMode}`);
           }
-
-          const nextState = yield* applyDesktopServerExposureMode(nextMode, {
-            persist: true,
-            rejectIfUnavailable: true,
-          });
-          yield* relaunchDesktopAppEffect(`serverExposureMode=${nextMode}`);
-          return nextState;
+          return change.state;
         }).pipe(Effect.provide(context)),
       setTailscaleServeEnabled: (input) =>
         Effect.gen(function* () {
-          const nextSettings = setDesktopTailscaleServePreference(desktopSettings, {
-            enabled: input.enabled,
-            ...(typeof input.port === "number" ? { port: input.port } : {}),
-          });
-          if (nextSettings === desktopSettings) {
-            return getDesktopServerExposureState();
+          const change = yield* serverExposure.setTailscaleServeEnabled(input);
+          if (change.requiresRelaunch) {
+            yield* relaunchDesktopAppEffect(
+              change.state.tailscaleServeEnabled
+                ? "tailscale-serve-enabled"
+                : "tailscale-serve-disabled",
+            );
           }
-          return yield* applyDesktopTailscaleServeEnabled(nextSettings);
+          return change.state;
         }).pipe(Effect.provide(context)),
-      getAdvertisedEndpoints: getDesktopAdvertisedEndpoints().pipe(Effect.provide(context)),
+      getAdvertisedEndpoints: serverExposure.getAdvertisedEndpoints,
     });
   }),
 );
@@ -746,6 +605,7 @@ const desktopBackendManagerLayer = DesktopBackendManagerLive.pipe(
 
 const desktopBackendRuntimeLayer = DesktopLocalEnvironment.layer.pipe(
   Layer.provideMerge(desktopBackendManagerLayer),
+  Layer.provideMerge(desktopServerExposureLayer),
 );
 
 const desktopElectronWindowLayer = desktopSshEnvironmentBridgeLayer.pipe(
@@ -765,7 +625,7 @@ const desktopRuntimeLayer = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeHttpClient.layerUndici),
-  Layer.provideMerge(DesktopNetworkInterfacesLive),
+  Layer.provideMerge(DesktopNetworkInterfaces.layer),
   Layer.provideMerge(desktopBackendRuntimeLayer),
   Layer.provideMerge(desktopElectronWindowLayer),
   Layer.provideMerge(ElectronApp.layer),
@@ -774,7 +634,6 @@ const desktopRuntimeLayer = Layer.mergeAll(
   Layer.provideMerge(ElectronProtocol.layer),
   Layer.provideMerge(ElectronShell.layer),
   Layer.provideMerge(ElectronTheme.layer),
-  Layer.provideMerge(DesktopSettingsState.layer),
   Layer.provideMerge(desktopEnvironmentLayer),
 );
 
@@ -921,9 +780,12 @@ function dispatchMenuAction(
     const context = yield* Effect.context<DesktopWindowBoundaryServices>();
     const runEffect = makeDesktopEffectRunner(context);
     const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+    const backendConfig = yield* serverExposure.backendConfig;
     const existingWindow = yield* electronWindow.focusedMainOrFirst;
     const targetWindow =
-      Option.getOrUndefined(existingWindow) ?? createWindow(runEffect, environment, electronWindow);
+      Option.getOrUndefined(existingWindow) ??
+      createWindow(runEffect, environment, electronWindow, backendConfig.httpBaseUrl);
     if (Option.isNone(existingWindow)) {
       yield* electronWindow.setMain(targetWindow);
     }
@@ -967,9 +829,13 @@ function handleCheckForUpdatesMenuClick(
       }
 
       const electronWindow = yield* ElectronWindow.ElectronWindow;
+      const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+      const backendConfig = yield* serverExposure.backendConfig;
       const existingWindow = yield* electronWindow.currentMainOrFirst;
       if (Option.isNone(existingWindow)) {
-        yield* electronWindow.setMain(createWindow(runEffect, environment, electronWindow));
+        yield* electronWindow.setMain(
+          createWindow(runEffect, environment, electronWindow, backendConfig.httpBaseUrl),
+        );
       }
       yield* checkForUpdatesFromMenu();
     }),
@@ -1325,6 +1191,7 @@ function createWindow(
   runEffect: DesktopEffectRunner,
   environment: DesktopEnvironmentShape,
   electronWindow: ElectronWindow.ElectronWindowShape,
+  backendHttpUrl: URL,
 ): BrowserWindow {
   const window = new BrowserWindow({
     width: 1100,
@@ -1442,7 +1309,7 @@ function createWindow(
     void window.loadURL(resolveDesktopDevServerUrl(environment));
     window.webContents.openDevTools({ mode: "detach" });
   } else {
-    void window.loadURL(requireBackendHttpUrl().href);
+    void window.loadURL(backendHttpUrl.href);
   }
 
   window.on("closed", () => {
@@ -1464,6 +1331,8 @@ function bootstrap() {
   return Effect.gen(function* () {
     const environment = yield* DesktopEnvironment;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const settingsState = yield* DesktopSettingsState.DesktopSettingsState;
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     const context = yield* Effect.context<DesktopWindowBoundaryServices>();
     const runEffect = makeDesktopEffectRunner(context);
     yield* logDesktopInfo("bootstrap start");
@@ -1472,12 +1341,12 @@ function bootstrap() {
       return yield* Effect.fail(new Error("T3CODE_PORT is required in desktop development."));
     }
 
-    backendPort =
+    const backendPort =
       configuredBackendPort ??
       (yield* resolveDesktopBackendPortEffect({
-        host: DESKTOP_LOOPBACK_HOST,
+        host: DesktopServerExposure.DESKTOP_LOOPBACK_HOST,
         startPort: DEFAULT_DESKTOP_BACKEND_PORT,
-        requiredHosts: DESKTOP_REQUIRED_PORT_PROBE_HOSTS,
+        requiredHosts: DesktopServerExposure.DESKTOP_REQUIRED_PORT_PROBE_HOSTS,
       }));
     yield* logDesktopInfo(
       configuredBackendPort === undefined
@@ -1489,25 +1358,22 @@ function bootstrap() {
       },
     );
     backendBootstrapToken = yield* randomHexString(48);
-    if (desktopSettings.serverExposureMode !== DEFAULT_DESKTOP_SETTINGS.serverExposureMode) {
+    const settings = yield* settingsState.get;
+    if (settings.serverExposureMode !== environment.defaultDesktopSettings.serverExposureMode) {
       yield* logDesktopInfo("bootstrap restoring persisted server exposure mode", {
-        mode: desktopSettings.serverExposureMode,
+        mode: settings.serverExposureMode,
       });
     }
-    const serverExposureState = yield* applyDesktopServerExposureMode(
-      desktopSettings.serverExposureMode,
-      {
-        persist: desktopSettings.serverExposureMode !== DEFAULT_DESKTOP_SETTINGS.serverExposureMode,
-      },
-    );
+    const serverExposureState = yield* serverExposure.configureFromSettings({ port: backendPort });
+    const backendConfig = yield* serverExposure.backendConfig;
     yield* logDesktopInfo("bootstrap resolved backend endpoint", {
-      baseUrl: getBackendHttpUrlHref(),
+      baseUrl: backendConfig.httpBaseUrl.href,
     });
     if (serverExposureState.endpointUrl) {
       yield* logDesktopInfo("bootstrap enabled network access", {
         endpointUrl: serverExposureState.endpointUrl,
       });
-    } else if (desktopSettings.serverExposureMode === "network-accessible") {
+    } else if (settings.serverExposureMode === "network-accessible") {
       yield* logDesktopWarning(
         "bootstrap fell back to local-only because no advertised network host was available",
       );
@@ -1519,7 +1385,9 @@ function bootstrap() {
     yield* logDesktopInfo("bootstrap backend start requested");
 
     if (environment.isDevelopment) {
-      yield* electronWindow.setMain(createWindow(runEffect, environment, electronWindow));
+      yield* electronWindow.setMain(
+        createWindow(runEffect, environment, electronWindow, backendConfig.httpBaseUrl),
+      );
       yield* logDesktopInfo("bootstrap main window created");
     }
   });
@@ -1568,13 +1436,20 @@ function handleActivate(
     const context = yield* Effect.context<DesktopWindowBoundaryServices>();
     const runEffect = makeDesktopEffectRunner(context);
     const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     const existingWindow = yield* electronWindow.currentMainOrFirst;
     if (Option.isSome(existingWindow)) {
       yield* electronWindow.reveal(existingWindow.value);
       return;
     }
     if (environment.isDevelopment) {
-      const window = createWindow(runEffect, environment, electronWindow);
+      const backendConfig = yield* serverExposure.backendConfig;
+      const window = createWindow(
+        runEffect,
+        environment,
+        electronWindow,
+        backendConfig.httpBaseUrl,
+      );
       yield* electronWindow.setMain(window);
       return;
     }
@@ -1682,8 +1557,7 @@ const program = Effect.scoped(
       yield* electronApp.setPath("userData", userDataPath);
       yield* resolveDesktopIconPaths();
       yield* logDesktopInfo("runtime logging configured", { logDir: environment.logDir });
-      desktopSettings = yield* settingsState.load;
-      desktopServerExposureMode = desktopSettings.serverExposureMode;
+      yield* settingsState.load;
 
       if (process.platform === "linux") {
         yield* electronApp.appendCommandLineSwitch("class", environment.linuxWmClass);

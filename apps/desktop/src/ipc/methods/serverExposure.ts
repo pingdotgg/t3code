@@ -17,6 +17,10 @@ import {
   SET_TAILSCALE_SERVE_ENABLED_CHANNEL,
 } from "../channels.ts";
 import { makeIpcMethod } from "../DesktopIpc.ts";
+import type {
+  DesktopServerExposurePersistenceError,
+  DesktopServerExposureSetModeError,
+} from "../../main/DesktopServerExposure.ts";
 
 const SetTailscaleServeEnabledInput = Schema.Struct({
   enabled: Schema.Boolean,
@@ -27,10 +31,18 @@ export interface DesktopServerExposureIpcActionsShape {
   readonly getState: Effect.Effect<DesktopServerExposureState>;
   readonly setMode: (
     mode: DesktopServerExposureMode,
-  ) => Effect.Effect<DesktopServerExposureState, unknown, DesktopShutdown>;
+  ) => Effect.Effect<
+    DesktopServerExposureState,
+    DesktopServerExposureSetModeError,
+    DesktopShutdown
+  >;
   readonly setTailscaleServeEnabled: (
     input: typeof SetTailscaleServeEnabledInput.Type,
-  ) => Effect.Effect<DesktopServerExposureState, unknown, DesktopShutdown>;
+  ) => Effect.Effect<
+    DesktopServerExposureState,
+    DesktopServerExposurePersistenceError,
+    DesktopShutdown
+  >;
   readonly getAdvertisedEndpoints: Effect.Effect<readonly (typeof AdvertisedEndpoint.Type)[]>;
 }
 

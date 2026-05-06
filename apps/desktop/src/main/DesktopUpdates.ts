@@ -40,7 +40,7 @@ import {
 } from "../updateMachine.ts";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "../updateState.ts";
 import { formatErrorMessage } from "./DesktopErrors.ts";
-import { DesktopSettingsState } from "./DesktopSettingsState.ts";
+import * as DesktopSettingsState from "./DesktopSettingsState.ts";
 import * as DesktopState from "./DesktopState.ts";
 
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
@@ -143,10 +143,10 @@ const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const settingsState = yield* DesktopSettingsState;
+  const settingsState = yield* DesktopSettingsState.DesktopSettingsState;
   const updatePersistedSettings = (
     f: Parameters<typeof settingsState.updatePersisted>[0],
-  ): Effect.Effect<DesktopSettings, unknown> =>
+  ): Effect.Effect<DesktopSettings, DesktopSettingsState.DesktopSettingsPersistenceError> =>
     settingsState
       .updatePersisted(f)
       .pipe(

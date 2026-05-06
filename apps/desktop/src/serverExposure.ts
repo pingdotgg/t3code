@@ -8,8 +8,8 @@ import type {
   DesktopServerExposureMode,
 } from "@t3tools/contracts";
 
-const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
-const DESKTOP_LAN_BIND_HOST = "0.0.0.0";
+export const DESKTOP_LOOPBACK_HOST = "127.0.0.1";
+export const DESKTOP_LAN_BIND_HOST = "0.0.0.0";
 
 export interface DesktopNetworkInterfaceInfo {
   readonly address: string;
