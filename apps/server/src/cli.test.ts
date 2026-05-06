@@ -1,5 +1,5 @@
 import * as NodeHttp from "node:http";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -352,6 +352,231 @@ it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
         assert.fail(`Expected UnrecognizedOption, got ${String(optionError?._tag)}`);
       }
       assert.equal(optionError.option, "--dev-url");
+    }),
+  );
+
+  it.effect("moves a project workspace directory and updates metadata", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-move-test-"));
+      const workspaceRoot = mkdtempSync(join(tmpdir(), "t3-cli-move-workspace-"));
+      const newWorkspaceRoot = join(tmpdir(), `t3-cli-move-target-${Date.now()}`);
+
+      yield* runCliWithRuntime([
+        "project",
+        "add",
+        workspaceRoot,
+        "--title",
+        "MoveTest",
+        "--base-dir",
+        baseDir,
+      ]);
+      const afterAdd = yield* readPersistedSnapshot(baseDir);
+      const addedProject = afterAdd.projects.find(
+        (project) => project.workspaceRoot === workspaceRoot && project.deletedAt === null,
+      );
+      assert.isTrue(addedProject !== undefined);
+
+      yield* runCliWithRuntime([
+        "project",
+        "move",
+        workspaceRoot,
+        newWorkspaceRoot,
+        "--base-dir",
+        baseDir,
+      ]);
+      const afterMove = yield* readPersistedSnapshot(baseDir);
+      const movedProject = afterMove.projects.find(
+        (project) => project.id === addedProject?.id,
+      );
+      assert.equal(movedProject?.workspaceRoot, newWorkspaceRoot);
+      assert.equal(movedProject?.title, "MoveTest");
+      assert.equal(movedProject?.deletedAt, null);
+    }),
+  );
+
+  it.effect("dry-run move previews without making changes", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-dry-run-test-"));
+      const workspaceRoot = mkdtempSync(join(tmpdir(), "t3-cli-dry-run-workspace-"));
+      const newWorkspaceRoot = join(tmpdir(), `t3-cli-dry-run-target-${Date.now()}`);
+
+      yield* runCliWithRuntime([
+        "project",
+        "add",
+        workspaceRoot,
+        "--title",
+        "DryRunTest",
+        "--base-dir",
+        baseDir,
+      ]);
+      const afterAdd = yield* readPersistedSnapshot(baseDir);
+      const addedProject = afterAdd.projects.find(
+        (project) => project.workspaceRoot === workspaceRoot && project.deletedAt === null,
+      );
+      assert.isTrue(addedProject !== undefined);
+
+      const { output } = yield* captureStdout(
+        runCli([
+          "project",
+          "move",
+          workspaceRoot,
+          newWorkspaceRoot,
+          "--dry-run",
+          "--base-dir",
+          baseDir,
+        ]).pipe(Effect.provide(CliRuntimeLayer)),
+      );
+
+      assert.isTrue(output.includes("[dry-run]"));
+      assert.isTrue(output.includes(workspaceRoot));
+      assert.isTrue(output.includes(newWorkspaceRoot));
+
+      const afterDryRun = yield* readPersistedSnapshot(baseDir);
+      const unchangedProject = afterDryRun.projects.find(
+        (project) => project.id === addedProject?.id,
+      );
+      assert.equal(unchangedProject?.workspaceRoot, workspaceRoot);
+    }),
+  );
+
+  it.effect("rejects move when source directory does not exist", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-move-no-source-test-"));
+      const workspaceRoot = mkdtempSync(join(tmpdir(), "t3-cli-move-no-source-workspace-"));
+      const newWorkspaceRoot = join(tmpdir(), `t3-cli-move-target-${Date.now()}`);
+
+      yield* runCliWithRuntime([
+        "project",
+        "add",
+        workspaceRoot,
+        "--title",
+        "MissingSource",
+        "--base-dir",
+        baseDir,
+      ]);
+
+      rmSync(workspaceRoot, { recursive: true, force: true });
+
+      const error = yield* runCliWithRuntime([
+        "project",
+        "move",
+        workspaceRoot,
+        newWorkspaceRoot,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+
+      assert.isTrue(error instanceof Error);
+    }),
+  );
+
+  it.effect("rejects move when target already exists", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-move-exists-test-"));
+      const workspaceRoot = mkdtempSync(join(tmpdir(), "t3-cli-move-exists-workspace-"));
+      const existingTarget = mkdtempSync(join(tmpdir(), "t3-cli-move-exists-target-"));
+
+      yield* runCliWithRuntime([
+        "project",
+        "add",
+        workspaceRoot,
+        "--title",
+        "ExistsTest",
+        "--base-dir",
+        baseDir,
+      ]);
+
+      const error = yield* runCliWithRuntime([
+        "project",
+        "move",
+        workspaceRoot,
+        existingTarget,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+
+      assert.isTrue(error instanceof Error);
+      assert.isTrue((error as Error).message.includes("Target path already exists"));
+    }),
+  );
+
+  it.effect("rejects move when another project already uses the target workspace root", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-move-conflict-test-"));
+      const workspaceRootA = mkdtempSync(join(tmpdir(), "t3-cli-move-conflict-a-"));
+      const workspaceRootB = mkdtempSync(join(tmpdir(), "t3-cli-move-conflict-b-"));
+
+      yield* runCliWithRuntime([
+        "project",
+        "add",
+        workspaceRootA,
+        "--title",
+        "ProjectA",
+        "--base-dir",
+        baseDir,
+      ]);
+
+      yield* runCliWithRuntime([
+        "project",
+        "add",
+        workspaceRootB,
+        "--title",
+        "ProjectB",
+        "--base-dir",
+        baseDir,
+      ]);
+
+      rmSync(workspaceRootA, { recursive: true, force: true });
+
+      const error = yield* runCliWithRuntime([
+        "project",
+        "move",
+        workspaceRootB,
+        workspaceRootA,
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+
+      assert.isTrue(error instanceof Error);
+      assert.isTrue((error as Error).message.includes("Another active project already exists at"));
+    }),
+  );
+
+  it.effect("dry-run rejects move when source directory does not exist using project id", () =>
+    Effect.gen(function* () {
+      const baseDir = mkdtempSync(join(tmpdir(), "t3-cli-dry-run-missing-source-"));
+      const workspaceRoot = mkdtempSync(join(tmpdir(), "t3-cli-dry-run-missing-source-ws-"));
+      const newWorkspaceRoot = join(tmpdir(), `t3-cli-dry-run-missing-target-${Date.now()}`);
+
+      yield* runCliWithRuntime([
+        "project",
+        "add",
+        workspaceRoot,
+        "--title",
+        "DryRunMissing",
+        "--base-dir",
+        baseDir,
+      ]);
+      const afterAdd = yield* readPersistedSnapshot(baseDir);
+      const addedProject = afterAdd.projects.find(
+        (project) => project.workspaceRoot === workspaceRoot && project.deletedAt === null,
+      );
+      assert.isTrue(addedProject !== undefined);
+
+      rmSync(workspaceRoot, { recursive: true, force: true });
+
+      const error = yield* runCliWithRuntime([
+        "project",
+        "move",
+        addedProject!.id,
+        newWorkspaceRoot,
+        "--dry-run",
+        "--base-dir",
+        baseDir,
+      ]).pipe(Effect.flip);
+
+      assert.isTrue(error instanceof Error);
+      assert.isTrue((error as Error).message.includes("Source directory does not exist"));
     }),
   );
 });

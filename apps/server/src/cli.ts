@@ -1138,9 +1138,118 @@ const projectRenameCommand = Command.make("rename", {
   ),
 );
 
+const projectMoveCommand = Command.make("move", {
+  ...projectLocationFlags,
+  project: Argument.string("project").pipe(
+    Argument.withDescription("Project id or workspace root to move."),
+  ),
+  path: Argument.string("path").pipe(
+    Argument.withDescription("New workspace root path for the project."),
+  ),
+  dryRun: Flag.boolean("dry-run").pipe(
+    Flag.withDescription("Preview the move without making changes."),
+    Flag.optional,
+  ),
+}).pipe(
+  Command.withDescription("Move a project workspace directory."),
+  Command.withHandler((flags) =>
+    runProjectMutation(
+      flags,
+      Effect.fn("projectMoveMutation")(function* ({
+        snapshot,
+        dispatch,
+      }: {
+        readonly snapshot: OrchestrationReadModel;
+        readonly dispatch: (
+          command: ProjectCliDispatchCommand,
+        ) => Effect.Effect<void, Error, FileSystem.FileSystem | HttpClient.HttpClient | Path.Path>;
+      }) {
+        const project = yield* findActiveProjectTarget({
+          snapshot,
+          identifier: flags.project,
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        const expandedPath = yield* expandHomePath(flags.path.trim());
+        const newPath = path.resolve(expandedPath);
+        if (newPath === project.workspaceRoot) {
+          return `Project ${project.id} is already at ${newPath}.`;
+        }
+
+        const sourceExists = yield* fs.exists(project.workspaceRoot);
+        if (!sourceExists) {
+          return yield* Effect.fail(
+            new Error(`Source directory does not exist: ${project.workspaceRoot}`),
+          );
+        }
+
+        const targetParent = path.dirname(newPath);
+        const parentExists = yield* fs.exists(targetParent);
+        if (!parentExists) {
+          return yield* Effect.fail(
+            new Error(`Target parent directory does not exist: ${targetParent}`),
+          );
+        }
+
+        const parentWritable = yield* fs
+          .access(targetParent, { writable: true })
+          .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
+        if (!parentWritable) {
+          return yield* Effect.fail(
+            new Error(`Target parent directory is not writable: ${targetParent}`),
+          );
+        }
+
+        const targetExists = yield* fs.exists(newPath);
+        if (targetExists) {
+          return yield* Effect.fail(new Error(`Target path already exists: ${newPath}`));
+        }
+
+        const conflictProject = snapshot.projects.find(
+          (p) => p.deletedAt === null && p.workspaceRoot === newPath,
+        );
+        if (conflictProject) {
+          return yield* Effect.fail(
+            new Error(`Another active project already exists at ${newPath}: ${conflictProject.id}`),
+          );
+        }
+
+        const isDryRun = Option.isSome(flags.dryRun) && flags.dryRun.value;
+
+        if (isDryRun) {
+          return [
+            `[dry-run] Would move project ${project.id} (${project.title}):`,
+            `  ${project.workspaceRoot}`,
+            `  -> ${newPath}`,
+          ].join("\n");
+        }
+
+        const rollbackRename = () =>
+          fs.rename(newPath, project.workspaceRoot).pipe(Effect.ignore({ log: true }));
+
+        yield* fs.rename(project.workspaceRoot, newPath);
+
+        yield* dispatch({
+          type: "project.meta.update",
+          commandId: CommandId.make(crypto.randomUUID()),
+          projectId: project.id,
+          workspaceRoot: newPath,
+        }).pipe(Effect.tapError(() => rollbackRename()));
+        return `Moved project ${project.id} (${project.title}) to ${newPath}.`;
+      }),
+    ),
+  ),
+);
+
 const projectCommand = Command.make("project").pipe(
   Command.withDescription("Manage projects."),
-  Command.withSubcommands([projectAddCommand, projectRemoveCommand, projectRenameCommand]),
+  Command.withSubcommands([
+    projectAddCommand,
+    projectRemoveCommand,
+    projectRenameCommand,
+    projectMoveCommand,
+  ]),
 );
 
 const runServerCommand = (
