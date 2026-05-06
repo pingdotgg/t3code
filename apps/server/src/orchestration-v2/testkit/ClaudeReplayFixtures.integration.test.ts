@@ -118,6 +118,19 @@ describe("Claude Agent SDK replay fixtures", () => {
           );
 
           provider.assertOutput(result, transcript);
+          const projectionThreadId = materialized.projectionThreadIds[0];
+          if (projectionThreadId === undefined) {
+            throw new Error("Missing replay projection thread id.");
+          }
+          const projection = result.projections.get(projectionThreadId);
+          if (projection === undefined) {
+            throw new Error("Missing replay projection.");
+          }
+          const latestRun = projection.runs.at(-1);
+          if (latestRun === undefined) {
+            throw new Error("Missing replay run.");
+          }
+          assert.deepEqual(latestRun.modelSelection, provider.modelSelection);
         } finally {
           await rm(checkpointWorkspace, { recursive: true, force: true });
         }
