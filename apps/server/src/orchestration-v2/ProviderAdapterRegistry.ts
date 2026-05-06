@@ -69,6 +69,139 @@ export function makeSingleLayer(
   return makeLayer([adapter]);
 }
 
+export function deriveProviderAdapterInstanceConfigMap<R>(input: {
+  readonly settings: ServerSettings;
+  readonly drivers: ReadonlyArray<AnyProviderAdapterDriver<R>>;
+}): ProviderInstanceConfigMap {
+  const merged: Record<string, ProviderInstanceConfig> = {
+    ...input.settings.providerInstances,
+  };
+
+  for (const driver of input.drivers) {
+    const instanceId = defaultInstanceIdForDriver(driver.driverKind);
+    if (instanceId in merged) {
+      continue;
+    }
+
+    const legacyKey = driver.driverKind as keyof ServerSettings["providers"];
+    const legacyConfig = input.settings.providers[legacyKey];
+    if (legacyConfig === undefined) {
+      continue;
+    }
+
+    merged[instanceId] = {
+      driver: driver.driverKind,
+      config: legacyConfig,
+    };
+  }
+
+  return merged as ProviderInstanceConfigMap;
+}
+
+const decodedConfigEnabled = (config: unknown): boolean | undefined => {
+  if (!config || typeof config !== "object" || globalThis.Array.isArray(config)) {
+    return undefined;
+  }
+  const enabled = (config as { readonly enabled?: unknown }).enabled;
+  return typeof enabled === "boolean" ? enabled : undefined;
+};
+
+export function makeRegistryFromConfigMap<R>(input: {
+  readonly drivers: ReadonlyArray<AnyProviderAdapterDriver<R>>;
+  readonly configMap: ProviderInstanceConfigMap;
+}): Effect.Effect<
+  ProviderAdapterRegistryV2Shape,
+  ProviderAdapterRegistryBuildError,
+  R | Scope.Scope
+> {
+  return Effect.gen(function* () {
+    const driversById = new Map<ProviderDriverKind, AnyProviderAdapterDriver<R>>(
+      input.drivers.map((driver) => [driver.driverKind, driver]),
+    );
+    const adapters: Array<ProviderAdapterV2Shape> = [];
+
+    for (const [rawInstanceId, entry] of Object.entries(input.configMap)) {
+      const instanceId = ProviderInstanceId.make(rawInstanceId);
+      const driver = driversById.get(entry.driver);
+      if (driver === undefined) {
+        yield* Effect.logWarning("Skipping orchestration-v2 provider adapter with unknown driver", {
+          instanceId,
+          driver: entry.driver,
+        });
+        continue;
+      }
+
+      const typedConfig = yield* Schema.decodeUnknownEffect(driver.configSchema)(
+        entry.config ?? driver.defaultConfig(),
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterDriverCreateError({
+              driver: entry.driver,
+              instanceId,
+              detail: "Invalid provider instance config.",
+              cause,
+            }),
+        ),
+      );
+
+      const adapter = yield* driver.create({
+        instanceId,
+        displayName: entry.displayName,
+        accentColor: entry.accentColor,
+        environment: entry.environment ?? [],
+        enabled: entry.enabled ?? decodedConfigEnabled(typedConfig) ?? true,
+        config: typedConfig,
+      });
+      adapters.push(adapter);
+    }
+
+    return makeRegistry(adapters);
+  });
+}
+
+export function makeDriverLayer<R>(input: {
+  readonly drivers: ReadonlyArray<AnyProviderAdapterDriver<R>>;
+  readonly configMap: ProviderInstanceConfigMap;
+}): Layer.Layer<ProviderAdapterRegistryV2, ProviderAdapterRegistryBuildError, R> {
+  return Layer.effect(
+    ProviderAdapterRegistryV2,
+    makeRegistryFromConfigMap(input).pipe(
+      Effect.map((registry) => ProviderAdapterRegistryV2.of(registry)),
+    ),
+  ) as Layer.Layer<ProviderAdapterRegistryV2, ProviderAdapterRegistryBuildError, R>;
+}
+
+export function makeDriverLayerFromSettings<R>(input: {
+  readonly drivers: ReadonlyArray<AnyProviderAdapterDriver<R>>;
+}): Layer.Layer<
+  ProviderAdapterRegistryV2,
+  ProviderAdapterRegistryBuildError,
+  R | ServerSettingsService
+> {
+  return Layer.unwrap(
+    Effect.gen(function* () {
+      const settingsService = yield* ServerSettingsService;
+      const settings = yield* settingsService.getSettings.pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderAdapterDriverCreateError({
+              driver: ProviderDriverKindSchema.make("settings"),
+              instanceId: ProviderInstanceId.make("settings"),
+              detail: "Failed to read server settings before building provider adapters.",
+              cause,
+            }),
+        ),
+      );
+      const configMap = deriveProviderAdapterInstanceConfigMap({
+        settings,
+        drivers: input.drivers,
+      });
+      return makeDriverLayer({ drivers: input.drivers, configMap });
+    }),
+  );
+}
+
 export const layerFromProviderAdapter: Layer.Layer<
   ProviderAdapterRegistryV2,
   never,
