@@ -15,7 +15,7 @@ import * as CliError from "effect/unstable/cli/CliError";
 import * as TestConsole from "effect/testing/TestConsole";
 import { Command } from "effect/unstable/cli";
 
-import { cli } from "./cli.ts";
+import { cli } from "./bin.ts";
 import { deriveServerPaths, ServerConfig, type ServerConfigShape } from "./config.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
@@ -148,7 +148,7 @@ const withLiveProjectCliServer = <A, E, R>(baseDir: string, run: () => Effect.Ef
     );
   });
 
-it.layer(NodeServices.layer)("cli log-level parsing", (it) => {
+it.layer(NodeServices.layer)("bin cli parsing", (it) => {
   it.effect("accepts the built-in lowercase log-level flag values", () =>
     runCliWithRuntime(["--log-level", "debug", "--version"]),
   );
