@@ -115,13 +115,21 @@ Target docs:
 
 - [`provider-switching-and-context.md`](../../../../docs/orchestration-v2/provider-switching-and-context.md)
 - [`provider-capability-system.md`](../../../../docs/orchestration-v2/provider-capability-system.md)
+- [`testing-strategy.md`](../../../../docs/orchestration-v2/testing-strategy.md)
 
 TODO:
 
-- [ ] Finish single-adapter primitives first: projections, fork source points, merge-back, rollback, and
-      context transfer resolution.
-- [ ] Add the second adapter after the single-adapter core is stable enough to validate cross-provider
-      behavior.
+- [x] Add Claude replay fixture definitions for recorded fixtures, with TODO fixture slots that
+      reference the corresponding Codex transcripts and V2 docs.
+- [ ] Promote Claude `simple` from the replay adapter to a real `ClaudeAdapterV2` replay test:
+      live and replay both consume an injected Agent SDK `query()` async iterable.
+- [ ] Record Claude `multi_turn` from real usage and prove native session/thread continuation.
+- [ ] Record Claude `tool_call_read_only` from real usage and prove read-only tool projection without
+      approvals.
+- [ ] Keep unrecorded Claude fixtures out of `testkit/fixtures/index.ts` until each has a real
+      transcript and real adapter assertions.
+- [ ] Add the second adapter once these vv0 Claude slices are stable enough to validate
+      cross-provider behavior.
 - [ ] Use the second adapter to test:
       cross-provider fork, same-thread provider switch, returning to a previous provider thread with
       delta handoff, and unsupported capability fallback paths.

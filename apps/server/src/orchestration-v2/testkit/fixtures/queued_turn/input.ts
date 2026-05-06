@@ -1,10 +1,14 @@
-import type { OrchestratorFixtureInput } from "../shared.ts";
+import {
+  MULTI_TURN_FIRST_PROMPT,
+  MULTI_TURN_SECOND_PROMPT,
+  type OrchestratorFixtureInput,
+} from "../shared.ts";
 
 export function queuedTurnInput(): OrchestratorFixtureInput {
   return {
     steps: [
-      { type: "message", text: "Respond with exactly: first fixture turn complete" },
-      { type: "queue_message", text: "Respond with exactly: second fixture turn complete" },
+      { type: "message", text: MULTI_TURN_FIRST_PROMPT },
+      { type: "queue_message", text: MULTI_TURN_SECOND_PROMPT },
     ],
   };
 }
