@@ -104,6 +104,10 @@ describe("orchestration V2 contracts", () => {
         threadId: "thread-1",
         ordinal: 1,
         provider: "codex",
+        modelSelection: {
+          instanceId: "codex",
+          model: "gpt-5.4",
+        },
         providerThreadId: "provider-thread-1",
         userMessageId: "message-1",
         rootNodeId: null,
