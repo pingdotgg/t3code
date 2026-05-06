@@ -77,6 +77,10 @@ import {
   ServerRemoveKeybindingInput,
   ServerRemoveKeybindingResult,
   ServerProviderUpdatedPayload,
+  ServerTraceDiagnosticsResult,
+  ServerProcessDiagnosticsResult,
+  ServerSignalProcessInput,
+  ServerSignalProcessResult,
   ServerUpsertKeybindingInput,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
@@ -139,6 +143,9 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
+  serverGetTraceDiagnostics: "server.getTraceDiagnostics",
+  serverGetProcessDiagnostics: "server.getProcessDiagnostics",
+  serverSignalProcess: "server.signalProcess",
 
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
@@ -205,6 +212,21 @@ export const WsServerUpdateSettingsRpc = Rpc.make(WS_METHODS.serverUpdateSetting
 export const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourceControl, {
   payload: Schema.Struct({}),
   success: SourceControlDiscoveryResult,
+});
+
+export const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
+  payload: Schema.Struct({}),
+  success: ServerTraceDiagnosticsResult,
+});
+
+export const WsServerGetProcessDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetProcessDiagnostics, {
+  payload: Schema.Struct({}),
+  success: ServerProcessDiagnosticsResult,
+});
+
+export const WsServerSignalProcessRpc = Rpc.make(WS_METHODS.serverSignalProcess, {
+  payload: ServerSignalProcessInput,
+  success: ServerSignalProcessResult,
 });
 
 export const WsSourceControlLookupRepositoryRpc = Rpc.make(
@@ -439,6 +461,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerDiscoverSourceControlRpc,
+  WsServerGetTraceDiagnosticsRpc,
+  WsServerGetProcessDiagnosticsRpc,
+  WsServerSignalProcessRpc,
   WsSourceControlLookupRepositoryRpc,
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,

@@ -1,5 +1,6 @@
 import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
   defaultInstanceIdForDriver,
@@ -24,7 +25,6 @@ import {
 } from "../../components/desktopUpdate.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
-import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { isElectron } from "../../env";
 import { useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
@@ -66,7 +66,10 @@ import {
 } from "../ProviderUpdateLaunchNotification.logic";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
-import { buildProviderInstanceUpdatePatch } from "./SettingsPanels.logic";
+import {
+  buildProviderInstanceUpdatePatch,
+  formatDiagnosticsDescription,
+} from "./SettingsPanels.logic";
 import {
   SettingResetButton,
   SettingsPageContainer,
@@ -75,11 +78,7 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { ProjectFavicon } from "../ProjectFavicon";
-import {
-  useServerAvailableEditors,
-  useServerObservability,
-  useServerProviders,
-} from "../../rpc/serverState";
+import { useServerObservability, useServerProviders } from "../../rpc/serverState";
 
 const THEME_OPTIONS = [
   {
@@ -442,27 +441,15 @@ export function GeneralSettingsPanel() {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
-  const [openingPathByTarget, setOpeningPathByTarget] = useState({
-    logsDirectory: false,
-  });
-  const [openPathErrorByTarget, setOpenPathErrorByTarget] = useState<
-    Partial<Record<"logsDirectory", string | null>>
-  >({});
-  const availableEditors = useServerAvailableEditors();
   const observability = useServerObservability();
   const serverProviders = useServerProviders();
-  const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
-  const diagnosticsDescription = (() => {
-    const exports: string[] = [];
-    if (observability?.otlpTracesEnabled && observability.otlpTracesUrl) {
-      exports.push(`traces to ${observability.otlpTracesUrl}`);
-    }
-    if (observability?.otlpMetricsEnabled && observability.otlpMetricsUrl) {
-      exports.push(`metrics to ${observability.otlpMetricsUrl}`);
-    }
-    const mode = observability?.localTracingEnabled ? "Local trace file" : "Terminal logs only";
-    return exports.length > 0 ? `${mode}. OTLP exporting ${exports.join(" and ")}.` : `${mode}.`;
-  })();
+  const diagnosticsDescription = formatDiagnosticsDescription({
+    localTracingEnabled: observability?.localTracingEnabled ?? false,
+    otlpTracesEnabled: observability?.otlpTracesEnabled ?? false,
+    otlpTracesUrl: observability?.otlpTracesUrl,
+    otlpMetricsEnabled: observability?.otlpMetricsEnabled ?? false,
+    otlpMetricsUrl: observability?.otlpMetricsUrl,
+  });
 
   const textGenerationModelSelection = resolveAppModelSelectionState(settings, serverProviders);
   const textGenInstanceId = textGenerationModelSelection.instanceId;
@@ -486,44 +473,6 @@ export function GeneralSettingsPanel() {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
-
-  const openInPreferredEditor = useCallback(
-    (target: "logsDirectory", path: string | null, failureMessage: string) => {
-      if (!path) return;
-      setOpenPathErrorByTarget((existing) => ({ ...existing, [target]: null }));
-      setOpeningPathByTarget((existing) => ({ ...existing, [target]: true }));
-
-      const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
-      if (!editor) {
-        setOpenPathErrorByTarget((existing) => ({
-          ...existing,
-          [target]: "No available editors found.",
-        }));
-        setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
-        return;
-      }
-
-      void ensureLocalApi()
-        .shell.openInEditor(path, editor)
-        .catch((error) => {
-          setOpenPathErrorByTarget((existing) => ({
-            ...existing,
-            [target]: error instanceof Error ? error.message : failureMessage,
-          }));
-        })
-        .finally(() => {
-          setOpeningPathByTarget((existing) => ({ ...existing, [target]: false }));
-        });
-    },
-    [availableEditors],
-  );
-
-  const openLogsDirectory = useCallback(() => {
-    openInPreferredEditor("logsDirectory", logsDirectoryPath, "Unable to open logs folder.");
-  }, [logsDirectoryPath, openInPreferredEditor]);
-
-  const openDiagnosticsError = openPathErrorByTarget.logsDirectory ?? null;
-  const isOpeningLogsDirectory = openingPathByTarget.logsDirectory;
 
   return (
     <SettingsPageContainer>
@@ -914,24 +863,9 @@ export function GeneralSettingsPanel() {
         <SettingsRow
           title="Diagnostics"
           description={diagnosticsDescription}
-          status={
-            <>
-              <span className="block break-all font-mono text-[11px] text-foreground">
-                {logsDirectoryPath ?? "Resolving logs directory..."}
-              </span>
-              {openDiagnosticsError ? (
-                <span className="mt-1 block text-destructive">{openDiagnosticsError}</span>
-              ) : null}
-            </>
-          }
           control={
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!logsDirectoryPath || isOpeningLogsDirectory}
-              onClick={openLogsDirectory}
-            >
-              {isOpeningLogsDirectory ? "Opening..." : "Open logs folder"}
+            <Button render={<Link to="/settings/diagnostics" />} size="xs" variant="outline">
+              View diagnostics
             </Button>
           }
         />

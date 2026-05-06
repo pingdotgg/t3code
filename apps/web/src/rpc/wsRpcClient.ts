@@ -129,6 +129,11 @@ export interface WsRpcClient {
     readonly discoverSourceControl: RpcUnaryNoArgMethod<
       typeof WS_METHODS.serverDiscoverSourceControl
     >;
+    readonly getTraceDiagnostics: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetTraceDiagnostics>;
+    readonly getProcessDiagnostics: RpcUnaryNoArgMethod<
+      typeof WS_METHODS.serverGetProcessDiagnostics
+    >;
+    readonly signalProcess: RpcUnaryMethod<typeof WS_METHODS.serverSignalProcess>;
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
     readonly subscribeAuthAccess: RpcStreamMethod<typeof WS_METHODS.subscribeAuthAccess>;
@@ -247,6 +252,18 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.serverUpdateSettings]({ patch })),
       discoverSourceControl: () =>
         transport.request((client) => client[WS_METHODS.serverDiscoverSourceControl]({})),
+      getTraceDiagnostics: () =>
+        transport.request((client) =>
+          client[WS_METHODS.serverGetTraceDiagnostics]({}).pipe(Effect.withTracerEnabled(false)),
+        ),
+      getProcessDiagnostics: () =>
+        transport.request((client) =>
+          client[WS_METHODS.serverGetProcessDiagnostics]({}).pipe(Effect.withTracerEnabled(false)),
+        ),
+      signalProcess: (input) =>
+        transport.request((client) =>
+          client[WS_METHODS.serverSignalProcess](input).pipe(Effect.withTracerEnabled(false)),
+        ),
       subscribeConfig: (listener, options) =>
         transport.subscribe((client) => client[WS_METHODS.subscribeServerConfig]({}), listener, {
           ...options,

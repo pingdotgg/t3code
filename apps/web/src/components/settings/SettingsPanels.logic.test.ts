@@ -5,7 +5,48 @@ import {
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
-import { buildProviderInstanceUpdatePatch } from "./SettingsPanels.logic";
+import {
+  buildProviderInstanceUpdatePatch,
+  formatDiagnosticsDescription,
+} from "./SettingsPanels.logic";
+
+describe("formatDiagnosticsDescription", () => {
+  it("collapses trace and metric URLs that share the same OTEL base path", () => {
+    expect(
+      formatDiagnosticsDescription({
+        localTracingEnabled: true,
+        otlpTracesEnabled: true,
+        otlpTracesUrl: "http://localhost:4318/v1/traces",
+        otlpMetricsEnabled: true,
+        otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+      }),
+    ).toBe("Local trace file. Exporting OTEL to http://localhost:4318/v1/{traces,metrics}.");
+  });
+
+  it("keeps separate trace and metric URLs when their base paths differ", () => {
+    expect(
+      formatDiagnosticsDescription({
+        localTracingEnabled: true,
+        otlpTracesEnabled: true,
+        otlpTracesUrl: "http://localhost:4318/v1/traces",
+        otlpMetricsEnabled: true,
+        otlpMetricsUrl: "http://localhost:9000/v1/metrics",
+      }),
+    ).toBe(
+      "Local trace file. Exporting OTEL traces to http://localhost:4318/v1/traces and metrics to http://localhost:9000/v1/metrics.",
+    );
+  });
+
+  it("omits OTEL text when no exporter is enabled", () => {
+    expect(
+      formatDiagnosticsDescription({
+        localTracingEnabled: true,
+        otlpTracesEnabled: false,
+        otlpMetricsEnabled: false,
+      }),
+    ).toBe("Local trace file.");
+  });
+});
 
 describe("buildProviderInstanceUpdatePatch", () => {
   it("promotes an edited default provider into providerInstances and resets the legacy provider", () => {

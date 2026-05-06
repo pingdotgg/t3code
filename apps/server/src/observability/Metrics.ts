@@ -1,4 +1,4 @@
-import { Duration, Effect, Exit, Metric } from "effect";
+import { Clock, Duration, Effect, Exit, Metric } from "effect";
 import { dual } from "effect/Function";
 
 import {
@@ -96,9 +96,11 @@ const withMetricsImpl = <A, E, R>(
   options: WithMetricsOptions,
 ): Effect.Effect<A, E, R> =>
   Effect.gen(function* () {
-    const startedAt = Date.now();
+    const startedAt = yield* Clock.currentTimeNanos;
     const exit = yield* Effect.exit(effect);
-    const duration = Duration.millis(Math.max(0, Date.now() - startedAt));
+    const endedAt = yield* Clock.currentTimeNanos;
+    const elapsedNanos = endedAt > startedAt ? endedAt - startedAt : 0n;
+    const duration = Duration.nanos(elapsedNanos);
     const baseAttributes =
       typeof options.attributes === "function" ? options.attributes() : (options.attributes ?? {});
 
