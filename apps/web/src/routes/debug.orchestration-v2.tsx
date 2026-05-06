@@ -1,28 +1,33 @@
-import type {
-  OrchestrationV2DomainEvent,
-  ModelSelection,
-  CheckpointId,
-  CheckpointScopeId,
-  OrchestrationV2PlanStep,
-  OrchestrationV2Run,
-  OrchestrationV2RunStatus,
-  OrchestrationV2Checkpoint,
-  OrchestrationV2ThreadProjection,
-  OrchestrationV2ThreadShell,
-  OrchestrationV2ThreadStreamItem,
-  OrchestrationV2TurnItem,
-  OrchestrationV2TurnItemStatus,
-  OrchestrationV2UserInputQuestion,
-  RunId,
-  RuntimeMode,
-  ThreadId,
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type CheckpointId,
+  type CheckpointScopeId,
+  type ModelSelection,
+  type OrchestrationV2Checkpoint,
+  type OrchestrationV2DomainEvent,
+  type OrchestrationV2PlanStep,
+  type OrchestrationV2Run,
+  type OrchestrationV2RunStatus,
+  type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ThreadShell,
+  type OrchestrationV2ThreadStreamItem,
+  type OrchestrationV2TurnItem,
+  type OrchestrationV2TurnItemStatus,
+  type OrchestrationV2UserInputQuestion,
+  type RunId,
+  type RuntimeMode,
+  type ServerProvider,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { createFileRoute } from "@tanstack/react-router";
 import type { CSSProperties, DragEvent, ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
 import { getPrimaryEnvironmentConnection } from "../environments/runtime";
 import { newCommandId, newMessageId, newProjectId, newThreadId } from "../lib/utils";
+import { deriveProviderInstanceEntries, sortProviderInstanceEntries } from "../providerInstances";
 import { GitMergeIcon } from "lucide-react";
 
 export const Route = createFileRoute("/debug/orchestration-v2")({
@@ -30,10 +35,111 @@ export const Route = createFileRoute("/debug/orchestration-v2")({
 });
 
 const DEFAULT_PROMPT = "Respond with the following text: fixture simple ok";
+const DEBUG_CODEX_DRIVER = ProviderDriverKind.make("codex");
+const DEBUG_CLAUDE_DRIVER = ProviderDriverKind.make("claudeAgent");
+const DEBUG_CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
+const DEBUG_CLAUDE_INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
 const DEFAULT_MODEL_SELECTION = {
-  provider: "codex",
+  instanceId: DEBUG_CODEX_INSTANCE_ID,
   model: "gpt-5.4",
 } satisfies ModelSelection;
+
+const DEBUG_PROVIDER_SNAPSHOTS: ReadonlyArray<ServerProvider> = [
+  {
+    instanceId: DEBUG_CODEX_INSTANCE_ID,
+    driver: DEBUG_CODEX_DRIVER,
+    displayName: "Codex",
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [
+      {
+        slug: "gpt-5.4",
+        name: "GPT-5.4",
+        shortName: "5.4",
+        isCustom: false,
+        capabilities: null,
+      },
+      {
+        slug: "gpt-5.4-mini",
+        name: "GPT-5.4 Mini",
+        shortName: "5.4 Mini",
+        isCustom: false,
+        capabilities: null,
+      },
+      {
+        slug: "gpt-5.3-codex",
+        name: "GPT-5.3 Codex",
+        shortName: "5.3",
+        isCustom: false,
+        capabilities: null,
+      },
+      {
+        slug: "gpt-5.3-codex-spark",
+        name: "GPT-5.3 Codex Spark",
+        shortName: "Spark",
+        isCustom: false,
+        capabilities: null,
+      },
+    ],
+    slashCommands: [],
+    skills: [],
+  },
+  {
+    instanceId: DEBUG_CLAUDE_INSTANCE_ID,
+    driver: DEBUG_CLAUDE_DRIVER,
+    displayName: "Claude",
+    enabled: true,
+    installed: true,
+    version: null,
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-01-01T00:00:00.000Z",
+    models: [
+      {
+        slug: "claude-opus-4-7",
+        name: "Claude Opus 4.7",
+        shortName: "Opus 4.7",
+        isCustom: false,
+        capabilities: null,
+      },
+      {
+        slug: "claude-opus-4-6",
+        name: "Claude Opus 4.6",
+        shortName: "Opus 4.6",
+        isCustom: false,
+        capabilities: null,
+      },
+      {
+        slug: "claude-sonnet-4-6",
+        name: "Claude Sonnet 4.6",
+        shortName: "Sonnet 4.6",
+        isCustom: false,
+        capabilities: null,
+      },
+      {
+        slug: "claude-haiku-4-5",
+        name: "Claude Haiku 4.5",
+        shortName: "Haiku 4.5",
+        isCustom: false,
+        capabilities: null,
+      },
+    ],
+    slashCommands: [],
+    skills: [],
+  },
+];
+
+const DEBUG_PROVIDER_INSTANCE_ENTRIES = sortProviderInstanceEntries(
+  deriveProviderInstanceEntries(DEBUG_PROVIDER_SNAPSHOTS),
+);
+
+const DEBUG_MODEL_OPTIONS_BY_INSTANCE = new Map(
+  DEBUG_PROVIDER_SNAPSHOTS.map((provider) => [provider.instanceId, provider.models] as const),
+);
 
 type LogEntry =
   | {
@@ -232,7 +338,7 @@ function buildProjectionTimeline(
       key: `run:${run.id}`,
       eyebrow: "Run",
       title: `Run ${run.ordinal}`,
-      subtitle: run.provider,
+      subtitle: `${run.modelSelection.instanceId} / ${run.modelSelection.model}`,
       status: run.status,
       timestamp: formatTimestamp(run.startedAt ?? run.requestedAt),
       raw: run,
@@ -586,6 +692,7 @@ type PendingMergeBackTransfer = OrchestrationV2ThreadProjection["contextTransfer
 interface DebugThreadTreeNode {
   readonly threadId: ThreadId;
   readonly thread: OrchestrationV2ThreadShell;
+  readonly modelSelection: ModelSelection;
   readonly children: ReadonlyArray<DebugThreadTreeNode>;
 }
 
@@ -752,6 +859,7 @@ function threadShellCreatedMs(thread: OrchestrationV2ThreadShell): number {
 
 function buildThreadTree(input: {
   readonly threads: ReadonlyMap<ThreadId, OrchestrationV2ThreadShell>;
+  readonly projectionsByThread: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection>;
 }): ReadonlyArray<DebugThreadTreeNode> {
   const childIds = new Map<ThreadId, Array<ThreadId>>();
   const rootIds: Array<ThreadId> = [];
@@ -782,10 +890,12 @@ function buildThreadTree(input: {
     if (thread === undefined) {
       throw new Error(`Missing orchestration V2 shell thread ${threadId}`);
     }
+    const latestRun = input.projectionsByThread.get(threadId)?.runs.at(-1);
     const children = sortThreadIds(childIds.get(threadId) ?? []).map(buildNode);
     return {
       threadId,
       thread,
+      modelSelection: latestRun?.modelSelection ?? thread.modelSelection,
       children,
     };
   };
@@ -1125,8 +1235,8 @@ function ThreadTreeRow(props: {
   const thread = props.node.thread;
   const active = props.node.threadId === props.activeThreadId;
   const relationship = thread.lineage.relationshipToParent ?? "source";
-  const provider = thread.modelSelection.provider;
-  const model = thread.modelSelection.model;
+  const instanceId = props.node.modelSelection.instanceId;
+  const model = props.node.modelSelection.model;
   const itemCount = thread.visibleItemCount;
   const createdAt = formatTimestamp(thread.createdAt);
 
@@ -1397,6 +1507,7 @@ function PanelHeader(props: {
 
 function OrchestrationV2DebugRoute() {
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
+  const [modelSelection, setModelSelection] = useState<ModelSelection>(DEFAULT_MODEL_SELECTION);
   const [threadId, setThreadId] = useState<ThreadId | null>(null);
   const [projection, setProjection] = useState<OrchestrationV2ThreadProjection | null>(null);
   const [projectionError, setProjectionError] = useState<string | null>(null);
@@ -1449,8 +1560,8 @@ function OrchestrationV2DebugRoute() {
     [logEntries, projection, projectionByThread],
   );
   const threadTree = useMemo(
-    () => buildThreadTree({ threads: shellThreadsById }),
-    [shellThreadsById],
+    () => buildThreadTree({ threads: shellThreadsById, projectionsByThread: projectionByThread }),
+    [projectionByThread, shellThreadsById],
   );
   const activeTurn = useMemo(() => deriveActiveTurn(projection), [projection]);
   const queuedRuns = useMemo(() => buildQueuedRunRows(projection), [projection]);
@@ -1581,7 +1692,7 @@ function OrchestrationV2DebugRoute() {
       threadId: nextThreadId,
       projectId: newProjectId(),
       title: "V2 debug thread",
-      modelSelection: DEFAULT_MODEL_SELECTION,
+      modelSelection,
       runtimeMode: "full-access" satisfies RuntimeMode,
       interactionMode: "default",
       branch: null,
@@ -1593,7 +1704,7 @@ function OrchestrationV2DebugRoute() {
     appendLog({ type: "command", label: "thread.create", value: result });
     await refreshProjection(nextThreadId);
     return nextThreadId;
-  }, [api, appendLog, refreshProjection, subscribeToThread]);
+  }, [api, appendLog, modelSelection, refreshProjection, subscribeToThread]);
 
   const ensureThread = useCallback(async () => {
     if (threadId !== null) {
@@ -1636,7 +1747,7 @@ function OrchestrationV2DebugRoute() {
           messageId: newMessageId(),
           text: trimmedPrompt,
           attachments: [],
-          modelSelection: DEFAULT_MODEL_SELECTION,
+          modelSelection,
           dispatchMode:
             intent === "steer" && targetRunId !== undefined
               ? { type: "steer_active", targetRunId }
@@ -1659,7 +1770,16 @@ function OrchestrationV2DebugRoute() {
         setIsBusy(false);
       }
     },
-    [activeTurn?.targetRunId, api, appendLog, ensureThread, isBusy, prompt, refreshProjection],
+    [
+      activeTurn?.targetRunId,
+      api,
+      appendLog,
+      ensureThread,
+      isBusy,
+      modelSelection,
+      prompt,
+      refreshProjection,
+    ],
   );
 
   const promoteQueuedRun = useCallback(
@@ -1916,6 +2036,20 @@ function OrchestrationV2DebugRoute() {
           <HiddenPanelPills hiddenPanels={hiddenPanels} onRestore={restorePanel} />
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <ProviderModelPicker
+            activeInstanceId={modelSelection.instanceId}
+            model={modelSelection.model}
+            lockedProvider={null}
+            instanceEntries={DEBUG_PROVIDER_INSTANCE_ENTRIES}
+            modelOptionsByInstance={DEBUG_MODEL_OPTIONS_BY_INSTANCE}
+            compact
+            disabled={isBusy}
+            triggerVariant="outline"
+            triggerClassName="h-9 max-w-64 bg-background"
+            onInstanceModelChange={(instanceId, model) => {
+              setModelSelection({ instanceId, model });
+            }}
+          />
           <button
             type="button"
             disabled={isBusy}
