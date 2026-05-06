@@ -2,6 +2,7 @@ import {
   ArchiveIcon,
   ArrowUpDownIcon,
   ChevronRightIcon,
+  ChevronsDownUpIcon,
   CloudIcon,
   FolderPlusIcon,
   SearchIcon,
@@ -898,6 +899,7 @@ interface SidebarProjectItemProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   isManualProjectSorting: boolean;
   dragHandleProps: SortableProjectHandleProps | null;
+  collapseAllProjects: () => void;
 }
 
 const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjectItemProps) {
@@ -918,6 +920,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     suppressProjectClickForContextMenuRef,
     isManualProjectSorting,
     dragHandleProps,
+    collapseAllProjects,
   } = props;
   const threadSortOrder = useSettings<SidebarThreadSortOrder>(
     (settings) => settings.sidebarThreadSortOrder,
@@ -1215,6 +1218,12 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         event.stopPropagation();
         return;
       }
+      if (event.altKey) {
+        event.preventDefault();
+        event.stopPropagation();
+        collapseAllProjects();
+        return;
+      }
       if (selectedThreadCount > 0) {
         clearSelection();
       }
@@ -1222,6 +1231,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
     [
       clearSelection,
+      collapseAllProjects,
       dragInProgressRef,
       project.projectKey,
       selectedThreadCount,
@@ -2488,6 +2498,8 @@ interface SidebarProjectsContentProps {
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   attachProjectListAutoAnimateRef: (node: HTMLElement | null) => void;
   projectsLength: number;
+  allProjectsCollapsed: boolean;
+  collapseAllProjects: () => void;
 }
 
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
@@ -2528,6 +2540,8 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     suppressProjectClickForContextMenuRef,
     attachProjectListAutoAnimateRef,
     projectsLength,
+    allProjectsCollapsed,
+    collapseAllProjects,
   } = props;
 
   const handleProjectSortOrderChange = useCallback(
@@ -2616,6 +2630,23 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 render={
                   <button
                     type="button"
+                    aria-label="Collapse all projects"
+                    data-testid="sidebar-collapse-all-trigger"
+                    disabled={allProjectsCollapsed}
+                    className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted-foreground/60"
+                    onClick={collapseAllProjects}
+                  />
+                }
+              >
+                <ChevronsDownUpIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="right">Collapse all projects</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
                     aria-label="Add project"
                     data-testid="sidebar-add-project-trigger"
                     className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
@@ -2668,6 +2699,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         }
                         isManualProjectSorting={isManualProjectSorting}
                         dragHandleProps={dragHandleProps}
+                        collapseAllProjects={collapseAllProjects}
                       />
                     )}
                   </SortableProjectItem>
@@ -2698,6 +2730,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
                 isManualProjectSorting={isManualProjectSorting}
                 dragHandleProps={null}
+                collapseAllProjects={collapseAllProjects}
               />
             ))}
           </SidebarMenu>
@@ -2719,6 +2752,7 @@ export default function Sidebar() {
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const reorderProjects = useUiStateStore((store) => store.reorderProjects);
+  const collapseAllProjectsAction = useUiStateStore((store) => store.collapseAllProjects);
   const navigate = useNavigate();
   const pathname = useLocation({ select: (loc) => loc.pathname });
   const isOnSettings = pathname.startsWith("/settings");
@@ -3000,6 +3034,21 @@ export default function Sidebar() {
     visibleThreads,
   ]);
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
+  const sortedProjectKeys = useMemo(
+    () => sortedProjects.map((project) => project.projectKey),
+    [sortedProjects],
+  );
+  const allProjectsCollapsed = useMemo(
+    () =>
+      sortedProjects.every(
+        (project) => (projectExpandedById[project.projectKey] ?? true) === false,
+      ),
+    [projectExpandedById, sortedProjects],
+  );
+  const handleCollapseAllProjects = useCallback(
+    () => collapseAllProjectsAction(sortedProjectKeys),
+    [collapseAllProjectsAction, sortedProjectKeys],
+  );
   const visibleSidebarThreadKeys = useMemo(
     () =>
       sortedProjects.flatMap((project) => {
@@ -3384,6 +3433,8 @@ export default function Sidebar() {
             suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
             attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
             projectsLength={projects.length}
+            allProjectsCollapsed={allProjectsCollapsed}
+            collapseAllProjects={handleCollapseAllProjects}
           />
 
           <SidebarSeparator />

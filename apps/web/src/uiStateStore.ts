@@ -579,6 +579,20 @@ export function setProjectExpanded(state: UiState, projectId: string, expanded: 
   };
 }
 
+export function collapseAllProjects(state: UiState, projectIds: readonly string[]): UiState {
+  const nextExpandedById: Record<string, boolean> = {};
+  for (const projectId of Object.keys(state.projectExpandedById)) {
+    nextExpandedById[projectId] = false;
+  }
+  for (const projectId of projectIds) {
+    nextExpandedById[projectId] = false;
+  }
+  if (recordsEqual(state.projectExpandedById, nextExpandedById)) {
+    return state;
+  }
+  return { ...state, projectExpandedById: nextExpandedById };
+}
+
 export function reorderProjects(
   state: UiState,
   draggedProjectIds: readonly string[],
@@ -632,6 +646,7 @@ interface UiStateStore extends UiState {
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   toggleProject: (projectId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
+  collapseAllProjects: (projectIds: readonly string[]) => void;
   reorderProjects: (
     draggedProjectIds: readonly string[],
     targetProjectIds: readonly string[],
@@ -654,6 +669,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
   setProjectExpanded: (projectId, expanded) =>
     set((state) => setProjectExpanded(state, projectId, expanded)),
+  collapseAllProjects: (projectIds) => set((state) => collapseAllProjects(state, projectIds)),
   reorderProjects: (draggedProjectIds, targetProjectIds) =>
     set((state) => reorderProjects(state, draggedProjectIds, targetProjectIds)),
 }));
