@@ -365,3 +365,4 @@ export function applyClaudePromptEffortPrefix(
   }
   return `Ultrathink:\n${trimmed}`;
 }
+// PR tree render test marker.

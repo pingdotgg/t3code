@@ -354,3 +354,4 @@ export function removeInlineTerminalContextPlaceholder(
 
   return { prompt, cursor: prompt.length };
 }
+// PR tree render test marker.

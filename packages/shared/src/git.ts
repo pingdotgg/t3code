@@ -268,3 +268,4 @@ export function applyGitStatusStreamEvent(
       return mergeGitStatusParts(toLocalStatusPart(current), event.remote);
   }
 }
+// PR tree render test marker.

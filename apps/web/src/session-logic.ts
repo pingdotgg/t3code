@@ -1250,3 +1250,4 @@ export function derivePhase(session: ThreadSession | null): SessionPhase {
   if (session.status === "running") return "running";
   return "ready";
 }
+// PR tree render test marker.
