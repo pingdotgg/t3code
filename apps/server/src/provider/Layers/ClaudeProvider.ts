@@ -736,3 +736,122 @@ export const makePendingClaudeProvider = (claudeSettings: ClaudeSettings): Serve
 };
 
 export { probeClaudeCapabilities };
+
+export const ClaudeProviderLive = Layer.effect(
+  ClaudeProvider,
+  Effect.gen(function* () {
+    const serverSettings = yield* ServerSettingsService;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const usageProbeStateRef = yield* Ref.make(
+      new Map<string, { rawOutput: string; fetchedAtMs: number; inFlight: boolean }>(),
+    );
+    const usageProbeTtlMs = 5 * 60 * 1000;
+
+    const subscriptionProbeCache = yield* Cache.make({
+      capacity: 1,
+      timeToLive: Duration.minutes(5),
+      lookup: (binaryPath: string) => probeClaudeCapabilities(binaryPath),
+    });
+    const refreshUsageProbe = (key: string, binaryPath: string, launchArgs: string) =>
+      Effect.gen(function* () {
+        yield* Ref.update(usageProbeStateRef, (current) => {
+          const next = new Map(current);
+          const existing = next.get(key);
+          next.set(key, {
+            rawOutput: existing?.rawOutput ?? "",
+            fetchedAtMs: existing?.fetchedAtMs ?? 0,
+            inFlight: true,
+          });
+          return next;
+        });
+
+        const checkedAt = new Date().toISOString();
+        const rawOutput = yield* Effect.tryPromise(() =>
+          probeClaudeUsageLimits({
+            binaryPath,
+            launchArgs,
+            cwd: process.cwd(),
+            checkedAt,
+          }),
+        ).pipe(
+          Effect.map((result) => result.rawOutput),
+          Effect.orElseSucceed(() => ""),
+        );
+
+        yield* Ref.update(usageProbeStateRef, (current) => {
+          const next = new Map(current);
+          next.set(key, {
+            rawOutput,
+            fetchedAtMs: Date.now(),
+            inFlight: false,
+          });
+          return next;
+        });
+      }).pipe(
+        Effect.ensuring(
+          Ref.update(usageProbeStateRef, (current) => {
+            const next = new Map(current);
+            const existing = next.get(key);
+            if (existing) {
+              next.set(key, { ...existing, inFlight: false });
+            }
+            return next;
+          }),
+        ),
+      );
+
+    const checkProvider = checkClaudeProviderStatus(
+      (binaryPath) =>
+        Cache.get(subscriptionProbeCache, binaryPath).pipe(
+          Effect.map((probe) => probe?.subscriptionType),
+        ),
+      (binaryPath) =>
+        Cache.get(subscriptionProbeCache, binaryPath).pipe(
+          Effect.map((probe) => probe?.slashCommands),
+        ),
+      (input) =>
+        Effect.gen(function* () {
+          const key = JSON.stringify([input.binaryPath, input.launchArgs]);
+          const entry = (yield* Ref.get(usageProbeStateRef)).get(key);
+          const isFresh = entry !== undefined && Date.now() - entry.fetchedAtMs < usageProbeTtlMs;
+
+          if ((!entry || !isFresh) && !entry?.inFlight) {
+            yield* Effect.sync(() => {
+              void Effect.runPromiseExit(
+                refreshUsageProbe(key, input.binaryPath, input.launchArgs),
+              );
+            });
+          }
+
+          if (!entry) {
+            return makeUnavailableUsageLimits({
+              source: "claudeStatusProbe",
+              checkedAt: input.checkedAt,
+              reason: "Usage limits are still loading for this Claude account.",
+            });
+          }
+
+          return parseClaudeUsageLimitsOutput({
+            output: entry.rawOutput,
+            checkedAt: input.checkedAt,
+          });
+        }),
+    ).pipe(
+      Effect.provideService(ServerSettingsService, serverSettings),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    );
+
+    return yield* makeManagedServerProvider<ClaudeSettings>({
+      getSettings: serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.providers.claudeAgent),
+        Effect.orDie,
+      ),
+      streamSettings: serverSettings.streamChanges.pipe(
+        Stream.map((settings) => settings.providers.claudeAgent),
+      ),
+      haveSettingsChanged: (previous, next) => !Equal.equals(previous, next),
+      initialSnapshot: makePendingClaudeProvider,
+      checkProvider,
+    });
+  }),
+);
