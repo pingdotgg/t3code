@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect";
 import { PositiveInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { RepositoryIdentity } from "./environment.ts";
+import { ModelSelection, ProjectScript } from "./orchestration.ts";
 import { SourceControlProviderInfo, SourceControlProviderKind } from "./sourceControl.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
@@ -64,15 +65,28 @@ export const ProjectRemoteOverride = Schema.Struct({
 });
 export type ProjectRemoteOverride = typeof ProjectRemoteOverride.Type;
 
+const ProjectActionEnvironmentKey = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
+).check(Schema.isMaxLength(128));
+const ProjectActionEnvironmentValue = Schema.String.check(Schema.isMaxLength(8_192));
+
+export const ProjectActionEnvironment = Schema.Record(
+  ProjectActionEnvironmentKey,
+  ProjectActionEnvironmentValue,
+).check(Schema.isMaxProperties(128));
+export type ProjectActionEnvironment = typeof ProjectActionEnvironment.Type;
+
 export const ProjectSettings = Schema.Struct({
   remoteOverride: Schema.NullOr(ProjectRemoteOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  actionEnvironment: ProjectActionEnvironment.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ProjectSettings = typeof ProjectSettings.Type;
 
 export const ProjectSettingsPatch = Schema.Struct({
   remoteOverride: Schema.optionalKey(Schema.NullOr(ProjectRemoteOverride)),
+  actionEnvironment: Schema.optionalKey(ProjectActionEnvironment),
 });
 export type ProjectSettingsPatch = typeof ProjectSettingsPatch.Type;
 
@@ -110,6 +124,10 @@ export const ProjectDetails = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.NullOr(RepositoryIdentity),
+  defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  scripts: Schema.Array(ProjectScript).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   settings: ProjectSettings,
   detected: Schema.Struct({
     gitRoot: Schema.NullOr(TrimmedNonEmptyString),

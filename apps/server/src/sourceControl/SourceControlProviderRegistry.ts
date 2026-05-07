@@ -31,6 +31,7 @@ export interface SourceControlProviderRegistration {
 export interface SourceControlProviderHandle {
   readonly provider: SourceControlProvider.SourceControlProviderShape;
   readonly context: SourceControlProvider.SourceControlProviderContext | null;
+  readonly contextSource: "override" | "detected" | null;
 }
 
 export interface SourceControlProviderRegistryShape {
@@ -196,7 +197,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
           const override = settings.projectSettings[projectOption.value.id]?.remoteOverride ?? null;
           const overrideContext = override ? providerContextFromOverride(override) : null;
           if (overrideContext) {
-            return overrideContext;
+            return { context: overrideContext, source: "override" as const };
           }
         }
 
@@ -204,13 +205,17 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
           .listRemotes(cwd)
           .pipe(Effect.mapError((error) => providerDetectionError("detectProvider", cwd, error)));
 
-        return selectProviderContext(remotes.remotes);
+        const context = selectProviderContext(remotes.remotes);
+        return { context, source: context ? ("detected" as const) : null };
       },
     );
 
     const providerContextCache = yield* Cache.makeWith<
       string,
-      SourceControlProvider.SourceControlProviderContext | null,
+      {
+        readonly context: SourceControlProvider.SourceControlProviderContext | null;
+        readonly source: "override" | "detected" | null;
+      },
       SourceControlProviderError
     >(detectProviderContext, {
       capacity: PROVIDER_DETECTION_CACHE_CAPACITY,
@@ -219,12 +224,13 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
 
     const resolveHandle: SourceControlProviderRegistryShape["resolveHandle"] = (input) =>
       Cache.get(providerContextCache, input.cwd).pipe(
-        Effect.map((context) => {
+        Effect.map(({ context, source }) => {
           const kind = context?.provider.kind ?? "unknown";
           const provider = providers.get(kind) ?? unsupportedProvider(kind);
           return {
             provider: bindProviderContext(provider, context),
             context,
+            contextSource: source,
           } satisfies SourceControlProviderHandle;
         }),
       );

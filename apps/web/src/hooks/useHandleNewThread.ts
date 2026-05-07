@@ -1,11 +1,17 @@
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
-import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef } from "@t3tools/contracts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  type ModelSelection,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
+import { createDefaultModelSelection } from "@t3tools/shared/model";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   type DraftThreadEnvMode,
   type DraftThreadState,
+  type ComposerThreadDraftState,
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
@@ -16,6 +22,16 @@ import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
 import { useSettings } from "./useSettings";
+
+function isEmptyComposerDraft(draft: ComposerThreadDraftState | null | undefined): boolean {
+  if (!draft) return true;
+  return (
+    draft.prompt.trim().length === 0 &&
+    draft.images.length === 0 &&
+    draft.persistedAttachments.length === 0 &&
+    draft.terminalContexts.length === 0
+  );
+}
 
 function useNewThreadState() {
   const projects = useStore(useShallow((store) => selectProjectsAcrossEnvironments(store)));
@@ -40,11 +56,12 @@ function useNewThreadState() {
     ): Promise<void> => {
       const {
         getDraftSessionByLogicalProjectKey,
+        getComposerDraft,
         getDraftSession,
         getDraftThread,
-        applyStickyState,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
+        setModelSelection,
       } = useComposerDraftStore.getState();
       const currentRouteTarget = getCurrentRouteTarget();
       const project = projects.find(
@@ -59,6 +76,15 @@ function useNewThreadState() {
       const hasWorktreePathOption = options?.worktreePath !== undefined;
       const hasEnvModeOption = options?.envMode !== undefined;
       const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
+      const projectDefaultModelSelection: ModelSelection =
+        project?.defaultModelSelection ?? createDefaultModelSelection();
+      const seedDefaultModelSelection = (draftId: Parameters<typeof getComposerDraft>[0]) => {
+        const draft = getComposerDraft(draftId);
+        if (!isEmptyComposerDraft(draft)) return;
+        setModelSelection(draftId, projectDefaultModelSelection, {
+          preserveExistingOptions: false,
+        });
+      };
       const latestActiveDraftThread: DraftThreadState | null = currentRouteTarget
         ? currentRouteTarget.kind === "server"
           ? getDraftThread(currentRouteTarget.threadRef)
@@ -76,6 +102,7 @@ function useNewThreadState() {
           setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, storedDraftThread.draftId, {
             threadId: storedDraftThread.threadId,
           });
+          seedDefaultModelSelection(storedDraftThread.draftId);
           if (
             currentRouteTarget?.kind === "draft" &&
             currentRouteTarget.draftId === storedDraftThread.draftId
@@ -111,6 +138,7 @@ function useNewThreadState() {
           ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
           ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
         });
+        seedDefaultModelSelection(currentRouteTarget.draftId);
         return Promise.resolve();
       }
 
@@ -126,7 +154,7 @@ function useNewThreadState() {
           envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
-        applyStickyState(draftId);
+        seedDefaultModelSelection(draftId);
 
         await router.navigate({
           to: "/draft/$draftId",

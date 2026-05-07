@@ -29,16 +29,19 @@ import {
 } from "@t3tools/client-runtime";
 import {
   applyClaudePromptEffortPrefix,
+  createDefaultModelSelection,
   createModelSelection,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
+import { useQuery } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
+import { projectDetailsQueryOptions } from "~/lib/projectReactQuery";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
@@ -195,6 +198,7 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
+const EMPTY_ACTION_ENVIRONMENT: Record<string, string> = {};
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
@@ -792,10 +796,7 @@ export default function ChatView(props: ChatViewProps) {
         ? buildLocalDraftThread(
             threadId,
             draftThread,
-            fallbackDraftProject?.defaultModelSelection ?? {
-              instanceId: ProviderInstanceId.make("codex"),
-              model: DEFAULT_MODEL,
-            },
+            fallbackDraftProject?.defaultModelSelection ?? createDefaultModelSelection(),
             localDraftError,
           )
         : undefined,
@@ -1653,6 +1654,16 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
+  const activeProjectDetails = useQuery(
+    projectDetailsQueryOptions({
+      environmentId: activeProject?.environmentId ?? null,
+      projectId: activeProject?.id ?? null,
+      enabled: activeProject !== null,
+      staleTime: 10_000,
+    }),
+  );
+  const activeProjectActionEnvironment =
+    activeProjectDetails.data?.settings.actionEnvironment ?? EMPTY_ACTION_ENVIRONMENT;
   const activeTerminalLaunchContext =
     terminalLaunchContext?.threadId === activeThreadId
       ? terminalLaunchContext
@@ -1903,7 +1914,10 @@ export default function ChatView(props: ChatViewProps) {
           cwd: activeProject.cwd,
         },
         worktreePath: targetWorktreePath,
-        ...(options?.env ? { extraEnv: options.env } : {}),
+        extraEnv: {
+          ...activeProjectActionEnvironment,
+          ...options?.env,
+        },
       });
       const openTerminalInput: TerminalOpenInput = shouldCreateNewTerminal
         ? {
@@ -1942,6 +1956,7 @@ export default function ChatView(props: ChatViewProps) {
       activeThread,
       activeThreadId,
       activeThreadRef,
+      activeProjectActionEnvironment,
       gitCwd,
       setTerminalOpen,
       setThreadError,

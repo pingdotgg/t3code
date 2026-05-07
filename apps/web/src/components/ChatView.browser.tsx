@@ -203,7 +203,44 @@ function createMockEnvironmentApi(input: {
 }): EnvironmentApi {
   return {
     terminal: {} as EnvironmentApi["terminal"],
-    projects: {} as EnvironmentApi["projects"],
+    projects: {
+      getDetails: vi.fn(async () => ({
+        id: PROJECT_ID,
+        title: "Project",
+        workspaceRoot: "/repo/project",
+        repositoryIdentity: null,
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5",
+        },
+        scripts: [],
+        settings: {
+          remoteOverride: null,
+          actionEnvironment: {},
+        },
+        detected: {
+          gitRoot: "/repo/project",
+          branch: "main",
+          remotes: [],
+          primaryRemote: null,
+        },
+        effective: {
+          title: "Project",
+          remote: null,
+        },
+      })),
+      updateSettings: vi.fn(async () => ({
+        remoteOverride: null,
+        actionEnvironment: {},
+      })),
+      searchEntries: vi.fn(async () => ({
+        entries: [],
+        truncated: false,
+      })),
+      writeFile: vi.fn(async (input) => ({
+        relativePath: input.relativePath,
+      })),
+    },
     filesystem: {
       browse: input.browse,
     },

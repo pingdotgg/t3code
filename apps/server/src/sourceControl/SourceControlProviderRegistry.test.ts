@@ -12,6 +12,7 @@ import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
+import { parseRemoteHost } from "./RemoteOverride.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
@@ -100,6 +101,23 @@ it.effect("routes GitHub remotes to the GitHub provider", () =>
     assert.strictEqual(provider.kind, "github");
   }),
 );
+
+it.effect("marks automatically detected provider contexts", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@github.com:pingdotgg/t3code.git" }],
+    });
+
+    const handle = yield* registry.resolveHandle({ cwd: "/repo" });
+
+    assert.strictEqual(handle.contextSource, "detected");
+    assert.strictEqual(handle.context?.provider.kind, "github");
+  }),
+);
+
+it("returns null for URL hosts that parse as empty strings", () => {
+  assert.strictEqual(parseRemoteHost("file:///path/to/repo"), null);
+});
 
 it.effect("routes directly by provider kind for remote-first workflows", () =>
   Effect.gen(function* () {

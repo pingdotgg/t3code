@@ -1,22 +1,31 @@
-import { ArrowLeftIcon, ExternalLinkIcon, RefreshCwIcon, SaveIcon } from "lucide-react";
+import { ArrowLeftIcon, ExternalLinkIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect, useCanGoBack, useNavigate } from "@tanstack/react-router";
+import { createDefaultModelSelection, createModelSelection } from "@t3tools/shared/model";
 import type {
+  KeybindingCommand,
+  ModelSelection,
+  ProjectActionEnvironment,
   ProjectDetectedRemote,
   ProjectEffectiveRemote,
   ProjectRemoteOverride,
+  ProjectScript,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
+import { DEFAULT_MODEL } from "@t3tools/contracts";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { ensureEnvironmentApi } from "../environmentApi";
 import { cn, newCommandId } from "../lib/utils";
 import { readLocalApi } from "../localApi";
-import { selectProjectsAcrossEnvironments, useStore } from "../store";
+import {
+  selectProjectsAcrossEnvironments,
+  selectThreadsAcrossEnvironments,
+  useStore,
+} from "../store";
 import { Button } from "../components/ui/button";
-import { Input } from "../components/ui/input";
 import {
   Select,
   SelectItem,
@@ -27,9 +36,31 @@ import {
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
 import { Spinner } from "../components/ui/spinner";
 import { Switch } from "../components/ui/switch";
-import { SettingsPageContainer, SettingsSection } from "../components/settings/settingsLayout";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsSection,
+} from "../components/settings/settingsLayout";
 import { toastManager, stackedThreadToast } from "../components/ui/toast";
+import { DraftInput } from "../components/ui/draft-input";
 import { isElectron } from "../env";
+import { projectDetailsQueryOptions, projectQueryKeys } from "../lib/projectReactQuery";
+import { useServerKeybindings, useServerProviders } from "../rpc/serverState";
+import { usePrimaryEnvironmentId } from "../environments/primary";
+import { useSavedEnvironmentRuntimeStore } from "../environments/runtime";
+import ProjectScriptsControl, {
+  type NewProjectScriptInput,
+} from "../components/ProjectScriptsControl";
+import { commandForProjectScript, nextProjectScriptId } from "../projectScripts";
+import { decodeProjectScriptKeybindingRule } from "../lib/projectScriptKeybindings";
+import { useSettings } from "../hooks/useSettings";
+import {
+  getCustomModelOptionsByInstance,
+  resolveAppModelSelectionForInstance,
+} from "../modelSelection";
+import { deriveProviderInstanceEntries, sortProviderInstanceEntries } from "../providerInstances";
+import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
+import { TraitsPicker } from "../components/chat/TraitsPicker";
 
 const PROVIDER_LABELS: Record<SourceControlProviderKind, string> = {
   github: "GitHub",
@@ -39,8 +70,35 @@ const PROVIDER_LABELS: Record<SourceControlProviderKind, string> = {
   unknown: "Generic",
 };
 
-function projectDetailsQueryKey(environmentId: string | undefined, projectId: string) {
-  return ["project-details", environmentId ?? "missing", projectId] as const;
+const DEFAULT_PROJECT_MODEL_SELECTION = createDefaultModelSelection();
+
+const EMPTY_ACTION_ENVIRONMENT: ProjectActionEnvironment = {};
+const ACTION_ENVIRONMENT_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+interface RemoteOverrideDraft {
+  readonly enabled: boolean;
+  readonly provider: SourceControlProviderKind;
+  readonly remoteName: string;
+  readonly remoteUrl: string;
+  readonly webUrl: string;
+}
+
+function buildRemoteOverride(draft: RemoteOverrideDraft): ProjectRemoteOverride | null {
+  if (!draft.enabled) return null;
+  const remoteName = draft.remoteName.trim();
+  const remoteUrl = draft.remoteUrl.trim();
+  const webUrl = draft.webUrl.trim();
+  if (!remoteName || !remoteUrl) return null;
+  return {
+    provider: draft.provider,
+    remoteName,
+    remoteUrl,
+    ...(webUrl ? { webUrl } : {}),
+  };
+}
+
+function isValidActionEnvironmentKey(key: string): boolean {
+  return ACTION_ENVIRONMENT_KEY_PATTERN.test(key) && key.length <= 128;
 }
 
 function ProjectRouteView() {
@@ -49,23 +107,76 @@ function ProjectRouteView() {
   const canGoBack = useCanGoBack();
   const queryClient = useQueryClient();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const threads = useStore(useShallow(selectThreadsAcrossEnvironments));
   const project = projects.find((candidate) => candidate.id === projectId);
-  const queryKey = projectDetailsQueryKey(project?.environmentId, projectId);
+  const queryKey = projectQueryKeys.details(project?.environmentId ?? null, project?.id ?? null);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const primaryProviders = useServerProviders();
+  const keybindings = useServerKeybindings();
+  const primarySettings = useSettings();
+  const remoteRuntimeState = useSavedEnvironmentRuntimeStore((state) =>
+    project?.environmentId ? state.byId[project.environmentId] : null,
+  );
+  const settings = useMemo(
+    () =>
+      project?.environmentId && project.environmentId !== primaryEnvironmentId
+        ? {
+            ...primarySettings,
+            ...remoteRuntimeState?.serverConfig?.settings,
+          }
+        : primarySettings,
+    [
+      primaryEnvironmentId,
+      primarySettings,
+      project?.environmentId,
+      remoteRuntimeState?.serverConfig?.settings,
+    ],
+  );
+  const serverProviders =
+    project?.environmentId && project.environmentId !== primaryEnvironmentId
+      ? (remoteRuntimeState?.serverConfig?.providers ?? primaryProviders)
+      : primaryProviders;
+  const providerInstanceEntries = useMemo(
+    () => sortProviderInstanceEntries(deriveProviderInstanceEntries(serverProviders)),
+    [serverProviders],
+  );
+  const modelOptionsByInstance = useMemo(
+    () => getCustomModelOptionsByInstance(settings, serverProviders),
+    [serverProviders, settings],
+  );
+  const fallbackModelSelection = useMemo(() => {
+    const entry =
+      providerInstanceEntries.find((candidate) => candidate.enabled && candidate.isAvailable) ??
+      providerInstanceEntries[0] ??
+      null;
+    if (!entry) return DEFAULT_PROJECT_MODEL_SELECTION;
+    const model =
+      resolveAppModelSelectionForInstance(entry.instanceId, settings, serverProviders, null) ??
+      entry.models[0]?.slug ??
+      DEFAULT_MODEL;
+    return {
+      instanceId: entry.instanceId,
+      model,
+    } satisfies ModelSelection;
+  }, [providerInstanceEntries, serverProviders, settings]);
 
-  const projectDetails = useQuery({
-    queryKey,
-    enabled: project !== undefined,
-    queryFn: () =>
-      ensureEnvironmentApi(project!.environmentId).projects.getDetails({
-        projectId: project!.id,
-      }),
-  });
+  const projectDetails = useQuery(
+    projectDetailsQueryOptions({
+      environmentId: project?.environmentId ?? null,
+      projectId: project?.id ?? null,
+      enabled: project !== undefined,
+    }),
+  );
 
   const [title, setTitle] = useState("");
   const [overrideEnabled, setOverrideEnabled] = useState(false);
   const [provider, setProvider] = useState<SourceControlProviderKind>("gitlab");
+  const [remoteName, setRemoteName] = useState("");
   const [remoteUrl, setRemoteUrl] = useState("");
   const [webUrl, setWebUrl] = useState("");
+  const [defaultModelSelection, setDefaultModelSelection] = useState<ModelSelection | null>(null);
+  const [actionEnvironment, setActionEnvironment] =
+    useState<ProjectActionEnvironment>(EMPTY_ACTION_ENVIRONMENT);
 
   useEffect(() => {
     const details = projectDetails.data;
@@ -74,66 +185,130 @@ function ProjectRouteView() {
     setTitle(details.title);
     setOverrideEnabled(Boolean(override));
     setProvider(override?.provider ?? details.detected.primaryRemote?.provider?.kind ?? "gitlab");
+    setRemoteName(override?.remoteName ?? details.detected.primaryRemote?.name ?? "origin");
     setRemoteUrl(override?.remoteUrl ?? details.detected.primaryRemote?.url ?? "");
     setWebUrl(override?.webUrl ?? details.detected.primaryRemote?.provider?.baseUrl ?? "");
+    setDefaultModelSelection(details.defaultModelSelection);
+    setActionEnvironment(details.settings.actionEnvironment);
   }, [projectDetails.data]);
 
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      if (!project || !projectDetails.data) return;
+  const showProjectSettingsError = useCallback((title: string, error: unknown) => {
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title,
+        description: error instanceof Error ? error.message : "An error occurred.",
+      }),
+    );
+  }, []);
+
+  const invalidateProjectDetails = useCallback(
+    () => queryClient.invalidateQueries({ queryKey }),
+    [queryClient, queryKey],
+  );
+
+  const commitProjectMeta = useCallback(
+    async (patch: { title?: string; defaultModelSelection?: ModelSelection | null }) => {
+      if (!project) return;
       const api = ensureEnvironmentApi(project.environmentId);
-      const trimmedTitle = title.trim();
-      if (trimmedTitle.length === 0) {
-        throw new Error("Project name cannot be empty.");
-      }
-
-      const trimmedRemoteUrl = remoteUrl.trim();
-      const trimmedWebUrl = webUrl.trim();
-      if (overrideEnabled && trimmedRemoteUrl.length === 0) {
-        throw new Error("Remote URL is required when manual remote override is enabled.");
-      }
-
-      if (trimmedTitle !== projectDetails.data.title) {
+      try {
         await api.orchestration.dispatchCommand({
           type: "project.meta.update",
           commandId: newCommandId(),
           projectId: project.id,
-          title: trimmedTitle,
+          ...patch,
         });
+        await invalidateProjectDetails();
+      } catch (error) {
+        showProjectSettingsError("Failed to update project settings", error);
       }
+    },
+    [invalidateProjectDetails, project, showProjectSettingsError],
+  );
 
-      const remoteOverride: ProjectRemoteOverride | null = overrideEnabled
-        ? {
-            provider,
-            remoteUrl: trimmedRemoteUrl,
-            ...(trimmedWebUrl ? { webUrl: trimmedWebUrl } : {}),
-          }
-        : null;
+  const commitProjectSettings = useCallback(
+    async (patch: {
+      remoteOverride?: ProjectRemoteOverride | null;
+      actionEnvironment?: ProjectActionEnvironment;
+    }) => {
+      if (!project) return;
+      const api = ensureEnvironmentApi(project.environmentId);
+      try {
+        await api.projects.updateSettings({
+          projectId: project.id,
+          patch,
+        });
+        await invalidateProjectDetails();
+      } catch (error) {
+        showProjectSettingsError("Failed to update project settings", error);
+      }
+    },
+    [invalidateProjectDetails, project, showProjectSettingsError],
+  );
 
-      await api.projects.updateSettings({
-        projectId: project.id,
-        patch: {
-          remoteOverride,
-        },
-      });
+  const persistRemoteOverrideIfValid = useCallback(
+    (draft: RemoteOverrideDraft) => {
+      const nextRemoteOverride = buildRemoteOverride(draft);
+      if (draft.enabled && nextRemoteOverride === null) return;
+      void commitProjectSettings({ remoteOverride: nextRemoteOverride });
     },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey });
-      toastManager.add({
-        type: "success",
-        title: "Project settings saved",
-      });
+    [commitProjectSettings],
+  );
+
+  const commitTitle = useCallback(
+    (nextTitle: string) => {
+      const trimmed = nextTitle.trim();
+      if (!projectDetails.data) return;
+      if (trimmed.length === 0) {
+        setTitle(projectDetails.data.title);
+        showProjectSettingsError(
+          "Failed to update project settings",
+          new Error("Project name cannot be empty."),
+        );
+        return;
+      }
+      setTitle(trimmed);
+      if (trimmed !== projectDetails.data.title) {
+        void commitProjectMeta({ title: trimmed });
+      }
     },
-    onError: (error) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to save project settings",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
+    [commitProjectMeta, projectDetails.data, showProjectSettingsError],
+  );
+
+  const commitDefaultModelSelection = useCallback(
+    (nextSelection: ModelSelection | null) => {
+      setDefaultModelSelection(nextSelection);
+      if (
+        !isModelSelectionEqual(nextSelection, projectDetails.data?.defaultModelSelection ?? null)
+      ) {
+        void commitProjectMeta({ defaultModelSelection: nextSelection });
+      }
     },
-  });
+    [commitProjectMeta, projectDetails.data?.defaultModelSelection],
+  );
+
+  const commitActionEnvironment = useCallback(
+    (nextEnvironment: ProjectActionEnvironment) => {
+      setActionEnvironment(nextEnvironment);
+      const normalized = normalizeActionEnvironment(nextEnvironment);
+      const invalidKey = Object.keys(normalized).find((key) => !isValidActionEnvironmentKey(key));
+      if (invalidKey) {
+        showProjectSettingsError(
+          "Failed to update action environment",
+          new Error(`"${invalidKey}" is not a valid environment variable name.`),
+        );
+        return;
+      }
+      if (!isStringRecordEqual(normalized, projectDetails.data?.settings.actionEnvironment ?? {})) {
+        void commitProjectSettings({ actionEnvironment: normalized });
+      }
+    },
+    [
+      commitProjectSettings,
+      projectDetails.data?.settings.actionEnvironment,
+      showProjectSettingsError,
+    ],
+  );
 
   const navigateBackWithinApp = () => {
     if (canGoBack) {
@@ -143,21 +318,164 @@ function ProjectRouteView() {
     void navigate({ to: "/" });
   };
 
-  const effectiveRemote = projectDetails.data?.effective.remote ?? null;
-  const hasChanges = useMemo(() => {
-    const details = projectDetails.data;
-    if (!details) return false;
-    const override = details.settings.remoteOverride;
-    return (
-      title.trim() !== details.title ||
-      overrideEnabled !== Boolean(override) ||
-      (overrideEnabled &&
-        (provider !== (override?.provider ?? "gitlab") ||
-          remoteUrl.trim() !== (override?.remoteUrl ?? "") ||
-          webUrl.trim() !== (override?.webUrl ?? "")))
-    );
-  }, [overrideEnabled, projectDetails.data, provider, remoteUrl, title, webUrl]);
+  const projectThreadCount = useMemo(
+    () =>
+      project
+        ? threads.filter(
+            (thread) =>
+              thread.projectId === project.id && thread.environmentId === project.environmentId,
+          ).length
+        : 0,
+    [project, threads],
+  );
+  const persistProjectScripts = async (input: {
+    nextScripts: ProjectScript[];
+    keybinding?: string | null;
+    keybindingCommand: KeybindingCommand;
+  }) => {
+    if (!project) return;
+    const api = ensureEnvironmentApi(project.environmentId);
+    await api.orchestration.dispatchCommand({
+      type: "project.meta.update",
+      commandId: newCommandId(),
+      projectId: project.id,
+      scripts: input.nextScripts,
+    });
 
+    const keybindingRule = decodeProjectScriptKeybindingRule({
+      keybinding: input.keybinding,
+      command: input.keybindingCommand,
+    });
+    if (keybindingRule) {
+      const localApi = readLocalApi();
+      await localApi?.server.upsertKeybinding(keybindingRule);
+    }
+    await queryClient.invalidateQueries({ queryKey });
+  };
+
+  const saveProjectScript = async (input: NewProjectScriptInput) => {
+    const details = projectDetails.data;
+    if (!details) return;
+    const nextId = nextProjectScriptId(
+      input.name,
+      details.scripts.map((script) => script.id),
+    );
+    const nextScript: ProjectScript = {
+      id: nextId,
+      name: input.name,
+      command: input.command,
+      icon: input.icon,
+      runOnWorktreeCreate: input.runOnWorktreeCreate,
+    };
+    const nextScripts = input.runOnWorktreeCreate
+      ? [
+          ...details.scripts.map((script) =>
+            script.runOnWorktreeCreate
+              ? Object.assign({}, script, { runOnWorktreeCreate: false })
+              : script,
+          ),
+          nextScript,
+        ]
+      : [...details.scripts, nextScript];
+    await persistProjectScripts({
+      nextScripts,
+      keybinding: input.keybinding,
+      keybindingCommand: commandForProjectScript(nextId),
+    });
+  };
+
+  const updateProjectScript = async (scriptId: string, input: NewProjectScriptInput) => {
+    const details = projectDetails.data;
+    if (!details) return;
+    const existingScript = details.scripts.find((script) => script.id === scriptId);
+    if (!existingScript) {
+      throw new Error("Action not found.");
+    }
+    const updatedScript: ProjectScript = {
+      ...existingScript,
+      name: input.name,
+      command: input.command,
+      icon: input.icon,
+      runOnWorktreeCreate: input.runOnWorktreeCreate,
+    };
+    const nextScripts = details.scripts.map((script) =>
+      script.id === scriptId
+        ? updatedScript
+        : input.runOnWorktreeCreate
+          ? Object.assign({}, script, { runOnWorktreeCreate: false })
+          : script,
+    );
+    await persistProjectScripts({
+      nextScripts,
+      keybinding: input.keybinding,
+      keybindingCommand: commandForProjectScript(scriptId),
+    });
+  };
+
+  const deleteProjectScript = async (scriptId: string) => {
+    const details = projectDetails.data;
+    if (!details) return;
+    await persistProjectScripts({
+      nextScripts: details.scripts.filter((script) => script.id !== scriptId),
+      keybinding: null,
+      keybindingCommand: commandForProjectScript(scriptId),
+    });
+  };
+
+  const removeProjectMutation = useMutation({
+    mutationFn: async () => {
+      if (!project) {
+        throw new Error("Project no longer available.");
+      }
+      const willDeleteThreads = projectThreadCount > 0;
+      const message = [
+        willDeleteThreads
+          ? `Remove project "${project.name}" and delete its ${projectThreadCount} thread${
+              projectThreadCount === 1 ? "" : "s"
+            }?`
+          : `Remove project "${project.name}"?`,
+        `Path: ${project.cwd}`,
+        willDeleteThreads
+          ? "This permanently clears conversation history for every related thread."
+          : "This removes only this project entry.",
+        "This action cannot be undone.",
+      ].join("\n");
+      const confirmed = await readLocalApi()?.dialogs.confirm(message);
+      if (!confirmed) return false;
+
+      await ensureEnvironmentApi(project.environmentId).orchestration.dispatchCommand({
+        type: "project.delete",
+        commandId: newCommandId(),
+        projectId: project.id,
+        force: true,
+      });
+      return true;
+    },
+    onSuccess: (removed) => {
+      if (!removed) return;
+      toastManager.add({
+        type: "success",
+        title: "Project removed",
+      });
+      void navigate({ to: "/" });
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to remove project",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    },
+  });
+
+  const effectiveRemote = projectDetails.data?.effective.remote ?? null;
+  const displayedModelSelection = defaultModelSelection ?? fallbackModelSelection;
+  const displayedModelInstanceEntry =
+    providerInstanceEntries.find(
+      (entry) => entry.instanceId === displayedModelSelection.instanceId,
+    ) ?? null;
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
       <div className="flex min-h-0 flex-1 flex-col">
@@ -183,14 +501,6 @@ function ProjectRouteView() {
           >
             <RefreshCwIcon className="size-3.5" />
             Refresh
-          </Button>
-          <Button
-            size="sm"
-            disabled={!hasChanges || saveMutation.isPending || projectDetails.isLoading}
-            onClick={() => saveMutation.mutate()}
-          >
-            <SaveIcon className="size-3.5" />
-            Save
           </Button>
         </header>
 
@@ -225,11 +535,58 @@ function ProjectRouteView() {
                   <ProjectSettingRow
                     title="Name"
                     control={
-                      <Input
-                        className="max-w-md"
-                        value={title}
-                        onChange={(event) => setTitle(event.target.value)}
-                      />
+                      <DraftInput className="max-w-md" value={title} onCommit={commitTitle} />
+                    }
+                  />
+                  <ProjectSettingRow
+                    title="Default model"
+                    resetAction={
+                      projectDetails.data.defaultModelSelection !== null ? (
+                        <SettingResetButton
+                          label="project default model"
+                          onClick={() => commitDefaultModelSelection(null)}
+                        />
+                      ) : null
+                    }
+                    control={
+                      <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+                        <ProviderModelPicker
+                          activeInstanceId={displayedModelSelection.instanceId}
+                          model={displayedModelSelection.model}
+                          lockedProvider={null}
+                          instanceEntries={providerInstanceEntries}
+                          keybindings={keybindings}
+                          modelOptionsByInstance={modelOptionsByInstance}
+                          terminalOpen={false}
+                          triggerVariant="outline"
+                          triggerClassName="max-w-md"
+                          onInstanceModelChange={(instanceId, model) =>
+                            commitDefaultModelSelection(createModelSelection(instanceId, model))
+                          }
+                        />
+                        {displayedModelInstanceEntry ? (
+                          <TraitsPicker
+                            provider={displayedModelInstanceEntry.driverKind}
+                            models={displayedModelInstanceEntry.models}
+                            model={displayedModelSelection.model}
+                            prompt=""
+                            onPromptChange={() => {}}
+                            modelOptions={displayedModelSelection.options}
+                            allowPromptInjectedEffort={false}
+                            triggerVariant="outline"
+                            triggerClassName="max-w-md"
+                            onModelOptionsChange={(nextOptions) =>
+                              commitDefaultModelSelection(
+                                createModelSelection(
+                                  displayedModelSelection.instanceId,
+                                  displayedModelSelection.model,
+                                  nextOptions,
+                                ),
+                              )
+                            }
+                          />
+                        ) : null}
+                      </div>
                     }
                   />
                   <ProjectSettingRow
@@ -246,22 +603,51 @@ function ProjectRouteView() {
                 >
                   <ProjectSettingRow
                     title="Manual remote"
+                    resetAction={
+                      projectDetails.data.settings.remoteOverride !== null ? (
+                        <SettingResetButton
+                          label="manual remote"
+                          onClick={() => {
+                            setOverrideEnabled(false);
+                            void commitProjectSettings({ remoteOverride: null });
+                          }}
+                        />
+                      ) : null
+                    }
                     control={
                       <Switch
                         checked={overrideEnabled}
-                        onCheckedChange={(checked) => setOverrideEnabled(checked)}
+                        onCheckedChange={(checked) => {
+                          const enabled = Boolean(checked);
+                          setOverrideEnabled(enabled);
+                          persistRemoteOverrideIfValid({
+                            enabled,
+                            provider,
+                            remoteName,
+                            remoteUrl,
+                            webUrl,
+                          });
+                        }}
                       />
                     }
                   >
                     {overrideEnabled ? (
-                      <div className="grid gap-3 border-t border-border/60 pt-4 md:grid-cols-[12rem_minmax(0,1fr)]">
+                      <div className="grid gap-3 border-t border-border/60 pt-4 md:grid-cols-2">
                         <label className="grid gap-1.5 text-xs font-medium text-foreground">
                           Provider
                           <Select
                             value={provider}
-                            onValueChange={(value) =>
-                              setProvider(value as SourceControlProviderKind)
-                            }
+                            onValueChange={(value) => {
+                              const nextProvider = value as SourceControlProviderKind;
+                              setProvider(nextProvider);
+                              persistRemoteOverrideIfValid({
+                                enabled: overrideEnabled,
+                                provider: nextProvider,
+                                remoteName,
+                                remoteUrl,
+                                webUrl,
+                              });
+                            }}
                           >
                             <SelectTrigger aria-label="Source control provider">
                               <SelectValue>{PROVIDER_LABELS[provider]}</SelectValue>
@@ -276,20 +662,54 @@ function ProjectRouteView() {
                           </Select>
                         </label>
                         <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                          Remote URL
-                          <Input
-                            value={remoteUrl}
-                            placeholder="git@git.example.com:team/repo.git"
-                            onChange={(event) => setRemoteUrl(event.target.value)}
+                          Remote name
+                          <DraftInput
+                            value={remoteName}
+                            placeholder="origin"
+                            onCommit={(nextRemoteName) => {
+                              setRemoteName(nextRemoteName);
+                              persistRemoteOverrideIfValid({
+                                enabled: overrideEnabled,
+                                provider,
+                                remoteName: nextRemoteName,
+                                remoteUrl,
+                                webUrl,
+                              });
+                            }}
                           />
                         </label>
-                        <div className="hidden md:block" />
+                        <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                          Remote URL
+                          <DraftInput
+                            value={remoteUrl}
+                            placeholder="git@git.example.com:team/repo.git"
+                            onCommit={(nextRemoteUrl) => {
+                              setRemoteUrl(nextRemoteUrl);
+                              persistRemoteOverrideIfValid({
+                                enabled: overrideEnabled,
+                                provider,
+                                remoteName,
+                                remoteUrl: nextRemoteUrl,
+                                webUrl,
+                              });
+                            }}
+                          />
+                        </label>
                         <label className="grid gap-1.5 text-xs font-medium text-foreground">
                           Web URL
-                          <Input
+                          <DraftInput
                             value={webUrl}
                             placeholder="https://git.example.com/team/repo"
-                            onChange={(event) => setWebUrl(event.target.value)}
+                            onCommit={(nextWebUrl) => {
+                              setWebUrl(nextWebUrl);
+                              persistRemoteOverrideIfValid({
+                                enabled: overrideEnabled,
+                                provider,
+                                remoteName,
+                                remoteUrl,
+                                webUrl: nextWebUrl,
+                              });
+                            }}
                           />
                         </label>
                       </div>
@@ -311,6 +731,52 @@ function ProjectRouteView() {
                     value={projectDetails.data.detected.branch ?? "Detached or unavailable."}
                   />
                 </SettingsSection>
+
+                <SettingsSection title="Actions">
+                  <ProjectScriptsControl
+                    variant="settings"
+                    scripts={projectDetails.data.scripts}
+                    keybindings={keybindings}
+                    onAddScript={saveProjectScript}
+                    onUpdateScript={updateProjectScript}
+                    onDeleteScript={deleteProjectScript}
+                  />
+                </SettingsSection>
+
+                <SettingsSection title="Action environment">
+                  <ProjectSettingRow
+                    title="Variables"
+                    align="start"
+                    control={
+                      <ActionEnvironmentEditor
+                        environment={actionEnvironment}
+                        onChange={commitActionEnvironment}
+                      />
+                    }
+                  />
+                </SettingsSection>
+
+                <SettingsSection title="Danger zone">
+                  <ProjectSettingRow
+                    title="Remove project"
+                    description={
+                      projectThreadCount > 0
+                        ? "All project threads will be deleted."
+                        : "No threads will be deleted."
+                    }
+                    control={
+                      <Button
+                        variant="destructive-outline"
+                        size="sm"
+                        disabled={removeProjectMutation.isPending}
+                        onClick={() => removeProjectMutation.mutate()}
+                      >
+                        <Trash2Icon className="size-3.5" />
+                        Remove
+                      </Button>
+                    }
+                  />
+                </SettingsSection>
               </>
             ) : null}
           </SettingsPageContainer>
@@ -324,6 +790,28 @@ function formatGitRemoteValue(remote: ProjectDetectedRemote) {
   return remote.pushUrl && remote.pushUrl !== remote.url
     ? `${remote.url} (push: ${remote.pushUrl})`
     : remote.url;
+}
+
+function isModelSelectionEqual(left: ModelSelection | null, right: ModelSelection | null) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function normalizeActionEnvironment(
+  environment: Readonly<Record<string, string>>,
+): ProjectActionEnvironment {
+  return Object.fromEntries(
+    Object.entries(environment)
+      .map(([key, value]) => [key.trim(), value] as const)
+      .filter(([key]) => key.length > 0)
+      .toSorted(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
+function isStringRecordEqual(
+  left: Readonly<Record<string, string>>,
+  right: Readonly<Record<string, string>>,
+) {
+  return JSON.stringify(left) === JSON.stringify(normalizeActionEnvironment(right));
 }
 
 function ProjectPathLink({ path }: { path: string }) {
@@ -363,45 +851,155 @@ function ProjectSettingsLoading() {
 
 function ProjectSettingRow({
   title,
+  description,
   value,
   control,
+  resetAction,
   children,
+  align = "center",
 }: {
   title: string;
+  description?: ReactNode;
   value?: string;
   control?: ReactNode;
+  resetAction?: ReactNode;
   children?: ReactNode;
+  align?: "center" | "start";
 }) {
   const hasChildren = Boolean(children);
+  const alignStart = align === "start" || hasChildren || description !== undefined;
   return (
     <div className="border-t border-border/60 px-4 py-3.5 first:border-t-0 sm:px-5">
       <div
         className={cn(
           "flex min-w-0 flex-col gap-2 sm:flex-row sm:justify-between sm:gap-6",
-          hasChildren ? "sm:items-start" : "sm:items-center",
+          alignStart ? "sm:items-start" : "sm:items-center",
         )}
       >
         <div
           className={cn(
             "shrink-0 text-sm font-medium text-foreground sm:min-w-48",
-            hasChildren && "sm:pt-1.5",
+            alignStart && "sm:pt-1.5",
           )}
         >
-          {title}
+          <div className="flex min-h-5 items-center gap-1.5">
+            <div>{title}</div>
+            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+              {resetAction}
+            </span>
+          </div>
+          {description ? (
+            <p className="mt-2 max-w-sm text-xs font-normal leading-5 text-muted-foreground">
+              {description}
+            </p>
+          ) : null}
         </div>
-        <div className="min-w-0 sm:flex-1">
+        <div className={cn("min-w-0 sm:flex-1", alignStart && control && "sm:self-stretch")}>
           {control ? (
-            <div className="flex min-w-0 items-center sm:justify-end">{control}</div>
-          ) : (
+            <div className="flex min-w-0 w-full items-center sm:h-full sm:justify-end">
+              {control}
+            </div>
+          ) : value !== undefined ? (
             <div
               className="min-w-0 truncate text-sm text-muted-foreground sm:text-right"
               title={value}
             >
               {value}
             </div>
-          )}
+          ) : null}
           {children ? <div className="mt-4 min-w-0">{children}</div> : null}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ActionEnvironmentEditor({
+  environment,
+  onChange,
+}: {
+  environment: ProjectActionEnvironment;
+  onChange: (environment: ProjectActionEnvironment) => void;
+}) {
+  const entries = useMemo(
+    () => Object.entries(environment).toSorted(([left], [right]) => left.localeCompare(right)),
+    [environment],
+  );
+
+  const updateEntryKey = (previousKey: string, nextKey: string) => {
+    const next = { ...environment };
+    const value = next[previousKey] ?? "";
+    delete next[previousKey];
+    next[nextKey] = value;
+    onChange(next);
+  };
+
+  const updateEntryValue = (key: string, value: string) => {
+    onChange({ ...environment, [key]: value });
+  };
+
+  const removeEntry = (key: string) => {
+    const next = { ...environment };
+    delete next[key];
+    onChange(next);
+  };
+
+  const addEntry = () => {
+    let index = 1;
+    let key = "VARIABLE";
+    while (Object.prototype.hasOwnProperty.call(environment, key)) {
+      index += 1;
+      key = `VARIABLE_${index}`;
+    }
+    onChange({ ...environment, [key]: "" });
+  };
+
+  if (entries.length === 0) {
+    return (
+      <div className="flex w-full min-w-0 flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-end">
+        <p className="text-sm text-muted-foreground">No action variables configured.</p>
+        <Button type="button" variant="outline" size="sm" onClick={addEntry}>
+          <PlusIcon className="size-3.5" />
+          Add variable
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid w-full min-w-0 gap-3">
+      <div className="grid gap-2">
+        {entries.map(([key, value]) => (
+          <div key={key} className="grid gap-2 sm:grid-cols-[minmax(0,13rem)_minmax(0,1fr)_auto]">
+            <DraftInput
+              aria-label="Variable name"
+              value={key}
+              placeholder="DATABASE_URL"
+              onCommit={(nextKey) => updateEntryKey(key, nextKey)}
+            />
+            <DraftInput
+              aria-label={`${key} value`}
+              value={value}
+              placeholder="value"
+              onCommit={(nextValue) => updateEntryValue(key, nextValue)}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Remove ${key}`}
+              onClick={() => removeEntry(key)}
+            >
+              <Trash2Icon className="size-3.5" />
+            </Button>
+          </div>
+        ))}
+      </div>
+      <div className="flex justify-end">
+        <Button type="button" variant="outline" size="sm" onClick={addEntry}>
+          <PlusIcon className="size-3.5" />
+          Add variable
+        </Button>
       </div>
     </div>
   );

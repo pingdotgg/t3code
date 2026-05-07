@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
 } from "@t3tools/contracts";
@@ -193,5 +194,47 @@ describe("serverSettings helpers", () => {
       enabled: true,
       config: { homePath: "~/.codex" },
     });
+  });
+
+  it("replaces projectSettings maps so removed action environment keys stay removed", () => {
+    const projectId = ProjectId.make("project-1");
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettings: {
+        [projectId]: {
+          remoteOverride: null,
+          actionEnvironment: {
+            API_BASE_URL: "https://api.example.test",
+            DEBUG: "1",
+          },
+        },
+      },
+    };
+
+    expect(
+      applyServerSettingsPatch(current, {
+        projectSettings: {
+          [projectId]: {
+            remoteOverride: null,
+            actionEnvironment: {
+              API_BASE_URL: "https://api.example.test",
+            },
+          },
+        },
+      }).projectSettings[projectId]?.actionEnvironment,
+    ).toEqual({
+      API_BASE_URL: "https://api.example.test",
+    });
+
+    expect(
+      applyServerSettingsPatch(current, {
+        projectSettings: {
+          [projectId]: {
+            remoteOverride: null,
+            actionEnvironment: {},
+          },
+        },
+      }).projectSettings[projectId]?.actionEnvironment,
+    ).toEqual({});
   });
 });

@@ -15,7 +15,8 @@ export function parseRemoteHost(remoteUrl: string): string | null {
   }
 
   try {
-    return new URL(trimmed).hostname.toLowerCase();
+    const hostname = new URL(trimmed).hostname.toLowerCase();
+    return hostname || null;
   } catch {
     return null;
   }

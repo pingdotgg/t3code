@@ -3,6 +3,7 @@ import { projectScriptRuntimeEnv, setupProjectScript } from "@t3tools/shared/pro
 import { Effect, Layer, Option } from "effect";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { TerminalManager } from "../../terminal/Services/Manager.ts";
 import {
   type ProjectSetupScriptRunnerShape,
@@ -11,6 +12,7 @@ import {
 
 const makeProjectSetupScriptRunner = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const serverSettings = yield* ServerSettingsService;
   const terminalManager = yield* TerminalManager;
 
   const runForThread: ProjectSetupScriptRunnerShape["runForThread"] = (input) =>
@@ -41,9 +43,12 @@ const makeProjectSetupScriptRunner = Effect.gen(function* () {
 
       const terminalId = input.preferredTerminalId ?? `setup-${script.id}`;
       const cwd = input.worktreePath;
+      const settings = yield* serverSettings.getSettings;
+      const actionEnvironment = settings.projectSettings[project.id]?.actionEnvironment ?? {};
       const env = projectScriptRuntimeEnv({
         project: { cwd: project.workspaceRoot },
         worktreePath: input.worktreePath,
+        extraEnv: actionEnvironment,
       });
 
       yield* terminalManager.open({

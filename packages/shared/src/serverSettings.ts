@@ -76,13 +76,13 @@ export function applyServerSettingsPatch(
 ): ServerSettings {
   const selectionPatch = patch.textGenerationModelSelection;
   const next = deepMerge(current, patch);
-  const nextWithReplacements =
-    patch.providerInstances !== undefined
-      ? {
-          ...next,
-          providerInstances: patch.providerInstances,
-        }
-      : next;
+  const nextWithReplacements = {
+    ...next,
+    ...(patch.providerInstances !== undefined
+      ? { providerInstances: patch.providerInstances }
+      : {}),
+    ...(patch.projectSettings !== undefined ? { projectSettings: patch.projectSettings } : {}),
+  };
   if (!selectionPatch) {
     return nextWithReplacements;
   }

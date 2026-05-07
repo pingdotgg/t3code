@@ -790,12 +790,16 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     cwd: string,
     branch: string | null,
   ) {
-    const providerFromProjectSettings = yield* sourceControlProviders.resolveHandle({ cwd }).pipe(
-      Effect.map((handle) => handle.context?.provider ?? null),
-      Effect.catch(() => Effect.succeed(null)),
+    const providerHandle = yield* sourceControlProviders.resolveHandle({ cwd }).pipe(
+      Effect.catch(() =>
+        Effect.succeed({
+          context: null,
+          contextSource: null,
+        }),
+      ),
     );
-    if (providerFromProjectSettings) {
-      return providerFromProjectSettings;
+    if (providerHandle.contextSource === "override" && providerHandle.context) {
+      return providerHandle.context.provider;
     }
 
     const preferredRemoteName =
@@ -806,7 +810,14 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
       (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
       (yield* readConfigValueNullable(cwd, "remote.origin.url"));
 
-    return remoteUrl ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl) : null;
+    const providerFromBranchRemote = remoteUrl
+      ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl)
+      : null;
+    if (providerFromBranchRemote) {
+      return providerFromBranchRemote;
+    }
+
+    return providerHandle.context?.provider ?? null;
   });
 
   const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (

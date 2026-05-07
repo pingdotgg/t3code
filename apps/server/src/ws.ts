@@ -177,6 +177,7 @@ function pickPrimaryRemote(remotes: ReadonlyArray<ProjectDetectedRemote>) {
 
 const emptyProjectSettings: ProjectSettings = {
   remoteOverride: null,
+  actionEnvironment: {},
 };
 
 function toAuthAccessStreamEvent(
@@ -1037,6 +1038,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 title: project.title,
                 workspaceRoot: project.workspaceRoot,
                 repositoryIdentity: project.repositoryIdentity ?? null,
+                defaultModelSelection: project.defaultModelSelection,
+                scripts: project.scripts,
                 settings,
                 detected,
                 effective: {

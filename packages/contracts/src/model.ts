@@ -130,14 +130,21 @@ const CLAUDE_DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
 const CURSOR_DRIVER_KIND = ProviderDriverKind.make("cursor");
 const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 
-export const DEFAULT_MODEL = "gpt-5.4";
+export const DEFAULT_MODEL = "gpt-5.5";
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
+export const DEFAULT_CODEX_REASONING_EFFORT = "low";
 
 export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-sonnet-4-6",
   [CURSOR_DRIVER_KIND]: "auto",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
+};
+
+export const DEFAULT_MODEL_OPTIONS_BY_PROVIDER: Partial<
+  Record<ProviderDriverKind, ReadonlyArray<ProviderOptionSelection>>
+> = {
+  [CODEX_DRIVER_KIND]: [{ id: "reasoningEffort", value: DEFAULT_CODEX_REASONING_EFFORT }],
 };
 
 /** Per-provider text generation model defaults. */

@@ -1,12 +1,11 @@
 import {
   CommandId,
-  DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   type ModelSelection,
   ProjectId,
-  ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { createDefaultModelSelection } from "@t3tools/shared/model";
 import {
   Data,
   Deferred,
@@ -154,10 +153,8 @@ export const launchStartupHeartbeat = recordStartupHeartbeat.pipe(
   Effect.asVoid,
 );
 
-export const getAutoBootstrapDefaultModelSelection = (): ModelSelection => ({
-  instanceId: ProviderInstanceId.make("codex"),
-  model: DEFAULT_MODEL,
-});
+export const getAutoBootstrapDefaultModelSelection = (): ModelSelection =>
+  createDefaultModelSelection();
 
 export const resolveWelcomeBase = Effect.gen(function* () {
   const serverConfig = yield* ServerConfig;

@@ -355,6 +355,9 @@ interface ComposerDraftStoreState {
   setModelSelection: (
     threadRef: ComposerThreadTarget,
     modelSelection: ModelSelection | null | undefined,
+    options?: {
+      preserveExistingOptions?: boolean;
+    },
   ) => void;
   /** Replace the model options for one or more providers in the draft. */
   setModelOptions: (
@@ -2353,7 +2356,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return { draftsByThreadKey: nextDraftsByThreadKey };
           });
         },
-        setModelSelection: (threadRef, modelSelection) => {
+        setModelSelection: (threadRef, modelSelection, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
             return;
@@ -2368,7 +2371,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextMap = { ...base.modelSelectionByProvider };
             if (normalized) {
               const current = nextMap[normalized.instanceId];
-              if (normalized.options !== undefined) {
+              if (normalized.options !== undefined || options?.preserveExistingOptions === false) {
                 // Explicit options provided → use them
                 nextMap[normalized.instanceId] = normalized as ModelSelection;
               } else {
