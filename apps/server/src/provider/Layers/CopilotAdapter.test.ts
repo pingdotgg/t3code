@@ -9,10 +9,10 @@ import type {
   SessionEvent,
 } from "@github/copilot-sdk";
 import { it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Fiber, Layer, Stream } from "effect";
 import { beforeEach, vi } from "vitest";
 
-import { ThreadId } from "@t3tools/contracts";
+import { type ProviderRuntimeEvent, ThreadId } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -301,5 +301,52 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
 
         yield* adapter.stopSession(threadId);
       }),
+  );
+
+  it.effect("completes the turn as failed when Copilot send rejects", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-send-failure-turn-completed");
+
+      yield* adapter.startSession({
+        provider: "copilot",
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      runtimeMock.state.lastSession.send.mockRejectedValueOnce(new Error("Copilot send rejected"));
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const result = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "trigger send failure",
+          attachments: [],
+        })
+        .pipe(Effect.result);
+
+      yield* waitForSdkEventQueue();
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      assert.equal(result._tag, "Failure");
+      const aborted = runtimeEvents.find((event) => event.type === "turn.aborted");
+      const completed = runtimeEvents.find((event) => event.type === "turn.completed");
+
+      assert.equal(aborted?.type, "turn.aborted");
+      assert.equal(completed?.type, "turn.completed");
+      if (aborted?.type === "turn.aborted" && completed?.type === "turn.completed") {
+        assert.equal(String(completed.turnId), String(aborted.turnId));
+        assert.equal(completed.payload.state, "failed");
+        assert.equal(completed.payload.errorMessage, "Copilot send rejected");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
   );
 });
