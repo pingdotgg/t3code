@@ -317,15 +317,6 @@ export const discoverSkillsFromRoots = (
     catch: () => undefined,
   }).pipe(Effect.catch(() => Effect.succeed([])));
 
-async function commonProjectRoots(cwd: string): Promise<ReadonlyArray<SkillRoot>> {
-  const dirs = await projectSkillSearchDirs(cwd);
-  return dirs.map((dir) => ({ path: nodePath.join(dir, ".agents", "skills"), scope: "project" }));
-}
-
-function commonUserRoots(homeDir: string): ReadonlyArray<SkillRoot> {
-  return [{ path: nodePath.join(homeDir, ".agents", "skills"), scope: "user" }];
-}
-
 async function claudeProjectRoots(cwd: string): Promise<ReadonlyArray<SkillRoot>> {
   const dirs = await projectSkillSearchDirs(cwd);
   return dirs.map((dir) => ({ path: nodePath.join(dir, ".claude", "skills"), scope: "project" }));
@@ -380,20 +371,6 @@ export const discoverOpenCodeSkills = (
       return discoverSkillsFromRootsPromise({
         roots: [...(await openCodeProjectRoots(input.cwd)), ...openCodeUserRoots(homeDir)],
         invocationPrefix: "$",
-      });
-    },
-    catch: () => undefined,
-  }).pipe(Effect.catch(() => Effect.succeed([])));
-
-export const discoverCommonAgentSkills = (
-  input: SkillDiscoveryInput & { readonly invocationPrefix?: SkillInvocationPrefix },
-): Effect.Effect<ReadonlyArray<ServerProviderSkill>> =>
-  Effect.tryPromise({
-    try: async () => {
-      const homeDir = resolveHomeDir(input);
-      return discoverSkillsFromRootsPromise({
-        roots: [...(await commonProjectRoots(input.cwd)), ...commonUserRoots(homeDir)],
-        invocationPrefix: input.invocationPrefix ?? "$",
       });
     },
     catch: () => undefined,

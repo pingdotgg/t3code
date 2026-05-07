@@ -909,21 +909,16 @@ export const ChatComposer = memo(
           },
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
         const providerSkills = selectedProviderStatus?.skills ?? [];
-        const providerSkillNames = new Set(
-          providerSkills
-            .filter((skill) => skill.enabled)
-            .map((skill) => skill.name.trim().toLowerCase()),
-        );
-        const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? [])
-          .filter((command) => !providerSkillNames.has(command.name.trim().toLowerCase()))
-          .map((command) => ({
+        const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
+          (command) => ({
             id: `provider-slash-command:${selectedProvider}:${command.name}`,
             type: "provider-slash-command" as const,
             provider: selectedProvider,
             command,
             label: `/${command.name}`,
             description: command.description ?? command.input?.hint ?? "Run provider command",
-          }));
+          }),
+        );
         const query = composerTrigger.query.trim().toLowerCase();
         const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
         const skillItems = searchProviderSkills(providerSkills, composerTrigger.query).map(

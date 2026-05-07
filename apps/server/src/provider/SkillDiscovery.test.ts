@@ -8,7 +8,6 @@ import { afterEach, describe, it } from "vitest";
 
 import {
   discoverClaudeSkills,
-  discoverCommonAgentSkills,
   discoverSkillsFromRoots,
   mergeProviderSkills,
   parseSkillMarkdown,
@@ -112,26 +111,6 @@ describe("parseSkillMarkdown", () => {
 });
 
 describe("skill discovery", () => {
-  it("discovers project .agents skills while walking to the git root", async () => {
-    const repo = makeTempDir("t3-skills-repo-");
-    const home = makeTempDir("t3-skills-home-");
-    NodeFS.mkdirSync(NodePath.join(repo, ".git"));
-    const cwd = NodePath.join(repo, "packages", "web");
-    NodeFS.mkdirSync(cwd, { recursive: true });
-    writeSkill(
-      NodePath.join(repo, ".agents", "skills"),
-      "ui-review",
-      ["---", "name: ui-review", "description: Review UI changes.", "---"].join("\n"),
-    );
-
-    const skills = await Effect.runPromise(discoverCommonAgentSkills({ cwd, homeDir: home }));
-
-    assert.deepStrictEqual(
-      skills.map((skill) => [skill.name, skill.scope, skill.invocationPrefix]),
-      [["ui-review", "project", "$"]],
-    );
-  });
-
   it("discovers Claude project and user skills", async () => {
     const repo = makeTempDir("t3-claude-skills-repo-");
     const home = makeTempDir("t3-claude-skills-home-");
