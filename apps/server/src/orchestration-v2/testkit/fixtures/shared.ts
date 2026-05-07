@@ -133,6 +133,11 @@ export const CODEX_MODEL_SELECTION = {
   model: "gpt-5.4",
 } satisfies ModelSelection;
 
+export const CLAUDE_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-sonnet-4-6",
+} satisfies ModelSelection;
+
 export function createThreadCommand(input: {
   readonly commandId: CommandId;
   readonly ids: FixtureIds;
@@ -689,6 +694,23 @@ export function assertRuntimeRequestCounts(
       expected.resolved,
     );
   }
+}
+
+export function countReplayLabelsWithPrefix(
+  transcript: ProviderReplayTranscript,
+  prefix: string,
+): number {
+  return transcript.entries.filter(
+    (entry) => entry.type !== "runtime_exit" && (entry.label?.startsWith(prefix) ?? false),
+  ).length;
+}
+
+export function assertReplayLabelPrefixCount(
+  transcript: ProviderReplayTranscript,
+  prefix: string,
+  expected: number,
+) {
+  assert.equal(countReplayLabelsWithPrefix(transcript, prefix), expected);
 }
 
 export function assertRuntimeRequestKinds(

@@ -3,19 +3,18 @@ import type { ProviderReplayTranscript } from "@t3tools/contracts";
 import { Effect } from "effect";
 import { readFile, rm } from "node:fs/promises";
 
+import { classifyClaudeNativeTool } from "../Adapters/ClaudeAdapterV2.ts";
 import {
   ClaudeOrchestratorReplayHarness,
   recordClaudeAgentSdkReplayTranscript,
   replayClaudeAgentSdkTranscript,
 } from "../Adapters/ClaudeAdapterV2.testkit.ts";
-import { layer as idAllocatorLayer } from "../IdAllocator.ts";
-import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
-import { CLAUDE_REPLAY_FIXTURES } from "./fixtures/claude.ts";
-import { materializeFixtureInput, SIMPLE_PROMPT } from "./fixtures/shared.ts";
+import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
 import {
-  runOrchestratorV2ProviderReplayScenario,
-  type OrchestratorV2ProviderReplayScenario,
-} from "./ProviderReplayHarness.ts";
+  MULTI_TURN_FIRST_PROMPT,
+  MULTI_TURN_SECOND_PROMPT,
+  SIMPLE_PROMPT,
+} from "./fixtures/shared.ts";
 import { makeCheckpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 
@@ -24,26 +23,84 @@ async function readTranscript(file: URL): Promise<ProviderReplayTranscript> {
   return await Effect.runPromise(decodeProviderReplayNdjson(text));
 }
 
-function simpleClaudeFixture() {
-  const fixture = CLAUDE_REPLAY_FIXTURES.find((entry) => entry.name === "simple");
-  const provider = fixture?.providers[0];
+function claudeFixture(name: string) {
+  const fixture = ORCHESTRATOR_REPLAY_FIXTURES.find((entry) => entry.name === name);
+  const provider = fixture?.providers.find((entry) => entry.provider === "claudeAgent");
   if (fixture === undefined || provider === undefined) {
-    throw new Error("Missing simple/claudeAgent replay fixture.");
+    throw new Error(`Missing ${name}/claudeAgent replay fixture.`);
   }
   return { fixture, provider };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function claudeToolUseNamesFromTranscript(
+  transcript: ProviderReplayTranscript,
+): ReadonlyArray<string> {
+  return transcript.entries.flatMap((entry) => {
+    if (
+      entry.type !== "emit_inbound" ||
+      !isRecord(entry.frame) ||
+      entry.frame.type !== "assistant"
+    ) {
+      return [];
+    }
+
+    const message = entry.frame.message;
+    const content = isRecord(message) ? message.content : undefined;
+    if (!Array.isArray(content)) {
+      return [];
+    }
+
+    return content.flatMap((part) =>
+      isRecord(part) &&
+      typeof part.id === "string" &&
+      typeof part.name === "string" &&
+      "input" in part
+        ? [part.name]
+        : [],
+    );
+  });
+}
+
 describe("Claude Agent SDK replay fixtures", () => {
+  it("classifies every Claude fixture tool use through the native tool table", async () => {
+    const unknownToolNames = new Set<string>();
+    const seenToolNames = new Set<string>();
+
+    for (const fixture of ORCHESTRATOR_REPLAY_FIXTURES) {
+      for (const provider of fixture.providers) {
+        if (provider.provider !== "claudeAgent") {
+          continue;
+        }
+
+        const transcript = await readTranscript(provider.transcriptFile);
+        for (const toolName of claudeToolUseNamesFromTranscript(transcript)) {
+          seenToolNames.add(toolName);
+          const classification = classifyClaudeNativeTool(toolName);
+          if (!classification.known) {
+            unknownToolNames.add(`${fixture.name}:${toolName}`);
+          }
+        }
+      }
+    }
+
+    assert.isAtLeast(seenToolNames.size, 1, "expected Claude fixtures to contain tool uses");
+    assert.deepEqual([...unknownToolNames], []);
+  });
+
   it.skipIf(process.env.T3_RECORD_CLAUDE_AGENT_SDK_FIXTURE !== "1")(
     "records simple from real Claude Code query() output",
     async () => {
-      const { fixture, provider } = simpleClaudeFixture();
+      const { fixture, provider } = claudeFixture("simple");
 
       const checkpointWorkspace = await makeCheckpointWorkspace("claude-simple-record");
       try {
         const transcript = await recordClaudeAgentSdkReplayTranscript({
           scenario: fixture.name,
-          prompt: SIMPLE_PROMPT,
+          prompts: [SIMPLE_PROMPT],
           modelSelection: provider.modelSelection,
           cwd: checkpointWorkspace,
         });
@@ -58,7 +115,7 @@ describe("Claude Agent SDK replay fixtures", () => {
   );
 
   it("replays simple as typed Claude Agent SDK query messages", async () => {
-    const { provider } = simpleClaudeFixture();
+    const { provider } = claudeFixture("simple");
 
     const rawTranscript = await readTranscript(provider.transcriptFile);
     const transcript = await Effect.runPromise(
@@ -67,7 +124,7 @@ describe("Claude Agent SDK replay fixtures", () => {
 
     const messages = await replayClaudeAgentSdkTranscript({
       transcript,
-      prompt: SIMPLE_PROMPT,
+      prompts: [SIMPLE_PROMPT],
       modelSelection: provider.modelSelection,
     });
 
@@ -82,59 +139,27 @@ describe("Claude Agent SDK replay fixtures", () => {
     );
   });
 
-  for (const fixture of CLAUDE_REPLAY_FIXTURES) {
-    for (const provider of fixture.providers) {
-      it(`runs ${fixture.name}/${provider.provider} through OrchestratorV2 using deterministic replay`, async () => {
-        const rawTranscript = await readTranscript(provider.transcriptFile);
-        const transcript = await Effect.runPromise(
-          ClaudeOrchestratorReplayHarness.decodeTranscript(rawTranscript),
-        );
-        const checkpointWorkspace = await makeCheckpointWorkspace(`${fixture.name}-claude`);
-        const materialized = await Effect.runPromise(
-          materializeFixtureInput({
-            scenario: fixture.name,
-            fixtureInput: fixture.buildInput(),
-            modelSelection: provider.modelSelection,
-          }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime),
-        );
+  it("replays multi_turn as typed Claude Agent SDK query messages", async () => {
+    const { provider } = claudeFixture("multi_turn");
 
-        try {
-          const scenario = {
-            name: `${fixture.name}/${provider.provider}`,
-            transcript,
-            commands: materialized.commands,
-            steps: materialized.steps,
-            projectionThreadIds: materialized.projectionThreadIds,
-            runtimePolicyOverride: {
-              ...provider.runtimePolicyOverride,
-              cwd: checkpointWorkspace,
-            },
-          } satisfies OrchestratorV2ProviderReplayScenario<typeof transcript>;
+    const rawTranscript = await readTranscript(provider.transcriptFile);
+    const transcript = await Effect.runPromise(
+      ClaudeOrchestratorReplayHarness.decodeTranscript(rawTranscript),
+    );
 
-          const result = await Effect.runPromise(
-            runOrchestratorV2ProviderReplayScenario(scenario, ClaudeOrchestratorReplayHarness).pipe(
-              provideDeterministicTestRuntime,
-            ),
-          );
+    const messages = await replayClaudeAgentSdkTranscript({
+      transcript,
+      prompts: [MULTI_TURN_FIRST_PROMPT, MULTI_TURN_SECOND_PROMPT],
+      modelSelection: provider.modelSelection,
+    });
 
-          provider.assertOutput(result, transcript);
-          const projectionThreadId = materialized.projectionThreadIds[0];
-          if (projectionThreadId === undefined) {
-            throw new Error("Missing replay projection thread id.");
-          }
-          const projection = result.projections.get(projectionThreadId);
-          if (projection === undefined) {
-            throw new Error("Missing replay projection.");
-          }
-          const latestRun = projection.runs.at(-1);
-          if (latestRun === undefined) {
-            throw new Error("Missing replay run.");
-          }
-          assert.deepEqual(latestRun.modelSelection, provider.modelSelection);
-        } finally {
-          await rm(checkpointWorkspace, { recursive: true, force: true });
-        }
-      });
-    }
-  }
+    const assistantText = messages
+      .filter((message) => message.type === "assistant")
+      .flatMap((message) =>
+        message.message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])),
+      )
+      .join("\n");
+    assert.include(assistantText, "first fixture turn complete");
+    assert.include(assistantText, "second fixture turn complete");
+  });
 });
