@@ -22,28 +22,28 @@ There are three comparison points:
 2. Branch state before the `VcsProcess.run` internal rewrite
    - commit: `e7d715ab0`
    - measured in a temporary worktree using the same checked-in sequential harness
-3. Current branch state after replacing `VcsProcess.run` internals
+3. Current branch state after replacing `VcsProcess.run` internals and peeling checkpoint refs to commits
    - measured from this workspace using the same checked-in sequential harness
 
 ### Mean Latency
 
 | Metric                               | `upstream/main` | Branch before `VcsProcess.run` rewrite | Current branch after `VcsProcess.run` rewrite |
 | ------------------------------------ | --------------: | -------------------------------------: | --------------------------------------------: |
-| `vcsRegistry.resolve`                |        `0.04ms` |                               `0.07ms` |                                      `0.07ms` |
-| `driver.checkpoints.diffCheckpoints` |             n/a |                             `294.15ms` |                                     `76.51ms` |
-| `checkpointStore.diffCheckpoints`    |     `1179.81ms` |                             `384.44ms` |                                     `72.18ms` |
-| `checkpointDiffQuery.getTurnDiff`    |     `1649.32ms` |                             `383.86ms` |                                     `61.45ms` |
-| `parseTurnDiffFilesFromUnifiedDiff`  |       `12.42ms` |                              `12.40ms` |                                     `13.16ms` |
+| `vcsRegistry.resolve`                |        `0.04ms` |                               `0.07ms` |                                      `0.05ms` |
+| `driver.checkpoints.diffCheckpoints` |             n/a |                             `294.15ms` |                                     `51.47ms` |
+| `checkpointStore.diffCheckpoints`    |     `1179.81ms` |                             `384.44ms` |                                     `64.73ms` |
+| `checkpointDiffQuery.getTurnDiff`    |     `1649.32ms` |                             `383.86ms` |                                     `55.57ms` |
+| `parseTurnDiffFilesFromUnifiedDiff`  |       `12.42ms` |                              `12.40ms` |                                     `11.86ms` |
 
 ### Tail Latency (`p99`)
 
 | Metric                               | `upstream/main` | Branch before `VcsProcess.run` rewrite | Current branch after `VcsProcess.run` rewrite |
 | ------------------------------------ | --------------: | -------------------------------------: | --------------------------------------------: |
-| `vcsRegistry.resolve`                |        `0.08ms` |                               `0.84ms` |                                      `0.19ms` |
-| `driver.checkpoints.diffCheckpoints` |             n/a |                             `456.42ms` |                                    `244.11ms` |
-| `checkpointStore.diffCheckpoints`    |     `2262.90ms` |                            `1297.82ms` |                                    `374.22ms` |
-| `checkpointDiffQuery.getTurnDiff`    |     `2937.21ms` |                            `1169.40ms` |                                    `220.43ms` |
-| `parseTurnDiffFilesFromUnifiedDiff`  |       `16.43ms` |                              `21.03ms` |                                     `17.95ms` |
+| `vcsRegistry.resolve`                |        `0.08ms` |                               `0.84ms` |                                      `0.11ms` |
+| `driver.checkpoints.diffCheckpoints` |             n/a |                             `456.42ms` |                                    `205.32ms` |
+| `checkpointStore.diffCheckpoints`    |     `2262.90ms` |                            `1297.82ms` |                                    `193.02ms` |
+| `checkpointDiffQuery.getTurnDiff`    |     `2937.21ms` |                            `1169.40ms` |                                    `204.10ms` |
+| `parseTurnDiffFilesFromUnifiedDiff`  |       `16.43ms` |                              `21.03ms` |                                     `18.89ms` |
 
 ### Key Deltas
 
@@ -62,33 +62,33 @@ Compared with `upstream/main`:
 
 This is the number set to preserve if the `VcsProcess.run` rewrite is rejected but the earlier checkpoint/VCS restructuring is kept.
 
-#### Additional gains from replacing `VcsProcess.run` internals
+#### Additional gains from replacing `VcsProcess.run` internals and peeling checkpoint refs to commits
 
 Compared with the branch state before the rewrite:
 
 - `driver.checkpoints.diffCheckpoints`
-  - `294.15ms` -> `76.51ms`
-  - `74.0%` lower mean latency
-  - `3.84x` faster
+  - `294.15ms` -> `51.47ms`
+  - `82.5%` lower mean latency
+  - `5.71x` faster
 - `checkpointStore.diffCheckpoints`
-  - `384.44ms` -> `72.18ms`
-  - `81.2%` lower mean latency
-  - `5.33x` faster
+  - `384.44ms` -> `64.73ms`
+  - `83.2%` lower mean latency
+  - `5.94x` faster
 - `checkpointDiffQuery.getTurnDiff`
-  - `383.86ms` -> `61.45ms`
-  - `84.0%` lower mean latency
-  - `6.25x` faster
+  - `383.86ms` -> `55.57ms`
+  - `85.5%` lower mean latency
+  - `6.91x` faster
 
 Compared directly with `upstream/main`:
 
 - `checkpointStore.diffCheckpoints`
-  - `1179.81ms` -> `72.18ms`
-  - `93.9%` lower mean latency
-  - `16.34x` faster
+  - `1179.81ms` -> `64.73ms`
+  - `94.5%` lower mean latency
+  - `18.23x` faster
 - `checkpointDiffQuery.getTurnDiff`
-  - `1649.32ms` -> `61.45ms`
-  - `96.3%` lower mean latency
-  - `26.84x` faster
+  - `1649.32ms` -> `55.57ms`
+  - `96.6%` lower mean latency
+  - `29.68x` faster
 
 ### Notes
 

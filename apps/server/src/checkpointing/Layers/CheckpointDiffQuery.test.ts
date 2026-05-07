@@ -41,6 +41,104 @@ function makeThreadCheckpointContext(input: {
 }
 
 describe("CheckpointDiffQueryLive", () => {
+  it("uses the narrow full-thread context lookup for all-turns diffs", async () => {
+    const projectId = ProjectId.make("project-full-thread");
+    const threadId = ThreadId.make("thread-full-thread");
+    const toCheckpointRef = checkpointRefForThreadTurn(threadId, 4);
+    let getThreadCheckpointContextCalls = 0;
+    let getFullThreadDiffContextCalls = 0;
+    const diffCheckpointsCalls: Array<{
+      readonly fromCheckpointRef: CheckpointRef;
+      readonly toCheckpointRef: CheckpointRef;
+      readonly cwd: string;
+      readonly ignoreWhitespace: boolean;
+    }> = [];
+
+    const checkpointStore: CheckpointStoreShape = {
+      isGitRepository: () => Effect.succeed(true),
+      captureCheckpoint: () => Effect.void,
+      hasCheckpointRef: () => Effect.succeed(true),
+      restoreCheckpoint: () => Effect.succeed(true),
+      diffCheckpoints: ({ fromCheckpointRef, toCheckpointRef, cwd, ignoreWhitespace }) =>
+        Effect.sync(() => {
+          diffCheckpointsCalls.push({
+            fromCheckpointRef,
+            toCheckpointRef,
+            cwd,
+            ignoreWhitespace,
+          });
+          return "full thread diff patch";
+        }),
+      deleteCheckpointRefs: () => Effect.void,
+    };
+
+    const layer = CheckpointDiffQueryLive.pipe(
+      Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
+      Layer.provideMerge(
+        Layer.succeed(ProjectionSnapshotQuery, {
+          getCommandReadModel: () =>
+            Effect.die("CheckpointDiffQuery should not request the command read model"),
+          getSnapshot: () =>
+            Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
+          getShellSnapshot: () =>
+            Effect.die("CheckpointDiffQuery should not request the orchestration shell snapshot"),
+          getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
+          getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+          getProjectShellById: () => Effect.succeed(Option.none()),
+          getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+          getThreadCheckpointContext: () =>
+            Effect.sync(() => {
+              getThreadCheckpointContextCalls += 1;
+              return Option.none();
+            }),
+          getFullThreadDiffContext: () =>
+            Effect.sync(() => {
+              getFullThreadDiffContextCalls += 1;
+              return Option.some({
+                threadId,
+                projectId,
+                workspaceRoot: "/tmp/workspace",
+                worktreePath: "/tmp/worktree",
+                latestCheckpointTurnCount: 4,
+                toCheckpointRef,
+              });
+            }),
+          getThreadShellById: () => Effect.succeed(Option.none()),
+          getThreadDetailById: () => Effect.succeed(Option.none()),
+        }),
+      ),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery;
+        return yield* query.getFullThreadDiff({
+          threadId,
+          toTurnCount: 4,
+          ignoreWhitespace: true,
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(getThreadCheckpointContextCalls).toBe(0);
+    expect(getFullThreadDiffContextCalls).toBe(1);
+    expect(diffCheckpointsCalls).toEqual([
+      {
+        cwd: "/tmp/worktree",
+        fromCheckpointRef: checkpointRefForThreadTurn(threadId, 0),
+        toCheckpointRef,
+        ignoreWhitespace: true,
+      },
+    ]);
+    expect(result).toEqual({
+      threadId,
+      fromTurnCount: 0,
+      toTurnCount: 4,
+      diff: "full thread diff patch",
+    });
+  });
+
   it("computes diffs using canonical turn-0 checkpoint refs", async () => {
     const projectId = ProjectId.make("project-1");
     const threadId = ThreadId.make("thread-1");
