@@ -1,4 +1,4 @@
-import { CommandId, EventId, ProjectId } from "@t3tools/contracts";
+import { CommandId, EventId, ProjectId, type OrchestrationEvent } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { DateTime, Effect } from "effect";
 import { TestClock } from "effect/testing";
@@ -9,6 +9,7 @@ import { createEmptyReadModel, projectEvent } from "./projector.ts";
 const asCommandId = (value: string): CommandId => CommandId.make(value);
 const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
+type PlannedEvent = Omit<OrchestrationEvent, "sequence">;
 
 it.effect("uses the Effect clock for generated decider timestamps", () =>
   Effect.gen(function* () {
@@ -49,9 +50,14 @@ it.effect("uses the Effect clock for generated decider timestamps", () =>
       readModel,
     });
 
-    const event = Array.isArray(result) ? null : result;
-    if (event === null) {
-      assert.fail("Expected a single project.meta-updated event.");
+    const events: ReadonlyArray<PlannedEvent> = Array.isArray(result)
+      ? (result as ReadonlyArray<PlannedEvent>)
+      : [result as PlannedEvent];
+    assert.equal(events.length, 1);
+
+    const event = events[0];
+    if (event === undefined) {
+      assert.fail("Expected a project.meta-updated event.");
     }
 
     if (event.type !== "project.meta-updated") {
