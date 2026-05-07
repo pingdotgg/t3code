@@ -43,6 +43,10 @@ export const SUBAGENT_PROMPT =
   "Spawn 2 subagents, one to read package.json and one to read tsconfig.json";
 export const TURN_INTERRUPT_PROMPT =
   "Do not answer immediately. First run the local shell command `sleep 30`, then respond with exactly: interrupt fixture should not finish naturally.";
+export const TURN_INTERRUPT_MID_TOOL_PROMPT =
+  "Run this exact local command: `node -e \"console.log('interrupt fixture tool started'); setTimeout(() => {}, 30000)\"`. Do not answer until it completes, then respond exactly: interrupt fixture should not finish naturally.";
+export const TURN_INTERRUPT_RECOVERY_PROMPT =
+  "Respond with exactly: interrupt recovery fixture complete";
 export const MESSAGE_STEERING_STEER_PROMPT =
   "Actually, respond with exactly: steering fixture observed";
 export const THREAD_ROLLBACK_FIRST_PROMPT =
@@ -79,6 +83,7 @@ export type OrchestratorFixtureInputStep =
   | {
       readonly type: "interrupt";
       readonly targetRunIndex: number;
+      readonly waitForTurnItemType?: OrchestrationV2TurnItem["type"];
     }
   | {
       readonly type: "approve_next_runtime_request";
@@ -441,6 +446,14 @@ export function materializeFixtureInput(input: {
           }
           break;
         case "interrupt":
+          if (step.waitForTurnItemType !== undefined) {
+            steps.push({
+              type: "await_run_turn_item",
+              threadId: ids.threadId,
+              runId: runIdFor(step.targetRunIndex),
+              itemType: step.waitForTurnItemType,
+            });
+          }
           pushDispatch(
             {
               type: "run.interrupt",
