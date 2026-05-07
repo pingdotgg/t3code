@@ -14,7 +14,9 @@ import type { RuntimePolicyV2Override } from "../src/orchestration-v2/RuntimePol
 import { makeCheckpointWorkspace } from "../src/orchestration-v2/testkit/ReplayFixtureWorkspace.ts";
 import { CLAUDE_MODEL_SELECTION } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
 import {
+  MESSAGE_STEERING_INITIAL_PROMPT,
   MULTI_TURN_FIRST_PROMPT,
+  MESSAGE_STEERING_STEER_PROMPT,
   READ_ONLY_NEVER_POLICY,
   READ_ONLY_ON_REQUEST_POLICY,
   RESTRICTED_GRANULAR_POLICY,
@@ -44,6 +46,18 @@ const CLAUDE_RECORDINGS = {
     prompts: [MULTI_TURN_FIRST_PROMPT, MULTI_TURN_SECOND_PROMPT],
     defaultTranscriptFile: "fixtures/multi_turn_restart/claude_transcript.ndjson",
     queryMode: "restart",
+    enableTools: true,
+  },
+  queued_turn: {
+    prompts: [MULTI_TURN_FIRST_PROMPT, MULTI_TURN_SECOND_PROMPT],
+    defaultTranscriptFile: "fixtures/queued_turn/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
+  },
+  message_steering: {
+    prompts: [MESSAGE_STEERING_INITIAL_PROMPT, MESSAGE_STEERING_STEER_PROMPT],
+    defaultTranscriptFile: "fixtures/message_steering/claude_transcript.ndjson",
+    queryMode: "active_steering",
     enableTools: true,
   },
   tool_call_read_only: {
@@ -88,15 +102,24 @@ function readArgValue(name: string): string | undefined {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
-function selectedQueryMode(defaultMode: "streaming" | "restart"): "streaming" | "restart" {
+type ClaudeRecordingQueryMode = "streaming" | "restart" | "active_steering" | "interrupt_restart";
+
+function selectedQueryMode(defaultMode: ClaudeRecordingQueryMode): ClaudeRecordingQueryMode {
   const raw = readArgValue("--query-mode") ?? process.env.T3_CLAUDE_REPLAY_QUERY_MODE;
   if (raw === undefined) {
     return defaultMode;
   }
-  if (raw === "streaming" || raw === "restart") {
+  if (
+    raw === "streaming" ||
+    raw === "restart" ||
+    raw === "active_steering" ||
+    raw === "interrupt_restart"
+  ) {
     return raw;
   }
-  throw new Error(`Unsupported Claude replay query mode '${raw}'. Use 'streaming' or 'restart'.`);
+  throw new Error(
+    `Unsupported Claude replay query mode '${raw}'. Use 'streaming', 'restart', 'active_steering', or 'interrupt_restart'.`,
+  );
 }
 
 const scenario = readArgValue("--scenario") ?? process.env.T3_CLAUDE_REPLAY_SCENARIO ?? "simple";

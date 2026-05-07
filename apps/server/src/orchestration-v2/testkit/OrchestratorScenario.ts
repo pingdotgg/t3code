@@ -2,6 +2,7 @@ import type {
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2RuntimeRequest,
+  OrchestrationV2Run,
   OrchestrationV2ShellSnapshot,
   OrchestrationV2StoredEvent,
   OrchestrationV2ThreadProjection,
@@ -36,6 +37,11 @@ export type OrchestratorV2ScenarioStep =
   | {
       readonly type: "await_thread_idle";
       readonly threadId: ThreadId;
+    }
+  | {
+      readonly type: "await_run_steerable";
+      readonly threadId: ThreadId;
+      readonly runId: OrchestrationV2Run["id"];
     }
   | {
       readonly type: "respond_to_next_runtime_request";
@@ -208,6 +214,33 @@ export function runOrchestratorV2Scenario(
           return yield* waitForThreadIdle(threadId, attemptsRemaining - 1);
         });
 
+      const waitForRunSteerable = (
+        threadId: ThreadId,
+        runId: OrchestrationV2Run["id"],
+        attemptsRemaining = 1_000,
+      ): Effect.Effect<void, OrchestratorV2Error | OrchestratorV2ScenarioStepError, never> =>
+        Effect.gen(function* () {
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const run = projection.runs.find((candidate) => candidate.id === runId);
+          const providerTurn = projection.providerTurns.find(
+            (candidate) =>
+              run?.activeAttemptId !== null &&
+              candidate.runAttemptId === run?.activeAttemptId &&
+              candidate.status === "running",
+          );
+          if (run?.status === "running" && providerTurn !== undefined) {
+            return;
+          }
+          if (attemptsRemaining <= 0) {
+            return yield* new OrchestratorV2ScenarioStepError({
+              scenario: scenario.name,
+              step: `await_run_steerable:${runId}`,
+            });
+          }
+          yield* Effect.yieldNow;
+          return yield* waitForRunSteerable(threadId, runId, attemptsRemaining - 1);
+        });
+
       for (const step of scenarioSteps(scenario)) {
         switch (step.type) {
           case "dispatch": {
@@ -241,6 +274,9 @@ export function runOrchestratorV2Scenario(
             break;
           case "await_thread_idle":
             yield* waitForThreadIdle(step.threadId);
+            break;
+          case "await_run_steerable":
+            yield* waitForRunSteerable(step.threadId, step.runId);
             break;
           case "respond_to_next_runtime_request": {
             const request = yield* waitForPendingRuntimeRequest(step.threadId);
