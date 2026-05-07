@@ -36,12 +36,10 @@ import {
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
-import { useQuery } from "@tanstack/react-query";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
-import { projectDetailsQueryOptions } from "~/lib/projectReactQuery";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
@@ -1654,16 +1652,11 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
-  const activeProjectDetails = useQuery(
-    projectDetailsQueryOptions({
-      environmentId: activeProject?.environmentId ?? null,
-      projectId: activeProject?.id ?? null,
-      enabled: activeProject !== null,
-      staleTime: 10_000,
-    }),
-  );
   const activeProjectActionEnvironment =
-    activeProjectDetails.data?.settings.actionEnvironment ?? EMPTY_ACTION_ENVIRONMENT;
+    activeProject && serverConfig
+      ? (serverConfig.settings.projectSettings[activeProject.id]?.actionEnvironment ??
+        EMPTY_ACTION_ENVIRONMENT)
+      : EMPTY_ACTION_ENVIRONMENT;
   const activeTerminalLaunchContext =
     terminalLaunchContext?.threadId === activeThreadId
       ? terminalLaunchContext

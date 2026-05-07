@@ -29,7 +29,9 @@ function isEmptyComposerDraft(draft: ComposerThreadDraftState | null | undefined
     draft.prompt.trim().length === 0 &&
     draft.images.length === 0 &&
     draft.persistedAttachments.length === 0 &&
-    draft.terminalContexts.length === 0
+    draft.terminalContexts.length === 0 &&
+    Object.keys(draft.modelSelectionByProvider).length === 0 &&
+    draft.activeProvider === null
   );
 }
 
@@ -59,7 +61,6 @@ function useNewThreadState() {
         getComposerDraft,
         getDraftSession,
         getDraftThread,
-        applyStickyState,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
         setModelSelection,
@@ -85,7 +86,6 @@ function useNewThreadState() {
         setModelSelection(draftId, projectDefaultModelSelection, {
           preserveExistingOptions: false,
         });
-        applyStickyState(draftId);
       };
       const latestActiveDraftThread: DraftThreadState | null = currentRouteTarget
         ? currentRouteTarget.kind === "server"

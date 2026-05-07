@@ -15,7 +15,7 @@ import type {
 } from "@t3tools/contracts";
 import { DEFAULT_MODEL } from "@t3tools/contracts";
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { ensureEnvironmentApi } from "../environmentApi";
@@ -97,6 +97,18 @@ interface RemoteOverrideDraft {
   readonly remoteName: string;
   readonly remoteUrl: string;
   readonly webUrl: string;
+}
+
+interface ProjectSettingsDraft {
+  readonly projectKey: string;
+  readonly title?: string;
+  readonly overrideEnabled?: boolean;
+  readonly provider?: SourceControlProviderKind;
+  readonly remoteName?: string;
+  readonly remoteUrl?: string;
+  readonly webUrl?: string;
+  readonly defaultModelSelection?: ModelSelection | null;
+  readonly actionEnvironment?: ProjectActionEnvironment;
 }
 
 function buildRemoteOverride(draft: RemoteOverrideDraft): ProjectRemoteOverride | null {
@@ -206,29 +218,49 @@ function ProjectRouteView() {
     }),
   );
 
-  const [title, setTitle] = useState("");
-  const [overrideEnabled, setOverrideEnabled] = useState(false);
-  const [provider, setProvider] = useState<SourceControlProviderKind>("gitlab");
-  const [remoteName, setRemoteName] = useState("");
-  const [remoteUrl, setRemoteUrl] = useState("");
-  const [webUrl, setWebUrl] = useState("");
-  const [defaultModelSelection, setDefaultModelSelection] = useState<ModelSelection | null>(null);
-  const [actionEnvironment, setActionEnvironment] =
-    useState<ProjectActionEnvironment>(EMPTY_ACTION_ENVIRONMENT);
-
-  useEffect(() => {
-    const details = projectDetails.data;
-    if (!details) return;
-    const override = details.settings.remoteOverride;
-    setTitle(details.title);
-    setOverrideEnabled(Boolean(override));
-    setProvider(override?.provider ?? details.detected.primaryRemote?.provider?.kind ?? "gitlab");
-    setRemoteName(override?.remoteName ?? details.detected.primaryRemote?.name ?? "origin");
-    setRemoteUrl(override?.remoteUrl ?? details.detected.primaryRemote?.url ?? "");
-    setWebUrl(override?.webUrl ?? details.detected.primaryRemote?.provider?.baseUrl ?? "");
-    setDefaultModelSelection(details.defaultModelSelection);
-    setActionEnvironment(details.settings.actionEnvironment);
-  }, [projectDetails.data]);
+  const [draft, setDraft] = useState<ProjectSettingsDraft | null>(null);
+  const details = projectDetails.data;
+  const projectDraftKey = project && details ? `${project.environmentId}:${details.id}` : null;
+  const currentDraft = draft?.projectKey === projectDraftKey ? draft : null;
+  const override = details?.settings.remoteOverride ?? null;
+  const title = currentDraft?.title ?? details?.title ?? "";
+  const overrideEnabled = currentDraft?.overrideEnabled ?? Boolean(override);
+  const provider =
+    currentDraft?.provider ??
+    override?.provider ??
+    details?.detected.primaryRemote?.provider?.kind ??
+    "gitlab";
+  const remoteName =
+    currentDraft?.remoteName ??
+    override?.remoteName ??
+    details?.detected.primaryRemote?.name ??
+    "origin";
+  const remoteUrl =
+    currentDraft?.remoteUrl ?? override?.remoteUrl ?? details?.detected.primaryRemote?.url ?? "";
+  const webUrl =
+    currentDraft?.webUrl ??
+    override?.webUrl ??
+    details?.detected.primaryRemote?.provider?.baseUrl ??
+    "";
+  const defaultModelSelection =
+    currentDraft && "defaultModelSelection" in currentDraft
+      ? currentDraft.defaultModelSelection
+      : (details?.defaultModelSelection ?? null);
+  const actionEnvironment =
+    currentDraft?.actionEnvironment ??
+    details?.settings.actionEnvironment ??
+    EMPTY_ACTION_ENVIRONMENT;
+  const stageDraft = useCallback(
+    (patch: Partial<Omit<ProjectSettingsDraft, "projectKey">>) => {
+      if (!projectDraftKey) return;
+      setDraft((current) => ({
+        projectKey: projectDraftKey,
+        ...(current?.projectKey === projectDraftKey ? current : {}),
+        ...patch,
+      }));
+    },
+    [projectDraftKey],
+  );
 
   const showProjectSettingsError = useCallback((title: string, error: unknown) => {
     toastManager.add(
@@ -244,6 +276,7 @@ function ProjectRouteView() {
     () => queryClient.invalidateQueries({ queryKey }),
     [queryClient, queryKey],
   );
+  const settingsCommitQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const commitProjectMeta = useCallback(
     async (patch: { title?: string; defaultModelSelection?: ModelSelection | null }) => {
@@ -265,21 +298,27 @@ function ProjectRouteView() {
   );
 
   const commitProjectSettings = useCallback(
-    async (patch: {
+    (patch: {
       remoteOverride?: ProjectRemoteOverride | null;
       actionEnvironment?: ProjectActionEnvironment;
     }) => {
-      if (!project) return;
-      const api = ensureEnvironmentApi(project.environmentId);
-      try {
-        await api.projects.updateSettings({
-          projectId: project.id,
-          patch,
+      const nextCommit = settingsCommitQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          if (!project) return;
+          const api = ensureEnvironmentApi(project.environmentId);
+          try {
+            await api.projects.updateSettings({
+              projectId: project.id,
+              patch,
+            });
+            await invalidateProjectDetails();
+          } catch (error) {
+            showProjectSettingsError("Failed to update project settings", error);
+          }
         });
-        await invalidateProjectDetails();
-      } catch (error) {
-        showProjectSettingsError("Failed to update project settings", error);
-      }
+      settingsCommitQueueRef.current = nextCommit.catch(() => undefined);
+      return nextCommit;
     },
     [invalidateProjectDetails, project, showProjectSettingsError],
   );
@@ -298,36 +337,36 @@ function ProjectRouteView() {
       const trimmed = nextTitle.trim();
       if (!projectDetails.data) return;
       if (trimmed.length === 0) {
-        setTitle(projectDetails.data.title);
+        stageDraft({ title: projectDetails.data.title });
         showProjectSettingsError(
           "Failed to update project settings",
           new Error("Project name cannot be empty."),
         );
         return;
       }
-      setTitle(trimmed);
+      stageDraft({ title: trimmed });
       if (trimmed !== projectDetails.data.title) {
         void commitProjectMeta({ title: trimmed });
       }
     },
-    [commitProjectMeta, projectDetails.data, showProjectSettingsError],
+    [commitProjectMeta, projectDetails.data, showProjectSettingsError, stageDraft],
   );
 
   const commitDefaultModelSelection = useCallback(
     (nextSelection: ModelSelection | null) => {
-      setDefaultModelSelection(nextSelection);
+      stageDraft({ defaultModelSelection: nextSelection });
       if (
         !isModelSelectionEqual(nextSelection, projectDetails.data?.defaultModelSelection ?? null)
       ) {
         void commitProjectMeta({ defaultModelSelection: nextSelection });
       }
     },
-    [commitProjectMeta, projectDetails.data?.defaultModelSelection],
+    [commitProjectMeta, projectDetails.data?.defaultModelSelection, stageDraft],
   );
 
   const commitActionEnvironment = useCallback(
     (nextEnvironment: ProjectActionEnvironment) => {
-      setActionEnvironment(nextEnvironment);
+      stageDraft({ actionEnvironment: nextEnvironment });
       let normalized: ProjectActionEnvironment;
       try {
         normalized = normalizeActionEnvironment(nextEnvironment);
@@ -354,6 +393,7 @@ function ProjectRouteView() {
       commitProjectSettings,
       projectDetails.data?.settings.actionEnvironment,
       showProjectSettingsError,
+      stageDraft,
     ],
   );
 
@@ -656,7 +696,7 @@ function ProjectRouteView() {
                         <SettingResetButton
                           label="custom remote"
                           onClick={() => {
-                            setOverrideEnabled(false);
+                            stageDraft({ overrideEnabled: false });
                             void commitProjectSettings({ remoteOverride: null });
                           }}
                         />
@@ -679,7 +719,7 @@ function ProjectRouteView() {
                               aria-label="Use custom remote"
                               onCheckedChange={(checked) => {
                                 const enabled = Boolean(checked);
-                                setOverrideEnabled(enabled);
+                                stageDraft({ overrideEnabled: enabled });
                                 persistRemoteOverrideIfValid({
                                   enabled,
                                   provider,
@@ -699,7 +739,7 @@ function ProjectRouteView() {
                                 value={provider}
                                 onValueChange={(value) => {
                                   const nextProvider = value as SourceControlProviderKind;
-                                  setProvider(nextProvider);
+                                  stageDraft({ provider: nextProvider });
                                   persistRemoteOverrideIfValid({
                                     enabled: overrideEnabled,
                                     provider: nextProvider,
@@ -727,7 +767,7 @@ function ProjectRouteView() {
                                 value={remoteName}
                                 placeholder="origin"
                                 onCommit={(nextRemoteName) => {
-                                  setRemoteName(nextRemoteName);
+                                  stageDraft({ remoteName: nextRemoteName });
                                   persistRemoteOverrideIfValid({
                                     enabled: overrideEnabled,
                                     provider,
@@ -744,7 +784,7 @@ function ProjectRouteView() {
                                 value={remoteUrl}
                                 placeholder="git@git.example.com:team/repo.git"
                                 onCommit={(nextRemoteUrl) => {
-                                  setRemoteUrl(nextRemoteUrl);
+                                  stageDraft({ remoteUrl: nextRemoteUrl });
                                   persistRemoteOverrideIfValid({
                                     enabled: overrideEnabled,
                                     provider,
@@ -761,7 +801,7 @@ function ProjectRouteView() {
                                 value={webUrl}
                                 placeholder="https://git.example.com/team/repo"
                                 onCommit={(nextWebUrl) => {
-                                  setWebUrl(nextWebUrl);
+                                  stageDraft({ webUrl: nextWebUrl });
                                   persistRemoteOverrideIfValid({
                                     enabled: overrideEnabled,
                                     provider,
@@ -1023,6 +1063,21 @@ function ActionEnvironmentEditor({
   );
 
   const updateEntryKey = (previousKey: string, nextKey: string) => {
+    const trimmedNextKey = nextKey.trim();
+    const duplicateKey = Object.keys(environment).find(
+      (key) => key !== previousKey && key.trim() === trimmedNextKey,
+    );
+    if (trimmedNextKey.length > 0 && duplicateKey) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to update action environment",
+          description: `"${trimmedNextKey}" is already configured.`,
+        }),
+      );
+      return;
+    }
+
     const next = { ...environment };
     const value = next[previousKey] ?? "";
     delete next[previousKey];
