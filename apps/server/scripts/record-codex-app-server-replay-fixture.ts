@@ -8,6 +8,7 @@ import * as CodexClient from "effect-codex-app-server/client";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 
 import {
+  MESSAGE_STEERING_INITIAL_PROMPT,
   MESSAGE_STEERING_STEER_PROMPT,
   MULTI_TURN_FIRST_PROMPT,
   MULTI_TURN_SECOND_PROMPT,
@@ -491,20 +492,12 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
         {
           name: "immediate-steer",
           description: "Start a turn, then immediately steer the active root turn.",
-          turnDefaults: {
-            approvalPolicy: "never",
-            sandboxPolicy: workspaceWriteSandbox(),
-          },
           steps: [
             {
               type: "steeredTurn",
               label: "steered",
-              prompt: TOOL_CALL_WRITE_PROMPT,
+              prompt: MESSAGE_STEERING_INITIAL_PROMPT,
               steer: MESSAGE_STEERING_STEER_PROMPT,
-              turnOverrides: {
-                approvalPolicy: "on-request",
-                sandboxPolicy: readOnlyFullAccessSandbox(),
-              },
             },
           ],
         },
