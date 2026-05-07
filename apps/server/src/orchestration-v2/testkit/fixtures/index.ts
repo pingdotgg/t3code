@@ -18,6 +18,8 @@ import { assertThreadRollbackOutput } from "./thread_rollback/codex_output.ts";
 import { threadRollbackInput } from "./thread_rollback/input.ts";
 import { assertTodoListOutput } from "./todo_list/codex_output.ts";
 import { todoListInput } from "./todo_list/input.ts";
+import { assertToolCallReadOnlyClaudeOutput } from "./tool_call_read_only/claude_output.ts";
+import { toolCallReadOnlyInput } from "./tool_call_read_only/input.ts";
 import { assertToolCallReadOnlyOnRequestClaudeOutput } from "./tool_call_read_only_on_request/claude_output.ts";
 import { assertToolCallReadOnlyOnRequestOutput } from "./tool_call_read_only_on_request/codex_output.ts";
 import { toolCallReadOnlyOnRequestInput } from "./tool_call_read_only_on_request/input.ts";
@@ -35,57 +37,12 @@ import { webSearchInput } from "./web_search/input.ts";
 import {
   CLAUDE_MODEL_SELECTION,
   CODEX_MODEL_SELECTION,
+  READ_ONLY_NEVER_POLICY,
+  READ_ONLY_ON_REQUEST_POLICY,
+  RESTRICTED_GRANULAR_POLICY,
   type OrchestratorReplayFixture,
+  WORKSPACE_NEVER_POLICY,
 } from "./shared.ts";
-
-const READ_ONLY_ON_REQUEST_POLICY = {
-  approvalPolicy: "on-request",
-  sandboxPolicy: {
-    type: "readOnly",
-    access: { type: "fullAccess" },
-    networkAccess: false,
-  },
-} as const;
-
-const READ_ONLY_NEVER_POLICY = {
-  approvalPolicy: "never",
-  sandboxPolicy: {
-    type: "readOnly",
-    access: { type: "fullAccess" },
-    networkAccess: false,
-  },
-} as const;
-
-const WORKSPACE_NEVER_POLICY = {
-  approvalPolicy: "never",
-  sandboxPolicy: {
-    type: "workspaceWrite",
-    writableRoots: [],
-    readOnlyAccess: { type: "fullAccess" },
-    networkAccess: false,
-  },
-} as const;
-
-const RESTRICTED_GRANULAR_POLICY = {
-  approvalPolicy: {
-    granular: {
-      mcp_elicitations: true,
-      request_permissions: true,
-      rules: true,
-      sandbox_approval: true,
-      skill_approval: true,
-    },
-  },
-  sandboxPolicy: {
-    type: "readOnly",
-    access: {
-      type: "restricted",
-      includePlatformDefaults: false,
-      readableRoots: [],
-    },
-    networkAccess: false,
-  },
-} as const;
 
 export const ORCHESTRATOR_REPLAY_FIXTURES = [
   {
@@ -103,6 +60,19 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         transcriptFile: new URL("./simple/claude_transcript.ndjson", import.meta.url),
         modelSelection: CLAUDE_MODEL_SELECTION,
         assertOutput: assertSimpleClaudeOutput,
+      },
+    ],
+  },
+  {
+    name: "tool_call_read_only",
+    buildInput: toolCallReadOnlyInput,
+    providers: [
+      {
+        provider: "claudeAgent",
+        transcriptFile: new URL("./tool_call_read_only/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
+        assertOutput: assertToolCallReadOnlyClaudeOutput,
       },
     ],
   },
@@ -335,12 +305,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
     ],
   },
 ] satisfies ReadonlyArray<OrchestratorReplayFixture>;
-
-// TODO(claude-v2/tool_call_read_only): add a Claude provider variant to `tool_call_read_only`
-// after read-only tool behavior has its own real Claude transcript. Use
-// `tool_call_read_only/input.ts` and compare against
-// `tool_call_read_only_on_request/claude_transcript.ndjson` for the callback frame shape and
-// `tool_call_read_only_on_request/codex_transcript.ndjson` for V2 projection expectations.
 
 // TODO(claude-v2/approvals-denied): add denied write fixtures after the live query runner records
 // Claude denial callback responses. Cross-reference
