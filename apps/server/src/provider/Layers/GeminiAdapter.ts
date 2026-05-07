@@ -1125,7 +1125,19 @@ export function makeGeminiAdapter(
         }
         context.stopped = true;
         if (context.turnState) {
-          context.interruptedTurnIds.add(context.turnState.turnId);
+          const interruptedTurnId = context.turnState.turnId;
+          context.interruptedTurnIds.add(interruptedTurnId);
+          yield* finishTurn(
+            context,
+            {
+              state: "interrupted",
+              stopReason: "cancelled",
+            },
+            {
+              persistSnapshot: false,
+              emitReadyState: false,
+            },
+          );
         }
         yield* settlePendingApprovalsAsCancelled(context.pendingApprovals);
         if (context.notificationFiber) {

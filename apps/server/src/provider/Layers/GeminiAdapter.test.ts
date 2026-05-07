@@ -584,6 +584,20 @@ describe("GeminiAdapterLive", () => {
           const events = yield* Ref.get(eventsRef);
           const exitIndex = events.findIndex((event) => event.type === "session.exited");
           expect(exitIndex).toBeGreaterThanOrEqual(0);
+          const turnCompletedEvents = events.filter(
+            (event): event is Extract<ProviderRuntimeEvent, { readonly type: "turn.completed" }> =>
+              event.type === "turn.completed" && event.turnId === started.turnId,
+          );
+          expect(turnCompletedEvents).toHaveLength(1);
+          expect(turnCompletedEvents[0]?.payload).toMatchObject({
+            state: "interrupted",
+            stopReason: "cancelled",
+          });
+          expect(
+            events.findIndex(
+              (event) => event.type === "turn.completed" && event.turnId === started.turnId,
+            ),
+          ).toBeLessThan(exitIndex);
           expect(
             events
               .slice(exitIndex + 1)
