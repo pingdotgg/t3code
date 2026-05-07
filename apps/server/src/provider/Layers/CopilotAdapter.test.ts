@@ -12,7 +12,7 @@ import { it } from "@effect/vitest";
 import { Effect, Fiber, Layer, Stream } from "effect";
 import { beforeEach, vi } from "vitest";
 
-import { type ProviderRuntimeEvent, ThreadId } from "@t3tools/contracts";
+import { type ProviderRuntimeEvent, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -20,6 +20,7 @@ import { CopilotAdapter } from "../Services/CopilotAdapter.ts";
 import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
+const COPILOT_DRIVER = ProviderDriverKind.make("copilot");
 const waitForSdkEventQueue = () =>
   Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 10)));
 
@@ -121,7 +122,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         const threadId = asThreadId("copilot-bootstrap-permission-denied");
 
         const session = yield* adapter.startSession({
-          provider: "copilot",
+          provider: COPILOT_DRIVER,
           threadId,
           cwd: process.cwd(),
           runtimeMode: "approval-required",
@@ -149,7 +150,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         const threadId = asThreadId("copilot-bootstrap-permission-approved");
 
         const session = yield* adapter.startSession({
-          provider: "copilot",
+          provider: COPILOT_DRIVER,
           threadId,
           cwd: process.cwd(),
           runtimeMode: "full-access",
@@ -185,7 +186,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         const threadId = asThreadId("copilot-bootstrap-user-input");
 
         const session = yield* adapter.startSession({
-          provider: "copilot",
+          provider: COPILOT_DRIVER,
           threadId,
           cwd: process.cwd(),
           runtimeMode: "approval-required",
@@ -204,7 +205,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         const threadId = asThreadId("copilot-task-complete-assistant-fallback");
 
         yield* adapter.startSession({
-          provider: "copilot",
+          provider: COPILOT_DRIVER,
           threadId,
           cwd: process.cwd(),
           runtimeMode: "approval-required",
@@ -309,7 +310,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
       const threadId = asThreadId("copilot-send-failure-turn-completed");
 
       yield* adapter.startSession({
-        provider: "copilot",
+        provider: COPILOT_DRIVER,
         threadId,
         cwd: process.cwd(),
         runtimeMode: "approval-required",
