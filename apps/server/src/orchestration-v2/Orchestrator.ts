@@ -1099,16 +1099,46 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
 
-      const currentAttempt = input.projection.attempts.find(
+      const waitForInterruptedProviderTurn = (
+        attemptsRemaining = 1_000,
+      ): Effect.Effect<OrchestrationV2ThreadProjection, OrchestratorV2Error> =>
+        Effect.gen(function* () {
+          const current = yield* projectionStore
+            .getThreadProjection(input.command.threadId)
+            .pipe(
+              Effect.mapError(
+                () => new OrchestratorProjectionError({ threadId: input.command.threadId }),
+              ),
+            );
+          const interruptedTurn = current.providerTurns.find(
+            (candidate) => candidate.id === providerTurn.id,
+          );
+          if (interruptedTurn !== undefined && interruptedTurn.status !== "running") {
+            return current;
+          }
+          if (attemptsRemaining <= 0) {
+            return yield* new OrchestratorDispatchError({
+              commandId: input.command.commandId,
+              commandType: input.command.type,
+              cause: `Provider turn ${providerTurn.id} did not terminalize before steering restart.`,
+            });
+          }
+          yield* Effect.yieldNow;
+          return yield* waitForInterruptedProviderTurn(attemptsRemaining - 1);
+        });
+
+      const postInterruptProjection = yield* waitForInterruptedProviderTurn();
+
+      const currentAttempt = postInterruptProjection.attempts.find(
         (candidate) => candidate.id === targetRun.activeAttemptId,
       );
-      const currentRootNode = input.projection.nodes.find(
+      const currentRootNode = postInterruptProjection.nodes.find(
         (candidate) => candidate.id === rootNodeId,
       );
       const attemptOrdinal =
         Math.max(
           0,
-          ...input.projection.attempts
+          ...postInterruptProjection.attempts
             .filter((candidate) => candidate.runId === targetRun.id)
             .map((candidate) => candidate.attemptOrdinal),
         ) + 1;
