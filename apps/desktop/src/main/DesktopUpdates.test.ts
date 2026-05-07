@@ -13,7 +13,7 @@ import { TestClock } from "effect/testing";
 
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
-import { layer as makeDesktopEnvironmentLayer } from "./DesktopEnvironment.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { DEFAULT_DESKTOP_SETTINGS } from "../desktopSettings.ts";
@@ -118,7 +118,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}) {
     }),
   });
 
-  const environmentLayer = makeDesktopEnvironmentLayer({
+  const environmentLayer = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     cwd: "/repo",
     platform: "darwin",

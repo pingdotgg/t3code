@@ -12,7 +12,7 @@ import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { MENU_ACTION_CHANNEL } from "../ipc/channels.ts";
+import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
@@ -343,7 +343,7 @@ const make = Effect.gen(function* () {
 
         const send = () => {
           if (targetWindow.isDestroyed()) return;
-          targetWindow.webContents.send(MENU_ACTION_CHANNEL, action);
+          targetWindow.webContents.send(IpcChannels.MENU_ACTION_CHANNEL, action);
           void runPromise(electronWindow.reveal(targetWindow));
         };
 

@@ -4,15 +4,11 @@ import {
   DesktopEnvironmentBootstrapSchema,
   DesktopThemeSchema,
   PickFolderOptionsSchema,
-  type DesktopAppBranding,
-  type DesktopEnvironmentBootstrap,
-  type DesktopTheme,
-  type PickFolderOptions,
 } from "@t3tools/contracts";
-import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import * as DesktopWindowIpcActions from "../../main/DesktopWindowIpcActions.ts";
 import {
   CONFIRM_CHANNEL,
   CONTEXT_MENU_CHANNEL,
@@ -34,27 +30,12 @@ const ContextMenuInput = Schema.Struct({
   position: Schema.optionalKey(ContextMenuPosition),
 });
 
-export interface DesktopWindowIpcActionsShape {
-  readonly getAppBranding: Effect.Effect<DesktopAppBranding | null>;
-  readonly getLocalEnvironmentBootstrap: Effect.Effect<DesktopEnvironmentBootstrap | null>;
-  readonly pickFolder: (options: PickFolderOptions | undefined) => Effect.Effect<string | null>;
-  readonly confirm: (message: string) => Effect.Effect<boolean>;
-  readonly setTheme: (theme: DesktopTheme) => Effect.Effect<void>;
-  readonly showContextMenu: (input: typeof ContextMenuInput.Type) => Effect.Effect<string | null>;
-  readonly openExternal: (url: string) => Effect.Effect<boolean>;
-}
-
-export class DesktopWindowIpcActions extends Context.Service<
-  DesktopWindowIpcActions,
-  DesktopWindowIpcActionsShape
->()("t3/desktop/Ipc/Window") {}
-
 export const getAppBranding = makeSyncIpcMethod({
   channel: GET_APP_BRANDING_CHANNEL,
   result: Schema.NullOr(DesktopAppBrandingSchema),
   handler: () =>
     Effect.gen(function* () {
-      const window = yield* DesktopWindowIpcActions;
+      const window = yield* DesktopWindowIpcActions.DesktopWindowIpcActions;
       return yield* window.getAppBranding;
     }),
 });
@@ -64,7 +45,7 @@ export const getLocalEnvironmentBootstrap = makeSyncIpcMethod({
   result: Schema.NullOr(DesktopEnvironmentBootstrapSchema),
   handler: () =>
     Effect.gen(function* () {
-      const window = yield* DesktopWindowIpcActions;
+      const window = yield* DesktopWindowIpcActions.DesktopWindowIpcActions;
       return yield* window.getLocalEnvironmentBootstrap;
     }),
 });
@@ -75,7 +56,7 @@ export const pickFolder = makeIpcMethod({
   result: Schema.NullOr(Schema.String),
   handler: (options) =>
     Effect.gen(function* () {
-      const window = yield* DesktopWindowIpcActions;
+      const window = yield* DesktopWindowIpcActions.DesktopWindowIpcActions;
       return yield* window.pickFolder(options);
     }),
 });
@@ -86,7 +67,7 @@ export const confirm = makeIpcMethod({
   result: Schema.Boolean,
   handler: (message) =>
     Effect.gen(function* () {
-      const window = yield* DesktopWindowIpcActions;
+      const window = yield* DesktopWindowIpcActions.DesktopWindowIpcActions;
       return yield* window.confirm(message);
     }),
 });
@@ -97,7 +78,7 @@ export const setTheme = makeIpcMethod({
   result: Schema.Void,
   handler: (theme) =>
     Effect.gen(function* () {
-      const window = yield* DesktopWindowIpcActions;
+      const window = yield* DesktopWindowIpcActions.DesktopWindowIpcActions;
       yield* window.setTheme(theme);
     }),
 });
@@ -108,7 +89,7 @@ export const showContextMenu = makeIpcMethod({
   result: Schema.NullOr(Schema.String),
   handler: (input) =>
     Effect.gen(function* () {
-      const window = yield* DesktopWindowIpcActions;
+      const window = yield* DesktopWindowIpcActions.DesktopWindowIpcActions;
       return yield* window.showContextMenu(input);
     }),
 });
@@ -119,7 +100,7 @@ export const openExternal = makeIpcMethod({
   result: Schema.Boolean,
   handler: (url) =>
     Effect.gen(function* () {
-      const window = yield* DesktopWindowIpcActions;
+      const window = yield* DesktopWindowIpcActions.DesktopWindowIpcActions;
       return yield* window.openExternal(url);
     }),
 });

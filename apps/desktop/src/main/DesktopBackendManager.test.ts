@@ -3,19 +3,17 @@ import {
   type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
-import {
-  Deferred,
-  Duration,
-  Effect,
-  FileSystem,
-  Layer,
-  Option,
-  Queue,
-  Schema,
-  Sink,
-  Scope,
-  Stream,
-} from "effect";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";

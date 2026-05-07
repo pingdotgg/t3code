@@ -11,11 +11,7 @@ import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
-import {
-  DesktopEnvironment,
-  layer as makeDesktopEnvironmentLayer,
-  type MakeDesktopEnvironmentInput,
-} from "./DesktopEnvironment.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const defaultEnvironmentInput = {
   dirname: "/repo/apps/desktop/dist-electron",
@@ -27,9 +23,9 @@ const defaultEnvironmentInput = {
   isPackaged: true,
   resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
   runningUnderArm64Translation: false,
-} satisfies MakeDesktopEnvironmentInput;
+} satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
-type TestEnvironmentInput = Partial<MakeDesktopEnvironmentInput> & {
+type TestEnvironmentInput = Partial<DesktopEnvironment.MakeDesktopEnvironmentInput> & {
   readonly env?: Record<string, string | undefined>;
 };
 
@@ -78,7 +74,7 @@ const makeAssetsLayer = (png: Option.Option<string>) =>
 
 const makeEnvironmentLayer = (overrides: TestEnvironmentInput = {}) => {
   const { env, ...environmentOverrides } = overrides;
-  return makeDesktopEnvironmentLayer({
+  return DesktopEnvironment.layer({
     ...defaultEnvironmentInput,
     ...environmentOverrides,
   }).pipe(
@@ -98,7 +94,10 @@ const withIdentity = <A, E, R>(
   effect: Effect.Effect<
     A,
     E,
-    R | DesktopAppIdentity.DesktopAppIdentity | DesktopEnvironment | FileSystem.FileSystem
+    | R
+    | DesktopAppIdentity.DesktopAppIdentity
+    | DesktopEnvironment.DesktopEnvironment
+    | FileSystem.FileSystem
   >,
   input: {
     readonly calls?: ElectronAppCalls;

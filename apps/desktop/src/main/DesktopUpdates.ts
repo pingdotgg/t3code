@@ -28,7 +28,7 @@ import * as DesktopSettingsState from "./DesktopSettingsState.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { type DesktopSettings, setDesktopUpdateChannelPreference } from "../desktopSettings.ts";
-import { UPDATE_STATE_CHANNEL } from "../ipc/channels.ts";
+import * as IpcChannels from "../ipc/channels.ts";
 import { doesVersionMatchDesktopUpdateChannel } from "../updateChannels.ts";
 import {
   createInitialDesktopUpdateState,
@@ -242,7 +242,7 @@ const make = Effect.gen(function* () {
   );
 
   const emitState = Ref.get(updateStateRef).pipe(
-    Effect.flatMap((state) => electronWindow.sendAll(UPDATE_STATE_CHANNEL, state)),
+    Effect.flatMap((state) => electronWindow.sendAll(IpcChannels.UPDATE_STATE_CHANNEL, state)),
   );
 
   const setState = (state: DesktopUpdateState): Effect.Effect<void> =>

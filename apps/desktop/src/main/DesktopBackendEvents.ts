@@ -5,11 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 
-import type {
-  BackendTimeoutError,
-  BackendProcessOutputStream,
-  DesktopBackendStartConfig,
-} from "./DesktopBackendManager.ts";
+import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import { DesktopBackendOutputLog } from "./DesktopLogging.ts";
 import * as DesktopRun from "./DesktopRun.ts";
 import * as DesktopState from "./DesktopState.ts";
@@ -19,12 +15,14 @@ export interface DesktopBackendEventsShape {
   readonly onStarting: Effect.Effect<void>;
   readonly onStarted: (input: {
     readonly pid: number;
-    readonly config: DesktopBackendStartConfig;
+    readonly config: DesktopBackendManager.DesktopBackendStartConfig;
   }) => Effect.Effect<void>;
   readonly onReady: Effect.Effect<void>;
-  readonly onReadinessFailure: (error: BackendTimeoutError) => Effect.Effect<void>;
+  readonly onReadinessFailure: (
+    error: DesktopBackendManager.BackendTimeoutError,
+  ) => Effect.Effect<void>;
   readonly onOutput: (
-    streamName: BackendProcessOutputStream,
+    streamName: DesktopBackendManager.BackendProcessOutputStream,
     chunk: Uint8Array,
   ) => Effect.Effect<void>;
   readonly onExit: (input: {

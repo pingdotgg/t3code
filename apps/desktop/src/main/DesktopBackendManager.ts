@@ -1,22 +1,20 @@
-import {
-  Context,
-  Data,
-  Duration,
-  Effect,
-  Exit,
-  Fiber,
-  FileSystem,
-  PlatformError,
-  Layer,
-  Option,
-  Ref,
-  Result,
-  Schema,
-  Scope,
-  Schedule,
-  Semaphore,
-  Stream,
-} from "effect";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import * as Result from "effect/Result";
+import * as PlatformError from "effect/PlatformError";
+import * as Data from "effect/Data";
+import * as Context from "effect/Context";
+import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
+import * as Schedule from "effect/Schedule";
+import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 

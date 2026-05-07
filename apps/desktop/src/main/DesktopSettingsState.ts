@@ -13,14 +13,18 @@ import {
   readDesktopSettingsEffect,
   writeDesktopSettingsEffect,
 } from "../desktopSettings.ts";
-import { DesktopEnvironment } from "./DesktopEnvironment.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 export type DesktopSettingsPersistenceError = PlatformError.PlatformError | Schema.SchemaError;
 
 export interface DesktopSettingsStateShape {
   readonly get: Effect.Effect<DesktopSettings>;
   readonly set: (settings: DesktopSettings) => Effect.Effect<void>;
-  readonly load: Effect.Effect<DesktopSettings, never, FileSystem.FileSystem | DesktopEnvironment>;
+  readonly load: Effect.Effect<
+    DesktopSettings,
+    never,
+    FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment
+  >;
   readonly update: (
     f: (settings: DesktopSettings) => DesktopSettings,
   ) => Effect.Effect<DesktopSettings>;
@@ -29,14 +33,14 @@ export interface DesktopSettingsStateShape {
   ) => Effect.Effect<
     DesktopSettings,
     DesktopSettingsPersistenceError,
-    FileSystem.FileSystem | Path.Path | DesktopEnvironment
+    FileSystem.FileSystem | Path.Path | DesktopEnvironment.DesktopEnvironment
   >;
   readonly modifyPersisted: <A>(
     f: (settings: DesktopSettings) => readonly [A, DesktopSettings],
   ) => Effect.Effect<
     A,
     DesktopSettingsPersistenceError,
-    FileSystem.FileSystem | Path.Path | DesktopEnvironment
+    FileSystem.FileSystem | Path.Path | DesktopEnvironment.DesktopEnvironment
   >;
 }
 
@@ -54,7 +58,7 @@ export const layer = Layer.effect(
       SynchronizedRef.updateAndGet(settingsRef, f);
     const modifyPersisted = <A>(f: (settings: DesktopSettings) => readonly [A, DesktopSettings]) =>
       Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
         return yield* SynchronizedRef.modifyEffect(settingsRef, (settings) => {
           const [result, nextSettings] = f(settings);
           if (nextSettings === settings) {
@@ -71,7 +75,7 @@ export const layer = Layer.effect(
       get: SynchronizedRef.get(settingsRef),
       set: (settings) => SynchronizedRef.set(settingsRef, settings),
       load: Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const settings = yield* readDesktopSettingsEffect(
           environment.desktopSettingsPath,
           environment.appVersion,

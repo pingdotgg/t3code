@@ -14,9 +14,6 @@ import type { RemoteT3RunnerOptions } from "@t3tools/ssh/tunnel";
 
 import type { DesktopSettings } from "./desktopSettings.ts";
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
-import { DesktopServerExposureIpcActions } from "./ipc/methods/serverExposure.ts";
-import { DesktopUpdateIpcActions } from "./ipc/methods/updates.ts";
-import * as DesktopWindowIpcActionsLive from "./ipc/methods/windowLive.ts";
 import * as ElectronApp from "./electron/ElectronApp.ts";
 import * as ElectronDialog from "./electron/ElectronDialog.ts";
 import * as ElectronMenu from "./electron/ElectronMenu.ts";
@@ -41,20 +38,19 @@ import * as DesktopRun from "./main/DesktopRun.ts";
 import * as DesktopServerExposure from "./main/DesktopServerExposure.ts";
 import * as DesktopSettingsState from "./main/DesktopSettingsState.ts";
 import * as DesktopShellEnvironment from "./main/DesktopShellEnvironment.ts";
-import * as DesktopShutdown from "./main/DesktopShutdown.ts";
 import * as DesktopSshEnvironment from "./main/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./main/DesktopSshPasswordPrompts.ts";
 import * as DesktopSshRemoteApi from "./main/DesktopSshRemoteApi.ts";
 import * as DesktopState from "./main/DesktopState.ts";
 import * as DesktopUpdates from "./main/DesktopUpdates.ts";
 import * as DesktopWindow from "./main/DesktopWindow.ts";
-
-const desktopConfigLayer = DesktopConfig.layer;
+import * as DesktopWindowIpcActions from "./main/DesktopWindowIpcActions.ts";
 
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const electronApp = yield* ElectronApp.ElectronApp;
-    const metadata = yield* electronApp.metadata;
+    const metadata = yield* Effect.service(ElectronApp.ElectronApp).pipe(
+      Effect.flatMap((app) => app.metadata),
+    );
     return DesktopEnvironment.layer({
       dirname: __dirname,
       cwd: process.cwd(),
@@ -63,13 +59,7 @@ const desktopEnvironmentLayer = Layer.unwrap(
       ...metadata,
     });
   }),
-).pipe(Layer.provide(Layer.mergeAll(EffectPath.layer, ElectronApp.layer, desktopConfigLayer)));
-
-const desktopLoggerLayer = DesktopLoggerLive.pipe(Layer.provide(NodeServices.layer));
-
-const desktopBackendOutputLogLayer = DesktopBackendOutputLogLive.pipe(
-  Layer.provide(NodeServices.layer),
-);
+).pipe(Layer.provideMerge(DesktopConfig.layer));
 
 const resolveDesktopSshCliRunner = (
   environment: DesktopEnvironment.DesktopEnvironmentShape,
@@ -100,133 +90,61 @@ const desktopSshEnvironmentLayer = Layer.unwrap(
   }),
 );
 
-const desktopSshRuntimeLayer = Layer.mergeAll(
-  desktopSshEnvironmentLayer,
-  DesktopSshRemoteApi.layer,
-).pipe(Layer.provideMerge(DesktopSshPasswordPrompts.layer()), Layer.provideMerge(NetService.layer));
+const electronLayer = Layer.mergeAll(
+  ElectronApp.layer,
+  ElectronDialog.layer,
+  ElectronMenu.layer,
+  ElectronProtocol.layer,
+  DesktopSecretStorage.layer,
+  ElectronShell.layer,
+  ElectronTheme.layer,
+  ElectronUpdater.layer,
+  ElectronWindow.layer,
+  Layer.succeed(DesktopIpc.DesktopIpc, DesktopIpc.make(Electron.ipcMain)),
+);
 
-const desktopShellEnvironmentLayer = DesktopShellEnvironment.layer;
+const desktopFoundationLayer = Layer.mergeAll(
+  DesktopRun.layer,
+  DesktopState.layer,
+  DesktopLifecycle.layerShutdown,
+  DesktopSettingsState.layer,
+  DesktopAssets.layer,
+  DesktopLoggerLive,
+  DesktopBackendOutputLogLive,
+).pipe(Layer.provideMerge(desktopEnvironmentLayer));
 
-const desktopWindowLayer = DesktopWindow.layer.pipe(Layer.provideMerge(DesktopAssets.layer));
-
-const desktopAppIdentityLayer = DesktopAppIdentity.layer.pipe(
-  Layer.provideMerge(DesktopAssets.layer),
+const desktopSshLayer = Layer.mergeAll(desktopSshEnvironmentLayer, DesktopSshRemoteApi.layer).pipe(
+  Layer.provideMerge(DesktopSshPasswordPrompts.layer()),
 );
 
 const desktopServerExposureLayer = DesktopServerExposure.layer.pipe(
-  Layer.provideMerge(NodeServices.layer),
-  Layer.provideMerge(NodeHttpClient.layerUndici),
   Layer.provideMerge(DesktopServerExposure.networkInterfacesLayer),
-  Layer.provideMerge(desktopConfigLayer),
-  Layer.provideMerge(DesktopSettingsState.layer),
-  Layer.provideMerge(desktopEnvironmentLayer),
+  Layer.provideMerge(desktopFoundationLayer),
 );
 
-const desktopServerExposureIpcActionsLayer = Layer.effect(
-  DesktopServerExposureIpcActions,
-  Effect.gen(function* () {
-    const context = yield* Effect.context<DesktopLifecycle.DesktopLifecycleRuntimeServices>();
-    const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-    return DesktopServerExposureIpcActions.of({
-      getState: serverExposure.getState,
-      setMode: (nextMode) =>
-        Effect.gen(function* () {
-          const change = yield* serverExposure.setMode(nextMode);
-          if (change.requiresRelaunch) {
-            yield* lifecycle.relaunch(`serverExposureMode=${nextMode}`);
-          }
-          return change.state;
-        }).pipe(Effect.provide(context)),
-      setTailscaleServeEnabled: (input) =>
-        Effect.gen(function* () {
-          const change = yield* serverExposure.setTailscaleServeEnabled(input);
-          if (change.requiresRelaunch) {
-            yield* lifecycle.relaunch(
-              change.state.tailscaleServeEnabled
-                ? "tailscale-serve-enabled"
-                : "tailscale-serve-disabled",
-            );
-          }
-          return change.state;
-        }).pipe(Effect.provide(context)),
-      getAdvertisedEndpoints: serverExposure.getAdvertisedEndpoints,
-    });
-  }),
-).pipe(Layer.provideMerge(DesktopLifecycle.layer), Layer.provideMerge(desktopWindowLayer));
+const desktopWindowLayer = DesktopWindow.layer.pipe(Layer.provideMerge(desktopServerExposureLayer));
 
-const desktopUpdatesLayer = DesktopUpdates.layer.pipe(
-  Layer.provideMerge(ElectronUpdater.layer),
-  Layer.provideMerge(desktopConfigLayer),
-);
-
-const desktopUpdateIpcActionsLayer = Layer.effect(
-  DesktopUpdateIpcActions,
-  Effect.gen(function* () {
-    const updates = yield* DesktopUpdates.DesktopUpdates;
-    return DesktopUpdateIpcActions.of({
-      getState: updates.getState,
-      setChannel: updates.setChannel,
-      download: updates.download,
-      install: updates.install,
-      check: updates.check("web-ui"),
-    });
-  }),
-).pipe(Layer.provideMerge(desktopUpdatesLayer));
-
-const desktopApplicationMenuLayer = DesktopApplicationMenu.layer.pipe(
-  Layer.provideMerge(desktopUpdatesLayer),
+const desktopBackendLayer = DesktopBackendManager.layer.pipe(
+  Layer.provideMerge(DesktopAppIdentity.layer),
+  Layer.provideMerge(DesktopBackendConfiguration.layer),
+  Layer.provideMerge(DesktopBackendEvents.layer),
   Layer.provideMerge(desktopWindowLayer),
 );
 
-const desktopBackendDependenciesLayer = Layer.mergeAll(
-  NodeServices.layer,
-  NodeHttpClient.layerUndici,
-  NetService.layer,
-  DesktopBackendConfiguration.layer,
-  DesktopBackendEvents.layer.pipe(
-    Layer.provide(desktopBackendOutputLogLayer),
-    Layer.provide(desktopWindowLayer),
-  ),
-);
-
-const desktopBackendManagerLayer = DesktopBackendManager.layer.pipe(
-  Layer.provide(desktopBackendDependenciesLayer),
-);
-
-const desktopBackendRuntimeLayer = desktopBackendManagerLayer.pipe(
-  Layer.provideMerge(desktopServerExposureLayer),
-);
-
-const desktopRuntimeLayer = Layer.mergeAll(
-  desktopLoggerLayer,
-  desktopAppIdentityLayer,
-  desktopApplicationMenuLayer,
-  desktopShellEnvironmentLayer,
-  desktopSshRuntimeLayer,
+const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
-  desktopWindowLayer,
-  Layer.succeed(DesktopIpc.DesktopIpc, DesktopIpc.make(Electron.ipcMain)),
-  desktopServerExposureIpcActionsLayer,
-  desktopUpdateIpcActionsLayer,
-  DesktopWindowIpcActionsLive.layer,
-  DesktopSecretStorage.layer,
-).pipe(
+  DesktopApplicationMenu.layer,
+  DesktopShellEnvironment.layer,
+  desktopSshLayer,
+  DesktopWindowIpcActions.layer,
+).pipe(Layer.provideMerge(DesktopUpdates.layer), Layer.provideMerge(desktopBackendLayer));
+
+const desktopRuntimeLayer = desktopApplicationLayer.pipe(
+  Layer.provideMerge(EffectPath.layer),
   Layer.provideMerge(NodeServices.layer),
   Layer.provideMerge(NodeHttpClient.layerUndici),
-  Layer.provideMerge(desktopBackendRuntimeLayer),
-  Layer.provideMerge(ElectronWindow.layer),
-  Layer.provideMerge(ElectronApp.layer),
-  Layer.provideMerge(ElectronDialog.layer),
-  Layer.provideMerge(ElectronMenu.layer),
-  Layer.provideMerge(ElectronProtocol.layer),
-  Layer.provideMerge(ElectronShell.layer),
-  Layer.provideMerge(ElectronTheme.layer),
   Layer.provideMerge(NetService.layer),
-  Layer.provideMerge(desktopEnvironmentLayer),
-  Layer.provideMerge(DesktopShutdown.layer),
-  Layer.provideMerge(DesktopRun.layer),
-  Layer.provideMerge(DesktopState.layer),
+  Layer.provideMerge(electronLayer),
 );
 
 DesktopApp.program.pipe(Effect.provide(desktopRuntimeLayer), NodeRuntime.runMain);

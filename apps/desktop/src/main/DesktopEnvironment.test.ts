@@ -2,11 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
 import * as EffectPath from "effect/Path";
 
-import {
-  DesktopEnvironment,
-  layer as makeDesktopEnvironmentLayer,
-  type MakeDesktopEnvironmentInput,
-} from "./DesktopEnvironment.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 
 const defaultInput = {
@@ -19,23 +15,23 @@ const defaultInput = {
   isPackaged: false,
   resourcesPath: "/Applications/T3 Code.app/Contents/Resources",
   runningUnderArm64Translation: false,
-} satisfies MakeDesktopEnvironmentInput;
+} satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
 const makeEnvironmentLayer = (
-  overrides: Partial<MakeDesktopEnvironmentInput> = {},
+  overrides: Partial<DesktopEnvironment.MakeDesktopEnvironmentInput> = {},
   env: Record<string, string | undefined> = {},
 ) =>
-  makeDesktopEnvironmentLayer({
+  DesktopEnvironment.layer({
     ...defaultInput,
     ...overrides,
   }).pipe(Layer.provide(Layer.mergeAll(EffectPath.layer, DesktopConfig.layerTest(env))));
 
 const makeEnvironment = (
-  overrides: Partial<MakeDesktopEnvironmentInput> = {},
+  overrides: Partial<DesktopEnvironment.MakeDesktopEnvironmentInput> = {},
   env: Record<string, string | undefined> = {},
 ) =>
   Effect.gen(function* () {
-    return yield* DesktopEnvironment;
+    return yield* DesktopEnvironment.DesktopEnvironment;
   }).pipe(Effect.provide(makeEnvironmentLayer(overrides, env)));
 
 describe("DesktopEnvironment", () => {

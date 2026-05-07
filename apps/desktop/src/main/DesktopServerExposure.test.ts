@@ -1,6 +1,5 @@
 import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
-import * as NodePath from "@effect/platform-node/NodePath";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -96,7 +95,6 @@ function makeLayer(input: {
   return DesktopServerExposure.layer.pipe(
     Layer.provideMerge(DesktopSettingsState.layer),
     Layer.provideMerge(NodeFileSystem.layer),
-    Layer.provideMerge(NodePath.layer),
     Layer.provideMerge(NodeHttpClient.layerUndici),
     Layer.provideMerge(mockSpawnerLayer()),
     Layer.provideMerge(networkLayer),

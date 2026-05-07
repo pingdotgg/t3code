@@ -8,7 +8,7 @@ import { TestClock } from "effect/testing";
 import type * as Electron from "electron";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { SSH_PASSWORD_PROMPT_CHANNEL } from "../ipc/channels.ts";
+import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
 interface SentMessage {
@@ -109,7 +109,7 @@ describe("DesktopSshPasswordPrompts", () => {
       assert.equal(testWindow.sentMessages.length, 1);
       const sent = testWindow.sentMessages[0];
       assert.ok(sent);
-      assert.equal(sent.channel, SSH_PASSWORD_PROMPT_CHANNEL);
+      assert.equal(sent.channel, IpcChannels.SSH_PASSWORD_PROMPT_CHANNEL);
       const request = sent.args[0] as { readonly requestId: string; readonly destination: string };
       assert.equal(request.destination, "devbox");
       assert.equal(testWindow.isRestored(), true);

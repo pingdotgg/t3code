@@ -13,7 +13,7 @@ import {
   Semaphore,
 } from "effect";
 
-import { DesktopEnvironment } from "./DesktopEnvironment.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const DESKTOP_LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const DESKTOP_LOG_FILE_MAX_FILES = 10;
@@ -156,7 +156,7 @@ const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(functio
 });
 
 const makeDesktopFileLogger = Effect.gen(function* () {
-  const environment = yield* DesktopEnvironment;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const writer = yield* makeRotatingLogFileWriter({
     filePath: environment.path.join(environment.logDir, "desktop-main.log"),
   });
@@ -170,7 +170,7 @@ const makeDesktopFileLogger = Effect.gen(function* () {
 
 export const DesktopLoggerLive = Layer.unwrap(
   Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment;
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const packagedFileLogger = environment.isPackaged
       ? yield* makeDesktopFileLogger.pipe(Effect.option)
       : Option.none<Logger.Logger<unknown, void>>();
@@ -193,7 +193,7 @@ export const DesktopLoggerLive = Layer.unwrap(
 export const DesktopBackendOutputLogLive = Layer.effect(
   DesktopBackendOutputLog,
   Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment;
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
     if (environment.isDevelopment) {
       return DesktopBackendOutputLogNoop;
     }

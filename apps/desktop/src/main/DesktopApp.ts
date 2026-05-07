@@ -19,7 +19,6 @@ import * as DesktopRun from "./DesktopRun.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopSettingsState from "./DesktopSettingsState.ts";
 import * as DesktopShellEnvironment from "./DesktopShellEnvironment.ts";
-import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
@@ -84,14 +83,14 @@ const handleFatalStartupError = (
 ): Effect.Effect<
   void,
   never,
-  | DesktopShutdown.DesktopShutdown
+  | DesktopLifecycle.DesktopShutdown
   | DesktopRun.DesktopRun
   | DesktopState.DesktopState
   | ElectronApp.ElectronApp
   | ElectronDialog.ElectronDialog
 > =>
   Effect.gen(function* () {
-    const shutdown = yield* DesktopShutdown.DesktopShutdown;
+    const shutdown = yield* DesktopLifecycle.DesktopShutdown;
     const state = yield* DesktopState.DesktopState;
     const electronApp = yield* ElectronApp.ElectronApp;
     const electronDialog = yield* ElectronDialog.ElectronDialog;
@@ -182,7 +181,7 @@ const bootstrap = Effect.gen(function* () {
 
 export const program = Effect.scoped(
   Effect.gen(function* () {
-    const shutdown = yield* DesktopShutdown.DesktopShutdown;
+    const shutdown = yield* DesktopLifecycle.DesktopShutdown;
 
     yield* Effect.gen(function* () {
       const appIdentity = yield* DesktopAppIdentity.DesktopAppIdentity;

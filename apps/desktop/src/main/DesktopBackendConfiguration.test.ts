@@ -5,7 +5,7 @@ import * as EffectPath from "effect/Path";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 
-import { DesktopEnvironment, layer as makeDesktopEnvironmentLayer } from "./DesktopEnvironment.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopRun from "./DesktopRun.ts";
@@ -27,7 +27,7 @@ const serverExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExp
 } satisfies DesktopServerExposure.DesktopServerExposureShape);
 
 function makeEnvironmentLayer(baseDir: string) {
-  return makeDesktopEnvironmentLayer({
+  return DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     cwd: "/repo",
     platform: "darwin",
@@ -57,7 +57,7 @@ const withHarness = <A, E, R>(
     A,
     E,
     | R
-    | DesktopEnvironment
+    | DesktopEnvironment.DesktopEnvironment
     | FileSystem.FileSystem
     | DesktopBackendConfiguration.DesktopBackendConfiguration
   >,
@@ -83,7 +83,7 @@ describe("DesktopBackendConfiguration", () => {
   it.effect("resolves backend start config with a stable scoped bootstrap token", () =>
     withHarness(
       Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
 
         const first = yield* configuration.resolve;
@@ -115,7 +115,7 @@ describe("DesktopBackendConfiguration", () => {
     withHarness(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
-        const environment = yield* DesktopEnvironment;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
 
         yield* fileSystem.makeDirectory(environment.path.dirname(environment.serverSettingsPath), {

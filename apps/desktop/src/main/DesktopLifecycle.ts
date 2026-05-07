@@ -1,6 +1,7 @@
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -9,11 +10,41 @@ import type * as Electron from "electron";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopRun from "./DesktopRun.ts";
-import { DesktopShutdown } from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
+
+export interface DesktopShutdownShape {
+  readonly request: Effect.Effect<void>;
+  readonly awaitRequest: Effect.Effect<void>;
+  readonly markComplete: Effect.Effect<void>;
+  readonly awaitComplete: Effect.Effect<void>;
+  readonly isComplete: Effect.Effect<boolean>;
+}
+
+export class DesktopShutdown extends Context.Service<DesktopShutdown, DesktopShutdownShape>()(
+  "t3/desktop/Shutdown",
+) {}
+
+const makeShutdown = Effect.gen(function* () {
+  const requested = yield* Deferred.make<void>();
+  const completed = yield* Deferred.make<void>();
+  const completedRef = yield* Ref.make(false);
+
+  return DesktopShutdown.of({
+    request: Deferred.succeed(requested, undefined).pipe(Effect.asVoid),
+    awaitRequest: Deferred.await(requested),
+    markComplete: Ref.set(completedRef, true).pipe(
+      Effect.andThen(Deferred.succeed(completed, undefined)),
+      Effect.asVoid,
+    ),
+    awaitComplete: Deferred.await(completed),
+    isComplete: Ref.get(completedRef),
+  });
+});
+
+export const layerShutdown = Layer.effect(DesktopShutdown, makeShutdown);
 
 export type DesktopLifecycleRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment

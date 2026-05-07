@@ -14,7 +14,7 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 
-import { SSH_PASSWORD_PROMPT_CHANNEL } from "../ipc/channels.ts";
+import * as IpcChannels from "../ipc/channels.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 
 const DEFAULT_SSH_PASSWORD_PROMPT_TIMEOUT_MS = 3 * 60 * 1000;
@@ -319,7 +319,7 @@ const make = (options: LayerOptions = {}) =>
               throw new Error(WINDOW_UNAVAILABLE_MESSAGE);
             }
             window.value.once("closed", cancelOnWindowClosed);
-            window.value.webContents.send(SSH_PASSWORD_PROMPT_CHANNEL, promptRequest);
+            window.value.webContents.send(IpcChannels.SSH_PASSWORD_PROMPT_CHANNEL, promptRequest);
             if (window.value.isDestroyed()) {
               throw new Error(WINDOW_UNAVAILABLE_MESSAGE);
             }

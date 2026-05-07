@@ -30,8 +30,6 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
 
-export { resolveRemoteT3CliPackageSpec } from "@t3tools/ssh/command";
-
 export type DesktopSshEnvironmentRuntimeServices =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
