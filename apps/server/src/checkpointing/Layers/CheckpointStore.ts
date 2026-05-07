@@ -20,7 +20,7 @@ const makeCheckpointStore = Effect.gen(function* () {
     operation: string,
     cwd: string,
   ) {
-    const handle = yield* vcsRegistry.resolve({ cwd, requestedKind: "git" });
+    const handle = yield* vcsRegistry.resolve({ cwd });
     if (!handle.driver.checkpoints) {
       return yield* new VcsUnsupportedOperationError({
         operation,

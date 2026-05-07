@@ -85,6 +85,15 @@ describe("runProcess", () => {
     ).rejects.toThrow("timed out");
   });
 
+  it("returns a timed out result when non-zero exits are allowed", async () => {
+    const result = await runProcess("node", [helperScriptPath, "sleep", "500"], {
+      timeoutMs: 50,
+      allowNonZeroExit: true,
+    });
+
+    expect(result.timedOut).toBe(true);
+  });
+
   afterAll(() => {
     cleanupHelperScript(helperScriptPath);
   });

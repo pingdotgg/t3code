@@ -67,7 +67,9 @@ function normalizeExitError(
     return new Error(`Command not found: ${command}`);
   }
 
-  const reason = `failed (code=${result.code ?? "null"}, signal=${result.signal ?? "null"})`;
+  const reason = result.timedOut
+    ? "timed out"
+    : `failed (code=${result.code ?? "null"}, signal=${result.signal ?? "null"})`;
   const stderr = result.stderr.trim();
   const detail = stderr.length > 0 ? ` ${stderr}` : "";
   return new Error(`${commandLabel(command, args)} ${reason}.${detail}`);
@@ -111,6 +113,7 @@ export async function runProcess(
       outputMode,
       shell: process.platform === "win32",
       collectorMode: "concat",
+      timeoutBehavior: "result",
     }).pipe(
       Effect.mapError((error) =>
         Match.valueTags(error, {
@@ -126,10 +129,12 @@ export async function runProcess(
 
   const normalizedResult: ProcessRunResult = {
     ...result,
-    timedOut: false,
   };
 
-  if (!options.allowNonZeroExit && normalizedResult.code !== null && normalizedResult.code !== 0) {
+  if (
+    !options.allowNonZeroExit &&
+    (normalizedResult.timedOut || (normalizedResult.code !== null && normalizedResult.code !== 0))
+  ) {
     throw normalizeExitError(command, args, normalizedResult);
   }
 

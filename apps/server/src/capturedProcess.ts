@@ -7,6 +7,7 @@ export interface CapturedProcessResult {
   readonly stderr: string;
   readonly code: number | null;
   readonly signal: NodeJS.Signals | null;
+  readonly timedOut: boolean;
   readonly stdoutTruncated: boolean;
   readonly stderrTruncated: boolean;
 }
@@ -24,6 +25,7 @@ export interface CapturedProcessRunOptions {
   readonly truncatedMarker?: string;
   readonly shell?: boolean;
   readonly collectorMode?: CapturedProcessCollectorMode;
+  readonly timeoutBehavior?: "error" | "result";
 }
 
 export class CapturedProcessSpawnError extends Data.TaggedError("CapturedProcessSpawnError")<{
@@ -206,6 +208,7 @@ async function runCapturedProcessPromise(
 ): Promise<CapturedProcessResult> {
   const collectorMode = options.collectorMode ?? "concat";
   const truncatedMarker = options.truncatedMarker ?? "";
+  const timeoutBehavior = options.timeoutBehavior ?? "error";
 
   return new Promise<CapturedProcessResult>((resolve, reject) => {
     const child = spawn(command, args, {
@@ -228,14 +231,15 @@ async function runCapturedProcessPromise(
       truncatedMarker,
     );
     let settled = false;
+    let timedOut = false;
     let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
 
     const timeoutTimer = setTimeout(() => {
+      timedOut = true;
       killChild(child, "SIGTERM");
       forceKillTimer = setTimeout(() => {
         killChild(child, "SIGKILL");
       }, 1_000);
-      finalize(() => reject(new CapturedProcessTimeoutError({ timeoutMs: options.timeoutMs })));
     }, options.timeoutMs);
 
     const finalize = (callback: () => void): void => {
@@ -284,16 +288,22 @@ async function runCapturedProcessPromise(
     child.once("close", (code, signal) => {
       const stdoutResult = stdout.finalize();
       const stderrResult = stderr.finalize();
-      finalize(() =>
+      finalize(() => {
+        if (timedOut && timeoutBehavior === "error") {
+          reject(new CapturedProcessTimeoutError({ timeoutMs: options.timeoutMs }));
+          return;
+        }
+
         resolve({
           stdout: stdoutResult.text,
           stderr: stderrResult.text,
           code,
           signal,
+          timedOut,
           stdoutTruncated: stdoutResult.truncated,
           stderrTruncated: stderrResult.truncated,
-        }),
-      );
+        });
+      });
     });
 
     child.stdin?.once("error", (cause) => {
