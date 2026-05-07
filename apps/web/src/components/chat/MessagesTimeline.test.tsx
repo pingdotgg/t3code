@@ -95,6 +95,7 @@ function buildProps() {
     resolvedTheme: "light" as const,
     timestampFormat: "locale" as const,
     workspaceRoot: undefined,
+    onProgrammaticScrollStart: () => {},
     onIsAtEndChange: () => {},
   };
 }

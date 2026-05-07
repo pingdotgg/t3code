@@ -35,7 +35,7 @@ import {
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
@@ -725,6 +725,8 @@ export default function ChatView(props: ChatViewProps) {
   );
   const legendListRef = useRef<LegendListRef | null>(null);
   const isAtEndRef = useRef(true);
+  const isProgrammaticScrollPendingRef = useRef(false);
+  const programmaticScrollFallbackTimerRef = useRef<number | null>(null);
   const attachmentPreviewHandoffByMessageIdRef = useRef<Record<string, string[]>>({});
   const attachmentPreviewPromotionInFlightByMessageIdRef = useRef<Record<string, true>>({});
   const sendInFlightRef = useRef(false);
@@ -2202,26 +2204,67 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   // Scroll helpers — LegendList handles auto-scroll via maintainScrollAtEnd.
-  const scrollToEnd = useCallback((animated = false) => {
-    legendListRef.current?.scrollToEnd?.({ animated });
+  const clearProgrammaticScrollPending = useCallback(() => {
+    isProgrammaticScrollPendingRef.current = false;
+    if (programmaticScrollFallbackTimerRef.current !== null) {
+      window.clearTimeout(programmaticScrollFallbackTimerRef.current);
+      programmaticScrollFallbackTimerRef.current = null;
+    }
   }, []);
+  const beginProgrammaticScroll = useCallback(
+    (animated = false) => {
+      clearProgrammaticScrollPending();
+      isProgrammaticScrollPendingRef.current = true;
+      programmaticScrollFallbackTimerRef.current = window.setTimeout(
+        () => {
+          clearProgrammaticScrollPending();
+        },
+        animated ? 1000 : 150,
+      );
+      isAtEndRef.current = true;
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+    },
+    [clearProgrammaticScrollPending],
+  );
+  const scrollToEnd = useCallback(
+    (animated = false) => {
+      beginProgrammaticScroll(animated);
+      return legendListRef.current?.scrollToEnd?.({ animated });
+    },
+    [beginProgrammaticScroll],
+  );
 
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
-  // thread switches.  LegendList fires scroll events with isAtEnd=false while
-  // initialScrollAtEnd is settling; hiding is always immediate.
+  // thread switches. LegendList can emit transient mount-time scroll events
+  // while initialScrollAtEnd is settling; hiding is always immediate.
   const showScrollDebouncer = useRef(
     new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
   );
-  const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
-    if (isAtEndRef.current === isAtEnd) return;
-    isAtEndRef.current = isAtEnd;
-    if (isAtEnd) {
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-    } else {
-      showScrollDebouncer.current.maybeExecute();
-    }
-  }, []);
+  const onIsAtEndChange = useCallback(
+    (isAtEnd: boolean) => {
+      if (isProgrammaticScrollPendingRef.current) {
+        if (isAtEnd) {
+          clearProgrammaticScrollPending();
+        } else {
+          return;
+        }
+      }
+      if (isAtEndRef.current === isAtEnd) return;
+      isAtEndRef.current = isAtEnd;
+      if (isAtEnd) {
+        showScrollDebouncer.current.cancel();
+        setShowScrollToBottom(false);
+      } else {
+        showScrollDebouncer.current.maybeExecute();
+      }
+    },
+    [clearProgrammaticScrollPending],
+  );
+
+  useLayoutEffect(() => {
+    clearProgrammaticScrollPending();
+  }, [activeThreadId, clearProgrammaticScrollPending]);
 
   useEffect(() => {
     setPullRequestDialogState(null);
@@ -2236,7 +2279,13 @@ export default function ChatView(props: ChatViewProps) {
       setPlanSidebarOpen(false);
     }
     planSidebarDismissedForTurnRef.current = null;
-  }, [activeThread?.id]);
+  }, [activeThreadId]);
+
+  useEffect(() => {
+    return () => {
+      clearProgrammaticScrollPending();
+    };
+  }, [clearProgrammaticScrollPending]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).
@@ -2741,10 +2790,7 @@ export default function ChatView(props: ChatViewProps) {
     // Scroll to the current end *before* adding the optimistic message.
     // This sets LegendList's internal isAtEnd=true so maintainScrollAtEnd
     // automatically pins to the new item when the data changes.
-    isAtEndRef.current = true;
-    showScrollDebouncer.current.cancel();
-    setShowScrollToBottom(false);
-    await legendListRef.current?.scrollToEnd?.({ animated: false });
+    await scrollToEnd(false);
 
     setOptimisticUserMessages((existing) => [
       ...existing,
@@ -3136,10 +3182,7 @@ export default function ChatView(props: ChatViewProps) {
       setThreadError(threadIdForSend, null);
 
       // Scroll to the current end *before* adding the optimistic message.
-      isAtEndRef.current = true;
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-      await legendListRef.current?.scrollToEnd?.({ animated: false });
+      await scrollToEnd(false);
 
       setOptimisticUserMessages((existing) => [
         ...existing,
@@ -3574,6 +3617,7 @@ export default function ChatView(props: ChatViewProps) {
               resolvedTheme={resolvedTheme}
               timestampFormat={timestampFormat}
               workspaceRoot={activeWorkspaceRoot}
+              onProgrammaticScrollStart={beginProgrammaticScroll}
               onIsAtEndChange={onIsAtEndChange}
             />
 
@@ -3582,7 +3626,7 @@ export default function ChatView(props: ChatViewProps) {
               <div className="pointer-events-none absolute bottom-1 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5">
                 <button
                   type="button"
-                  onClick={() => scrollToEnd(true)}
+                  onClick={() => void scrollToEnd(true)}
                   className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
                 >
                   <ChevronDownIcon className="size-3.5" />

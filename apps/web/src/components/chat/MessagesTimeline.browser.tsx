@@ -69,6 +69,7 @@ function buildProps() {
     resolvedTheme: "dark" as const,
     timestampFormat: "24-hour" as const,
     workspaceRoot: undefined,
+    onProgrammaticScrollStart: () => {},
     onIsAtEndChange: vi.fn(),
   };
 }
@@ -79,6 +80,134 @@ describe("MessagesTimeline", () => {
     getStateSpy.mockClear();
     vi.restoreAllMocks();
     document.body.innerHTML = "";
+  });
+
+  it("snaps to the bottom when a populated thread opens", async () => {
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+
+    const props = buildProps();
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          {
+            id: "work-1",
+            kind: "work",
+            createdAt: "2026-04-13T12:00:00.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-04-13T12:00:00.000Z",
+              label: "thinking",
+              detail: "Inspecting repository state",
+              tone: "thinking",
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      await expect.element(page.getByText("Thinking - Inspecting repository state")).toBeVisible();
+      expect(props.onIsAtEndChange).toHaveBeenCalledWith(true);
+      expect(scrollToEndSpy).toHaveBeenCalledWith({ animated: false });
+      expect(requestAnimationFrameSpy).toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("reschedules the initial bottom snap if rows update before the first frame lands", async () => {
+    let nextFrameId = 1;
+    const scheduledFrames = new Map<number, FrameRequestCallback>();
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        const frameId = nextFrameId++;
+        scheduledFrames.set(frameId, callback);
+        return frameId;
+      });
+    const cancelAnimationFrameSpy = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation((frameId: number) => {
+        scheduledFrames.delete(frameId);
+      });
+
+    const props = buildProps();
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          {
+            id: "work-1",
+            kind: "work",
+            createdAt: "2026-04-13T12:00:00.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-04-13T12:00:00.000Z",
+              label: "thinking",
+              detail: "Inspecting repository state",
+              tone: "thinking",
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      await vi.waitFor(() => {
+        expect(requestAnimationFrameSpy).toHaveBeenCalledTimes(1);
+      });
+
+      await screen.rerender(
+        <MessagesTimeline
+          {...props}
+          timelineEntries={[
+            {
+              id: "work-1",
+              kind: "work",
+              createdAt: "2026-04-13T12:00:00.000Z",
+              entry: {
+                id: "work-1",
+                createdAt: "2026-04-13T12:00:00.000Z",
+                label: "thinking",
+                detail: "Inspecting repository state",
+                tone: "thinking",
+              },
+            },
+            {
+              id: "work-2",
+              kind: "work",
+              createdAt: "2026-04-13T12:00:01.000Z",
+              entry: {
+                id: "work-2",
+                createdAt: "2026-04-13T12:00:01.000Z",
+                label: "thinking",
+                detail: "Streaming update arrived",
+                tone: "thinking",
+              },
+            },
+          ]}
+        />,
+      );
+
+      await vi.waitFor(() => {
+        expect(requestAnimationFrameSpy).toHaveBeenCalled();
+        expect(scheduledFrames.size).toBe(1);
+      });
+      for (const callback of scheduledFrames.values()) {
+        callback(0);
+      }
+      expect(scrollToEndSpy).toHaveBeenCalledTimes(1);
+      expect(props.onIsAtEndChange).toHaveBeenCalledWith(true);
+    } finally {
+      await screen.unmount();
+    }
   });
 
   it("renders activity rows instead of the empty placeholder when a thread has non-message timeline data", async () => {

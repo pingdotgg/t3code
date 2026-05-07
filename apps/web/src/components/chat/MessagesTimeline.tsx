@@ -119,6 +119,7 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  onProgrammaticScrollStart: (animated?: boolean) => void;
   onIsAtEndChange: (isAtEnd: boolean) => void;
 }
 
@@ -147,6 +148,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  onProgrammaticScrollStart,
   onIsAtEndChange,
 }: MessagesTimelineProps) {
   const rawRows = useMemo(
@@ -170,30 +172,55 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   const rows = useStableRows(rawRows);
 
-  const handleScroll = useCallback(() => {
-    const state = listRef.current?.getState?.();
-    if (state) {
-      onIsAtEndChange(state.isAtEnd);
-    }
-  }, [listRef, onIsAtEndChange]);
+  const handleScroll = useCallback(
+    (event?: {
+      nativeEvent?: {
+        contentInset?: { bottom?: number; right?: number };
+        contentOffset?: { x?: number; y?: number };
+        contentSize?: { width?: number; height?: number };
+        layoutMeasurement?: { width?: number; height?: number };
+      };
+    }) => {
+      const derivedIsAtEnd = deriveIsAtEndFromScrollEvent(event);
+      if (derivedIsAtEnd !== null) {
+        onIsAtEndChange(derivedIsAtEnd);
+        return;
+      }
 
-  const previousRowCountRef = useRef(rows.length);
+      const state = listRef.current?.getState?.();
+      if (state) {
+        onIsAtEndChange(state.isAtEnd);
+      }
+    },
+    [listRef, onIsAtEndChange],
+  );
+
+  const didReconcileInitialScrollRef = useRef(false);
+  const didRequestInitialScrollRef = useRef(false);
   useEffect(() => {
-    const previousRowCount = previousRowCountRef.current;
-    previousRowCountRef.current = rows.length;
-
-    if (previousRowCount > 0 || rows.length === 0) {
+    if (rows.length === 0) {
+      didReconcileInitialScrollRef.current = false;
+      didRequestInitialScrollRef.current = false;
       return;
     }
+    if (didRequestInitialScrollRef.current) {
+      return;
+    }
+    didRequestInitialScrollRef.current = true;
 
     onIsAtEndChange(true);
+    onProgrammaticScrollStart(false);
     const frameId = window.requestAnimationFrame(() => {
+      didReconcileInitialScrollRef.current = true;
       void listRef.current?.scrollToEnd?.({ animated: false });
     });
     return () => {
       window.cancelAnimationFrame(frameId);
+      if (!didReconcileInitialScrollRef.current) {
+        didRequestInitialScrollRef.current = false;
+      }
     };
-  }, [listRef, onIsAtEndChange, rows.length]);
+  }, [listRef, onIsAtEndChange, onProgrammaticScrollStart, rows.length]);
 
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
@@ -831,6 +858,34 @@ function useStableRows(rows: MessagesTimelineRow[]): MessagesTimelineRow[] {
     prevState.current = nextState;
     return nextState.result;
   }, [rows]);
+}
+
+function deriveIsAtEndFromScrollEvent(event?: {
+  nativeEvent?: {
+    contentInset?: { bottom?: number; right?: number };
+    contentOffset?: { x?: number; y?: number };
+    contentSize?: { width?: number; height?: number };
+    layoutMeasurement?: { width?: number; height?: number };
+  };
+}): boolean | null {
+  const nativeEvent = event?.nativeEvent;
+  const contentHeight = nativeEvent?.contentSize?.height;
+  const offsetY = nativeEvent?.contentOffset?.y;
+  const viewportHeight = nativeEvent?.layoutMeasurement?.height;
+
+  if (
+    typeof contentHeight !== "number" ||
+    typeof offsetY !== "number" ||
+    typeof viewportHeight !== "number"
+  ) {
+    return null;
+  }
+
+  const insetBottom =
+    typeof nativeEvent?.contentInset?.bottom === "number" ? nativeEvent.contentInset.bottom : 0;
+  const distanceFromEnd = contentHeight + insetBottom - offsetY - viewportHeight;
+
+  return contentHeight <= viewportHeight || distanceFromEnd <= 2;
 }
 
 // ---------------------------------------------------------------------------
