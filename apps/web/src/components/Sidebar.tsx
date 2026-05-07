@@ -118,7 +118,6 @@ import {
   DialogPopup,
   DialogTitle,
 } from "./ui/dialog";
-import { Input } from "./ui/input";
 import {
   Menu,
   MenuGroup,
@@ -1049,10 +1048,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const [renamingThreadKey, setRenamingThreadKey] = useState<string | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
   const [confirmingArchiveThreadKey, setConfirmingArchiveThreadKey] = useState<string | null>(null);
-  const [projectRenameTarget, setProjectRenameTarget] = useState<SidebarProjectGroupMember | null>(
-    null,
-  );
-  const [projectRenameTitle, setProjectRenameTitle] = useState("");
   const [projectGroupingTarget, setProjectGroupingTarget] =
     useState<SidebarProjectGroupMember | null>(null);
   const [projectGroupingSelection, setProjectGroupingSelection] = useState<
@@ -1253,9 +1248,16 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     (event: React.MouseEvent<HTMLButtonElement>) => {
       event.preventDefault();
       event.stopPropagation();
+      if (dragInProgressRef.current) {
+        return;
+      }
+      if (suppressProjectClickAfterDragRef.current) {
+        suppressProjectClickAfterDragRef.current = false;
+        return;
+      }
       toggleProject(project.projectKey);
     },
-    [project.projectKey, toggleProject],
+    [dragInProgressRef, project.projectKey, suppressProjectClickAfterDragRef, toggleProject],
   );
 
   const handleProjectButtonPointerDownCapture = useCallback(
@@ -1275,11 +1277,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     },
     [suppressProjectClickAfterDragRef, suppressProjectClickForContextMenuRef],
   );
-
-  const openProjectRenameDialog = useCallback((member: SidebarProjectGroupMember) => {
-    setProjectRenameTarget(member);
-    setProjectRenameTitle(member.name);
-  }, []);
 
   const openProjectGroupingDialog = useCallback(
     (member: SidebarProjectGroupMember) => {
@@ -1439,7 +1436,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const actionHandlers = new Map<string, () => Promise<void> | void>();
         const makeLeaf = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "settings" | "grouping" | "delete",
           member: SidebarProjectGroupMember,
           options?: {
             destructive?: boolean;
@@ -1449,14 +1446,14 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           const id = `${action}:${member.physicalProjectKey}`;
           actionHandlers.set(id, () => {
             switch (action) {
-              case "rename":
-                openProjectRenameDialog(member);
+              case "settings":
+                void router.navigate({
+                  to: "/projects/$projectId",
+                  params: { projectId: member.id },
+                });
                 return;
               case "grouping":
                 openProjectGroupingDialog(member);
-                return;
-              case "copy-path":
-                copyPathToClipboard(member.cwd, { path: member.cwd });
                 return;
               case "delete":
                 return handleRemoveProject(member);
@@ -1472,7 +1469,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         const buildTargetedItem = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "settings" | "grouping" | "delete",
           label: string,
           options?: {
             destructive?: boolean;
@@ -1504,9 +1501,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const clicked = await api.contextMenu.show(
           [
-            buildTargetedItem("rename", "Rename project"),
+            buildTargetedItem("settings", "Open project settings"),
             buildTargetedItem("grouping", "Project grouping…"),
-            buildTargetedItem("copy-path", "Copy Project Path"),
             buildTargetedItem("delete", "Remove project", {
               destructive: true,
             }),
@@ -1525,12 +1521,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       })();
     },
     [
-      copyPathToClipboard,
       handleRemoveProject,
       openProjectGroupingDialog,
-      openProjectRenameDialog,
       project.groupedProjectCount,
       project.memberProjects,
+      router,
       suppressProjectClickForContextMenuRef,
     ],
   );
@@ -1820,61 +1815,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [],
   );
 
-  const closeProjectRenameDialog = useCallback(() => {
-    setProjectRenameTarget(null);
-    setProjectRenameTitle("");
-  }, []);
-
-  const submitProjectRename = useCallback(async () => {
-    if (!projectRenameTarget) {
-      return;
-    }
-
-    const trimmed = projectRenameTitle.trim();
-    if (trimmed.length === 0) {
-      toastManager.add({
-        type: "warning",
-        title: "Project title cannot be empty",
-      });
-      return;
-    }
-
-    if (trimmed === projectRenameTarget.name) {
-      closeProjectRenameDialog();
-      return;
-    }
-
-    const api = readEnvironmentApi(projectRenameTarget.environmentId);
-    if (!api) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to rename project",
-          description: "Project API unavailable.",
-        }),
-      );
-      return;
-    }
-
-    try {
-      await api.orchestration.dispatchCommand({
-        type: "project.meta.update",
-        commandId: newCommandId(),
-        projectId: projectRenameTarget.id,
-        title: trimmed,
-      });
-      closeProjectRenameDialog();
-    } catch (error) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Failed to rename project",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    }
-  }, [closeProjectRenameDialog, projectRenameTarget, projectRenameTitle]);
-
   const closeProjectGroupingDialog = useCallback(() => {
     setProjectGroupingTarget(null);
     setProjectGroupingSelection("inherit");
@@ -2120,53 +2060,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         expandThreadListForProject={expandThreadListForProject}
         collapseThreadListForProject={collapseThreadListForProject}
       />
-
-      <Dialog
-        open={projectRenameTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeProjectRenameDialog();
-          }
-        }}
-      >
-        <DialogPopup className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Rename project</DialogTitle>
-            <DialogDescription>
-              {projectRenameTarget
-                ? `Update the title for ${projectRenameTarget.cwd}.`
-                : "Update the project title."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel className="space-y-4">
-            <div className="grid gap-1.5">
-              <span className="text-xs font-medium text-foreground">Project title</span>
-              <Input
-                aria-label="Project title"
-                value={projectRenameTitle}
-                onChange={(event) => setProjectRenameTitle(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    void submitProjectRename();
-                  }
-                }}
-              />
-            </div>
-            {projectRenameTarget?.environmentLabel ? (
-              <p className="text-xs text-muted-foreground">
-                Environment: {projectRenameTarget.environmentLabel}
-              </p>
-            ) : null}
-          </DialogPanel>
-          <DialogFooter>
-            <Button variant="outline" onClick={closeProjectRenameDialog}>
-              Cancel
-            </Button>
-            <Button onClick={() => void submitProjectRename()}>Save</Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
 
       <Dialog
         open={projectGroupingTarget !== null}

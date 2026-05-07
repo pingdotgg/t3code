@@ -1,9 +1,7 @@
 import { Cache, Context, Duration, Effect, Exit, Layer, Option } from "effect";
 import {
   SourceControlProviderError,
-  type ProjectRemoteOverride,
   type SourceControlProviderDiscoveryItem,
-  type SourceControlProviderInfo,
 } from "@t3tools/contracts";
 import type { SourceControlProviderKind } from "@t3tools/contracts";
 import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
@@ -14,6 +12,7 @@ import * as GitHubSourceControlProvider from "./GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as SourceControlProviderDiscovery from "./SourceControlProviderDiscovery.ts";
+import { providerContextFromOverride } from "./RemoteOverride.ts";
 import { ServerConfig } from "../config.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
@@ -110,75 +109,6 @@ function selectProviderContext(
     candidates[0] ??
     null
   );
-}
-
-function parseRemoteHost(remoteUrl: string): string | null {
-  const trimmed = remoteUrl.trim();
-  if (trimmed.startsWith("git@")) {
-    const hostWithPath = trimmed.slice("git@".length);
-    const separatorIndex = hostWithPath.search(/[:/]/);
-    return separatorIndex > 0 ? hostWithPath.slice(0, separatorIndex).toLowerCase() : null;
-  }
-
-  try {
-    return new URL(trimmed).hostname.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
-function parseBaseUrl(value: string): string | null {
-  try {
-    const url = new URL(value);
-    return `${url.protocol}//${url.host}`;
-  } catch {
-    const host = parseRemoteHost(value);
-    return host ? `https://${host}` : null;
-  }
-}
-
-function providerName(kind: SourceControlProviderKind, baseUrl: string | null): string {
-  switch (kind) {
-    case "github":
-      return baseUrl === "https://github.com" ? "GitHub" : "GitHub Self-Hosted";
-    case "gitlab":
-      return baseUrl === "https://gitlab.com" ? "GitLab" : "GitLab Self-Hosted";
-    case "azure-devops":
-      return "Azure DevOps";
-    case "bitbucket":
-      return baseUrl === "https://bitbucket.org" ? "Bitbucket" : "Bitbucket Self-Hosted";
-    case "unknown":
-      return parseRemoteHost(baseUrl ?? "") ?? "Source control";
-  }
-}
-
-function providerInfoFromOverride(
-  override: ProjectRemoteOverride,
-): SourceControlProviderInfo | null {
-  const baseUrl = override.webUrl
-    ? parseBaseUrl(override.webUrl)
-    : parseBaseUrl(override.remoteUrl);
-  if (!baseUrl) {
-    return null;
-  }
-  return {
-    kind: override.provider,
-    name: providerName(override.provider, baseUrl),
-    baseUrl,
-  };
-}
-
-function providerContextFromOverride(
-  override: ProjectRemoteOverride,
-): SourceControlProvider.SourceControlProviderContext | null {
-  const provider = providerInfoFromOverride(override);
-  return provider
-    ? {
-        provider,
-        remoteName: override.remoteName ?? "origin",
-        remoteUrl: override.remoteUrl,
-      }
-    : null;
 }
 
 function bindProviderContext(

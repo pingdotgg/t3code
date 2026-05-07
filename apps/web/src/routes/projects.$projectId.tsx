@@ -2,6 +2,7 @@ import { ArrowLeftIcon, ExternalLinkIcon, RefreshCwIcon, SaveIcon } from "lucide
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect, useCanGoBack, useNavigate } from "@tanstack/react-router";
 import type {
+  ProjectDetectedRemote,
   ProjectEffectiveRemote,
   ProjectRemoteOverride,
   SourceControlProviderKind,
@@ -24,6 +25,7 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { SidebarInset, SidebarTrigger } from "../components/ui/sidebar";
+import { Spinner } from "../components/ui/spinner";
 import { Switch } from "../components/ui/switch";
 import { SettingsPageContainer, SettingsSection } from "../components/settings/settingsLayout";
 import { toastManager, stackedThreadToast } from "../components/ui/toast";
@@ -85,6 +87,12 @@ function ProjectRouteView() {
         throw new Error("Project name cannot be empty.");
       }
 
+      const trimmedRemoteUrl = remoteUrl.trim();
+      const trimmedWebUrl = webUrl.trim();
+      if (overrideEnabled && trimmedRemoteUrl.length === 0) {
+        throw new Error("Remote URL is required when manual remote override is enabled.");
+      }
+
       if (trimmedTitle !== projectDetails.data.title) {
         await api.orchestration.dispatchCommand({
           type: "project.meta.update",
@@ -94,8 +102,6 @@ function ProjectRouteView() {
         });
       }
 
-      const trimmedRemoteUrl = remoteUrl.trim();
-      const trimmedWebUrl = webUrl.trim();
       const remoteOverride: ProjectRemoteOverride | null = overrideEnabled
         ? {
             provider,
@@ -103,10 +109,6 @@ function ProjectRouteView() {
             ...(trimmedWebUrl ? { webUrl: trimmedWebUrl } : {}),
           }
         : null;
-
-      if (overrideEnabled && trimmedRemoteUrl.length === 0) {
-        throw new Error("Remote URL is required when manual remote override is enabled.");
-      }
 
       await api.projects.updateSettings({
         projectId: project.id,
@@ -142,7 +144,6 @@ function ProjectRouteView() {
   };
 
   const effectiveRemote = projectDetails.data?.effective.remote ?? null;
-  const detectedPrimaryRemote = projectDetails.data?.detected.primaryRemote ?? null;
   const hasChanges = useMemo(() => {
     const details = projectDetails.data;
     if (!details) return false;
@@ -193,127 +194,170 @@ function ProjectRouteView() {
           </Button>
         </header>
 
-        <SettingsPageContainer>
-          {!project ? (
-            <ProjectNotice title="Project not found" description="This project is not loaded." />
-          ) : projectDetails.isLoading ? (
-            <ProjectNotice title="Loading project" description={project.cwd} />
-          ) : projectDetails.isError ? (
-            <ProjectNotice
-              title="Unable to load project"
-              description={
-                projectDetails.error instanceof Error
-                  ? projectDetails.error.message
-                  : "Project details could not be loaded."
-              }
-            />
-          ) : projectDetails.data ? (
-            <>
-              <section className="space-y-2">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <h1 className="truncate text-2xl font-semibold tracking-tight">
-                      {projectDetails.data.effective.title}
-                    </h1>
-                  </div>
-                </div>
-              </section>
-
-              <SettingsSection title="Project">
-                <ProjectSettingRow
-                  title="Name"
-                  control={
-                    <Input
-                      className="max-w-md"
-                      value={title}
-                      onChange={(event) => setTitle(event.target.value)}
-                    />
-                  }
-                />
-                <ProjectSettingRow title="Path" value={projectDetails.data.workspaceRoot} />
-              </SettingsSection>
-
-              <SettingsSection
-                title="Git info"
-                headerAction={
-                  effectiveRemote?.webUrl ? <OpenRemoteButton remote={effectiveRemote} /> : null
+        {project && projectDetails.isLoading ? (
+          <ProjectSettingsLoading />
+        ) : (
+          <SettingsPageContainer>
+            {!project ? (
+              <ProjectNotice title="Project not found" description="This project is not loaded." />
+            ) : projectDetails.isError ? (
+              <ProjectNotice
+                title="Unable to load project"
+                description={
+                  projectDetails.error instanceof Error
+                    ? projectDetails.error.message
+                    : "Project details could not be loaded."
                 }
-              >
-                <ProjectSettingRow
-                  title="Manual remote"
-                  control={
-                    <Switch
-                      checked={overrideEnabled}
-                      onCheckedChange={(checked) => setOverrideEnabled(checked)}
-                    />
+              />
+            ) : projectDetails.data ? (
+              <>
+                <section className="space-y-2">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <h1 className="truncate text-2xl font-semibold tracking-tight">
+                        {projectDetails.data.effective.title}
+                      </h1>
+                    </div>
+                  </div>
+                </section>
+
+                <SettingsSection title="Project">
+                  <ProjectSettingRow
+                    title="Name"
+                    control={
+                      <Input
+                        className="max-w-md"
+                        value={title}
+                        onChange={(event) => setTitle(event.target.value)}
+                      />
+                    }
+                  />
+                  <ProjectSettingRow
+                    title="Path"
+                    control={<ProjectPathLink path={projectDetails.data.workspaceRoot} />}
+                  />
+                </SettingsSection>
+
+                <SettingsSection
+                  title="Git info"
+                  headerAction={
+                    effectiveRemote?.webUrl ? <OpenRemoteButton remote={effectiveRemote} /> : null
                   }
                 >
-                  {overrideEnabled ? (
-                    <div className="grid gap-3 border-t border-border/60 pt-4 md:grid-cols-[12rem_minmax(0,1fr)]">
-                      <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                        Provider
-                        <Select
-                          value={provider}
-                          onValueChange={(value) => setProvider(value as SourceControlProviderKind)}
-                        >
-                          <SelectTrigger aria-label="Source control provider">
-                            <SelectValue>{PROVIDER_LABELS[provider]}</SelectValue>
-                          </SelectTrigger>
-                          <SelectPopup align="start">
-                            {Object.entries(PROVIDER_LABELS).map(([value, label]) => (
-                              <SelectItem key={value} value={value}>
-                                {label}
-                              </SelectItem>
-                            ))}
-                          </SelectPopup>
-                        </Select>
-                      </label>
-                      <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                        Remote URL
-                        <Input
-                          value={remoteUrl}
-                          placeholder="git@git.example.com:team/repo.git"
-                          onChange={(event) => setRemoteUrl(event.target.value)}
-                        />
-                      </label>
-                      <div className="hidden md:block" />
-                      <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                        Web URL
-                        <Input
-                          value={webUrl}
-                          placeholder="https://git.example.com/team/repo"
-                          onChange={(event) => setWebUrl(event.target.value)}
-                        />
-                      </label>
-                    </div>
-                  ) : null}
-                </ProjectSettingRow>
-                <ProjectSettingRow
-                  title="Detected remote"
-                  value={
-                    detectedPrimaryRemote ? detectedPrimaryRemote.url : "No Git remote detected."
-                  }
-                />
-                <ProjectSettingRow
-                  title="Effective remote"
-                  value={
-                    effectiveRemote ? effectiveRemote.remoteUrl : "No effective remote configured."
-                  }
-                />
-                <ProjectSettingRow
-                  title="Repository root"
-                  value={projectDetails.data.detected.gitRoot ?? "Not inside a Git repository."}
-                />
-                <ProjectSettingRow
-                  title="Branch"
-                  value={projectDetails.data.detected.branch ?? "Detached or unavailable."}
-                />
-              </SettingsSection>
-            </>
-          ) : null}
-        </SettingsPageContainer>
+                  <ProjectSettingRow
+                    title="Manual remote"
+                    control={
+                      <Switch
+                        checked={overrideEnabled}
+                        onCheckedChange={(checked) => setOverrideEnabled(checked)}
+                      />
+                    }
+                  >
+                    {overrideEnabled ? (
+                      <div className="grid gap-3 border-t border-border/60 pt-4 md:grid-cols-[12rem_minmax(0,1fr)]">
+                        <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                          Provider
+                          <Select
+                            value={provider}
+                            onValueChange={(value) =>
+                              setProvider(value as SourceControlProviderKind)
+                            }
+                          >
+                            <SelectTrigger aria-label="Source control provider">
+                              <SelectValue>{PROVIDER_LABELS[provider]}</SelectValue>
+                            </SelectTrigger>
+                            <SelectPopup align="start">
+                              {Object.entries(PROVIDER_LABELS).map(([value, label]) => (
+                                <SelectItem key={value} value={value}>
+                                  {label}
+                                </SelectItem>
+                              ))}
+                            </SelectPopup>
+                          </Select>
+                        </label>
+                        <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                          Remote URL
+                          <Input
+                            value={remoteUrl}
+                            placeholder="git@git.example.com:team/repo.git"
+                            onChange={(event) => setRemoteUrl(event.target.value)}
+                          />
+                        </label>
+                        <div className="hidden md:block" />
+                        <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                          Web URL
+                          <Input
+                            value={webUrl}
+                            placeholder="https://git.example.com/team/repo"
+                            onChange={(event) => setWebUrl(event.target.value)}
+                          />
+                        </label>
+                      </div>
+                    ) : null}
+                  </ProjectSettingRow>
+                  {projectDetails.data.detected.remotes.length > 0 ? (
+                    projectDetails.data.detected.remotes.map((remote) => (
+                      <ProjectSettingRow
+                        key={remote.name}
+                        title={`Remote: ${remote.name}`}
+                        value={formatGitRemoteValue(remote)}
+                      />
+                    ))
+                  ) : (
+                    <ProjectSettingRow title="Remote" value="No Git remote configured." />
+                  )}
+                  <ProjectSettingRow
+                    title="Branch"
+                    value={projectDetails.data.detected.branch ?? "Detached or unavailable."}
+                  />
+                </SettingsSection>
+              </>
+            ) : null}
+          </SettingsPageContainer>
+        )}
       </div>
     </SidebarInset>
+  );
+}
+
+function formatGitRemoteValue(remote: ProjectDetectedRemote) {
+  return remote.pushUrl && remote.pushUrl !== remote.url
+    ? `${remote.url} (push: ${remote.pushUrl})`
+    : remote.url;
+}
+
+function ProjectPathLink({ path }: { path: string }) {
+  const openPath = () => {
+    const api = readLocalApi();
+    void api?.shell.openInEditor(path, "file-manager").catch((error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Unable to open project folder",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        }),
+      );
+    });
+  };
+
+  return (
+    <button
+      type="button"
+      className="min-w-0 max-w-full cursor-pointer truncate text-left text-sm text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:text-right"
+      title={path}
+      aria-label="Open project folder"
+      onClick={openPath}
+    >
+      {path}
+    </button>
+  );
+}
+
+function ProjectSettingsLoading() {
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center">
+      <Spinner className="size-5 text-muted-foreground" />
+    </div>
   );
 }
 
