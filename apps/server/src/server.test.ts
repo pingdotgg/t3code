@@ -80,6 +80,7 @@ import {
   ProviderRegistry,
   type ProviderRegistryShape,
 } from "./provider/Services/ProviderRegistry.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "./provider/providerMaintenance.ts";
 import { ServerLifecycleEvents, type ServerLifecycleEventsShape } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup, type ServerRuntimeStartupShape } from "./serverRuntimeStartup.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "./serverSettings.ts";
@@ -113,6 +114,8 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
+import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
+import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 
 const defaultProjectId = ProjectId.make("project-default");
 const defaultThreadId = ThreadId.make("thread-default");
@@ -517,6 +520,12 @@ const buildAppUnderTest = (options?: {
         Layer.mock(ProviderRegistry)({
           getProviders: Effect.succeed([]),
           refresh: () => Effect.succeed([]),
+          refreshInstance: () => Effect.succeed([]),
+          getProviderMaintenanceCapabilitiesForInstance: (_instanceId, provider) =>
+            Effect.succeed(
+              makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
+            ),
+          setProviderMaintenanceActionState: () => Effect.succeed([]),
           streamChanges: Stream.empty,
           ...options?.layers?.providerRegistry,
         }),
@@ -534,6 +543,52 @@ const buildAppUnderTest = (options?: {
       Layer.provide(
         Layer.mock(Open)({
           ...options?.layers?.open,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ProcessDiagnostics.ProcessDiagnostics)({
+          read: Effect.succeed({
+            serverPid: process.pid,
+            readAt: TEST_EPOCH,
+            processCount: 0,
+            totalRssBytes: 0,
+            totalCpuPercent: 0,
+            processes: [],
+            error: Option.none(),
+          }),
+          signal: (input) =>
+            Effect.succeed({
+              pid: input.pid,
+              signal: input.signal,
+              signaled: true,
+              message: Option.none(),
+            }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(TraceDiagnostics.TraceDiagnostics)({
+          read: () =>
+            Effect.succeed({
+              traceFilePath: "",
+              scannedFilePaths: [],
+              readAt: TEST_EPOCH,
+              recordCount: 0,
+              parseErrorCount: 0,
+              firstSpanAt: Option.none(),
+              lastSpanAt: Option.none(),
+              failureCount: 0,
+              interruptionCount: 0,
+              slowSpanThresholdMs: 1_000,
+              slowSpanCount: 0,
+              logLevelCounts: {},
+              topSpansByCount: [],
+              slowestSpans: [],
+              commonFailures: [],
+              latestFailures: [],
+              latestWarningAndErrorLogs: [],
+              partialFailure: Option.none(),
+              error: Option.none(),
+            }),
         }),
       ),
       Layer.provide(gitManagerLayer),
@@ -1904,6 +1959,42 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const wsUrl = yield* getWsServerUrl("/ws");
       const response = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverUpsertKeybinding](rule)),
+      );
+
+      assert.deepEqual(response.issues, []);
+      assert.deepEqual(response.keybindings, [resolved]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc server.removeKeybinding", () =>
+    Effect.gen(function* () {
+      const rule: KeybindingRule = {
+        command: "terminal.toggle",
+        key: "ctrl+k",
+      };
+      const resolved: ResolvedKeybindingRule = {
+        command: "terminal.toggle",
+        shortcut: {
+          key: "j",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      };
+
+      yield* buildAppUnderTest({
+        layers: {
+          keybindings: {
+            removeKeybindingRule: () => Effect.succeed([resolved]),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[WS_METHODS.serverRemoveKeybinding](rule)),
       );
 
       assert.deepEqual(response.issues, []);
