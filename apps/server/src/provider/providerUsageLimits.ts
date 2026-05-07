@@ -33,7 +33,7 @@ export function windowKindFromDuration(input: {
   if (duration === input.shortestWindowDurationMins) {
     return "session";
   }
-  return undefined;
+  return "session";
 }
 
 export function normalizeUsageWindows(

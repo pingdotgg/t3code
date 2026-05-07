@@ -60,4 +60,38 @@ describe("providerUsageLimits", () => {
       }),
     ).toBe("weekly");
   });
+
+  it("keeps intermediate windows as session instead of dropping them", () => {
+    expect(
+      makeUsageLimitsSnapshot({
+        source: "codexAppServer",
+        checkedAt: "2026-04-17T10:00:00.000Z",
+        unavailableReason: "missing",
+        windows: [
+          { label: "Short", usedPercent: 10, windowDurationMins: 60 },
+          { label: "Middle", usedPercent: 20, windowDurationMins: 1440 },
+          { label: "Long", usedPercent: 30, windowDurationMins: 4320 },
+        ],
+      }).windows,
+    ).toEqual([
+      {
+        kind: "session",
+        label: "Session",
+        usedPercent: 10,
+        windowDurationMins: 60,
+      },
+      {
+        kind: "session",
+        label: "Session",
+        usedPercent: 20,
+        windowDurationMins: 1440,
+      },
+      {
+        kind: "weekly",
+        label: "Weekly",
+        usedPercent: 30,
+        windowDurationMins: 4320,
+      },
+    ]);
+  });
 });
