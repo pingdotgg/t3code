@@ -1,7 +1,7 @@
 import { ArchiveIcon, ArchiveX, LoaderIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { type ReactNode, useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
@@ -10,13 +10,11 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceId,
   type ScopedThreadRef,
-  type ServerProvider,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import { Equal } from "effect";
-import { cn } from "../../lib/utils";
 import { APP_VERSION } from "../../branding";
 import {
   canCheckForUpdate,
@@ -50,11 +48,7 @@ import {
   selectThreadShellsAcrossEnvironments,
   useStore,
 } from "../../store";
-import {
-  formatRelativeTime,
-  formatRelativeTimeLabel,
-  formatRelativeTimeUntilLabel,
-} from "../../timestampFormat";
+import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { DraftInput } from "../ui/draft-input";
@@ -148,123 +142,6 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
         <>Checked {lastCheckedRelative.value}</>
       )}
     </span>
-  );
-}
-
-function getUsageMeterToneClass(usedPercent: number): string {
-  if (usedPercent >= 90) return "bg-destructive";
-  if (usedPercent >= 70) return "bg-warning";
-  return "bg-foreground/88";
-}
-
-function getUsageRemainingLabel(usedPercent: number): string {
-  const remainingPercent = Math.max(0, Math.min(100, 100 - Math.round(usedPercent)));
-  return `${remainingPercent}% remaining`;
-}
-
-function getUsageTrackClass(usedPercent: number): string {
-  if (usedPercent >= 90) return "bg-destructive/12";
-  if (usedPercent >= 70) return "bg-warning/12";
-  return "bg-black/5 dark:bg-white/6";
-}
-
-function getUsageResetLabel(resetsAt: string | undefined): string | null {
-  if (!resetsAt) return null;
-  const diffMs = new Date(resetsAt).getTime() - Date.now();
-  if (!Number.isFinite(diffMs) || diffMs <= 0) {
-    return null;
-  }
-  const relativeLabel = formatRelativeTimeUntilLabel(resetsAt);
-  if (relativeLabel === "Soon") {
-    return "Resets soon";
-  }
-  if (diffMs < 6 * 60 * 60 * 1000) {
-    return `Resets in ${relativeLabel.replace(/ left$/, "")}`;
-  }
-  const now = new Date();
-  const resetDate = new Date(resetsAt);
-  const tomorrow = new Date(now);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const isResetTomorrow =
-    resetDate.toDateString() !== now.toDateString() &&
-    resetDate.toDateString() === tomorrow.toDateString();
-  if (isResetTomorrow) {
-    return "Resets tomorrow";
-  }
-  return `Resets in ${relativeLabel.replace(/ left$/, "")}`;
-}
-
-function ProviderUsageLimitsBlock({ provider }: { provider: ServerProvider | undefined }) {
-  useRelativeTimeTick();
-
-  if (!provider || !provider.enabled || !provider.installed || !provider.usageLimits) {
-    return null;
-  }
-
-  if (!provider.usageLimits.available) {
-    return (
-      <p className="pt-2 text-[11px] text-muted-foreground/85">
-        {provider.usageLimits?.reason ?? "Unable to fetch usage"}
-      </p>
-    );
-  }
-
-  return (
-    <div className="space-y-4 pt-3">
-      {provider.usageLimits.windows.map((window) => {
-        const percentageLabel = `${Math.round(window.usedPercent)}%`;
-        const resetLabel = getUsageResetLabel(window.resetsAt);
-        const normalizedWidth = Math.max(0, Math.min(100, window.usedPercent));
-        const remainingLabel = getUsageRemainingLabel(window.usedPercent);
-
-        return (
-          <div
-            key={`${window.label ?? ""}-${window.kind}-${window.windowDurationMins ?? "na"}-${window.resetsAt ?? "na"}`}
-            className="space-y-1.5"
-          >
-            <div className="flex items-center justify-between gap-3 text-[11px]">
-              <span className="font-medium tracking-[0.01em] text-foreground/92">
-                {window.label} limit
-              </span>
-              <span className="text-muted-foreground/85">{remainingLabel}</span>
-            </div>
-            <div
-              className={cn(
-                "h-1.5 overflow-hidden rounded-full",
-                getUsageTrackClass(window.usedPercent),
-              )}
-            >
-              <div
-                className={cn(
-                  "h-full rounded-full transition-[width,background-color]",
-                  getUsageMeterToneClass(window.usedPercent),
-                )}
-                style={{ width: `${normalizedWidth}%` }}
-                aria-label={`${window.label} usage ${percentageLabel}`}
-              />
-            </div>
-            {resetLabel ? (
-              <p className="text-[11px] text-muted-foreground/72">{resetLabel}</p>
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function ProviderCardShell({ children, expanded }: { children: ReactNode; expanded: boolean }) {
-  return (
-    <div
-      className={cn(
-        "relative overflow-hidden border-t border-border/70 bg-[linear-gradient(180deg,rgba(15,23,42,0.02),rgba(15,23,42,0.008))] first:border-t-0 dark:border-white/8 dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.028),rgba(255,255,255,0.01))]",
-        expanded &&
-          "bg-[linear-gradient(180deg,rgba(15,23,42,0.045),rgba(15,23,42,0.018))] dark:bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.016))]",
-      )}
-    >
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-black/6 dark:bg-white/5" />
-      {children}
-    </div>
   );
 }
 
