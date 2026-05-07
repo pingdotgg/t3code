@@ -12,6 +12,10 @@ export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"])
 export type TimestampFormat = typeof TimestampFormat.Type;
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 
+export const CopyButtonPosition = Schema.Literals(["top", "bottom"]);
+export type CopyButtonPosition = typeof CopyButtonPosition.Type;
+export const DEFAULT_COPY_BUTTON_POSITION: CopyButtonPosition = "top";
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -77,6 +81,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
+  ),
+  copyButtonPosition: CopyButtonPosition.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_COPY_BUTTON_POSITION)),
   ),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;

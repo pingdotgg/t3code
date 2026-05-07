@@ -437,7 +437,7 @@ label:has(> select#reasoning-effort) select {
 
 .chat-markdown .chat-markdown-copy-button {
   position: absolute;
-  top: 0.5rem;
+  top: 0.5rem; /* default; overridden by inline style when setting is "bottom" */
   right: 0.5rem;
   z-index: 1;
   display: inline-flex;
@@ -462,6 +462,18 @@ label:has(> select#reasoning-effort) select {
 .chat-markdown .chat-markdown-codeblock:focus-within .chat-markdown-copy-button {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Touch devices don't have hover — always show the copy button */
+@media (hover: none) {
+  .chat-markdown .chat-markdown-copy-button {
+    opacity: 0.7;
+    pointer-events: auto;
+  }
+
+  .chat-markdown .chat-markdown-copy-button:active {
+    opacity: 1;
+  }
 }
 
 .chat-markdown .chat-markdown-copy-button:hover {

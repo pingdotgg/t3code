@@ -27,6 +27,7 @@ import { openInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
+import { useSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import {
   normalizeMarkdownLinkDestination,
@@ -149,23 +150,40 @@ function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
 function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNode }) {
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyButtonPosition = useSettings((s) => s.copyButtonPosition);
   const handleCopy = useCallback(() => {
-    if (typeof navigator === "undefined" || navigator.clipboard == null) {
+    const onSuccess = () => {
+      if (copiedTimerRef.current != null) {
+        clearTimeout(copiedTimerRef.current);
+      }
+      setCopied(true);
+      copiedTimerRef.current = setTimeout(() => {
+        setCopied(false);
+        copiedTimerRef.current = null;
+      }, 1200);
+    };
+
+    // Prefer the async Clipboard API (requires secure context)
+    if (typeof navigator !== "undefined" && navigator.clipboard != null) {
+      void navigator.clipboard.writeText(code).then(onSuccess).catch(() => undefined);
       return;
     }
-    void navigator.clipboard
-      .writeText(code)
-      .then(() => {
-        if (copiedTimerRef.current != null) {
-          clearTimeout(copiedTimerRef.current);
-        }
-        setCopied(true);
-        copiedTimerRef.current = setTimeout(() => {
-          setCopied(false);
-          copiedTimerRef.current = null;
-        }, 1200);
-      })
-      .catch(() => undefined);
+
+    // Fallback for non-secure contexts (e.g. HTTP over Tailscale)
+    const textarea = document.createElement("textarea");
+    textarea.value = code;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    try {
+      textarea.select();
+      const ok = document.execCommand("copy");
+      if (ok) onSuccess();
+    } catch {
+      // silently fail
+    } finally {
+      document.body.removeChild(textarea);
+    }
   }, [code]);
 
   useEffect(
@@ -178,11 +196,17 @@ function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNo
     [],
   );
 
+  const positionStyle =
+    copyButtonPosition === "bottom"
+      ? { top: "auto", bottom: "0.5rem" }
+      : { top: "0.5rem" };
+
   return (
     <div className="chat-markdown-codeblock leading-snug">
       <button
         type="button"
         className="chat-markdown-copy-button"
+        style={positionStyle}
         onClick={handleCopy}
         title={copied ? "Copied" : "Copy code"}
         aria-label={copied ? "Copied" : "Copy code"}

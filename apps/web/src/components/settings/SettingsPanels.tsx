@@ -364,6 +364,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.copyButtonPosition !== DEFAULT_UNIFIED_SETTINGS.copyButtonPosition
+        ? ["Copy button position"]
+        : []),
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
@@ -395,6 +398,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.autoOpenPlanSidebar,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
+      settings.copyButtonPosition,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.diffIgnoreWhitespace,
@@ -546,6 +550,47 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Copy button position"
+          description="Place the code block copy button at the top or bottom corner."
+          resetAction={
+            settings.copyButtonPosition !== DEFAULT_UNIFIED_SETTINGS.copyButtonPosition ? (
+              <SettingResetButton
+                label="copy button position"
+                onClick={() =>
+                  updateSettings({
+                    copyButtonPosition: DEFAULT_UNIFIED_SETTINGS.copyButtonPosition,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.copyButtonPosition}
+              onValueChange={(value) => {
+                if (value === "top" || value === "bottom") {
+                  updateSettings({ copyButtonPosition: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Copy button position">
+                <SelectValue>
+                  {settings.copyButtonPosition === "bottom" ? "Bottom" : "Top"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="top">
+                  Top
+                </SelectItem>
+                <SelectItem hideIndicator value="bottom">
+                  Bottom
                 </SelectItem>
               </SelectPopup>
             </Select>
