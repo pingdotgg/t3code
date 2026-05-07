@@ -110,7 +110,7 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
+import { syncProjectScriptKeybinding } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   commandForProjectScript,
@@ -1989,20 +1989,20 @@ export default function ChatView(props: ChatViewProps) {
         scripts: input.nextScripts,
       });
 
-      const keybindingRule = decodeProjectScriptKeybindingRule({
-        keybinding: input.keybinding,
-        command: input.keybindingCommand,
-      });
-
-      if (isElectron && keybindingRule) {
+      if (isElectron) {
         const localApi = readLocalApi();
         if (!localApi) {
           throw new Error("Local API unavailable.");
         }
-        await localApi.server.upsertKeybinding(keybindingRule);
+        await syncProjectScriptKeybinding({
+          keybindings,
+          keybinding: input.keybinding,
+          command: input.keybindingCommand,
+          server: localApi.server,
+        });
       }
     },
-    [environmentId],
+    [environmentId, keybindings],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput) => {

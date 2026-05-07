@@ -52,7 +52,7 @@ import ProjectScriptsControl, {
   type NewProjectScriptInput,
 } from "../components/ProjectScriptsControl";
 import { commandForProjectScript, nextProjectScriptId } from "../projectScripts";
-import { decodeProjectScriptKeybindingRule } from "../lib/projectScriptKeybindings";
+import { syncProjectScriptKeybinding } from "../lib/projectScriptKeybindings";
 import { useSettings } from "../hooks/useSettings";
 import {
   getCustomModelOptionsByInstance,
@@ -290,7 +290,16 @@ function ProjectRouteView() {
   const commitActionEnvironment = useCallback(
     (nextEnvironment: ProjectActionEnvironment) => {
       setActionEnvironment(nextEnvironment);
-      const normalized = normalizeActionEnvironment(nextEnvironment);
+      let normalized: ProjectActionEnvironment;
+      try {
+        normalized = normalizeActionEnvironment(nextEnvironment);
+      } catch (error) {
+        showProjectSettingsError(
+          "Failed to update action environment",
+          error instanceof Error ? error : new Error("Unable to update action environment."),
+        );
+        return;
+      }
       const invalidKey = Object.keys(normalized).find((key) => !isValidActionEnvironmentKey(key));
       if (invalidKey) {
         showProjectSettingsError(
@@ -342,14 +351,12 @@ function ProjectRouteView() {
       scripts: input.nextScripts,
     });
 
-    const keybindingRule = decodeProjectScriptKeybindingRule({
+    await syncProjectScriptKeybinding({
+      keybindings,
       keybinding: input.keybinding,
       command: input.keybindingCommand,
+      server: readLocalApi()?.server,
     });
-    if (keybindingRule) {
-      const localApi = readLocalApi();
-      await localApi?.server.upsertKeybinding(keybindingRule);
-    }
     await queryClient.invalidateQueries({ queryKey });
   };
 
@@ -799,11 +806,17 @@ function isModelSelectionEqual(left: ModelSelection | null, right: ModelSelectio
 function normalizeActionEnvironment(
   environment: Readonly<Record<string, string>>,
 ): ProjectActionEnvironment {
+  const normalized = new Map<string, string>();
+  for (const [key, value] of Object.entries(environment)) {
+    const trimmed = key.trim();
+    if (trimmed.length === 0) continue;
+    if (normalized.has(trimmed)) {
+      throw new Error(`Duplicate action environment key "${trimmed}".`);
+    }
+    normalized.set(trimmed, value);
+  }
   return Object.fromEntries(
-    Object.entries(environment)
-      .map(([key, value]) => [key.trim(), value] as const)
-      .filter(([key]) => key.length > 0)
-      .toSorted(([left], [right]) => left.localeCompare(right)),
+    [...normalized.entries()].toSorted(([left], [right]) => left.localeCompare(right)),
   );
 }
 

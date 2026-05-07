@@ -59,6 +59,7 @@ function useNewThreadState() {
         getComposerDraft,
         getDraftSession,
         getDraftThread,
+        applyStickyState,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
         setModelSelection,
@@ -78,12 +79,13 @@ function useNewThreadState() {
       const storedDraftThread = getDraftSessionByLogicalProjectKey(logicalProjectKey);
       const projectDefaultModelSelection: ModelSelection =
         project?.defaultModelSelection ?? createDefaultModelSelection();
-      const seedDefaultModelSelection = (draftId: Parameters<typeof getComposerDraft>[0]) => {
+      const seedDraftModelState = (draftId: Parameters<typeof getComposerDraft>[0]) => {
         const draft = getComposerDraft(draftId);
         if (!isEmptyComposerDraft(draft)) return;
         setModelSelection(draftId, projectDefaultModelSelection, {
           preserveExistingOptions: false,
         });
+        applyStickyState(draftId);
       };
       const latestActiveDraftThread: DraftThreadState | null = currentRouteTarget
         ? currentRouteTarget.kind === "server"
@@ -102,7 +104,7 @@ function useNewThreadState() {
           setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, storedDraftThread.draftId, {
             threadId: storedDraftThread.threadId,
           });
-          seedDefaultModelSelection(storedDraftThread.draftId);
+          seedDraftModelState(storedDraftThread.draftId);
           if (
             currentRouteTarget?.kind === "draft" &&
             currentRouteTarget.draftId === storedDraftThread.draftId
@@ -138,7 +140,7 @@ function useNewThreadState() {
           ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
           ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
         });
-        seedDefaultModelSelection(currentRouteTarget.draftId);
+        seedDraftModelState(currentRouteTarget.draftId);
         return Promise.resolve();
       }
 
@@ -154,7 +156,7 @@ function useNewThreadState() {
           envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
-        seedDefaultModelSelection(draftId);
+        seedDraftModelState(draftId);
 
         await router.navigate({
           to: "/draft/$draftId",

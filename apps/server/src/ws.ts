@@ -110,25 +110,8 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 
-function parseGitRemoteVerboseOutput(stdout: string): ProjectDetectedRemote[] {
-  const remotes = new Map<string, { url?: string; pushUrl?: string }>();
-  for (const line of stdout.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)$/.exec(trimmed);
-    if (!match) continue;
-    const [, name = "", url = "", direction = ""] = match;
-    if (name.length === 0 || url.length === 0) continue;
-    const remote = remotes.get(name) ?? {};
-    if (direction === "fetch") {
-      remote.url = url;
-    } else if (direction === "push") {
-      remote.pushUrl = url;
-    }
-    remotes.set(name, remote);
-  }
-
-  return [...remotes.entries()].flatMap(([name, remote]) =>
+function detectedRemotesFromGitRemoteVerboseOutput(stdout: string): ProjectDetectedRemote[] {
+  return [...GitVcsDriver.parseGitRemoteVerboseOutput(stdout).entries()].flatMap(([name, remote]) =>
     remote.url
       ? [
           {
@@ -680,7 +663,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             { concurrency: "unbounded" },
           );
           const remotes =
-            remoteResult.exitCode === 0 ? parseGitRemoteVerboseOutput(remoteResult.stdout) : [];
+            remoteResult.exitCode === 0
+              ? detectedRemotesFromGitRemoteVerboseOutput(remoteResult.stdout)
+              : [];
           return {
             gitRoot: gitRootResult.exitCode === 0 ? gitRootResult.stdout.trim() || null : null,
             branch: branchResult.exitCode === 0 ? branchResult.stdout.trim() || null : null,
