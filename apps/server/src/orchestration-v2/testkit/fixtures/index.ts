@@ -30,8 +30,14 @@ import { toolCallRestrictedGranularInput } from "./tool_call_restricted_granular
 import { assertToolCallWorkspaceNeverClaudeOutput } from "./tool_call_workspace_never/claude_output.ts";
 import { assertToolCallWorkspaceNeverOutput } from "./tool_call_workspace_never/codex_output.ts";
 import { toolCallWorkspaceNeverInput } from "./tool_call_workspace_never/input.ts";
+import { assertTurnInterruptClaudeOutput } from "./turn_interrupt/claude_output.ts";
 import { assertTurnInterruptOutput } from "./turn_interrupt/codex_output.ts";
 import { turnInterruptInput } from "./turn_interrupt/input.ts";
+import { assertTurnInterruptMidToolClaudeOutput } from "./turn_interrupt_mid_tool/claude_output.ts";
+import { assertTurnInterruptMidToolCodexOutput } from "./turn_interrupt_mid_tool/codex_output.ts";
+import { turnInterruptMidToolInput } from "./turn_interrupt_mid_tool/input.ts";
+import { assertTurnInterruptRestartClaudeOutput } from "./turn_interrupt_restart/claude_output.ts";
+import { turnInterruptRestartInput } from "./turn_interrupt_restart/input.ts";
 import { assertClaudeWebSearchOutput } from "./web_search/claude_output.ts";
 import { assertWebSearchOutput } from "./web_search/codex_output.ts";
 import { webSearchInput } from "./web_search/input.ts";
@@ -302,6 +308,55 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
         assertOutput: assertTurnInterruptOutput,
       },
+      {
+        provider: "claudeAgent",
+        transcriptFile: new URL("./turn_interrupt/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptClaudeOutput,
+      },
+    ],
+  },
+  {
+    name: "turn_interrupt_mid_tool",
+    buildInput: turnInterruptMidToolInput,
+    providers: [
+      {
+        provider: "codex",
+        transcriptFile: new URL(
+          "./turn_interrupt_mid_tool/codex_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CODEX_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptMidToolCodexOutput,
+      },
+      {
+        provider: "claudeAgent",
+        transcriptFile: new URL(
+          "./turn_interrupt_mid_tool/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptMidToolClaudeOutput,
+      },
+    ],
+  },
+  {
+    name: "turn_interrupt_restart",
+    buildInput: turnInterruptRestartInput,
+    providers: [
+      {
+        provider: "claudeAgent",
+        transcriptFile: new URL(
+          "./turn_interrupt_restart/claude_transcript.ndjson",
+          import.meta.url,
+        ),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+        assertOutput: assertTurnInterruptRestartClaudeOutput,
+      },
     ],
   },
   {
@@ -324,10 +379,6 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
 // `tool_call_workspace_never/claude_transcript.ndjson`,
 // `tool_call_restricted_granular/claude_transcript.ndjson`, and
 // docs/orchestration-v2/provider-capability-system.md.
-
-// TODO(claude-v2/control): add a Claude interrupt fixture once explicit run interrupt behavior
-// is fully hardened. Cross-reference `turn_interrupt/codex_transcript.ndjson` and
-// docs/orchestration-v2/feature-lifecycles.md.
 
 // TODO(claude-v2/context-transfer): add provider-switch handoff and return fixtures when portable
 // context handoff is implemented. Cross-reference docs/orchestration-v2/provider-switching-and-context.md

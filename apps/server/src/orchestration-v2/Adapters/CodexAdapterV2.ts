@@ -1455,10 +1455,799 @@ export const layer: Layer.Layer<
             }),
           );
 
-          yield* client.handleServerNotification("item/plan/delta", (payload) =>
-            Effect.gen(function* () {
-              const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
-              if (context === undefined) {
+        const resolveCodexAttachment = (attachment: ChatAttachment) =>
+          Effect.gen(function* () {
+            const attachmentPath = resolveAttachmentPath({
+              attachmentsDir: serverConfig.attachmentsDir,
+              attachment,
+            });
+            if (attachmentPath === null) {
+              return yield* toProtocolError(`Invalid attachment id '${attachment.id}'`);
+            }
+            const bytes = yield* fileSystem
+              .readFile(attachmentPath)
+              .pipe(
+                Effect.mapError((cause) =>
+                  toProtocolError(`Failed to read attachment '${attachment.id}'.`, cause),
+                ),
+              );
+            return {
+              type: "image" as const,
+              url: `data:${attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
+            } satisfies CodexSchema.V2TurnStartParams__UserInput;
+          });
+
+        const toCodexInput = (
+          turnInput: Pick<ProviderAdapterV2TurnInput | ProviderAdapterV2SteerInput, "message">,
+        ) =>
+          Effect.gen(function* () {
+            const inputItems: Array<CodexSchema.V2TurnStartParams__UserInput> = [];
+            if (turnInput.message.text.length > 0) {
+              inputItems.push({
+                type: "text",
+                text: turnInput.message.text,
+              });
+            }
+            const attachmentItems = yield* Effect.forEach(
+              turnInput.message.attachments,
+              resolveCodexAttachment,
+              { concurrency: 1 },
+            );
+            inputItems.push(...attachmentItems);
+            if (inputItems.length === 0) {
+              return yield* toProtocolError("Turn requires non-empty text or attachments.");
+            }
+            return inputItems;
+          });
+
+        const buildAgentMessageArtifacts = (
+          context: ActiveCodexTurnContext,
+          item: Extract<
+            CodexSchema.V2ItemCompletedNotification__ThreadItem,
+            { type: "agentMessage" }
+          >,
+        ) =>
+          Effect.gen(function* () {
+            const completedAt = yield* DateTime.now;
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const ordinal = yield* resolveItemOrdinal(context, item.id);
+            const messageId = idAllocator.derive.messageFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              parentNodeId: context.itemParentNodeId,
+              rootNodeId: context.rootNodeId,
+              kind: "assistant_message",
+              status: "completed",
+              countsForRun: false,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: context.startedAt,
+              completedAt,
+            };
+            const message: OrchestrationV2ConversationMessage = {
+              id: messageId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId,
+              role: "assistant",
+              text: item.text,
+              attachments: [],
+              streaming: false,
+              createdAt: completedAt,
+              updatedAt: completedAt,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: turnItemId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: null,
+              startedAt: context.startedAt,
+              completedAt,
+              updatedAt: completedAt,
+              type: "assistant_message",
+              messageId,
+              text: item.text,
+              streaming: false,
+            };
+            return { node, message, turnItem };
+          });
+
+        const buildCommandExecutionArtifacts = (
+          context: ActiveCodexTurnContext,
+          item: Extract<
+            | CodexSchema.V2ItemStartedNotification__ThreadItem
+            | CodexSchema.V2ItemCompletedNotification__ThreadItem,
+            { type: "commandExecution" }
+          >,
+        ) =>
+          Effect.gen(function* () {
+            const updatedAt = yield* DateTime.now;
+            const status = codexItemStatus(item.status);
+            const completedAt = status.completed ? updatedAt : null;
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const ordinal = yield* resolveItemOrdinal(context, item.id);
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              parentNodeId: context.itemParentNodeId,
+              rootNodeId: context.rootNodeId,
+              kind: "tool_call",
+              status: status.node,
+              countsForRun: false,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: context.startedAt,
+              completedAt,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: turnItemId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              parentItemId: null,
+              ordinal,
+              status: status.turnItem,
+              title: null,
+              startedAt: context.startedAt,
+              completedAt,
+              updatedAt,
+              type: "command_execution",
+              input: item.command,
+              ...(item.aggregatedOutput === null || item.aggregatedOutput === undefined
+                ? {}
+                : { output: item.aggregatedOutput }),
+              ...(item.exitCode === null || item.exitCode === undefined
+                ? {}
+                : { exitCode: item.exitCode }),
+            };
+            return { node, turnItem };
+          });
+
+        const buildFileChangeArtifacts = (
+          context: ActiveCodexTurnContext,
+          item: Extract<
+            CodexSchema.V2ItemCompletedNotification__ThreadItem,
+            { type: "fileChange" }
+          >,
+        ) =>
+          Effect.gen(function* () {
+            const firstChange = item.changes[0];
+            if (firstChange === undefined) {
+              return null;
+            }
+
+            const updatedAt = yield* DateTime.now;
+            const status = codexItemStatus(item.status);
+            const completedAt = status.completed ? updatedAt : null;
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const ordinal = yield* resolveItemOrdinal(context, item.id);
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              parentNodeId: context.itemParentNodeId,
+              rootNodeId: context.rootNodeId,
+              kind: "tool_call",
+              status: status.node,
+              countsForRun: false,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: context.startedAt,
+              completedAt,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: turnItemId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              parentItemId: null,
+              ordinal,
+              status: status.turnItem,
+              title: null,
+              startedAt: context.startedAt,
+              completedAt,
+              updatedAt,
+              type: "file_change",
+              fileName: firstChange.path,
+              diffStr: firstChange.diff,
+            };
+            return { node, turnItem };
+          });
+
+        const buildWebSearchArtifacts = (input: {
+          readonly context: ActiveCodexTurnContext;
+          readonly item: CodexWebSearchItem;
+          readonly completed: boolean;
+        }) =>
+          Effect.gen(function* () {
+            const updatedAt = yield* DateTime.now;
+            const completedAt = input.completed ? updatedAt : null;
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: input.item.id,
+            });
+            const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: input.item.id,
+            });
+            const ordinal = yield* resolveItemOrdinal(input.context, input.item.id);
+            const patterns = webSearchPatterns(input.item);
+            const status = input.completed ? "completed" : "running";
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              parentNodeId: input.context.itemParentNodeId,
+              rootNodeId: input.context.rootNodeId,
+              kind: "tool_call",
+              status,
+              countsForRun: false,
+              providerThreadId: input.context.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(input.item.id),
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: input.context.startedAt,
+              completedAt,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: turnItemId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              nodeId,
+              providerThreadId: input.context.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(input.item.id),
+              parentItemId: null,
+              ordinal,
+              status,
+              title: null,
+              startedAt: input.context.startedAt,
+              completedAt,
+              updatedAt,
+              type: "web_search",
+              ...(patterns.length === 0 ? {} : { patterns: [...patterns] }),
+            };
+            return { node, turnItem };
+          });
+
+        const buildProposedPlanArtifacts = (input: {
+          readonly context: ActiveCodexTurnContext;
+          readonly nativeItemId: string;
+          readonly status: OrchestrationV2PlanArtifact["status"];
+          readonly markdown: string;
+          readonly completed?: boolean;
+        }) =>
+          Effect.gen(function* () {
+            const updatedAt = yield* DateTime.now;
+            const completedAt = input.completed === true ? updatedAt : null;
+            const planId = yield* resolvePlanId(input.context, input.nativeItemId);
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: input.nativeItemId,
+            });
+            const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: input.nativeItemId,
+            });
+            const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
+            const plan: OrchestrationV2PlanArtifact = {
+              id: planId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              nodeId,
+              kind: "proposed_plan",
+              status: input.status,
+              markdown: input.markdown,
+            };
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              parentNodeId: input.context.itemParentNodeId,
+              rootNodeId: input.context.rootNodeId,
+              kind: "plan",
+              status: input.completed === true ? "completed" : "running",
+              countsForRun: false,
+              providerThreadId: input.context.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(input.nativeItemId),
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: input.context.startedAt,
+              completedAt,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: turnItemId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              nodeId,
+              providerThreadId: input.context.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(input.nativeItemId),
+              parentItemId: null,
+              ordinal,
+              status: input.completed === true ? "completed" : "running",
+              title: null,
+              startedAt: input.context.startedAt,
+              completedAt,
+              updatedAt,
+              type: "proposed_plan",
+              planId,
+              markdown: input.markdown,
+              streaming: input.completed !== true,
+            };
+            return { node, plan, turnItem };
+          });
+
+        const buildTodoListArtifacts = (input: {
+          readonly context: ActiveCodexTurnContext;
+          readonly nativeItemId: string;
+          readonly status: OrchestrationV2PlanArtifact["status"];
+          readonly steps: ReadonlyArray<OrchestrationV2PlanStep>;
+          readonly explanation?: string;
+          readonly completed?: boolean;
+        }) =>
+          Effect.gen(function* () {
+            const updatedAt = yield* DateTime.now;
+            const completedAt = input.completed === true ? updatedAt : null;
+            const planId = yield* resolvePlanId(input.context, input.nativeItemId);
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: input.nativeItemId,
+            });
+            const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: input.nativeItemId,
+            });
+            const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
+            const plan: OrchestrationV2PlanArtifact = {
+              id: planId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              nodeId,
+              kind: "todo_list",
+              status: input.status,
+              steps: [...input.steps],
+              ...(input.explanation === undefined ? {} : { explanation: input.explanation }),
+            };
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              parentNodeId: input.context.itemParentNodeId,
+              rootNodeId: input.context.rootNodeId,
+              kind: "todo_list",
+              status: input.completed === true ? "completed" : "running",
+              countsForRun: false,
+              providerThreadId: input.context.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(input.nativeItemId),
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: input.context.startedAt,
+              completedAt,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: turnItemId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              nodeId,
+              providerThreadId: input.context.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(input.nativeItemId),
+              parentItemId: null,
+              ordinal,
+              status: input.completed === true ? "completed" : "running",
+              title: null,
+              startedAt: input.context.startedAt,
+              completedAt,
+              updatedAt,
+              type: "todo_list",
+              planId,
+              steps: [...input.steps],
+              ...(input.explanation === undefined ? {} : { explanation: input.explanation }),
+            };
+            return { node, plan, turnItem };
+          });
+
+        const buildApprovalRequestArtifacts = (input: {
+          readonly context: ActiveCodexTurnContext;
+          readonly nativeItemId: string;
+          readonly nativeRequestId: string;
+          readonly requestKind: ProviderRequestKind;
+          readonly prompt?: string | null;
+        }) =>
+          Effect.gen(function* () {
+            const createdAt = yield* DateTime.now;
+            const parentNodeId = idAllocator.derive.nodeFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: input.nativeItemId,
+            });
+            const ordinal = yield* resolveItemOrdinal(
+              input.context,
+              `${input.nativeItemId}:approval:${input.nativeRequestId}`,
+            );
+            const requestId = yield* idAllocator.allocate.runtimeRequest({
+              provider: CODEX_PROVIDER,
+              providerTurnId: input.context.providerTurnId,
+              nativeRequestId: input.nativeRequestId,
+            });
+            const nodeId = idAllocator.derive.approvalNode({ requestId });
+            const providerSessionId = input.context.input.providerThread.providerSessionId;
+            if (providerSessionId === null) {
+              return yield* toProtocolError(
+                `Provider thread ${input.context.providerThread.id} is missing a provider session id.`,
+              );
+            }
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              parentNodeId,
+              rootNodeId: input.context.rootNodeId,
+              kind: "approval_request",
+              status: "waiting",
+              countsForRun: false,
+              providerThreadId: input.context.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(input.nativeItemId),
+              runtimeRequestId: requestId,
+              checkpointScopeId: null,
+              startedAt: createdAt,
+              completedAt: null,
+            };
+            const request: OrchestrationV2RuntimeRequest = {
+              id: requestId,
+              nodeId,
+              providerTurnId: input.context.providerTurnId,
+              nativeRequestRef: {
+                provider: CODEX_PROVIDER,
+                nativeId: input.nativeRequestId,
+                strength: "strong",
+              },
+              kind: input.requestKind,
+              status: "pending",
+              responseCapability: {
+                type: "live",
+                providerSessionId,
+              },
+              createdAt,
+              resolvedAt: null,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: idAllocator.derive.approvalTurnItem({ requestId }),
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              nodeId,
+              providerThreadId: input.context.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(input.nativeItemId),
+              parentItemId: null,
+              ordinal,
+              status: "waiting",
+              title: null,
+              startedAt: createdAt,
+              completedAt: null,
+              updatedAt: createdAt,
+              type: "approval_request",
+              requestId,
+              requestKind: input.requestKind,
+              ...(input.prompt === null || input.prompt === undefined
+                ? {}
+                : { prompt: input.prompt }),
+            };
+            return { node, request, turnItem };
+          });
+
+        const buildUserInputRequestArtifacts = (input: {
+          readonly context: ActiveCodexTurnContext;
+          readonly nativeItemId: string;
+          readonly nativeRequestId: string;
+          readonly questions: ReadonlyArray<CodexSchema.ToolRequestUserInputParams__ToolRequestUserInputQuestion>;
+        }) =>
+          Effect.gen(function* () {
+            const createdAt = yield* DateTime.now;
+            const requestId = yield* idAllocator.allocate.runtimeRequest({
+              provider: CODEX_PROVIDER,
+              providerTurnId: input.context.providerTurnId,
+              nativeRequestId: input.nativeRequestId,
+            });
+            const providerSessionId = input.context.input.providerThread.providerSessionId;
+            if (providerSessionId === null) {
+              return yield* toProtocolError(
+                `Provider thread ${input.context.providerThread.id} is missing a provider session id.`,
+              );
+            }
+            const questions = input.questions.map((question, index) => ({
+              id: nonEmptyText(question.id, `question-${index + 1}`),
+              header: nonEmptyText(question.header, "Question"),
+              question: nonEmptyText(question.question, "Choose an answer."),
+              options:
+                question.options?.map((option, optionIndex) => ({
+                  label: nonEmptyText(option.label, `Option ${optionIndex + 1}`),
+                  description: nonEmptyText(option.description, option.label),
+                })) ?? [],
+            }));
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: input.nativeItemId,
+            });
+            const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+              provider: CODEX_PROVIDER,
+              nativeItemId: input.nativeItemId,
+            });
+            const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              parentNodeId: input.context.itemParentNodeId,
+              rootNodeId: input.context.rootNodeId,
+              kind: "user_input_request",
+              status: "waiting",
+              countsForRun: false,
+              providerThreadId: input.context.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(input.nativeItemId),
+              runtimeRequestId: requestId,
+              checkpointScopeId: null,
+              startedAt: createdAt,
+              completedAt: null,
+            };
+            const request: OrchestrationV2RuntimeRequest = {
+              id: requestId,
+              nodeId,
+              providerTurnId: input.context.providerTurnId,
+              nativeRequestRef: {
+                provider: CODEX_PROVIDER,
+                nativeId: input.nativeRequestId,
+                strength: "strong",
+              },
+              kind: "user_input",
+              status: "pending",
+              responseCapability: {
+                type: "live",
+                providerSessionId,
+              },
+              createdAt,
+              resolvedAt: null,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: turnItemId,
+              threadId: input.context.input.threadId,
+              runId: input.context.input.runId,
+              nodeId,
+              providerThreadId: input.context.providerThread.id,
+              providerTurnId: input.context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(input.nativeItemId),
+              parentItemId: null,
+              ordinal,
+              status: "waiting",
+              title: null,
+              startedAt: createdAt,
+              completedAt: null,
+              updatedAt: createdAt,
+              type: "user_input_request",
+              requestId,
+              questions,
+            };
+            return { node, request, turnItem };
+          });
+
+        yield* client.handleServerNotification("item/agentMessage/delta", (payload) =>
+          Ref.update(agentMessageDeltas, (current) => {
+            const updated = new Map(current);
+            updated.set(payload.itemId, `${updated.get(payload.itemId) ?? ""}${payload.delta}`);
+            return updated;
+          }),
+        );
+
+        yield* client.handleServerNotification("item/plan/delta", (payload) =>
+          Effect.gen(function* () {
+            const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
+            if (context === undefined) {
+              return;
+            }
+            const markdown = yield* Ref.modify(planDeltas, (current) => {
+              const updated = new Map(current);
+              const next = `${updated.get(payload.itemId) ?? ""}${payload.delta}`;
+              updated.set(payload.itemId, next);
+              return [next, updated];
+            });
+            const artifacts = yield* buildProposedPlanArtifacts({
+              context,
+              nativeItemId: payload.itemId,
+              status: "active",
+              markdown,
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              provider: CODEX_PROVIDER,
+              node: artifacts.node,
+            });
+            yield* emitProviderEvent({
+              type: "plan.updated",
+              provider: CODEX_PROVIDER,
+              plan: artifacts.plan,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              provider: CODEX_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+          }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerNotification("turn/plan/updated", (payload) =>
+          Effect.gen(function* () {
+            const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
+            if (context === undefined) {
+              return;
+            }
+            const steps = payload.plan.map((step, index) => ({
+              id: `step-${index + 1}`,
+              text: nonEmptyText(step.step, `Step ${index + 1}`),
+              status: codexPlanStepStatus(step.status),
+            }));
+            const explanation = trimText(payload.explanation);
+            const artifacts = yield* buildTodoListArtifacts({
+              context,
+              nativeItemId: `turn-plan:${payload.turnId}`,
+              status: "active",
+              ...(explanation === undefined ? {} : { explanation }),
+              steps,
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              provider: CODEX_PROVIDER,
+              node: artifacts.node,
+            });
+            yield* emitProviderEvent({
+              type: "plan.updated",
+              provider: CODEX_PROVIDER,
+              plan: artifacts.plan,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              provider: CODEX_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+          }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerNotification("turn/started", (payload) =>
+          Effect.gen(function* () {
+            const context = (yield* Ref.get(activeTurns)).get(payload.turn.id);
+            if (context !== undefined) {
+              return;
+            }
+            yield* rememberSubagentTurnStarted({
+              nativeThreadId: payload.threadId,
+              nativeTurnId: payload.turn.id,
+              startedAt: codexTimestamp(payload.turn.startedAt),
+            });
+          }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerNotification("item/started", (payload) =>
+          Effect.gen(function* () {
+            const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
+            if (context === undefined) {
+              return;
+            }
+
+            if (payload.item.type === "commandExecution") {
+              const artifacts = yield* buildCommandExecutionArtifacts(context, payload.item);
+              yield* emitProviderEvent({
+                type: "node.updated",
+                provider: CODEX_PROVIDER,
+                node: artifacts.node,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                provider: CODEX_PROVIDER,
+                turnItem: artifacts.turnItem,
+              });
+              return;
+            }
+
+            if (payload.item.type !== "webSearch") {
+              return;
+            }
+
+            const artifacts = yield* buildWebSearchArtifacts({
+              context,
+              item: payload.item,
+              completed: false,
+            });
+            yield* emitProviderEvent({
+              type: "node.updated",
+              provider: CODEX_PROVIDER,
+              node: artifacts.node,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              provider: CODEX_PROVIDER,
+              turnItem: artifacts.turnItem,
+            });
+          }).pipe(Effect.orDie),
+        );
+
+        yield* client.handleServerNotification("item/completed", (payload) =>
+          Effect.gen(function* () {
+            const context = (yield* Ref.get(activeTurns)).get(payload.turnId);
+            if (context === undefined) {
+              return;
+            }
+
+            if (payload.item.type === "commandExecution") {
+              const artifacts = yield* buildCommandExecutionArtifacts(context, payload.item);
+              yield* emitProviderEvent({
+                type: "node.updated",
+                provider: CODEX_PROVIDER,
+                node: artifacts.node,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                provider: CODEX_PROVIDER,
+                turnItem: artifacts.turnItem,
+              });
+              return;
+            }
+
+            if (payload.item.type === "fileChange") {
+              const artifacts = yield* buildFileChangeArtifacts(context, payload.item);
+              if (artifacts === null) {
                 return;
               }
               const markdown = yield* Ref.modify(planDeltas, (current) => {
