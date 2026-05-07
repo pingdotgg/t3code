@@ -146,7 +146,7 @@ function firstBodyParagraph(body: string): string | undefined {
       !paragraph.startsWith("#") &&
       !paragraph.startsWith("```") &&
       !paragraph.startsWith("!") &&
-      paragraph !== "---",
+      !paragraph.startsWith("---"),
   );
 }
 

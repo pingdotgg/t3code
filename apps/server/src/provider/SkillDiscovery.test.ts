@@ -89,6 +89,7 @@ describe("parseSkillMarkdown", () => {
     });
 
     assert.equal(skill?.name, "broken");
+    assert.equal(skill?.description, "Body");
     assert.equal(skill?.enabled, true);
   });
 
