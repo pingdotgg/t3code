@@ -6,6 +6,7 @@ import type {
   OrchestrationV2ShellSnapshot,
   OrchestrationV2StoredEvent,
   OrchestrationV2ThreadProjection,
+  OrchestrationV2TurnItem,
   ProviderApprovalDecision,
   ProviderUserInputAnswers,
   CommandId,
@@ -42,6 +43,12 @@ export type OrchestratorV2ScenarioStep =
       readonly type: "await_run_steerable";
       readonly threadId: ThreadId;
       readonly runId: OrchestrationV2Run["id"];
+    }
+  | {
+      readonly type: "await_run_turn_item";
+      readonly threadId: ThreadId;
+      readonly runId: OrchestrationV2Run["id"];
+      readonly itemType: OrchestrationV2TurnItem["type"];
     }
   | {
       readonly type: "respond_to_next_runtime_request";
@@ -241,6 +248,30 @@ export function runOrchestratorV2Scenario(
           return yield* waitForRunSteerable(threadId, runId, attemptsRemaining - 1);
         });
 
+      const waitForRunTurnItem = (
+        threadId: ThreadId,
+        runId: OrchestrationV2Run["id"],
+        itemType: OrchestrationV2TurnItem["type"],
+        attemptsRemaining = 1_000,
+      ): Effect.Effect<void, OrchestratorV2Error | OrchestratorV2ScenarioStepError, never> =>
+        Effect.gen(function* () {
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const hasTurnItem = projection.turnItems.some(
+            (item) => item.runId === runId && item.type === itemType,
+          );
+          if (hasTurnItem) {
+            return;
+          }
+          if (attemptsRemaining <= 0) {
+            return yield* new OrchestratorV2ScenarioStepError({
+              scenario: scenario.name,
+              step: `await_run_turn_item:${runId}:${itemType}`,
+            });
+          }
+          yield* Effect.yieldNow;
+          return yield* waitForRunTurnItem(threadId, runId, itemType, attemptsRemaining - 1);
+        });
+
       for (const step of scenarioSteps(scenario)) {
         switch (step.type) {
           case "dispatch": {
@@ -277,6 +308,9 @@ export function runOrchestratorV2Scenario(
             break;
           case "await_run_steerable":
             yield* waitForRunSteerable(step.threadId, step.runId);
+            break;
+          case "await_run_turn_item":
+            yield* waitForRunTurnItem(step.threadId, step.runId, step.itemType);
             break;
           case "respond_to_next_runtime_request": {
             const request = yield* waitForPendingRuntimeRequest(step.threadId);
