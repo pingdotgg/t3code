@@ -4,11 +4,11 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopEnvironment from "../../main/DesktopEnvironment.ts";
 import { readClientSettingsEffect, writeClientSettingsEffect } from "../../clientPersistence.ts";
-import { GET_CLIENT_SETTINGS_CHANNEL, SET_CLIENT_SETTINGS_CHANNEL } from "../channels.ts";
+import * as IpcChannels from "../channels.ts";
 import { makeIpcMethod } from "../DesktopIpc.ts";
 
 export const getClientSettings = makeIpcMethod({
-  channel: GET_CLIENT_SETTINGS_CHANNEL,
+  channel: IpcChannels.GET_CLIENT_SETTINGS_CHANNEL,
   payload: Schema.Void,
   result: Schema.NullOr(ClientSettingsSchema),
   handler: () =>
@@ -19,7 +19,7 @@ export const getClientSettings = makeIpcMethod({
 });
 
 export const setClientSettings = makeIpcMethod({
-  channel: SET_CLIENT_SETTINGS_CHANNEL,
+  channel: IpcChannels.SET_CLIENT_SETTINGS_CHANNEL,
   payload: ClientSettingsSchema,
   result: Schema.Void,
   handler: (settings) =>

@@ -11,13 +11,7 @@ import {
 } from "../../clientPersistence.ts";
 import * as DesktopEnvironment from "../../main/DesktopEnvironment.ts";
 import * as ElectronSafeStorage from "../../electron/ElectronSafeStorage.ts";
-import {
-  GET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL,
-  GET_SAVED_ENVIRONMENT_SECRET_CHANNEL,
-  REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL,
-  SET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL,
-  SET_SAVED_ENVIRONMENT_SECRET_CHANNEL,
-} from "../channels.ts";
+import * as IpcChannels from "../channels.ts";
 import { makeIpcMethod } from "../DesktopIpc.ts";
 
 const SavedEnvironmentRegistryPayload = Schema.Array(PersistedSavedEnvironmentRecordSchema);
@@ -33,7 +27,7 @@ const SetSavedEnvironmentSecretInput = Schema.Struct({
 });
 
 export const getSavedEnvironmentRegistry = makeIpcMethod({
-  channel: GET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL,
+  channel: IpcChannels.GET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL,
   payload: Schema.Void,
   result: SavedEnvironmentRegistryPayload,
   handler: () =>
@@ -44,7 +38,7 @@ export const getSavedEnvironmentRegistry = makeIpcMethod({
 });
 
 export const setSavedEnvironmentRegistry = makeIpcMethod({
-  channel: SET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL,
+  channel: IpcChannels.SET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL,
   payload: SavedEnvironmentRegistryPayload,
   result: Schema.Void,
   handler: (records) =>
@@ -55,7 +49,7 @@ export const setSavedEnvironmentRegistry = makeIpcMethod({
 });
 
 export const getSavedEnvironmentSecret = makeIpcMethod({
-  channel: GET_SAVED_ENVIRONMENT_SECRET_CHANNEL,
+  channel: IpcChannels.GET_SAVED_ENVIRONMENT_SECRET_CHANNEL,
   payload: EnvironmentId,
   result: Schema.NullOr(Schema.String),
   handler: (environmentId) =>
@@ -71,7 +65,7 @@ export const getSavedEnvironmentSecret = makeIpcMethod({
 });
 
 export const setSavedEnvironmentSecret = makeIpcMethod({
-  channel: SET_SAVED_ENVIRONMENT_SECRET_CHANNEL,
+  channel: IpcChannels.SET_SAVED_ENVIRONMENT_SECRET_CHANNEL,
   payload: SetSavedEnvironmentSecretInput,
   result: Schema.Boolean,
   handler: ({ environmentId, secret }) =>
@@ -88,7 +82,7 @@ export const setSavedEnvironmentSecret = makeIpcMethod({
 });
 
 export const removeSavedEnvironmentSecret = makeIpcMethod({
-  channel: REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL,
+  channel: IpcChannels.REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL,
   payload: EnvironmentId,
   result: Schema.Void,
   handler: (environmentId) =>

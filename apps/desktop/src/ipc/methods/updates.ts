@@ -8,17 +8,11 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import * as DesktopUpdates from "../../main/DesktopUpdates.ts";
-import {
-  UPDATE_CHECK_CHANNEL,
-  UPDATE_DOWNLOAD_CHANNEL,
-  UPDATE_GET_STATE_CHANNEL,
-  UPDATE_INSTALL_CHANNEL,
-  UPDATE_SET_CHANNEL_CHANNEL,
-} from "../channels.ts";
+import * as IpcChannels from "../channels.ts";
 import { makeIpcMethod } from "../DesktopIpc.ts";
 
 export const getUpdateState = makeIpcMethod({
-  channel: UPDATE_GET_STATE_CHANNEL,
+  channel: IpcChannels.UPDATE_GET_STATE_CHANNEL,
   payload: Schema.Void,
   result: DesktopUpdateStateSchema,
   handler: () =>
@@ -29,7 +23,7 @@ export const getUpdateState = makeIpcMethod({
 });
 
 export const setUpdateChannel = makeIpcMethod({
-  channel: UPDATE_SET_CHANNEL_CHANNEL,
+  channel: IpcChannels.UPDATE_SET_CHANNEL_CHANNEL,
   payload: DesktopUpdateChannelSchema,
   result: DesktopUpdateStateSchema,
   handler: (channel) =>
@@ -40,7 +34,7 @@ export const setUpdateChannel = makeIpcMethod({
 });
 
 export const downloadUpdate = makeIpcMethod({
-  channel: UPDATE_DOWNLOAD_CHANNEL,
+  channel: IpcChannels.UPDATE_DOWNLOAD_CHANNEL,
   payload: Schema.Void,
   result: DesktopUpdateActionResultSchema,
   handler: () =>
@@ -51,7 +45,7 @@ export const downloadUpdate = makeIpcMethod({
 });
 
 export const installUpdate = makeIpcMethod({
-  channel: UPDATE_INSTALL_CHANNEL,
+  channel: IpcChannels.UPDATE_INSTALL_CHANNEL,
   payload: Schema.Void,
   result: DesktopUpdateActionResultSchema,
   handler: () =>
@@ -62,7 +56,7 @@ export const installUpdate = makeIpcMethod({
 });
 
 export const checkForUpdate = makeIpcMethod({
-  channel: UPDATE_CHECK_CHANNEL,
+  channel: IpcChannels.UPDATE_CHECK_CHANNEL,
   payload: Schema.Void,
   result: DesktopUpdateCheckResultSchema,
   handler: () =>
