@@ -520,19 +520,27 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
 }
 
 // ---------------------------------------------------------------------------
-// Self-ticking components — bypass LegendList memoisation entirely.
-// Each owns a `nowMs` state value consumed in the render output so the
-// React Compiler cannot elide the re-render as a no-op.
+// Self-ticking labels — update their own text nodes so elapsed-time display
+// does not create a React commit every second while a response is streaming.
 // ---------------------------------------------------------------------------
 
 /** Live "Working for Xs" label. */
 function WorkingTimer({ createdAt }: { createdAt: string }) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const textRef = useRef<HTMLSpanElement>(null);
+  const initialText = formatWorkingTimerNow(createdAt);
+
   useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    const updateText = () => {
+      if (textRef.current) {
+        textRef.current.textContent = formatWorkingTimerNow(createdAt);
+      }
+    };
+    updateText();
+    const id = setInterval(updateText, 1000);
     return () => clearInterval(id);
   }, [createdAt]);
-  return <>{formatWorkingTimer(createdAt, new Date(nowMs).toISOString()) ?? "0s"}</>;
+
+  return <span ref={textRef}>{initialText}</span>;
 }
 
 /** Live timestamp + elapsed duration for a streaming assistant message. */
@@ -545,15 +553,28 @@ function LiveMessageMeta({
   durationStart: string | null | undefined;
   timestampFormat: TimestampFormat;
 }) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
+  const textRef = useRef<HTMLSpanElement>(null);
+  const initialText = formatLiveMessageMetaNow(createdAt, durationStart, timestampFormat);
+
   useEffect(() => {
-    const id = setInterval(() => setNowMs(Date.now()), 1000);
+    const updateText = () => {
+      if (textRef.current) {
+        textRef.current.textContent = formatLiveMessageMetaNow(
+          createdAt,
+          durationStart,
+          timestampFormat,
+        );
+      }
+    };
+    updateText();
+    if (!durationStart) {
+      return;
+    }
+    const id = setInterval(updateText, 1000);
     return () => clearInterval(id);
-  }, [durationStart]);
-  const elapsed = durationStart
-    ? formatElapsed(durationStart, new Date(nowMs).toISOString())
-    : null;
-  return <>{formatMessageMeta(createdAt, elapsed, timestampFormat)}</>;
+  }, [createdAt, durationStart, timestampFormat]);
+
+  return <span ref={textRef}>{initialText}</span>;
 }
 
 // ---------------------------------------------------------------------------
@@ -858,6 +879,19 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
   }
 
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+function formatWorkingTimerNow(startIso: string): string {
+  return formatWorkingTimer(startIso, new Date().toISOString()) ?? "0s";
+}
+
+function formatLiveMessageMetaNow(
+  createdAt: string,
+  durationStart: string | null | undefined,
+  timestampFormat: TimestampFormat,
+): string {
+  const elapsed = durationStart ? formatElapsed(durationStart, new Date().toISOString()) : null;
+  return formatMessageMeta(createdAt, elapsed, timestampFormat);
 }
 
 function formatMessageMeta(
