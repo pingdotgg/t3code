@@ -1,5 +1,8 @@
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Layer, Sink, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {

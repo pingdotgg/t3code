@@ -1,6 +1,9 @@
-import * as Net from "node:net";
+import * as NodeNet from "node:net";
 
-import { Data, Effect, Layer, Context } from "effect";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Context from "effect/Context";
 
 export class NetError extends Data.TaggedError("NetError")<{
   readonly message: string;
@@ -18,7 +21,7 @@ function isErrnoExceptionWithCode(cause: unknown): cause is {
   );
 }
 
-const closeServer = (server: Net.Server) => {
+const closeServer = (server: NodeNet.Server) => {
   try {
     server.close();
   } catch {
@@ -28,7 +31,7 @@ const closeServer = (server: Net.Server) => {
 
 const tryReservePort = (port: number): Effect.Effect<number, NetError> =>
   Effect.callback<number, NetError>((resume) => {
-    const server = Net.createServer();
+    const server = NodeNet.createServer();
     let settled = false;
 
     const settle = (effect: Effect.Effect<number, NetError>) => {
@@ -90,7 +93,7 @@ export const make = () => {
    */
   const canListenOnHost = (port: number, host: string): Effect.Effect<boolean> =>
     Effect.callback<boolean>((resume) => {
-      const server = Net.createServer();
+      const server = NodeNet.createServer();
       let settled = false;
 
       const settle = (value: boolean) => {
@@ -128,7 +131,7 @@ export const make = () => {
    */
   const reserveLoopbackPort = (host = "127.0.0.1"): Effect.Effect<number, NetError> =>
     Effect.callback<number, NetError>((resume) => {
-      const probe = Net.createServer();
+      const probe = NodeNet.createServer();
       let settled = false;
 
       const settle = (effect: Effect.Effect<number, NetError>) => {

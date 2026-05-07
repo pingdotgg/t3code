@@ -7,7 +7,7 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        "namespaceImportPackages": ["effect"],
+        "namespaceImportPackages": ["@effect/platform-node", "effect"],
         "diagnosticSeverity": {
           "importFromBarrel": "error",
           "anyUnknownInErrorContext": "error",
