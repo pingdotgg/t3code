@@ -1,6 +1,7 @@
 import { ArrowLeftIcon, ExternalLinkIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect, useCanGoBack, useNavigate } from "@tanstack/react-router";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { createDefaultModelSelection, createModelSelection } from "@t3tools/shared/model";
 import type {
   KeybindingCommand,
@@ -51,6 +52,14 @@ import { useSavedEnvironmentRuntimeStore } from "../environments/runtime";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
 } from "../components/ProjectScriptsControl";
+import {
+  AzureDevOpsIcon,
+  BitbucketIcon,
+  GitHubIcon,
+  GitIcon,
+  GitLabIcon,
+  type Icon,
+} from "../components/Icons";
 import { commandForProjectScript, nextProjectScriptId } from "../projectScripts";
 import { syncProjectScriptKeybinding } from "../lib/projectScriptKeybindings";
 import { useSettings } from "../hooks/useSettings";
@@ -68,6 +77,13 @@ const PROVIDER_LABELS: Record<SourceControlProviderKind, string> = {
   "azure-devops": "Azure DevOps",
   bitbucket: "Bitbucket",
   unknown: "Generic",
+};
+
+const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, Icon>> = {
+  github: GitHubIcon,
+  gitlab: GitLabIcon,
+  "azure-devops": AzureDevOpsIcon,
+  bitbucket: BitbucketIcon,
 };
 
 const DEFAULT_PROJECT_MODEL_SELECTION = createDefaultModelSelection();
@@ -95,6 +111,28 @@ function buildRemoteOverride(draft: RemoteOverrideDraft): ProjectRemoteOverride 
     remoteUrl,
     ...(webUrl ? { webUrl } : {}),
   };
+}
+
+function formatGitRemoteRepositoryLabel(remote: ProjectDetectedRemote) {
+  const segments = normalizeGitRemoteUrl(remote.url).split("/").slice(1).filter(Boolean);
+  const azureGitMarkerIndex = segments.findIndex((segment) => segment.toLowerCase() === "_git");
+  const azureProject = segments[azureGitMarkerIndex - 1];
+  const azureRepo = segments[azureGitMarkerIndex + 1];
+
+  if (azureGitMarkerIndex > 0 && azureProject && azureRepo) {
+    return `${azureProject}/${azureRepo}`;
+  }
+
+  if (segments.length >= 2) {
+    return segments.slice(-2).join("/");
+  }
+
+  return segments[0] ?? remote.name;
+}
+
+function remoteProviderIcon(remote: ProjectDetectedRemote | null): Icon {
+  if (!remote?.provider) return GitIcon;
+  return SOURCE_CONTROL_PROVIDER_ICONS[remote.provider.kind] ?? GitIcon;
 }
 
 function isValidActionEnvironmentKey(key: string): boolean {
@@ -478,6 +516,8 @@ function ProjectRouteView() {
   });
 
   const effectiveRemote = projectDetails.data?.effective.remote ?? null;
+  const detectedRemote =
+    projectDetails.data?.detected.primaryRemote ?? projectDetails.data?.detected.remotes[0] ?? null;
   const displayedModelSelection = defaultModelSelection ?? fallbackModelSelection;
   const displayedModelInstanceEntry =
     providerInstanceEntries.find(
@@ -609,11 +649,12 @@ function ProjectRouteView() {
                   }
                 >
                   <ProjectSettingRow
-                    title="Manual remote"
+                    title="Remote"
+                    align={overrideEnabled ? "start" : "center"}
                     resetAction={
                       projectDetails.data.settings.remoteOverride !== null ? (
                         <SettingResetButton
-                          label="manual remote"
+                          label="custom remote"
                           onClick={() => {
                             setOverrideEnabled(false);
                             void commitProjectSettings({ remoteOverride: null });
@@ -622,120 +663,119 @@ function ProjectRouteView() {
                       ) : null
                     }
                     control={
-                      <Switch
-                        checked={overrideEnabled}
-                        onCheckedChange={(checked) => {
-                          const enabled = Boolean(checked);
-                          setOverrideEnabled(enabled);
-                          persistRemoteOverrideIfValid({
-                            enabled,
-                            provider,
-                            remoteName,
-                            remoteUrl,
-                            webUrl,
-                          });
-                        }}
-                      />
-                    }
-                  >
-                    {overrideEnabled ? (
-                      <div className="grid gap-3 border-t border-border/60 pt-4 md:grid-cols-2">
-                        <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                          Provider
-                          <Select
-                            value={provider}
-                            onValueChange={(value) => {
-                              const nextProvider = value as SourceControlProviderKind;
-                              setProvider(nextProvider);
-                              persistRemoteOverrideIfValid({
-                                enabled: overrideEnabled,
-                                provider: nextProvider,
-                                remoteName,
-                                remoteUrl,
-                                webUrl,
-                              });
-                            }}
-                          >
-                            <SelectTrigger aria-label="Source control provider">
-                              <SelectValue>{PROVIDER_LABELS[provider]}</SelectValue>
-                            </SelectTrigger>
-                            <SelectPopup align="start">
-                              {Object.entries(PROVIDER_LABELS).map(([value, label]) => (
-                                <SelectItem key={value} value={value}>
-                                  {label}
-                                </SelectItem>
-                              ))}
-                            </SelectPopup>
-                          </Select>
-                        </label>
-                        <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                          Remote name
-                          <DraftInput
-                            value={remoteName}
-                            placeholder="origin"
-                            onCommit={(nextRemoteName) => {
-                              setRemoteName(nextRemoteName);
-                              persistRemoteOverrideIfValid({
-                                enabled: overrideEnabled,
-                                provider,
-                                remoteName: nextRemoteName,
-                                remoteUrl,
-                                webUrl,
-                              });
-                            }}
-                          />
-                        </label>
-                        <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                          Remote URL
-                          <DraftInput
-                            value={remoteUrl}
-                            placeholder="git@git.example.com:team/repo.git"
-                            onCommit={(nextRemoteUrl) => {
-                              setRemoteUrl(nextRemoteUrl);
-                              persistRemoteOverrideIfValid({
-                                enabled: overrideEnabled,
-                                provider,
-                                remoteName,
-                                remoteUrl: nextRemoteUrl,
-                                webUrl,
-                              });
-                            }}
-                          />
-                        </label>
-                        <label className="grid gap-1.5 text-xs font-medium text-foreground">
-                          Web URL
-                          <DraftInput
-                            value={webUrl}
-                            placeholder="https://git.example.com/team/repo"
-                            onCommit={(nextWebUrl) => {
-                              setWebUrl(nextWebUrl);
-                              persistRemoteOverrideIfValid({
-                                enabled: overrideEnabled,
-                                provider,
-                                remoteName,
-                                remoteUrl,
-                                webUrl: nextWebUrl,
-                              });
-                            }}
-                          />
-                        </label>
+                      <div className="grid w-full min-w-0 gap-4">
+                        <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          {overrideEnabled ? (
+                            <div className="min-w-0 text-sm text-muted-foreground">
+                              Custom remote
+                            </div>
+                          ) : (
+                            <DetectedRemoteSummary remote={detectedRemote} />
+                          )}
+                          <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                            <span>Custom</span>
+                            <Switch
+                              checked={overrideEnabled}
+                              aria-label="Use custom remote"
+                              onCheckedChange={(checked) => {
+                                const enabled = Boolean(checked);
+                                setOverrideEnabled(enabled);
+                                persistRemoteOverrideIfValid({
+                                  enabled,
+                                  provider,
+                                  remoteName,
+                                  remoteUrl,
+                                  webUrl,
+                                });
+                              }}
+                            />
+                          </div>
+                        </div>
+                        {overrideEnabled ? (
+                          <div className="grid gap-3 border-t border-border/60 pt-4 md:grid-cols-2">
+                            <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                              Provider
+                              <Select
+                                value={provider}
+                                onValueChange={(value) => {
+                                  const nextProvider = value as SourceControlProviderKind;
+                                  setProvider(nextProvider);
+                                  persistRemoteOverrideIfValid({
+                                    enabled: overrideEnabled,
+                                    provider: nextProvider,
+                                    remoteName,
+                                    remoteUrl,
+                                    webUrl,
+                                  });
+                                }}
+                              >
+                                <SelectTrigger aria-label="Source control provider">
+                                  <SelectValue>{PROVIDER_LABELS[provider]}</SelectValue>
+                                </SelectTrigger>
+                                <SelectPopup align="start">
+                                  {Object.entries(PROVIDER_LABELS).map(([value, label]) => (
+                                    <SelectItem key={value} value={value}>
+                                      {label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectPopup>
+                              </Select>
+                            </label>
+                            <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                              Remote name
+                              <DraftInput
+                                value={remoteName}
+                                placeholder="origin"
+                                onCommit={(nextRemoteName) => {
+                                  setRemoteName(nextRemoteName);
+                                  persistRemoteOverrideIfValid({
+                                    enabled: overrideEnabled,
+                                    provider,
+                                    remoteName: nextRemoteName,
+                                    remoteUrl,
+                                    webUrl,
+                                  });
+                                }}
+                              />
+                            </label>
+                            <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                              Remote URL
+                              <DraftInput
+                                value={remoteUrl}
+                                placeholder="git@git.example.com:team/repo.git"
+                                onCommit={(nextRemoteUrl) => {
+                                  setRemoteUrl(nextRemoteUrl);
+                                  persistRemoteOverrideIfValid({
+                                    enabled: overrideEnabled,
+                                    provider,
+                                    remoteName,
+                                    remoteUrl: nextRemoteUrl,
+                                    webUrl,
+                                  });
+                                }}
+                              />
+                            </label>
+                            <label className="grid gap-1.5 text-xs font-medium text-foreground">
+                              Web URL
+                              <DraftInput
+                                value={webUrl}
+                                placeholder="https://git.example.com/team/repo"
+                                onCommit={(nextWebUrl) => {
+                                  setWebUrl(nextWebUrl);
+                                  persistRemoteOverrideIfValid({
+                                    enabled: overrideEnabled,
+                                    provider,
+                                    remoteName,
+                                    remoteUrl,
+                                    webUrl: nextWebUrl,
+                                  });
+                                }}
+                              />
+                            </label>
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
-                  </ProjectSettingRow>
-                  {projectDetails.data.detected.remotes.length > 0 ? (
-                    projectDetails.data.detected.remotes.map((remote) => (
-                      <ProjectSettingRow
-                        key={remote.name}
-                        title={`Remote: ${remote.name}`}
-                        value={formatGitRemoteValue(remote)}
-                      />
-                    ))
-                  ) : (
-                    <ProjectSettingRow title="Remote" value="No Git remote configured." />
-                  )}
-                  <ProjectSettingRow
-                    title="Branch"
-                    value={projectDetails.data.detected.branch ?? "Detached or unavailable."}
+                    }
                   />
                 </SettingsSection>
 
@@ -791,12 +831,6 @@ function ProjectRouteView() {
       </div>
     </SidebarInset>
   );
-}
-
-function formatGitRemoteValue(remote: ProjectDetectedRemote) {
-  return remote.pushUrl && remote.pushUrl !== remote.url
-    ? `${remote.url} (push: ${remote.pushUrl})`
-    : remote.url;
 }
 
 function isModelSelectionEqual(left: ModelSelection | null, right: ModelSelection | null) {
@@ -860,6 +894,55 @@ function ProjectSettingsLoading() {
       <Spinner className="size-5 text-muted-foreground" />
     </div>
   );
+}
+
+function DetectedRemoteSummary({ remote }: { remote: ProjectDetectedRemote | null }) {
+  const Icon = remoteProviderIcon(remote);
+
+  if (!remote) {
+    return (
+      <div className="flex min-w-0 flex-1 items-center gap-3 py-1 text-left">
+        <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+          <Icon className="size-5" aria-hidden />
+        </span>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium text-foreground">
+            No Git remote configured.
+          </div>
+          <div className="mt-0.5 text-xs text-muted-foreground">
+            Enable custom remote to set one manually.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const remoteValue = formatGitRemoteValue(remote);
+  const providerLabel = remote.provider?.name ?? "Git remote";
+
+  return (
+    <div className="flex min-w-0 flex-1 items-center gap-3 py-1 text-left">
+      <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
+        <Icon className="size-5" aria-hidden />
+      </span>
+      <div className="min-w-0">
+        <div className="truncate text-sm font-medium text-foreground" title={remoteValue}>
+          {formatGitRemoteRepositoryLabel(remote)}
+        </div>
+        <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+          <span className="truncate">{providerLabel}</span>
+          <span aria-hidden>-</span>
+          <span className="truncate">{remote.name}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatGitRemoteValue(remote: ProjectDetectedRemote) {
+  return remote.pushUrl && remote.pushUrl !== remote.url
+    ? `${remote.url} (push: ${remote.pushUrl})`
+    : remote.url;
 }
 
 function ProjectSettingRow({
