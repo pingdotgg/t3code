@@ -7,14 +7,12 @@ import * as Ref from "effect/Ref";
 
 import type * as Electron from "electron";
 
-import type { DesktopEnvironmentShape } from "../desktopEnvironment.ts";
-import { DesktopEnvironment } from "../desktopEnvironment.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { MENU_ACTION_CHANNEL } from "../ipc/channels.ts";
-import { bindFirstRevealTrigger, type RevealSubscription } from "../windowReveal.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopAssets from "./DesktopAssets.ts";
@@ -30,7 +28,7 @@ type WindowTitleBarOptions = Pick<
 >;
 
 type DesktopWindowRuntimeServices =
-  | DesktopEnvironment
+  | DesktopEnvironment.DesktopEnvironment
   | DesktopAssets.DesktopAssets
   | DesktopServerExposure.DesktopServerExposure
   | DesktopState.DesktopState
@@ -76,11 +74,11 @@ const logWindowInfo = (message: string, annotations?: Record<string, unknown>) =
   );
 
 function resolveDesktopDevServerUrl(
-  environment: DesktopEnvironmentShape,
+  environment: DesktopEnvironment.DesktopEnvironmentShape,
 ): Effect.Effect<string, DesktopWindowDevServerUrlMissingError> {
   return Option.match(environment.devServerUrl, {
     onNone: () => Effect.fail(new DesktopWindowDevServerUrlMissingError()),
-    onSome: Effect.succeed,
+    onSome: (url) => Effect.succeed(url.href),
   });
 }
 
@@ -134,8 +132,25 @@ function syncWindowAppearance(
   });
 }
 
+type RevealSubscription = (listener: () => void) => void;
+
+function bindFirstRevealTrigger(
+  subscribers: readonly RevealSubscription[],
+  reveal: () => void,
+): void {
+  let revealed = false;
+  const fire = () => {
+    if (revealed) return;
+    revealed = true;
+    reveal();
+  };
+  for (const subscribe of subscribers) {
+    subscribe(fire);
+  }
+}
+
 const make = Effect.gen(function* () {
-  const environment = yield* DesktopEnvironment;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const assets = yield* DesktopAssets.DesktopAssets;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const electronShell = yield* ElectronShell.ElectronShell;

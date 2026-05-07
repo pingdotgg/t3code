@@ -12,10 +12,10 @@ import * as Stream from "effect/Stream";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { DEFAULT_DESKTOP_SETTINGS, readDesktopSettingsEffect } from "../desktopSettings.ts";
-import { makeDesktopEnvironment, DesktopEnvironment } from "../desktopEnvironment.ts";
-import { DesktopNetworkInterfacesService } from "../desktopNetworkInterfaces.ts";
-import type { DesktopNetworkInterfaces } from "../serverExposure.ts";
+import { DesktopEnvironment, layer as makeDesktopEnvironmentLayer } from "./DesktopEnvironment.ts";
+import * as DesktopConfig from "./DesktopConfig.ts";
 import * as DesktopServerExposure from "./DesktopServerExposure.ts";
+import type { DesktopNetworkInterfaces } from "./DesktopServerExposure.ts";
 import * as DesktopSettingsState from "./DesktopSettingsState.ts";
 
 const encoder = new TextEncoder();
@@ -64,10 +64,9 @@ function mockSpawnerLayer(statusJson = "{}") {
   );
 }
 
-function makeEnvironment(baseDir: string) {
-  return makeDesktopEnvironment({
+function makeEnvironmentLayer(baseDir: string, env: Record<string, string | undefined> = {}) {
+  return makeDesktopEnvironmentLayer({
     dirname: "/repo/apps/desktop/src",
-    env: { T3CODE_HOME: baseDir },
     cwd: "/repo",
     platform: "darwin",
     processArch: "x64",
@@ -76,17 +75,21 @@ function makeEnvironment(baseDir: string) {
     isPackaged: true,
     resourcesPath: "/missing/resources",
     runningUnderArm64Translation: false,
-  });
+  }).pipe(
+    Layer.provide(
+      Layer.mergeAll(EffectPath.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir, ...env })),
+    ),
+  );
 }
 
 function makeLayer(input: {
   readonly baseDir: string;
   readonly networkInterfaces?: DesktopNetworkInterfaces;
+  readonly env?: Record<string, string | undefined>;
 }) {
-  const environmentLayer = Layer.effect(DesktopEnvironment, makeEnvironment(input.baseDir)).pipe(
-    Layer.provide(EffectPath.layer),
-  );
-  const networkLayer = Layer.succeed(DesktopNetworkInterfacesService, {
+  const env = { T3CODE_HOME: input.baseDir, ...input.env };
+  const environmentLayer = makeEnvironmentLayer(input.baseDir, env);
+  const networkLayer = Layer.succeed(DesktopServerExposure.DesktopNetworkInterfacesService, {
     read: Effect.succeed(input.networkInterfaces ?? emptyNetworkInterfaces),
   });
 
@@ -97,6 +100,7 @@ function makeLayer(input: {
     Layer.provideMerge(NodeHttpClient.layerUndici),
     Layer.provideMerge(mockSpawnerLayer()),
     Layer.provideMerge(networkLayer),
+    Layer.provideMerge(DesktopConfig.layerTest(env)),
     Layer.provideMerge(environmentLayer),
   );
 }
@@ -112,13 +116,14 @@ const withHarness = <A, E, R>(
     | DesktopServerExposure.DesktopServerExposure
     | DesktopSettingsState.DesktopSettingsState
   >,
+  env: Record<string, string | undefined> = {},
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: "t3-desktop-server-exposure-test-",
     });
-    return yield* effect.pipe(Effect.provide(makeLayer({ baseDir, networkInterfaces })));
+    return yield* effect.pipe(Effect.provide(makeLayer({ baseDir, networkInterfaces, env })));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopServerExposure", () => {
@@ -243,6 +248,130 @@ describe("DesktopServerExposure", () => {
           ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/", "http://100.90.1.2:4173/"],
         );
       }),
+    ),
+  );
+
+  it.effect("uses ConfigProvider desktop exposure overrides", () =>
+    withHarness(
+      lanNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        const change = yield* serverExposure.setMode("network-accessible");
+
+        assert.equal(change.state.advertisedHost, "10.0.0.7");
+        assert.equal(change.state.endpointUrl, "http://10.0.0.7:4173");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          endpoints.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/", "http://10.0.0.7:4173/", "https://public.example.test/"],
+        );
+      }),
+      {
+        T3CODE_DESKTOP_LAN_HOST: "10.0.0.7",
+        T3CODE_DESKTOP_HTTPS_ENDPOINTS: "https://public.example.test",
+      },
+    ),
+  );
+
+  it.effect("advertises loopback, LAN, and configured manual endpoints from runtime state", () =>
+    withHarness(
+      lanNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 3773 });
+        yield* serverExposure.setMode("network-accessible");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(endpoints, [
+          {
+            id: "desktop-loopback:3773",
+            label: "This machine",
+            provider: {
+              id: "desktop-core",
+              label: "Desktop",
+              kind: "core",
+              isAddon: false,
+            },
+            httpBaseUrl: "http://127.0.0.1:3773/",
+            wsBaseUrl: "ws://127.0.0.1:3773/",
+            reachability: "loopback",
+            compatibility: {
+              hostedHttpsApp: "mixed-content-blocked",
+              desktopApp: "compatible",
+            },
+            source: "desktop-core",
+            status: "available",
+            description: "Loopback endpoint for this desktop app.",
+          },
+          {
+            id: "desktop-lan:http://192.168.1.20:3773",
+            label: "Local network",
+            provider: {
+              id: "desktop-core",
+              label: "Desktop",
+              kind: "core",
+              isAddon: false,
+            },
+            httpBaseUrl: "http://192.168.1.20:3773/",
+            wsBaseUrl: "ws://192.168.1.20:3773/",
+            reachability: "lan",
+            compatibility: {
+              hostedHttpsApp: "mixed-content-blocked",
+              desktopApp: "compatible",
+            },
+            source: "desktop-core",
+            status: "available",
+            isDefault: true,
+            description: "Reachable from devices on the same network.",
+          },
+          {
+            id: "manual:https://desktop.example.ts.net",
+            label: "Custom HTTPS",
+            provider: {
+              id: "manual",
+              label: "Manual",
+              kind: "manual",
+              isAddon: false,
+            },
+            httpBaseUrl: "https://desktop.example.ts.net/",
+            wsBaseUrl: "wss://desktop.example.ts.net/",
+            reachability: "public",
+            compatibility: {
+              hostedHttpsApp: "compatible",
+              desktopApp: "compatible",
+            },
+            source: "user",
+            status: "unknown",
+            description: "User-configured HTTPS endpoint for this desktop backend.",
+          },
+          {
+            id: "manual:http://desktop.example.test:3773",
+            label: "Custom endpoint",
+            provider: {
+              id: "manual",
+              label: "Manual",
+              kind: "manual",
+              isAddon: false,
+            },
+            httpBaseUrl: "http://desktop.example.test:3773/",
+            wsBaseUrl: "ws://desktop.example.test:3773/",
+            reachability: "public",
+            compatibility: {
+              hostedHttpsApp: "mixed-content-blocked",
+              desktopApp: "compatible",
+            },
+            source: "user",
+            status: "unknown",
+            description: "User-configured endpoint for this desktop backend.",
+          },
+        ]);
+      }),
+      {
+        T3CODE_DESKTOP_HTTPS_ENDPOINTS:
+          "https://desktop.example.ts.net,http://desktop.example.test:3773,not-a-url",
+      },
     ),
   );
 });

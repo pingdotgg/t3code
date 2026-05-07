@@ -1,14 +1,18 @@
-import type { DesktopAppBranding, DesktopRuntimeInfo } from "@t3tools/contracts";
-import { Context, Effect, Option } from "effect";
+import type {
+  DesktopAppBranding,
+  DesktopAppStageLabel,
+  DesktopRuntimeArch,
+  DesktopRuntimeInfo,
+} from "@t3tools/contracts";
+import { Context, Effect, Layer, Option } from "effect";
 import * as EffectPath from "effect/Path";
 
-import { resolveDesktopAppBranding } from "./appBranding.ts";
-import { type DesktopSettings, resolveDefaultDesktopSettings } from "./desktopSettings.ts";
-import { resolveDesktopRuntimeInfo } from "./runtimeArch.ts";
+import { type DesktopSettings, resolveDefaultDesktopSettings } from "../desktopSettings.ts";
+import * as DesktopConfig from "./DesktopConfig.ts";
+import { isNightlyDesktopVersion } from "../updateChannels.ts";
 
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;
-  readonly env: NodeJS.ProcessEnv;
   readonly cwd: string;
   readonly platform: NodeJS.Platform;
   readonly processArch: string;
@@ -30,6 +34,7 @@ export interface DesktopEnvironmentShape {
   readonly appPath: string;
   readonly resourcesPath: string;
   readonly homeDirectory: string;
+  readonly appDataDirectory: string;
   readonly baseDir: string;
   readonly stateDir: string;
   readonly desktopSettingsPath: string;
@@ -43,8 +48,10 @@ export interface DesktopEnvironmentShape {
   readonly backendCwd: string;
   readonly preloadPath: string;
   readonly appUpdateYmlPath: string;
-  readonly devServerUrl: Option.Option<string>;
+  readonly devServerUrl: Option.Option<URL>;
   readonly devRemoteT3ServerEntryPath: Option.Option<string>;
+  readonly configuredBackendPort: Option.Option<number>;
+  readonly commitHashOverride: Option.Option<string>;
   readonly branding: DesktopAppBranding;
   readonly displayName: string;
   readonly appUserModelId: string;
@@ -64,37 +71,97 @@ export class DesktopEnvironment extends Context.Service<
   DesktopEnvironmentShape
 >()("t3/desktop/Environment") {}
 
-const trimmedEnvOption = (env: NodeJS.ProcessEnv, name: string): Option.Option<string> =>
-  (() => {
-    const value = env[name]?.trim();
-    return value && value.length > 0 ? Option.some(value) : Option.none();
-  })();
-
-export function resolveDesktopHomeDirectory(input: {
-  readonly env: NodeJS.ProcessEnv;
+function resolveDesktopHomeDirectory(input: {
+  readonly config: DesktopConfig.DesktopConfigShape;
   readonly cwd: string;
 }): string {
-  const home =
-    input.env.HOME?.trim() ||
-    input.env.USERPROFILE?.trim() ||
-    `${input.env.HOMEDRIVE ?? ""}${input.env.HOMEPATH ?? ""}`.trim();
-  return home.length > 0 ? home : input.cwd;
+  const driveHome = Option.zipWith(
+    input.config.homeDrive,
+    input.config.homePath,
+    (drive, homePath) => `${drive}${homePath}`,
+  );
+  return Option.getOrElse(
+    Option.firstSomeOf([input.config.home, input.config.userProfile, driveHome]),
+    () => input.cwd,
+  );
 }
 
-export const makeDesktopEnvironment = (
+const APP_BASE_NAME = "T3 Code";
+
+function resolveDesktopAppStageLabel(input: {
+  readonly isDevelopment: boolean;
+  readonly appVersion: string;
+}): DesktopAppStageLabel {
+  if (input.isDevelopment) {
+    return "Dev";
+  }
+
+  return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Alpha";
+}
+
+function resolveDesktopAppBranding(input: {
+  readonly isDevelopment: boolean;
+  readonly appVersion: string;
+}): DesktopAppBranding {
+  const stageLabel = resolveDesktopAppStageLabel(input);
+  return {
+    baseName: APP_BASE_NAME,
+    stageLabel,
+    displayName: `${APP_BASE_NAME} (${stageLabel})`,
+  };
+}
+
+function normalizeDesktopArch(arch: string): DesktopRuntimeArch {
+  if (arch === "arm64") return "arm64";
+  if (arch === "x64") return "x64";
+  return "other";
+}
+
+function resolveDesktopRuntimeInfo(input: {
+  readonly platform: NodeJS.Platform;
+  readonly processArch: string;
+  readonly runningUnderArm64Translation: boolean;
+}): DesktopRuntimeInfo {
+  const appArch = normalizeDesktopArch(input.processArch);
+
+  if (input.platform !== "darwin") {
+    return {
+      hostArch: appArch,
+      appArch,
+      runningUnderArm64Translation: false,
+    };
+  }
+
+  const hostArch = appArch === "arm64" || input.runningUnderArm64Translation ? "arm64" : appArch;
+
+  return {
+    hostArch,
+    appArch,
+    runningUnderArm64Translation: input.runningUnderArm64Translation,
+  };
+}
+
+const makeDesktopEnvironment = (
   input: MakeDesktopEnvironmentInput,
-): Effect.Effect<DesktopEnvironmentShape, never, EffectPath.Path> =>
+): Effect.Effect<DesktopEnvironmentShape, never, EffectPath.Path | DesktopConfig.DesktopConfig> =>
   Effect.gen(function* () {
     const path = yield* EffectPath.Path;
+    const config = yield* DesktopConfig.DesktopConfig;
     const homeDirectory = resolveDesktopHomeDirectory({
-      env: input.env,
+      config,
       cwd: input.cwd,
     });
-    const devServerUrl = trimmedEnvOption(input.env, "VITE_DEV_SERVER_URL");
+    const devServerUrl = config.devServerUrl;
     const isDevelopment = Option.isSome(devServerUrl);
-    const baseDir = Option.getOrElse(trimmedEnvOption(input.env, "T3CODE_HOME"), () =>
-      path.join(homeDirectory, ".t3"),
-    );
+    const appDataDirectory =
+      input.platform === "win32"
+        ? Option.getOrElse(config.appDataDirectory, () =>
+            path.join(homeDirectory, "AppData", "Roaming"),
+          )
+        : input.platform === "darwin"
+          ? path.join(homeDirectory, "Library", "Application Support")
+          : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
+    const baseDir = Option.getOrElse(config.t3Home, () => path.join(homeDirectory, ".t3"));
     const stateDir = path.join(baseDir, "userdata");
     const rootDir = path.resolve(input.dirname, "../../..");
     const appRoot = input.isPackaged ? input.appPath : rootDir;
@@ -118,6 +185,7 @@ export const makeDesktopEnvironment = (
       appPath: input.appPath,
       resourcesPath,
       homeDirectory,
+      appDataDirectory,
       baseDir,
       stateDir,
       desktopSettingsPath: path.join(stateDir, "desktop-settings.json"),
@@ -134,10 +202,9 @@ export const makeDesktopEnvironment = (
         ? path.join(resourcesPath, "app-update.yml")
         : path.join(input.appPath, "dev-app-update.yml"),
       devServerUrl,
-      devRemoteT3ServerEntryPath: trimmedEnvOption(
-        input.env,
-        "T3CODE_DEV_REMOTE_T3_SERVER_ENTRY_PATH",
-      ),
+      devRemoteT3ServerEntryPath: config.devRemoteT3ServerEntryPath,
+      configuredBackendPort: config.configuredBackendPort,
+      commitHashOverride: config.commitHashOverride,
       branding,
       displayName,
       appUserModelId: isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
@@ -185,3 +252,6 @@ export const makeDesktopEnvironment = (
       developmentDockIconPath: path.join(rootDir, "assets", "dev", "blueprint-macos-1024.png"),
     });
   });
+
+export const layer = (input: MakeDesktopEnvironmentInput) =>
+  Layer.effect(DesktopEnvironment, makeDesktopEnvironment(input));

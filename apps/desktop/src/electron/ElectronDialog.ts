@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 
-import { showDesktopConfirmDialog } from "../confirmDialog.ts";
+const CONFIRM_BUTTON_INDEX = 1;
 
 export interface ElectronDialogPickFolderInput {
   readonly owner: Option.Option<Electron.BrowserWindow>;
@@ -56,7 +56,26 @@ const make = ElectronDialog.of({
       return Option.fromNullishOr(result.filePaths[0]);
     }),
   confirm: (input) =>
-    Effect.promise(() => showDesktopConfirmDialog(input.message, Option.getOrNull(input.owner))),
+    Effect.gen(function* () {
+      const normalizedMessage = input.message.trim();
+      if (normalizedMessage.length === 0) {
+        return false;
+      }
+
+      const options = {
+        type: "question" as const,
+        buttons: ["No", "Yes"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+        message: normalizedMessage,
+      };
+      const result = yield* Option.match(input.owner, {
+        onNone: () => Effect.promise(() => Electron.dialog.showMessageBox(options)),
+        onSome: (owner) => Effect.promise(() => Electron.dialog.showMessageBox(owner, options)),
+      });
+      return result.response === CONFIRM_BUTTON_INDEX;
+    }),
   showMessageBox: (options) => Effect.promise(() => Electron.dialog.showMessageBox(options)),
   showErrorBox: (title, content) =>
     Effect.sync(() => {

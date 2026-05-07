@@ -1,4 +1,4 @@
-import { Context, Deferred, Effect, Ref } from "effect";
+import { Context, Deferred, Effect, Layer, Ref } from "effect";
 
 export interface DesktopShutdownShape {
   readonly request: Effect.Effect<void>;
@@ -12,7 +12,7 @@ export class DesktopShutdown extends Context.Service<DesktopShutdown, DesktopShu
   "t3/desktop/Shutdown",
 ) {}
 
-export const makeDesktopShutdown = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const requested = yield* Deferred.make<void>();
   const completed = yield* Deferred.make<void>();
   const completedRef = yield* Ref.make(false);
@@ -28,3 +28,5 @@ export const makeDesktopShutdown = Effect.gen(function* () {
     isComplete: Ref.get(completedRef),
   });
 });
+
+export const layer = Layer.effect(DesktopShutdown, make);

@@ -4,7 +4,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
-import * as DesktopEnvironment from "../desktopEnvironment.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 export interface DesktopIconPaths {
   readonly ico: Option.Option<string>;

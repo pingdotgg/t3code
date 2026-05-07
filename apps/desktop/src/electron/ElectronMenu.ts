@@ -23,6 +23,9 @@ export interface ElectronMenuTemplateInput {
 }
 
 export interface ElectronMenuShape {
+  readonly setApplicationMenu: (
+    template: readonly Electron.MenuItemConstructorOptions[],
+  ) => Effect.Effect<void>;
   readonly showContextMenu: (
     input: ElectronMenuContextInput,
   ) => Effect.Effect<Option.Option<string>>;
@@ -130,6 +133,10 @@ export const layer = Layer.sync(ElectronMenu, () => {
   };
 
   return ElectronMenu.of({
+    setApplicationMenu: (template) =>
+      Effect.sync(() => {
+        Electron.Menu.setApplicationMenu(Electron.Menu.buildFromTemplate([...template]));
+      }),
     popupTemplate: (input) => {
       if (input.template.length === 0) {
         return Effect.void;

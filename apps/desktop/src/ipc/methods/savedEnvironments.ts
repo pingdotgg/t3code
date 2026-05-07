@@ -9,7 +9,7 @@ import {
   writeSavedEnvironmentRegistryEffect,
   writeSavedEnvironmentSecretEffect,
 } from "../../clientPersistence.ts";
-import * as DesktopEnvironment from "../../desktopEnvironment.ts";
+import * as DesktopEnvironment from "../../main/DesktopEnvironment.ts";
 import * as ElectronSafeStorage from "../../electron/ElectronSafeStorage.ts";
 import {
   GET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL,

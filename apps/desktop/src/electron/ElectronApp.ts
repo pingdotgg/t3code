@@ -45,22 +45,16 @@ export class ElectronApp extends Context.Service<ElectronApp, ElectronAppShape>(
 const addScopedAppListener = <Args extends ReadonlyArray<unknown>>(
   eventName: string,
   listener: (...args: Args) => void,
-): Effect.Effect<void, never, Scope.Scope> => {
-  const app = Electron.app as {
-    on: (eventName: string, listener: (...args: Array<unknown>) => void) => unknown;
-    removeListener: (eventName: string, listener: (...args: Array<unknown>) => void) => unknown;
-  };
-  const untypedListener = listener as unknown as (...args: Array<unknown>) => void;
-  return Effect.acquireRelease(
+): Effect.Effect<void, never, Scope.Scope> =>
+  Effect.acquireRelease(
     Effect.sync(() => {
-      app.on(eventName, untypedListener);
+      Electron.app.on(eventName as any, listener as any);
     }),
     () =>
       Effect.sync(() => {
-        app.removeListener(eventName, untypedListener);
+        Electron.app.removeListener(eventName as any, listener as any);
       }),
   ).pipe(Effect.asVoid);
-};
 
 const make = ElectronApp.of({
   metadata: Effect.sync(() => ({

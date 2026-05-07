@@ -13,7 +13,7 @@ import {
   Semaphore,
 } from "effect";
 
-import { DesktopEnvironment } from "./desktopEnvironment.ts";
+import { DesktopEnvironment } from "./DesktopEnvironment.ts";
 
 const DESKTOP_LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const DESKTOP_LOG_FILE_MAX_FILES = 10;
@@ -45,7 +45,7 @@ const textEncoder = new TextEncoder();
 
 const sanitizeLogValue = (value: string): string => value.replace(/\s+/g, " ").trim();
 
-export const DesktopBackendOutputLogNoop: DesktopBackendOutputLogShape = {
+const DesktopBackendOutputLogNoop: DesktopBackendOutputLogShape = {
   writeSessionBoundary: () => Effect.void,
   writeOutputChunk: () => Effect.void,
 };
@@ -61,7 +61,7 @@ const refreshFileSize = (
     );
   });
 
-export const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(function* (input: {
+const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(function* (input: {
   readonly filePath: string;
   readonly maxBytes?: number;
   readonly maxFiles?: number;

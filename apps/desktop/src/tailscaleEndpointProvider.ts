@@ -1,7 +1,4 @@
-import {
-  createAdvertisedEndpoint,
-  type CreateAdvertisedEndpointInput,
-} from "@t3tools/client-runtime";
+import { createAdvertisedEndpoint } from "@t3tools/client-runtime";
 import type { AdvertisedEndpoint, AdvertisedEndpointProvider } from "@t3tools/contracts";
 import {
   buildTailscaleHttpsBaseUrl,
@@ -14,7 +11,7 @@ import { Effect, Option } from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import type { DesktopNetworkInterfaces } from "./serverExposure.ts";
+import type { DesktopNetworkInterfaces } from "./main/DesktopServerExposure.ts";
 
 export { isTailscaleIpv4Address, parseTailscaleMagicDnsName } from "@t3tools/tailscale";
 
@@ -25,17 +22,7 @@ const TAILSCALE_ENDPOINT_PROVIDER: AdvertisedEndpointProvider = {
   isAddon: true,
 };
 
-function createTailscaleEndpoint(
-  input: Omit<CreateAdvertisedEndpointInput, "provider" | "source">,
-): AdvertisedEndpoint {
-  return createAdvertisedEndpoint({
-    ...input,
-    provider: TAILSCALE_ENDPOINT_PROVIDER,
-    source: "desktop-addon",
-  });
-}
-
-export function resolveTailscaleIpAdvertisedEndpoints(input: {
+function resolveTailscaleIpAdvertisedEndpoints(input: {
   readonly port: number;
   readonly networkInterfaces: DesktopNetworkInterfaces;
 }): readonly AdvertisedEndpoint[] {
@@ -53,7 +40,9 @@ export function resolveTailscaleIpAdvertisedEndpoints(input: {
       seen.add(address.address);
 
       endpoints.push(
-        createTailscaleEndpoint({
+        createAdvertisedEndpoint({
+          provider: TAILSCALE_ENDPOINT_PROVIDER,
+          source: "desktop-addon",
           id: `tailscale-ip:http://${address.address}:${input.port}`,
           label: "Tailscale IP",
           httpBaseUrl: `http://${address.address}:${input.port}`,
@@ -68,7 +57,7 @@ export function resolveTailscaleIpAdvertisedEndpoints(input: {
   return endpoints;
 }
 
-export const resolveTailscaleMagicDnsAdvertisedEndpoint = Effect.fn(
+const resolveTailscaleMagicDnsAdvertisedEndpoint = Effect.fn(
   "resolveTailscaleMagicDnsAdvertisedEndpoint",
 )(function* (input: {
   readonly dnsName: string | null;
@@ -93,7 +82,9 @@ export const resolveTailscaleMagicDnsAdvertisedEndpoint = Effect.fn(
     : false;
 
   return Option.some(
-    createTailscaleEndpoint({
+    createAdvertisedEndpoint({
+      provider: TAILSCALE_ENDPOINT_PROVIDER,
+      source: "desktop-addon",
       id: `tailscale-magicdns:${httpBaseUrl}`,
       label: "Tailscale HTTPS",
       httpBaseUrl,

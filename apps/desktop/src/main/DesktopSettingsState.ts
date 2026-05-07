@@ -13,7 +13,7 @@ import {
   readDesktopSettingsEffect,
   writeDesktopSettingsEffect,
 } from "../desktopSettings.ts";
-import { DesktopEnvironment } from "../desktopEnvironment.ts";
+import { DesktopEnvironment } from "./DesktopEnvironment.ts";
 
 export type DesktopSettingsPersistenceError = PlatformError.PlatformError | Schema.SchemaError;
 

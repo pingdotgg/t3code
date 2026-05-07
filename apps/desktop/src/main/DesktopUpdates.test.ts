@@ -10,10 +10,10 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { TestClock } from "effect/testing";
-import { afterEach, beforeEach } from "vitest";
 
-import { DesktopBackendManager } from "../desktopBackendManager.ts";
-import { makeDesktopEnvironment, DesktopEnvironment } from "../desktopEnvironment.ts";
+import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopConfig from "./DesktopConfig.ts";
+import { layer as makeDesktopEnvironmentLayer } from "./DesktopEnvironment.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { DEFAULT_DESKTOP_SETTINGS } from "../desktopSettings.ts";
@@ -21,32 +21,17 @@ import * as DesktopSettingsState from "./DesktopSettingsState.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
 
-const originalMockUpdates = process.env.T3CODE_DESKTOP_MOCK_UPDATES;
-const originalMockUpdatePort = process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT;
-
-interface UpdatesHarness {
-  readonly layer: Layer.Layer<
-    DesktopUpdates.DesktopUpdates | DesktopSettingsState.DesktopSettingsState
-  >;
-  readonly checkCount: () => number;
-  readonly feedUrls: () => readonly ElectronUpdater.ElectronUpdaterFeedUrl[];
-  readonly listenerCount: () => number;
-  readonly sentStates: readonly DesktopUpdateState[];
-  readonly emit: (eventName: string, payload?: unknown) => void;
-}
-
 interface UpdatesHarnessOptions {
   readonly checkForUpdates?: Effect.Effect<
     void,
     ElectronUpdater.ElectronUpdaterCheckForUpdatesError
   >;
+  readonly env?: Record<string, string | undefined>;
 }
 
-const flushCallbacks = Effect.callback<void>((resume) => {
-  setImmediate(() => resume(Effect.void));
-});
+const flushCallbacks = Effect.yieldNow;
 
-function makeHarness(options: UpdatesHarnessOptions = {}): UpdatesHarness {
+function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
   let allowDowngrade = false;
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
@@ -118,7 +103,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}): UpdatesHarness {
     syncAllAppearance: () => Effect.void,
   } satisfies ElectronWindow.ElectronWindowShape);
 
-  const backendLayer = Layer.succeed(DesktopBackendManager, {
+  const backendLayer = Layer.succeed(DesktopBackendManager.DesktopBackendManager, {
     start: Effect.void,
     stop: () => Effect.void,
     shutdown: Effect.void,
@@ -133,21 +118,29 @@ function makeHarness(options: UpdatesHarnessOptions = {}): UpdatesHarness {
     }),
   });
 
-  const environmentLayer = Layer.effect(
-    DesktopEnvironment,
-    makeDesktopEnvironment({
-      dirname: "/repo/apps/desktop/src",
-      env: { T3CODE_HOME: `/tmp/t3-desktop-updates-test-${process.pid}` },
-      cwd: "/repo",
-      platform: "darwin",
-      processArch: "x64",
-      appVersion: "1.2.3",
-      appPath: "/repo",
-      isPackaged: true,
-      resourcesPath: "/missing/resources",
-      runningUnderArm64Translation: false,
-    }),
-  ).pipe(Layer.provide(EffectPath.layer));
+  const environmentLayer = makeDesktopEnvironmentLayer({
+    dirname: "/repo/apps/desktop/src",
+    cwd: "/repo",
+    platform: "darwin",
+    processArch: "x64",
+    appVersion: "1.2.3",
+    appPath: "/repo",
+    isPackaged: true,
+    resourcesPath: "/missing/resources",
+    runningUnderArm64Translation: false,
+  }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        EffectPath.layer,
+        DesktopConfig.layerTest({
+          T3CODE_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
+          T3CODE_DESKTOP_MOCK_UPDATES: "true",
+          T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
+          ...options.env,
+        }),
+      ),
+    ),
+  );
 
   const layer = DesktopUpdates.layer.pipe(
     Layer.provideMerge(updaterLayer),
@@ -155,6 +148,14 @@ function makeHarness(options: UpdatesHarnessOptions = {}): UpdatesHarness {
     Layer.provideMerge(backendLayer),
     Layer.provideMerge(DesktopState.layer),
     Layer.provideMerge(DesktopSettingsState.layer),
+    Layer.provideMerge(
+      DesktopConfig.layerTest({
+        T3CODE_HOME: `/tmp/t3-desktop-updates-test-${process.pid}`,
+        T3CODE_DESKTOP_MOCK_UPDATES: "true",
+        T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT: "4141",
+        ...options.env,
+      }),
+    ),
     Layer.provideMerge(environmentLayer),
     Layer.provideMerge(NodeServices.layer),
   );
@@ -169,7 +170,7 @@ function makeHarness(options: UpdatesHarnessOptions = {}): UpdatesHarness {
         0,
       ),
     sentStates,
-    emit: (eventName, payload) => {
+    emit: (eventName: string, payload?: unknown) => {
       for (const listener of listeners.get(eventName) ?? []) {
         listener(payload);
       }
@@ -178,25 +179,6 @@ function makeHarness(options: UpdatesHarnessOptions = {}): UpdatesHarness {
 }
 
 describe("DesktopUpdates", () => {
-  beforeEach(() => {
-    process.env.T3CODE_DESKTOP_MOCK_UPDATES = "1";
-    process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT = "4141";
-  });
-
-  afterEach(() => {
-    if (originalMockUpdates === undefined) {
-      delete process.env.T3CODE_DESKTOP_MOCK_UPDATES;
-    } else {
-      process.env.T3CODE_DESKTOP_MOCK_UPDATES = originalMockUpdates;
-    }
-
-    if (originalMockUpdatePort === undefined) {
-      delete process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT;
-    } else {
-      process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT = originalMockUpdatePort;
-    }
-  });
-
   it.effect("configures the updater and runs startup checks on the test clock", () => {
     const harness = makeHarness();
 

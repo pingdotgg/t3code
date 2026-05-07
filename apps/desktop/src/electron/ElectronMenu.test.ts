@@ -4,14 +4,18 @@ import * as Option from "effect/Option";
 import type * as Electron from "electron";
 import { beforeEach, vi } from "vitest";
 
-const { buildFromTemplateMock, createFromNamedImageMock } = vi.hoisted(() => ({
-  buildFromTemplateMock: vi.fn(),
-  createFromNamedImageMock: vi.fn(),
-}));
+const { buildFromTemplateMock, createFromNamedImageMock, setApplicationMenuMock } = vi.hoisted(
+  () => ({
+    buildFromTemplateMock: vi.fn(),
+    createFromNamedImageMock: vi.fn(),
+    setApplicationMenuMock: vi.fn(),
+  }),
+);
 
 vi.mock("electron", () => ({
   Menu: {
     buildFromTemplate: buildFromTemplateMock,
+    setApplicationMenu: setApplicationMenuMock,
   },
   nativeImage: {
     createFromNamedImage: createFromNamedImageMock,
@@ -24,7 +28,21 @@ describe("ElectronMenu", () => {
   beforeEach(() => {
     buildFromTemplateMock.mockReset();
     createFromNamedImageMock.mockReset();
+    setApplicationMenuMock.mockReset();
   });
+
+  it.effect("sets the native application menu from a template", () =>
+    Effect.gen(function* () {
+      const menu = { id: "application-menu" };
+      buildFromTemplateMock.mockReturnValue(menu);
+
+      const electronMenu = yield* ElectronMenu.ElectronMenu;
+      yield* electronMenu.setApplicationMenu([{ role: "about" }]);
+
+      assert.deepEqual(buildFromTemplateMock.mock.calls, [[[{ role: "about" }]]]);
+      assert.deepEqual(setApplicationMenuMock.mock.calls, [[menu]]);
+    }).pipe(Effect.provide(ElectronMenu.layer)),
+  );
 
   it.effect("returns none without building a menu when there are no valid items", () =>
     Effect.gen(function* () {

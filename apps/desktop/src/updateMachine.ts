@@ -4,7 +4,15 @@ import type {
   DesktopUpdateState,
 } from "@t3tools/contracts";
 
-import { getCanRetryAfterDownloadFailure, nextStatusAfterDownloadFailure } from "./updateState.ts";
+export function nextStatusAfterDownloadFailure(
+  currentState: DesktopUpdateState,
+): DesktopUpdateState["status"] {
+  return currentState.availableVersion ? "available" : "error";
+}
+
+export function getCanRetryAfterDownloadFailure(currentState: DesktopUpdateState): boolean {
+  return currentState.availableVersion !== null;
+}
 
 export function createInitialDesktopUpdateState(
   currentVersion: string,

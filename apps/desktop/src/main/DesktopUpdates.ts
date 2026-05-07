@@ -1,4 +1,5 @@
 import type {
+  DesktopRuntimeInfo,
   DesktopUpdateActionResult,
   DesktopUpdateChannel,
   DesktopUpdateCheckResult,
@@ -19,13 +20,15 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
-import { DesktopBackendManager } from "../desktopBackendManager.ts";
-import { type DesktopSettings, setDesktopUpdateChannelPreference } from "../desktopSettings.ts";
-import { DesktopEnvironment, type DesktopEnvironmentShape } from "../desktopEnvironment.ts";
 import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopConfig from "./DesktopConfig.ts";
+import * as DesktopSettingsState from "./DesktopSettingsState.ts";
+import * as DesktopState from "./DesktopState.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { type DesktopSettings, setDesktopUpdateChannelPreference } from "../desktopSettings.ts";
 import { UPDATE_STATE_CHANNEL } from "../ipc/channels.ts";
-import { isArm64HostRunningIntelBuild } from "../runtimeArch.ts";
 import { doesVersionMatchDesktopUpdateChannel } from "../updateChannels.ts";
 import {
   createInitialDesktopUpdateState,
@@ -39,13 +42,9 @@ import {
   reduceDesktopUpdateStateOnNoUpdate,
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "../updateMachine.ts";
-import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "../updateState.ts";
-import { formatErrorMessage } from "./DesktopErrors.ts";
-import * as DesktopSettingsState from "./DesktopSettingsState.ts";
-import * as DesktopState from "./DesktopState.ts";
 
-const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
-const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
+const AUTO_UPDATE_POLL_INTERVAL = "4 minutes";
 
 const AppUpdateYmlConfig = Schema.Record(Schema.String, Schema.String);
 type AppUpdateYmlConfig = typeof AppUpdateYmlConfig.Type;
@@ -149,7 +148,7 @@ function parseAppUpdateYml(raw: string): Effect.Effect<Option.Option<AppUpdateYm
 function createBaseUpdateState(
   channel: DesktopUpdateChannel,
   enabled: boolean,
-  environment: DesktopEnvironmentShape,
+  environment: DesktopEnvironment.DesktopEnvironmentShape,
 ): DesktopUpdateState {
   return {
     ...createInitialDesktopUpdateState(environment.appVersion, environment.runtimeInfo, channel),
@@ -162,12 +161,58 @@ function getCanRetryFromState(state: DesktopUpdateState): boolean {
   return state.availableVersion !== null || state.downloadedVersion !== null;
 }
 
+function shouldBroadcastDownloadProgress(
+  currentState: DesktopUpdateState,
+  nextPercent: number,
+): boolean {
+  if (currentState.status !== "downloading") {
+    return true;
+  }
+
+  const currentPercent = currentState.downloadPercent;
+  if (currentPercent === null) {
+    return true;
+  }
+
+  const previousStep = Math.floor(currentPercent / 10);
+  const nextStep = Math.floor(nextPercent / 10);
+  return nextStep !== previousStep || nextPercent === 100;
+}
+
+function getAutoUpdateDisabledReason(args: {
+  isDevelopment: boolean;
+  isPackaged: boolean;
+  platform: NodeJS.Platform;
+  appImage?: string | undefined;
+  disabledByEnv: boolean;
+  hasUpdateFeedConfig: boolean;
+}): string | null {
+  if (!args.hasUpdateFeedConfig) {
+    return "Automatic updates are not available because no update feed is configured.";
+  }
+  if (args.isDevelopment || !args.isPackaged) {
+    return "Automatic updates are only available in packaged production builds.";
+  }
+  if (args.disabledByEnv) {
+    return "Automatic updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.";
+  }
+  if (args.platform === "linux" && !args.appImage) {
+    return "Automatic updates on Linux require running the AppImage build.";
+  }
+  return null;
+}
+
+function isArm64HostRunningIntelBuild(runtimeInfo: DesktopRuntimeInfo): boolean {
+  return runtimeInfo.hostArch === "arm64" && runtimeInfo.appArch === "x64";
+}
+
 const make = Effect.gen(function* () {
-  const backendManager = yield* DesktopBackendManager;
+  const config = yield* DesktopConfig.DesktopConfig;
+  const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
   const desktopState = yield* DesktopState.DesktopState;
   const electronUpdater = yield* ElectronUpdater.ElectronUpdater;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
-  const environment = yield* DesktopEnvironment;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const settingsState = yield* DesktopSettingsState.DesktopSettingsState;
@@ -176,7 +221,7 @@ const make = Effect.gen(function* () {
   ): Effect.Effect<DesktopSettings, DesktopUpdatePersistenceError> =>
     settingsState.updatePersisted(f).pipe(
       Effect.mapError((cause) => new DesktopUpdatePersistenceError({ cause })),
-      Effect.provideService(DesktopEnvironment, environment),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
     );
@@ -224,10 +269,7 @@ const make = Effect.gen(function* () {
   );
 
   const hasUpdateFeedConfig = Ref.get(appUpdateYmlConfigRef).pipe(
-    Effect.map(
-      (appUpdateYmlConfig) =>
-        Option.isSome(appUpdateYmlConfig) || Boolean(process.env.T3CODE_DESKTOP_MOCK_UPDATES),
-    ),
+    Effect.map((appUpdateYmlConfig) => Option.isSome(appUpdateYmlConfig) || config.mockUpdates),
   );
 
   const resolveDisabledReason = Effect.gen(function* () {
@@ -236,9 +278,9 @@ const make = Effect.gen(function* () {
       getAutoUpdateDisabledReason({
         isDevelopment: environment.isDevelopment,
         isPackaged: environment.isPackaged,
-        platform: process.platform,
-        appImage: process.env.APPIMAGE,
-        disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+        platform: environment.platform,
+        appImage: Option.getOrUndefined(config.appImagePath),
+        disabledByEnv: config.disableAutoUpdate,
         hasUpdateFeedConfig: hasFeedConfig,
       }),
     );
@@ -306,11 +348,10 @@ const make = Effect.gen(function* () {
         Effect.catch((error) =>
           Effect.gen(function* () {
             const failedAt = yield* currentIsoTimestamp;
-            const message = formatErrorMessage(error);
             yield* updateState((current) =>
-              reduceDesktopUpdateStateOnCheckFailure(current, message, failedAt),
+              reduceDesktopUpdateStateOnCheckFailure(current, error.message, failedAt),
             );
-            yield* logUpdaterError("failed to check for updates", { message });
+            yield* logUpdaterError("failed to check for updates", { message: error.message });
             return true;
           }),
         ),
@@ -340,11 +381,10 @@ const make = Effect.gen(function* () {
     }).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
-          const message = formatErrorMessage(error);
           yield* updateState((current) =>
-            reduceDesktopUpdateStateOnDownloadFailure(current, message),
+            reduceDesktopUpdateStateOnDownloadFailure(current, error.message),
           );
-          yield* logUpdaterError("failed to download update", { message });
+          yield* logUpdaterError("failed to download update", { message: error.message });
           return { accepted: true, completed: false };
         }),
       ),
@@ -377,13 +417,12 @@ const make = Effect.gen(function* () {
     }).pipe(
       Effect.catch((error) =>
         Effect.gen(function* () {
-          const message = formatErrorMessage(error);
           yield* Ref.set(updateInstallInFlightRef, false);
           yield* updateState((current) =>
-            reduceDesktopUpdateStateOnInstallFailure(current, message),
+            reduceDesktopUpdateStateOnInstallFailure(current, error.message),
           );
           yield* Ref.set(desktopState.quitting, false);
-          yield* logUpdaterError("failed to install update", { message });
+          yield* logUpdaterError("failed to install update", { message: error.message });
           return { accepted: true, completed: false };
         }),
       ),
@@ -397,14 +436,14 @@ const make = Effect.gen(function* () {
     yield* Ref.set(updatePollerScopeRef, Option.some(scope));
     yield* Scope.addFinalizer(parentScope, Scope.close(scope, Exit.void));
 
-    yield* Effect.sleep(Duration.millis(AUTO_UPDATE_STARTUP_DELAY_MS)).pipe(
+    yield* Effect.sleep(AUTO_UPDATE_STARTUP_DELAY).pipe(
       Effect.andThen(checkForUpdates("startup")),
       Effect.catchCause((cause) =>
         logUpdaterError("startup update check failed", { cause: Cause.pretty(cause) }),
       ),
       Effect.forkIn(scope),
     );
-    yield* Effect.sleep(Duration.millis(AUTO_UPDATE_POLL_INTERVAL_MS)).pipe(
+    yield* Effect.sleep(AUTO_UPDATE_POLL_INTERVAL).pipe(
       Effect.andThen(checkForUpdates("poll")),
       Effect.forever,
       Effect.catchCause((cause) =>
@@ -455,7 +494,7 @@ const make = Effect.gen(function* () {
 
   const handleUpdaterError = (error: unknown) =>
     Effect.gen(function* () {
-      const message = formatErrorMessage(error);
+      const message = error instanceof Error ? error.message : String(error);
       if (yield* Ref.get(updateInstallInFlightRef)) {
         yield* Ref.set(updateInstallInFlightRef, false);
         yield* Ref.set(desktopState.quitting, false);
@@ -537,26 +576,22 @@ const make = Effect.gen(function* () {
       const appUpdateYmlConfig = yield* readAppUpdateYml;
       yield* Ref.set(appUpdateYmlConfigRef, appUpdateYmlConfig);
 
-      const githubToken =
-        process.env.T3CODE_DESKTOP_UPDATE_GITHUB_TOKEN?.trim() ||
-        process.env.GH_TOKEN?.trim() ||
-        "";
-      if (githubToken) {
-        const config = Option.getOrUndefined(appUpdateYmlConfig);
-        if (config?.provider === "github") {
+      if (Option.isSome(config.desktopUpdateGithubToken)) {
+        const appUpdateConfig = Option.getOrUndefined(appUpdateYmlConfig);
+        if (appUpdateConfig?.provider === "github") {
           yield* electronUpdater.setFeedURL({
-            ...config,
+            ...appUpdateConfig,
             provider: "github",
             private: true,
-            token: githubToken,
+            token: config.desktopUpdateGithubToken.value,
           } as ElectronUpdater.ElectronUpdaterFeedUrl);
         }
       }
 
-      if (process.env.T3CODE_DESKTOP_MOCK_UPDATES) {
+      if (config.mockUpdates) {
         yield* electronUpdater.setFeedURL({
           provider: "generic",
-          url: `http://localhost:${process.env.T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT ?? 3000}`,
+          url: `http://localhost:${config.mockUpdateServerPort}`,
         } as ElectronUpdater.ElectronUpdaterFeedUrl);
       }
 

@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -6,13 +7,17 @@ import * as Scope from "effect/Scope";
 
 import type * as Electron from "electron";
 
-import { DesktopShutdown } from "../desktopShutdown.ts";
+import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopRun from "./DesktopRun.ts";
+import { DesktopShutdown } from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 
 export type DesktopLifecycleRuntimeServices =
+  | DesktopEnvironment.DesktopEnvironment
+  | DesktopRun.DesktopRun
   | DesktopShutdown
   | DesktopState.DesktopState
   | DesktopWindow.DesktopWindow
@@ -20,6 +25,9 @@ export type DesktopLifecycleRuntimeServices =
   | ElectronTheme.ElectronTheme;
 
 export interface DesktopLifecycleShape {
+  readonly relaunch: (
+    reason: string,
+  ) => Effect.Effect<void, never, DesktopLifecycleRuntimeServices>;
   readonly register: Effect.Effect<void, never, Scope.Scope | DesktopLifecycleRuntimeServices>;
 }
 
@@ -126,10 +134,41 @@ function quitFromSignal(
 export const layer = Layer.succeed(
   DesktopLifecycle,
   DesktopLifecycle.of({
+    relaunch: (reason) =>
+      Effect.gen(function* () {
+        const electronApp = yield* ElectronApp.ElectronApp;
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const run = yield* DesktopRun.DesktopRun;
+        const state = yield* DesktopState.DesktopState;
+        yield* run.logInfo("desktop relaunch requested", { reason });
+        yield* Effect.gen(function* () {
+          yield* Effect.yieldNow;
+          yield* Ref.set(state.quitting, true);
+          yield* requestDesktopShutdownAndWait();
+          if (environment.isDevelopment) {
+            yield* electronApp.exit(75);
+            return;
+          }
+          yield* electronApp.relaunch({
+            execPath: process.execPath,
+            args: process.argv.slice(1),
+          });
+          yield* electronApp.exit(0);
+        }).pipe(
+          Effect.catchCause((cause) =>
+            run.logError("desktop relaunch failed", {
+              cause: Cause.pretty(cause),
+            }),
+          ),
+          Effect.forkDetach,
+          Effect.asVoid,
+        );
+      }),
     register: Effect.gen(function* () {
       const desktopWindow = yield* DesktopWindow.DesktopWindow;
       const electronApp = yield* ElectronApp.ElectronApp;
       const electronTheme = yield* ElectronTheme.ElectronTheme;
+      const environment = yield* DesktopEnvironment.DesktopEnvironment;
       const context = yield* Effect.context<DesktopLifecycleRuntimeServices>();
       const runEffect = makeDesktopEffectRunner(context);
       let quitAllowed = false;
@@ -154,14 +193,14 @@ export const layer = Layer.succeed(
           Effect.gen(function* () {
             const app = yield* ElectronApp.ElectronApp;
             const state = yield* DesktopState.DesktopState;
-            if (process.platform !== "darwin" && !(yield* Ref.get(state.quitting))) {
+            if (environment.platform !== "darwin" && !(yield* Ref.get(state.quitting))) {
               yield* app.quit;
             }
           }),
         );
       });
 
-      if (process.platform !== "win32") {
+      if (environment.platform !== "win32") {
         yield* addScopedListener(process, "SIGINT", () => {
           quitFromSignal("SIGINT", runEffect);
         });

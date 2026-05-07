@@ -1,43 +1,99 @@
-import type { DesktopBackendBootstrap } from "@t3tools/contracts";
 import {
   Context,
+  Data,
   Duration,
   Effect,
   Exit,
   Fiber,
   FileSystem,
+  PlatformError,
   Layer,
   Option,
   Ref,
+  Result,
+  Schema,
   Scope,
+  Schedule,
   Semaphore,
+  Stream,
 } from "effect";
 import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
-  runBackendProcess,
-  type BackendProcessExit,
-  type RunBackendProcessOptions,
-} from "./backendProcess.ts";
-import type { BackendTimeoutError } from "./backendReadiness.ts";
+  DesktopBackendBootstrap,
+  type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
+} from "@t3tools/contracts";
+
+import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
+import * as DesktopBackendEvents from "./DesktopBackendEvents.ts";
 
 const INITIAL_RESTART_DELAY = Duration.millis(500);
 const MAX_RESTART_DELAY = Duration.seconds(10);
+const DEFAULT_BACKEND_READINESS_TIMEOUT = Duration.minutes(1);
+const DEFAULT_BACKEND_READINESS_INTERVAL = Duration.millis(100);
+const DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT = Duration.seconds(1);
+const DEFAULT_BACKEND_TERMINATE_GRACE = Duration.seconds(2);
 
-type BackendRunnerRequirements =
-  | ChildProcessSpawner.ChildProcessSpawner
-  | HttpClient.HttpClient
-  | Scope.Scope;
+type BackendProcessLayerServices = ChildProcessSpawner.ChildProcessSpawner | HttpClient.HttpClient;
+
+type BackendProcessRunRequirements = BackendProcessLayerServices | Scope.Scope;
+
+export type BackendProcessOutputStream = "stdout" | "stderr";
 
 export interface DesktopBackendStartConfig {
   readonly executablePath: string;
   readonly entryPath: string;
   readonly cwd: string;
   readonly env: Record<string, string | undefined>;
-  readonly bootstrap: DesktopBackendBootstrap;
+  readonly bootstrap: DesktopBackendBootstrapValue;
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
+}
+
+interface BackendProcessExit {
+  readonly code: Option.Option<number>;
+  readonly reason: string;
+  readonly result: Result.Result<ChildProcessSpawner.ExitCode, PlatformError.PlatformError>;
+}
+
+export class BackendTimeoutError extends Data.TaggedError("BackendTimeoutError")<{
+  readonly url: URL;
+}> {
+  override get message() {
+    return `Timed out waiting for backend readiness at ${this.url.href}.`;
+  }
+}
+
+class BackendProcessBootstrapEncodeError extends Data.TaggedError(
+  "BackendProcessBootstrapEncodeError",
+)<{
+  readonly cause: Schema.SchemaError;
+}> {
+  override get message() {
+    return `Failed to encode desktop backend bootstrap payload: ${this.cause.message}`;
+  }
+}
+
+class BackendProcessSpawnError extends Data.TaggedError("BackendProcessSpawnError")<{
+  readonly cause: PlatformError.PlatformError;
+}> {
+  override get message() {
+    return `Failed to spawn desktop backend process: ${this.cause.message}`;
+  }
+}
+
+type BackendProcessError = BackendProcessBootstrapEncodeError | BackendProcessSpawnError;
+
+interface RunBackendProcessOptions extends DesktopBackendStartConfig {
+  readonly readinessTimeout?: Duration.Duration;
+  readonly onStarted?: (pid: number) => Effect.Effect<void>;
+  readonly onReady?: () => Effect.Effect<void>;
+  readonly onReadinessFailure?: (error: BackendTimeoutError) => Effect.Effect<void>;
+  readonly onOutput?: (
+    streamName: BackendProcessOutputStream,
+    chunk: Uint8Array,
+  ) => Effect.Effect<void>;
 }
 
 export interface DesktopBackendSnapshot {
@@ -48,64 +104,6 @@ export interface DesktopBackendSnapshot {
   readonly restartScheduled: boolean;
   readonly shuttingDown: boolean;
 }
-
-export interface DesktopBackendProcessRunnerShape {
-  readonly run: (
-    options: RunBackendProcessOptions,
-  ) => Effect.Effect<BackendProcessExit, unknown, BackendRunnerRequirements>;
-}
-
-export class DesktopBackendProcessRunner extends Context.Service<
-  DesktopBackendProcessRunner,
-  DesktopBackendProcessRunnerShape
->()("t3/desktop/BackendProcessRunner") {}
-
-export const DesktopBackendProcessRunnerLive = Layer.succeed(DesktopBackendProcessRunner, {
-  run: runBackendProcess,
-} satisfies DesktopBackendProcessRunnerShape);
-
-export interface DesktopBackendConfigurationShape {
-  readonly resolve: Effect.Effect<DesktopBackendStartConfig, never, FileSystem.FileSystem>;
-}
-
-export class DesktopBackendConfiguration extends Context.Service<
-  DesktopBackendConfiguration,
-  DesktopBackendConfigurationShape
->()("t3/desktop/BackendConfiguration") {}
-
-export interface DesktopBackendEventsShape {
-  readonly onStarting: Effect.Effect<void>;
-  readonly onStarted: (input: {
-    readonly pid: number;
-    readonly config: DesktopBackendStartConfig;
-  }) => Effect.Effect<void>;
-  readonly onReady: Effect.Effect<void>;
-  readonly onReadinessFailure: (error: BackendTimeoutError) => Effect.Effect<void>;
-  readonly onOutput: (streamName: "stdout" | "stderr", chunk: Uint8Array) => Effect.Effect<void>;
-  readonly onExit: (input: {
-    readonly pid: Option.Option<number>;
-    readonly reason: string;
-  }) => Effect.Effect<void>;
-  readonly onRestartScheduled: (input: {
-    readonly reason: string;
-    readonly delay: Duration.Duration;
-  }) => Effect.Effect<void>;
-}
-
-export class DesktopBackendEvents extends Context.Service<
-  DesktopBackendEvents,
-  DesktopBackendEventsShape
->()("t3/desktop/BackendEvents") {}
-
-export const DesktopBackendEventsSilent = Layer.succeed(DesktopBackendEvents, {
-  onStarting: Effect.void,
-  onStarted: () => Effect.void,
-  onReady: Effect.void,
-  onReadinessFailure: () => Effect.void,
-  onOutput: () => Effect.void,
-  onExit: () => Effect.void,
-  onRestartScheduled: () => Effect.void,
-} satisfies DesktopBackendEventsShape);
 
 export interface DesktopBackendManagerShape {
   readonly start: Effect.Effect<void>;
@@ -177,14 +175,114 @@ const closeRun = (
   ).pipe(Effect.ignore);
 };
 
-export const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(function* () {
+const encodeBootstrapJson = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
+
+const waitForHttpReady = Effect.fn("desktop.backendManager.waitForHttpReady")(function* (
+  baseUrl: URL,
+  timeout: Duration.Duration,
+): Effect.fn.Return<void, BackendTimeoutError, HttpClient.HttpClient> {
+  const client = (yield* HttpClient.HttpClient).pipe(
+    HttpClient.filterStatusOk,
+    HttpClient.transformResponse(Effect.timeout(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT)),
+    HttpClient.retry(Schedule.spaced(DEFAULT_BACKEND_READINESS_INTERVAL)),
+  );
+
+  yield* client.get(new URL("/", baseUrl)).pipe(
+    Effect.asVoid,
+    Effect.timeout(timeout),
+    Effect.mapError(() => new BackendTimeoutError({ url: baseUrl })),
+  );
+});
+
+function describeProcessExit(
+  result: Result.Result<ChildProcessSpawner.ExitCode, PlatformError.PlatformError>,
+): BackendProcessExit {
+  if (Result.isSuccess(result)) {
+    const code = Number(result.success);
+    return {
+      code: Option.some(code),
+      reason: `code=${code}`,
+      result,
+    };
+  }
+
+  return {
+    code: Option.none(),
+    reason: result.failure.message,
+    result,
+  };
+}
+
+function drainBackendOutput(
+  streamName: BackendProcessOutputStream,
+  stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
+  onOutput: (streamName: BackendProcessOutputStream, chunk: Uint8Array) => Effect.Effect<void>,
+): Effect.Effect<void> {
+  return stream.pipe(
+    Stream.runForEach((chunk) => onOutput(streamName, chunk)),
+    Effect.ignore,
+  );
+}
+
+const runBackendProcess = Effect.fn("runBackendProcess")(function* (
+  options: RunBackendProcessOptions,
+): Effect.fn.Return<BackendProcessExit, BackendProcessError, BackendProcessRunRequirements> {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const bootstrapJson = yield* encodeBootstrapJson(options.bootstrap).pipe(
+    Effect.mapError((cause) => new BackendProcessBootstrapEncodeError({ cause })),
+  );
+  const onOutput = options.onOutput ?? (() => Effect.void);
+  const command = ChildProcess.make(
+    options.executablePath,
+    [options.entryPath, "--bootstrap-fd", "3"],
+    {
+      cwd: options.cwd,
+      env: options.env,
+      extendEnv: true,
+      // In Electron main, process.execPath points to the Electron binary.
+      // Run the child in Node mode so this backend process does not become a GUI app instance.
+      stdin: "ignore",
+      stdout: options.captureOutput ? "pipe" : "inherit",
+      stderr: options.captureOutput ? "pipe" : "inherit",
+      killSignal: "SIGTERM",
+      forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE,
+      additionalFds: {
+        fd3: {
+          type: "input",
+          stream: Stream.encodeText(Stream.make(`${bootstrapJson}\n`)),
+        },
+      },
+    },
+  );
+
+  const handle = yield* spawner
+    .spawn(command)
+    .pipe(Effect.mapError((cause) => new BackendProcessSpawnError({ cause })));
+
+  yield* options.onStarted?.(Number(handle.pid)) ?? Effect.void;
+  if (options.captureOutput) {
+    yield* drainBackendOutput("stdout", handle.stdout, onOutput).pipe(Effect.forkScoped);
+    yield* drainBackendOutput("stderr", handle.stderr, onOutput).pipe(Effect.forkScoped);
+  }
+  yield* waitForHttpReady(
+    options.httpBaseUrl,
+    options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
+  ).pipe(
+    Effect.tap(() => options.onReady?.() ?? Effect.void),
+    Effect.catch((error) => options.onReadinessFailure?.(error) ?? Effect.void),
+    Effect.forkScoped,
+  );
+
+  return describeProcessExit(yield* Effect.result(handle.exitCode));
+});
+
+const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(function* () {
   const parentScope = yield* Scope.Scope;
   const fileSystem = yield* FileSystem.FileSystem;
-  const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+  const events = yield* DesktopBackendEvents.DesktopBackendEvents;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
-  const configuration = yield* DesktopBackendConfiguration;
-  const events = yield* DesktopBackendEvents;
-  const runner = yield* DesktopBackendProcessRunner;
   const state = yield* Ref.make(initialState);
   const mutex = yield* Semaphore.make(1);
 
@@ -229,9 +327,7 @@ export const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(
         }
 
         yield* events.onStarting;
-        const config = yield* configuration.resolve.pipe(
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-        );
+        const config = yield* configuration.resolve;
         const entryExists = yield* fileSystem
           .exists(config.entryPath)
           .pipe(Effect.orElseSucceed(() => false));
@@ -320,45 +416,43 @@ export const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(
             }),
           );
 
-        const program = runner
-          .run({
-            ...config,
-            onStarted: (pid) =>
-              Effect.gen(function* () {
-                yield* updateActiveRun(runId, (run) => ({
-                  ...run,
-                  pid: Option.some(pid),
-                }));
-                yield* Ref.update(state, (latest) => ({
-                  ...latest,
-                  restartAttempt: 0,
-                }));
-                yield* events.onStarted({ pid, config });
-              }),
-            onReady: () =>
-              Effect.gen(function* () {
-                yield* Ref.update(state, (latest) => ({
-                  ...latest,
-                  ready: Option.match(latest.active, {
-                    onNone: () => latest.ready,
-                    onSome: (run) => (run.id === runId ? true : latest.ready),
-                  }),
-                }));
-                yield* events.onReady;
-              }),
-            onReadinessFailure: events.onReadinessFailure,
-            onOutput: events.onOutput,
-          })
-          .pipe(
-            Scope.provide(runScope),
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-            Effect.provideService(HttpClient.HttpClient, httpClient),
-            Effect.matchEffect({
-              onFailure: (error) => finalizeRun(formatUnknownError(error)),
-              onSuccess: (exit) => finalizeRun(exit.reason),
+        const program = runBackendProcess({
+          ...config,
+          onStarted: (pid) =>
+            Effect.gen(function* () {
+              yield* updateActiveRun(runId, (run) => ({
+                ...run,
+                pid: Option.some(pid),
+              }));
+              yield* Ref.update(state, (latest) => ({
+                ...latest,
+                restartAttempt: 0,
+              }));
+              yield* events.onStarted({ pid, config });
             }),
-            Effect.ensuring(Scope.close(runScope, Exit.void).pipe(Effect.ignore)),
-          );
+          onReady: () =>
+            Effect.gen(function* () {
+              yield* Ref.update(state, (latest) => ({
+                ...latest,
+                ready: Option.match(latest.active, {
+                  onNone: () => latest.ready,
+                  onSome: (run) => (run.id === runId ? true : latest.ready),
+                }),
+              }));
+              yield* events.onReady;
+            }),
+          onReadinessFailure: events.onReadinessFailure,
+          onOutput: events.onOutput,
+        }).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(HttpClient.HttpClient, httpClient),
+          Scope.provide(runScope),
+          Effect.matchEffect({
+            onFailure: (error) => finalizeRun(error.message),
+            onSuccess: (exit) => finalizeRun(exit.reason),
+          }),
+          Effect.ensuring(Scope.close(runScope, Exit.void).pipe(Effect.ignore)),
+        );
 
         const fiber = yield* Effect.forkIn(program, parentScope);
         yield* updateActiveRun(runId, (run) => ({
@@ -467,14 +561,4 @@ export const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(
   });
 });
 
-export const DesktopBackendManagerLive = Layer.effect(
-  DesktopBackendManager,
-  makeDesktopBackendManager(),
-);
-
-function formatUnknownError(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
+export const layer = Layer.effect(DesktopBackendManager, makeDesktopBackendManager());

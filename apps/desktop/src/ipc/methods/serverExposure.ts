@@ -9,7 +9,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { DesktopShutdown } from "../../desktopShutdown.ts";
+import { DesktopShutdown } from "../../main/DesktopShutdown.ts";
 import {
   GET_ADVERTISED_ENDPOINTS_CHANNEL,
   GET_SERVER_EXPOSURE_STATE_CHANNEL,

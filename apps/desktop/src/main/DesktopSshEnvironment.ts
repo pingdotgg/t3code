@@ -77,7 +77,7 @@ export interface DesktopSshEnvironmentLayerOptions {
   readonly resolveCliRunner?: Effect.Effect<RemoteT3RunnerOptions>;
 }
 
-export function discoverDesktopSshHostsEffect(input?: { readonly homeDir?: string }) {
+function discoverDesktopSshHostsEffect(input?: { readonly homeDir?: string }) {
   return discoverSshHosts(input ?? {});
 }
 

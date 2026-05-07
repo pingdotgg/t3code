@@ -1,13 +1,15 @@
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as NetService from "@t3tools/shared/Net";
 import { SshPasswordPromptError } from "@t3tools/ssh/errors";
 import { Effect, FileSystem, Layer, Path } from "effect";
 
-import * as DesktopSshEnvironment from "./main/DesktopSshEnvironment.ts";
-import * as DesktopSshPasswordPrompts from "./main/DesktopSshPasswordPrompts.ts";
-import * as DesktopIpc from "./ipc/DesktopIpc.ts";
-import { SSH_PASSWORD_PROMPT_CANCELLED_RESULT } from "./ipc/channels.ts";
-import { discoverSshHosts, ensureSshEnvironment } from "./ipc/methods/sshEnvironment.ts";
+import * as DesktopSshEnvironment from "./DesktopSshEnvironment.ts";
+import * as DesktopSshPasswordPrompts from "./DesktopSshPasswordPrompts.ts";
+import * as DesktopIpc from "../ipc/DesktopIpc.ts";
+import { SSH_PASSWORD_PROMPT_CANCELLED_RESULT } from "../ipc/channels.ts";
+import { discoverSshHosts, ensureSshEnvironment } from "../ipc/methods/sshEnvironment.ts";
 
 function makeTempHomeDir() {
   return Effect.gen(function* () {
@@ -79,7 +81,8 @@ describe("sshEnvironment", () => {
         ].join("\n"),
       );
 
-      const hosts = yield* DesktopSshEnvironment.discoverDesktopSshHostsEffect({ homeDir });
+      const sshEnvironment = yield* DesktopSshEnvironment.DesktopSshEnvironment;
+      const hosts = yield* sshEnvironment.discoverHosts({ homeDir });
       assert.deepEqual(hosts, [
         {
           alias: "bastion.example.com",
@@ -110,7 +113,23 @@ describe("sshEnvironment", () => {
           source: "ssh-config",
         },
       ]);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(
+      Effect.provide(
+        DesktopSshEnvironment.layer().pipe(
+          Layer.provideMerge(
+            Layer.succeed(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {
+              request: () => Effect.die("unexpected password prompt request"),
+              resolve: () => Effect.die("unexpected password prompt resolution"),
+              cancelPending: () => Effect.void,
+            }),
+          ),
+          Layer.provideMerge(NodeServices.layer),
+          Layer.provideMerge(NodeHttpClient.layerUndici),
+          Layer.provideMerge(NetService.layer),
+        ),
+      ),
+      Effect.scoped,
+    ),
   );
 
   it.effect("runs SSH IPC handlers with the captured Effect context", () =>
