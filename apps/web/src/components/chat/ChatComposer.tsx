@@ -909,21 +909,25 @@ export const ChatComposer = memo(
           },
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
         const providerSkills = selectedProviderStatus?.skills ?? [];
-        const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
-          (command) => ({
-            id: `provider-slash-command:${selectedProvider}:${command.name}`,
-            type: "provider-slash-command" as const,
-            provider: selectedProvider,
-            command,
-            label: `/${command.name}`,
-            description: command.description ?? command.input?.hint ?? "Run provider command",
-          }),
-        );
+        const providerSlashCommands = selectedProviderStatus?.slashCommands ?? [];
+        const providerSlashCommandItems = providerSlashCommands.map((command) => ({
+          id: `provider-slash-command:${selectedProvider}:${command.name}`,
+          type: "provider-slash-command" as const,
+          provider: selectedProvider,
+          command,
+          label: `/${command.name}`,
+          description: command.description ?? command.input?.hint ?? "Run provider command",
+        }));
         const query = composerTrigger.query.trim().toLowerCase();
         const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
-        const skillItems = searchProviderSkills(providerSkills, composerTrigger.query).map(
-          (skill) => makeComposerSkillItem(selectedProvider, skill),
-        );
+        const skillItems = searchProviderSkills(providerSkills, composerTrigger.query)
+          .filter(
+            (skill) =>
+              !providerSlashCommands.some(
+                (command) => command.name.trim().toLowerCase() === skill.name.trim().toLowerCase(),
+              ),
+          )
+          .map((skill) => makeComposerSkillItem(selectedProvider, skill));
         return [
           ...(!query ? slashCommandItems : searchSlashCommandItems(slashCommandItems, query)),
           ...skillItems,
