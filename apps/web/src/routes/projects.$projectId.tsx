@@ -20,7 +20,7 @@ import { useShallow } from "zustand/react/shallow";
 
 import { ensureEnvironmentApi } from "../environmentApi";
 import { cn, newCommandId } from "../lib/utils";
-import { readLocalApi } from "../localApi";
+import { ensureLocalApi, readLocalApi } from "../localApi";
 import {
   selectProjectsAcrossEnvironments,
   selectThreadsAcrossEnvironments,
@@ -525,7 +525,7 @@ function ProjectRouteView() {
           : "This removes only this project entry.",
         "This action cannot be undone.",
       ].join("\n");
-      const confirmed = await readLocalApi()?.dialogs.confirm(message);
+      const confirmed = await ensureLocalApi().dialogs.confirm(message);
       if (!confirmed) return false;
 
       await ensureEnvironmentApi(project.environmentId).orchestration.dispatchCommand({
@@ -898,7 +898,10 @@ function isStringRecordEqual(
   left: Readonly<Record<string, string>>,
   right: Readonly<Record<string, string>>,
 ) {
-  return JSON.stringify(left) === JSON.stringify(normalizeActionEnvironment(right));
+  return (
+    JSON.stringify(normalizeActionEnvironment(left)) ===
+    JSON.stringify(normalizeActionEnvironment(right))
+  );
 }
 
 function ProjectPathLink({ path }: { path: string }) {
