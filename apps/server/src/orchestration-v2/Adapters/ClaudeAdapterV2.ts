@@ -37,6 +37,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
@@ -55,7 +56,7 @@ import {
   ProviderAdapterResumeThreadError,
   ProviderAdapterRollbackThreadError,
   ProviderAdapterRuntimeRequestResponseError,
-  ProviderAdapterSteerRunUnsupportedError,
+  ProviderAdapterSteerRunError,
   ProviderAdapterTurnStartError,
   ProviderAdapterV2,
   type ProviderAdapterV2EnsureThreadInput,
@@ -65,6 +66,7 @@ import {
   type ProviderAdapterV2RuntimePolicy,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2SessionRuntime,
+  type ProviderAdapterV2SteerInput,
   type ProviderAdapterV2TurnInput,
 } from "../ProviderAdapter.ts";
 import {
@@ -97,8 +99,8 @@ export const ClaudeProviderCapabilitiesV2 = {
     emitsTurnStarted: true,
     emitsTurnCompleted: true,
     supportsInterrupt: true,
-    supportsActiveSteering: false,
-    supportsSteeringByInterruptRestart: true,
+    supportsActiveSteering: true,
+    supportsSteeringByInterruptRestart: false,
     supportsQueuedMessages: true,
     terminalStatusQuality: "strong",
   },
@@ -443,11 +445,6 @@ const getNativeThreadId = Effect.fnUntraced(function* (
   }
   return nativeThreadId;
 });
-
-function shouldResumeClaudeThread(turnInput: ProviderAdapterV2TurnInput): boolean {
-  const firstRunOrdinal = turnInput.providerThread.firstRunOrdinal;
-  return firstRunOrdinal !== null && firstRunOrdinal < turnInput.runOrdinal;
-}
 
 export function makeClaudeUserMessage(input: {
   readonly text: string;
@@ -1067,6 +1064,10 @@ function terminalStatusFromResult(
   return "failed";
 }
 
+function isClaudeActiveSteeringAbortResult(message: SDKResultMessage): boolean {
+  return message.terminal_reason === "aborted_streaming";
+}
+
 function buildAssistantArtifacts(input: {
   readonly idAllocator: IdAllocatorV2Shape;
   readonly turnInput: ProviderAdapterV2TurnInput;
@@ -1156,6 +1157,7 @@ interface ActiveClaudeTurnContext {
   readonly input: ProviderAdapterV2TurnInput;
   readonly nativeTurnId: string;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
+  readonly providerTurnOrdinal: number;
   readonly startedAt: DateTime.Utc;
   readonly assistant: {
     text: string;
@@ -1168,6 +1170,7 @@ interface ClaudeLiveQueryContext {
   readonly nativeThreadId: string;
   readonly query: ClaudeAgentSdkQuerySession;
   readonly queryPolicyKey: string;
+  readonly closed: Deferred.Deferred<void, never>;
   currentModel: string;
 }
 
@@ -1215,7 +1218,10 @@ export function makeClaudeAdapterV2(
         const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
         const activeTurn = yield* Ref.make<ActiveClaudeTurnContext | null>(null);
         const interruptedTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
+        const steeredTurns = yield* Ref.make(new Set<OrchestrationV2ProviderTurn["id"]>());
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
+        const openedNativeThreads = yield* Ref.make(new Set<string>());
+        const nextProviderTurnOrdinals = yield* Ref.make(new Map<string, number>());
         const itemOrdinals = yield* Ref.make(new Map<string, number>());
         const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
         const pendingRuntimeRequests = yield* Ref.make(
@@ -1266,7 +1272,7 @@ export function makeClaudeAdapterV2(
             nativeId: input.context.nativeTurnId,
             strength: "weak",
           },
-          ordinal: input.context.input.runOrdinal,
+          ordinal: input.context.providerTurnOrdinal,
           status: input.status,
           startedAt: input.context.startedAt,
           completedAt: input.completedAt,
@@ -1651,7 +1657,16 @@ export function makeClaudeAdapterV2(
           }
         });
 
-        const handleSdkMessage = Effect.fnUntraced(function* (message: SDKMessage) {
+        const handleSdkMessage = Effect.fnUntraced(function* (input: {
+          readonly query: ClaudeAgentSdkQuerySession;
+          readonly message: SDKMessage;
+        }) {
+          const liveQuery = yield* Ref.get(queryContext);
+          if (liveQuery?.query !== input.query) {
+            return;
+          }
+
+          const message = input.message;
           const context = yield* Ref.get(activeTurn);
           if (context === null) {
             return;
@@ -1710,9 +1725,19 @@ export function makeClaudeAdapterV2(
 
           if (message.type === "result") {
             const completedAt = yield* DateTime.now;
+            const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
+            const wasSteered = (yield* Ref.get(steeredTurns)).has(context.providerTurnId);
+            if (!interrupted && wasSteered && isClaudeActiveSteeringAbortResult(message)) {
+              return;
+            }
+            yield* Ref.update(steeredTurns, (current) => {
+              const next = new Set(current);
+              next.delete(context.providerTurnId);
+              return next;
+            });
             yield* finalizeActiveTurn({
               context,
-              status: terminalStatusFromResult(message),
+              status: interrupted ? "interrupted" : terminalStatusFromResult(message),
               completedAt,
             });
           }
@@ -1836,7 +1861,15 @@ export function makeClaudeAdapterV2(
             yield* existing.query.close.pipe(Effect.ignore);
           }
 
-          const openedWithResume = shouldResumeClaudeThread(turnInput);
+          const openedWithResume = yield* Ref.modify(openedNativeThreads, (current) => {
+            const hasOpenedThread = current.has(nativeThreadId);
+            if (hasOpenedThread) {
+              return [true, current];
+            }
+            const updated = new Set(current);
+            updated.add(nativeThreadId);
+            return [false, updated];
+          });
           const querySession = yield* queryRunner.open({
             options: makeClaudeQueryOptions({
               modelSelection: turnInput.modelSelection,
@@ -1856,26 +1889,31 @@ export function makeClaudeAdapterV2(
               ...(shouldInstallClaudePermissionCallback(queryPolicy) ? { canUseTool } : {}),
             }),
           });
+          const closed = yield* Deferred.make<void, never>();
           const context: ClaudeLiveQueryContext = {
             nativeThreadId,
             query: querySession,
             queryPolicyKey,
+            closed,
             currentModel: turnInput.modelSelection.model,
           };
           yield* Ref.set(queryContext, context);
           yield* querySession.messages.pipe(
-            Stream.runForEach(handleSdkMessage),
+            Stream.runForEach((message) => handleSdkMessage({ query: querySession, message })),
             Effect.exit,
             Effect.flatMap(
               Effect.fnUntraced(function* (exit: ClaudeQueryStreamExit) {
-                yield* Ref.update(queryContext, (current) =>
-                  current?.query === querySession ? null : current,
+                const ownsLiveQuery = yield* Ref.modify(queryContext, (current) =>
+                  current?.query === querySession ? [true, null] : [false, current],
                 );
-                yield* finalizeActiveTurnAfterQueryExit(
-                  exit._tag === "Failure" ? exit.cause : undefined,
-                );
+                if (ownsLiveQuery) {
+                  yield* finalizeActiveTurnAfterQueryExit(
+                    exit._tag === "Failure" ? exit.cause : undefined,
+                  );
+                }
               }),
             ),
+            Effect.ensuring(Deferred.succeed(closed, undefined)),
             Effect.forkIn(sessionScope),
           );
           return context;
@@ -1885,10 +1923,20 @@ export function makeClaudeAdapterV2(
           function* (turnInput: ProviderAdapterV2TurnInput) {
             const startedAt = yield* DateTime.now;
             const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
-            const nativeTurnId = `turn:${turnInput.runId}`;
+            const nativeTurnId = `turn:${turnInput.attemptId}`;
             const providerTurnId = idAllocator.derive.providerTurn({
               provider: CLAUDE_PROVIDER,
               nativeTurnId,
+            });
+            const providerTurnOrdinal = yield* Ref.modify(nextProviderTurnOrdinals, (current) => {
+              const previous = current.get(String(turnInput.providerThread.id));
+              const next =
+                previous === undefined
+                  ? turnInput.runOrdinal
+                  : Math.max(previous + 1, turnInput.runOrdinal);
+              const updated = new Map(current);
+              updated.set(String(turnInput.providerThread.id), next);
+              return [next, updated];
             });
             const currentTurn = yield* Ref.get(activeTurn);
             if (currentTurn !== null) {
@@ -1901,6 +1949,7 @@ export function makeClaudeAdapterV2(
               input: turnInput,
               nativeTurnId,
               providerTurnId,
+              providerTurnOrdinal,
               startedAt,
               assistant: {
                 text: "",
@@ -1947,18 +1996,87 @@ export function makeClaudeAdapterV2(
                 detail: `Claude provider thread ${turnInput.providerThread.id} has no live query.`,
               });
             }
+            const currentTurn = yield* Ref.get(activeTurn);
+            if (currentTurn?.providerTurnId !== turnInput.providerTurnId) {
+              return yield* new ProviderAdapterProtocolError({
+                provider: CLAUDE_PROVIDER,
+                detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
+              });
+            }
             yield* Ref.update(interruptedTurns, (current) => {
               const next = new Set(current);
               next.add(turnInput.providerTurnId);
               return next;
             });
             yield* existing.query.interrupt;
+            yield* existing.query.close.pipe(Effect.ignore);
+            const closed = yield* Deferred.await(existing.closed).pipe(
+              Effect.timeoutOption("10 seconds"),
+            );
+            if (Option.isSome(closed)) {
+              return;
+            }
+
+            const completedAt = yield* DateTime.now;
+            yield* Effect.logWarning("orchestration-v2.claude-query-interrupt-timeout", {
+              providerSessionId: input.providerSessionId,
+              providerThreadId: turnInput.providerThread.id,
+              providerTurnId: turnInput.providerTurnId,
+            });
+            yield* Ref.update(queryContext, (current) =>
+              current?.query === existing.query ? null : current,
+            );
+            yield* finalizeActiveTurn({
+              context: currentTurn,
+              status: "interrupted",
+              completedAt,
+            });
+            yield* Deferred.succeed(existing.closed, undefined);
           },
           (effect, turnInput) =>
             effect.pipe(
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapterInterruptError({
+                    provider: CLAUDE_PROVIDER,
+                    providerThreadId: turnInput.providerThread.id,
+                    providerTurnId: turnInput.providerTurnId,
+                    cause,
+                  }),
+              ),
+            ),
+        );
+
+        const steerTurn = Effect.fn("ClaudeAdapterV2.steerTurn")(
+          function* (turnInput: ProviderAdapterV2SteerInput) {
+            const existing = yield* Ref.get(queryContext);
+            if (existing === null) {
+              return yield* new ProviderAdapterProtocolError({
+                provider: CLAUDE_PROVIDER,
+                detail: `Claude provider thread ${turnInput.providerThread.id} has no live query.`,
+              });
+            }
+            const currentTurn = yield* Ref.get(activeTurn);
+            if (currentTurn?.providerTurnId !== turnInput.providerTurnId) {
+              return yield* new ProviderAdapterProtocolError({
+                provider: CLAUDE_PROVIDER,
+                detail: `Claude provider turn ${turnInput.providerTurnId} is not the active turn.`,
+              });
+            }
+            yield* Ref.update(steeredTurns, (current) => {
+              const next = new Set(current);
+              next.add(turnInput.providerTurnId);
+              return next;
+            });
+            yield* existing.query.offer(
+              makeClaudeUserMessage({ text: turnInput.message.text, priority: "now" }),
+            );
+          },
+          (effect, turnInput) =>
+            effect.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterSteerRunError({
                     provider: CLAUDE_PROVIDER,
                     providerThreadId: turnInput.providerThread.id,
                     providerTurnId: turnInput.providerTurnId,
@@ -2040,13 +2158,7 @@ export function makeClaudeAdapterV2(
               ),
           ),
           startTurn,
-          steerTurn: (turnInput) =>
-            Effect.fail(
-              new ProviderAdapterSteerRunUnsupportedError({
-                provider: CLAUDE_PROVIDER,
-                providerThreadId: turnInput.providerThread.id,
-              }),
-            ),
+          steerTurn,
           interruptTurn,
           respondToRuntimeRequest: Effect.fn("ClaudeAdapterV2.respondToRuntimeRequest")(
             function* (requestInput) {

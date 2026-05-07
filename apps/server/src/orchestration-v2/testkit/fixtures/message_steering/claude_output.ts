@@ -16,11 +16,11 @@ import {
   projectionFor,
 } from "../shared.ts";
 
-export function assertMessageSteeringOutput(
+export function assertClaudeMessageSteeringOutput(
   result: OrchestratorV2ScenarioResult,
   transcript: ProviderReplayTranscript,
 ) {
-  assert.equal(transcript.provider, "codex");
+  assert.equal(transcript.provider, "claudeAgent");
   assertBaseProjection({ result, transcript, runCount: 1, runStatuses: ["completed"] });
 
   const projection = projectionFor(result, transcript.scenario);
