@@ -33,8 +33,8 @@ export const PROVIDER_THREAD_RESUME_FIRST_PROMPT =
   "Respond with exactly: provider thread resume fixture first turn complete";
 export const PROVIDER_THREAD_RESUME_SECOND_PROMPT =
   "Using the conversation history available in this resumed thread, first repeat the exact final answer you gave in the previous turn. Then on a new line write exactly: provider thread resume fixture second turn complete";
-export const TOOL_CALL_READ_ONLY_PROMPT =
-  "Read package.json and tsconfig.json from the current workspace, then answer exactly: read only tool fixture complete";
+export const TOOL_CALL_READ_ONLY_WORKSPACE_ROOT = "/tmp/claude-replay-tool_call_read_only";
+export const TOOL_CALL_READ_ONLY_PROMPT = `Read ${TOOL_CALL_READ_ONLY_WORKSPACE_ROOT}/package.json and ${TOOL_CALL_READ_ONLY_WORKSPACE_ROOT}/tsconfig.json, then answer exactly: read only tool fixture complete`;
 export const TOOL_CALL_WRITE_PROMPT =
   "Create or overwrite .codex-probe-write-action.txt with exactly this text: codex app-server approval fixture. Use a local shell command or file edit only, then briefly report what happened. Do not read package metadata, use GitHub, use web, or use MCP.";
 export const SUBAGENT_PROMPT =
@@ -137,6 +137,55 @@ export const CLAUDE_MODEL_SELECTION = {
   instanceId: ProviderInstanceId.make("claudeAgent"),
   model: "claude-sonnet-4-6",
 } satisfies ModelSelection;
+
+export const READ_ONLY_ON_REQUEST_POLICY = {
+  approvalPolicy: "on-request",
+  sandboxPolicy: {
+    type: "readOnly",
+    access: { type: "fullAccess" },
+    networkAccess: false,
+  },
+} as const satisfies RuntimePolicyV2Override;
+
+export const READ_ONLY_NEVER_POLICY = {
+  approvalPolicy: "never",
+  sandboxPolicy: {
+    type: "readOnly",
+    access: { type: "fullAccess" },
+    networkAccess: false,
+  },
+} as const satisfies RuntimePolicyV2Override;
+
+export const WORKSPACE_NEVER_POLICY = {
+  approvalPolicy: "never",
+  sandboxPolicy: {
+    type: "workspaceWrite",
+    writableRoots: [],
+    readOnlyAccess: { type: "fullAccess" },
+    networkAccess: false,
+  },
+} as const satisfies RuntimePolicyV2Override;
+
+export const RESTRICTED_GRANULAR_POLICY = {
+  approvalPolicy: {
+    granular: {
+      mcp_elicitations: true,
+      request_permissions: true,
+      rules: true,
+      sandbox_approval: true,
+      skill_approval: true,
+    },
+  },
+  sandboxPolicy: {
+    type: "readOnly",
+    access: {
+      type: "restricted",
+      includePlatformDefaults: false,
+      readableRoots: [],
+    },
+    networkAccess: false,
+  },
+} as const satisfies RuntimePolicyV2Override;
 
 export function createThreadCommand(input: {
   readonly commandId: CommandId;

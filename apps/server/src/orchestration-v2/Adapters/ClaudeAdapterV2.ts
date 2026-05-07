@@ -5,6 +5,7 @@ import {
   type PermissionMode,
   type PermissionResult,
   type Query as ClaudeQuery,
+  type Settings as ClaudeSdkSettings,
   type SDKAssistantMessage,
   type SDKMessage,
   type SDKResultMessage,
@@ -28,21 +29,20 @@ import {
   type ProviderInstanceId,
   type ProviderRequestKind,
 } from "@t3tools/contracts";
-import {
-  Cause,
-  Context,
-  DateTime,
-  Deferred,
-  Effect,
-  Exit,
-  Layer,
-  Path,
-  Queue,
-  Random,
-  Ref,
-  Schema,
-  Stream,
-} from "effect";
+
+import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Random from "effect/Random";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import {
@@ -171,6 +171,30 @@ const CLAUDE_CODE_PRESET_TOOLS = {
   preset: "claude_code",
 } satisfies NonNullable<ClaudeQueryOptions["tools"]>;
 
+export type ClaudeAgentSdkQueryToolList = ReadonlyArray<string>;
+export interface ClaudeAgentSdkQueryPresetTools {
+  readonly type: "preset";
+  readonly preset: "claude_code";
+}
+export type ClaudeAgentSdkQueryTools = ClaudeAgentSdkQueryToolList | ClaudeAgentSdkQueryPresetTools;
+
+export const CLAUDE_READ_ONLY_ALLOWED_TOOLS = ["Read", "Glob", "Grep"] as const;
+
+function claudeAgentSdkQueryToolsForSdk(
+  tools: ClaudeAgentSdkQueryTools,
+): NonNullable<ClaudeQueryOptions["tools"]> {
+  if (isClaudeAgentSdkQueryToolList(tools)) {
+    return [...tools];
+  }
+  return { type: tools.type, preset: tools.preset };
+}
+
+function isClaudeAgentSdkQueryToolList(
+  tools: ClaudeAgentSdkQueryTools,
+): tools is ClaudeAgentSdkQueryToolList {
+  return Array.isArray(tools);
+}
+
 type ClaudeAgentSdkThreadIdentity =
   | {
       readonly sessionId: string;
@@ -293,8 +317,11 @@ export function makeClaudeQueryOptions(input: {
   readonly resume: boolean;
   readonly cwd: string | null;
   readonly settings?: ClaudeSettings;
+  readonly sdkSettings?: string | ClaudeSdkSettings;
   readonly environment?: NodeJS.ProcessEnv;
-  readonly tools?: NonNullable<ClaudeQueryOptions["tools"]>;
+  readonly tools?: ClaudeAgentSdkQueryTools;
+  readonly allowedTools?: ReadonlyArray<string>;
+  readonly disallowedTools?: ReadonlyArray<string>;
   readonly permissionMode?: PermissionMode;
   readonly canUseTool?: CanUseTool;
   readonly allowDangerouslySkipPermissions?: boolean;
@@ -304,15 +331,19 @@ export function makeClaudeQueryOptions(input: {
   const threadIdentity: ClaudeAgentSdkThreadIdentity = input.resume
     ? { resume: input.nativeThreadId }
     : { sessionId: input.nativeThreadId };
+  const selectedTools = input.tools ?? CLAUDE_CODE_PRESET_TOOLS;
   const options: ClaudeAgentSdkQueryOptions = {
     model: input.modelSelection.model,
-    tools: input.tools ?? [],
+    tools: claudeAgentSdkQueryToolsForSdk(selectedTools),
     permissionMode: input.permissionMode ?? "default",
     ...threadIdentity,
+    ...(input.allowedTools === undefined ? {} : { allowedTools: [...input.allowedTools] }),
+    ...(input.disallowedTools === undefined ? {} : { disallowedTools: [...input.disallowedTools] }),
     ...(input.canUseTool === undefined ? {} : { canUseTool: input.canUseTool }),
     ...(input.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
       : {}),
+    ...(input.sdkSettings === undefined ? {} : { settings: input.sdkSettings }),
     ...(input.settings?.binaryPath
       ? { pathToClaudeCodeExecutable: input.settings.binaryPath }
       : {}),
@@ -473,6 +504,35 @@ function assertNever(value: never): never {
   throw new Error(`Unhandled Claude SDK variant: ${jsonStringifyForTool(value)}`);
 }
 
+const ClaudeRuntimeSandboxPolicyKind = Schema.Struct({
+  type: Schema.Literals(["dangerFullAccess", "externalSandbox", "readOnly", "workspaceWrite"]),
+});
+type ClaudeRuntimeSandboxPolicy = typeof ClaudeRuntimeSandboxPolicyKind.Type;
+type ClaudeRuntimeSandboxPolicyKindName = ClaudeRuntimeSandboxPolicy["type"];
+
+const ClaudeRuntimeReadOnlyFullAccessSandboxPolicy = Schema.Struct({
+  type: Schema.Literal("readOnly"),
+  access: Schema.Struct({
+    type: Schema.Literal("fullAccess"),
+  }),
+});
+
+function sandboxPolicyKindForClaudeRuntimePolicy(
+  runtimePolicy: ProviderAdapterV2RuntimePolicy,
+): ClaudeRuntimeSandboxPolicyKindName | undefined {
+  return runtimePolicy.sandboxPolicy !== undefined &&
+    Schema.is(ClaudeRuntimeSandboxPolicyKind)(runtimePolicy.sandboxPolicy)
+    ? runtimePolicy.sandboxPolicy.type
+    : undefined;
+}
+
+function readOnlyPolicyAllowsGlobalReads(runtimePolicy: ProviderAdapterV2RuntimePolicy): boolean {
+  return (
+    runtimePolicy.sandboxPolicy !== undefined &&
+    Schema.is(ClaudeRuntimeReadOnlyFullAccessSandboxPolicy)(runtimePolicy.sandboxPolicy)
+  );
+}
+
 function permissionModeForClaudeRuntimePolicy(
   runtimePolicy: ProviderAdapterV2RuntimePolicy,
 ): PermissionMode {
@@ -481,6 +541,17 @@ function permissionModeForClaudeRuntimePolicy(
   }
   if (runtimePolicy.approvalPolicy !== undefined && runtimePolicy.approvalPolicy !== "never") {
     return "default";
+  }
+
+  switch (sandboxPolicyKindForClaudeRuntimePolicy(runtimePolicy)) {
+    case "readOnly":
+      return "dontAsk";
+    case "dangerFullAccess":
+      return "bypassPermissions";
+    case "externalSandbox":
+    case "workspaceWrite":
+    case undefined:
+      break;
   }
 
   switch (runtimePolicy.runtimeMode) {
@@ -493,10 +564,66 @@ function permissionModeForClaudeRuntimePolicy(
   }
 }
 
-function shouldInstallClaudePermissionCallback(
+export interface ClaudeRuntimeQueryPolicy {
+  readonly permissionMode: PermissionMode;
+  readonly tools?: ClaudeAgentSdkQueryTools;
+  readonly allowedTools?: ReadonlyArray<string>;
+  readonly allowDangerouslySkipPermissions?: true;
+  readonly installPermissionCallback: boolean;
+}
+
+export function claudeRuntimeQueryPolicyForRuntimePolicy(
   runtimePolicy: ProviderAdapterV2RuntimePolicy,
-): boolean {
-  return permissionModeForClaudeRuntimePolicy(runtimePolicy) !== "bypassPermissions";
+): ClaudeRuntimeQueryPolicy {
+  const permissionMode = permissionModeForClaudeRuntimePolicy(runtimePolicy);
+  const readOnlyTools =
+    permissionMode === "dontAsk" &&
+    sandboxPolicyKindForClaudeRuntimePolicy(runtimePolicy) === "readOnly"
+      ? CLAUDE_READ_ONLY_ALLOWED_TOOLS
+      : undefined;
+  const allowedTools =
+    readOnlyTools !== undefined && readOnlyPolicyAllowsGlobalReads(runtimePolicy)
+      ? readOnlyTools
+      : undefined;
+
+  if (permissionMode === "plan") {
+    return {
+      permissionMode,
+      ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
+      ...(allowedTools === undefined ? {} : { allowedTools }),
+      installPermissionCallback: false,
+    };
+  }
+
+  const installPermissionCallback =
+    runtimePolicy.approvalPolicy === undefined
+      ? runtimePolicy.runtimeMode === "approval-required"
+      : runtimePolicy.approvalPolicy !== "never";
+
+  return {
+    permissionMode,
+    ...(readOnlyTools === undefined ? {} : { tools: readOnlyTools }),
+    ...(allowedTools === undefined ? {} : { allowedTools }),
+    ...(permissionMode === "bypassPermissions" ? { allowDangerouslySkipPermissions: true } : {}),
+    installPermissionCallback,
+  };
+}
+
+function shouldInstallClaudePermissionCallback(policy: ClaudeRuntimeQueryPolicy): boolean {
+  if (policy.permissionMode === "plan") {
+    return false;
+  }
+  return policy.installPermissionCallback;
+}
+
+function claudeRuntimeQueryPolicyKey(policy: ClaudeRuntimeQueryPolicy): string {
+  return JSON.stringify({
+    permissionMode: policy.permissionMode,
+    tools: policy.tools,
+    allowedTools: policy.allowedTools,
+    allowDangerouslySkipPermissions: policy.allowDangerouslySkipPermissions,
+    installPermissionCallback: policy.installPermissionCallback,
+  });
 }
 
 type ClaudeToolItemType = Extract<
@@ -1040,7 +1167,7 @@ interface ActiveClaudeTurnContext {
 interface ClaudeLiveQueryContext {
   readonly nativeThreadId: string;
   readonly query: ClaudeAgentSdkQuerySession;
-  readonly permissionMode: PermissionMode;
+  readonly queryPolicyKey: string;
   currentModel: string;
 }
 
@@ -1690,12 +1817,13 @@ export function makeClaudeAdapterV2(
           turnInput: ProviderAdapterV2TurnInput,
           nativeThreadId: string,
         ) {
-          const permissionMode = permissionModeForClaudeRuntimePolicy(turnInput.runtimePolicy);
+          const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(turnInput.runtimePolicy);
+          const queryPolicyKey = claudeRuntimeQueryPolicyKey(queryPolicy);
           const existing = yield* Ref.get(queryContext);
           if (
             existing !== null &&
             existing.nativeThreadId === nativeThreadId &&
-            existing.permissionMode === permissionMode
+            existing.queryPolicyKey === queryPolicyKey
           ) {
             if (existing.currentModel !== turnInput.modelSelection.model) {
               yield* existing.query.setModel(turnInput.modelSelection.model);
@@ -1717,20 +1845,21 @@ export function makeClaudeAdapterV2(
               cwd: turnInput.runtimePolicy.cwd,
               settings: adapterOptions.settings,
               environment: adapterOptions.environment,
-              tools: CLAUDE_CODE_PRESET_TOOLS,
-              permissionMode,
-              ...(permissionMode === "bypassPermissions"
-                ? { allowDangerouslySkipPermissions: true }
-                : {}),
-              ...(shouldInstallClaudePermissionCallback(turnInput.runtimePolicy)
-                ? { canUseTool }
-                : {}),
+              tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
+              ...(queryPolicy.allowedTools === undefined
+                ? {}
+                : { allowedTools: queryPolicy.allowedTools }),
+              permissionMode: queryPolicy.permissionMode,
+              ...(queryPolicy.allowDangerouslySkipPermissions === undefined
+                ? {}
+                : { allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions }),
+              ...(shouldInstallClaudePermissionCallback(queryPolicy) ? { canUseTool } : {}),
             }),
           });
           const context: ClaudeLiveQueryContext = {
             nativeThreadId,
             query: querySession,
-            permissionMode,
+            queryPolicyKey,
             currentModel: turnInput.modelSelection.model,
           };
           yield* Ref.set(queryContext, context);
