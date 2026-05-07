@@ -29,7 +29,7 @@ import * as DesktopState from "./DesktopState.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { type DesktopSettings, setDesktopUpdateChannelPreference } from "../desktopSettings.ts";
 import * as IpcChannels from "../ipc/channels.ts";
-import { doesVersionMatchDesktopUpdateChannel } from "../updateChannels.ts";
+import { resolveDefaultDesktopUpdateChannel } from "../updateChannels.ts";
 import {
   createInitialDesktopUpdateState,
   reduceDesktopUpdateStateOnCheckFailure,
@@ -458,7 +458,7 @@ const make = Effect.gen(function* () {
       Effect.flatMap((info) =>
         Effect.gen(function* () {
           const state = yield* Ref.get(updateStateRef);
-          if (!doesVersionMatchDesktopUpdateChannel(info.version, state.channel)) {
+          if (resolveDefaultDesktopUpdateChannel(info.version) !== state.channel) {
             yield* logUpdaterInfo("ignoring update that does not match selected channel", {
               version: info.version,
               channel: state.channel,
