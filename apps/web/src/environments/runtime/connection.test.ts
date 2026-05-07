@@ -22,14 +22,14 @@ function createTestClient() {
           environmentId: EnvironmentId.make("env-1"),
         },
       })),
-      subscribeConfig: (listener: (event: any) => void) => {
+      subscribeConfig: vi.fn((listener: (event: any) => void) => {
         configListeners.add(listener);
         return () => configListeners.delete(listener);
-      },
-      subscribeLifecycle: (listener: (event: any) => void) => {
+      }),
+      subscribeLifecycle: vi.fn((listener: (event: any) => void) => {
         lifecycleListeners.add(listener);
         return () => lifecycleListeners.delete(listener);
-      },
+      }),
       subscribeAuthAccess: () => () => undefined,
       refreshProviders: vi.fn(async () => undefined),
       upsertKeybinding: vi.fn(async () => undefined),
@@ -85,16 +85,7 @@ function createTestClient() {
       openInEditor: vi.fn(async () => undefined),
     },
     git: {
-      pull: vi.fn(async () => undefined),
-      refreshStatus: vi.fn(async () => undefined),
-      onStatus: vi.fn(() => () => undefined),
       runStackedAction: vi.fn(async () => ({}) as any),
-      listBranches: vi.fn(async () => []),
-      createWorktree: vi.fn(async () => undefined),
-      removeWorktree: vi.fn(async () => undefined),
-      createBranch: vi.fn(async () => undefined),
-      checkout: vi.fn(async () => undefined),
-      init: vi.fn(async () => undefined),
       resolvePullRequest: vi.fn(async () => undefined),
       preparePullRequestThread: vi.fn(async () => undefined),
     },
@@ -243,6 +234,35 @@ describe("createEnvironmentConnection", () => {
       expect.objectContaining({ snapshotSequence: 2 }),
       environmentId,
     );
+
+    await connection.dispose();
+  });
+
+  it("skips primary lifecycle/config subscriptions when no handlers are registered", async () => {
+    const environmentId = EnvironmentId.make("env-1");
+    const { client } = createTestClient();
+
+    const connection = createEnvironmentConnection({
+      kind: "primary",
+      knownEnvironment: {
+        id: "env-1",
+        label: "Local env",
+        source: "manual",
+        target: {
+          httpBaseUrl: "http://example.test",
+          wsBaseUrl: "ws://example.test",
+        },
+        environmentId,
+      },
+      client,
+      applyShellEvent: vi.fn(),
+      syncShellSnapshot: vi.fn(),
+      applyTerminalEvent: vi.fn(),
+    });
+
+    expect(client.server.subscribeLifecycle).not.toHaveBeenCalled();
+    expect(client.server.subscribeConfig).not.toHaveBeenCalled();
+    expect(client.orchestration.subscribeShell).toHaveBeenCalledOnce();
 
     await connection.dispose();
   });

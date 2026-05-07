@@ -8,6 +8,15 @@ import pkg from "./package.json" with { type: "json" };
 const port = Number(process.env.PORT ?? 5733);
 const host = process.env.HOST?.trim() || "localhost";
 const configuredWsUrl = process.env.VITE_WS_URL?.trim();
+const configuredHostedAppUrl = (() => {
+  if (process.env.VERCEL_ENV === "production" && process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  return process.env.VITE_HOSTED_APP_URL?.trim();
+})();
 const sourcemapEnv = process.env.T3CODE_WEB_SOURCEMAP?.trim().toLowerCase();
 
 const buildSourcemap =
@@ -55,11 +64,18 @@ export default defineConfig({
     tailwindcss(),
   ],
   optimizeDeps: {
-    include: ["@pierre/diffs", "@pierre/diffs/react", "@pierre/diffs/worker/worker.js"],
+    include: [
+      "@pierre/diffs",
+      "@pierre/diffs/react",
+      "@pierre/diffs/worker/worker.js",
+      "effect/Array",
+      "effect/Order",
+    ],
   },
   define: {
     // In dev mode, tell the web app where the WebSocket server lives
     "import.meta.env.VITE_WS_URL": JSON.stringify(configuredWsUrl ?? ""),
+    "import.meta.env.VITE_HOSTED_APP_URL": JSON.stringify(configuredHostedAppUrl ?? ""),
     "import.meta.env.APP_VERSION": JSON.stringify(pkg.version),
   },
   resolve: {

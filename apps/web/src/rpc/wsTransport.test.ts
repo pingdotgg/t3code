@@ -284,10 +284,15 @@ describe("WsTransport", () => {
     socket.close(1012, "service restart");
 
     await waitFor(() => {
-      expect(onClose).toHaveBeenCalledWith({
-        code: 1012,
-        reason: "service restart",
-      });
+      expect(onClose).toHaveBeenCalledWith(
+        {
+          code: 1012,
+          reason: "service restart",
+        },
+        {
+          intentional: false,
+        },
+      );
       expect(getWsConnectionStatus()).toMatchObject({
         attemptCount: 2,
         closeReason: "service restart",
@@ -296,6 +301,38 @@ describe("WsTransport", () => {
     }, 2_000);
 
     await transport.dispose();
+  });
+
+  it("does not report an intentional dispose as a reconnectable disconnect", async () => {
+    const onClose = vi.fn();
+    const transport = createTransport("ws://localhost:3020", {
+      getConnectionLabel: () => "Remote Mac mini",
+      onClose,
+    });
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const socket = getSocket();
+    socket.open();
+
+    await waitFor(() => {
+      expect(getWsConnectionStatus()).toMatchObject({
+        connectionLabel: "Remote Mac mini",
+        hasConnected: true,
+        phase: "connected",
+      });
+    });
+
+    await transport.dispose();
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(getWsConnectionStatus()).toMatchObject({
+      connectionLabel: "Remote Mac mini",
+      phase: "connected",
+      reconnectPhase: "idle",
+    });
   });
 
   it("reconnects the websocket session without disposing the transport", async () => {
@@ -324,6 +361,11 @@ describe("WsTransport", () => {
     const secondSocket = getSocket();
     expect(secondSocket).not.toBe(firstSocket);
     expect(firstSocket.readyState).toBe(MockWebSocket.CLOSED);
+    expect(getWsConnectionStatus()).toMatchObject({
+      closeCode: null,
+      closeReason: null,
+      phase: "connecting",
+    });
 
     const requestPromise = transport.request((client) =>
       client[WS_METHODS.serverUpsertKeybinding]({
@@ -359,6 +401,92 @@ describe("WsTransport", () => {
     });
 
     await transport.dispose();
+  });
+
+  it("ignores stale socket lifecycle events after a reconnect starts a new session", async () => {
+    const onClose = vi.fn();
+    const transport = createTransport("ws://localhost:3020", { onClose });
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const firstSocket = getSocket();
+    firstSocket.open();
+
+    await waitFor(() => {
+      expect(getWsConnectionStatus()).toMatchObject({
+        hasConnected: true,
+        phase: "connected",
+      });
+    });
+
+    await transport.reconnect();
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(2);
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(getWsConnectionStatus()).toMatchObject({
+      closeCode: null,
+      closeReason: null,
+      phase: "connecting",
+    });
+
+    const secondSocket = getSocket();
+    secondSocket.open();
+
+    await waitFor(() => {
+      expect(getWsConnectionStatus()).toMatchObject({
+        phase: "connected",
+      });
+    });
+
+    firstSocket.close(1006, "stale close");
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(getWsConnectionStatus()).toMatchObject({
+      closeCode: null,
+      closeReason: null,
+      phase: "connected",
+    });
+
+    await transport.dispose();
+  });
+
+  it("ignores stale socket close events after the transport is disposed", async () => {
+    const onClose = vi.fn();
+    const transport = createTransport("ws://localhost:3020", { onClose });
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const firstSocket = getSocket();
+    firstSocket.open();
+
+    await waitFor(() => {
+      expect(getWsConnectionStatus()).toMatchObject({
+        hasConnected: true,
+        phase: "connected",
+      });
+    });
+
+    await transport.reconnect();
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(2);
+    });
+
+    const secondSocket = getSocket();
+    secondSocket.open();
+    await transport.dispose();
+
+    onClose.mockClear();
+    firstSocket.close(1006, "stale close after dispose");
+
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("marks unary requests as slow until the first server ack arrives", async () => {

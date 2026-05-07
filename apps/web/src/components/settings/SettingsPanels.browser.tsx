@@ -10,18 +10,49 @@ import {
   type DesktopUpdateChannel,
   type DesktopUpdateState,
   type LocalApi,
+  ProviderDriverKind,
+  ProviderInstanceId,
   type ServerConfig,
+  type ServerProvider,
+  type SourceControlDiscoveryResult,
 } from "@t3tools/contracts";
-import { DateTime } from "effect";
+import { DateTime, Option } from "effect";
 import { page } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
+import type { ReactNode } from "react";
+import {
+  RouterProvider,
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from "@tanstack/react-router";
 
 import { __resetLocalApiForTests } from "../../localApi";
-import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import { AppAtomRegistryProvider, resetAppAtomRegistryForTests } from "../../rpc/atomRegistry";
 import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
+import { useUiStateStore } from "../../uiStateStore";
 import { ConnectionsSettings } from "./ConnectionsSettings";
-import { GeneralSettingsPanel } from "./SettingsPanels";
+import { DiagnosticsSettingsPanel } from "./DiagnosticsSettings";
+import { GeneralSettingsPanel, ProviderSettingsPanel } from "./SettingsPanels";
+import { SourceControlSettingsPanel } from "./SourceControlSettings";
+
+function renderWithTestRouter(children: ReactNode) {
+  const rootRoute = createRootRoute({
+    component: () => children,
+  });
+  const indexRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/",
+  });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([indexRoute]),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+
+  return render(<RouterProvider router={router} />);
+}
 
 const authAccessHarness = vi.hoisted(() => {
   type Snapshot = AuthAccessSnapshot;
@@ -113,6 +144,8 @@ const authAccessHarness = vi.hoisted(() => {
   };
 });
 
+const mockConnectDesktopSshEnvironment = vi.hoisted(() => vi.fn());
+
 vi.mock("../../environments/runtime", () => {
   const primaryConnection = {
     kind: "primary" as const,
@@ -150,6 +183,7 @@ vi.mock("../../environments/runtime", () => {
       new URL(path, "http://localhost:3000").toString(),
     waitForSavedEnvironmentRegistryHydration: async () => undefined,
     addSavedEnvironment: vi.fn(),
+    connectDesktopSshEnvironment: mockConnectDesktopSshEnvironment,
     disconnectSavedEnvironment: vi.fn(),
     ensureEnvironmentConnectionBootstrapped: async () => undefined,
     getPrimaryEnvironmentConnection: () => primaryConnection,
@@ -198,6 +232,31 @@ function createBaseServerConfig(): ServerConfig {
       otlpMetricsEnabled: false,
     },
     settings: DEFAULT_SERVER_SETTINGS,
+  };
+}
+
+function createOutdatedProvider(driver: string): ServerProvider {
+  return {
+    instanceId: ProviderInstanceId.make(driver),
+    driver: ProviderDriverKind.make(driver),
+    enabled: true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-05-04T10:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    versionAdvisory: {
+      status: "behind_latest",
+      currentVersion: "1.0.0",
+      latestVersion: "1.1.0",
+      message: "Update available.",
+      checkedAt: "2026-05-04T10:00:00.000Z",
+      updateCommand: "npm install -g openai/codex@latest",
+      canUpdate: true,
+    },
   };
 }
 
@@ -257,7 +316,9 @@ function makeClientSession(input: {
 }
 
 const createDesktopBridgeStub = (overrides?: {
+  readonly discoverSshHosts?: DesktopBridge["discoverSshHosts"];
   readonly serverExposureState?: Awaited<ReturnType<DesktopBridge["getServerExposureState"]>>;
+  readonly advertisedEndpoints?: Awaited<ReturnType<DesktopBridge["getAdvertisedEndpoints"]>>;
   readonly setServerExposureMode?: DesktopBridge["setServerExposureMode"];
   readonly setUpdateChannel?: DesktopBridge["setUpdateChannel"];
 }): DesktopBridge => {
@@ -293,11 +354,58 @@ const createDesktopBridgeStub = (overrides?: {
     getSavedEnvironmentSecret: vi.fn().mockResolvedValue(null),
     setSavedEnvironmentSecret: vi.fn().mockResolvedValue(true),
     removeSavedEnvironmentSecret: vi.fn().mockResolvedValue(undefined),
+    discoverSshHosts: overrides?.discoverSshHosts ?? vi.fn().mockResolvedValue([]),
+    ensureSshEnvironment: vi.fn().mockImplementation(async (target) => ({
+      target,
+      httpBaseUrl: "http://127.0.0.1:3774/",
+      wsBaseUrl: "ws://127.0.0.1:3774/",
+      pairingToken: "ssh-pairing-token",
+    })),
+    disconnectSshEnvironment: vi.fn().mockResolvedValue(undefined),
+    fetchSshEnvironmentDescriptor: vi.fn().mockResolvedValue({
+      environmentId: "environment-ssh",
+      label: "SSH environment",
+      platform: {
+        os: "linux",
+        arch: "x64",
+      },
+      serverVersion: "0.0.0-test",
+      capabilities: {
+        repositoryIdentity: true,
+      },
+    }),
+    bootstrapSshBearerSession: vi.fn().mockResolvedValue({
+      authenticated: true,
+      role: "owner",
+      sessionMethod: "bearer-session-token",
+      expiresAt: "2026-05-01T12:00:00.000Z",
+      sessionToken: "ssh-bearer-token",
+    }),
+    fetchSshSessionState: vi.fn().mockResolvedValue({
+      authenticated: true,
+      auth: {
+        policy: "remote-reachable",
+        bootstrapMethods: ["one-time-token"],
+        sessionMethods: ["browser-session-cookie", "bearer-session-token"],
+        sessionCookieName: "t3_session",
+      },
+      role: "owner",
+      sessionMethod: "bearer-session-token",
+      expiresAt: "2026-05-01T12:00:00.000Z",
+    }),
+    issueSshWebSocketToken: vi.fn().mockResolvedValue({
+      token: "ssh-ws-token",
+      expiresAt: "2026-05-01T12:05:00.000Z",
+    }),
+    onSshPasswordPrompt: vi.fn(() => () => {}),
+    resolveSshPasswordPrompt: vi.fn().mockResolvedValue(undefined),
     getServerExposureState: vi.fn().mockResolvedValue(
       overrides?.serverExposureState ?? {
         mode: "local-only",
         endpointUrl: null,
         advertisedHost: null,
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       },
     ),
     setServerExposureMode:
@@ -306,7 +414,17 @@ const createDesktopBridgeStub = (overrides?: {
         mode,
         endpointUrl: mode === "network-accessible" ? "http://192.168.1.44:3773" : null,
         advertisedHost: mode === "network-accessible" ? "192.168.1.44" : null,
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       })),
+    setTailscaleServeEnabled: vi.fn().mockImplementation(async (input) => ({
+      mode: overrides?.serverExposureState?.mode ?? "network-accessible",
+      endpointUrl: overrides?.serverExposureState?.endpointUrl ?? "http://192.168.1.44:3773",
+      advertisedHost: overrides?.serverExposureState?.advertisedHost ?? "192.168.1.44",
+      tailscaleServeEnabled: input.enabled,
+      tailscaleServePort: input.port ?? 443,
+    })),
+    getAdvertisedEndpoints: vi.fn().mockResolvedValue(overrides?.advertisedEndpoints ?? []),
     pickFolder: vi.fn().mockResolvedValue(null),
     confirm: vi.fn().mockResolvedValue(false),
     setTheme: vi.fn().mockResolvedValue(undefined),
@@ -343,7 +461,9 @@ describe("GeneralSettingsPanel observability", () => {
     resetServerStateForTests();
     await __resetLocalApiForTests();
     localStorage.clear();
+    useUiStateStore.setState({ defaultAdvertisedEndpointKey: null });
     authAccessHarness.reset();
+    mockConnectDesktopSshEnvironment.mockReset();
   });
 
   afterEach(async () => {
@@ -429,25 +549,194 @@ describe("GeneralSettingsPanel observability", () => {
       .toBeInTheDocument();
   });
 
-  it("shows diagnostics inside About with a single logs-folder action", async () => {
+  it("hides advertised endpoint rows when desktop network access is disabled", async () => {
+    window.desktopBridge = createDesktopBridgeStub({
+      serverExposureState: {
+        mode: "local-only",
+        endpointUrl: null,
+        advertisedHost: null,
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
+      },
+      advertisedEndpoints: [
+        {
+          id: "loopback",
+          label: "This machine",
+          provider: {
+            id: "desktop-core",
+            label: "Desktop",
+            kind: "manual",
+            isAddon: false,
+          },
+          httpBaseUrl: "http://127.0.0.1:3773/",
+          wsBaseUrl: "ws://127.0.0.1:3773/",
+          reachability: "loopback",
+          compatibility: {
+            hostedHttpsApp: "mixed-content-blocked",
+            desktopApp: "compatible",
+          },
+          source: "desktop-core",
+          status: "available",
+          isDefault: true,
+        },
+        {
+          id: "tailscale-ip",
+          label: "Tailscale IP",
+          provider: {
+            id: "tailscale",
+            label: "Tailscale",
+            kind: "private-network",
+            isAddon: true,
+          },
+          httpBaseUrl: "http://100.105.39.17:3773/",
+          wsBaseUrl: "ws://100.105.39.17:3773/",
+          reachability: "private-network",
+          compatibility: {
+            hostedHttpsApp: "mixed-content-blocked",
+            desktopApp: "compatible",
+          },
+          source: "desktop-addon",
+          status: "available",
+        },
+      ],
+    });
+    authAccessHarness.setSnapshot({
+      pairingLinks: [],
+      clientSessions: [],
+    });
     setServerConfigSnapshot(createBaseServerConfig());
 
     mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("Limited to this machine.")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "This machine", exact: true }))
+      .not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Tailscale IP", exact: true }))
+      .not.toBeInTheDocument();
+  });
+
+  it("collapses advertised endpoints behind the network access summary", async () => {
+    window.desktopBridge = createDesktopBridgeStub({
+      serverExposureState: {
+        mode: "network-accessible",
+        endpointUrl: "http://192.168.86.39:3773",
+        advertisedHost: "192.168.86.39",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
+      },
+      advertisedEndpoints: [
+        {
+          id: "desktop-loopback:3773",
+          label: "This machine",
+          provider: {
+            id: "desktop-core",
+            label: "Desktop",
+            kind: "manual",
+            isAddon: false,
+          },
+          httpBaseUrl: "http://127.0.0.1:3773/",
+          wsBaseUrl: "ws://127.0.0.1:3773/",
+          reachability: "loopback",
+          compatibility: {
+            hostedHttpsApp: "mixed-content-blocked",
+            desktopApp: "compatible",
+          },
+          source: "desktop-core",
+          status: "available",
+        },
+        {
+          id: "desktop-lan:http://192.168.86.39:3773",
+          label: "Local network",
+          provider: {
+            id: "desktop-core",
+            label: "Desktop",
+            kind: "manual",
+            isAddon: false,
+          },
+          httpBaseUrl: "http://192.168.86.39:3773/",
+          wsBaseUrl: "ws://192.168.86.39:3773/",
+          reachability: "lan",
+          compatibility: {
+            hostedHttpsApp: "mixed-content-blocked",
+            desktopApp: "compatible",
+          },
+          source: "desktop-core",
+          status: "available",
+          isDefault: true,
+        },
+        {
+          id: "tailscale-ip:http://100.105.39.17:3773",
+          label: "Tailscale IP",
+          provider: {
+            id: "tailscale",
+            label: "Tailscale",
+            kind: "private-network",
+            isAddon: true,
+          },
+          httpBaseUrl: "http://100.105.39.17:3773/",
+          wsBaseUrl: "ws://100.105.39.17:3773/",
+          reachability: "private-network",
+          compatibility: {
+            hostedHttpsApp: "mixed-content-blocked",
+            desktopApp: "compatible",
+          },
+          source: "desktop-addon",
+          status: "available",
+        },
+      ],
+    });
+    authAccessHarness.setSnapshot({
+      pairingLinks: [],
+      clientSessions: [],
+    });
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("http://192.168.86.39:3773/")).toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "+2" })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Local network", exact: true }))
+      .not.toBeInTheDocument();
+
+    await page.getByRole("button", { name: "+2" }).click();
+
+    await expect
+      .element(page.getByRole("heading", { name: "Local network", exact: true }))
+      .toBeInTheDocument();
+    await expect.element(page.getByText("Default", { exact: true })).toBeInTheDocument();
+    await page.getByRole("button", { name: "Set as default" }).first().click();
+    await expect.element(page.getByText("http://127.0.0.1:3773/").first()).toBeInTheDocument();
+  });
+
+  it("shows diagnostics inside About with a diagnostics link", async () => {
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await renderWithTestRouter(
       <AppAtomRegistryProvider>
         <GeneralSettingsPanel />
       </AppAtomRegistryProvider>,
     );
 
     await expect.element(page.getByText("About")).toBeInTheDocument();
-    await expect.element(page.getByText("Diagnostics")).toBeInTheDocument();
-    await expect.element(page.getByText("Open logs folder")).toBeInTheDocument();
     await expect
-      .element(page.getByText("/repo/project/.t3/logs", { exact: true }))
+      .element(page.getByRole("heading", { name: "Diagnostics", exact: true }))
       .toBeInTheDocument();
+    await expect.element(page.getByRole("link", { name: "View diagnostics" })).toBeInTheDocument();
     await expect
       .element(
         page.getByText(
-          "Local trace file. OTLP exporting traces to http://localhost:4318/v1/traces.",
+          "Local trace file. Exporting OTEL traces to http://localhost:4318/v1/traces.",
         ),
       )
       .toBeInTheDocument();
@@ -459,6 +748,8 @@ describe("GeneralSettingsPanel observability", () => {
         mode: "network-accessible",
         endpointUrl: "http://192.168.1.44:3773",
         advertisedHost: "192.168.1.44",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       },
     });
     let pairingLinks: Array<AuthAccessSnapshot["pairingLinks"][number]> = [];
@@ -564,7 +855,7 @@ describe("GeneralSettingsPanel observability", () => {
       .element(page.getByText("Client · Mobile · iOS · Safari · 192.168.1.88"))
       .toBeInTheDocument();
     await expect
-      .element(page.getByRole("button", { name: /^(Copy|Show link)$/ }))
+      .element(page.getByRole("button", { name: /^Copy pairing URL for:/ }))
       .toBeInTheDocument();
     await expect.element(page.getByText("Revoke others")).toBeInTheDocument();
   });
@@ -575,6 +866,8 @@ describe("GeneralSettingsPanel observability", () => {
         mode: "network-accessible",
         endpointUrl: "http://192.168.1.44:3773",
         advertisedHost: "192.168.1.44",
+        tailscaleServeEnabled: false,
+        tailscaleServePort: 443,
       },
     });
     let clientSessions: Array<AuthAccessSnapshot["clientSessions"][number]> = [
@@ -675,16 +968,120 @@ describe("GeneralSettingsPanel observability", () => {
     await vi.waitFor(() => {
       expect(desktopBridge.setServerExposureMode).toHaveBeenCalledWith("network-accessible");
     });
+    await expect.element(page.getByText("http://192.168.1.44:3773")).toBeInTheDocument();
+  });
+
+  it("adds desktop ssh environments from the add-environment dialog", async () => {
+    const discoverSshHosts = vi.fn().mockResolvedValue([
+      {
+        alias: "devbox",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 22,
+        source: "ssh-config" as const,
+      },
+    ]);
+    window.desktopBridge = createDesktopBridgeStub({
+      discoverSshHosts,
+    });
+    mockConnectDesktopSshEnvironment.mockResolvedValue({
+      environmentId: EnvironmentId.make("environment-devbox"),
+      label: "Build box",
+      wsBaseUrl: "ws://127.0.0.1:3774/",
+      httpBaseUrl: "http://127.0.0.1:3774/",
+      createdAt: "2036-04-07T00:00:00.000Z",
+      lastConnectedAt: "2036-04-07T00:00:00.000Z",
+      desktopSsh: {
+        alias: "devbox.example.com",
+        hostname: "devbox.example.com",
+        username: "julius",
+        port: 2222,
+      },
+    });
+
+    setServerConfigSnapshot(createBaseServerConfig());
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ConnectionsSettings />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByRole("button", { name: "Add environment", exact: true }).click();
+    const addEnvironmentDialog = page.getByRole("dialog", { name: "Add Environment" });
     await expect
-      .element(page.getByText("Reachable at http://192.168.1.44:3773"))
+      .element(addEnvironmentDialog.getByRole("heading", { name: "Add Environment", exact: true }))
       .toBeInTheDocument();
+    await addEnvironmentDialog.getByRole("button", { name: /^SSH\b/ }).click();
+    await vi.waitFor(() => {
+      expect(discoverSshHosts).toHaveBeenCalledTimes(1);
+    });
+    await expect
+      .element(page.getByRole("heading", { name: "devbox", exact: true }))
+      .toBeInTheDocument();
+
+    await addEnvironmentDialog.getByLabelText("SSH host or alias").fill("devbox.example.com");
+    await addEnvironmentDialog.getByLabelText("Username").fill("julius");
+    await addEnvironmentDialog.getByLabelText("Port").fill("2222");
+    await addEnvironmentDialog
+      .getByRole("button", { name: "Add environment", exact: true })
+      .first()
+      .click();
+
+    await vi.waitFor(() => {
+      expect(mockConnectDesktopSshEnvironment).toHaveBeenCalledWith(
+        {
+          alias: "devbox.example.com",
+          hostname: "devbox.example.com",
+          username: "julius",
+          port: 2222,
+        },
+        { label: "" },
+      );
+    });
   });
 
   it("opens the logs folder in the preferred editor", async () => {
     const openInEditor = vi.fn<LocalApi["shell"]["openInEditor"]>().mockResolvedValue(undefined);
     window.nativeApi = {
+      persistence: {
+        getClientSettings: vi.fn().mockResolvedValue(null),
+        setClientSettings: vi.fn().mockResolvedValue(undefined),
+      },
       shell: {
         openInEditor,
+      },
+      server: {
+        getProcessDiagnostics: vi.fn().mockResolvedValue({
+          serverPid: 1234,
+          readAt: makeUtc("2036-04-07T00:00:00.000Z"),
+          processCount: 0,
+          totalRssBytes: 0,
+          totalCpuPercent: 0,
+          processes: [],
+          error: Option.none(),
+        }),
+        getTraceDiagnostics: vi.fn().mockResolvedValue({
+          traceFilePath: "/repo/project/.t3/traces.jsonl",
+          scannedFilePaths: ["/repo/project/.t3/traces.jsonl"],
+          readAt: makeUtc("2036-04-07T00:00:00.000Z"),
+          recordCount: 0,
+          parseErrorCount: 0,
+          firstSpanAt: Option.none(),
+          lastSpanAt: Option.none(),
+          failureCount: 0,
+          interruptionCount: 0,
+          slowSpanThresholdMs: 5_000,
+          slowSpanCount: 0,
+          logLevelCounts: {},
+          topSpansByCount: [],
+          slowestSpans: [],
+          commonFailures: [],
+          latestFailures: [],
+          latestWarningAndErrorLogs: [],
+          partialFailure: Option.none(),
+          error: Option.none(),
+        }),
       },
     } as unknown as LocalApi;
 
@@ -692,11 +1089,11 @@ describe("GeneralSettingsPanel observability", () => {
 
     mounted = await render(
       <AppAtomRegistryProvider>
-        <GeneralSettingsPanel />
+        <DiagnosticsSettingsPanel />
       </AppAtomRegistryProvider>,
     );
 
-    const openLogsButton = page.getByText("Open logs folder");
+    const openLogsButton = page.getByLabelText("Open logs folder");
     await openLogsButton.click();
 
     expect(openInEditor).toHaveBeenCalledWith("/repo/project/.t3/logs", "cursor");
@@ -707,15 +1104,203 @@ describe("GeneralSettingsPanel observability", () => {
 
     mounted = await render(
       <AppAtomRegistryProvider>
-        <GeneralSettingsPanel />
+        <ProviderSettingsPanel />
       </AppAtomRegistryProvider>,
     );
 
     await page.getByLabelText("Toggle OpenCode details").click();
 
-    await expect.element(page.getByText("OpenCode server URL")).toBeInTheDocument();
+    // The unified provider-instance card renders field labels without a
+    // driver-name prefix (the driver name is already shown in the card
+    // header), so the labels read "Server URL" / "Server password"
+    // rather than the old "OpenCode server URL" / "OpenCode server password".
+    await expect.element(page.getByText("Server URL")).toBeInTheDocument();
     await expect.element(page.getByPlaceholder("http://127.0.0.1:4096")).toBeInTheDocument();
-    await expect.element(page.getByText("OpenCode server password")).toBeInTheDocument();
-    await expect.element(page.getByPlaceholder("Server password")).toBeInTheDocument();
+    await expect.element(page.getByText("Server password")).toBeInTheDocument();
+    await expect.element(page.getByPlaceholder("Optional")).toBeInTheDocument();
+  });
+
+  it("runs one-click provider updates from the provider card", async () => {
+    const updateProvider = vi.fn<LocalApi["server"]["updateProvider"]>().mockResolvedValue({
+      providers: [createOutdatedProvider("codex")],
+    });
+    window.nativeApi = {
+      persistence: {
+        getClientSettings: vi.fn().mockResolvedValue(null),
+        setClientSettings: vi.fn().mockResolvedValue(undefined),
+      },
+      server: {
+        updateProvider,
+      },
+    } as unknown as LocalApi;
+
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [createOutdatedProvider("codex")],
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ProviderSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByRole("button", { name: "Update available — view details" }).click();
+    await expect.element(page.getByRole("button", { name: "Update now" })).toBeInTheDocument();
+    await page.getByRole("button", { name: "Update now" }).click();
+
+    expect(updateProvider).toHaveBeenCalledWith({
+      provider: ProviderDriverKind.make("codex"),
+      instanceId: ProviderInstanceId.make("codex"),
+    });
+  });
+});
+
+describe("SourceControlSettingsPanel discovery states", () => {
+  let mounted:
+    | (Awaited<ReturnType<typeof render>> & {
+        cleanup?: () => Promise<void>;
+        unmount?: () => Promise<void>;
+      })
+    | null = null;
+
+  beforeEach(async () => {
+    resetAppAtomRegistryForTests();
+    await __resetLocalApiForTests();
+    document.body.innerHTML = "";
+  });
+
+  afterEach(async () => {
+    if (mounted) {
+      const teardown = mounted.cleanup ?? mounted.unmount;
+      await teardown?.call(mounted).catch(() => {});
+    }
+    mounted = null;
+    Reflect.deleteProperty(window, "nativeApi");
+    document.body.innerHTML = "";
+    await __resetLocalApiForTests();
+    resetAppAtomRegistryForTests();
+  });
+
+  function setSourceControlDiscoveryStub(
+    discoverSourceControl: () => Promise<SourceControlDiscoveryResult>,
+  ) {
+    window.nativeApi = {
+      server: {
+        discoverSourceControl,
+      },
+    } as LocalApi;
+  }
+
+  it("shows skeleton sections while the first source control scan is pending", async () => {
+    setSourceControlDiscoveryStub(() => new Promise(() => {}));
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("Version Control")).toBeInTheDocument();
+    await expect.element(page.getByText("Source Control Providers")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Rescan server environment" }))
+      .toBeDisabled();
+    await expect.element(page.getByText("Nothing detected yet")).not.toBeInTheDocument();
+  });
+
+  it("uses the shared empty state when discovery completes without tools", async () => {
+    setSourceControlDiscoveryStub(async () => ({
+      versionControlSystems: [],
+      sourceControlProviders: [],
+    }));
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("Nothing detected yet")).toBeInTheDocument();
+    await expect
+      .element(
+        page.getByText(
+          "Install Git on the server, add optional hosting integrations or credentials your workspace needs, then rescan.",
+        ),
+      )
+      .toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Scan" })).toBeInTheDocument();
+  });
+
+  it("keeps discovered rows instead of showing the empty state", async () => {
+    setSourceControlDiscoveryStub(async () => ({
+      versionControlSystems: [
+        {
+          kind: "git",
+          label: "Git",
+          executable: "git",
+          implemented: true,
+          status: "available",
+          version: Option.some("git version 2.50.0"),
+          installHint: "Install Git.",
+          detail: Option.none(),
+        },
+      ],
+      sourceControlProviders: [],
+    }));
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByRole("heading", { name: "Git" })).toBeInTheDocument();
+    await expect.element(page.getByText("Nothing detected yet")).not.toBeInTheDocument();
+  });
+
+  it("does not rescan on remount while the discovery atom is fresh", async () => {
+    let calls = 0;
+    setSourceControlDiscoveryStub(async () => {
+      calls += 1;
+      return {
+        versionControlSystems: [
+          {
+            kind: "git",
+            label: "Git",
+            executable: "git",
+            implemented: true,
+            status: "available",
+            version: Option.some("git version 2.50.0"),
+            installHint: "Install Git.",
+            detail: Option.none(),
+          },
+        ],
+        sourceControlProviders: [],
+      };
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByRole("heading", { name: "Git" })).toBeInTheDocument();
+    expect(calls).toBe(1);
+
+    const teardown = mounted.cleanup ?? mounted.unmount;
+    await teardown?.call(mounted).catch(() => {});
+    mounted = null;
+    document.body.innerHTML = "";
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByRole("heading", { name: "Git" })).toBeInTheDocument();
+    expect(calls).toBe(1);
   });
 });

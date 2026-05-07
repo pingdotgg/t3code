@@ -7,6 +7,8 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationEvent,
+  ProviderInstanceId,
+  type OrchestrationReadModel,
 } from "@t3tools/contracts";
 import { Effect, Layer, ManagedRuntime, Metric, Option, Queue, Stream } from "effect";
 import { describe, expect, it } from "vitest";
@@ -41,9 +43,13 @@ async function createOrchestrationSystem() {
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
   });
-  const orchestrationLayer = OrchestrationEngineLive.pipe(
-    Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-    Layer.provide(OrchestrationProjectionPipelineLive),
+  const orchestrationLayer = Layer.mergeAll(
+    OrchestrationEngineLive.pipe(
+      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+      Layer.provide(OrchestrationProjectionPipelineLive),
+    ),
+    OrchestrationProjectionSnapshotQueryLive,
+  ).pipe(
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(RepositoryIdentityResolverLive),
@@ -53,8 +59,10 @@ async function createOrchestrationSystem() {
   );
   const runtime = ManagedRuntime.make(orchestrationLayer);
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+  const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
   return {
     engine,
+    readModel: () => runtime.runPromise(snapshotQuery.getSnapshot()),
     run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
   };
@@ -76,15 +84,18 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
-  it("bootstraps the in-memory read model from persisted projections", async () => {
-    const failOnHistoricalReplayStore: OrchestrationEventStoreShape = {
-      append: () =>
-        Effect.fail(
-          new PersistenceSqlError({
-            operation: "test.append",
-            detail: "append should not be called during bootstrap",
-          }),
-        ),
+  it("bootstraps command handling from persisted projections without reading the full snapshot", async () => {
+    let nextSequence = 8;
+    const eventStore: OrchestrationEventStoreShape = {
+      append: (event) =>
+        Effect.sync(() => {
+          const savedEvent = {
+            ...event,
+            sequence: nextSequence,
+          } as OrchestrationEvent;
+          nextSequence += 1;
+          return savedEvent;
+        }),
       readFromSequence: () => Stream.empty,
       readAll: () =>
         Stream.fail(
@@ -104,7 +115,7 @@ describe("OrchestrationEngine", () => {
           title: "Bootstrap Project",
           workspaceRoot: "/tmp/project-bootstrap",
           defaultModelSelection: {
-            provider: "codex" as const,
+            instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
           scripts: [],
@@ -119,7 +130,7 @@ describe("OrchestrationEngine", () => {
           projectId: asProjectId("project-bootstrap"),
           title: "Bootstrap Thread",
           modelSelection: {
-            provider: "codex" as const,
+            instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -139,11 +150,27 @@ describe("OrchestrationEngine", () => {
         },
       ],
     };
+    const commandReadModel = {
+      ...projectionSnapshot,
+      threads: projectionSnapshot.threads.map((thread) => ({
+        ...thread,
+        messages: [],
+        proposedPlans: [],
+        activities: [],
+        checkpoints: [],
+      })),
+    };
+    let fullSnapshotReadCount = 0;
 
     const layer = OrchestrationEngineLive.pipe(
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
-          getSnapshot: () => Effect.succeed(projectionSnapshot),
+          getCommandReadModel: () => Effect.succeed(commandReadModel),
+          getSnapshot: () =>
+            Effect.sync(() => {
+              fullSnapshotReadCount += 1;
+              return projectionSnapshot;
+            }),
           getShellSnapshot: () =>
             Effect.succeed({
               snapshotSequence: projectionSnapshot.snapshotSequence,
@@ -151,6 +178,8 @@ describe("OrchestrationEngine", () => {
               threads: [],
               updatedAt: projectionSnapshot.updatedAt,
             }),
+          getSnapshotSequence: () =>
+            Effect.succeed({ snapshotSequence: projectionSnapshot.snapshotSequence }),
           getCounts: () => Effect.succeed({ projectCount: 1, threadCount: 1 }),
           getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
           getProjectShellById: () => Effect.succeed(Option.none()),
@@ -166,7 +195,7 @@ describe("OrchestrationEngine", () => {
           projectEvent: () => Effect.void,
         } satisfies OrchestrationProjectionPipelineShape),
       ),
-      Layer.provide(Layer.succeed(OrchestrationEventStore, failOnHistoricalReplayStore)),
+      Layer.provide(Layer.succeed(OrchestrationEventStore, eventStore)),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
     );
@@ -174,18 +203,22 @@ describe("OrchestrationEngine", () => {
     const runtime = ManagedRuntime.make(layer);
 
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
-    const readModel = await runtime.runPromise(engine.getReadModel());
+    const result = await runtime.runPromise(
+      engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-bootstrap-thread-update"),
+        threadId: ThreadId.make("thread-bootstrap"),
+        title: "Updated Bootstrap Thread",
+      }),
+    );
 
-    expect(readModel.snapshotSequence).toBe(7);
-    expect(readModel.projects).toHaveLength(1);
-    expect(readModel.projects[0]?.title).toBe("Bootstrap Project");
-    expect(readModel.threads).toHaveLength(1);
-    expect(readModel.threads[0]?.title).toBe("Bootstrap Thread");
+    expect(result.sequence).toBe(8);
+    expect(fullSnapshotReadCount).toBe(0);
 
     await runtime.dispose();
   });
 
-  it("returns deterministic read models for repeated reads", async () => {
+  it("persists deterministic read models for repeated snapshot reads", async () => {
     const createdAt = now();
     const system = await createOrchestrationSystem();
     const { engine } = system;
@@ -198,7 +231,7 @@ describe("OrchestrationEngine", () => {
         title: "Project 1",
         workspaceRoot: "/tmp/project-1",
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         createdAt,
@@ -212,7 +245,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-1"),
         title: "Thread",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -239,8 +272,8 @@ describe("OrchestrationEngine", () => {
       }),
     );
 
-    const readModelA = await system.run(engine.getReadModel());
-    const readModelB = await system.run(engine.getReadModel());
+    const readModelA = await system.readModel();
+    const readModelB = await system.readModel();
     expect(readModelB).toEqual(readModelA);
     await system.dispose();
   });
@@ -258,7 +291,7 @@ describe("OrchestrationEngine", () => {
         title: "Project Archive",
         workspaceRoot: "/tmp/project-archive",
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         createdAt,
@@ -272,7 +305,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-archive"),
         title: "Archive me",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -291,9 +324,8 @@ describe("OrchestrationEngine", () => {
       }),
     );
     expect(
-      (await system.run(engine.getReadModel())).threads.find(
-        (thread) => thread.id === "thread-archive",
-      )?.archivedAt,
+      (await system.readModel()).threads.find((thread) => thread.id === "thread-archive")
+        ?.archivedAt,
     ).not.toBeNull();
 
     await system.run(
@@ -304,9 +336,8 @@ describe("OrchestrationEngine", () => {
       }),
     );
     expect(
-      (await system.run(engine.getReadModel())).threads.find(
-        (thread) => thread.id === "thread-archive",
-      )?.archivedAt,
+      (await system.readModel()).threads.find((thread) => thread.id === "thread-archive")
+        ?.archivedAt,
     ).toBeNull();
 
     await system.dispose();
@@ -325,7 +356,7 @@ describe("OrchestrationEngine", () => {
         title: "Replay Project",
         workspaceRoot: "/tmp/project-replay",
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         createdAt,
@@ -339,7 +370,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-replay"),
         title: "replay",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -383,7 +414,7 @@ describe("OrchestrationEngine", () => {
         title: "Stream Project",
         workspaceRoot: "/tmp/project-stream",
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         createdAt,
@@ -407,7 +438,7 @@ describe("OrchestrationEngine", () => {
           projectId: asProjectId("project-stream"),
           title: "domain-stream",
           modelSelection: {
-            provider: "codex",
+            instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -444,7 +475,7 @@ describe("OrchestrationEngine", () => {
         title: "Ack Project",
         workspaceRoot: "/tmp/project-ack",
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         createdAt,
@@ -459,7 +490,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-ack"),
         title: "Ack Thread",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -496,7 +527,7 @@ describe("OrchestrationEngine", () => {
           projectId: asProjectId("project-missing"),
           title: "Missing Project Thread",
           modelSelection: {
-            provider: "codex",
+            instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -533,7 +564,7 @@ describe("OrchestrationEngine", () => {
         title: "Turn Diff Project",
         workspaceRoot: "/tmp/project-turn-diff",
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         createdAt,
@@ -547,7 +578,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-turn-diff"),
         title: "Turn diff thread",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -572,7 +603,7 @@ describe("OrchestrationEngine", () => {
       }),
     );
 
-    const thread = (await system.run(engine.getReadModel())).threads.find(
+    const thread = (await system.readModel()).threads.find(
       (entry) => entry.id === "thread-turn-diff",
     );
     expect(thread?.checkpoints).toEqual([
@@ -652,7 +683,7 @@ describe("OrchestrationEngine", () => {
         title: "Flaky Project",
         workspaceRoot: "/tmp/project-flaky",
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         createdAt,
@@ -668,7 +699,7 @@ describe("OrchestrationEngine", () => {
           projectId: asProjectId("project-flaky"),
           title: "flaky-fail",
           modelSelection: {
-            provider: "codex",
+            instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -688,7 +719,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-flaky"),
         title: "flaky-ok",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -700,7 +731,15 @@ describe("OrchestrationEngine", () => {
     );
 
     expect(result.sequence).toBe(2);
-    expect((await runtime.runPromise(engine.getReadModel())).snapshotSequence).toBe(2);
+    const eventsAfterRetry = await runtime.runPromise(
+      Stream.runCollect(engine.readEvents(0)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+    expect(eventsAfterRetry.map((event) => event.type)).toEqual([
+      "project.created",
+      "thread.created",
+    ]);
     await runtime.dispose();
   });
 
@@ -747,7 +786,7 @@ describe("OrchestrationEngine", () => {
         title: "Atomic Project",
         workspaceRoot: "/tmp/project-atomic",
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         createdAt,
@@ -761,7 +800,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-atomic"),
         title: "atomic",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -800,7 +839,6 @@ describe("OrchestrationEngine", () => {
       "project.created",
       "thread.created",
     ]);
-    expect((await runtime.runPromise(engine.getReadModel())).snapshotSequence).toBe(2);
 
     const retryResult = await runtime.runPromise(engine.dispatch(turnStartCommand));
     expect(retryResult.sequence).toBe(4);
@@ -823,7 +861,7 @@ describe("OrchestrationEngine", () => {
     await runtime.dispose();
   });
 
-  it("reconciles in-memory state when append persists but projection fails", async () => {
+  it("reconciles command state when append persists but projection fails", async () => {
     type StoredEvent =
       ReturnType<OrchestrationEventStoreShape["append"]> extends Effect.Effect<infer A, any, any>
         ? A
@@ -855,7 +893,7 @@ describe("OrchestrationEngine", () => {
       projectEvent: (event) => {
         if (
           shouldFailProjection &&
-          event.commandId === CommandId.make("cmd-thread-meta-sync-fail")
+          event.commandId === CommandId.make("cmd-thread-archive-sync-fail")
         ) {
           shouldFailProjection = false;
           return Effect.fail(
@@ -890,7 +928,7 @@ describe("OrchestrationEngine", () => {
         title: "Sync Project",
         workspaceRoot: "/tmp/project-sync",
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         createdAt,
@@ -904,7 +942,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-sync"),
         title: "sync-before",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -918,20 +956,22 @@ describe("OrchestrationEngine", () => {
     await expect(
       runtime.runPromise(
         engine.dispatch({
-          type: "thread.meta.update",
-          commandId: CommandId.make("cmd-thread-meta-sync-fail"),
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-thread-archive-sync-fail"),
           threadId: ThreadId.make("thread-sync"),
-          title: "sync-after-failed-projection",
         }),
       ),
     ).rejects.toThrow("projection failed");
 
-    const readModelAfterFailure = await runtime.runPromise(engine.getReadModel());
-    const updatedThread = readModelAfterFailure.threads.find(
-      (thread) => thread.id === "thread-sync",
-    );
-    expect(readModelAfterFailure.snapshotSequence).toBe(3);
-    expect(updatedThread?.title).toBe("sync-after-failed-projection");
+    await expect(
+      runtime.runPromise(
+        engine.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("cmd-thread-archive-sync-retry"),
+          threadId: ThreadId.make("thread-sync"),
+        }),
+      ),
+    ).rejects.toThrow("already archived");
 
     await runtime.dispose();
   });
@@ -975,7 +1015,7 @@ describe("OrchestrationEngine", () => {
         title: "Duplicate Project",
         workspaceRoot: "/tmp/project-duplicate",
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         createdAt,
@@ -990,7 +1030,7 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-duplicate"),
         title: "duplicate",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -1010,7 +1050,7 @@ describe("OrchestrationEngine", () => {
           projectId: asProjectId("project-duplicate"),
           title: "duplicate",
           modelSelection: {
-            provider: "codex",
+            instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,

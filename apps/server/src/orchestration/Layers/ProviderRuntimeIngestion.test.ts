@@ -2,10 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import type {
+import {
   OrchestrationReadModel,
+  ProviderDriverKind,
   ProviderRuntimeEvent,
   ProviderSession,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
 import {
   ApprovalRequestId,
@@ -34,11 +36,9 @@ import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { ProviderRuntimeIngestionLive } from "./ProviderRuntimeIngestion.ts";
-import {
-  OrchestrationEngineService,
-  type OrchestrationEngineShape,
-} from "../Services/OrchestrationEngine.ts";
+import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
+import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -98,6 +98,19 @@ function createProviderServiceHarness() {
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([...runtimeSessions]),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
+    getInstanceInfo: (instanceId) => {
+      const driverKind = ProviderDriverKind.make(String(instanceId));
+      return Effect.succeed({
+        instanceId,
+        driverKind,
+        displayName: undefined,
+        enabled: true,
+        continuationIdentity: {
+          driverKind,
+          continuationKey: `${driverKind}:instance:${instanceId}`,
+        },
+      });
+    },
     rollbackConversation: () => unsupported(),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
@@ -139,16 +152,23 @@ function createProviderServiceHarness() {
   };
 }
 
+type ProviderRuntimeTestReadModel = OrchestrationReadModel;
+type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number];
+type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
+type ProviderRuntimeTestProposedPlan = ProviderRuntimeTestThread["proposedPlans"][number];
+type ProviderRuntimeTestActivity = ProviderRuntimeTestThread["activities"][number];
+type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][number];
+
 async function waitForThread(
-  engine: OrchestrationEngineShape,
+  readModel: () => Promise<ProviderRuntimeTestReadModel>,
   predicate: (thread: ProviderRuntimeTestThread) => boolean,
   timeoutMs = 2000,
   threadId: ThreadId = asThreadId("thread-1"),
 ) {
   const deadline = Date.now() + timeoutMs;
   const poll = async (): Promise<ProviderRuntimeTestThread> => {
-    const readModel = await Effect.runPromise(engine.getReadModel());
-    const thread = readModel.threads.find((entry) => entry.id === threadId);
+    const snapshot = await readModel();
+    const thread = snapshot.threads.find((entry) => entry.id === threadId);
     if (thread && predicate(thread)) {
       return thread;
     }
@@ -161,16 +181,9 @@ async function waitForThread(
   return poll();
 }
 
-type ProviderRuntimeTestReadModel = OrchestrationReadModel;
-type ProviderRuntimeTestThread = ProviderRuntimeTestReadModel["threads"][number];
-type ProviderRuntimeTestMessage = ProviderRuntimeTestThread["messages"][number];
-type ProviderRuntimeTestProposedPlan = ProviderRuntimeTestThread["proposedPlans"][number];
-type ProviderRuntimeTestActivity = ProviderRuntimeTestThread["activities"][number];
-type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][number];
-
 describe("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
-    OrchestrationEngineService | ProviderRuntimeIngestionService,
+    OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
     unknown
   > | null = null;
   let scope: Scope.Closeable | null = null;
@@ -208,8 +221,13 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provide(RepositoryIdentityResolverLive),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const projectionSnapshotLayer = OrchestrationProjectionSnapshotQueryLive.pipe(
+      Layer.provide(RepositoryIdentityResolverLive),
+      Layer.provide(SqlitePersistenceMemory),
+    );
     const layer = ProviderRuntimeIngestionLive.pipe(
       Layer.provideMerge(orchestrationLayer),
+      Layer.provideMerge(projectionSnapshotLayer),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
@@ -218,6 +236,7 @@ describe("ProviderRuntimeIngestion", () => {
     );
     runtime = ManagedRuntime.make(layer);
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
+    const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
@@ -232,7 +251,7 @@ describe("ProviderRuntimeIngestion", () => {
         title: "Provider Project",
         workspaceRoot,
         defaultModelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         createdAt,
@@ -246,7 +265,7 @@ describe("ProviderRuntimeIngestion", () => {
         projectId: asProjectId("project-1"),
         title: "Thread",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -274,7 +293,7 @@ describe("ProviderRuntimeIngestion", () => {
       }),
     );
     provider.setSession({
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       status: "ready",
       runtimeMode: "approval-required",
       threadId: ThreadId.make("thread-1"),
@@ -284,6 +303,7 @@ describe("ProviderRuntimeIngestion", () => {
 
     return {
       engine,
+      readModel: () => Effect.runPromise(snapshotQuery.getSnapshot()),
       emit: provider.emit,
       setProviderSession: provider.setSession,
       drain,
@@ -297,21 +317,21 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       threadId: asThreadId("thread-1"),
       createdAt: now,
       turnId: asTurnId("turn-1"),
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === "turn-1",
     );
 
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       threadId: asThreadId("thread-1"),
       createdAt: new Date().toISOString(),
       turnId: asTurnId("turn-1"),
@@ -322,7 +342,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     const thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) =>
         entry.session?.status === "error" &&
         entry.session?.activeTurnId === null &&
@@ -339,7 +359,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "session.state.changed",
       eventId: asEventId("evt-session-state-waiting"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       threadId: asThreadId("thread-1"),
       createdAt: waitingAt,
       payload: {
@@ -349,7 +369,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     let thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) => entry.session?.status === "running" && entry.session?.activeTurnId === null,
     );
     expect(thread.session?.status).toBe("running");
@@ -358,7 +378,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "session.state.changed",
       eventId: asEventId("evt-session-state-error"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       threadId: asThreadId("thread-1"),
       createdAt: new Date().toISOString(),
       payload: {
@@ -368,7 +388,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) =>
         entry.session?.status === "error" &&
         entry.session?.activeTurnId === null &&
@@ -380,7 +400,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "session.state.changed",
       eventId: asEventId("evt-session-state-stopped"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       threadId: asThreadId("thread-1"),
       createdAt: new Date().toISOString(),
       payload: {
@@ -389,7 +409,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) =>
         entry.session?.status === "stopped" &&
         entry.session?.activeTurnId === null &&
@@ -401,7 +421,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "session.state.changed",
       eventId: asEventId("evt-session-state-ready"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       threadId: asThreadId("thread-1"),
       createdAt: new Date().toISOString(),
       payload: {
@@ -410,7 +430,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) =>
         entry.session?.status === "ready" &&
         entry.session?.activeTurnId === null &&
@@ -427,14 +447,14 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-midturn-lifecycle"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-midturn-lifecycle"),
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" &&
         thread.session?.activeTurnId === "turn-midturn-lifecycle",
@@ -443,20 +463,20 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "thread.started",
       eventId: asEventId("evt-thread-started-midturn-lifecycle"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
     });
     harness.emit({
       type: "session.started",
       eventId: asEventId("evt-session-started-midturn-lifecycle"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
     });
 
     await harness.drain();
-    const midReadModel = await Effect.runPromise(harness.engine.getReadModel());
+    const midReadModel = await harness.readModel();
     const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(midThread?.session?.status).toBe("running");
     expect(midThread?.session?.activeTurnId).toBe("turn-midturn-lifecycle");
@@ -464,7 +484,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-midturn-lifecycle"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-midturn-lifecycle"),
@@ -472,7 +492,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
     );
   });
@@ -502,14 +522,14 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-claude-placeholder"),
-      provider: "claudeAgent",
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-claude-placeholder"),
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" &&
         thread.session?.activeTurnId === "turn-claude-placeholder",
@@ -518,7 +538,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-claude-placeholder"),
-      provider: "claudeAgent",
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-claude-placeholder"),
@@ -526,7 +546,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
     );
   });
@@ -538,14 +558,14 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-primary"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-primary"),
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" && thread.session?.activeTurnId === "turn-primary",
     );
@@ -553,7 +573,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-aux"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-aux"),
@@ -561,7 +581,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     await harness.drain();
-    const midReadModel = await Effect.runPromise(harness.engine.getReadModel());
+    const midReadModel = await harness.readModel();
     const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(midThread?.session?.status).toBe("running");
     expect(midThread?.session?.activeTurnId).toBe("turn-primary");
@@ -569,7 +589,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-primary"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-primary"),
@@ -577,7 +597,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
     );
   });
@@ -589,14 +609,14 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-guarded"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-guarded-main"),
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" &&
         thread.session?.activeTurnId === "turn-guarded-main",
@@ -605,7 +625,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-guarded-other"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-guarded-other"),
@@ -613,7 +633,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     await harness.drain();
-    const midReadModel = await Effect.runPromise(harness.engine.getReadModel());
+    const midReadModel = await harness.readModel();
     const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(midThread?.session?.status).toBe("running");
     expect(midThread?.session?.activeTurnId).toBe("turn-guarded-main");
@@ -621,7 +641,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-guarded-main"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-guarded-main"),
@@ -629,7 +649,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
     );
   });
@@ -641,7 +661,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-message-delta-1"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-2"),
@@ -654,7 +674,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-message-delta-2"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-2"),
@@ -667,7 +687,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-message-completed"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-2"),
@@ -678,7 +698,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.messages.some(
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-1" && !message.streaming,
@@ -698,7 +718,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-assistant-item-completed-no-delta"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-no-delta"),
@@ -710,7 +730,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.messages.some(
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-no-delta" && !message.streaming,
@@ -730,7 +750,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-tool-completed-with-data"),
-      provider: "cursor",
+      provider: ProviderDriverKind.make("cursor"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-tool-completed"),
@@ -749,7 +769,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.activities.some(
         (activity: ProviderRuntimeTestActivity) => activity.id === "evt-tool-completed-with-data",
       ),
@@ -786,7 +806,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-command-completed"),
-      provider: "cursor",
+      provider: ProviderDriverKind.make("cursor"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-command-completed"),
@@ -804,7 +824,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.activities.some(
         (activity: ProviderRuntimeTestActivity) => activity.id === "evt-command-completed",
       ),
@@ -828,7 +848,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-read-path-completed"),
-      provider: "cursor",
+      provider: ProviderDriverKind.make("cursor"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-read-path"),
@@ -846,7 +866,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.activities.some(
         (activity: ProviderRuntimeTestActivity) => activity.id === "evt-read-path-completed",
       ),
@@ -870,7 +890,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.proposed.completed",
       eventId: asEventId("evt-plan-item-completed"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-plan-final"),
@@ -879,7 +899,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.proposedPlans.some(
         (proposedPlan: ProviderRuntimeTestProposedPlan) =>
           proposedPlan.id === "plan:thread-1:turn:turn-plan-final",
@@ -909,7 +929,7 @@ describe("ProviderRuntimeIngestion", () => {
         projectId: asProjectId("project-1"),
         title: "Plan Source",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: "plan",
@@ -944,7 +964,7 @@ describe("ProviderRuntimeIngestion", () => {
         projectId: asProjectId("project-1"),
         title: "Plan Target",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -972,7 +992,7 @@ describe("ProviderRuntimeIngestion", () => {
       }),
     );
     harness.setProviderSession({
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       status: "ready",
       runtimeMode: "approval-required",
       threadId: targetThreadId,
@@ -984,7 +1004,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.proposed.completed",
       eventId: asEventId("evt-plan-source-completed"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt,
       threadId: sourceThreadId,
       turnId: sourceTurnId,
@@ -994,7 +1014,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     const sourceThreadWithPlan = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.proposedPlans.some(
           (proposedPlan: ProviderRuntimeTestProposedPlan) =>
@@ -1035,7 +1055,7 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     const sourceThreadBeforeStart = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.proposedPlans.some(
           (proposedPlan: ProviderRuntimeTestProposedPlan) =>
@@ -1054,14 +1074,14 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-plan-target-started"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: new Date().toISOString(),
       threadId: targetThreadId,
       turnId: targetTurnId,
     });
 
     const sourceThreadAfterStart = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.proposedPlans.some(
           (proposedPlan: ProviderRuntimeTestProposedPlan) =>
@@ -1096,7 +1116,7 @@ describe("ProviderRuntimeIngestion", () => {
         projectId: asProjectId("project-1"),
         title: "Plan Source",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: "plan",
@@ -1124,7 +1144,7 @@ describe("ProviderRuntimeIngestion", () => {
       }),
     );
     harness.setProviderSession({
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       status: "running",
       runtimeMode: "approval-required",
       threadId: targetThreadId,
@@ -1136,14 +1156,14 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-already-running"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt,
       threadId: targetThreadId,
       turnId: activeTurnId,
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" && thread.session?.activeTurnId === activeTurnId,
       2_000,
@@ -1153,7 +1173,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.proposed.completed",
       eventId: asEventId("evt-plan-source-completed-guarded"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt,
       threadId: sourceThreadId,
       turnId: sourceTurnId,
@@ -1163,7 +1183,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     const sourceThreadWithPlan = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.proposedPlans.some(
           (proposedPlan: ProviderRuntimeTestProposedPlan) =>
@@ -1206,7 +1226,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-stale-plan-implementation"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: new Date().toISOString(),
       threadId: targetThreadId,
       turnId: staleTurnId,
@@ -1214,7 +1234,7 @@ describe("ProviderRuntimeIngestion", () => {
 
     await harness.drain();
 
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await harness.readModel();
     const sourceThreadAfterRejectedStart = readModel.threads.find(
       (entry) => entry.id === sourceThreadId,
     );
@@ -1249,7 +1269,7 @@ describe("ProviderRuntimeIngestion", () => {
         projectId: asProjectId("project-1"),
         title: "Plan Source",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: "plan",
@@ -1284,7 +1304,7 @@ describe("ProviderRuntimeIngestion", () => {
         projectId: asProjectId("project-1"),
         title: "Plan Target",
         modelSelection: {
-          provider: "codex",
+          instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5-codex",
         },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -1315,7 +1335,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.proposed.completed",
       eventId: asEventId("evt-plan-source-completed-unrelated"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt,
       threadId: sourceThreadId,
       turnId: sourceTurnId,
@@ -1325,7 +1345,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     const sourceThreadWithPlan = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.proposedPlans.some(
           (proposedPlan: ProviderRuntimeTestProposedPlan) =>
@@ -1366,7 +1386,7 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     harness.setProviderSession({
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       status: "running",
       runtimeMode: "approval-required",
       threadId: targetThreadId,
@@ -1378,7 +1398,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-unrelated-plan-implementation"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: new Date().toISOString(),
       threadId: targetThreadId,
       turnId: replayedTurnId,
@@ -1386,7 +1406,7 @@ describe("ProviderRuntimeIngestion", () => {
 
     await harness.drain();
 
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await harness.readModel();
     const sourceThreadAfterUnrelatedStart = readModel.threads.find(
       (entry) => entry.id === sourceThreadId,
     );
@@ -1405,14 +1425,14 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-plan-buffer"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-plan-buffer"),
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" && thread.session?.activeTurnId === "turn-plan-buffer",
     );
@@ -1420,7 +1440,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.proposed.delta",
       eventId: asEventId("evt-plan-delta-1"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-plan-buffer"),
@@ -1431,7 +1451,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.proposed.delta",
       eventId: asEventId("evt-plan-delta-2"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-plan-buffer"),
@@ -1442,7 +1462,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-plan-buffer"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-plan-buffer"),
@@ -1451,7 +1471,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.proposedPlans.some(
         (proposedPlan: ProviderRuntimeTestProposedPlan) =>
           proposedPlan.id === "plan:thread-1:turn:turn-plan-buffer",
@@ -1471,13 +1491,13 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-buffered"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered"),
     });
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" && thread.session?.activeTurnId === "turn-buffered",
     );
@@ -1485,7 +1505,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-message-delta-buffered"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered"),
@@ -1497,7 +1517,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     await harness.drain();
-    const midReadModel = await Effect.runPromise(harness.engine.getReadModel());
+    const midReadModel = await harness.readModel();
     const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(
       midThread?.messages.some(
@@ -1508,7 +1528,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-message-completed-buffered"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered"),
@@ -1519,7 +1539,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.messages.some(
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-buffered" && !message.streaming,
@@ -1539,13 +1559,13 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-buffered-request-flush"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-request-flush"),
     });
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" &&
         thread.session?.activeTurnId === "turn-buffered-request-flush",
@@ -1554,7 +1574,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-message-delta-buffered-request-flush"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-request-flush"),
@@ -1567,7 +1587,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "request.opened",
       eventId: asEventId("evt-request-opened-buffered-request-flush"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-request-flush"),
@@ -1578,7 +1598,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.messages.some(
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-buffered-request-flush" &&
@@ -1599,13 +1619,13 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-buffered-user-input-flush"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-user-input-flush"),
     });
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" &&
         thread.session?.activeTurnId === "turn-buffered-user-input-flush",
@@ -1614,7 +1634,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-message-delta-buffered-user-input-flush"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-user-input-flush"),
@@ -1627,7 +1647,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "user-input.requested",
       eventId: asEventId("evt-user-input-requested-buffered-user-input-flush"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-user-input-flush"),
@@ -1644,7 +1664,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.messages.some(
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-buffered-user-input-flush" &&
@@ -1667,13 +1687,13 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-buffered-whitespace-request"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: startedAt,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-whitespace-request"),
     });
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" &&
         thread.session?.activeTurnId === "turn-buffered-whitespace-request",
@@ -1682,7 +1702,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-message-delta-buffered-whitespace-request"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: startedAt,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-whitespace-request"),
@@ -1695,7 +1715,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "request.opened",
       eventId: asEventId("evt-request-opened-buffered-whitespace-request"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: pausedAt,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-whitespace-request"),
@@ -1706,7 +1726,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.activities.some(
         (activity: ProviderRuntimeTestActivity) => activity.kind === "approval.requested",
       ),
@@ -1729,13 +1749,13 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-buffered-request-append"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: startedAt,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-request-append"),
     });
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" &&
         thread.session?.activeTurnId === "turn-buffered-request-append",
@@ -1744,7 +1764,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-message-delta-buffered-request-append-initial"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: startedAt,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-request-append"),
@@ -1757,7 +1777,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "request.opened",
       eventId: asEventId("evt-request-opened-buffered-request-append"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: pausedAt,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-request-append"),
@@ -1768,7 +1788,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    await waitForThread(harness.engine, (entry) =>
+    await waitForThread(harness.readModel, (entry) =>
       entry.messages.some(
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-buffered-request-append" &&
@@ -1780,7 +1800,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-message-delta-buffered-request-append-followup"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: resumedAt,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-request-append"),
@@ -1793,7 +1813,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-message-completed-buffered-request-append"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: completedAt,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffered-request-append"),
@@ -1804,7 +1824,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.messages.some(
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-buffered-request-append:segment:1" &&
@@ -1861,13 +1881,13 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-streaming-request-segment"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: startedAt,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-streaming-request-segment"),
     });
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" &&
         thread.session?.activeTurnId === "turn-streaming-request-segment",
@@ -1876,7 +1896,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-message-delta-streaming-request-segment-initial"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: startedAt,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-streaming-request-segment"),
@@ -1889,7 +1909,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "request.opened",
       eventId: asEventId("evt-request-opened-streaming-request-segment"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: pausedAt,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-streaming-request-segment"),
@@ -1900,7 +1920,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    await waitForThread(harness.engine, (entry) =>
+    await waitForThread(harness.readModel, (entry) =>
       entry.messages.some(
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-streaming-request-segment" &&
@@ -1912,7 +1932,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-message-delta-streaming-request-segment-followup"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: resumedAt,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-streaming-request-segment"),
@@ -1925,7 +1945,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-message-completed-streaming-request-segment"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: completedAt,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-streaming-request-segment"),
@@ -1936,7 +1956,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.messages.some(
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-streaming-request-segment:segment:1" &&
@@ -1983,13 +2003,13 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-streaming-mode"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-streaming-mode"),
     });
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" &&
         thread.session?.activeTurnId === "turn-streaming-mode",
@@ -1998,7 +2018,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-message-delta-streaming-mode"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-streaming-mode"),
@@ -2009,7 +2029,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const liveThread = await waitForThread(harness.engine, (entry) =>
+    const liveThread = await waitForThread(harness.readModel, (entry) =>
       entry.messages.some(
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-streaming-mode" &&
@@ -2025,7 +2045,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-message-completed-streaming-mode"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-streaming-mode"),
@@ -2037,7 +2057,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const finalThread = await waitForThread(harness.engine, (entry) =>
+    const finalThread = await waitForThread(harness.readModel, (entry) =>
       entry.messages.some(
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-streaming-mode" && !message.streaming,
@@ -2058,13 +2078,13 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-buffer-spill"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffer-spill"),
     });
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" &&
         thread.session?.activeTurnId === "turn-buffer-spill",
@@ -2073,7 +2093,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-message-delta-buffer-spill"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffer-spill"),
@@ -2086,7 +2106,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-message-completed-buffer-spill"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-buffer-spill"),
@@ -2097,7 +2117,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.messages.some(
         (message: ProviderRuntimeTestMessage) =>
           message.id === "assistant:item-buffer-spill" && !message.streaming,
@@ -2118,14 +2138,14 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-for-complete-dedup"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-complete-dedup"),
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "running" &&
         thread.session?.activeTurnId === "turn-complete-dedup",
@@ -2134,7 +2154,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-message-delta-for-complete-dedup"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-complete-dedup"),
@@ -2147,7 +2167,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.completed",
       eventId: asEventId("evt-message-completed-for-complete-dedup"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-complete-dedup"),
@@ -2160,7 +2180,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-for-complete-dedup"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-complete-dedup"),
@@ -2170,7 +2190,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (thread) =>
         thread.session?.status === "ready" &&
         thread.session?.activeTurnId === null &&
@@ -2204,7 +2224,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "request.opened",
       eventId: asEventId("evt-request-opened"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       requestId: ApprovalRequestId.make("req-open"),
@@ -2217,7 +2237,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "request.resolved",
       eventId: asEventId("evt-request-resolved"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       requestId: ApprovalRequestId.make("req-open"),
@@ -2228,7 +2248,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) =>
         entry.activities.some(
           (activity: ProviderRuntimeTestActivity) => activity.kind === "approval.requested",
@@ -2238,7 +2258,7 @@ describe("ProviderRuntimeIngestion", () => {
         ),
     );
 
-    const readModel = await Effect.runPromise(harness.engine.getReadModel());
+    const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread).toBeDefined();
 
@@ -2270,7 +2290,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "runtime.error",
       eventId: asEventId("evt-runtime-error"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-3"),
@@ -2280,7 +2300,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     const thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) =>
         entry.session?.status === "error" &&
         entry.session?.activeTurnId === "turn-3" &&
@@ -2297,7 +2317,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "runtime.error",
       eventId: asEventId("evt-runtime-error-activity"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-runtime-error-activity"),
@@ -2306,7 +2326,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.activities.some((activity) => activity.id === "evt-runtime-error-activity"),
     );
     const activity = thread.activities.find(
@@ -2328,7 +2348,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-warning-turn-started"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-warning"),
@@ -2338,7 +2358,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "runtime.warning",
       eventId: asEventId("evt-warning-runtime"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-warning"),
@@ -2351,7 +2371,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     const thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) =>
         entry.session?.status === "running" &&
         entry.session?.activeTurnId === "turn-warning" &&
@@ -2372,7 +2392,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "session.started",
       eventId: asEventId("evt-session-started"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       message: "session started",
@@ -2380,14 +2400,14 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "thread.started",
       eventId: asEventId("evt-thread-started"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
     });
     harness.emit({
       type: "item.started",
       eventId: asEventId("evt-tool-started"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-9"),
@@ -2400,7 +2420,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     const thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) =>
         entry.session?.status === "ready" &&
         entry.session?.activeTurnId === null &&
@@ -2424,7 +2444,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "thread.metadata.updated",
       eventId: asEventId("evt-thread-metadata-updated"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       payload: {
@@ -2436,7 +2456,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.plan.updated",
       eventId: asEventId("evt-turn-plan-updated"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-p1"),
@@ -2452,7 +2472,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "item.updated",
       eventId: asEventId("evt-item-updated"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-p1"),
@@ -2469,7 +2489,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "runtime.warning",
       eventId: asEventId("evt-runtime-warning"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-p1"),
@@ -2482,7 +2502,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.diff.updated",
       eventId: asEventId("evt-turn-diff-updated"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-p1"),
@@ -2493,7 +2513,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     const thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) =>
         entry.title === "Renamed by provider" &&
         entry.activities.some(
@@ -2558,7 +2578,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "thread.token-usage.updated",
       eventId: asEventId("evt-thread-token-usage-updated"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       payload: {
@@ -2580,7 +2600,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.activities.some(
         (activity: ProviderRuntimeTestActivity) => activity.kind === "context-window.updated",
       ),
@@ -2610,7 +2630,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "thread.token-usage.updated",
       eventId: asEventId("evt-thread-token-usage-updated-camel"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       payload: {
@@ -2632,7 +2652,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.activities.some(
         (activity: ProviderRuntimeTestActivity) => activity.kind === "context-window.updated",
       ),
@@ -2663,7 +2683,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "thread.token-usage.updated",
       eventId: asEventId("evt-thread-token-usage-updated-claude-window"),
-      provider: "claudeAgent",
+      provider: ProviderDriverKind.make("claudeAgent"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       payload: {
@@ -2682,7 +2702,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.activities.some(
         (activity: ProviderRuntimeTestActivity) => activity.kind === "context-window.updated",
       ),
@@ -2707,7 +2727,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "thread.state.changed",
       eventId: asEventId("evt-thread-compacted"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-1"),
@@ -2717,7 +2737,7 @@ describe("ProviderRuntimeIngestion", () => {
       },
     });
 
-    const thread = await waitForThread(harness.engine, (entry) =>
+    const thread = await waitForThread(harness.readModel, (entry) =>
       entry.activities.some(
         (activity: ProviderRuntimeTestActivity) => activity.kind === "context-compaction",
       ),
@@ -2737,7 +2757,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "task.started",
       eventId: asEventId("evt-task-started"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-1"),
@@ -2750,7 +2770,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "task.progress",
       eventId: asEventId("evt-task-progress"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-1"),
@@ -2764,7 +2784,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "task.completed",
       eventId: asEventId("evt-task-completed"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-1"),
@@ -2777,7 +2797,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.proposed.completed",
       eventId: asEventId("evt-task-proposed-plan-completed"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-task-1"),
@@ -2787,7 +2807,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     const thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) =>
         entry.activities.some(
           (activity: ProviderRuntimeTestActivity) => activity.kind === "task.completed",
@@ -2840,7 +2860,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "user-input.requested",
       eventId: asEventId("evt-user-input-requested"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-user-input"),
@@ -2865,7 +2885,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "user-input.resolved",
       eventId: asEventId("evt-user-input-resolved"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-user-input"),
@@ -2878,7 +2898,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     const thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) =>
         entry.activities.some(
           (activity: ProviderRuntimeTestActivity) => activity.kind === "user-input.requested",
@@ -2913,7 +2933,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "content.delta",
       eventId: asEventId("evt-invalid-delta"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: now,
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-invalid"),
@@ -2927,7 +2947,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "runtime.error",
       eventId: asEventId("evt-runtime-error-after-failure"),
-      provider: "codex",
+      provider: ProviderDriverKind.make("codex"),
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-after-failure"),
@@ -2937,7 +2957,7 @@ describe("ProviderRuntimeIngestion", () => {
     });
 
     const thread = await waitForThread(
-      harness.engine,
+      harness.readModel,
       (entry) =>
         entry.session?.status === "error" &&
         entry.session?.activeTurnId === "turn-after-failure" &&

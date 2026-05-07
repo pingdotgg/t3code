@@ -6,6 +6,23 @@ import { ProviderRuntimeEvent } from "./providerRuntime.ts";
 const decodeRuntimeEvent = Schema.decodeUnknownSync(ProviderRuntimeEvent);
 
 describe("ProviderRuntimeEvent", () => {
+  it("accepts fork-provided driver kinds as branded slugs", () => {
+    const parsed = decodeRuntimeEvent({
+      type: "session.started",
+      eventId: "event-ollama-session",
+      provider: "ollama",
+      providerInstanceId: "ollama_local",
+      createdAt: "2026-02-28T00:00:00.000Z",
+      threadId: "thread-1",
+      payload: {
+        message: "started",
+      },
+    });
+
+    expect(parsed.provider).toBe("ollama");
+    expect(parsed.providerInstanceId).toBe("ollama_local");
+  });
+
   it("decodes turn.plan.updated for plan rendering", () => {
     const parsed = decodeRuntimeEvent({
       type: "turn.plan.updated",

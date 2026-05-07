@@ -58,6 +58,22 @@
   }
 }
 
+/* Safe-area inset utilities for surfaces that opt into edge-to-edge rendering.
+   Insets resolve to 0 when the browser already constrains the layout viewport
+   to the safe area. */
+@utility pt-safe {
+  padding-top: max(env(safe-area-inset-top), 0px);
+}
+@utility pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+@utility pl-safe {
+  padding-left: max(env(safe-area-inset-left), 0px);
+}
+@utility pr-safe {
+  padding-right: max(env(safe-area-inset-right), 0px);
+}
+
 /* Suppress all transitions during theme changes */
 .no-transitions,
 .no-transitions *,
@@ -138,19 +154,28 @@ body {
     sans-serif;
   margin: 0;
   padding: 0;
-  min-height: 100vh;
 }
 
 html,
-body,
+body {
+  min-height: calc(100svh + env(safe-area-inset-top));
+  overscroll-behavior: none;
+}
+
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 #root {
   height: 100%;
   width: 100%;
   max-width: 100%;
-  overflow-y: hidden;
   overflow-x: hidden;
   overflow-x: clip;
+  overflow-y: hidden;
   overscroll-behavior-y: none;
+  padding-top: max(env(safe-area-inset-top), 0px);
 }
 
 body::after {
@@ -458,6 +483,19 @@ label:has(> select#reasoning-effort) select {
   border: 1px solid var(--border);
   padding: 0.35rem 0.45rem;
   text-align: left;
+}
+
+@keyframes provider-update-pill-countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.provider-update-pill-progress {
+  animation: provider-update-pill-countdown var(--provider-update-pill-dismiss-ms) linear forwards;
 }
 
 /* Diffs theme bridge (match diff surfaces to app palette) */

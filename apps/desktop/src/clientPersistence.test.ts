@@ -49,10 +49,14 @@ function makeSecretStorage(available: boolean): DesktopSecretStorage {
 }
 
 const clientSettings: ClientSettings = {
+  autoOpenPlanSidebar: false,
   confirmThreadArchive: true,
   confirmThreadDelete: false,
+  dismissedProviderUpdateNotificationKeys: [],
+  diffIgnoreWhitespace: true,
   diffWordWrap: true,
   favorites: [],
+  providerModelPreferences: {},
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {
     "environment-1:/tmp/project-a": "separate",
@@ -70,6 +74,12 @@ const savedRegistryRecord: PersistedSavedEnvironmentRecord = {
   wsBaseUrl: "wss://remote.example.com/",
   createdAt: "2026-04-09T00:00:00.000Z",
   lastConnectedAt: "2026-04-09T01:00:00.000Z",
+  desktopSsh: {
+    alias: "devbox",
+    hostname: "devbox.example.com",
+    username: "julius",
+    port: 22,
+  },
 };
 
 describe("clientPersistence", () => {

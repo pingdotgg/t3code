@@ -8,15 +8,16 @@
       "scripts"
     ],
     "catalog": {
-      "effect": "4.0.0-beta.45",
-      "@effect/atom-react": "4.0.0-beta.45",
-      "@effect/openapi-generator": "4.0.0-beta.45",
-      "@effect/platform-bun": "4.0.0-beta.45",
-      "@effect/platform-node": "4.0.0-beta.45",
-      "@effect/platform-node-shared": "4.0.0-beta.45",
-      "@effect/sql-sqlite-bun": "4.0.0-beta.45",
-      "@effect/vitest": "4.0.0-beta.45",
+      "effect": "4.0.0-beta.59",
+      "@effect/atom-react": "4.0.0-beta.59",
+      "@effect/openapi-generator": "4.0.0-beta.59",
+      "@effect/platform-bun": "4.0.0-beta.59",
+      "@effect/platform-node": "4.0.0-beta.59",
+      "@effect/platform-node-shared": "4.0.0-beta.59",
+      "@effect/sql-sqlite-bun": "4.0.0-beta.59",
+      "@effect/vitest": "4.0.0-beta.59",
       "@effect/language-service": "0.84.2",
+      "@pierre/diffs": "1.1.20",
       "@types/bun": "^1.3.11",
       "@types/node": "^24.10.13",
       "tsdown": "^0.20.3",
@@ -26,6 +27,7 @@
   },
   "type": "module",
   "scripts": {
+    "prepare": "effect-language-service patch",
     "dev": "node scripts/dev-runner.ts dev",
     "dev:server": "node scripts/dev-runner.ts dev:server",
     "dev:web": "node scripts/dev-runner.ts dev:web",
@@ -58,10 +60,12 @@
     "sync:vscode-icons": "node scripts/sync-vscode-icons.mjs"
   },
   "devDependencies": {
+    "@effect/language-service": "catalog:",
     "@types/node": "catalog:",
     "oxfmt": "^0.40.0",
     "oxlint": "^1.55.0",
     "turbo": "^2.3.3",
+    "typescript": "catalog:",
     "vitest": "catalog:"
   },
   "overrides": {
@@ -84,7 +88,11 @@
       "apps/web/public"
     ]
   },
+  "patchedDependencies": {
+    "effect@4.0.0-beta.59": "patches/effect@4.0.0-beta.59.patch"
+  },
   "trustedDependencies": [
-    "node-pty"
+    "node-pty",
+    "electron"
   ]
 }
