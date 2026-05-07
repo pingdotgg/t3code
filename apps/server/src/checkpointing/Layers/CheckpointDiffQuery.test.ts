@@ -45,7 +45,6 @@ describe("CheckpointDiffQueryLive", () => {
     const projectId = ProjectId.make("project-1");
     const threadId = ThreadId.make("thread-1");
     const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
-    const hasCheckpointRefCalls: Array<CheckpointRef> = [];
     const diffCheckpointsCalls: Array<{
       readonly fromCheckpointRef: CheckpointRef;
       readonly toCheckpointRef: CheckpointRef;
@@ -65,11 +64,7 @@ describe("CheckpointDiffQueryLive", () => {
     const checkpointStore: CheckpointStoreShape = {
       isGitRepository: () => Effect.succeed(true),
       captureCheckpoint: () => Effect.void,
-      hasCheckpointRef: ({ checkpointRef }) =>
-        Effect.sync(() => {
-          hasCheckpointRefCalls.push(checkpointRef);
-          return true;
-        }),
+      hasCheckpointRef: () => Effect.succeed(true),
       restoreCheckpoint: () => Effect.succeed(true),
       diffCheckpoints: ({ fromCheckpointRef, toCheckpointRef, cwd, ignoreWhitespace }) =>
         Effect.sync(() => {
@@ -121,7 +116,6 @@ describe("CheckpointDiffQueryLive", () => {
     );
 
     const expectedFromRef = checkpointRefForThreadTurn(threadId, 0);
-    expect(hasCheckpointRefCalls).toEqual([expectedFromRef, toCheckpointRef]);
     expect(diffCheckpointsCalls).toEqual([
       {
         cwd: "/tmp/workspace",
@@ -202,6 +196,71 @@ describe("CheckpointDiffQueryLive", () => {
     );
 
     expect(diffCheckpointsCalls).toEqual([{ ignoreWhitespace: true }]);
+  });
+
+  it("does not preflight checkpoint refs before diffing", async () => {
+    const projectId = ProjectId.make("project-no-preflight");
+    const threadId = ThreadId.make("thread-no-preflight");
+    const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+    let hasCheckpointRefCallCount = 0;
+
+    const threadCheckpointContext = makeThreadCheckpointContext({
+      projectId,
+      threadId,
+      workspaceRoot: "/tmp/workspace",
+      worktreePath: null,
+      checkpointTurnCount: 1,
+      checkpointRef: toCheckpointRef,
+    });
+
+    const checkpointStore: CheckpointStoreShape = {
+      isGitRepository: () => Effect.succeed(true),
+      captureCheckpoint: () => Effect.void,
+      hasCheckpointRef: () =>
+        Effect.sync(() => {
+          hasCheckpointRefCallCount += 1;
+          return true;
+        }),
+      restoreCheckpoint: () => Effect.succeed(true),
+      diffCheckpoints: () => Effect.succeed("diff patch"),
+      deleteCheckpointRefs: () => Effect.void,
+    };
+
+    const layer = CheckpointDiffQueryLive.pipe(
+      Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
+      Layer.provideMerge(
+        Layer.succeed(ProjectionSnapshotQuery, {
+          getCommandReadModel: () =>
+            Effect.die("CheckpointDiffQuery should not request the command read model"),
+          getSnapshot: () =>
+            Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
+          getShellSnapshot: () =>
+            Effect.die("CheckpointDiffQuery should not request the orchestration shell snapshot"),
+          getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 0 }),
+          getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+          getProjectShellById: () => Effect.succeed(Option.none()),
+          getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+          getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
+          getThreadShellById: () => Effect.succeed(Option.none()),
+          getThreadDetailById: () => Effect.succeed(Option.none()),
+        }),
+      ),
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery;
+        return yield* query.getTurnDiff({
+          threadId,
+          fromTurnCount: 0,
+          toTurnCount: 1,
+          ignoreWhitespace: true,
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(hasCheckpointRefCallCount).toBe(0);
   });
 
   it("fails when the thread is missing from the snapshot", async () => {

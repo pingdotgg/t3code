@@ -28,6 +28,12 @@ const make = Effect.gen(function* () {
     function* (input) {
       const operation = "CheckpointDiffQuery.getTurnDiff";
       const ignoreWhitespace = input.ignoreWhitespace ?? true;
+      yield* Effect.annotateCurrentSpan({
+        "checkpoint.thread_id": input.threadId,
+        "checkpoint.from_turn_count": input.fromTurnCount,
+        "checkpoint.to_turn_count": input.toTurnCount,
+        "checkpoint.ignore_whitespace": ignoreWhitespace,
+      });
 
       if (input.fromTurnCount === input.toTurnCount) {
         const emptyDiff: OrchestrationGetTurnDiffResultType = {
@@ -97,36 +103,6 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           turnCount: input.toTurnCount,
           detail: `Checkpoint ref is unavailable for turn ${input.toTurnCount}.`,
-        });
-      }
-
-      const [fromExists, toExists] = yield* Effect.all(
-        [
-          checkpointStore.hasCheckpointRef({
-            cwd: workspaceCwd,
-            checkpointRef: fromCheckpointRef,
-          }),
-          checkpointStore.hasCheckpointRef({
-            cwd: workspaceCwd,
-            checkpointRef: toCheckpointRef,
-          }),
-        ],
-        { concurrency: "unbounded" },
-      );
-
-      if (!fromExists) {
-        return yield* new CheckpointUnavailableError({
-          threadId: input.threadId,
-          turnCount: input.fromTurnCount,
-          detail: `Filesystem checkpoint is unavailable for turn ${input.fromTurnCount}.`,
-        });
-      }
-
-      if (!toExists) {
-        return yield* new CheckpointUnavailableError({
-          threadId: input.threadId,
-          turnCount: input.toTurnCount,
-          detail: `Filesystem checkpoint is unavailable for turn ${input.toTurnCount}.`,
         });
       }
 
