@@ -83,17 +83,35 @@ function isIncomingResponse(value: unknown): value is typeof JsonRpcResponseEnve
   return Schema.is(JsonRpcResponseEnvelope)(value);
 }
 
+const encodeJsonString = Schema.encodeUnknownEffect(Schema.UnknownFromJsonString);
+const decodeJsonString = Schema.decodeUnknownEffect(Schema.UnknownFromJsonString);
+
 const encodeWireMessage = (
   message: Record<string, unknown>,
 ): Effect.Effect<string, CodexError.CodexAppServerProtocolParseError> =>
-  Effect.try({
-    try: () => `${JSON.stringify(message)}\n`,
-    catch: (cause) =>
-      new CodexError.CodexAppServerProtocolParseError({
-        detail: "Failed to encode Codex App Server message",
-        cause,
-      }),
-  });
+  encodeJsonString(message).pipe(
+    Effect.map((encoded) => `${encoded}\n`),
+    Effect.mapError(
+      (cause) =>
+        new CodexError.CodexAppServerProtocolParseError({
+          detail: "Failed to encode Codex App Server message",
+          cause,
+        }),
+    ),
+  );
+
+const decodeWireMessage = (
+  line: string,
+): Effect.Effect<unknown, CodexError.CodexAppServerProtocolParseError> =>
+  decodeJsonString(line).pipe(
+    Effect.mapError(
+      (cause) =>
+        new CodexError.CodexAppServerProtocolParseError({
+          detail: "Failed to decode Codex App Server wire message",
+          cause,
+        }),
+    ),
+  );
 
 const normalizeIncomingError = (error: unknown, detail: string): CodexError.CodexAppServerError =>
   Schema.is(CodexError.CodexAppServerError)(error)
@@ -284,16 +302,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
         stage: "raw",
         payload: line,
       }).pipe(
-        Effect.flatMap(() =>
-          Effect.try({
-            try: () => JSON.parse(line),
-            catch: (cause) =>
-              new CodexError.CodexAppServerProtocolParseError({
-                detail: "Failed to decode Codex App Server wire message",
-                cause,
-              }),
-          }),
-        ),
+        Effect.flatMap(() => decodeWireMessage(line)),
         Effect.tap((decoded) =>
           logProtocol({
             direction: "incoming",
