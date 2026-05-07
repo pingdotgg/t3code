@@ -53,15 +53,12 @@ describe("DesktopEnvironment", () => {
       assert.equal(environment.isDevelopment, true);
       assert.equal(environment.appDataDirectory, "/Users/alice/Library/Application Support");
       assert.equal(environment.baseDir, "/tmp/t3");
-      assert.equal(environment.stateDir, "/tmp/t3/userdata");
-      assert.equal(environment.desktopSettingsPath, "/tmp/t3/userdata/desktop-settings.json");
-      assert.equal(environment.clientSettingsPath, "/tmp/t3/userdata/client-settings.json");
-      assert.equal(
-        environment.savedEnvironmentRegistryPath,
-        "/tmp/t3/userdata/saved-environments.json",
-      );
-      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
-      assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
+      assert.equal(environment.stateDir, "/tmp/t3/dev");
+      assert.equal(environment.desktopSettingsPath, "/tmp/t3/dev/desktop-settings.json");
+      assert.equal(environment.clientSettingsPath, "/tmp/t3/dev/client-settings.json");
+      assert.equal(environment.savedEnvironmentRegistryPath, "/tmp/t3/dev/saved-environments.json");
+      assert.equal(environment.serverSettingsPath, "/tmp/t3/dev/settings.json");
+      assert.equal(environment.logDir, "/tmp/t3/dev/logs");
       assert.equal(environment.rootDir, "/repo");
       assert.equal(environment.appRoot, "/repo");
       assert.equal(environment.backendEntryPath, "/repo/apps/server/dist/bin.mjs");
@@ -75,6 +72,22 @@ describe("DesktopEnvironment", () => {
       assert.deepEqual(environment.devRemoteT3ServerEntryPath, Option.some("/remote/server.mjs"));
       assert.deepEqual(environment.configuredBackendPort, Option.some(4949));
       assert.deepEqual(environment.commitHashOverride, Option.some("0123456789abcdef"));
+    }),
+  );
+
+  it.effect("derives production state paths under userdata", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        {},
+        {
+          T3CODE_HOME: "/tmp/t3",
+        },
+      );
+
+      assert.equal(environment.isDevelopment, false);
+      assert.equal(environment.stateDir, "/tmp/t3/userdata");
+      assert.equal(environment.logDir, "/tmp/t3/userdata/logs");
+      assert.equal(environment.serverSettingsPath, "/tmp/t3/userdata/settings.json");
     }),
   );
 

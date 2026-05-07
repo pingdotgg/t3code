@@ -20,7 +20,6 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
-import * as DesktopWindow from "../window/DesktopWindow.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -129,7 +128,6 @@ const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
 const bootstrap = Effect.gen(function* () {
   const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
   const state = yield* DesktopState.DesktopState;
-  const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
@@ -178,11 +176,7 @@ const bootstrap = Effect.gen(function* () {
 
   if (!(yield* Ref.get(state.quitting))) {
     yield* backendManager.start;
-  }
-  yield* Effect.logInfo("bootstrap backend start requested");
-
-  if (environment.isDevelopment) {
-    yield* desktopWindow.ensureMain;
+    yield* Effect.logInfo("bootstrap backend start requested");
   }
 });
 
@@ -203,7 +197,6 @@ export const program = Effect.scoped(
     const updates = yield* DesktopUpdates.DesktopUpdates;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
 
-    yield* electronProtocol.registerDesktopSchemePrivileges;
     yield* Effect.addFinalizer(() =>
       backendManager.stop().pipe(Effect.ensuring(shutdown.markComplete)),
     );

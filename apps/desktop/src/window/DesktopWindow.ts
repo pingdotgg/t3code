@@ -73,6 +73,15 @@ const logWindowInfo = (message: string, annotations?: Record<string, unknown>) =
     }),
   );
 
+const logWindowWarning = (message: string, annotations?: Record<string, unknown>) =>
+  Effect.logWarning(message).pipe(
+    Effect.annotateLogs({
+      scope: "desktop",
+      component: "desktop-window",
+      ...annotations,
+    }),
+  );
+
 function resolveDesktopDevServerUrl(
   environment: DesktopEnvironment.DesktopEnvironmentShape,
 ): Effect.Effect<string, DesktopWindowDevServerUrlMissingError> {
@@ -249,6 +258,29 @@ const make = Effect.gen(function* () {
       window.webContents.on("did-finish-load", () => {
         window.setTitle(environment.displayName);
       });
+      window.webContents.on(
+        "did-fail-load",
+        (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+          if (!isMainFrame) {
+            return;
+          }
+          void runPromise(
+            logWindowWarning("main window failed to load", {
+              errorCode,
+              errorDescription,
+              url: validatedURL,
+            }),
+          );
+        },
+      );
+      window.webContents.on("render-process-gone", (_event, details) => {
+        void runPromise(
+          logWindowWarning("main window render process gone", {
+            reason: details.reason,
+            exitCode: details.exitCode,
+          }),
+        );
+      });
 
       const revealSubscribers: RevealSubscription[] = [
         (fire) => window.once("ready-to-show", fire),
@@ -313,21 +345,14 @@ const make = Effect.gen(function* () {
       const existingWindow = yield* electronWindow.currentMainOrFirst;
       if (Option.isSome(existingWindow)) {
         yield* electronWindow.reveal(existingWindow.value);
-        return;
+      } else {
+        yield* createMainIfBackendReady;
       }
-      if (environment.isDevelopment) {
-        yield* createMain;
-        return;
-      }
-      yield* createMainIfBackendReady;
     }),
     createMainIfBackendReady,
     handleBackendReady: Effect.gen(function* () {
       yield* Ref.set(state.backendReady, true);
       yield* logWindowInfo("backend ready", { source: "http" });
-      if (environment.isDevelopment) {
-        return;
-      }
       yield* createMainIfBackendReady;
     }),
     dispatchMenuAction: (action) =>

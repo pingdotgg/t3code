@@ -136,11 +136,15 @@ const desktopApplicationLayer = Layer.mergeAll(
   desktopSshLayer,
 ).pipe(Layer.provideMerge(DesktopUpdates.layer), Layer.provideMerge(desktopBackendLayer));
 
-const desktopRuntimeLayer = desktopApplicationLayer.pipe(
-  Layer.provideMerge(NodeServices.layer),
-  Layer.provideMerge(NodeHttpClient.layerUndici),
-  Layer.provideMerge(NetService.layer),
-  Layer.provideMerge(electronLayer),
+const desktopRuntimeLayer = ElectronProtocol.layerSchemePrivileges.pipe(
+  Layer.flatMap(() =>
+    desktopApplicationLayer.pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(NodeHttpClient.layerUndici),
+      Layer.provideMerge(NetService.layer),
+      Layer.provideMerge(electronLayer),
+    ),
+  ),
 );
 
 DesktopApp.program.pipe(Effect.provide(desktopRuntimeLayer), NodeRuntime.runMain);

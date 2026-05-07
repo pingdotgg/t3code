@@ -36,7 +36,13 @@ const serverExposureLayer = Layer.succeed(DesktopServerExposure.DesktopServerExp
   getAdvertisedEndpoints: Effect.succeed([]),
 } satisfies DesktopServerExposure.DesktopServerExposureShape);
 
-function makeEnvironmentLayer(baseDir: string) {
+function makeEnvironmentLayer(
+  baseDir: string,
+  options?: {
+    readonly isPackaged?: boolean;
+    readonly devServerUrl?: string;
+  },
+) {
   return DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
@@ -44,7 +50,7 @@ function makeEnvironmentLayer(baseDir: string) {
     processArch: "x64",
     appVersion: "1.2.3",
     appPath: "/repo",
-    isPackaged: true,
+    isPackaged: options?.isPackaged ?? true,
     resourcesPath: "/missing/resources",
     runningUnderArm64Translation: false,
   }).pipe(
@@ -56,6 +62,7 @@ function makeEnvironmentLayer(baseDir: string) {
           T3CODE_PORT: "9999",
           T3CODE_MODE: "desktop",
           T3CODE_DESKTOP_LAN_HOST: "192.168.1.50",
+          VITE_DEV_SERVER_URL: options?.devServerUrl,
         }),
       ),
     ),
@@ -157,5 +164,32 @@ describe("DesktopBackendConfiguration", () => {
         assert.isUndefined(config.bootstrap.otlpMetricsUrl);
       }),
     ),
+  );
+
+  it.effect("captures backend output in development so child process logs can be persisted", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-backend-config-test-",
+      });
+
+      yield* Effect.gen(function* () {
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const config = yield* configuration.resolve;
+        assert.equal(config.captureOutput, true);
+      }).pipe(
+        Effect.provide(
+          DesktopBackendConfiguration.layer.pipe(
+            Layer.provideMerge(serverExposureLayer),
+            Layer.provideMerge(
+              makeEnvironmentLayer(baseDir, {
+                isPackaged: false,
+                devServerUrl: "http://127.0.0.1:5733",
+              }),
+            ),
+          ),
+        ),
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

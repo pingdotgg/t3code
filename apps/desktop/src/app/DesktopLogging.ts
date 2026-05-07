@@ -196,19 +196,25 @@ const makeDesktopFileLogger = Effect.gen(function* () {
   });
 });
 
+const writeDevelopmentConsoleOutput = (
+  streamName: "stdout" | "stderr",
+  chunk: Uint8Array,
+): Effect.Effect<void> =>
+  Effect.sync(() => {
+    const output = streamName === "stderr" ? process.stderr : process.stdout;
+    output.write(chunk);
+  }).pipe(Effect.ignore);
+
 export const DesktopLoggerLive = Layer.unwrap(
   Effect.gen(function* () {
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const packagedFileLogger = environment.isPackaged
-      ? yield* makeDesktopFileLogger.pipe(Effect.option)
-      : Option.none<Logger.Logger<unknown, void>>();
+    const fileLogger = yield* makeDesktopFileLogger.pipe(Effect.option);
     const loggers: Array<Logger.Logger<unknown, unknown>> = [
       Logger.consolePretty(),
       Logger.tracerLogger,
     ];
 
-    if (Option.isSome(packagedFileLogger)) {
-      loggers.push(packagedFileLogger.value);
+    if (Option.isSome(fileLogger)) {
+      loggers.push(fileLogger.value);
     }
 
     return Layer.mergeAll(
@@ -222,9 +228,6 @@ export const DesktopBackendOutputLogLive = Layer.effect(
   DesktopBackendOutputLog,
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    if (environment.isDevelopment) {
-      return DesktopBackendOutputLogNoop;
-    }
 
     const writer = yield* makeRotatingLogFileWriter({
       filePath: environment.path.join(environment.logDir, "server-child.log"),
@@ -242,7 +245,12 @@ export const DesktopBackendOutputLogLive = Layer.effect(
                 `[${timestamp}] ---- APP SESSION ${phase} run=${runId} ${sanitizeLogValue(details)} ----\n`,
               );
             }),
-          writeOutputChunk: (_streamName, chunk) => logFile.writeBytes(chunk),
+          writeOutputChunk: (streamName, chunk) =>
+            environment.isDevelopment
+              ? writeDevelopmentConsoleOutput(streamName, chunk).pipe(
+                  Effect.andThen(logFile.writeBytes(chunk)),
+                )
+              : logFile.writeBytes(chunk),
         }) satisfies DesktopBackendOutputLogShape,
     });
   }),

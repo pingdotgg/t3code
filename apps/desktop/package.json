@@ -17,7 +17,7 @@
   "dependencies": {
     "@effect/platform-node": "catalog:",
     "effect": "catalog:",
-    "electron": "40.9.3",
+    "electron": "41.5.0",
     "electron-updater": "^6.6.2"
   },
   "devDependencies": {

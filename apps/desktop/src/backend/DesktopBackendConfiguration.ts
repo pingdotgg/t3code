@@ -131,7 +131,7 @@ const resolveBackendStartConfig = (input: {
         }),
       },
       httpBaseUrl: backendExposure.httpBaseUrl,
-      captureOutput: !environment.isDevelopment,
+      captureOutput: true,
     };
   });
 

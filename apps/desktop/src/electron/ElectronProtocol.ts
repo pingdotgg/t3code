@@ -34,7 +34,6 @@ export class ElectronProtocolStaticBundleMissingError extends Data.TaggedError(
 }
 
 export interface ElectronProtocolShape {
-  readonly registerDesktopSchemePrivileges: Effect.Effect<void, never>;
   readonly registerFileProtocol: <E, R>(input: {
     readonly scheme: string;
     readonly handler: (
@@ -83,6 +82,8 @@ const registerDesktopSchemePrivileges = Effect.sync(() => {
     },
   ]);
 });
+
+export const layerSchemePrivileges = Layer.effectDiscard(registerDesktopSchemePrivileges);
 
 const resolveDesktopStaticDir: Effect.Effect<
   Option.Option<string>,
@@ -261,7 +262,6 @@ const make = Effect.gen(function* () {
   });
 
   return ElectronProtocol.of({
-    registerDesktopSchemePrivileges,
     registerFileProtocol,
     registerDesktopFileProtocol,
   });

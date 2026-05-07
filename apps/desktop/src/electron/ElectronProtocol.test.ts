@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Electron from "electron";
 import { beforeEach, vi } from "vitest";
@@ -35,6 +36,32 @@ describe("ElectronProtocol", () => {
     );
     assert.isTrue(Option.isNone(ElectronProtocol.normalizeDesktopProtocolPathname("/../secret")));
   });
+
+  it.effect("registers desktop scheme privileges through a layer", () =>
+    Effect.scoped(
+      Layer.build(ElectronProtocol.layerSchemePrivileges).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            assert.deepEqual(registerSchemesAsPrivilegedMock.mock.calls, [
+              [
+                [
+                  {
+                    scheme: "t3",
+                    privileges: {
+                      standard: true,
+                      secure: true,
+                      supportFetchAPI: true,
+                      corsEnabled: true,
+                    },
+                  },
+                ],
+              ],
+            ]);
+          }),
+        ),
+      ),
+    ),
+  );
 
   it.effect("scopes registered file protocols", () =>
     Effect.gen(function* () {
