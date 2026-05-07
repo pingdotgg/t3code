@@ -76,6 +76,7 @@ function ProviderUsageBars(props: {
         const color = usageBarColor(window.usedPercent);
         const roundedPercent = Math.round(window.usedPercent);
         const remainingPercent = 100 - roundedPercent;
+        const windowKey = `${window.kind}:${window.windowDurationMins ?? "unknown"}:${window.resetsAt ?? "none"}`;
 
         const resetDateStr = window.resetsAt
           ? new Date(window.resetsAt).toLocaleString("en-GB", {
@@ -88,7 +89,7 @@ function ProviderUsageBars(props: {
           : null;
 
         return (
-          <div key={window.label} className="grid gap-1.5">
+          <div key={windowKey} className="grid gap-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className="font-medium text-foreground">{window.label}</span>
               <span className="text-muted-foreground">{remainingPercent}% remaining</span>
