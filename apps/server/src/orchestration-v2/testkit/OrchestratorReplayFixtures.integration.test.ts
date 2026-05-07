@@ -1,8 +1,9 @@
-import { describe, it } from "@effect/vitest";
-import type { ProviderKind, ProviderReplayTranscript } from "@t3tools/contracts";
+import { assert, describe, it } from "@effect/vitest";
+import type { ProviderReplayTranscript } from "@t3tools/contracts";
 import { Effect } from "effect";
 import { readFile, rm } from "node:fs/promises";
 
+import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
@@ -19,19 +20,9 @@ import {
 import { makeCheckpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
 
-const PROVIDER_REPLAY_HARNESSES = [CodexOrchestratorReplayHarness] as const;
-
 async function readTranscript(file: URL): Promise<ProviderReplayTranscript> {
   const text = await readFile(file, "utf8");
   return await Effect.runPromise(decodeProviderReplayNdjson(text));
-}
-
-function harnessFor(provider: ProviderKind) {
-  const harness = PROVIDER_REPLAY_HARNESSES.find((candidate) => candidate.provider === provider);
-  if (!harness) {
-    throw new Error(`No replay harness registered for provider ${provider}.`);
-  }
-  return harness;
 }
 
 async function runFixtureProvider<Transcript extends ProviderReplayTranscript, Error>(input: {
@@ -70,8 +61,35 @@ async function runFixtureProvider<Transcript extends ProviderReplayTranscript, E
     );
 
     input.provider.assertOutput(result, transcript);
+    const projectionThreadId = materialized.projectionThreadIds[0];
+    assert.isDefined(projectionThreadId);
+    const projection = result.projections.get(projectionThreadId);
+    assert.isDefined(projection);
+    const latestRun = projection.runs.at(-1);
+    assert.deepEqual(latestRun?.modelSelection, input.provider.modelSelection);
   } finally {
     await rm(checkpointWorkspace, { recursive: true, force: true });
+  }
+}
+
+async function runFixtureProviderWithRegisteredHarness(input: {
+  readonly fixtureName: string;
+  readonly buildInput: () => OrchestratorFixtureInput;
+  readonly provider: ProviderOrchestratorReplayVariant;
+}) {
+  switch (input.provider.provider) {
+    case "codex":
+      return await runFixtureProvider({
+        ...input,
+        harness: CodexOrchestratorReplayHarness,
+      });
+    case "claudeAgent":
+      return await runFixtureProvider({
+        ...input,
+        harness: ClaudeOrchestratorReplayHarness,
+      });
+    default:
+      throw new Error(`No replay harness registered for provider ${input.provider.provider}.`);
   }
 }
 
@@ -79,11 +97,10 @@ describe("orchestrator replay fixtures", () => {
   for (const fixture of ORCHESTRATOR_REPLAY_FIXTURES) {
     for (const provider of fixture.providers) {
       it(`runs ${fixture.name}/${provider.provider} through OrchestratorV2 using deterministic replay`, async () => {
-        await runFixtureProvider({
+        await runFixtureProviderWithRegisteredHarness({
           fixtureName: fixture.name,
           buildInput: fixture.buildInput,
           provider,
-          harness: harnessFor(provider.provider),
         });
       });
     }
