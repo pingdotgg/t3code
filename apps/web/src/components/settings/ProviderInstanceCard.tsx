@@ -48,7 +48,7 @@ import {
 
 function usageBarColor(percent: number): string {
   if (percent >= 90) return "bg-destructive";
-  if (percent >= 75) return "bg-warning";
+  if (percent >= 70) return "bg-warning";
   return "bg-foreground";
 }
 
