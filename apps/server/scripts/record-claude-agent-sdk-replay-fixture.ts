@@ -25,6 +25,9 @@ import {
   TOOL_CALL_READ_ONLY_PROMPT,
   TOOL_CALL_READ_ONLY_WORKSPACE_ROOT,
   TOOL_CALL_WRITE_PROMPT,
+  TURN_INTERRUPT_MID_TOOL_PROMPT,
+  TURN_INTERRUPT_PROMPT,
+  TURN_INTERRUPT_RECOVERY_PROMPT,
   WORKSPACE_NEVER_POLICY,
   WEB_SEARCH_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
@@ -59,6 +62,26 @@ const CLAUDE_RECORDINGS = {
     defaultTranscriptFile: "fixtures/message_steering/claude_transcript.ndjson",
     queryMode: "active_steering",
     enableTools: true,
+  },
+  turn_interrupt_mid_tool: {
+    prompts: [TURN_INTERRUPT_MID_TOOL_PROMPT],
+    defaultTranscriptFile: "fixtures/turn_interrupt_mid_tool/claude_transcript.ndjson",
+    queryMode: "interrupt",
+    enableTools: true,
+    interruptAfter: "tool_use",
+  },
+  turn_interrupt: {
+    prompts: [TURN_INTERRUPT_PROMPT],
+    defaultTranscriptFile: "fixtures/turn_interrupt/claude_transcript.ndjson",
+    queryMode: "interrupt",
+    enableTools: true,
+  },
+  turn_interrupt_restart: {
+    prompts: [TURN_INTERRUPT_MID_TOOL_PROMPT, TURN_INTERRUPT_RECOVERY_PROMPT],
+    defaultTranscriptFile: "fixtures/turn_interrupt_restart/claude_transcript.ndjson",
+    queryMode: "interrupt_restart",
+    enableTools: true,
+    interruptAfter: "tool_use",
   },
   tool_call_read_only: {
     prompts: [TOOL_CALL_READ_ONLY_PROMPT],
@@ -102,7 +125,12 @@ function readArgValue(name: string): string | undefined {
   return index >= 0 ? args[index + 1] : undefined;
 }
 
-type ClaudeRecordingQueryMode = "streaming" | "restart" | "active_steering" | "interrupt_restart";
+type ClaudeRecordingQueryMode =
+  | "streaming"
+  | "restart"
+  | "active_steering"
+  | "interrupt"
+  | "interrupt_restart";
 
 function selectedQueryMode(defaultMode: ClaudeRecordingQueryMode): ClaudeRecordingQueryMode {
   const raw = readArgValue("--query-mode") ?? process.env.T3_CLAUDE_REPLAY_QUERY_MODE;
@@ -113,12 +141,13 @@ function selectedQueryMode(defaultMode: ClaudeRecordingQueryMode): ClaudeRecordi
     raw === "streaming" ||
     raw === "restart" ||
     raw === "active_steering" ||
+    raw === "interrupt" ||
     raw === "interrupt_restart"
   ) {
     return raw;
   }
   throw new Error(
-    `Unsupported Claude replay query mode '${raw}'. Use 'streaming', 'restart', 'active_steering', or 'interrupt_restart'.`,
+    `Unsupported Claude replay query mode '${raw}'. Use 'streaming', 'restart', 'active_steering', 'interrupt', or 'interrupt_restart'.`,
   );
 }
 
@@ -253,6 +282,7 @@ try {
       ? {}
       : { allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions }),
     ...(queryPolicy.installPermissionCallback ? { enablePermissionCallback: true } : {}),
+    ...("interruptAfter" in recording ? { interruptAfter: recording.interruptAfter } : {}),
   });
   await mkdir(path.dirname(outputPath), { recursive: true });
   await writeFile(outputPath, encodeTranscriptNdjson(transcript), "utf8");

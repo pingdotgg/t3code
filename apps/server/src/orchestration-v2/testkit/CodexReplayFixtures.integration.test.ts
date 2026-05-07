@@ -135,6 +135,13 @@ const scenarioExpectations = {
     turnCompletedCount: 1,
     approvalRequestCount: 0,
   },
+  turn_interrupt_mid_tool: {
+    outgoing: ["initialize", "initialized", "thread/start", "turn/start", "turn/interrupt"],
+    incoming: ["turn/started", "item/started", "turn/completed"],
+    turnStartCount: 1,
+    turnCompletedCount: 1,
+    approvalRequestCount: 0,
+  },
   thread_rollback: {
     outgoing: ["initialize", "initialized", "thread/start", "turn/start", "thread/rollback"],
     incoming: ["turn/started", "turn/completed", "item/agentMessage/delta"],
