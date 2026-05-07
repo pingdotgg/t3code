@@ -135,24 +135,69 @@ const opencodeConfig = {
 };
 ```
 
-### Cursor ACP
+### Cursor SDK
 
-Cursor CLI supports MCP, but the current T3 harness uses Cursor through ACP.
-The local ACP session creation sends `mcpServers: []`, and there is no current
-adapter hook that projects a T3 MCP server into Cursor through ACP. Cursor CLI
-docs indicate the agent discovers MCP from the same editor `mcp.json`
-configuration and has `cursor-agent mcp` commands for listing servers,
-listing tools, login, and disabling.
+Cursor's TypeScript SDK exposes Cursor agents as durable `Agent` objects and
+per-prompt `Run` objects. It also exposes MCP through SDK options instead of
+requiring us to mutate Cursor editor configuration. Local agents can receive
+inline `mcpServers` at `Agent.create` time and at `agent.send` time. Cloud
+agents can also receive inline MCP configuration, but stdio servers run inside
+the cloud VM; use a reachable remote MCP transport for cloud agents rather
+than a local T3 binary path.
+
+Local fit:
+
+- The V2 Cursor adapter should model a Cursor SDK `Agent` as the provider
+  thread and a Cursor SDK `Run` as the provider turn.
+- `Agent.resume(agentId, options)` can reattach to durable Cursor state, but
+  inline MCP configuration is not persisted across resume. The adapter must
+  rebuild and pass the current orchestrator MCP projection on resume and on
+  each run that should expose T3 orchestration tools.
+- `Run.stream()`, `Run.wait()`, and `Run.cancel()` map cleanly to V2 streaming,
+  terminal turn state, and interrupt semantics.
+- Cursor SDK stream messages include normalized message types such as
+  assistant text, reasoning, tool calls, status, task, and request. Tool
+  argument/result payloads should be treated as provider diagnostics until
+  replay fixtures prove stable shapes for the V2 normalizer.
+- Send-time inline `mcpServers` replaces the create-time inline server set for
+  that run. When using send-time injection, always pass the full desired MCP
+  server set, not only the delta.
+
+Recommended projection for local SDK agents:
+
+```ts
+const agent = await Agent.create({
+  local: { cwd },
+  model,
+  mcpServers: {
+    t3_orchestrator: {
+      command: t3BinaryPath,
+      args: ["mcp", "orchestrator", "--transport", "stdio"],
+      env: buildOrchestratorMcpEnv(parentContext),
+    },
+  },
+});
+
+const run = await agent.send(prompt, {
+  model,
+  mcpServers: {
+    t3_orchestrator: {
+      command: t3BinaryPath,
+      args: ["mcp", "orchestrator", "--transport", "stdio"],
+      env: buildOrchestratorMcpEnv(parentContext),
+    },
+  },
+});
+```
 
 Recommended V2 posture:
 
-- Mark Cursor's app-injected MCP support as `external_config_only` until ACP
-  exposes a reliable config input or we decide to manage `.cursor/mcp.json`.
+- Prefer the Cursor SDK for the V2 adapter foundation. It gives V2 first-class
+  provider-thread resumption, run lifecycle, streaming, cancellation, model
+  selection, and MCP injection primitives.
 - Do not silently write project/global Cursor config from a provider session.
   Project config mutation is user-visible and should be an explicit user
   setting or setup step.
-- Preserve the ACP `mcpServers` field in our capability model as provider
-  evidence, but do not treat the current empty array as an injection path.
 
 ## V2 Capability Additions
 
@@ -168,7 +213,7 @@ type ToolCapabilities = {
   supportsDynamicToolCallbacks: boolean;
   mcpInjection:
     | { type: "none" }
-    | { type: "sdk_options"; reload: "restart_required" }
+    | { type: "sdk_options"; reload: "per_run" | "restart_required" }
     | { type: "config_file"; reload: "hot_reload" | "restart_required" }
     | { type: "process_env_config"; reload: "restart_required" }
     | { type: "external_config_only" };
@@ -191,7 +236,7 @@ Expected initial values:
 codex       mcpInjection=config_file/hot_reload, native subagents=yes
 claudeAgent mcpInjection=sdk_options/restart_required
 openCode    mcpInjection=process_env_config/restart_required for owned servers
-cursor      mcpInjection=external_config_only
+cursor      mcpInjection=sdk_options/per_run for SDK, external_config_only for legacy ACP
 ```
 
 ## MCP Server Shape
@@ -199,6 +244,23 @@ cursor      mcpInjection=external_config_only
 The server should be named `t3_orchestrator` and should expose a small stable
 tool surface. Tool names should stay generic because this server will outgrow
 subagents.
+
+Use Effect's MCP server module as the implementation baseline:
+
+```ts
+import { NodeRuntime, NodeStdio } from "@effect/platform-node";
+import { Context, Effect, Layer, Logger, Schema } from "effect";
+import { McpServer, Tool, Toolkit } from "effect/unstable/ai";
+```
+
+The relevant primitives are:
+
+- `Tool.make` for typed MCP tool definitions.
+- `Toolkit.make` and `Toolkit.toLayer` for tool handler registration.
+- `McpServer.toolkit` for registering the toolkit with the MCP registry.
+- `McpServer.layerStdio` for the provider-spawned stdio server.
+- `McpServer.layerHttp` if we later need HTTP transport for internal tests or
+  non-stdio clients.
 
 ### Tools
 
@@ -258,10 +320,14 @@ type DelegateTaskResult = {
   childThreadId?: string;
   childRunId?: string;
   childNodeId: string;
-  status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  status: "queued" | "running" | "completed" | "failed" | "cancelled" | "rejected";
   providerInstanceId: string;
   model?: string;
   summary?: string;
+  failure?: {
+    code: string;
+    message: string;
+  };
   resultContextTransferId?: string;
 };
 ```
@@ -286,12 +352,16 @@ Future tools can use the same server:
 
 ### MCP Tool Result Rules
 
-MCP clients call tools with `tools/call` and arguments. Results should include
-both `content` and `structuredContent` so weaker clients still see text while
-T3-aware clients can validate typed output. Tool execution errors that the
-model can act on should return `isError: true` in the result rather than a
-protocol-level JSON-RPC error. Unknown tools, malformed requests, and protocol
-failures should remain JSON-RPC errors.
+MCP clients call tools with `tools/call` and arguments. Effect's
+`McpServer.toolkit` registers Effect `Tool` definitions as MCP tools, emits
+JSON schemas from Effect Schema, and returns both model-visible text content
+and `structuredContent` from encoded tool results. Handler failures are mapped
+to MCP tool errors, while protocol failures stay JSON-RPC errors.
+
+For expected orchestration denials, prefer typed tool failures or explicit
+rejected statuses over defects. That keeps "provider unavailable", "permission
+denied", and "runtime mode escalation denied" as model-actionable outcomes
+instead of transport-level failures.
 
 For long-running work, prefer:
 
@@ -342,6 +412,66 @@ Important boundaries:
 
 ## Pseudo-Code
 
+Typed tool declarations:
+
+Assume the `*Schema` constants mirror the TypeScript shapes above.
+
+```ts
+const DelegationFailure = Schema.Struct({
+  code: Schema.Literals([
+    "provider_unavailable",
+    "model_unavailable",
+    "permission_denied",
+    "runtime_mode_escalation_denied",
+    "timeout",
+    "internal_error",
+  ]),
+  message: Schema.String,
+});
+
+const OrchestratorCapabilities = Tool.make("orchestrator_capabilities", {
+  description: "List providers and models available for delegated work.",
+  success: OrchestratorCapabilitiesResultSchema,
+}).annotate(Tool.Readonly, true);
+
+const DelegateTask = Tool.make("delegate_task", {
+  description: "Request a child orchestration task from T3.",
+  parameters: DelegateTaskInputSchema,
+  success: DelegateTaskResultSchema,
+  failure: DelegationFailure,
+  failureMode: "return",
+}).annotate(Tool.Idempotent, true);
+
+const TaskStatus = Tool.make("task_status", {
+  description: "Read the latest durable state for a delegated task.",
+  parameters: Schema.Struct({
+    taskId: Schema.String,
+  }),
+  success: DelegateTaskResultSchema,
+}).annotate(Tool.Readonly, true);
+
+const TaskCancel = Tool.make("task_cancel", {
+  description: "Cancel a delegated task.",
+  parameters: Schema.Struct({
+    taskId: Schema.String,
+    reason: Schema.optionalKey(Schema.String),
+  }),
+  success: Schema.Struct({
+    taskId: Schema.String,
+    status: Schema.Literal("cancel_requested"),
+  }),
+  failure: DelegationFailure,
+  failureMode: "return",
+}).annotate(Tool.Idempotent, true);
+
+const OrchestratorToolkit = Toolkit.make(
+  OrchestratorCapabilities,
+  DelegateTask,
+  TaskStatus,
+  TaskCancel,
+);
+```
+
 Provider projection contract:
 
 ```ts
@@ -365,59 +495,88 @@ type ProviderMcpProjector = {
 };
 ```
 
-MCP server entrypoint:
+MCP server entrypoint using Effect layers:
 
 ```ts
-async function startOrchestratorMcpServer(env: NodeJS.ProcessEnv) {
-  const auth = await verifyCapabilityToken(env.T3_ORCH_MCP_TOKEN);
-  const transport = new StdioServerTransport();
-  const server = new McpServer({
-    name: "t3_orchestrator",
-    version: APP_VERSION,
-  });
+class OrchestratorMcpAuth extends Context.Service<OrchestratorMcpAuth, OrchestratorMcpAuthShape>()(
+  "t3/orchestrator-mcp/Auth",
+) {}
 
-  server.tool("orchestrator_capabilities", capabilitiesSchema, async () => {
-    const result = await orchestration.readDelegationCapabilities(auth.scope);
-    return toolResult(result);
-  });
+const OrchestratorMcpHandlers = OrchestratorToolkit.toLayer({
+  orchestrator_capabilities: () =>
+    Effect.gen(function* () {
+      const auth = yield* OrchestratorMcpAuth;
+      const orchestration = yield* OrchestrationV2;
+      return yield* orchestration.readDelegationCapabilities(auth.scope);
+    }),
 
-  server.tool("delegate_task", delegateTaskSchema, async (input) => {
-    const commandId = stableCommandId(auth.mcpSessionId, input.clientRequestId);
-    const receipt = await orchestration.dispatch({
-      type: "delegated_task.request",
-      commandId,
-      causation: {
-        source: "mcp",
-        providerInstanceId: auth.providerInstanceId,
-        parentThreadId: auth.parentThreadId,
-        parentRunId: auth.parentRunId,
-        parentNodeId: auth.parentNodeId,
-      },
-      input,
-    });
+  delegate_task: (input) =>
+    Effect.gen(function* () {
+      const auth = yield* OrchestratorMcpAuth;
+      const orchestration = yield* OrchestrationV2;
+      const commandId = stableCommandId(auth.mcpSessionId, input.clientRequestId);
+      const receipt = yield* orchestration.dispatch({
+        type: "delegated_task.request",
+        commandId,
+        causation: {
+          source: "mcp",
+          providerInstanceId: auth.providerInstanceId,
+          parentThreadId: auth.parentThreadId,
+          parentRunId: auth.parentRunId,
+          parentNodeId: auth.parentNodeId,
+        },
+        input,
+      });
 
-    if (input.mode !== "wait") {
-      return toolResult(toDelegateTaskResult(receipt));
-    }
+      if (input.mode !== "wait") {
+        return toDelegateTaskResult(receipt);
+      }
 
-    const finalState = await orchestration.waitForDelegatedTask(
-      receipt.taskId,
-      input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS,
-    );
-    return toolResult(toDelegateTaskResult(finalState));
-  });
+      const finalState = yield* orchestration.waitForDelegatedTask(
+        receipt.taskId,
+        input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS,
+      );
+      return toDelegateTaskResult(finalState);
+    }),
 
-  server.tool("task_status", taskStatusSchema, async (input) => {
-    return toolResult(await orchestration.readDelegatedTask(auth.scope, input.taskId));
-  });
+  task_status: ({ taskId }) =>
+    Effect.gen(function* () {
+      const auth = yield* OrchestratorMcpAuth;
+      const orchestration = yield* OrchestrationV2;
+      return yield* orchestration.readDelegatedTask(auth.scope, taskId);
+    }),
 
-  server.tool("task_cancel", taskCancelSchema, async (input) => {
-    return toolResult(await orchestration.cancelDelegatedTask(auth.scope, input.taskId));
-  });
+  task_cancel: ({ taskId, reason }) =>
+    Effect.gen(function* () {
+      const auth = yield* OrchestratorMcpAuth;
+      const orchestration = yield* OrchestrationV2;
+      return yield* orchestration.cancelDelegatedTask(auth.scope, {
+        taskId,
+        reason,
+      });
+    }),
+});
 
-  await server.connect(transport);
-}
+const ServerLayer = McpServer.toolkit(OrchestratorToolkit).pipe(
+  Layer.provide(OrchestratorMcpHandlers),
+  Layer.provide(OrchestrationMcpServicesLive),
+  Layer.provide(
+    McpServer.layerStdio({
+      name: "t3_orchestrator",
+      version: APP_VERSION,
+    }),
+  ),
+  Layer.provide(NodeStdio.layer),
+  Layer.provide(Layer.succeed(Logger.LogToStderr)(true)),
+);
+
+Layer.launch(ServerLayer).pipe(NodeRuntime.runMain);
 ```
+
+The handler layer should translate expected orchestration denials into typed
+tool failures or explicit rejected statuses. Defects, malformed inputs, and
+protocol problems can remain Effect failures so `McpServer.toolkit` maps them
+to MCP tool errors.
 
 Provider hooks:
 
@@ -461,14 +620,35 @@ function buildOpenCodeConfig(projection: OrchestratorMcpProjection) {
     },
   };
 }
+
+function applyCursorSdkProjection<T extends { mcpServers?: Record<string, unknown> }>(
+  options: T,
+  projection: OrchestratorMcpProjection,
+): T {
+  return {
+    ...options,
+    mcpServers: {
+      ...(options.mcpServers ?? {}),
+      [projection.serverName]: {
+        command: projection.command,
+        args: projection.args,
+        env: projection.env,
+      },
+    },
+  };
+}
 ```
 
 ## Testing Plan
 
 - Unit test provider projection builders for Codex TOML, Claude query options,
-  OpenCode JSON config, and Cursor unsupported/external-only behavior.
-- Unit test MCP schemas and error mapping: validation errors return
-  `isError: true` when actionable, protocol errors stay JSON-RPC errors.
+  OpenCode JSON config, and Cursor SDK create/send options.
+- Cursor SDK replay tests should assert that the adapter re-supplies the
+  orchestrator MCP projection after `Agent.resume` and on each `agent.send`
+  that exposes orchestration tools.
+- Unit test MCP schemas and error mapping: expected denials return typed tool
+  outcomes, handler failures become MCP tool errors, and protocol errors stay
+  JSON-RPC errors.
 - Replay-backed integration test: a synthetic parent MCP `delegate_task` call
   creates `DelegatedTaskRequested`, a child execution node, a child provider
   effect, child runtime events, and a result context transfer.
@@ -489,7 +669,13 @@ function buildOpenCodeConfig(projection: OrchestratorMcpProjection) {
   https://code.claude.com/docs/en/agent-sdk/mcp
 - OpenCode MCP configuration:
   https://opencode.ai/docs/mcp-servers
-- Cursor CLI MCP behavior:
-  https://docs.cursor.com/cli/mcp
+- Cursor TypeScript SDK agents, runs, resume, MCP, and cloud behavior:
+  https://cursor.com/docs/sdk/typescript
+- Cursor CLI MCP behavior for legacy ACP fallback and external configuration:
+  https://cursor.com/docs/cli/mcp
+- Cursor CLI ACP behavior for legacy adapter context:
+  https://cursor.com/docs/cli/acp
+- Effect MCP server module:
+  https://github.com/Effect-TS/effect-smol/blob/main/packages/effect/src/unstable/ai/McpServer.ts
 - MCP tool call and result schema:
   https://modelcontextprotocol.io/specification/2025-06-18/schema
