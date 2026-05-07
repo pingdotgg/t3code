@@ -31,6 +31,7 @@ import {
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { readLocalApi } from "../localApi";
 import { useSettings } from "../hooks/useSettings";
+import { applyAppIconPreferenceToDocument } from "../appIcon";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKeyFromPath,
@@ -83,6 +84,7 @@ function RootRouteView() {
   const pathname = useLocation({ select: (location) => location.pathname });
   const { authGateState } = Route.useRouteContext();
   const interfaceAppearanceSettings = useSettings((settings) => ({
+    appIcon: settings.appIcon,
     uiFontScale: settings.uiFontScale,
     codeFontScale: settings.codeFontScale,
     macOsFontSmoothing: settings.macOsFontSmoothing,
@@ -98,6 +100,7 @@ function RootRouteView() {
   }, [pathname]);
 
   useEffect(() => {
+    applyAppIconPreferenceToDocument(interfaceAppearanceSettings);
     applyInterfaceSettingsToDocument(interfaceAppearanceSettings);
   }, [interfaceAppearanceSettings]);
 

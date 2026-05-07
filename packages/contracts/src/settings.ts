@@ -104,7 +104,33 @@ export const MacOsFontSmoothing = Schema.Union([
 export type MacOsFontSmoothing = typeof MacOsFontSmoothing.Type;
 export const DEFAULT_MAC_OS_FONT_SMOOTHING: MacOsFontSmoothing = "auto";
 
+const AppIconPreference = Schema.Literals([
+  "default",
+  "forma-arc",
+  "forma-fluted",
+  "forma-foil",
+  "forma-blueprint",
+]);
+const LegacyBuildAppIconId = Schema.Literals(["forma-prod", "forma-dev", "forma-nightly"]);
+export const AppIconId = Schema.Union([AppIconPreference, LegacyBuildAppIconId]).pipe(
+  Schema.decodeTo(
+    AppIconPreference,
+    SchemaTransformation.transformOrFail({
+      decode: (value) =>
+        Effect.succeed(
+          value === "forma-prod" || value === "forma-dev" || value === "forma-nightly"
+            ? "default"
+            : value,
+        ),
+      encode: (value) => Effect.succeed(value),
+    }),
+  ),
+);
+export type AppIconId = typeof AppIconId.Type;
+export const DEFAULT_APP_ICON_ID: AppIconId = "default";
+
 export const ClientSettingsSchema = Schema.Struct({
+  appIcon: AppIconId.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_APP_ICON_ID))),
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -336,6 +362,7 @@ export const ServerSettingsPatch = Schema.Struct({
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
+  appIcon: Schema.optionalKey(AppIconId),
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),

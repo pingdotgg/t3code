@@ -449,6 +449,19 @@ function stageWindowsIcons(stageResourcesDir: string, sourceIco: string) {
   });
 }
 
+function copyOptionalAppIconAssets(repoRoot: string, stageResourcesDir: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const sourceDir = path.join(repoRoot, "assets", "app-icons");
+    if (!(yield* fs.exists(sourceDir))) {
+      return;
+    }
+
+    yield* fs.copy(sourceDir, path.join(stageResourcesDir, "app-icons"));
+  });
+}
+
 function validateBundledClientAssets(clientDir: string) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -762,6 +775,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
+  yield* copyOptionalAppIconAssets(repoRoot, stageResourcesDir);
 
   yield* assertPlatformBuildResources(
     options.platform,

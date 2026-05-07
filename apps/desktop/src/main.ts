@@ -22,6 +22,8 @@ import {
 import type { MenuItemConstructorOptions, OpenDialogOptions } from "electron";
 import {
   type ClientSettings,
+  DEFAULT_APP_ICON_ID,
+  type AppIconId,
   type DesktopTheme,
   type DesktopThreadAttentionNotification,
   type DesktopAppBranding,
@@ -111,6 +113,13 @@ const SET_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:set-saved-environment-secr
 const REMOVE_SAVED_ENVIRONMENT_SECRET_CHANNEL = "desktop:remove-saved-environment-secret";
 const GET_SERVER_EXPOSURE_STATE_CHANNEL = "desktop:get-server-exposure-state";
 const SET_SERVER_EXPOSURE_MODE_CHANNEL = "desktop:set-server-exposure-mode";
+const APP_ICON_IDS = new Set<AppIconId>([
+  "default",
+  "forma-arc",
+  "forma-fluted",
+  "forma-foil",
+  "forma-blueprint",
+]);
 const BASE_DIR = process.env.FORMA_HOME?.trim() || Path.join(OS.homedir(), ".forma");
 const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
@@ -1091,6 +1100,64 @@ function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
   return resolveResourcePath(`icon.${ext}`);
 }
 
+function isAppIconId(value: unknown): value is AppIconId {
+  return typeof value === "string" && APP_ICON_IDS.has(value as AppIconId);
+}
+
+function resolveAppIconAssetPath(appIcon: AppIconId): string | null {
+  if (appIcon === DEFAULT_APP_ICON_ID) {
+    return null;
+  }
+
+  const candidates = [
+    Path.join(__dirname, "../resources", "app-icons", `${appIcon}.png`),
+    Path.join(__dirname, "../prod-resources", "app-icons", `${appIcon}.png`),
+    Path.join(process.resourcesPath, "resources", "app-icons", `${appIcon}.png`),
+    Path.join(process.resourcesPath, "app-icons", `${appIcon}.png`),
+    Path.join(ROOT_DIR, "assets", "app-icons", `${appIcon}.png`),
+  ];
+
+  for (const candidate of candidates) {
+    if (FS.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function getPersistedAppIcon(): AppIconId {
+  try {
+    const settings = readClientSettings(CLIENT_SETTINGS_PATH);
+    return isAppIconId(settings?.appIcon) ? settings.appIcon : DEFAULT_APP_ICON_ID;
+  } catch {
+    return DEFAULT_APP_ICON_ID;
+  }
+}
+
+function resolvePreferredAppIconPath(appIcon: AppIconId): string | null {
+  return resolveAppIconAssetPath(appIcon) ?? resolveIconPath("png");
+}
+
+function applyAppIcon(appIcon: AppIconId): boolean {
+  const iconPath = resolvePreferredAppIconPath(appIcon);
+  if (!iconPath) {
+    return false;
+  }
+
+  if (process.platform === "darwin" && app.dock) {
+    app.dock.setIcon(iconPath);
+  }
+
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) {
+      window.setIcon(iconPath);
+    }
+  }
+
+  return true;
+}
+
 /**
  * Resolve the Electron userData directory path.
  *
@@ -1137,10 +1204,7 @@ function configureAppIdentity(): void {
   }
 
   if (process.platform === "darwin" && app.dock) {
-    const iconPath = resolveIconPath("png");
-    if (iconPath) {
-      app.dock.setIcon(iconPath);
-    }
+    applyAppIcon(getPersistedAppIcon());
   }
 }
 
@@ -1645,7 +1709,11 @@ function registerIpcHandlers(): void {
       throw new Error("Invalid client settings payload.");
     }
 
-    writeClientSettings(CLIENT_SETTINGS_PATH, rawSettings as ClientSettings);
+    const settings = rawSettings as ClientSettings;
+    writeClientSettings(CLIENT_SETTINGS_PATH, settings);
+    if (isAppIconId(settings.appIcon)) {
+      applyAppIcon(settings.appIcon);
+    }
   });
 
   ipcMain.removeHandler(GET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL);
@@ -1965,8 +2033,11 @@ function registerIpcHandlers(): void {
 
 function getIconOption(): { icon: string } | Record<string, never> {
   if (process.platform === "darwin") return {}; // macOS uses .icns from app bundle
-  const ext = process.platform === "win32" ? "ico" : "png";
-  const iconPath = resolveIconPath(ext);
+  const appIcon = getPersistedAppIcon();
+  const iconPath =
+    appIcon === DEFAULT_APP_ICON_ID
+      ? resolveIconPath(process.platform === "win32" ? "ico" : "png")
+      : resolvePreferredAppIconPath(appIcon);
   return iconPath ? { icon: iconPath } : {};
 }
 

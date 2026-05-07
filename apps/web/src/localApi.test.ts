@@ -604,6 +604,7 @@ describe("wsApi", () => {
 
   it("reads and writes persistence through the desktop bridge when available", async () => {
     const clientSettings: ClientSettings = {
+      appIcon: "forma-fluted",
       autoOpenPlanSidebar: false,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
@@ -669,6 +670,7 @@ describe("wsApi", () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi(rpcClientMock as never);
     const clientSettings: ClientSettings = {
+      appIcon: "forma-foil",
       autoOpenPlanSidebar: false,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
