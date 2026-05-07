@@ -28,6 +28,7 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderRequestKind,
+  type ThreadId,
 } from "@t3tools/contracts";
 
 import * as Cause from "effect/Cause";
@@ -45,6 +46,13 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import { ServerConfig } from "../../config.ts";
+import { makeClaudeEnvironment } from "../../provider/Drivers/ClaudeHome.ts";
+import {
+  type EventNdjsonLogger,
+  makeEventNdjsonLogger,
+} from "../../provider/Layers/EventNdjsonLogger.ts";
+import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
 import {
   ProviderAdapterEnsureThreadError,
@@ -76,6 +84,9 @@ import {
 } from "../ProviderAdapterDriver.ts";
 
 export const CLAUDE_PROVIDER = "claudeAgent" as const;
+export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
+export const CLAUDE_DRIVER_KIND = ProviderDriverKind.make(CLAUDE_PROVIDER);
+export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_DRIVER_KIND);
 
 export const ClaudeProviderCapabilitiesV2 = {
   sessions: {
@@ -218,6 +229,8 @@ export type ClaudeAgentSdkQueryOptions = Omit<
 
 export interface ClaudeAgentSdkQueryOpenInput {
   readonly options: ClaudeAgentSdkQueryOptions;
+  readonly threadId: ThreadId;
+  readonly providerSessionId: OrchestrationV2ProviderSession["id"];
 }
 
 export interface ClaudeAgentSdkQuerySession {
@@ -268,14 +281,146 @@ function closeClaudeQuery(queryRuntime: ClaudeQuery) {
   });
 }
 
-export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<ClaudeAgentSdkQueryRunner> =
-  Layer.succeed(
-    ClaudeAgentSdkQueryRunner,
-    ClaudeAgentSdkQueryRunner.of({
+export interface ClaudeAgentSdkLoggedQueryOptions {
+  readonly model: ClaudeAgentSdkQueryOptions["model"];
+  readonly tools: ClaudeAgentSdkQueryOptions["tools"];
+  readonly permissionMode: ClaudeAgentSdkQueryOptions["permissionMode"];
+  readonly sessionId?: string;
+  readonly resume?: string;
+  readonly cwd?: ClaudeAgentSdkQueryOptions["cwd"];
+  readonly allowedTools?: ClaudeAgentSdkQueryOptions["allowedTools"];
+  readonly disallowedTools?: ClaudeAgentSdkQueryOptions["disallowedTools"];
+  readonly settings?: ClaudeAgentSdkQueryOptions["settings"];
+  readonly pathToClaudeCodeExecutable?: ClaudeAgentSdkQueryOptions["pathToClaudeCodeExecutable"];
+  readonly extraArgs?: ClaudeAgentSdkQueryOptions["extraArgs"];
+  readonly allowDangerouslySkipPermissions?: true;
+  readonly hasCanUseTool?: true;
+  readonly hasEnvironment?: true;
+}
+
+export type ClaudeAgentSdkProtocolLogEvent =
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "query.open";
+        readonly options: ClaudeAgentSdkLoggedQueryOptions;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "prompt.offer";
+        readonly message: SDKUserMessage;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "query.set_model";
+        readonly model: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "query.interrupt";
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "query.close";
+      };
+    }
+  | {
+      readonly direction: "incoming";
+      readonly stage: "decoded";
+      readonly payload: SDKMessage;
+    };
+
+export type ClaudeAgentSdkProtocolLogger = (
+  event: ClaudeAgentSdkProtocolLogEvent,
+) => Effect.Effect<void>;
+
+export function loggedClaudeQueryOptions(
+  options: ClaudeAgentSdkQueryOptions,
+): ClaudeAgentSdkLoggedQueryOptions {
+  return {
+    model: options.model,
+    tools: options.tools,
+    permissionMode: options.permissionMode,
+    ...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
+    ...(options.resume === undefined ? {} : { resume: options.resume }),
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+    ...(options.allowedTools === undefined ? {} : { allowedTools: options.allowedTools }),
+    ...(options.disallowedTools === undefined ? {} : { disallowedTools: options.disallowedTools }),
+    ...(options.settings === undefined ? {} : { settings: options.settings }),
+    ...(options.pathToClaudeCodeExecutable === undefined
+      ? {}
+      : { pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable }),
+    ...(options.extraArgs === undefined ? {} : { extraArgs: options.extraArgs }),
+    ...(options.allowDangerouslySkipPermissions === true
+      ? { allowDangerouslySkipPermissions: true }
+      : {}),
+    ...(options.canUseTool === undefined ? {} : { hasCanUseTool: true }),
+    ...(options.env === undefined ? {} : { hasEnvironment: true }),
+  };
+}
+
+export function makeClaudeAgentSdkProtocolLogger(input: {
+  readonly nativeEventLogger: EventNdjsonLogger | undefined;
+  readonly threadId: ThreadId;
+  readonly providerSessionId: OrchestrationV2ProviderSession["id"];
+}): ClaudeAgentSdkProtocolLogger | undefined {
+  const { nativeEventLogger } = input;
+  if (nativeEventLogger === undefined) {
+    return undefined;
+  }
+
+  return (event) =>
+    nativeEventLogger
+      .write(
+        {
+          provider: CLAUDE_PROVIDER,
+          protocol: CLAUDE_AGENT_SDK_QUERY_PROTOCOL,
+          kind: "protocol",
+          providerSessionId: input.providerSessionId,
+          event,
+        },
+        input.threadId,
+      )
+      .pipe(Effect.ignore);
+}
+
+export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<
+  ClaudeAgentSdkQueryRunner,
+  never,
+  ServerConfig
+> = Layer.effect(
+  ClaudeAgentSdkQueryRunner,
+  Effect.gen(function* () {
+    const { providerEventLogPath } = yield* ServerConfig;
+    const nativeEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
+      stream: "native",
+    });
+
+    return ClaudeAgentSdkQueryRunner.of({
       allocateSessionId: Random.nextUUIDv4,
       open: Effect.fn("ClaudeAgentSdkQueryRunner.open")(function* (
         input: ClaudeAgentSdkQueryOpenInput,
       ) {
+        const protocolLogger = makeClaudeAgentSdkProtocolLogger({
+          nativeEventLogger,
+          threadId: input.threadId,
+          providerSessionId: input.providerSessionId,
+        });
+        const logProtocolEvent = (event: ClaudeAgentSdkProtocolLogEvent) =>
+          protocolLogger === undefined ? Effect.void : protocolLogger(event);
         const promptQueue = yield* Queue.unbounded<SDKUserMessage>();
         const prompt = Stream.fromQueue(promptQueue).pipe(
           Stream.catchCause((cause) =>
@@ -291,27 +436,89 @@ export const claudeAgentSdkQueryRunnerLiveLayer: Layer.Layer<ClaudeAgentSdkQuery
             }),
           catch: (cause) => queryRunnerError(cause, "query"),
         });
+        yield* logProtocolEvent({
+          direction: "outgoing",
+          stage: "decoded",
+          payload: {
+            type: "query.open",
+            options: loggedClaudeQueryOptions(input.options),
+          },
+        });
 
         return {
           messages: Stream.fromAsyncIterable(queryRuntime, (cause) =>
             queryRunnerError(cause, "fromAsyncIterable"),
+          ).pipe(
+            Stream.tap((message) =>
+              logProtocolEvent({
+                direction: "incoming",
+                stage: "decoded",
+                payload: message,
+              }),
+            ),
           ),
-          offer: (message) => Queue.offer(promptQueue, message).pipe(Effect.asVoid),
+          offer: (message) =>
+            Queue.offer(promptQueue, message).pipe(
+              Effect.asVoid,
+              Effect.tap(() =>
+                logProtocolEvent({
+                  direction: "outgoing",
+                  stage: "decoded",
+                  payload: {
+                    type: "prompt.offer",
+                    message,
+                  },
+                }),
+              ),
+            ),
           setModel: (model) =>
             Effect.tryPromise({
               try: () => queryRuntime.setModel(model),
               catch: (cause) => queryRunnerError(cause, "setModel"),
-            }),
+            }).pipe(
+              Effect.tap(() =>
+                logProtocolEvent({
+                  direction: "outgoing",
+                  stage: "decoded",
+                  payload: {
+                    type: "query.set_model",
+                    model,
+                  },
+                }),
+              ),
+            ),
           interrupt: Effect.tryPromise({
             try: () => queryRuntime.interrupt(),
-            catch: (cause) => queryRunnerError(cause, "interupt"),
-          }),
-          close: Queue.shutdown(promptQueue).pipe(Effect.andThen(closeClaudeQuery(queryRuntime))),
+            catch: (cause) => queryRunnerError(cause, "interrupt"),
+          }).pipe(
+            Effect.tap(() =>
+              logProtocolEvent({
+                direction: "outgoing",
+                stage: "decoded",
+                payload: {
+                  type: "query.interrupt",
+                },
+              }),
+            ),
+          ),
+          close: Queue.shutdown(promptQueue).pipe(
+            Effect.andThen(closeClaudeQuery(queryRuntime)),
+            Effect.tap(() =>
+              logProtocolEvent({
+                direction: "outgoing",
+                stage: "decoded",
+                payload: {
+                  type: "query.close",
+                },
+              }),
+            ),
+          ),
         } satisfies ClaudeAgentSdkQuerySession;
       }),
       assertComplete: Effect.void,
-    }),
-  );
+    });
+  }),
+);
 
 export function makeClaudeQueryOptions(input: {
   readonly modelSelection: ModelSelection;
@@ -1871,6 +2078,8 @@ export function makeClaudeAdapterV2(
             return [false, updated];
           });
           const querySession = yield* queryRunner.open({
+            threadId: turnInput.threadId,
+            providerSessionId: input.providerSessionId,
             options: makeClaudeQueryOptions({
               modelSelection: turnInput.modelSelection,
               nativeThreadId,

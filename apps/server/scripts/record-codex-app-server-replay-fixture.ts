@@ -23,6 +23,7 @@ import {
   THREAD_ROLLBACK_SECOND_PROMPT,
   TODO_LIST_PROMPT,
   TOOL_CALL_WRITE_PROMPT,
+  TURN_INTERRUPT_MID_TOOL_PROMPT,
   TURN_INTERRUPT_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
 
@@ -51,6 +52,7 @@ const SCENARIO_NAMES = [
   "proposed_plan",
   "message_steering",
   "turn_interrupt",
+  "turn_interrupt_mid_tool",
   "thread_rollback",
 ] as const;
 
@@ -89,7 +91,8 @@ type ReplayStep =
       readonly type: "interruptedTurn";
       readonly label: string;
       readonly prompt: string;
-      readonly interruptAfterMs: number;
+      readonly interruptAfterMs?: number;
+      readonly interruptAfterCommandExecutionStarted?: boolean;
       readonly turnOverrides?: Omit<TurnStartParams, "input" | "threadId">;
     }
   | {
@@ -528,6 +531,31 @@ function scenarios(): ReadonlyArray<ReplayScenario> {
       ],
     },
     {
+      name: "turn_interrupt_mid_tool",
+      fileName: "turn_interrupt_mid_tool.ndjson",
+      description:
+        "One active turn is interrupted after Codex has already executed a local command.",
+      runs: [
+        {
+          name: "interrupt-after-command-execution",
+          description: "Start a turn, wait for command execution, then send turn/interrupt.",
+          prompt: TURN_INTERRUPT_MID_TOOL_PROMPT,
+          turnDefaults: {
+            approvalPolicy: "never",
+            sandboxPolicy: workspaceWriteSandbox(),
+          },
+          steps: [
+            {
+              type: "interruptedTurn",
+              label: "interrupt-after-command-execution",
+              prompt: TURN_INTERRUPT_MID_TOOL_PROMPT,
+              interruptAfterCommandExecutionStarted: true,
+            },
+          ],
+        },
+      ],
+    },
+    {
       name: "thread_rollback",
       fileName: "thread_rollback.ndjson",
       description:
@@ -679,11 +707,13 @@ function installReplayHandlers({
   client,
   startTurn,
   completeTurn,
+  startCommandExecution,
   beforeApprovalResponse,
 }: {
   readonly client: CodexClient.CodexAppServerClientShape;
   readonly startTurn: (turnId: string) => Effect.Effect<void>;
   readonly completeTurn: (turnId: string) => Effect.Effect<void>;
+  readonly startCommandExecution: (turnId: string) => Effect.Effect<void>;
   readonly beforeApprovalResponse: () => Effect.Effect<void>;
 }) {
   return Effect.all(
@@ -746,6 +776,16 @@ function installReplayHandlers({
       client.handleServerNotification("turn/completed", (payload) =>
         completeTurn(payload.turn.id).pipe(Effect.ignore),
       ),
+      client.handleServerNotification("item/completed", (payload) =>
+        isRecord(payload.item) && payload.item.type === "commandExecution"
+          ? startCommandExecution(payload.turnId).pipe(Effect.ignore)
+          : Effect.void,
+      ),
+      client.handleServerNotification("item/started", (payload) =>
+        isRecord(payload.item) && payload.item.type === "commandExecution"
+          ? startCommandExecution(payload.turnId).pipe(Effect.ignore)
+          : Effect.void,
+      ),
     ],
     { discard: true },
   );
@@ -763,6 +803,7 @@ function runReplaySession({
   return Effect.gen(function* () {
     const startedTurns = new Map<string, Deferred.Deferred<void>>();
     const completedTurns = new Map<string, Deferred.Deferred<void>>();
+    const startedCommandExecutions = new Map<string, Deferred.Deferred<void>>();
     let approvalGate: Deferred.Deferred<void> | undefined;
     const getStarted = (turnId: string) => {
       const existing = startedTurns.get(turnId);
@@ -782,17 +823,36 @@ function runReplaySession({
         Effect.tap((deferred) => Effect.sync(() => completedTurns.set(turnId, deferred))),
       );
     };
+    const getCommandExecutionStarted = (turnId: string) => {
+      const existing = startedCommandExecutions.get(turnId);
+      if (existing) {
+        return Effect.succeed(existing);
+      }
+      return Deferred.make<void>().pipe(
+        Effect.tap((deferred) => Effect.sync(() => startedCommandExecutions.set(turnId, deferred))),
+      );
+    };
     const startTurn = (turnId: string) =>
       getStarted(turnId).pipe(Effect.flatMap((deferred) => Deferred.succeed(deferred, void 0)));
     const completeTurn = (turnId: string) =>
       getCompletion(turnId).pipe(Effect.flatMap((deferred) => Deferred.succeed(deferred, void 0)));
+    const startCommandExecution = (turnId: string) =>
+      getCommandExecutionStarted(turnId).pipe(
+        Effect.flatMap((deferred) => Deferred.succeed(deferred, void 0)),
+      );
     const beforeApprovalResponse = () =>
       approvalGate ? Deferred.await(approvalGate) : Effect.void;
 
     const initializeClient = Effect.gen(function* () {
       const client = yield* CodexClient.CodexAppServerClient;
 
-      yield* installReplayHandlers({ client, startTurn, completeTurn, beforeApprovalResponse });
+      yield* installReplayHandlers({
+        client,
+        startTurn,
+        completeTurn,
+        startCommandExecution,
+        beforeApprovalResponse,
+      });
 
       yield* client.request("initialize", {
         clientInfo: CODEX_CLIENT_INFO,
@@ -840,7 +900,12 @@ function runReplaySession({
         }
 
         if (step.type === "interruptedTurn") {
-          yield* Effect.sleep(`${step.interruptAfterMs} millis`);
+          if (step.interruptAfterCommandExecutionStarted === true) {
+            const commandExecutionStarted = yield* getCommandExecutionStarted(turnId);
+            yield* Deferred.await(commandExecutionStarted);
+          } else {
+            yield* Effect.sleep(`${step.interruptAfterMs ?? 1_500} millis`);
+          }
           yield* client.request("turn/interrupt", {
             threadId,
             turnId,
