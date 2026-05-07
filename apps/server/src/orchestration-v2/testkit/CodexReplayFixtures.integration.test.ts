@@ -123,16 +123,10 @@ const scenarioExpectations = {
   },
   message_steering: {
     outgoing: ["initialize", "initialized", "thread/start", "turn/start", "turn/steer"],
-    incoming: [
-      "turn/started",
-      "turn/completed",
-      "item/agentMessage/delta",
-      "item/commandExecution/requestApproval",
-      "serverRequest/resolved",
-    ],
+    incoming: ["turn/started", "turn/completed", "item/agentMessage/delta"],
     turnStartCount: 1,
     turnCompletedCount: 1,
-    approvalRequestCount: 1,
+    approvalRequestCount: 0,
   },
   turn_interrupt: {
     outgoing: ["initialize", "initialized", "thread/start", "turn/start", "turn/interrupt"],

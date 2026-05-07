@@ -1,3 +1,4 @@
+import { assertClaudeMessageSteeringOutput } from "./message_steering/claude_output.ts";
 import { assertMessageSteeringOutput } from "./message_steering/codex_output.ts";
 import { messageSteeringInput } from "./message_steering/input.ts";
 import { assertMultiTurnClaudeOutput } from "./multi_turn/claude_output.ts";
@@ -207,6 +208,12 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         modelSelection: CODEX_MODEL_SELECTION,
         assertOutput: assertQueuedTurnOutput,
       },
+      {
+        provider: "claudeAgent",
+        transcriptFile: new URL("./queued_turn/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertQueuedTurnOutput,
+      },
     ],
   },
   {
@@ -274,8 +281,13 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
         provider: "codex",
         transcriptFile: new URL("./message_steering/codex_transcript.ndjson", import.meta.url),
         modelSelection: CODEX_MODEL_SELECTION,
-        runtimePolicyOverride: READ_ONLY_ON_REQUEST_POLICY,
         assertOutput: assertMessageSteeringOutput,
+      },
+      {
+        provider: "claudeAgent",
+        transcriptFile: new URL("./message_steering/claude_transcript.ndjson", import.meta.url),
+        modelSelection: CLAUDE_MODEL_SELECTION,
+        assertOutput: assertClaudeMessageSteeringOutput,
       },
     ],
   },
@@ -313,10 +325,9 @@ export const ORCHESTRATOR_REPLAY_FIXTURES = [
 // `tool_call_restricted_granular/claude_transcript.ndjson`, and
 // docs/orchestration-v2/provider-capability-system.md.
 
-// TODO(claude-v2/control): add Claude providers to queued-turn, interrupt, and steering fixtures
-// once the real adapter exposes those behaviors through capability-checked V2 paths.
-// Cross-reference `queued_turn/codex_transcript.ndjson`, `turn_interrupt/codex_transcript.ndjson`,
-// `message_steering/codex_transcript.ndjson`, and docs/orchestration-v2/feature-lifecycles.md.
+// TODO(claude-v2/control): add a Claude interrupt fixture once explicit run interrupt behavior
+// is fully hardened. Cross-reference `turn_interrupt/codex_transcript.ndjson` and
+// docs/orchestration-v2/feature-lifecycles.md.
 
 // TODO(claude-v2/context-transfer): add provider-switch handoff and return fixtures when portable
 // context handoff is implemented. Cross-reference docs/orchestration-v2/provider-switching-and-context.md

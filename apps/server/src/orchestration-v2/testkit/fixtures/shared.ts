@@ -37,6 +37,8 @@ export const TOOL_CALL_READ_ONLY_WORKSPACE_ROOT = "/tmp/claude-replay-tool_call_
 export const TOOL_CALL_READ_ONLY_PROMPT = `Read ${TOOL_CALL_READ_ONLY_WORKSPACE_ROOT}/package.json and ${TOOL_CALL_READ_ONLY_WORKSPACE_ROOT}/tsconfig.json, then answer exactly: read only tool fixture complete`;
 export const TOOL_CALL_WRITE_PROMPT =
   "Create or overwrite .codex-probe-write-action.txt with exactly this text: codex app-server approval fixture. Use a local shell command or file edit only, then briefly report what happened. Do not read package metadata, use GitHub, use web, or use MCP.";
+export const MESSAGE_STEERING_INITIAL_PROMPT =
+  "Respond with exactly: steering fixture initial response";
 export const SUBAGENT_PROMPT =
   "Spawn 2 subagents, one to read package.json and one to read tsconfig.json";
 export const TURN_INTERRUPT_PROMPT =
@@ -296,8 +298,7 @@ export function materializeFixtureInput(input: {
             const nextStep = input.fixtureInput.steps[stepIndex + 1];
             const shouldRunInBackground =
               (nextStep !== undefined &&
-                (((nextStep.type === "steer" || nextStep.type === "interrupt") &&
-                  nextStep.targetRunIndex === messageIndex) ||
+                ((nextStep.type === "interrupt" && nextStep.targetRunIndex === messageIndex) ||
                   nextStep.type === "queue_message")) ||
               nextStep?.type === "approve_next_runtime_request" ||
               nextStep?.type === "answer_next_user_input_request";
@@ -321,7 +322,13 @@ export function materializeFixtureInput(input: {
             );
             if (shouldRunInBackground) {
               activeRunDispatchKeys.add(key);
-            } else {
+            } else if (
+              !(
+                nextStep !== undefined &&
+                nextStep.type === "steer" &&
+                nextStep.targetRunIndex === messageIndex
+              )
+            ) {
               steps.push({ type: "await_thread_idle", threadId: ids.threadId });
             }
           }
@@ -401,6 +408,11 @@ export function materializeFixtureInput(input: {
           break;
         case "steer":
           messageIndex += 1;
+          steps.push({
+            type: "await_run_steerable",
+            threadId: ids.threadId,
+            runId: runIdFor(step.targetRunIndex),
+          });
           pushDispatch(
             dispatchMessageCommand({
               commandId: yield* idAllocator.allocate.command({
@@ -421,11 +433,10 @@ export function materializeFixtureInput(input: {
               },
             }),
           );
-          if (
-            input.fixtureInput.steps[stepIndex + 1]?.type !== "approve_next_runtime_request" &&
-            activeRunDispatchKeys.delete(`run:${step.targetRunIndex}`)
-          ) {
-            steps.push({ type: "await", key: `run:${step.targetRunIndex}` });
+          if (input.fixtureInput.steps[stepIndex + 1]?.type !== "approve_next_runtime_request") {
+            if (activeRunDispatchKeys.delete(`run:${step.targetRunIndex}`)) {
+              steps.push({ type: "await", key: `run:${step.targetRunIndex}` });
+            }
             steps.push({ type: "await_thread_idle", threadId: ids.threadId });
           }
           break;
