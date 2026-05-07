@@ -30,6 +30,7 @@ import type {
   DesktopUpdateActionResult,
   DesktopUpdateCheckResult,
   DesktopUpdateState,
+  DesktopWindowThemeColors,
 } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
@@ -84,12 +85,21 @@ import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runti
 import { resolveDesktopAppBranding } from "./appBranding.ts";
 import { bindFirstRevealTrigger, type RevealSubscription } from "./windowReveal.ts";
 import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
+import {
+  discoverEditorColorThemes,
+  getEditorThemePreferences,
+  loadEditorColorTheme,
+} from "./vscodeThemeDiscovery.ts";
 
 syncShellEnvironment();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
 const SET_THEME_CHANNEL = "desktop:set-theme";
+const DISCOVER_COLOR_THEMES_CHANNEL = "desktop:discover-color-themes";
+const LOAD_COLOR_THEME_CHANNEL = "desktop:load-color-theme";
+const GET_EDITOR_THEME_PREFERENCES_CHANNEL = "desktop:get-editor-theme-preferences";
+const SET_WINDOW_THEME_COLORS_CHANNEL = "desktop:set-window-theme-colors";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
@@ -118,6 +128,7 @@ const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
 const CLIENT_SETTINGS_PATH = Path.join(STATE_DIR, "client-settings.json");
 const SAVED_ENVIRONMENT_REGISTRY_PATH = Path.join(STATE_DIR, "saved-environments.json");
 const DESKTOP_SCHEME = "t3";
+let windowThemeColors: DesktopWindowThemeColors | null = null;
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 // Dev-only SSH launcher override. Set this to an absolute path on the SSH host
@@ -496,6 +507,20 @@ function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
   }
 
   return null;
+}
+
+function getSafeWindowThemeColors(rawInput: unknown): DesktopWindowThemeColors | null {
+  if (typeof rawInput !== "object" || rawInput === null || Array.isArray(rawInput)) return null;
+  const input = rawInput as Record<string, unknown>;
+  if (typeof input.backgroundColor !== "string" || input.backgroundColor.trim().length === 0) {
+    return null;
+  }
+  return {
+    backgroundColor: input.backgroundColor,
+    titleBarColor: typeof input.titleBarColor === "string" ? input.titleBarColor : undefined,
+    titleBarSymbolColor:
+      typeof input.titleBarSymbolColor === "string" ? input.titleBarSymbolColor : undefined,
+  };
 }
 
 async function waitForBackendHttpReady(
@@ -1818,6 +1843,26 @@ function registerIpcHandlers(): void {
     nativeTheme.themeSource = theme;
   });
 
+  ipcMain.removeHandler(DISCOVER_COLOR_THEMES_CHANNEL);
+  ipcMain.handle(DISCOVER_COLOR_THEMES_CHANNEL, async () => discoverEditorColorThemes());
+
+  ipcMain.removeHandler(LOAD_COLOR_THEME_CHANNEL);
+  ipcMain.handle(LOAD_COLOR_THEME_CHANNEL, async (_event, rawThemeId: unknown) => {
+    if (typeof rawThemeId !== "string") return null;
+    return loadEditorColorTheme(rawThemeId);
+  });
+
+  ipcMain.removeHandler(GET_EDITOR_THEME_PREFERENCES_CHANNEL);
+  ipcMain.handle(GET_EDITOR_THEME_PREFERENCES_CHANNEL, async () => getEditorThemePreferences());
+
+  ipcMain.removeHandler(SET_WINDOW_THEME_COLORS_CHANNEL);
+  ipcMain.handle(SET_WINDOW_THEME_COLORS_CHANNEL, async (_event, rawInput: unknown) => {
+    const input = getSafeWindowThemeColors(rawInput);
+    if (!input) return;
+    windowThemeColors = input;
+    syncAllWindowAppearance();
+  });
+
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);
   ipcMain.handle(
     CONTEXT_MENU_CHANNEL,
@@ -1989,7 +2034,9 @@ function getIconOption(): { icon: string } | Record<string, never> {
 }
 
 function getInitialWindowBackgroundColor(): string {
-  return nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff";
+  return (
+    windowThemeColors?.backgroundColor ?? (nativeTheme.shouldUseDarkColors ? "#0a0a0a" : "#ffffff")
+  );
 }
 
 function getWindowTitleBarOptions(): WindowTitleBarOptions {
@@ -2003,11 +2050,13 @@ function getWindowTitleBarOptions(): WindowTitleBarOptions {
   return {
     titleBarStyle: "hidden",
     titleBarOverlay: {
-      color: TITLEBAR_COLOR,
+      color: windowThemeColors?.titleBarColor ?? TITLEBAR_COLOR,
       height: TITLEBAR_HEIGHT,
-      symbolColor: nativeTheme.shouldUseDarkColors
-        ? TITLEBAR_DARK_SYMBOL_COLOR
-        : TITLEBAR_LIGHT_SYMBOL_COLOR,
+      symbolColor:
+        windowThemeColors?.titleBarSymbolColor ??
+        (nativeTheme.shouldUseDarkColors
+          ? TITLEBAR_DARK_SYMBOL_COLOR
+          : TITLEBAR_LIGHT_SYMBOL_COLOR),
     },
   };
 }

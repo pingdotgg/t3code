@@ -79,6 +79,10 @@
     "./keybindings": {
       "types": "./src/keybindings.ts",
       "import": "./src/keybindings.ts"
+    },
+    "./themeMapping": {
+      "types": "./src/themeMapping.ts",
+      "import": "./src/themeMapping.ts"
     }
   },
   "scripts": {

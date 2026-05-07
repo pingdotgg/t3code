@@ -10,6 +10,7 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceId,
   type ScopedThreadRef,
+  type ThemePreference,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
@@ -94,6 +95,26 @@ const THEME_OPTIONS = [
     label: "Dark",
   },
 ] as const;
+
+function themePreferenceToSelectValue(preference: ThemePreference) {
+  if (preference.mode === "system") return "system";
+  if (preference.mode === "builtin") return `builtin:${preference.theme}`;
+  if (preference.mode === "external") return `external:${preference.themeId}`;
+  return `follow-editor:${preference.source}`;
+}
+
+function selectValueToThemePreference(value: string): ThemePreference | null {
+  if (value === "system") return { mode: "system" };
+  if (value === "builtin:light") return { mode: "builtin", theme: "light" };
+  if (value === "builtin:dark") return { mode: "builtin", theme: "dark" };
+  if (value.startsWith("external:")) return { mode: "external", themeId: value.slice(9) };
+  if (value === "follow-editor:vscode") return { mode: "follow-editor", source: "vscode" };
+  if (value === "follow-editor:cursor") return { mode: "follow-editor", source: "cursor" };
+  if (value === "follow-editor:vscode-insiders") {
+    return { mode: "follow-editor", source: "vscode-insiders" };
+  }
+  return null;
+}
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -438,7 +459,16 @@ export function useSettingsRestore(onRestored?: () => void) {
 }
 
 export function GeneralSettingsPanel() {
-  const { theme, setTheme } = useTheme();
+  const {
+    theme,
+    preference,
+    setTheme,
+    setThemePreference,
+    discoveredThemes,
+    refreshThemes,
+    status: themeStatus,
+    message: themeMessage,
+  } = useTheme();
   const settings = useSettings();
   const { updateSettings } = useUpdateSettings();
   const observability = useServerObservability();
@@ -479,34 +509,67 @@ export function GeneralSettingsPanel() {
       <SettingsSection title="General">
         <SettingsRow
           title="Theme"
-          description="Choose how T3 Code looks across the app."
+          description={
+            themeMessage ??
+            (discoveredThemes.length > 0
+              ? `Detected ${discoveredThemes.length} themes from VS Code and Cursor.`
+              : "Choose how T3 Code looks across the app.")
+          }
           resetAction={
             theme !== "system" ? (
               <SettingResetButton label="theme" onClick={() => setTheme("system")} />
             ) : null
           }
           control={
-            <Select
-              value={theme}
-              onValueChange={(value) => {
-                if (value === "system" || value === "light" || value === "dark") {
-                  setTheme(value);
-                }
-              }}
-            >
-              <SelectTrigger className="w-full sm:w-40" aria-label="Theme preference">
-                <SelectValue>
-                  {THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System"}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectPopup align="end" alignItemWithTrigger={false}>
-                {THEME_OPTIONS.map((option) => (
-                  <SelectItem hideIndicator key={option.value} value={option.value}>
-                    {option.label}
+            <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Refresh editor themes"
+                disabled={themeStatus === "loading"}
+                onClick={() => void refreshThemes()}
+              >
+                {themeStatus === "loading" ? (
+                  <LoaderIcon className="size-4 animate-spin" />
+                ) : (
+                  <RefreshCwIcon className="size-4" />
+                )}
+              </Button>
+              <Select
+                value={themePreferenceToSelectValue(preference)}
+                onValueChange={(value) => {
+                  if (!value) return;
+                  const nextPreference = selectValueToThemePreference(value);
+                  if (nextPreference) setThemePreference(nextPreference);
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-64" aria-label="Theme preference">
+                  <SelectValue>
+                    {preference.mode === "external"
+                      ? (discoveredThemes.find((entry) => entry.id === preference.themeId)?.label ??
+                        "External theme")
+                      : (THEME_OPTIONS.find((option) => option.value === theme)?.label ?? "System")}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem hideIndicator value="system">
+                    System
                   </SelectItem>
-                ))}
-              </SelectPopup>
-            </Select>
+                  <SelectItem hideIndicator value="builtin:light">
+                    Light
+                  </SelectItem>
+                  <SelectItem hideIndicator value="builtin:dark">
+                    Dark
+                  </SelectItem>
+                  {discoveredThemes.map((entry) => (
+                    <SelectItem hideIndicator key={entry.id} value={`external:${entry.id}`}>
+                      {entry.source === "cursor" ? "Cursor" : "VS Code"} · {entry.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
           }
         />
 

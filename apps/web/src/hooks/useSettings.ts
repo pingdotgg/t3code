@@ -22,6 +22,7 @@ import { ensureLocalApi } from "~/localApi";
 import { Struct } from "effect";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/serverState";
+import type { ProjectGroupingSettings } from "~/logicalProject";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
@@ -30,6 +31,11 @@ const clientSettingsHydrationListeners = new Set<() => void>();
 let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
 let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
+
+const selectSidebarProjectGroupingMode = (settings: UnifiedSettings) =>
+  settings.sidebarProjectGroupingMode;
+const selectSidebarProjectGroupingOverrides = (settings: UnifiedSettings) =>
+  settings.sidebarProjectGroupingOverrides;
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -184,6 +190,19 @@ export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings)
   );
 
   return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
+}
+
+export function useProjectGroupingSettings(): ProjectGroupingSettings {
+  const sidebarProjectGroupingMode = useSettings(selectSidebarProjectGroupingMode);
+  const sidebarProjectGroupingOverrides = useSettings(selectSidebarProjectGroupingOverrides);
+
+  return useMemo(
+    () => ({
+      sidebarProjectGroupingMode,
+      sidebarProjectGroupingOverrides,
+    }),
+    [sidebarProjectGroupingMode, sidebarProjectGroupingOverrides],
+  );
 }
 
 /**

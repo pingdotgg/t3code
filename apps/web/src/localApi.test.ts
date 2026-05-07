@@ -222,7 +222,11 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     getAdvertisedEndpoints: async () => [],
     pickFolder: async () => null,
     confirm: async () => true,
+    discoverColorThemes: async () => [],
+    loadColorTheme: async () => null,
+    getEditorThemePreferences: async () => [],
     setTheme: async () => undefined,
+    setWindowThemeColors: async () => undefined,
     showContextMenu: async () => null,
     openExternal: async () => true,
     onMenuAction: () => () => undefined,
@@ -614,6 +618,7 @@ describe("wsApi", () => {
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,
       timestampFormat: "24-hour" as const,
+      themePreference: { mode: "system" as const },
     };
     const getClientSettings = vi.fn().mockResolvedValue({
       ...clientSettings,
@@ -676,6 +681,7 @@ describe("wsApi", () => {
       sidebarProjectSortOrder: "manual" as const,
       sidebarThreadSortOrder: "created_at" as const,
       timestampFormat: "24-hour" as const,
+      themePreference: { mode: "system" as const },
     };
 
     await api.persistence.setClientSettings(clientSettings);

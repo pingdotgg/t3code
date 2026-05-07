@@ -4,6 +4,10 @@ import type { DesktopBridge } from "@t3tools/contracts";
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
 const SET_THEME_CHANNEL = "desktop:set-theme";
+const DISCOVER_COLOR_THEMES_CHANNEL = "desktop:discover-color-themes";
+const LOAD_COLOR_THEME_CHANNEL = "desktop:load-color-theme";
+const GET_EDITOR_THEME_PREFERENCES_CHANNEL = "desktop:get-editor-theme-preferences";
+const SET_WINDOW_THEME_COLORS_CHANNEL = "desktop:set-window-theme-colors";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
@@ -114,7 +118,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getAdvertisedEndpoints: () => ipcRenderer.invoke(GET_ADVERTISED_ENDPOINTS_CHANNEL),
   pickFolder: (options) => ipcRenderer.invoke(PICK_FOLDER_CHANNEL, options),
   confirm: (message) => ipcRenderer.invoke(CONFIRM_CHANNEL, message),
+  discoverColorThemes: () => ipcRenderer.invoke(DISCOVER_COLOR_THEMES_CHANNEL),
+  loadColorTheme: (themeId) => ipcRenderer.invoke(LOAD_COLOR_THEME_CHANNEL, themeId),
+  getEditorThemePreferences: () => ipcRenderer.invoke(GET_EDITOR_THEME_PREFERENCES_CHANNEL),
   setTheme: (theme) => ipcRenderer.invoke(SET_THEME_CHANNEL, theme),
+  setWindowThemeColors: (input) => ipcRenderer.invoke(SET_WINDOW_THEME_COLORS_CHANNEL, input),
   showContextMenu: (items, position) => ipcRenderer.invoke(CONTEXT_MENU_CHANNEL, items, position),
   openExternal: (url: string) => ipcRenderer.invoke(OPEN_EXTERNAL_CHANNEL, url),
   onMenuAction: (listener) => {

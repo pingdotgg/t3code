@@ -31,6 +31,11 @@
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -112,6 +117,19 @@
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
   --warning-foreground: var(--color-amber-700);
+  --sidebar: var(--background);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-accent: var(--accent);
+  --sidebar-accent-foreground: var(--accent-foreground);
+  --sidebar-border: var(--border);
+  --terminal-background: var(--background);
+  --terminal-foreground: var(--foreground);
+  --terminal-cursor: var(--ring);
+  --terminal-selection-background: color-mix(in srgb, var(--ring) 24%, transparent);
+  --diff-inserted: var(--success);
+  --diff-removed: var(--destructive);
+  --chat-request-background: var(--card);
+  --chat-request-border: var(--border);
 
   @variant dark {
     color-scheme: dark;
@@ -141,6 +159,19 @@
     --success-foreground: var(--color-emerald-400);
     --warning: var(--color-amber-500);
     --warning-foreground: var(--color-amber-400);
+    --sidebar: var(--background);
+    --sidebar-foreground: var(--foreground);
+    --sidebar-accent: var(--accent);
+    --sidebar-accent-foreground: var(--accent-foreground);
+    --sidebar-border: var(--border);
+    --terminal-background: var(--background);
+    --terminal-foreground: var(--foreground);
+    --terminal-cursor: var(--ring);
+    --terminal-selection-background: color-mix(in srgb, var(--ring) 24%, transparent);
+    --diff-inserted: var(--success);
+    --diff-removed: var(--destructive);
+    --chat-request-background: var(--card);
+    --chat-request-border: var(--border);
   }
 }
 

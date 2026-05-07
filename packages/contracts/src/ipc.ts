@@ -69,6 +69,13 @@ import { EditorId } from "./editor.ts";
 import type { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import type { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
 import type {
+  DesktopWindowThemeColors,
+  DiscoveredColorTheme,
+  EditorThemePreference,
+  ResolvedColorTheme,
+  ThemeId,
+} from "./theme.ts";
+import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
@@ -241,7 +248,11 @@ export interface DesktopBridge {
   getAdvertisedEndpoints: () => Promise<readonly AdvertisedEndpoint[]>;
   pickFolder: (options?: PickFolderOptions) => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
+  discoverColorThemes: () => Promise<readonly DiscoveredColorTheme[]>;
+  loadColorTheme: (themeId: ThemeId) => Promise<ResolvedColorTheme | null>;
+  getEditorThemePreferences: () => Promise<readonly EditorThemePreference[]>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
+  setWindowThemeColors: (input: DesktopWindowThemeColors) => Promise<void>;
   showContextMenu: <T extends string>(
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },

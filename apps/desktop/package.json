@@ -18,7 +18,8 @@
     "@effect/platform-node": "catalog:",
     "effect": "catalog:",
     "electron": "40.9.3",
-    "electron-updater": "^6.6.2"
+    "electron-updater": "^6.6.2",
+    "jsonc-parser": "^3.3.1"
   },
   "devDependencies": {
     "@t3tools/client-runtime": "workspace:*",

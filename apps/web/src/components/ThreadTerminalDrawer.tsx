@@ -120,13 +120,30 @@ function terminalThemeFromApp(mountElement?: HTMLElement | null): ITheme {
     drawerStyles.color,
     normalizeComputedColor(bodyStyles.color, fallbackForeground),
   );
+  const rootStyles = getComputedStyle(document.documentElement);
+  const themedBackground = normalizeComputedColor(
+    rootStyles.getPropertyValue("--terminal-background"),
+    background,
+  );
+  const themedForeground = normalizeComputedColor(
+    rootStyles.getPropertyValue("--terminal-foreground"),
+    foreground,
+  );
+  const themedCursor = normalizeComputedColor(
+    rootStyles.getPropertyValue("--terminal-cursor"),
+    isDark ? "rgb(180, 203, 255)" : "rgb(38, 56, 78)",
+  );
+  const themedSelection = normalizeComputedColor(
+    rootStyles.getPropertyValue("--terminal-selection-background"),
+    isDark ? "rgba(180, 203, 255, 0.25)" : "rgba(37, 63, 99, 0.2)",
+  );
 
   if (isDark) {
     return {
-      background,
-      foreground,
-      cursor: "rgb(180, 203, 255)",
-      selectionBackground: "rgba(180, 203, 255, 0.25)",
+      background: themedBackground,
+      foreground: themedForeground,
+      cursor: themedCursor,
+      selectionBackground: themedSelection,
       scrollbarSliderBackground: "rgba(255, 255, 255, 0.1)",
       scrollbarSliderHoverBackground: "rgba(255, 255, 255, 0.18)",
       scrollbarSliderActiveBackground: "rgba(255, 255, 255, 0.22)",
@@ -150,10 +167,10 @@ function terminalThemeFromApp(mountElement?: HTMLElement | null): ITheme {
   }
 
   return {
-    background,
-    foreground,
-    cursor: "rgb(38, 56, 78)",
-    selectionBackground: "rgba(37, 63, 99, 0.2)",
+    background: themedBackground,
+    foreground: themedForeground,
+    cursor: themedCursor,
+    selectionBackground: themedSelection,
     scrollbarSliderBackground: "rgba(0, 0, 0, 0.15)",
     scrollbarSliderHoverBackground: "rgba(0, 0, 0, 0.25)",
     scrollbarSliderActiveBackground: "rgba(0, 0, 0, 0.3)",
