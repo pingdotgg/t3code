@@ -23,6 +23,7 @@ import {
   type ClaudeAgentSdkQueryOpenInput,
   type ClaudeAgentSdkQueryOptions,
   type ClaudeAgentSdkQuerySession,
+  type ClaudeAgentSdkQueryTools,
 } from "./ClaudeAdapterV2.ts";
 import { layer as idAllocatorLayer } from "../IdAllocator.ts";
 import { layerFromProviderAdapter } from "../ProviderAdapterRegistry.ts";
@@ -290,6 +291,9 @@ function stableClaudeQueryOptions(options: ClaudeAgentSdkQueryOptions): ClaudeAg
     model: options.model,
     tools: options.tools,
     permissionMode: options.permissionMode,
+    ...(options.allowedTools === undefined ? {} : { allowedTools: options.allowedTools }),
+    ...(options.disallowedTools === undefined ? {} : { disallowedTools: options.disallowedTools }),
+    ...(options.settings === undefined ? {} : { settings: options.settings }),
     ...(options.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
       : {}),
@@ -767,7 +771,10 @@ async function recordClaudeStreamingQuery(input: {
   readonly sessionId: string;
   readonly entries: Array<ProviderReplayEntry>;
   readonly enableTools?: boolean;
+  readonly tools?: ClaudeAgentSdkQueryTools;
   readonly permissionMode?: ClaudeAgentSdkQueryOptions["permissionMode"];
+  readonly allowedTools?: ReadonlyArray<string>;
+  readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly enablePermissionCallback?: boolean;
   readonly permissionDecision?: ProviderApprovalDecision;
@@ -809,8 +816,12 @@ async function recordClaudeStreamingQuery(input: {
     cwd: input.cwd,
     ...(input.enableTools === true
       ? {
-          tools: { type: "preset", preset: "claude_code" },
+          tools: input.tools ?? { type: "preset", preset: "claude_code" },
           permissionMode: input.permissionMode ?? "default",
+          ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+          ...(input.disallowedTools === undefined
+            ? {}
+            : { disallowedTools: input.disallowedTools }),
           ...(input.allowDangerouslySkipPermissions === true
             ? { allowDangerouslySkipPermissions: true }
             : {}),
@@ -872,7 +883,10 @@ async function recordClaudeRestartingQueries(input: {
   readonly sessionId: string;
   readonly entries: Array<ProviderReplayEntry>;
   readonly enableTools?: boolean;
+  readonly tools?: ClaudeAgentSdkQueryTools;
   readonly permissionMode?: ClaudeAgentSdkQueryOptions["permissionMode"];
+  readonly allowedTools?: ReadonlyArray<string>;
+  readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: boolean;
 }): Promise<void> {
   for (const [index, prompt] of input.prompts.entries()) {
@@ -884,8 +898,12 @@ async function recordClaudeRestartingQueries(input: {
       cwd: input.cwd,
       ...(input.enableTools === true
         ? {
-            tools: { type: "preset", preset: "claude_code" },
+            tools: input.tools ?? { type: "preset", preset: "claude_code" },
             permissionMode: input.permissionMode ?? "default",
+            ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+            ...(input.disallowedTools === undefined
+              ? {}
+              : { disallowedTools: input.disallowedTools }),
             ...(input.allowDangerouslySkipPermissions === true
               ? { allowDangerouslySkipPermissions: true }
               : {}),
@@ -952,7 +970,10 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
   readonly sessionId?: string;
   readonly queryMode?: "streaming" | "restart";
   readonly enableTools?: boolean;
+  readonly tools?: ClaudeAgentSdkQueryTools;
   readonly permissionMode?: ClaudeAgentSdkQueryOptions["permissionMode"];
+  readonly allowedTools?: ReadonlyArray<string>;
+  readonly disallowedTools?: ReadonlyArray<string>;
   readonly allowDangerouslySkipPermissions?: boolean;
   readonly enablePermissionCallback?: boolean;
   readonly permissionDecision?: ProviderApprovalDecision;
@@ -975,7 +996,10 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
       sessionId,
       entries,
       ...(input.enableTools === undefined ? {} : { enableTools: input.enableTools }),
+      ...(input.tools === undefined ? {} : { tools: input.tools }),
       ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
+      ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+      ...(input.disallowedTools === undefined ? {} : { disallowedTools: input.disallowedTools }),
       ...(input.allowDangerouslySkipPermissions === undefined
         ? {}
         : { allowDangerouslySkipPermissions: input.allowDangerouslySkipPermissions }),
@@ -995,7 +1019,10 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
       sessionId,
       entries,
       ...(input.enableTools === undefined ? {} : { enableTools: input.enableTools }),
+      ...(input.tools === undefined ? {} : { tools: input.tools }),
       ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
+      ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+      ...(input.disallowedTools === undefined ? {} : { disallowedTools: input.disallowedTools }),
       ...(input.allowDangerouslySkipPermissions === undefined
         ? {}
         : { allowDangerouslySkipPermissions: input.allowDangerouslySkipPermissions }),
@@ -1012,8 +1039,10 @@ export async function recordClaudeAgentSdkReplayTranscript(input: {
       model: input.modelSelection.model,
       nativeSessionId: sessionId,
       queryMode,
-      tools: input.enableTools === true ? "claude_code" : "none",
+      tools: input.enableTools === true ? (input.tools ?? "claude_code") : "none",
       ...(input.permissionMode === undefined ? {} : { permissionMode: input.permissionMode }),
+      ...(input.allowedTools === undefined ? {} : { allowedTools: input.allowedTools }),
+      ...(input.disallowedTools === undefined ? {} : { disallowedTools: input.disallowedTools }),
       ...(input.enablePermissionCallback === undefined
         ? {}
         : { enablePermissionCallback: input.enablePermissionCallback }),
