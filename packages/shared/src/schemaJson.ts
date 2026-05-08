@@ -97,6 +97,54 @@ export const prettyJsonString = SchemaGetter.parseJson<string>().compose(
 export const fromLenientJson = <S extends Schema.Top>(schema: S) =>
   Schema.String.pipe(Schema.decodeTo(schema, fromLenientJsonString));
 
+export function extractJsonObject(raw: string): string {
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return trimmed;
+  }
+
+  const start = trimmed.indexOf("{");
+  if (start < 0) {
+    return trimmed;
+  }
+
+  let depth = 0;
+  let inString = false;
+  let escaping = false;
+  for (let index = start; index < trimmed.length; index += 1) {
+    const char = trimmed[index];
+    if (inString) {
+      if (escaping) {
+        escaping = false;
+      } else if (char === "\\") {
+        escaping = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return trimmed.slice(start, index + 1);
+      }
+    }
+  }
+
+  return trimmed.slice(start);
+}
+
 /**
  * Build a JSON string schema that encodes with stable 2-space formatting.
  *

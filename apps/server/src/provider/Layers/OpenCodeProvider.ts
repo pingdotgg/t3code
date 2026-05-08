@@ -10,6 +10,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   buildServerProvider,
   nonEmptyTrimmed,
@@ -17,7 +18,6 @@ import {
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import { compareCliVersions } from "../cliVersion.ts";
 import {
   OpenCodeRuntime,
   openCodeRuntimeErrorDetail,
@@ -383,7 +383,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
         null,
       );
     }
-    if (compareCliVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
+    if (compareSemverVersions(version, MINIMUM_OPENCODE_VERSION) < 0) {
       return buildServerProvider({
         presentation: OPENCODE_PRESENTATION,
         enabled: openCodeSettings.enabled,

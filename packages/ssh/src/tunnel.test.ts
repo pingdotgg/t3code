@@ -20,10 +20,13 @@ import {
   buildRemoteT3RunnerScript,
   describeReadinessCause,
   issueRemotePairingToken,
+  launchOrReuseRemoteServer,
   REMOTE_PICK_PORT_SCRIPT,
   SshEnvironmentManager,
   waitForHttpReady,
 } from "./tunnel.ts";
+
+const TEST_NODE_ENGINE_RANGE = "^22.16 || ^23.11 || >=24.10";
 
 const makeSuccessfulProcess = (stdout: string) => {
   const stdoutStream = Stream.make(new TextEncoder().encode(stdout));
@@ -87,13 +90,34 @@ function commandArgs(command: ChildProcess.Command): ReadonlyArray<string> {
 
 describe("ssh tunnel scripts", () => {
   it("builds the remote t3 runner with npx and npm fallbacks", () => {
-    const script = buildRemoteT3RunnerScript();
+    const script = buildRemoteT3RunnerScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE });
 
     assert.include(script, "T3_NODE_SCRIPT_PATH=''");
     assert.include(script, 'exec t3 "$@"');
     assert.include(script, "exec npx --yes 't3@latest' \"$@\"");
     assert.include(script, "exec npm exec --yes 't3@latest' -- \"$@\"");
     assert.include(script, "could not install 't3@latest'");
+    assert.include(script, 'prepend_path_if_dir "$HOME/.local/bin"');
+    assert.include(script, `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`);
+    assert.include(script, "remote_node_satisfies_engine()");
+    assert.include(script, "function satisfiesSemverRange");
+    assert.include(script, "satisfiesSemverRange(rawVersion, range)");
+    assert.include(script, 'prepend_path_if_dir "$VOLTA_HOME/bin"');
+    assert.include(script, 'prepend_path_if_dir "$HOME/.asdf/shims"');
+    assert.include(script, 'prepend_path_if_dir "$HOME/.local/share/mise/shims"');
+    assert.include(script, 'eval "$(fnm env --use-on-cd --shell sh)"');
+    assert.include(script, 'prepend_path_if_dir "$HOME/.nodenv/shims"');
+    assert.include(script, 'NVM_DIR="$HOME/.nvm"');
+    assert.include(script, "nvm use --silent default");
+    assert.include(script, 'for T3_NODE_BIN in "$NVM_DIR"/versions/node/*/bin');
+    assert.notInclude(script, "ensure $NVM_DIR/nvm.sh is available");
+  });
+
+  it("does not hard-code a remote node engine range", () => {
+    const script = buildRemoteT3RunnerScript();
+
+    assert.include(script, "T3_NODE_ENGINE_RANGE=''");
+    assert.notInclude(script, TEST_NODE_ENGINE_RANGE);
   });
 
   it("shell-quotes package specs in the remote t3 runner", () => {
@@ -127,10 +151,20 @@ describe("ssh tunnel scripts", () => {
     } as const;
 
     assert.include(
-      buildRemoteLaunchScript(),
+      buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
       '[ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null',
     );
     assert.include(buildRemoteLaunchScript(), "RUNNER_CHANGED=1");
+    assert.include(buildRemoteLaunchScript(), "ensure_remote_node_path()");
+    assert.include(buildRemoteLaunchScript(), "if ! ensure_remote_node_path; then");
+    assert.include(
+      buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
+      `T3_NODE_ENGINE_RANGE='${TEST_NODE_ENGINE_RANGE}'`,
+    );
+    assert.include(
+      buildRemoteLaunchScript({ nodeEngineRange: TEST_NODE_ENGINE_RANGE }),
+      "does not satisfy required range ",
+    );
     assert.include(buildRemoteLaunchScript(), 'kill "$REMOTE_PID" 2>/dev/null || true');
     assert.include(buildRemoteLaunchScript(), "wait_ready");
     assert.include(buildRemoteLaunchScript(), '"$RUNNER_FILE" serve --host 127.0.0.1');
@@ -156,15 +190,46 @@ describe("ssh tunnel scripts", () => {
       'DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"',
     );
     assert.include(buildRemoteLaunchScript(), "resolve_default_runtime_port()");
+    assert.include(
+      buildRemoteLaunchScript(),
+      'DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port',
+    );
+    assert.include(
+      buildRemoteLaunchScript(),
+      "if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port))",
+    );
+    assert.include(buildRemoteLaunchScript(), 'PID_TO_STOP="${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"');
+    assert.include(buildRemoteLaunchScript(), 'REMOTE_PORT="$DEFAULT_REMOTE_PORT"');
+    assert.include(buildRemoteLaunchScript(), 'rm -f "$PID_FILE"');
     assert.include(buildRemoteLaunchScript(), "printf 'external\\n' >\"$MANAGED_FILE\"");
+    assert.include(buildRemoteLaunchScript(), 'if [ -z "$REMOTE_PORT" ]; then');
     assert.isBelow(
       buildRemoteLaunchScript().indexOf('if [ "$REMOTE_MANAGED" = "managed" ]'),
       buildRemoteLaunchScript().indexOf("printf 'external\\n' >\"$MANAGED_FILE\""),
     );
     assert.isBelow(
-      buildRemoteLaunchScript().indexOf('DEFAULT_REMOTE_PORT="$(resolve_default_runtime_port'),
+      buildRemoteLaunchScript().indexOf('DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port'),
       buildRemoteLaunchScript().indexOf('elif [ -n "$REMOTE_PID" ]'),
     );
+  });
+
+  it.effect("accepts launch JSON after remote shell startup noise", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(makeSuccessfulProcess('loaded nvm default\n{"remotePort":3774}\n')),
+    );
+    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const processLayer = Layer.merge(NodeServices.layer, spawnerLayer);
+
+    return Effect.gen(function* () {
+      const result = yield* launchOrReuseRemoteServer(target);
+      assert.equal(result.remotePort, 3774);
+    }).pipe(Effect.provide(processLayer));
   });
 
   it("allows the remote port picker to run without a state file path", () => {
@@ -226,6 +291,34 @@ describe("ssh tunnel scripts", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.succeed(
         makeSuccessfulProcess(`{
+  "id": "88941235-6ed5-4184-a2ff-5339e2075958",
+  "credential": "LCL4R2TPHDKQ",
+  "role": "client",
+  "expiresAt": "2026-04-29T01:01:20.994Z"
+}
+
+`),
+      ),
+    );
+    const spawnerLayer = Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+    const processLayer = Layer.merge(NodeServices.layer, spawnerLayer);
+    return Effect.gen(function* () {
+      const result = yield* issueRemotePairingToken(target);
+      assert.equal(result.credential, "LCL4R2TPHDKQ");
+    }).pipe(Effect.provide(processLayer));
+  });
+
+  it.effect("accepts pretty-printed pairing JSON after remote shell startup noise", () => {
+    const target = {
+      alias: "devbox",
+      hostname: "devbox.example.com",
+      username: "julius",
+      port: 2222,
+    } as const;
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        makeSuccessfulProcess(`loaded nvm default
+{
   "id": "88941235-6ed5-4184-a2ff-5339e2075958",
   "credential": "LCL4R2TPHDKQ",
   "role": "client",
