@@ -4,6 +4,12 @@ import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { make as makeJsonSchemaGenerator } from "@effect/openapi-generator/JsonSchemaGenerator";
 import { Effect, FileSystem, Layer, Logger, Path, Schema } from "effect";
+import {
+  FetchHttpClient,
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 const UPSTREAM_REF = "be75785504ff152fa6333e380a2d50642f42fba0";
@@ -20,6 +26,13 @@ const GithubContentEntries = Schema.Array(
   }),
 );
 type GithubContentEntry = (typeof GithubContentEntries.Type)[number];
+
+const JsonSchemaDocument = Schema.StructWithRest(
+  Schema.Struct({
+    definitions: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
+  }),
+  [Schema.Record(Schema.String, Schema.Json)],
+);
 
 interface GeneratedPaths {
   readonly generatedDir: string;
@@ -143,40 +156,19 @@ const ensureGeneratedDir = Effect.fn("ensureGeneratedDir")(function* () {
 });
 
 const fetchText = Effect.fn("fetchText")(function* (url: string) {
-  const response = yield* Effect.tryPromise({
-    try: () =>
-      fetch(url, {
-        headers: {
-          "user-agent": USER_AGENT,
-        },
-      }),
-    catch: (cause) =>
-      new GeneratorError({
-        detail: `Failed to fetch ${url}`,
-        cause,
-      }),
-  });
-
-  if (!response.ok) {
-    const detail = yield* Effect.tryPromise({
-      try: () => response.text(),
-      catch: () => "",
-    });
-    return yield* Effect.fail(
-      new GeneratorError({
-        detail: `Failed to download ${url}: ${response.status} ${detail}`,
-      }),
-    );
-  }
-
-  return yield* Effect.tryPromise({
-    try: () => response.text(),
-    catch: (cause) =>
-      new GeneratorError({
-        detail: `Failed to read response body for ${url}`,
-        cause,
-      }),
-  });
+  return yield* HttpClientRequest.get(url).pipe(
+    HttpClientRequest.setHeader("user-agent", USER_AGENT),
+    HttpClient.execute,
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.flatMap((okResponse) => okResponse.text),
+    Effect.mapError(
+      (cause) =>
+        new GeneratorError({
+          detail: `Failed to fetch ${url}`,
+          cause,
+        }),
+    ),
+  );
 });
 
 const fetchDirectoryEntries = Effect.fn("fetchDirectoryEntries")(function* (path: string) {
@@ -548,9 +540,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
 
   for (const file of jsonSchemaFiles) {
     const raw = yield* fetchText(file.downloadUrl);
-    const parsed = JSON.parse(raw) as {
-      readonly definitions?: Record<string, typeof Schema.Json.Type>;
-    } & Record<string, typeof Schema.Json.Type>;
+    const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(JsonSchemaDocument))(raw);
     const localDefinitionNames = new Map(
       Object.keys(parsed.definitions ?? {}).map((definitionName) => [
         definitionName,
@@ -767,6 +757,12 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
 
 generateFiles().pipe(
   Effect.scoped,
-  Effect.provide(Layer.mergeAll(Logger.layer([Logger.consolePretty()]), NodeServices.layer)),
+  Effect.provide(
+    Layer.mergeAll(
+      Logger.layer([Logger.consolePretty()]),
+      NodeServices.layer,
+      FetchHttpClient.layer,
+    ),
+  ),
   NodeRuntime.runMain,
 );
