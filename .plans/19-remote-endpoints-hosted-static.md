@@ -347,4 +347,3 @@ Each implementation PR should run:
 - `bun typecheck`
 - focused tests for changed backend/web behavior
 - backend tests for any server-side endpoint discovery or auth changes using `bun run test`, never `bun test`
-

@@ -27,6 +27,16 @@ export const SidebarProjectGroupingMode = Schema.Literals([
 ]);
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
+export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = 1;
+export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = 15;
+export const SidebarThreadPreviewCount = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_SIDEBAR_THREAD_PREVIEW_COUNT,
+    maximum: MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
+  }),
+);
+export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
+export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
 
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -74,6 +84,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
+  ),
+  sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
