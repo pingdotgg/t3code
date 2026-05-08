@@ -1,9 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
 import { EnvironmentId, type OrchestrationShellSnapshot } from "@t3tools/contracts";
-import { Cause, Effect, Option } from "effect";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useCallback, useMemo } from "react";
-
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import { readEnvironmentApi } from "../environmentApi";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 

@@ -1,6 +1,7 @@
 import { assert, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -281,6 +282,31 @@ describe("VcsStatusBroadcaster", () => {
         _tag: "remoteUpdated",
         remote: baseRemoteStatus,
       } satisfies VcsStatusStreamEvent);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it.effect("does not start automatic remote refreshes when disabled", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const snapshot = yield* Stream.runHead(
+        broadcaster.streamStatus(
+          { cwd: "/repo" },
+          { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
+        ),
+      );
+
+      assert.isTrue(Option.isSome(snapshot));
+      assert.equal(state.remoteStatusCalls, 0);
+      assert.equal(state.remoteInvalidationCalls, 0);
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 

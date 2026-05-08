@@ -109,6 +109,22 @@ describe("ProviderInstanceConfig", () => {
     expect(decoded.config).toEqual(opaqueConfig);
   });
 
+  it("trims provider instance envelope fields", () => {
+    const decoded = decodeProviderInstanceConfig({
+      driver: "  codex  ",
+      displayName: "  Codex Personal  ",
+      accentColor: "  #dc2626  ",
+      environment: [{ name: "  OPENROUTER_API_KEY  ", value: "  sk-or-test  " }],
+    });
+
+    expect(decoded).toMatchObject({
+      driver: "codex",
+      displayName: "Codex Personal",
+      accentColor: "#dc2626",
+      environment: [{ name: "OPENROUTER_API_KEY", value: "  sk-or-test  " }],
+    });
+  });
+
   it("decodes generic environment variables on the instance envelope", () => {
     const decoded = decodeProviderInstanceConfig({
       driver: "claudeAgent",
