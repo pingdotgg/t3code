@@ -4,7 +4,11 @@ import {
   type ServerProviderVersionAdvisory,
 } from "@t3tools/contracts";
 import { resolveCommandPath } from "@t3tools/shared/shell";
-import { DateTime, Effect, FileSystem, Option, Schema } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 
 import { compareCliVersions } from "./cliVersion.ts";

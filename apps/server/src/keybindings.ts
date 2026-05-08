@@ -19,29 +19,27 @@ import {
   type ServerUpsertKeybindingInput,
   type ServerConfigIssue,
 } from "@t3tools/contracts";
-import {
-  Array,
-  Cache,
-  Cause,
-  Deferred,
-  Duration,
-  Effect,
-  Exit,
-  FileSystem,
-  Path,
-  Layer,
-  Option,
-  Predicate,
-  PubSub,
-  Schema,
-  SchemaGetter,
-  SchemaIssue,
-  SchemaTransformation,
-  Ref,
-  Context,
-  Scope,
-  Stream,
-} from "effect";
+import * as Array from "effect/Array";
+import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
+import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
+import * as SchemaIssue from "effect/SchemaIssue";
+import * as SchemaTransformation from "effect/SchemaTransformation";
+import * as Ref from "effect/Ref";
+import * as Context from "effect/Context";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";

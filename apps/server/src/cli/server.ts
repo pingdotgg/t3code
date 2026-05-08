@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { Command, GlobalFlag } from "effect/unstable/cli";
 
 import { ServerConfig, type StartupPresentation } from "../config.ts";

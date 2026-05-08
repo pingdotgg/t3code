@@ -1,4 +1,13 @@
-import { Cause, Duration, Effect, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import {
   type AuthAccessStreamEvent,
   AuthSessionId,
@@ -29,6 +38,8 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { ServerConfig } from "./config.ts";
+
+const nowIsoSync = () => Effect.runSync(DateTime.now.pipe(Effect.map(DateTime.formatIso)));
 import { Keybindings } from "./keybindings.ts";
 import { Open, resolveAvailableEditors } from "./open.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
@@ -398,7 +409,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 threadId: command.threadId,
                 kind: "setup-script.started",
                 summary: "Setup script started",
-                createdAt: new Date().toISOString(),
+                createdAt: nowIsoSync(),
                 payload,
                 tone: "info",
               }),
@@ -423,7 +434,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             bootstrap?.runSetupScript && targetWorktreePath
               ? (() => {
                   const worktreePath = targetWorktreePath;
-                  const requestedAt = new Date().toISOString();
+                  const requestedAt = nowIsoSync();
                   return projectSetupScriptRunner
                     .runForThread({
                       threadId: command.threadId,
@@ -597,7 +608,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                         `session-stop-for-archive:${normalizedCommand.commandId}`,
                       ),
                       threadId: normalizedCommand.threadId,
-                      createdAt: new Date().toISOString(),
+                      createdAt: nowIsoSync(),
                     });
 
                     yield* dispatchNormalizedCommand(stopCommand);

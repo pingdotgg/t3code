@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as path from "node:path";
 import * as os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -5,7 +6,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 import { describe, expect } from "vitest";
 
 import { AcpSessionRuntime, type AcpSessionRequestLogEvent } from "./AcpSessionRuntime.ts";

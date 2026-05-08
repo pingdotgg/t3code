@@ -12,7 +12,15 @@ import {
   TurnId,
   type UserInputQuestion,
 } from "@t3tools/contracts";
-import { Cause, Effect, Exit, Queue, Random, Ref, Scope, Stream } from "effect";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Queue from "effect/Queue";
+import * as Random from "effect/Random";
+import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@opencode-ai/sdk/v2";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
@@ -96,7 +104,7 @@ export interface OpenCodeAdapterLiveOptions {
 }
 
 function nowIso(): string {
-  return new Date().toISOString();
+  return Effect.runSync(DateTime.now.pipe(Effect.map(DateTime.formatIso)));
 }
 
 /**
@@ -351,7 +359,7 @@ function isoFromEpochMs(value: number | undefined): string | undefined {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return undefined;
   }
-  return new Date(value).toISOString();
+  return DateTime.formatIso(DateTime.makeUnsafe(value));
 }
 
 function messageRoleForPart(

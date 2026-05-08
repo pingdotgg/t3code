@@ -1,8 +1,13 @@
 #!/usr/bin/env node
-
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Data, Effect, FileSystem, Logger, Option, Path } from "effect";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -228,7 +233,10 @@ const publishCmd = Command.make(
 
           const original = yield* fs.readFileString(packageJsonPath);
           yield* fs.writeFileString(backupPath, original);
-          yield* fs.writeFileString(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
+          yield* fs.writeFileString(
+            packageJsonPath,
+            `${Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(pkg)}\n`,
+          );
           yield* Effect.log("[cli] Prepared package.json for publish");
 
           const iconBackups = yield* applyPublishIconOverrides(repoRoot, serverDir);

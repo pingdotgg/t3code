@@ -13,7 +13,12 @@
  * @module provider/Drivers/CursorDriver
  */
 import { CursorSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
-import { Duration, Effect, FileSystem, Path, Schema, Stream } from "effect";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 

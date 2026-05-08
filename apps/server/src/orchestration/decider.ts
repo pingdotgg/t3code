@@ -3,7 +3,8 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "@t3tools/contracts";
-import { DateTime, Effect } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {

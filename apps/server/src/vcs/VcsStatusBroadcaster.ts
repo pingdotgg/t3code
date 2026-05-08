@@ -1,18 +1,15 @@
-import { realpathSync } from "node:fs";
-
-import {
-  Context,
-  Duration,
-  Effect,
-  Exit,
-  Fiber,
-  Layer,
-  PubSub,
-  Ref,
-  Scope,
-  Stream,
-  SynchronizedRef,
-} from "effect";
+import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 import type {
   GitManagerServiceError,
   VcsStatusInput,
@@ -69,18 +66,17 @@ function fingerprintStatusPart(status: unknown): string {
   return JSON.stringify(status);
 }
 
-function normalizeCwd(cwd: string): string {
-  try {
-    return realpathSync.native(cwd);
-  } catch {
-    return cwd;
-  }
-}
+const normalizeCwd = (cwd: string) =>
+  Effect.service(FileSystem.FileSystem).pipe(
+    Effect.flatMap((fs) => fs.realPath(cwd)),
+    Effect.orElseSucceed(() => cwd),
+  );
 
 export const layer = Layer.effect(
   VcsStatusBroadcaster,
   Effect.gen(function* () {
     const workflow = yield* GitWorkflowService.GitWorkflowService;
+    const fs = yield* FileSystem.FileSystem;
     const changesPubSub = yield* Effect.acquireRelease(
       PubSub.unbounded<VcsStatusChange>(),
       (pubsub) => PubSub.shutdown(pubsub),
@@ -195,10 +191,12 @@ export const layer = Layer.effect(
       },
     );
 
+    const withFileSystem = Effect.provideService(FileSystem.FileSystem, fs);
+
     const getStatus: VcsStatusBroadcasterShape["getStatus"] = Effect.fn(
       "VcsStatusBroadcaster.getStatus",
     )(function* (input) {
-      const cwd = normalizeCwd(input.cwd);
+      const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
       const [local, remote] = yield* Effect.all([
         getOrLoadLocalStatus(cwd),
         getOrLoadRemoteStatus(cwd),
@@ -209,7 +207,7 @@ export const layer = Layer.effect(
     const refreshLocalStatus: VcsStatusBroadcasterShape["refreshLocalStatus"] = Effect.fn(
       "VcsStatusBroadcaster.refreshLocalStatus",
     )(function* (rawCwd) {
-      const cwd = normalizeCwd(rawCwd);
+      const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
       yield* workflow.invalidateLocalStatus(cwd);
       const local = yield* workflow.localStatus({ cwd });
       return yield* updateCachedLocalStatus(cwd, local, { publish: true });
@@ -226,7 +224,7 @@ export const layer = Layer.effect(
     const refreshStatus: VcsStatusBroadcasterShape["refreshStatus"] = Effect.fn(
       "VcsStatusBroadcaster.refreshStatus",
     )(function* (rawCwd) {
-      const cwd = normalizeCwd(rawCwd);
+      const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
       const [local, remote] = yield* Effect.all([
         refreshLocalStatus(cwd),
         refreshRemoteStatus(cwd),
@@ -312,7 +310,7 @@ export const layer = Layer.effect(
     const streamStatus: VcsStatusBroadcasterShape["streamStatus"] = (input) =>
       Stream.unwrap(
         Effect.gen(function* () {
-          const cwd = normalizeCwd(input.cwd);
+          const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
           const subscription = yield* PubSub.subscribe(changesPubSub);
           const initialLocal = yield* getOrLoadLocalStatus(cwd);
           const initialRemote = (yield* getCachedStatus(cwd))?.remote?.value ?? null;

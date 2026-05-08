@@ -10,7 +10,8 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import { applyGitStatusStreamEvent } from "@t3tools/shared/git";
-import { Effect, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import { type WsRpcProtocolClient } from "./protocol";
 import { resetWsReconnectBackoff } from "./wsConnectionState";

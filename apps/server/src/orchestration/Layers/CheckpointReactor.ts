@@ -8,7 +8,12 @@ import {
   type OrchestrationEvent,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
-import { Cause, Effect, Layer, Option, Stream } from "effect";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
@@ -27,6 +32,8 @@ import type { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { WorkspaceEntries } from "../../workspace/Services/WorkspaceEntries.ts";
+
+const nowIsoSync = () => Effect.runSync(DateTime.now.pipe(Effect.map(DateTime.formatIso)));
 
 type ReactorInput =
   | {
@@ -584,7 +591,7 @@ const make = Effect.gen(function* () {
   const handleRevertRequested = Effect.fn("handleRevertRequested")(function* (
     event: Extract<OrchestrationEvent, { type: "thread.checkpoint-revert-requested" }>,
   ) {
-    const now = new Date().toISOString();
+    const now = DateTime.formatIso(yield* DateTime.now);
 
     const thread = yield* resolveThreadDetail(event.payload.threadId);
     if (!thread) {
@@ -721,7 +728,7 @@ const make = Effect.gen(function* () {
             threadId: event.payload.threadId,
             turnCount: event.payload.turnCount,
             detail: error.message,
-            createdAt: new Date().toISOString(),
+            createdAt: nowIsoSync(),
           }),
         ),
       );
@@ -740,7 +747,7 @@ const make = Effect.gen(function* () {
             threadId: event.payload.threadId,
             turnId: event.payload.turnId,
             detail: error.message,
-            createdAt: new Date().toISOString(),
+            createdAt: nowIsoSync(),
           }).pipe(Effect.catch(() => Effect.void)),
         ),
       );
@@ -764,7 +771,7 @@ const make = Effect.gen(function* () {
             threadId: event.threadId,
             turnId,
             detail: error.message,
-            createdAt: new Date().toISOString(),
+            createdAt: nowIsoSync(),
           }).pipe(Effect.catch(() => Effect.void)),
         ),
       );

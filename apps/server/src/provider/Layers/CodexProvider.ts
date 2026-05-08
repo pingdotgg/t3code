@@ -1,4 +1,11 @@
-import { DateTime, Duration, Effect, Layer, Option, Result, Schema, Types } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import * as Types from "effect/Types";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
@@ -326,7 +333,7 @@ const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvi
     }));
 
 const makePendingCodexProvider = (codexSettings: CodexSettings): ServerProviderDraft => {
-  const checkedAt = new Date().toISOString();
+  const checkedAt = Effect.runSync(DateTime.now.pipe(Effect.map(DateTime.formatIso)));
   const models = emptyCodexModelsFromSettings(codexSettings);
 
   if (!codexSettings.enabled) {

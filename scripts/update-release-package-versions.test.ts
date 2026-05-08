@@ -1,6 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ConfigProvider, Effect, FileSystem, Layer, Path, Schema, SchemaGetter } from "effect";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as SchemaGetter from "effect/SchemaGetter";
 import { Command, CliError } from "effect/unstable/cli";
 import * as TestConsole from "effect/testing/TestConsole";
 

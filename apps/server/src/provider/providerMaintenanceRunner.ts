@@ -7,7 +7,16 @@ import {
   type ServerProviderUpdatedPayload,
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
-import { Cause, Context, DateTime, Duration, Effect, Layer, Option, Ref, Schema } from "effect";
+import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
+import * as Data from "effect/Data";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -45,6 +54,11 @@ export class ProviderMaintenanceRunner extends Context.Service<
   ProviderMaintenanceRunnerShape
 >()("t3/provider/ProviderMaintenanceRunner") {}
 
+class ProviderMaintenanceCommandError extends Data.TaggedError("ProviderMaintenanceCommandError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
 interface VerifiedProviderRefresh {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly verifiedProviders: ReadonlyArray<ServerProvider>;
@@ -65,7 +79,10 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
           .pipe(
             Effect.mapError(
               (cause) =>
-                new Error(`Failed to run update command ${input.command}: ${cause.message}`),
+                new ProviderMaintenanceCommandError({
+                  message: `Failed to run update command ${input.command}: ${cause.message}`,
+                  cause,
+                }),
             ),
           );
         yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
@@ -86,7 +103,10 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
         ).pipe(
           Effect.mapError(
             (cause) =>
-              new Error(cause instanceof Error ? cause.message : "Update command failed to run."),
+              new ProviderMaintenanceCommandError({
+                message: cause instanceof Error ? cause.message : "Update command failed to run.",
+                cause,
+              }),
           ),
         );
 

@@ -1,4 +1,11 @@
-import { Effect, FileSystem, Option, Path, Random, Schema, Scope, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Random from "effect/Random";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { type CodexSettings, type ModelSelection } from "@t3tools/contracts";
@@ -152,7 +159,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     const schemaPath = yield* writeTempFile(
       operation,
       "codex-schema",
-      JSON.stringify(toJsonSchemaObject(outputSchemaJson)),
+      Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(toJsonSchemaObject(outputSchemaJson)),
     );
     const outputPath = yield* writeTempFile(operation, "codex-output", "");
 

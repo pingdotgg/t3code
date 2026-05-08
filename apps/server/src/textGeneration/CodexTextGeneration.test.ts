@@ -1,6 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Result, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vitest";
 
@@ -113,6 +118,7 @@ function makeFakeCodexBinary(
           : []),
         ...(input.stdinMustContain !== undefined
           ? [
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
               `if ! printf "%s" "$stdin_content" | grep -F -- ${JSON.stringify(input.stdinMustContain)} >/dev/null; then`,
               '  printf "%s\\n" "stdin missing expected content" >&2',
               `  exit 3`,
@@ -121,6 +127,7 @@ function makeFakeCodexBinary(
           : []),
         ...(input.stdinMustNotContain !== undefined
           ? [
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
               `if printf "%s" "$stdin_content" | grep -F -- ${JSON.stringify(input.stdinMustNotContain)} >/dev/null; then`,
               '  printf "%s\\n" "stdin contained forbidden content" >&2',
               `  exit 4`,
@@ -128,7 +135,10 @@ function makeFakeCodexBinary(
             ]
           : []),
         ...(input.stderr !== undefined
-          ? [`printf "%s\\n" ${JSON.stringify(input.stderr)} >&2`]
+          ? [
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              `printf "%s\\n" ${JSON.stringify(input.stderr)} >&2`,
+            ]
           : []),
         'if [ -n "$output_path" ]; then',
         "  cat > \"$output_path\" <<'__T3CODE_FAKE_CODEX_OUTPUT__'",
@@ -415,7 +425,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const { attachmentsDir } = yield* ServerConfig;
-          const attachmentId = `thread-branch-image-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+          const attachmentId = "thread-branch-image-attachment";
           const attachmentPath = path.join(attachmentsDir, `${attachmentId}.png`);
           yield* fs.makeDirectory(attachmentsDir, { recursive: true });
           yield* fs.writeFile(attachmentPath, Buffer.from("hello"));
@@ -453,7 +463,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const { attachmentsDir } = yield* ServerConfig;
-          const attachmentId = `thread-1-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+          const attachmentId = "thread-1-attachment";
           const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
           yield* fs.makeDirectory(attachmentsDir, { recursive: true });
           yield* fs.writeFile(imagePath, Buffer.from("hello"));
@@ -502,7 +512,7 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
           const { attachmentsDir } = yield* ServerConfig;
-          const missingAttachmentId = `thread-missing-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+          const missingAttachmentId = "thread-missing-attachment";
           const missingPath = path.join(attachmentsDir, `${missingAttachmentId}.png`);
           yield* fs.remove(missingPath).pipe(Effect.catch(() => Effect.void));
 

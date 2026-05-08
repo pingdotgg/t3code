@@ -6,7 +6,7 @@
  *
  * @module textGenerationPrompts
  */
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 import type { ChatAttachment } from "@t3tools/contracts";
 
 import { limitSection } from "./TextGenerationUtils.ts";

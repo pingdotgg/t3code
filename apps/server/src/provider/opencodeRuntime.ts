@@ -11,22 +11,21 @@ import {
   type QuestionAnswer,
   type QuestionRequest,
 } from "@opencode-ai/sdk/v2";
-import {
-  Cause,
-  Context,
-  Data,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  Layer,
-  Option,
-  Predicate as P,
-  Ref,
-  Result,
-  Scope,
-  Stream,
-} from "effect";
+import * as Cause from "effect/Cause";
+import * as Context from "effect/Context";
+import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as P from "effect/Predicate";
+import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
+import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { isWindowsCommandNotFound } from "../processRunner.ts";
@@ -66,7 +65,7 @@ export function openCodeRuntimeErrorDetail(cause: unknown): string {
     const status = (anyCause.response as { status?: number } | undefined)?.status;
     const body = anyCause.error ?? anyCause.data ?? anyCause.body;
     try {
-      return `status=${status ?? "?"} body=${JSON.stringify(body ?? cause)}`;
+      return `status=${status ?? "?"} body=${Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(body ?? cause)}`;
     } catch {
       /* fall through */
     }
@@ -337,7 +336,7 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
             shell: process.platform === "win32",
             env: {
               ...(input.environment ?? process.env),
-              OPENCODE_CONFIG_CONTENT: JSON.stringify({}),
+              OPENCODE_CONFIG_CONTENT: Schema.encodeUnknownSync(Schema.UnknownFromJsonString)({}),
             },
           }),
         )

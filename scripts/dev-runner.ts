@@ -5,7 +5,15 @@ import * as NodeOS from "node:os";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { NetService } from "@t3tools/shared/Net";
-import { Config, Data, Effect, Hash, Layer, Logger, Option, Path, Schema } from "effect";
+import * as Config from "effect/Config";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as Hash from "effect/Hash";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import { ChildProcess } from "effect/unstable/process";
 

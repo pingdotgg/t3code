@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as path from "node:path";
 import * as os from "node:os";
 import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -5,7 +6,13 @@ import { fileURLToPath } from "node:url";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { Context, Deferred, Effect, Fiber, Layer, Schema, Stream } from "effect";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import {
@@ -98,7 +105,7 @@ async function waitForFileContent(filePath: string, attempts = 40) {
         return raw;
       }
     } catch {}
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await Effect.runPromise(Effect.yieldNow);
   }
   throw new Error(`Timed out waiting for file content at ${filePath}`);
 }
@@ -113,10 +120,11 @@ async function waitForFileContent(filePath: string, attempts = 40) {
 // tests assumed.
 const makeResolveCursorSettings = Effect.gen(function* () {
   const serverSettings = yield* ServerSettingsService;
-  // @effect-diagnostics effect/returnEffectInGen:off
-  return serverSettings.getSettings.pipe(
-    Effect.map((snapshot) => snapshot.providers.cursor),
-    Effect.orDie,
+  return yield* Effect.succeed(
+    serverSettings.getSettings.pipe(
+      Effect.map((snapshot) => snapshot.providers.cursor),
+      Effect.orDie,
+    ),
   );
 });
 

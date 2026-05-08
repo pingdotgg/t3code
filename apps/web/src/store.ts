@@ -20,7 +20,7 @@ import type {
 } from "@t3tools/contracts";
 import { isProviderDriverKind, ProviderDriverKind } from "@t3tools/contracts";
 import type { ThreadId, TurnId } from "@t3tools/contracts";
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
 import {

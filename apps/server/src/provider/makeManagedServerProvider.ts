@@ -1,5 +1,12 @@
 import type { ServerProvider } from "@t3tools/contracts";
-import { Duration, Effect, Equal, Fiber, PubSub, Ref, Scope, Stream } from "effect";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
+import * as Fiber from "effect/Fiber";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";

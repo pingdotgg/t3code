@@ -4,7 +4,10 @@ import {
   type OpenCodeSettings,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { Cause, Data, Effect } from "effect";
+import * as Cause from "effect/Cause";
+import * as Data from "effect/Data";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
 import {
@@ -250,7 +253,7 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
 export const makePendingOpenCodeProvider = (
   openCodeSettings: OpenCodeSettings,
 ): ServerProviderDraft => {
-  const checkedAt = new Date().toISOString();
+  const checkedAt = Effect.runSync(DateTime.now.pipe(Effect.map(DateTime.formatIso)));
   const models = providerModelsFromSettings(
     [],
     PROVIDER,
@@ -298,7 +301,7 @@ export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatu
   environment: NodeJS.ProcessEnv = process.env,
 ): Effect.fn.Return<ServerProviderDraft, never, OpenCodeRuntime> {
   const openCodeRuntime = yield* OpenCodeRuntime;
-  const checkedAt = new Date().toISOString();
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCodeSettings.customModels;
   const isExternalServer = openCodeSettings.serverUrl.trim().length > 0;
 

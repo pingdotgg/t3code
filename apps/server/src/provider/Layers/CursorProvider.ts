@@ -1,5 +1,4 @@
-import * as nodeOs from "node:os";
-
+import * as NodeOs from "node:os";
 import type {
   CursorSettings,
   ModelCapabilities,
@@ -11,7 +10,15 @@ import type {
 } from "@t3tools/contracts";
 import { ProviderDriverKind } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Result } from "effect";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
@@ -59,7 +66,7 @@ export const CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES = {
 export function buildInitialCursorProviderSnapshot(
   cursorSettings: CursorSettings,
 ): ServerProviderDraft {
-  const checkedAt = new Date().toISOString();
+  const checkedAt = Effect.runSync(DateTime.now.pipe(Effect.map(DateTime.formatIso)));
   const models = getCursorFallbackModels(cursorSettings);
 
   if (!cursorSettings.enabled) {
@@ -854,7 +861,7 @@ function isCursorAboutJsonFormatUnsupported(result: CommandResult): boolean {
 const readCursorCliConfigChannel = Effect.fn("readCursorCliConfigChannel")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const configPath = path.join(nodeOs.homedir(), ".cursor", "cli-config.json");
+  const configPath = path.join(NodeOs.homedir(), ".cursor", "cli-config.json");
   const raw = yield* fileSystem.readFileString(configPath).pipe(Effect.orElseSucceed(() => ""));
   return parseCursorCliConfigChannel(raw);
 });
@@ -1085,7 +1092,7 @@ export const checkCursorProviderStatus = Effect.fn("checkCursorProviderStatus")(
   never,
   ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path
 > {
-  const checkedAt = new Date().toISOString();
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const fallbackModels = getCursorFallbackModels(cursorSettings);
 
   if (!cursorSettings.enabled) {

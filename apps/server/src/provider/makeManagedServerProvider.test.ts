@@ -1,7 +1,12 @@
 import { describe, it, assert } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { Deferred, Effect, Fiber, PubSub, Ref, Stream } from "effect";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
 

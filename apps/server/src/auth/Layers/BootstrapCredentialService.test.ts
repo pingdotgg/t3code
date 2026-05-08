@@ -1,6 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { Duration, Effect, Layer } from "effect";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { TestClock } from "effect/testing";
 
 import type { ServerConfigShape } from "../../config.ts";

@@ -1,7 +1,11 @@
 import { ClaudeSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vitest";
 
@@ -287,6 +291,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
       const claudeHome = path.join(process.cwd(), ".claude-work-test");
       return yield* withFakeClaudeEnv(
         {
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
           output: JSON.stringify({
             structured_output: {
               title: "Use Claude home",

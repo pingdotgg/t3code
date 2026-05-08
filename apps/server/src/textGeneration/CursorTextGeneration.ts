@@ -1,4 +1,7 @@
-import { Effect, Option, Ref, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { type CursorSettings, type ModelSelection } from "@t3tools/contracts";

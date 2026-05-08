@@ -1,6 +1,9 @@
 import { CommandId, EventId, ProjectId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
-import { Effect, Layer, Schema, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { PersistenceDecodeError } from "../Errors.ts";
@@ -17,7 +20,7 @@ layer("OrchestrationEventStore", (it) => {
     Effect.gen(function* () {
       const eventStore = yield* OrchestrationEventStore;
       const sql = yield* SqlClient.SqlClient;
-      const now = new Date().toISOString();
+      const now = "2026-01-01T00:00:00.000Z";
 
       const appended = yield* eventStore.append({
         type: "project.created",
@@ -69,7 +72,7 @@ layer("OrchestrationEventStore", (it) => {
     Effect.gen(function* () {
       const eventStore = yield* OrchestrationEventStore;
       const sql = yield* SqlClient.SqlClient;
-      const now = new Date().toISOString();
+      const now = "2026-01-01T00:00:00.000Z";
 
       yield* sql`
         INSERT INTO orchestration_events (

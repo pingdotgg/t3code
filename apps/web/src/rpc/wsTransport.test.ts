@@ -1,5 +1,5 @@
 import { DEFAULT_SERVER_SETTINGS, WS_METHODS } from "@t3tools/contracts";
-import { Stream } from "effect";
+import * as Stream from "effect/Stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {

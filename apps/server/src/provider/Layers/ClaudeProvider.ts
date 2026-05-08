@@ -6,7 +6,11 @@ import {
   type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import { Effect, Option, Path, Result } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Result from "effect/Result";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   createModelCapabilities,
@@ -521,7 +525,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   never,
   ChildProcessSpawner.ChildProcessSpawner | Path.Path
 > {
-  const checkedAt = new Date().toISOString();
+  const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const allModels = providerModelsFromSettings(
     BUILT_IN_MODELS,
     PROVIDER,
@@ -665,7 +669,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
 });
 
 export const makePendingClaudeProvider = (claudeSettings: ClaudeSettings): ServerProviderDraft => {
-  const checkedAt = new Date().toISOString();
+  const checkedAt = Effect.runSync(DateTime.now.pipe(Effect.map(DateTime.formatIso)));
   const models = providerModelsFromSettings(
     BUILT_IN_MODELS,
     PROVIDER,

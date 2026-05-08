@@ -5,7 +5,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { queryOptions } from "@tanstack/react-query";
-import { Option, Schema } from "effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { ensureEnvironmentApi } from "../environmentApi";
 
 interface CheckpointDiffQueryInput {

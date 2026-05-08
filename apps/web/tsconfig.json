@@ -15,12 +15,22 @@
     "plugins": [
       {
         "name": "@effect/language-service",
-        "namespaceImportPackages": ["@effect/platform-node"],
+        "namespaceImportPackages": ["@effect/platform-node", "effect"],
         "diagnosticSeverity": {
           "importFromBarrel": "error",
           "anyUnknownInErrorContext": "error",
-          "instanceOfSchema": "warning",
-          "deterministicKeys": "warning"
+          "unsafeEffectTypeAssertion": "error",
+          "instanceOfSchema": "error",
+          "deterministicKeys": "error",
+          "strictEffectProvide": "off",
+          "missingEffectServiceDependency": "error",
+          "leakingRequirements": "error",
+          "globalErrorInEffectCatch": "error",
+          "globalErrorInEffectFailure": "error",
+          "unknownInEffectCatch": "error",
+          "strictBooleanExpressions": "off",
+          "preferSchemaOverJson": "error",
+          "schemaSyncInEffect": "error"
         }
       }
     ]

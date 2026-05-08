@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
-import { Effect, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { describe, it } from "vitest";
 import { ThreadId } from "@t3tools/contracts";
 import * as CodexErrors from "effect-codex-app-server/errors";
