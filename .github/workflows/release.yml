@@ -272,11 +272,16 @@ jobs:
             exit 0
           }
 
-          Install-PackageProvider `
-            -Name NuGet `
-            -MinimumVersion 2.8.5.201 `
-            -Force `
-            -Scope CurrentUser
+          try {
+            Install-PackageProvider `
+              -Name NuGet `
+              -MinimumVersion 2.8.5.201 `
+              -Force `
+              -Scope CurrentUser `
+              -ErrorAction Stop
+          } catch {
+            Write-Warning "Could not bootstrap NuGet package provider. Continuing because the runner may already have a usable provider. $($_.Exception.Message)"
+          }
 
           Install-Module `
             -Name TrustedSigning `
@@ -284,7 +289,8 @@ jobs:
             -Force `
             -AllowClobber `
             -Repository PSGallery `
-            -Scope CurrentUser
+            -Scope CurrentUser `
+            -ErrorAction Stop
 
           Import-Module TrustedSigning -MinimumVersion 0.5.0 -Force
           Get-Command Invoke-TrustedSigning -ErrorAction Stop
