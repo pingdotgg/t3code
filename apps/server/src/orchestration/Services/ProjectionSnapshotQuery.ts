@@ -73,6 +73,17 @@ export interface ProjectionSnapshotQueryShape {
   >;
 
   /**
+   * Read archived thread shell summaries for the archive page.
+   *
+   * This query is separate from the main shell snapshot so archived threads
+   * are never bootstrapped into normal navigation state.
+   */
+  readonly getArchivedShellSnapshot: () => Effect.Effect<
+    OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
+
+  /**
    * Read the latest projection snapshot sequence without hydrating read-model
    * entities.
    */

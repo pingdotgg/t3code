@@ -308,12 +308,24 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               }),
             );
           case "thread.deleted":
+          case "thread.archived":
             return Effect.succeed(
               Option.some({
                 kind: "thread-removed" as const,
                 sequence: event.sequence,
                 threadId: event.payload.threadId,
               }),
+            );
+          case "thread.unarchived":
+            return projectionSnapshotQuery.getThreadShellById(event.payload.threadId).pipe(
+              Effect.map((thread) =>
+                Option.map(thread, (nextThread) => ({
+                  kind: "thread-upserted" as const,
+                  sequence: event.sequence,
+                  thread: nextThread,
+                })),
+              ),
+              Effect.catch(() => Effect.succeed(Option.none())),
             );
           default:
             if (event.aggregateKind !== "thread") {
@@ -732,6 +744,23 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 liveStream,
               );
             }),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
+            projectionSnapshotQuery.getArchivedShellSnapshot().pipe(
+              Effect.tapError((cause) =>
+                Effect.logError("orchestration archived shell snapshot load failed", { cause }),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: "Failed to load archived orchestration shell snapshot",
+                    cause,
+                  }),
+              ),
+            ),
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_WS_METHODS.subscribeThread]: (input) =>

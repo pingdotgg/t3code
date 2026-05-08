@@ -44,14 +44,10 @@ import {
 } from "../../providerInstances";
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { useShallow } from "zustand/react/shallow";
-import {
-  selectProjectsAcrossEnvironments,
-  selectThreadShellsAcrossEnvironments,
-  useStore,
-} from "../../store";
+import { selectProjectsAcrossEnvironments, useStore } from "../../store";
+import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
-import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
 import { DraftInput } from "../ui/draft-input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -1330,14 +1326,50 @@ export function ProviderSettingsPanel() {
 
 export function ArchivedThreadsPanel() {
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
-  const threads = useStore(useShallow(selectThreadShellsAcrossEnvironments));
   const { unarchiveThread, confirmAndDeleteThread } = useThreadActions();
+  const environmentIds = useMemo(
+    () => [...new Set(projects.map((project) => project.environmentId))],
+    [projects],
+  );
+  const {
+    snapshots: archivedSnapshots,
+    error: archiveError,
+    isLoading: isLoadingArchive,
+    refresh: refreshArchivedThreads,
+  } = useArchivedThreadSnapshots(environmentIds);
+
   const archivedGroups = useMemo(() => {
-    return projects
+    const projectsByEnvironmentAndId = new Map(
+      archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
+        snapshot.projects.map(
+          (project) =>
+            [
+              `${environmentId}:${project.id}`,
+              {
+                id: project.id,
+                environmentId,
+                name: project.title,
+                cwd: project.workspaceRoot,
+              },
+            ] as const,
+        ),
+      ),
+    );
+    const threads = archivedSnapshots.flatMap(({ environmentId, snapshot }) =>
+      snapshot.threads.map((thread) => ({
+        ...thread,
+        environmentId,
+      })),
+    );
+
+    return [...projectsByEnvironmentAndId.values()]
       .map((project) => ({
         project,
         threads: threads
-          .filter((thread) => thread.projectId === project.id && thread.archivedAt !== null)
+          .filter(
+            (thread) =>
+              thread.projectId === project.id && thread.environmentId === project.environmentId,
+          )
           .toSorted((left, right) => {
             const leftKey = left.archivedAt ?? left.createdAt;
             const rightKey = right.archivedAt ?? right.createdAt;
@@ -1345,7 +1377,7 @@ export function ArchivedThreadsPanel() {
           }),
       }))
       .filter((group) => group.threads.length > 0);
-  }, [projects, threads]);
+  }, [archivedSnapshots]);
 
   const handleArchivedThreadContextMenu = useCallback(
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
@@ -1362,6 +1394,7 @@ export function ArchivedThreadsPanel() {
       if (clicked === "unarchive") {
         try {
           await unarchiveThread(threadRef);
+          refreshArchivedThreads();
         } catch (error) {
           toastManager.add(
             stackedThreadToast({
@@ -1376,24 +1409,37 @@ export function ArchivedThreadsPanel() {
 
       if (clicked === "delete") {
         await confirmAndDeleteThread(threadRef);
+        refreshArchivedThreads();
       }
     },
-    [confirmAndDeleteThread, unarchiveThread],
+    [confirmAndDeleteThread, refreshArchivedThreads, unarchiveThread],
   );
 
   return (
     <SettingsPageContainer>
       {archivedGroups.length === 0 ? (
         <SettingsSection title="Archived threads">
-          <Empty className="min-h-88">
-            <EmptyMedia variant="icon">
-              <ArchiveIcon />
-            </EmptyMedia>
-            <EmptyHeader>
-              <EmptyTitle>No archived threads</EmptyTitle>
-              <EmptyDescription>Archived threads will appear here.</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
+          <SettingsRow
+            title={
+              <span className="inline-flex items-center gap-2">
+                {isLoadingArchive ? (
+                  <LoaderIcon className="size-3.5 animate-spin text-muted-foreground" />
+                ) : (
+                  <ArchiveIcon className="size-3.5 text-muted-foreground" />
+                )}
+                {isLoadingArchive
+                  ? "Loading archived threads"
+                  : archiveError
+                    ? "Could not load archived threads"
+                    : "No archived threads"}
+              </span>
+            }
+            description={
+              isLoadingArchive
+                ? "Checking connected environments."
+                : (archiveError ?? "Archived threads will appear here.")
+            }
+          />
         </SettingsSection>
       ) : (
         archivedGroups.map(({ project, threads: projectThreads }) => (
@@ -1403,9 +1449,8 @@ export function ArchivedThreadsPanel() {
             icon={<ProjectFavicon environmentId={project.environmentId} cwd={project.cwd} />}
           >
             {projectThreads.map((thread) => (
-              <div
+              <SettingsRow
                 key={thread.id}
-                className="flex items-center justify-between gap-3 border-t border-border px-4 py-3 first:border-t-0 sm:px-5"
                 onContextMenu={(event) => {
                   event.preventDefault();
                   void handleArchivedThreadContextMenu(
@@ -1416,39 +1461,40 @@ export function ArchivedThreadsPanel() {
                     },
                   );
                 }}
-              >
-                <div className="min-w-0 flex-1">
-                  <h3 className="truncate text-sm font-medium text-foreground">{thread.title}</h3>
-                  <p className="text-xs text-muted-foreground">
+                title={thread.title}
+                description={
+                  <>
                     Archived {formatRelativeTimeLabel(thread.archivedAt ?? thread.createdAt)}
                     {" \u00b7 Created "}
                     {formatRelativeTimeLabel(thread.createdAt)}
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
-                  onClick={() =>
-                    void unarchiveThread(scopeThreadRef(thread.environmentId, thread.id)).catch(
-                      (error) => {
-                        toastManager.add(
-                          stackedThreadToast({
-                            type: "error",
-                            title: "Failed to unarchive thread",
-                            description:
-                              error instanceof Error ? error.message : "An error occurred.",
-                          }),
-                        );
-                      },
-                    )
-                  }
-                >
-                  <ArchiveX className="size-3.5" />
-                  <span>Unarchive</span>
-                </Button>
-              </div>
+                  </>
+                }
+                control={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 shrink-0 cursor-pointer gap-1.5 px-2.5"
+                    onClick={() =>
+                      void unarchiveThread(scopeThreadRef(thread.environmentId, thread.id))
+                        .then(() => refreshArchivedThreads())
+                        .catch((error) => {
+                          toastManager.add(
+                            stackedThreadToast({
+                              type: "error",
+                              title: "Failed to unarchive thread",
+                              description:
+                                error instanceof Error ? error.message : "An error occurred.",
+                            }),
+                          );
+                        })
+                    }
+                  >
+                    <ArchiveX className="size-3.5" />
+                    <span>Unarchive</span>
+                  </Button>
+                }
+              />
             ))}
           </SettingsSection>
         ))
