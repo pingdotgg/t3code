@@ -532,7 +532,7 @@ function AppIconPreview({ id, src }: { id: AppIconId; src: string }) {
     .slice(0, 2);
 
   return (
-    <span className="relative flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/70 bg-muted/50 shadow-sm/4">
+    <span className="relative flex size-20">
       {!failed ? (
         <img
           src={src}
@@ -556,7 +556,7 @@ function AppIconPicker({
   onChange: (value: AppIconId) => void;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-2 pt-4 pb-5 sm:grid-cols-4">
+    <div className="grid grid-cols-5 gap-2 pt-4 pb-5">
       {APP_ICON_OPTIONS.map((option) => {
         const selected = option.id === value;
         return (
@@ -565,7 +565,7 @@ function AppIconPicker({
             type="button"
             aria-pressed={selected}
             className={cn(
-              "group flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg border px-2 py-3 text-center transition-colors",
+              "group flex min-h-0 flex-col items-center justify-center gap-1.5 rounded-xl border px-1.5 py-2 text-center transition-colors",
               selected
                 ? "border-foreground/55 bg-foreground/[0.04] text-foreground"
                 : "border-border/70 bg-background/40 text-muted-foreground hover:border-foreground/25 hover:bg-muted/50 hover:text-foreground",
@@ -573,7 +573,7 @@ function AppIconPicker({
             onClick={() => onChange(option.id)}
           >
             <AppIconPreview id={option.id} src={option.previewSrc} />
-            <span className="text-ui-xs font-medium">{option.label}</span>
+            <span className="text-xs leading-tight font-medium">{option.label}</span>
           </button>
         );
       })}
@@ -862,7 +862,7 @@ export function InterfaceSettingsPanel() {
 
   return (
     <SettingsPageContainer>
-      <SettingsSection title="Appearance">
+      <SettingsSection title="Theme">
         <SettingsRow
           title="Theme"
           description="Build a theme from mode, hue, and saturation."
@@ -909,11 +909,12 @@ export function InterfaceSettingsPanel() {
             theme={theme}
           />
         </SettingsRow>
+      </SettingsSection>
 
+      <SettingsSection title="Icons">
         <SettingsRow
           title="App icon"
           description="Choose the app artwork used for browser chrome and the desktop dock or window icon."
-          status={`Selected: ${resolveAppIconOption(settings.appIcon).label}`}
           resetAction={
             settings.appIcon !== DEFAULT_APP_ICON_ID ? (
               <SettingResetButton

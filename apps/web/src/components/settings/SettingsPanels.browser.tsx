@@ -538,11 +538,18 @@ describe("Settings panels", () => {
   it("renders the custom theme builder instead of preset theme cards", async () => {
     await renderSettingsPanel(<InterfaceSettingsPanel />);
 
+    await expect
+      .element(page.getByRole("heading", { name: "Theme", level: 2 }))
+      .toBeInTheDocument();
+    await expect
+      .element(page.getByRole("heading", { name: "Icons", level: 2 }))
+      .toBeInTheDocument();
     await expect.element(page.getByLabelText("Theme mode")).toBeInTheDocument();
     await expect.element(page.getByLabelText("Theme hue")).toBeInTheDocument();
     await expect.element(page.getByText("Hue", { exact: true })).toBeInTheDocument();
     await expect.element(page.getByText("Saturation", { exact: true })).toBeInTheDocument();
     await expect.element(page.getByLabelText("Theme saturation")).toBeInTheDocument();
+    await expect.element(page.getByText("App icon", { exact: true })).toBeInTheDocument();
     expect(document.querySelector('[data-theme-preview-card="true"]')).toBeNull();
     expect(document.querySelector('[aria-label="Theme hue wheel"]')).toBeNull();
   });

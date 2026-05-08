@@ -3,6 +3,7 @@ import {
   type AppIconId,
   type ClientSettings,
 } from "@forma/contracts/settings";
+import { APP_DEFAULT_ICON_ID, APP_STAGE_LABEL } from "./branding";
 
 export interface AppIconOption {
   readonly id: AppIconId;
@@ -21,10 +22,10 @@ const customAppIconIds = [
 
 const DEFAULT_APP_ICON_OPTION: AppIconOption = {
   id: "default",
-  label: "Default",
-  previewSrc: "/favicon.ico",
-  faviconHref: "/favicon.ico",
-  appleTouchIconHref: "/apple-touch-icon.png",
+  label: `Default (${APP_STAGE_LABEL})`,
+  previewSrc: `/app-icons/${APP_DEFAULT_ICON_ID}.png`,
+  faviconHref: `/app-icons/${APP_DEFAULT_ICON_ID}.png`,
+  appleTouchIconHref: `/app-icons/${APP_DEFAULT_ICON_ID}.png`,
 };
 
 export const APP_ICON_OPTIONS: ReadonlyArray<AppIconOption> = [

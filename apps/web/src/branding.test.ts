@@ -33,5 +33,14 @@ describe("branding", () => {
     expect(branding.APP_BASE_NAME).toBe("Forma");
     expect(branding.APP_STAGE_LABEL).toBe("Nightly");
     expect(branding.APP_DISPLAY_NAME).toBe("Forma (Nightly)");
+    expect(branding.APP_DEFAULT_ICON_ID).toBe("forma-nightly");
+  });
+
+  it("maps build stages to the expected default icon ids", async () => {
+    const branding = await import("./branding");
+
+    expect(branding.resolveDefaultBuildAppIconId("Alpha")).toBe("forma-prod");
+    expect(branding.resolveDefaultBuildAppIconId("Nightly")).toBe("forma-nightly");
+    expect(branding.resolveDefaultBuildAppIconId("Dev")).toBe("forma-dev");
   });
 });

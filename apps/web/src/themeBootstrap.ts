@@ -1,6 +1,7 @@
 import { readBrowserClientSettings } from "./clientPersistenceStorage";
 import { applyAppIconPreferenceToDocument } from "./appIcon";
 import { applyInterfaceSettingsToDocument } from "./interfaceAppearance";
+import { DEFAULT_APP_ICON_ID } from "@forma/contracts/settings";
 import {
   THEME_MEDIA_QUERY,
   applyThemePreferenceToDocument,
@@ -18,7 +19,7 @@ applyThemePreferenceToDocument(readStoredThemeSettings(), {
 });
 
 const clientSettings = readBrowserClientSettings();
+applyAppIconPreferenceToDocument(clientSettings ?? { appIcon: DEFAULT_APP_ICON_ID }, document);
 if (clientSettings) {
-  applyAppIconPreferenceToDocument(clientSettings, document);
   applyInterfaceSettingsToDocument(clientSettings, document);
 }

@@ -1,4 +1,5 @@
 import type { ComponentType } from "react";
+import { GitPullRequestIcon as SourceControlIcon } from "lucide-react";
 import {
   IconWifi as ConnectionsIcon,
   IconSwatchpalette as InterfaceIcon,
@@ -66,8 +67,8 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
   {
     label: "Source Control",
     to: "/settings/source-control",
-    icon: ConnectionsIcon,
-    iconUsesFill: true,
+    icon: SourceControlIcon,
+    iconUsesFill: false,
     restoreScope: null,
   },
   {

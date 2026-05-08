@@ -85,11 +85,7 @@ import { DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { HeaderIconActionButton } from "./HeaderIconActionButton";
 import { WorkspaceFilesTree } from "./WorkspaceFilesTree";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
-import {
-  AddDocumentIcon,
-  AddProjectFolderIcon,
-  TerminalToggleIcon,
-} from "./icons/custom";
+import { AddDocumentIcon, AddProjectFolderIcon, TerminalToggleIcon } from "./icons/custom";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
