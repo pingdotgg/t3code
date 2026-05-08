@@ -2,7 +2,13 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Console, Data, Effect, FileSystem, Logger, Path } from "effect";
+import * as Console from "effect/Console";
+import * as Data from "effect/Data";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Logger from "effect/Logger";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import { Command } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -100,7 +106,11 @@ const runCommand = Effect.fn("runCommand")(function* (
 
 function collectSources(
   directory: string,
-): Effect.Effect<ReadonlyArray<string>, unknown, FileSystem.FileSystem | Path.Path> {
+): Effect.Effect<
+  ReadonlyArray<string>,
+  PlatformError.PlatformError,
+  FileSystem.FileSystem | Path.Path
+> {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
