@@ -19,7 +19,7 @@ export type ArchivedSnapshotEntry = {
 const knownArchivedThreadEnvironmentKeys = new Set<string>();
 
 function makeArchivedThreadsEnvironmentKey(environmentIds: ReadonlyArray<EnvironmentId>): string {
-  return [...environmentIds].sort().join(ARCHIVED_THREADS_ENVIRONMENT_KEY_SEPARATOR);
+  return environmentIds.toSorted().join(ARCHIVED_THREADS_ENVIRONMENT_KEY_SEPARATOR);
 }
 
 function parseArchivedThreadsEnvironmentKey(key: string): ReadonlyArray<EnvironmentId> {
