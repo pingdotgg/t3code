@@ -98,7 +98,7 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("resolveRepositoryIdentityCa
   const topLevelResult = yield* runManagedProcess({
     command: "git",
     args: ["-C", cwd, "rev-parse", "--show-toplevel"],
-    timeoutBehavior: "result",
+    timeoutBehavior: "timedOutResult",
     shell: process.platform === "win32",
   }).pipe(Effect.option);
   if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
@@ -121,7 +121,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn("resolveRepositoryIdenti
     const remoteResult = yield* runManagedProcess({
       command: "git",
       args: ["-C", cacheKey, "remote", "-v"],
-      timeoutBehavior: "result",
+      timeoutBehavior: "timedOutResult",
       shell: process.platform === "win32",
     }).pipe(Effect.option);
     if (remoteResult._tag === "None" || remoteResult.value.code !== 0) {

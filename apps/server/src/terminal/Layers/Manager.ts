@@ -365,7 +365,7 @@ function checkWindowsSubprocessActivity(
     maxOutputBytes: 32_768,
     outputMode: "truncate",
     shell: process.platform === "win32",
-    timeoutBehavior: "result",
+    timeoutBehavior: "timedOutResult",
   }).pipe(
     Effect.map((result) => result.code === 0),
     Effect.mapError(
@@ -393,7 +393,7 @@ const checkPosixSubprocessActivity = Effect.fn("terminal.checkPosixSubprocessAct
     timeoutMs: 1_000,
     maxOutputBytes: 32_768,
     outputMode: "truncate",
-    timeoutBehavior: "result",
+    timeoutBehavior: "timedOutResult",
   }).pipe(
     Effect.mapError(
       (cause) =>
@@ -412,7 +412,7 @@ const checkPosixSubprocessActivity = Effect.fn("terminal.checkPosixSubprocessAct
     timeoutMs: 1_000,
     maxOutputBytes: 262_144,
     outputMode: "truncate",
-    timeoutBehavior: "result",
+    timeoutBehavior: "timedOutResult",
   }).pipe(
     Effect.mapError(
       (cause) =>

@@ -52,7 +52,6 @@ describe("resolveServerEnvironmentLabel", () => {
           stdout: " Julius's MacBook Pro \n",
           stderr: "",
           code: 0,
-          signal: null,
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
@@ -70,7 +69,7 @@ describe("resolveServerEnvironmentLabel", () => {
         expect.objectContaining({
           command: "scutil",
           args: ["--get", "ComputerName"],
-          timeoutBehavior: "result",
+          timeoutBehavior: "timedOutResult",
         }),
       );
     }),
@@ -96,7 +95,6 @@ describe("resolveServerEnvironmentLabel", () => {
           stdout: "CI Runner\n",
           stderr: "",
           code: 0,
-          signal: null,
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
@@ -114,7 +112,7 @@ describe("resolveServerEnvironmentLabel", () => {
         expect.objectContaining({
           command: "hostnamectl",
           args: ["--pretty"],
-          timeoutBehavior: "result",
+          timeoutBehavior: "timedOutResult",
         }),
       );
     }),
@@ -161,7 +159,6 @@ describe("resolveServerEnvironmentLabel", () => {
           stdout: " ",
           stderr: "",
           code: 0,
-          signal: null,
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,

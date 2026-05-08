@@ -165,17 +165,24 @@ describe("runProcess", () => {
     ).rejects.toBeInstanceOf(ProcessTimeoutError);
   });
 
-  it("returns a timed out result when timeoutBehavior is result", async () => {
+  it("returns a synthetic timed out result when timeoutBehavior is timedOutResult", async () => {
     const result = await Effect.runPromise(
       runProcess({
         command: "node",
         args: [helperScriptPath, "sleep", "500"],
         timeoutMs: 50,
-        timeoutBehavior: "result",
+        timeoutBehavior: "timedOutResult",
       }).pipe(Effect.provide(NodeServices.layer)),
     );
 
-    expect(result.timedOut).toBe(true);
+    expect(result).toMatchObject({
+      stdout: "",
+      stderr: "",
+      code: null,
+      timedOut: true,
+      stdoutTruncated: false,
+      stderrTruncated: false,
+    });
   });
 
   afterAll(() => {

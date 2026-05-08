@@ -15,14 +15,17 @@ export interface ProcessRunInput {
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
   readonly shell?: boolean | string | undefined;
-  readonly timeoutBehavior?: "error" | "result" | undefined;
+  /**
+   * On timeout, return a synthetic timedOut result.
+   * Partial stdout/stderr are not preserved.
+   */
+  readonly timeoutBehavior?: "error" | "timedOutResult" | undefined;
 }
 
 export interface ProcessRunOutput {
   readonly stdout: string;
   readonly stderr: string;
   readonly code: number | null;
-  readonly signal: NodeJS.Signals | null;
   readonly timedOut: boolean;
   readonly stdoutTruncated: boolean;
   readonly stderrTruncated: boolean;
@@ -235,7 +238,6 @@ export const runProcess = Effect.fn("processRunner.runProcess")(
       stdout: stdout.text,
       stderr: stderr.text,
       code: exitCode,
-      signal: null,
       timedOut: false,
       stdoutTruncated: stdout.truncated,
       stderrTruncated: stderr.truncated,
@@ -252,12 +254,11 @@ export const runProcess = Effect.fn("processRunner.runProcess")(
         if (Option.isSome(result)) {
           return Effect.succeed(result.value);
         }
-        if (timeoutBehavior === "result") {
+        if (timeoutBehavior === "timedOutResult") {
           return Effect.succeed({
             stdout: "",
             stderr: "",
             code: null,
-            signal: null,
             timedOut: true,
             stdoutTruncated: false,
             stderrTruncated: false,
