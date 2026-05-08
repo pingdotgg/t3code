@@ -19,6 +19,7 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { deriveTimelineEntries, formatElapsed } from "../../session-logic";
 import { type TurnDiffSummary } from "../../types";
 import { summarizeTurnDiffStats } from "../../lib/turnDiffTree";
+import { type AssistantTurnStats } from "../../lib/turnStats";
 import ChatMarkdown from "../ChatMarkdown";
 import {
   BotIcon,
@@ -40,6 +41,7 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
 import { DiffStatLabel, hasNonZeroStat } from "./DiffStatLabel";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { TurnStatsFooter } from "./TurnStatsFooter";
 import {
   computeStableMessagesTimelineRows,
   MAX_VISIBLE_WORK_LOG_ENTRIES,
@@ -101,6 +103,8 @@ const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
+const EMPTY_ASSISTANT_TURN_STATS_BY_MESSAGE_ID: ReadonlyMap<MessageId, AssistantTurnStats> =
+  new Map();
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -115,10 +119,11 @@ interface MessagesTimelineProps {
   timelineEntries: ReturnType<typeof deriveTimelineEntries>;
   completionDividerBeforeEntryId: string | null;
   completionSummary: string | null;
-  turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
+  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+  assistantTurnStatsByMessageId?: ReadonlyMap<MessageId, AssistantTurnStats>;
   routeThreadKey: string;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
-  revertTurnCountByUserMessageId: Map<MessageId, number>;
+  revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -145,6 +150,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   completionDividerBeforeEntryId,
   completionSummary,
   turnDiffSummaryByAssistantMessageId,
+  assistantTurnStatsByMessageId = EMPTY_ASSISTANT_TURN_STATS_BY_MESSAGE_ID,
   routeThreadKey,
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
@@ -167,6 +173,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         isWorking,
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
+        assistantTurnStatsByMessageId,
         revertTurnCountByUserMessageId,
       }),
     [
@@ -175,6 +182,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isWorking,
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
+      assistantTurnStatsByMessageId,
       revertTurnCountByUserMessageId,
     ],
   );
@@ -444,6 +452,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           </p>
           <AssistantCopyButton row={row} />
         </div>
+        {row.assistantTurnStats ? <TurnStatsFooter stats={row.assistantTurnStats} /> : null}
       </div>
     </>
   );

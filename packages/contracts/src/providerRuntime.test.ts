@@ -170,6 +170,7 @@ describe("ProviderRuntimeEvent", () => {
           maxTokens: 200000,
           toolUses: 25,
           durationMs: 43567,
+          timeToFirstTokenMs: 4300,
         },
       },
     });
@@ -180,5 +181,6 @@ describe("ProviderRuntimeEvent", () => {
     }
     expect(parsed.payload.usage.maxTokens).toBe(200000);
     expect(parsed.payload.usage.usedTokens).toBe(31251);
+    expect(parsed.payload.usage.timeToFirstTokenMs).toBe(4300);
   });
 });

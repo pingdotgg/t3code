@@ -2,6 +2,7 @@ import * as Equal from "effect/Equal";
 import { type TimelineEntry, type WorkLogEntry } from "../../session-logic";
 import { type ChatMessage, type ProposedPlan, type TurnDiffSummary } from "../../types";
 import { type MessageId } from "@t3tools/contracts";
+import { type AssistantTurnStats } from "../../lib/turnStats";
 
 export const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 
@@ -28,6 +29,7 @@ export type MessagesTimelineRow =
       showCompletionDivider: boolean;
       showAssistantCopyButton: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
+      assistantTurnStats?: AssistantTurnStats | undefined;
       revertTurnCount?: number | undefined;
     }
   | {
@@ -114,6 +116,7 @@ export function deriveMessagesTimelineRows(input: {
   isWorking: boolean;
   activeTurnStartedAt: string | null;
   turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+  assistantTurnStatsByMessageId: ReadonlyMap<MessageId, AssistantTurnStats>;
   revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
 }): MessagesTimelineRow[] {
   const nextRows: MessagesTimelineRow[] = [];
@@ -173,6 +176,10 @@ export function deriveMessagesTimelineRows(input: {
       assistantTurnDiffSummary:
         timelineEntry.message.role === "assistant"
           ? input.turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
+          : undefined,
+      assistantTurnStats:
+        timelineEntry.message.role === "assistant"
+          ? input.assistantTurnStatsByMessageId.get(timelineEntry.message.id)
           : undefined,
       revertTurnCount:
         timelineEntry.message.role === "user"
@@ -234,6 +241,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showCompletionDivider === bm.showCompletionDivider &&
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
+        a.assistantTurnStats === bm.assistantTurnStats &&
         a.revertTurnCount === bm.revertTurnCount
       );
     }

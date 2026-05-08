@@ -84,6 +84,7 @@ function buildProps() {
     completionDividerBeforeEntryId: null,
     completionSummary: null,
     turnDiffSummaryByAssistantMessageId: new Map(),
+    assistantTurnStatsByMessageId: new Map(),
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: () => {},
     revertTurnCountByUserMessageId: new Map(),

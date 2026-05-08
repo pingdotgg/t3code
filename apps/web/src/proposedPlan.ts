@@ -102,7 +102,10 @@ export function buildPlanImplementationThreadTitle(planMarkdown: string): string
 
 export function buildProposedPlanMarkdownFilename(planMarkdown: string): string {
   const title = proposedPlanTitle(planMarkdown);
-  return `${sanitizePlanFileSegment(title ?? "plan")}.md`;
+  const segment = sanitizePlanFileSegment(title ?? "plan");
+  const planSegment =
+    segment === "plan" || segment.startsWith("plan-") ? segment : `plan-${segment}`;
+  return `${planSegment}.md`;
 }
 
 export function normalizePlanMarkdownForExport(planMarkdown: string): string {

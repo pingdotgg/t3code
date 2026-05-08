@@ -120,6 +120,7 @@ import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
+import { buildLatestAssistantTurnStatsMap } from "../lib/turnStats";
 import {
   reconnectSavedEnvironment,
   useSavedEnvironmentRegistryStore,
@@ -1562,6 +1563,28 @@ export default function ChatView(props: ChatViewProps) {
       deriveTimelineEntries(timelineMessages, activeThread?.proposedPlans ?? [], workLogEntries),
     [activeThread?.proposedPlans, timelineMessages, workLogEntries],
   );
+  const latestAssistantTurnStatsByMessageId = useMemo(() => {
+    const assistantMessageId = activeLatestTurn?.assistantMessageId;
+    const assistantMessage =
+      assistantMessageId && latestTurnSettled
+        ? (timelineMessages.find(
+            (message) => message.id === assistantMessageId && message.role === "assistant",
+          ) ?? null)
+        : null;
+
+    return buildLatestAssistantTurnStatsMap({
+      latestTurn: latestTurnSettled ? activeLatestTurn : null,
+      assistantMessage,
+      activities: threadActivities,
+      modelSelection: activeThread?.modelSelection,
+    });
+  }, [
+    activeLatestTurn,
+    activeThread?.modelSelection,
+    latestTurnSettled,
+    threadActivities,
+    timelineMessages,
+  ]);
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
     useTurnDiffSummaries(activeThread);
   const turnDiffSummaryByAssistantMessageId = useMemo(() => {
@@ -3564,6 +3587,7 @@ export default function ChatView(props: ChatViewProps) {
               completionDividerBeforeEntryId={completionDividerBeforeEntryId}
               completionSummary={completionSummary}
               turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
+              assistantTurnStatsByMessageId={latestAssistantTurnStatsByMessageId}
               activeThreadEnvironmentId={activeThread.environmentId}
               routeThreadKey={routeThreadKey}
               onOpenTurnDiff={onOpenTurnDiff}

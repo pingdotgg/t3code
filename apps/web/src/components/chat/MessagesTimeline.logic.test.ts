@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { type AssistantTurnStats } from "../../lib/turnStats";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
@@ -6,6 +7,15 @@ import {
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
 } from "./MessagesTimeline.logic";
+
+const ASSISTANT_TURN_STATS: AssistantTurnStats = {
+  summaryLabel: "gpt-5.4 (High). 321 tokens. 1 tool call",
+  items: [
+    { id: "model", label: "gpt-5.4 (High)" },
+    { id: "tokens", label: "321 tokens" },
+    { id: "tools", label: "1 tool call" },
+  ],
+};
 
 describe("computeMessageDurationStart", () => {
   it("returns message createdAt when there is no preceding user message", () => {
@@ -254,6 +264,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
+      assistantTurnStatsByMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
 
@@ -313,6 +324,7 @@ describe("deriveMessagesTimelineRows", () => {
       turnDiffSummaryByAssistantMessageId: new Map([
         ["assistant-1" as never, assistantTurnDiffSummary],
       ]),
+      assistantTurnStatsByMessageId: new Map([["assistant-1" as never, ASSISTANT_TURN_STATS]]),
       revertTurnCountByUserMessageId: new Map([["user-1" as never, 1]]),
     });
 
@@ -327,6 +339,56 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(userRow?.revertTurnCount).toBe(1);
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
+    expect(assistantRow?.assistantTurnStats).toBe(ASSISTANT_TURN_STATS);
+  });
+
+  it("attaches assistant turn stats only to the targeted assistant row", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "assistant-old-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:05Z",
+          message: {
+            id: "assistant-old" as never,
+            role: "assistant",
+            text: "Older reply",
+            turnId: "turn-0" as never,
+            createdAt: "2026-01-01T00:00:05Z",
+            completedAt: "2026-01-01T00:00:06Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-new-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:20Z",
+          message: {
+            id: "assistant-new" as never,
+            role: "assistant",
+            text: "Latest reply",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:20Z",
+            completedAt: "2026-01-01T00:00:30Z",
+            streaming: false,
+          },
+        },
+      ],
+      completionDividerBeforeEntryId: null,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      assistantTurnStatsByMessageId: new Map([["assistant-new" as never, ASSISTANT_TURN_STATS]]),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const assistantRows = rows.filter(
+      (row): row is Extract<(typeof rows)[number], { kind: "message" }> =>
+        row.kind === "message" && row.message.role === "assistant",
+    );
+
+    expect(assistantRows[0]?.assistantTurnStats).toBeUndefined();
+    expect(assistantRows[1]?.assistantTurnStats).toBe(ASSISTANT_TURN_STATS);
   });
 });
 
@@ -368,6 +430,7 @@ describe("computeStableMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
+      assistantTurnStatsByMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
 
@@ -418,6 +481,7 @@ describe("computeStableMessagesTimelineRows", () => {
         isWorking: false,
         activeTurnStartedAt: null,
         turnDiffSummaryByAssistantMessageId: new Map(),
+        assistantTurnStatsByMessageId: new Map(),
         revertTurnCountByUserMessageId: new Map(),
       });
 
@@ -473,6 +537,7 @@ describe("computeStableMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaryByAssistantMessageId: new Map(),
+      assistantTurnStatsByMessageId: new Map(),
       revertTurnCountByUserMessageId: new Map(),
     });
 

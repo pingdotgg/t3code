@@ -28,9 +28,45 @@ export type ContextWindowSnapshot = NullableContextWindowUsage & {
 export function deriveLatestContextWindowSnapshot(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): ContextWindowSnapshot | null {
+  return deriveLatestContextWindowSnapshotForTurn(activities);
+}
+
+export function deriveLatestContextWindowSnapshotForTurn(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  turnId?: OrchestrationThreadActivity["turnId"],
+): ContextWindowSnapshot | null {
+  return findLatestContextWindowSnapshot(activities, (activity) =>
+    turnId !== undefined ? activity.turnId === turnId : true,
+  );
+}
+
+export function deriveLatestUnassignedContextWindowSnapshotSince(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  startedAt: string | null | undefined,
+): ContextWindowSnapshot | null {
+  if (!startedAt) {
+    return null;
+  }
+  const startedAtMs = Date.parse(startedAt);
+  if (!Number.isFinite(startedAtMs)) {
+    return null;
+  }
+  return findLatestContextWindowSnapshot(activities, (activity) => {
+    if (activity.turnId !== null && activity.turnId !== undefined) {
+      return false;
+    }
+    const activityAtMs = Date.parse(activity.createdAt);
+    return Number.isFinite(activityAtMs) && activityAtMs >= startedAtMs;
+  });
+}
+
+function findLatestContextWindowSnapshot(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  matchesActivity: (activity: OrchestrationThreadActivity) => boolean,
+): ContextWindowSnapshot | null {
   for (let index = activities.length - 1; index >= 0; index -= 1) {
     const activity = activities[index];
-    if (!activity || activity.kind !== "context-window.updated") {
+    if (!activity || activity.kind !== "context-window.updated" || !matchesActivity(activity)) {
       continue;
     }
 
@@ -65,6 +101,7 @@ export function deriveLatestContextWindowSnapshot(
       lastReasoningOutputTokens: asFiniteNumber(payload?.lastReasoningOutputTokens),
       toolUses: asFiniteNumber(payload?.toolUses),
       durationMs: asFiniteNumber(payload?.durationMs),
+      timeToFirstTokenMs: asFiniteNumber(payload?.timeToFirstTokenMs),
       compactsAutomatically: asBoolean(payload?.compactsAutomatically) ?? false,
       updatedAt: activity.createdAt,
     };

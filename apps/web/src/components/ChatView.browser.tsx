@@ -5666,6 +5666,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
         ...snapshot,
         threads,
       },
+      resolveRpc: (body) =>
+        body._tag === WS_METHODS.projectsWriteFile
+          ? { relativePath: body.relativePath }
+          : undefined,
     });
 
     try {
@@ -5688,6 +5692,39 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => {
           expect(document.body.textContent).toContain(
             "Enter a path relative to /repo/worktrees/plan-thread.",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      const savePathInput = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("input")).find(
+            (input) => input.value === "plan-ship-plan-mode-follow-up.md",
+          ) ?? null,
+        "Unable to find default root plan-artifact save path.",
+      );
+      expect(savePathInput.value).toBe("plan-ship-plan-mode-follow-up.md");
+
+      const saveButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Save",
+          ) ?? null,
+        "Unable to find proposed plan Save button.",
+      );
+      saveButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(wsRequests).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                _tag: WS_METHODS.projectsWriteFile,
+                cwd: "/repo/worktrees/plan-thread",
+                relativePath: "plan-ship-plan-mode-follow-up.md",
+              }),
+            ]),
           );
         },
         { timeout: 8_000, interval: 16 },

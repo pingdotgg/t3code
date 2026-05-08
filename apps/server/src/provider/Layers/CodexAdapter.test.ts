@@ -964,7 +964,6 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         kind: "notification",
         provider: ProviderDriverKind.make("codex"),
         threadId: asThreadId("thread-1"),
-        turnId: asTurnId("turn-1"),
         createdAt: new Date().toISOString(),
         method: "thread/tokenUsage/updated",
         payload: {
@@ -1015,6 +1014,8 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         lastReasoningOutputTokens: 0,
         compactsAutomatically: true,
       });
+      assert.equal(firstEvent.value.turnId, "turn-1");
+      assert.equal(firstEvent.value.providerRefs?.providerTurnId, "turn-1");
     }),
   );
 });

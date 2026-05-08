@@ -42,6 +42,17 @@ interface AssistantSegmentState {
   activeMessageId: MessageId | null;
 }
 
+interface AssistantResponseSegmentTiming {
+  startedAtMs: number;
+}
+
+interface AssistantStreamTimingState {
+  accumulatedResponseDurationMs: number;
+  activeResponseSegment?: AssistantResponseSegmentTiming | undefined;
+  turnStartedAtMs?: number;
+  firstAssistantDeltaAtMs?: number;
+}
+
 const TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY = 10_000;
 const TURN_MESSAGE_IDS_BY_TURN_TTL = Duration.minutes(120);
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
@@ -197,13 +208,83 @@ function assistantSegmentMessageId(baseKey: string, segmentIndex: number): Messa
     segmentIndex === 0 ? `assistant:${baseKey}` : `assistant:${baseKey}:segment:${segmentIndex}`,
   );
 }
+
+function parseTimestampMs(value: string): number | undefined {
+  const timestampMs = Date.parse(value);
+  return Number.isFinite(timestampMs) ? timestampMs : undefined;
+}
+
+function toPositiveFiniteMs(value: number | undefined): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function deriveAssistantStreamDurationMs(
+  state: AssistantStreamTimingState | undefined,
+): number | undefined {
+  if (!state) {
+    return undefined;
+  }
+
+  const roundedDurationMs = Math.round(state.accumulatedResponseDurationMs);
+  return roundedDurationMs > 0 ? roundedDurationMs : undefined;
+}
+
+function deriveAssistantTimeToFirstTokenMs(
+  state: AssistantStreamTimingState | undefined,
+): number | undefined {
+  if (!state) {
+    return undefined;
+  }
+  const { turnStartedAtMs, firstAssistantDeltaAtMs } = state;
+  if (
+    turnStartedAtMs === undefined ||
+    firstAssistantDeltaAtMs === undefined ||
+    !Number.isFinite(turnStartedAtMs) ||
+    !Number.isFinite(firstAssistantDeltaAtMs)
+  ) {
+    return undefined;
+  }
+  const durationMs = firstAssistantDeltaAtMs - turnStartedAtMs;
+  return durationMs > 0 && Number.isFinite(durationMs) ? Math.round(durationMs) : undefined;
+}
+
 function buildContextWindowActivityPayload(
   event: ProviderRuntimeEvent,
+  options?: {
+    readonly assistantStreamDurationMs?: number | undefined;
+    readonly assistantTimeToFirstTokenMs?: number | undefined;
+  },
 ): ThreadTokenUsageSnapshot | undefined {
   if (event.type !== "thread.token-usage.updated" || event.payload.usage.usedTokens <= 0) {
     return undefined;
   }
-  return event.payload.usage;
+  const usage = event.payload.usage;
+  const providerDurationMs = toPositiveFiniteMs(usage.durationMs);
+  const providerTimeToFirstTokenMs = toPositiveFiniteMs(usage.timeToFirstTokenMs);
+  const assistantStreamDurationMs = toPositiveFiniteMs(options?.assistantStreamDurationMs);
+  const assistantTimeToFirstTokenMs = toPositiveFiniteMs(options?.assistantTimeToFirstTokenMs);
+  if (providerDurationMs !== undefined) {
+    return providerTimeToFirstTokenMs !== undefined
+      ? usage
+      : {
+          ...usage,
+          ...(assistantTimeToFirstTokenMs !== undefined
+            ? { timeToFirstTokenMs: assistantTimeToFirstTokenMs }
+            : {}),
+        };
+  }
+
+  if (assistantStreamDurationMs === undefined && assistantTimeToFirstTokenMs === undefined) {
+    return usage;
+  }
+
+  return {
+    ...usage,
+    ...(assistantStreamDurationMs !== undefined ? { durationMs: assistantStreamDurationMs } : {}),
+    ...(assistantTimeToFirstTokenMs !== undefined
+      ? { timeToFirstTokenMs: assistantTimeToFirstTokenMs }
+      : {}),
+  };
 }
 
 function normalizeRuntimeTurnState(
@@ -259,6 +340,10 @@ function requestKindFromCanonicalRequestType(
 
 function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
+  options?: {
+    readonly assistantStreamDurationMs?: number | undefined;
+    readonly assistantTimeToFirstTokenMs?: number | undefined;
+  },
 ): ReadonlyArray<OrchestrationThreadActivity> {
   const maybeSequence = (() => {
     const eventWithSequence = event as ProviderRuntimeEvent & { sessionSequence?: number };
@@ -508,7 +593,7 @@ function runtimeEventToActivities(
     }
 
     case "thread.token-usage.updated": {
-      const payload = buildContextWindowActivityPayload(event);
+      const payload = buildContextWindowActivityPayload(event, options);
       if (!payload) {
         return [];
       }
@@ -628,6 +713,15 @@ const make = Effect.gen(function* () {
       ),
   });
 
+  const assistantStreamTimingByTurnKey = yield* Cache.make<string, AssistantStreamTimingState>({
+    capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
+    timeToLive: TURN_MESSAGE_IDS_BY_TURN_TTL,
+    lookup: () =>
+      Effect.die(
+        new Error("assistant stream timing should be read through getOption before initialization"),
+      ),
+  });
+
   const bufferedProposedPlanById = yield* Cache.make<string, { text: string; createdAt: string }>({
     capacity: BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY,
     timeToLive: BUFFERED_PROPOSED_PLAN_BY_ID_TTL,
@@ -702,6 +796,99 @@ const make = Effect.gen(function* () {
 
   const clearAssistantSegmentStateForTurn = (threadId: ThreadId, turnId: TurnId) =>
     Cache.invalidate(assistantSegmentStateByTurnKey, providerTurnKey(threadId, turnId));
+
+  const rememberTurnStartedAt = (input: {
+    threadId: ThreadId;
+    turnId: TurnId;
+    createdAt: string;
+  }) =>
+    Effect.gen(function* () {
+      const startedAtMs = parseTimestampMs(input.createdAt);
+      if (startedAtMs === undefined) {
+        return;
+      }
+
+      const turnKey = providerTurnKey(input.threadId, input.turnId);
+      const existingState = yield* Cache.getOption(assistantStreamTimingByTurnKey, turnKey);
+      yield* Cache.set(assistantStreamTimingByTurnKey, turnKey, {
+        ...(Option.isSome(existingState)
+          ? existingState.value
+          : { accumulatedResponseDurationMs: 0 }),
+        turnStartedAtMs: startedAtMs,
+      });
+    });
+
+  const rememberAssistantStreamDelta = (input: {
+    threadId: ThreadId;
+    turnId: TurnId;
+    createdAt: string;
+  }) =>
+    Effect.gen(function* () {
+      const deltaAtMs = parseTimestampMs(input.createdAt);
+      if (deltaAtMs === undefined) {
+        return;
+      }
+
+      const turnKey = providerTurnKey(input.threadId, input.turnId);
+      const existingState = yield* Cache.getOption(assistantStreamTimingByTurnKey, turnKey);
+      const currentState = Option.isSome(existingState)
+        ? existingState.value
+        : ({ accumulatedResponseDurationMs: 0 } satisfies AssistantStreamTimingState);
+      const activeResponseSegment = currentState.activeResponseSegment
+        ? {
+            startedAtMs: Math.min(currentState.activeResponseSegment.startedAtMs, deltaAtMs),
+          }
+        : {
+            startedAtMs: deltaAtMs,
+          };
+
+      yield* Cache.set(assistantStreamTimingByTurnKey, turnKey, {
+        ...currentState,
+        activeResponseSegment,
+        firstAssistantDeltaAtMs:
+          currentState.firstAssistantDeltaAtMs !== undefined
+            ? Math.min(currentState.firstAssistantDeltaAtMs, deltaAtMs)
+            : deltaAtMs,
+      });
+    });
+
+  const closeAssistantResponseSegment = (input: {
+    threadId: ThreadId;
+    turnId: TurnId;
+    createdAt: string;
+  }) =>
+    Effect.gen(function* () {
+      const closedAtMs = parseTimestampMs(input.createdAt);
+      if (closedAtMs === undefined) {
+        return;
+      }
+
+      const turnKey = providerTurnKey(input.threadId, input.turnId);
+      const existingState = yield* Cache.getOption(assistantStreamTimingByTurnKey, turnKey);
+      if (Option.isNone(existingState) || !existingState.value.activeResponseSegment) {
+        return;
+      }
+
+      const { activeResponseSegment, ...state } = existingState.value;
+      const segmentDurationMs = closedAtMs - activeResponseSegment.startedAtMs;
+      yield* Cache.set(assistantStreamTimingByTurnKey, turnKey, {
+        ...state,
+        accumulatedResponseDurationMs:
+          segmentDurationMs > 0 && Number.isFinite(segmentDurationMs)
+            ? state.accumulatedResponseDurationMs + segmentDurationMs
+            : state.accumulatedResponseDurationMs,
+      });
+    });
+
+  const getAssistantStreamDurationMsForTurn = (threadId: ThreadId, turnId: TurnId) =>
+    Cache.getOption(assistantStreamTimingByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+      Effect.map((state) => deriveAssistantStreamDurationMs(Option.getOrUndefined(state))),
+    );
+
+  const getAssistantTimeToFirstTokenMsForTurn = (threadId: ThreadId, turnId: TurnId) =>
+    Cache.getOption(assistantStreamTimingByTurnKey, providerTurnKey(threadId, turnId)).pipe(
+      Effect.map((state) => deriveAssistantTimeToFirstTokenMs(Option.getOrUndefined(state))),
+    );
 
   const getActiveAssistantMessageIdForTurn = (threadId: ThreadId, turnId: TurnId) =>
     getAssistantSegmentStateForTurn(threadId, turnId).pipe(
@@ -1057,6 +1244,7 @@ const make = Effect.gen(function* () {
       const proposedPlanPrefix = `plan:${threadId}:`;
       const turnKeys = Array.from(yield* Cache.keys(turnMessageIdsByTurnKey));
       const assistantSegmentKeys = Array.from(yield* Cache.keys(assistantSegmentStateByTurnKey));
+      const assistantTimingKeys = Array.from(yield* Cache.keys(assistantStreamTimingByTurnKey));
       const proposedPlanKeys = Array.from(yield* Cache.keys(bufferedProposedPlanById));
       yield* Effect.forEach(
         turnKeys,
@@ -1082,6 +1270,14 @@ const make = Effect.gen(function* () {
         (key) =>
           key.startsWith(prefix)
             ? Cache.invalidate(assistantSegmentStateByTurnKey, key)
+            : Effect.void,
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+      yield* Effect.forEach(
+        assistantTimingKeys,
+        (key) =>
+          key.startsWith(prefix)
+            ? Cache.invalidate(assistantStreamTimingByTurnKey, key)
             : Effect.void,
         { concurrency: 1 },
       ).pipe(Effect.asVoid);
@@ -1188,6 +1384,14 @@ const make = Effect.gen(function* () {
       const now = event.createdAt;
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
+
+      if (event.type === "turn.started" && eventTurnId) {
+        yield* rememberTurnStartedAt({
+          threadId: thread.id,
+          turnId: eventTurnId,
+          createdAt: now,
+        });
+      }
 
       const conflictsWithActiveTurn =
         activeTurnId !== null && eventTurnId !== undefined && !sameId(activeTurnId, eventTurnId);
@@ -1324,6 +1528,11 @@ const make = Effect.gen(function* () {
           ...(turnId ? { turnId } : {}),
         });
         if (turnId) {
+          yield* rememberAssistantStreamDelta({
+            threadId: thread.id,
+            turnId,
+            createdAt: now,
+          });
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
 
@@ -1362,6 +1571,11 @@ const make = Effect.gen(function* () {
           ? toTurnId(event.turnId)
           : undefined;
       if (pauseForUserTurnId) {
+        yield* closeAssistantResponseSegment({
+          threadId: thread.id,
+          turnId: pauseForUserTurnId,
+          createdAt: now,
+        });
         const detailedThread = yield* getLoadedThreadDetail();
         const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
           serverSettingsService.getSettings,
@@ -1429,6 +1643,13 @@ const make = Effect.gen(function* () {
         const detailedThread = yield* getLoadedThreadDetail();
         const messages = detailedThread?.messages ?? [];
         const turnId = toTurnId(event.turnId);
+        if (turnId) {
+          yield* closeAssistantResponseSegment({
+            threadId: thread.id,
+            turnId,
+            createdAt: now,
+          });
+        }
         const activeAssistantMessageId = turnId
           ? yield* getActiveAssistantMessageIdForTurn(thread.id, turnId)
           : Option.none<MessageId>();
@@ -1496,6 +1717,11 @@ const make = Effect.gen(function* () {
         const proposedPlans = detailedThread?.proposedPlans ?? [];
         const turnId = toTurnId(event.turnId);
         if (turnId) {
+          yield* closeAssistantResponseSegment({
+            threadId: thread.id,
+            turnId,
+            createdAt: now,
+          });
           const assistantMessageIds = yield* getAssistantMessageIdsForTurn(thread.id, turnId);
           yield* Effect.forEach(
             assistantMessageIds,
@@ -1605,7 +1831,18 @@ const make = Effect.gen(function* () {
         }
       }
 
-      const activities = runtimeEventToActivities(event);
+      const assistantStreamDurationMs =
+        event.type === "thread.token-usage.updated" && eventTurnId
+          ? yield* getAssistantStreamDurationMsForTurn(thread.id, eventTurnId)
+          : undefined;
+      const assistantTimeToFirstTokenMs =
+        event.type === "thread.token-usage.updated" && eventTurnId
+          ? yield* getAssistantTimeToFirstTokenMsForTurn(thread.id, eventTurnId)
+          : undefined;
+      const activities = runtimeEventToActivities(event, {
+        assistantStreamDurationMs,
+        assistantTimeToFirstTokenMs,
+      });
       yield* Effect.forEach(activities, (activity) =>
         orchestrationEngine.dispatch({
           type: "thread.activity.append",

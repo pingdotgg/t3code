@@ -102,9 +102,15 @@ describe("buildPlanImplementationThreadTitle", () => {
 });
 
 describe("buildProposedPlanMarkdownFilename", () => {
-  it("derives a stable markdown filename from the plan heading", () => {
+  it("derives a root plan-artifact markdown filename from the plan heading", () => {
     expect(buildProposedPlanMarkdownFilename("# Integrate Effect RPC Into Server App")).toBe(
-      "integrate-effect-rpc-into-server-app.md",
+      "plan-integrate-effect-rpc-into-server-app.md",
+    );
+  });
+
+  it("does not double-prefix headings that already start with plan", () => {
+    expect(buildProposedPlanMarkdownFilename("# PLAN: Integrate Effect RPC")).toBe(
+      "plan-integrate-effect-rpc.md",
     );
   });
 

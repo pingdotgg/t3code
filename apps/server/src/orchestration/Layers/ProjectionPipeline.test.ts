@@ -170,6 +170,144 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
       }
     }),
   );
+
+  it.effect("keeps the latest turn pointer when a completed session becomes ready", () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const createdAt = "2026-05-08T08:00:00.000Z";
+      const startedAt = "2026-05-08T08:00:01.000Z";
+      const completedAt = "2026-05-08T08:00:06.000Z";
+      const turnId = TurnId.make("turn-latest-pointer");
+
+      yield* eventStore.append({
+        type: "project.created",
+        eventId: EventId.make("evt-latest-project"),
+        aggregateKind: "project",
+        aggregateId: ProjectId.make("project-latest-pointer"),
+        occurredAt: createdAt,
+        commandId: CommandId.make("cmd-latest-project"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-latest-project"),
+        metadata: {},
+        payload: {
+          projectId: ProjectId.make("project-latest-pointer"),
+          title: "Project latest pointer",
+          workspaceRoot: "/tmp/project-latest-pointer",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-latest-thread"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-latest-pointer"),
+        occurredAt: createdAt,
+        commandId: CommandId.make("cmd-latest-thread"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-latest-thread"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-latest-pointer"),
+          projectId: ProjectId.make("project-latest-pointer"),
+          title: "Latest pointer",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5.4",
+          },
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.session-set",
+        eventId: EventId.make("evt-latest-running"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-latest-pointer"),
+        occurredAt: startedAt,
+        commandId: CommandId.make("cmd-latest-running"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-latest-running"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-latest-pointer"),
+          session: {
+            threadId: ThreadId.make("thread-latest-pointer"),
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: startedAt,
+          },
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.message-sent",
+        eventId: EventId.make("evt-latest-assistant"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-latest-pointer"),
+        occurredAt: completedAt,
+        commandId: CommandId.make("cmd-latest-assistant"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-latest-assistant"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-latest-pointer"),
+          messageId: MessageId.make("message-latest-assistant"),
+          role: "assistant",
+          text: "done",
+          turnId,
+          streaming: false,
+          createdAt: completedAt,
+          updatedAt: completedAt,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.session-set",
+        eventId: EventId.make("evt-latest-ready"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-latest-pointer"),
+        occurredAt: completedAt,
+        commandId: CommandId.make("cmd-latest-ready"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-latest-ready"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-latest-pointer"),
+          session: {
+            threadId: ThreadId.make("thread-latest-pointer"),
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: completedAt,
+          },
+        },
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      const rows = yield* sql<{ readonly latestTurnId: string | null }>`
+        SELECT latest_turn_id AS "latestTurnId"
+        FROM projection_threads
+        WHERE thread_id = 'thread-latest-pointer'
+      `;
+      assert.deepEqual(rows, [{ latestTurnId: "turn-latest-pointer" }]);
+    }),
+  );
 });
 
 it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-base-")))(

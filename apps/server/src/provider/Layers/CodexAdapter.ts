@@ -22,6 +22,7 @@ import {
   RuntimeRequestId,
   ProviderApprovalDecision,
   ThreadId,
+  TurnId,
   ProviderSendTurnInput,
 } from "@t3tools/contracts";
 import { Effect, Exit, Fiber, FileSystem, Queue, Schema, Scope, Stream } from "effect";
@@ -715,14 +716,24 @@ function mapToRuntimeEvents(
       EffectCodexSchema.V2ThreadTokenUsageUpdatedNotification,
       event.payload,
     );
-    const normalizedUsage = payload ? normalizeCodexTokenUsage(payload.tokenUsage) : undefined;
+    if (!payload) {
+      return [];
+    }
+    const normalizedUsage = normalizeCodexTokenUsage(payload.tokenUsage);
     if (!normalizedUsage) {
       return [];
     }
+    const turnId = TurnId.make(payload.turnId);
+    const baseEvent = runtimeEventBase(event, canonicalThreadId);
     return [
       {
         type: "thread.token-usage.updated",
-        ...runtimeEventBase(event, canonicalThreadId),
+        ...baseEvent,
+        turnId,
+        providerRefs: {
+          ...baseEvent.providerRefs,
+          providerTurnId: turnId,
+        },
         payload: {
           usage: normalizedUsage,
         },

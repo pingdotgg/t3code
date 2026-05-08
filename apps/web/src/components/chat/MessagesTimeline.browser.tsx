@@ -61,6 +61,7 @@ function buildProps() {
     routeThreadKey: "environment-local:thread-1",
     onOpenTurnDiff: vi.fn(),
     revertTurnCountByUserMessageId: new Map(),
+    assistantTurnStatsByMessageId: new Map(),
     onRevertUserMessage: vi.fn(),
     isRevertingCheckpoint: false,
     onImageExpand: vi.fn(),
@@ -153,6 +154,59 @@ describe("MessagesTimeline", () => {
       expect(props.onIsAtEndChange).toHaveBeenCalledWith(true);
       expect(scrollToEndSpy).toHaveBeenCalledWith({ animated: false });
       expect(requestAnimationFrameSpy).toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("renders a compact assistant turn stats footer and omits missing metrics", async () => {
+    const assistantTurnStatsByMessageId = new Map([
+      [
+        "assistant-1",
+        {
+          summaryLabel: "gpt-5.4 (Low). 321 tokens. 1 tool call",
+          items: [
+            { id: "model", label: "gpt-5.4 (Low)" },
+            { id: "tokens", label: "321 tokens" },
+            { id: "tools", label: "1 tool call" },
+          ],
+        },
+      ],
+    ]);
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        assistantTurnStatsByMessageId={assistantTurnStatsByMessageId as never}
+        timelineEntries={[
+          {
+            id: "assistant-1",
+            kind: "message",
+            createdAt: "2026-04-13T12:00:20.000Z",
+            message: {
+              id: "assistant-1" as never,
+              role: "assistant",
+              text: "Completed response",
+              turnId: "turn-1" as never,
+              createdAt: "2026-04-13T12:00:20.000Z",
+              completedAt: "2026-04-13T12:00:30.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      await expect.element(page.getByText("Completed response")).toBeVisible();
+      await expect.element(page.getByText("gpt-5.4 (Low)")).toBeVisible();
+      await expect.element(page.getByText("321 tokens")).toBeVisible();
+      await expect.element(page.getByText("1 tool call")).toBeVisible();
+      await expect.element(page.getByText("0 tok/sec")).not.toBeInTheDocument();
+      await expect
+        .element(
+          page.getByLabelText("Assistant turn stats: gpt-5.4 (Low). 321 tokens. 1 tool call"),
+        )
+        .toBeVisible();
     } finally {
       await screen.unmount();
     }

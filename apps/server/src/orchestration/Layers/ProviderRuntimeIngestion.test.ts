@@ -2720,6 +2720,473 @@ describe("ProviderRuntimeIngestion", () => {
     });
   });
 
+  it("derives context window duration from Codex assistant response boundaries", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-throughput-single-span");
+    const startedAt = "2026-05-08T12:00:00.000Z";
+    const firstDeltaAt = "2026-05-08T12:04:19.000Z";
+    const lastDeltaAt = "2026-05-08T12:04:44.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-throughput-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: startedAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-throughput-delta-first"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: firstDeltaAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-throughput"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "hello",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-throughput-delta-last"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: lastDeltaAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-throughput"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: " world",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-throughput-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: lastDeltaAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        state: "completed",
+      },
+    });
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-throughput-token-usage"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: lastDeltaAt,
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        usage: {
+          usedTokens: 150_000,
+          lastOutputTokens: 1_790,
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-throughput-token-usage",
+      ),
+    );
+
+    const usageActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-throughput-token-usage",
+    );
+    expect(usageActivity?.payload).toMatchObject({
+      usedTokens: 150_000,
+      lastOutputTokens: 1_790,
+      durationMs: 25_000,
+      timeToFirstTokenMs: 259_000,
+    });
+    expect((usageActivity?.payload as { durationMs?: number } | undefined)?.durationMs).not.toBe(
+      284_000,
+    );
+  });
+
+  it("uses the assistant completion boundary instead of a tiny final delta span", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-throughput-tiny-final-delta");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-throughput-tiny-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-throughput-tiny-delta-first"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:06.186Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-throughput-tiny"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "ok",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-throughput-tiny-delta-last"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:06.195Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-throughput-tiny"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: ".",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-throughput-tiny-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:06.700Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        state: "completed",
+      },
+    });
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-throughput-tiny-token-usage"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:06.700Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        usage: {
+          usedTokens: 72_193,
+          lastOutputTokens: 16,
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "evt-throughput-tiny-token-usage",
+      ),
+    );
+    const usageActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-throughput-tiny-token-usage",
+    );
+
+    expect(usageActivity?.payload).toMatchObject({
+      usedTokens: 72_193,
+      lastOutputTokens: 16,
+      durationMs: 514,
+      timeToFirstTokenMs: 6_186,
+    });
+    expect((usageActivity?.payload as { durationMs?: number } | undefined)?.durationMs).not.toBe(9);
+  });
+
+  it("preserves provider duration instead of overwriting it with derived Codex stream duration", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-throughput-provider-duration");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-throughput-provider-duration-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-throughput-provider-duration-delta-first"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:10.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-throughput-provider-duration"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "hello",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-throughput-provider-duration-delta-last"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:35.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-throughput-provider-duration"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: " world",
+      },
+    });
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-throughput-provider-duration-token-usage"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:36.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        usage: {
+          usedTokens: 150_000,
+          lastOutputTokens: 1_790,
+          durationMs: 12_345,
+          timeToFirstTokenMs: 1_234,
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "evt-throughput-provider-duration-token-usage",
+      ),
+    );
+    const usageActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) =>
+        activity.id === "evt-throughput-provider-duration-token-usage",
+    );
+
+    expect(usageActivity?.payload).toMatchObject({
+      usedTokens: 150_000,
+      lastOutputTokens: 1_790,
+      durationMs: 12_345,
+      timeToFirstTokenMs: 1_234,
+    });
+    expect((usageActivity?.payload as { durationMs?: number } | undefined)?.durationMs).not.toBe(
+      25_000,
+    );
+    expect(
+      (usageActivity?.payload as { timeToFirstTokenMs?: number } | undefined)?.timeToFirstTokenMs,
+    ).not.toBe(10_000);
+  });
+
+  it("omits context window duration when no positive assistant text span was observed", async () => {
+    const harness = await createHarness();
+
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-throughput-token-usage-without-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:04:44.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-throughput-without-delta"),
+      payload: {
+        usage: {
+          usedTokens: 150_000,
+          lastOutputTokens: 1_790,
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "evt-throughput-token-usage-without-delta",
+      ),
+    );
+    const usageActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) =>
+        activity.id === "evt-throughput-token-usage-without-delta",
+    );
+
+    expect(usageActivity?.payload).toMatchObject({
+      usedTokens: 150_000,
+      lastOutputTokens: 1_790,
+    });
+    expect((usageActivity?.payload as { durationMs?: number } | undefined)?.durationMs).toBe(
+      undefined,
+    );
+    expect(
+      (usageActivity?.payload as { timeToFirstTokenMs?: number } | undefined)?.timeToFirstTokenMs,
+    ).toBe(undefined);
+  });
+
+  it("omits context window TTFT when the first assistant text delta is not after turn start", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-ttft-non-positive");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-ttft-non-positive-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-ttft-non-positive-delta"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-ttft-non-positive"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "hello",
+      },
+    });
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-ttft-non-positive-token-usage"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:01.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        usage: {
+          usedTokens: 150_000,
+          lastOutputTokens: 1_790,
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "evt-ttft-non-positive-token-usage",
+      ),
+    );
+    const usageActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) =>
+        activity.id === "evt-ttft-non-positive-token-usage",
+    );
+
+    expect(
+      (usageActivity?.payload as { timeToFirstTokenMs?: number } | undefined)?.timeToFirstTokenMs,
+    ).toBe(undefined);
+  });
+
+  it("sums assistant response segments without including tool gaps", async () => {
+    const harness = await createHarness();
+    const turnId = asTurnId("turn-throughput-tool-gap");
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-throughput-gap-turn-started"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-throughput-gap-delta-1-first"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:10.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-throughput-gap"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "before",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-throughput-gap-delta-1-last"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:20.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-throughput-gap"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: " approval",
+      },
+    });
+    harness.emit({
+      type: "request.opened",
+      eventId: asEventId("evt-throughput-gap-request"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:00:25.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      requestId: ApprovalRequestId.make("req-throughput-gap"),
+      payload: {
+        requestType: "command_execution_approval",
+        detail: "sleep 120",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-throughput-gap-delta-2-first"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:03:00.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-throughput-gap"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "after",
+      },
+    });
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-throughput-gap-delta-2-last"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:03:15.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      itemId: asItemId("item-throughput-gap"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: " approval",
+      },
+    });
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-throughput-gap-turn-completed"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:03:16.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        state: "completed",
+      },
+    });
+    harness.emit({
+      type: "thread.token-usage.updated",
+      eventId: asEventId("evt-throughput-gap-token-usage"),
+      provider: ProviderDriverKind.make("codex"),
+      createdAt: "2026-05-08T12:03:16.000Z",
+      threadId: asThreadId("thread-1"),
+      turnId,
+      payload: {
+        usage: {
+          usedTokens: 150_000,
+          lastOutputTokens: 1_790,
+        },
+      },
+    });
+
+    const thread = await waitForThread(harness.readModel, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) => activity.id === "evt-throughput-gap-token-usage",
+      ),
+    );
+    const usageActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-throughput-gap-token-usage",
+    );
+
+    expect(usageActivity?.payload).toMatchObject({
+      usedTokens: 150_000,
+      lastOutputTokens: 1_790,
+      durationMs: 31_000,
+      timeToFirstTokenMs: 10_000,
+    });
+  });
+
   it("projects compacted thread state into context compaction activities", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
