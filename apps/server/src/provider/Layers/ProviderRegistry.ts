@@ -163,6 +163,22 @@ const snapshotInstanceKey = (provider: ServerProvider): ProviderInstanceId => {
   return provider.instanceId;
 };
 
+const isUnprobedProviderSnapshot = (provider: ServerProvider): boolean => {
+  if (
+    !provider.enabled ||
+    provider.status !== "warning" ||
+    provider.auth.status !== "unknown" ||
+    provider.version !== null
+  ) {
+    return false;
+  }
+
+  const message = provider.message ?? "";
+  return (
+    message.includes("has not been checked in this session yet") || message.startsWith("Checking ")
+  );
+};
+
 // Project a live `ProviderInstance` into the aggregator's consumption
 // shape. Each call re-captures the instance's `snapshot` closures, so
 // after `ProviderInstanceRegistry` rebuilds an instance (e.g. because
@@ -174,6 +190,7 @@ const buildSnapshotSource = (instance: ProviderInstance): ProviderSnapshotSource
   getSnapshot: instance.snapshot.getSnapshot,
   refresh: instance.snapshot.refresh,
   streamChanges: instance.snapshot.streamChanges,
+  subscribeChanges: instance.snapshot.subscribeChanges,
 });
 
 export const ProviderRegistryLive = Layer.effect(
@@ -349,8 +366,10 @@ export const ProviderRegistryLive = Layer.effect(
           }
 
           const providers = orderProviderSnapshots([...mergedProviders.values()]);
-          const providersToPersist = providers.filter((provider) =>
-            updatedKeys.has(snapshotInstanceKey(provider)),
+          const providersToPersist = providers.filter(
+            (provider) =>
+              updatedKeys.has(snapshotInstanceKey(provider)) &&
+              !isUnprobedProviderSnapshot(provider),
           );
           return [[previousProviders, providers, providersToPersist] as const, providers];
         },
@@ -375,9 +394,34 @@ export const ProviderRegistryLive = Layer.effect(
       provider: ServerProvider,
       options?: {
         readonly publish?: boolean;
+        readonly persist?: boolean;
       },
     ) {
       return yield* upsertProviders([provider], options);
+    });
+
+    const syncCurrentSourceSnapshot = Effect.fn("syncCurrentSourceSnapshot")(function* (
+      source: ProviderSnapshotSource,
+    ) {
+      const provider = yield* source.getSnapshot.pipe(
+        Effect.flatMap((snapshot) => correlateSnapshotWithSource(source, snapshot)),
+      );
+      const fallbackProvider = fallbackByInstance.get(source.instanceId);
+      if (
+        fallbackProvider !== undefined &&
+        isUnprobedProviderSnapshot(provider) &&
+        Equal.equals(provider, fallbackProvider)
+      ) {
+        const existingProvider = (yield* Ref.get(providersRef)).find(
+          (candidate) => snapshotInstanceKey(candidate) === snapshotInstanceKey(provider),
+        );
+        if (existingProvider !== undefined) {
+          return yield* Ref.get(providersRef);
+        }
+      }
+      return yield* syncProvider(provider, {
+        persist: !isUnprobedProviderSnapshot(provider),
+      });
     });
 
     const setProviderMaintenanceActionState = Effect.fn("setProviderMaintenanceActionState")(
@@ -541,8 +585,13 @@ export const ProviderRegistryLive = Layer.effect(
         // in an active subscriber or the result is dropped.
         for (const [, instance] of newlyAdded) {
           const source = buildSnapshotSource(instance);
-          yield* Stream.runForEach(source.streamChanges, (provider) =>
-            correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
+          const subscription = yield* source.subscribeChanges;
+          yield* Effect.forever(
+            PubSub.take(subscription).pipe(
+              Effect.flatMap((provider) =>
+                correlateSnapshotWithSource(source, provider).pipe(Effect.flatMap(syncProvider)),
+              ),
+            ),
           ).pipe(Effect.forkScoped);
         }
 
@@ -554,8 +603,10 @@ export const ProviderRegistryLive = Layer.effect(
         // swallowed so one bad driver can't wedge the whole registry.
         yield* Effect.forEach(
           newlyAdded,
-          ([, instance]) =>
-            refreshOneSource(buildSnapshotSource(instance)).pipe(Effect.ignoreCause({ log: true })),
+          ([, instance]) => {
+            const source = buildSnapshotSource(instance);
+            return syncCurrentSourceSnapshot(source).pipe(Effect.ignoreCause({ log: true }));
+          },
           { concurrency: "unbounded", discard: true },
         );
         yield* upsertProviders(unavailableProviders, {
@@ -616,7 +667,16 @@ export const ProviderRegistryLive = Layer.effect(
     // resolves. Cached snapshots (already in `providersRef`) merge with
     // these via `upsertProviders` so on-disk state wins where present
     // and pending fallbacks fill the gaps.
-    yield* upsertProviders(fallbackProviders, { publish: false });
+    const cachedProviderKeys = new Set(
+      (yield* Ref.get(providersRef)).map((provider) => snapshotInstanceKey(provider)),
+    );
+    const missingFallbackProviders = fallbackProviders.filter(
+      (provider) => !cachedProviderKeys.has(snapshotInstanceKey(provider)),
+    );
+    yield* upsertProviders(missingFallbackProviders, {
+      persist: false,
+      publish: false,
+    });
     // Subscribe to registry mutations BEFORE running the initial sync.
     // `subscribeChanges` acquires the dequeue synchronously in this
     // fibre; the subscription is active the instant this `yield*`

@@ -14,4 +14,5 @@ export type ProviderSnapshotSource = {
   readonly getSnapshot: ServerProviderShape["getSnapshot"];
   readonly refresh: ServerProviderShape["refresh"];
   readonly streamChanges: Stream.Stream<ServerProvider>;
+  readonly subscribeChanges: ServerProviderShape["subscribeChanges"];
 };

@@ -116,6 +116,7 @@ describe("makeManagedServerProvider", () => {
             refreshInterval: "1 hour",
           });
 
+          yield* Effect.yieldNow;
           const initial = yield* provider.getSnapshot;
           assert.deepStrictEqual(initial, initialSnapshot);
 

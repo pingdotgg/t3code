@@ -122,6 +122,15 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const applySnapshot = (nextSettings: Settings, options?: { readonly forceRefresh?: boolean }) =>
     refreshSemaphore.withPermits(1)(applySnapshotBase(nextSettings, options));
 
+  const getSnapshot = Effect.fn("getSnapshot")(function* () {
+    const nextSettings = yield* input.getSettings;
+    const previousSettings = yield* Ref.get(settingsRef);
+    if (!input.haveSettingsChanged(previousSettings, nextSettings)) {
+      return yield* Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot));
+    }
+    return yield* applySnapshot(nextSettings);
+  });
+
   const refreshSnapshot = Effect.fn("refreshSnapshot")(function* () {
     const nextSettings = yield* input.getSettings;
     return yield* applySnapshot(nextSettings, { forceRefresh: true });
@@ -145,14 +154,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   return {
     maintenanceCapabilities: input.maintenanceCapabilities,
-    getSnapshot: input.getSettings.pipe(
-      Effect.flatMap(applySnapshot),
-      Effect.tapError(Effect.logError),
-      Effect.orDie,
-    ),
+    getSnapshot: getSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
     refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
+    subscribeChanges: PubSub.subscribe(changesPubSub),
   } satisfies ServerProviderShape;
 });
