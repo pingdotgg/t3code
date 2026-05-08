@@ -106,6 +106,11 @@ export interface ServerSettingsShape {
     patch: ServerSettingsPatch,
   ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+  /** Patch settings from the latest persisted snapshot and persist atomically. */
+  readonly updateSettingsWith: (
+    makePatch: (current: ServerSettings) => ServerSettingsPatch,
+  ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
   /** Stream of settings change events. */
   readonly streamChanges: Stream.Stream<ServerSettings>;
 }
@@ -122,28 +127,31 @@ export class ServerSettingsService extends Context.Service<
           deepMerge(DEFAULT_SERVER_SETTINGS, overrides),
         );
 
+        const updateSettingsWith = (makePatch: (current: ServerSettings) => ServerSettingsPatch) =>
+          Ref.get(currentSettingsRef).pipe(
+            Effect.flatMap((currentSettings) =>
+              Schema.decodeEffect(ServerSettings)(
+                applyServerSettingsPatch(currentSettings, makePatch(currentSettings)),
+              ).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ServerSettingsError({
+                      settingsPath: "<memory>",
+                      detail: `failed to normalize server settings: ${SchemaIssue.makeFormatterDefault()(cause.issue)}`,
+                      cause,
+                    }),
+                ),
+              ),
+            ),
+            Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
+          );
+
         return {
           start: Effect.void,
           ready: Effect.void,
           getSettings: Ref.get(currentSettingsRef),
-          updateSettings: (patch) =>
-            Ref.get(currentSettingsRef).pipe(
-              Effect.flatMap((currentSettings) =>
-                Schema.decodeEffect(ServerSettings)(
-                  applyServerSettingsPatch(currentSettings, patch),
-                ).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ServerSettingsError({
-                        settingsPath: "<memory>",
-                        detail: `failed to normalize server settings: ${SchemaIssue.makeFormatterDefault()(cause.issue)}`,
-                        cause,
-                      }),
-                  ),
-                ),
-              ),
-              Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
-            ),
+          updateSettings: (patch) => updateSettingsWith(() => patch),
+          updateSettingsWith,
           streamChanges: Stream.empty,
         } satisfies ServerSettingsShape;
       }),
@@ -520,6 +528,32 @@ const makeServerSettings = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
+  const updateSettingsWith = (makePatch: (current: ServerSettings) => ServerSettingsPatch) =>
+    writeSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        const current = yield* getSettingsFromCache;
+        const nextPersisted = yield* persistProviderEnvironmentSecrets(
+          current,
+          applyServerSettingsPatch(current, makePatch(current)),
+        );
+        const next = yield* Schema.decodeEffect(ServerSettings)(nextPersisted).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ServerSettingsError({
+                settingsPath: "<memory>",
+                detail: `failed to normalize server settings: ${SchemaIssue.makeFormatterDefault()(cause.issue)}`,
+                cause,
+              }),
+          ),
+        );
+        yield* writeSettingsAtomically(next);
+        yield* Cache.set(settingsCache, cacheKey, next);
+        yield* emitChange(next);
+        const materialized = yield* materializeProviderEnvironmentSecrets(next);
+        return resolveTextGenerationProvider(materialized);
+      }),
+    );
+
   return {
     start,
     ready: Deferred.await(startedDeferred),
@@ -527,31 +561,8 @@ const makeServerSettings = Effect.gen(function* () {
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
-    updateSettings: (patch) =>
-      writeSemaphore.withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
-            current,
-            applyServerSettingsPatch(current, patch),
-          );
-          const next = yield* Schema.decodeEffect(ServerSettings)(nextPersisted).pipe(
-            Effect.mapError(
-              (cause) =>
-                new ServerSettingsError({
-                  settingsPath: "<memory>",
-                  detail: `failed to normalize server settings: ${SchemaIssue.makeFormatterDefault()(cause.issue)}`,
-                  cause,
-                }),
-            ),
-          );
-          yield* writeSettingsAtomically(next);
-          yield* Cache.set(settingsCache, cacheKey, next);
-          yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
-          return resolveTextGenerationProvider(materialized);
-        }),
-      ),
+    updateSettings: (patch) => updateSettingsWith(() => patch),
+    updateSettingsWith,
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub).pipe(
         Stream.mapEffect((settings) =>

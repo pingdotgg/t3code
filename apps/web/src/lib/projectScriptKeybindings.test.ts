@@ -165,6 +165,17 @@ describe("projectScriptKeybindings", () => {
     expect(server.upsertKeybinding).not.toHaveBeenCalled();
   });
 
+  it("skips validation when no keybinding server is available", async () => {
+    await expect(
+      syncProjectScriptKeybinding({
+        keybindings: [],
+        keybinding: "k".repeat(MAX_KEYBINDING_VALUE_LENGTH + 1),
+        command: commandForProjectScript("test"),
+        server: null,
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("removes stale command keybindings before saving the replacement", async () => {
     const command = commandForProjectScript("test");
     const server = {

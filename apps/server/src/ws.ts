@@ -692,31 +692,32 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         readonly projectId: ProjectId;
         readonly patch: Partial<ProjectSettings>;
       }) =>
-        serverSettings.getSettings.pipe(
-          Effect.flatMap((settings) => {
+        serverSettings
+          .updateSettingsWith((settings) => {
             const current = settings.projectSettings[input.projectId] ?? emptyProjectSettings;
             const nextProjectSettings = {
               ...current,
               ...input.patch,
             };
-            return serverSettings.updateSettings({
+            return {
               projectSettings: {
                 ...settings.projectSettings,
                 [input.projectId]: nextProjectSettings,
               },
-            });
-          }),
-          Effect.map(
-            (settings) => settings.projectSettings[input.projectId] ?? emptyProjectSettings,
-          ),
-          Effect.mapError(
-            (cause) =>
-              new ProjectDetailsError({
-                message: "Failed to update project settings.",
-                cause,
-              }),
-          ),
-        );
+            };
+          })
+          .pipe(
+            Effect.map(
+              (settings) => settings.projectSettings[input.projectId] ?? emptyProjectSettings,
+            ),
+            Effect.mapError(
+              (cause) =>
+                new ProjectDetailsError({
+                  message: "Failed to update project settings.",
+                  cause,
+                }),
+            ),
+          );
 
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>

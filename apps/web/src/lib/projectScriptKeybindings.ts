@@ -85,12 +85,12 @@ export async function syncProjectScriptKeybinding(input: {
   server: ProjectScriptKeybindingServer | null | undefined;
 }) {
   if (input.keybinding === undefined) return;
+  if (!input.server) return;
 
   const nextRule = decodeProjectScriptKeybindingRule({
     keybinding: input.keybinding,
     command: input.command,
   });
-  if (!input.server) return;
 
   const existingTargets = keybindingValuesForCommand(input.keybindings, input.command).map(
     (key) => ({

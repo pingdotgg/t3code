@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   DEFAULT_SERVER_SETTINGS,
+  ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
   ServerSettings,
@@ -134,6 +135,42 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           ],
         ),
       );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("updates settings from the latest persisted snapshot", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const firstProjectId = ProjectId.make("project-1");
+      const secondProjectId = ProjectId.make("project-2");
+
+      yield* Effect.all(
+        [
+          serverSettings.updateSettingsWith((settings) => ({
+            projectSettings: {
+              ...settings.projectSettings,
+              [firstProjectId]: {
+                remoteOverride: null,
+                actionEnvironment: { FIRST: "1" },
+              },
+            },
+          })),
+          serverSettings.updateSettingsWith((settings) => ({
+            projectSettings: {
+              ...settings.projectSettings,
+              [secondProjectId]: {
+                remoteOverride: null,
+                actionEnvironment: { SECOND: "2" },
+              },
+            },
+          })),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      const next = yield* serverSettings.getSettings;
+      assert.deepEqual(next.projectSettings[firstProjectId]?.actionEnvironment, { FIRST: "1" });
+      assert.deepEqual(next.projectSettings[secondProjectId]?.actionEnvironment, { SECOND: "2" });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
