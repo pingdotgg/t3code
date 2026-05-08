@@ -79,6 +79,13 @@ function createTestClient() {
     },
     projects: {
       listEntries: vi.fn(async () => ({ entries: [] })),
+      createDirectory: vi.fn(async () => ({ relativePath: "src" })),
+      renameEntry: vi.fn(async () => ({
+        fromRelativePath: "a",
+        toRelativePath: "b",
+        kind: "file",
+      })),
+      deleteEntry: vi.fn(async () => ({ relativePath: "a", kind: "file" })),
       readFile: vi.fn(async () => undefined),
       searchEntries: vi.fn(async () => []),
       writeFile: vi.fn(async () => undefined),

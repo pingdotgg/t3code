@@ -65,6 +65,43 @@ export function invalidateProjectQueries(
   return queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
 }
 
+export function invalidateProjectEntryQueries(
+  queryClient: QueryClient,
+  input: {
+    environmentId: EnvironmentId | null;
+    cwd: string | null;
+    relativePaths: readonly (string | null)[];
+  },
+) {
+  const environmentId = input.environmentId ?? null;
+  const cwd = input.cwd ?? null;
+  if (cwd === null) {
+    return queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+  }
+
+  const parentPaths = new Set<string | null>();
+  for (const relativePath of input.relativePaths) {
+    if (relativePath === null) {
+      parentPaths.add(null);
+      continue;
+    }
+    const separatorIndex = relativePath.lastIndexOf("/");
+    parentPaths.add(separatorIndex === -1 ? null : relativePath.slice(0, separatorIndex));
+    parentPaths.add(relativePath);
+  }
+
+  return Promise.all([
+    ...[...parentPaths].map((relativePath) =>
+      queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.listEntries(environmentId, cwd, relativePath),
+      }),
+    ),
+    queryClient.invalidateQueries({
+      queryKey: projectQueryKeys.searchEntriesScope(environmentId, cwd),
+    }),
+  ]);
+}
+
 export function projectLocalAgentInventoryQueryOptions(input: {
   environmentId: EnvironmentId | null;
   cwd: string | null;

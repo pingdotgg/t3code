@@ -36,6 +36,9 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     projects: {
       listEntries: rpcClient.projects.listEntries,
       getLocalAgentInventory: rpcClient.projects.getLocalAgentInventory,
+      createDirectory: rpcClient.projects.createDirectory,
+      renameEntry: rpcClient.projects.renameEntry,
+      deleteEntry: rpcClient.projects.deleteEntry,
       readFile: rpcClient.projects.readFile,
       searchEntries: rpcClient.projects.searchEntries,
       writeFile: rpcClient.projects.writeFile,

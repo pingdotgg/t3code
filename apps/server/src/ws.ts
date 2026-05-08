@@ -14,9 +14,12 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
+  ProjectCreateDirectoryError,
+  ProjectDeleteEntryError,
   ProjectListEntriesError,
   ProjectReadFileError,
   ProjectLocalAgentInventoryError,
+  ProjectRenameEntryError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
@@ -870,6 +873,51 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               Effect.mapError((cause) =>
                 Schema.is(WorkspacePathOutsideRootError)(cause)
                   ? new ProjectWriteFileError({
+                      message: "Workspace file path must stay within the project root.",
+                      cause,
+                    })
+                  : cause,
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsCreateDirectory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsCreateDirectory,
+            workspaceFileSystem.createDirectory(input).pipe(
+              Effect.mapError((cause) =>
+                Schema.is(WorkspacePathOutsideRootError)(cause)
+                  ? new ProjectCreateDirectoryError({
+                      message: "Workspace file path must stay within the project root.",
+                      cause,
+                    })
+                  : cause,
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsRenameEntry]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsRenameEntry,
+            workspaceFileSystem.renameEntry(input).pipe(
+              Effect.mapError((cause) =>
+                Schema.is(WorkspacePathOutsideRootError)(cause)
+                  ? new ProjectRenameEntryError({
+                      message: "Workspace file path must stay within the project root.",
+                      cause,
+                    })
+                  : cause,
+              ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsDeleteEntry]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsDeleteEntry,
+            workspaceFileSystem.deleteEntry(input).pipe(
+              Effect.mapError((cause) =>
+                Schema.is(WorkspacePathOutsideRootError)(cause)
+                  ? new ProjectDeleteEntryError({
                       message: "Workspace file path must stay within the project root.",
                       cause,
                     })

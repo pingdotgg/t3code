@@ -1,9 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import type { EnvironmentId, ScopedProjectRef } from "@forma/contracts";
+import type {
+  EnvironmentId,
+  ProjectEntry,
+  ProjectListEntriesResult,
+  ScopedProjectRef,
+} from "@forma/contracts";
 import { scopeThreadRef } from "@forma/client-runtime";
 import * as Schema from "effect/Schema";
 import {
+  IconArrowClockwise as RefreshIcon,
+  IconEllipsis as EllipsisIcon,
   IconListBulletIndent as SidebarToggleIcon,
   IconMagnifyingglass as SearchIcon,
   IconPlusminus as DiffIcon,
@@ -38,14 +45,29 @@ import {
   parseDiffRouteSearch,
 } from "../diffRouteSearch";
 import { openInPreferredEditor } from "../editorPreferences";
+import { readEnvironmentApi } from "../environmentApi";
+import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useSettings } from "../hooks/useSettings";
 import { useTheme } from "../hooks/useTheme";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { type CodeContextSelection } from "../lib/codeContext";
 import { resolveEditorFileLabel } from "../lib/editorFileLabel";
-import { prefetchProjectFileForEditor } from "../lib/projectFileReadCache";
 import {
+  createProjectEntry,
+  pathEqualsOrContainsParent,
+  removeProjectListEntry,
+  renameProjectListEntry,
+  upsertProjectListEntry,
+} from "../lib/projectExplorerEntries";
+import {
+  invalidateProjectFileForEditor,
+  prefetchProjectFileForEditor,
+  storeProjectFileForEditor,
+} from "../lib/projectFileReadCache";
+import {
+  invalidateProjectEntryQueries,
   invalidateProjectQueries,
+  projectQueryKeys,
   projectSearchEntriesQueryOptions,
 } from "../lib/projectReactQuery";
 import { cn } from "../lib/utils";
@@ -63,10 +85,22 @@ import { DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { HeaderIconActionButton } from "./HeaderIconActionButton";
 import { WorkspaceFilesTree } from "./WorkspaceFilesTree";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
-import { PreviewTriggerIcon, TerminalToggleIcon } from "./icons/custom";
+import {
+  AddDocumentIcon,
+  AddProjectFolderIcon,
+  TerminalToggleIcon,
+} from "./icons/custom";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
-import { Kbd, KbdGroup } from "./ui/kbd";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuShortcut,
+  MenuTrigger,
+} from "./ui/menu";
 import { ScrollArea } from "./ui/scroll-area";
 import { toastManager } from "./ui/toast";
 import { Toggle } from "./ui/toggle";
@@ -97,6 +131,11 @@ interface WorkspaceEditorControlsState {
   isSaving: boolean;
 }
 
+interface RequestedRootCreate {
+  nonce: number;
+  kind: Extract<ProjectEntry["kind"], "file" | "directory">;
+}
+
 interface WorkspaceFilesPanelProps {
   mode?: DiffPanelMode;
   routeTarget: ThreadRouteTarget;
@@ -116,6 +155,24 @@ function resolveParentDirectoryLabel(filePath: string): string | null {
     return null;
   }
   return normalizedPath.slice(0, separatorIndex);
+}
+
+function toAbsoluteWorkspacePath(workspaceRoot: string, relativePath: string): string {
+  const normalizedRoot = workspaceRoot.replace(/[\\/]+$/, "");
+  const normalizedPath = relativePath.replaceAll("\\", "/");
+  return `${normalizedRoot}/${normalizedPath}`;
+}
+
+function resolveWorkspaceRootLabel(workspaceRoot: string): string {
+  const normalizedRoot = workspaceRoot.replace(/[\\/]+$/, "");
+  const segments = normalizedRoot.split(/[\\/]/).filter(Boolean);
+  return segments.at(-1) ?? normalizedRoot;
+}
+
+function normalizeWorkspaceMutationError(error: unknown): string {
+  return error instanceof Error && error.message.trim().length > 0
+    ? error.message
+    : "An unexpected error occurred.";
 }
 
 function buildEditorTargetKey(target: EditorTarget | null): string | null {
@@ -238,14 +295,22 @@ export function WorkspaceFilesPanel({
   const [activeEditorTarget, setActiveEditorTarget] = useState<EditorTarget | null>(
     () => routeEditorTarget,
   );
+  const [editorLineNumbersVisible, setEditorLineNumbersVisible] = useState(true);
+  const [editorWordWrapEnabled, setEditorWordWrapEnabled] = useState(false);
+  const [editorAutoSaveEnabled, setEditorAutoSaveEnabled] = useState(false);
   const [editorControlsState, setEditorControlsState] =
     useState<WorkspaceEditorControlsState | null>(null);
   const [requestedSaveNonce, setRequestedSaveNonce] = useState(0);
+  const [requestedDiscardNonce, setRequestedDiscardNonce] = useState(0);
   const requestedNavigationNonceRef = useRef(0);
   const [requestedNavigation, setRequestedNavigation] =
     useState<DiffFileEditorRequestedNavigation | null>(null);
+  const requestedRootCreateNonceRef = useRef(0);
+  const [requestedRootCreate, setRequestedRootCreate] = useState<RequestedRootCreate | null>(null);
+  const [sidebarSearchVisible, setSidebarSearchVisible] = useState(false);
   const [sidebarSearchQuery, setSidebarSearchQuery] = useState("");
   const deferredSidebarSearchQuery = useDeferredValue(sidebarSearchQuery.trim());
+  const sidebarSearchInputRef = useRef<HTMLInputElement | null>(null);
   const [treeCollapsedByWorkspace, setTreeCollapsedByWorkspace] = useLocalStorage(
     WORKSPACE_PANEL_TREE_COLLAPSED_KEY,
     {},
@@ -299,10 +364,34 @@ export function WorkspaceFilesPanel({
     editorFilePath !== null &&
     editorControlsState?.filePath === editorFilePath &&
     editorControlsState.isSaving;
+  const canDiscardEditorChanges =
+    editorVisible &&
+    editorFilePath !== null &&
+    editorControlsState?.filePath === editorFilePath &&
+    editorControlsState.isDirty;
   const editorSessionKey = workspaceRoot ? `workspace-surface:${panelKey}` : undefined;
+  const workspaceRootLabel = workspaceRoot ? resolveWorkspaceRootLabel(workspaceRoot) : null;
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
   const previousDiffVisibleRef = useRef(surfaceMode === "diff");
+  const { copyToClipboard: copyWorkspacePathToClipboard } = useCopyToClipboard<{
+    description: string;
+  }>({
+    onCopy: (ctx) => {
+      toastManager.add({
+        type: "success",
+        title: "Path copied",
+        description: ctx.description,
+      });
+    },
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Failed to copy path",
+        description: normalizeWorkspaceMutationError(error),
+      });
+    },
+  });
 
   useLayoutEffect(() => {
     const openedIntoFilesView =
@@ -407,7 +496,42 @@ export function WorkspaceFilesPanel({
       ...current,
       [workspaceRoot]: !(current[workspaceRoot] ?? false),
     }));
-  }, [setTreeCollapsedByWorkspace, workspaceRoot]);
+    if (!treeCollapsed) {
+      setSidebarSearchVisible(false);
+      setSidebarSearchQuery("");
+    }
+  }, [setTreeCollapsedByWorkspace, treeCollapsed, workspaceRoot]);
+
+  const toggleSidebarSearchVisible = useCallback(() => {
+    if (!workspaceRoot) {
+      return;
+    }
+
+    if (treeCollapsed) {
+      setTreeCollapsedByWorkspace((current) => ({
+        ...current,
+        [workspaceRoot]: false,
+      }));
+      setSidebarSearchVisible(true);
+      return;
+    }
+
+    setSidebarSearchVisible((current) => {
+      const nextVisible = !current;
+      if (!nextVisible) {
+        setSidebarSearchQuery("");
+      }
+      return nextVisible;
+    });
+  }, [setTreeCollapsedByWorkspace, treeCollapsed, workspaceRoot]);
+
+  useEffect(() => {
+    if (!sidebarSearchVisible) {
+      return;
+    }
+
+    sidebarSearchInputRef.current?.focus();
+  }, [sidebarSearchVisible]);
 
   const addEditorCodeContext = useCallback(
     (selection: CodeContextSelection) => {
@@ -523,6 +647,123 @@ export function WorkspaceFilesPanel({
       });
     },
     [environmentId, workspaceRoot],
+  );
+
+  const patchDirectoryEntriesIfLoaded = useCallback(
+    (
+      relativePath: string | null,
+      update: (current: ProjectListEntriesResult | undefined) => ProjectListEntriesResult,
+    ) => {
+      if (!workspaceRoot) {
+        return;
+      }
+      const queryKey = projectQueryKeys.listEntries(environmentId, workspaceRoot, relativePath);
+      if (queryClient.getQueryData(queryKey) === undefined) {
+        return;
+      }
+      queryClient.setQueryData(queryKey, update);
+    },
+    [environmentId, queryClient, workspaceRoot],
+  );
+
+  const syncEditorPathAfterRename = useCallback(
+    (fromPath: string, toPath: string) => {
+      setActiveEditorTarget((current) =>
+        current && pathEqualsOrContainsParent(fromPath, current.filePath)
+          ? {
+              ...current,
+              filePath: `${toPath}${current.filePath.slice(fromPath.length)}`,
+            }
+          : current,
+      );
+
+      if (
+        !diffSearch.editorFilePath ||
+        !pathEqualsOrContainsParent(fromPath, diffSearch.editorFilePath)
+      ) {
+        return;
+      }
+
+      const nextEditorFilePath = `${toPath}${diffSearch.editorFilePath.slice(fromPath.length)}`;
+      navigateToCurrentRoute((previous) => ({
+        ...previous,
+        diff: "1",
+        diffView: "editor",
+        editorFilePath: nextEditorFilePath,
+        ...(typeof diffSearch.editorLine === "number" ? { editorLine: diffSearch.editorLine } : {}),
+        ...(typeof diffSearch.editorColumn === "number"
+          ? { editorColumn: diffSearch.editorColumn }
+          : {}),
+        ...(diffSearch.editorBackToView ? { editorBackToView: diffSearch.editorBackToView } : {}),
+      }));
+      if (surfaceMode === "editor") {
+        issueNavigationRequest("switch-file", { filePath: nextEditorFilePath });
+      }
+    },
+    [
+      diffSearch.editorBackToView,
+      diffSearch.editorColumn,
+      diffSearch.editorFilePath,
+      diffSearch.editorLine,
+      issueNavigationRequest,
+      navigateToCurrentRoute,
+      surfaceMode,
+    ],
+  );
+
+  const requestRootCreate = useCallback(
+    (kind: Extract<ProjectEntry["kind"], "file" | "directory">) => {
+      if (sidebarSearchVisible || sidebarSearchActive) {
+        setSidebarSearchVisible(false);
+        setSidebarSearchQuery("");
+      }
+      requestedRootCreateNonceRef.current += 1;
+      setRequestedRootCreate({
+        nonce: requestedRootCreateNonceRef.current,
+        kind,
+      });
+    },
+    [sidebarSearchActive, sidebarSearchVisible],
+  );
+
+  const refreshWorkspaceTree = useCallback(() => {
+    if (!workspaceRoot) {
+      return;
+    }
+    void Promise.all([
+      queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.listEntriesScope(environmentId, workspaceRoot),
+      }),
+      queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.searchEntriesScope(environmentId, workspaceRoot),
+      }),
+    ]);
+  }, [environmentId, queryClient, workspaceRoot]);
+
+  const copyRelativeWorkspacePath = useCallback(
+    (entry: ProjectEntry) => {
+      copyWorkspacePathToClipboard(entry.path, { description: entry.path });
+    },
+    [copyWorkspacePathToClipboard],
+  );
+
+  const copyAbsoluteWorkspacePath = useCallback(
+    (entry: ProjectEntry) => {
+      if (!workspaceRoot) {
+        return;
+      }
+      copyWorkspacePathToClipboard(toAbsoluteWorkspacePath(workspaceRoot, entry.path), {
+        description: entry.path,
+      });
+    },
+    [copyWorkspacePathToClipboard, workspaceRoot],
+  );
+
+  const openWorkspaceEntryInEditor = useCallback(
+    (entry: ProjectEntry) => {
+      openWorkspaceFileInEditor(entry.path);
+    },
+    [openWorkspaceFileInEditor],
   );
 
   const toggleTerminalVisibility = useCallback(() => {
@@ -644,6 +885,248 @@ export function WorkspaceFilesPanel({
     ],
   );
 
+  const createWorkspaceEntry = useCallback(
+    async (input: {
+      kind: Extract<ProjectEntry["kind"], "file" | "directory">;
+      relativePath: string;
+    }) => {
+      if (!workspaceRoot) {
+        throw new Error("Workspace root is unavailable.");
+      }
+      const api = readEnvironmentApi(environmentId);
+      if (!api) {
+        throw new Error("Environment connection is unavailable.");
+      }
+
+      const entry = createProjectEntry(input.relativePath, input.kind);
+      const parentPath = entry.parentPath ?? null;
+      patchDirectoryEntriesIfLoaded(parentPath, (current) =>
+        upsertProjectListEntry(current, entry),
+      );
+
+      try {
+        if (input.kind === "directory") {
+          await api.projects.createDirectory({
+            cwd: workspaceRoot,
+            relativePath: input.relativePath,
+          });
+        } else {
+          const result = await api.projects.writeFile({
+            cwd: workspaceRoot,
+            relativePath: input.relativePath,
+            contents: "",
+            expectedVersion: null,
+          });
+          storeProjectFileForEditor({
+            environmentId,
+            cwd: workspaceRoot,
+            relativePath: input.relativePath,
+            result: {
+              relativePath: input.relativePath,
+              contents: "",
+              version: result.version,
+            },
+          });
+          selectFile(input.relativePath);
+        }
+
+        void invalidateProjectEntryQueries(queryClient, {
+          environmentId,
+          cwd: workspaceRoot,
+          relativePaths: [input.relativePath],
+        });
+        toastManager.add({
+          type: "success",
+          title: input.kind === "directory" ? "Folder created" : "File created",
+          description: input.relativePath,
+        });
+        return { path: input.relativePath, kind: input.kind } as const;
+      } catch (error) {
+        void invalidateProjectEntryQueries(queryClient, {
+          environmentId,
+          cwd: workspaceRoot,
+          relativePaths: [input.relativePath],
+        });
+        toastManager.add({
+          type: "error",
+          title: input.kind === "directory" ? "Unable to create folder" : "Unable to create file",
+          description: normalizeWorkspaceMutationError(error),
+        });
+        throw error;
+      }
+    },
+    [environmentId, patchDirectoryEntriesIfLoaded, queryClient, selectFile, workspaceRoot],
+  );
+
+  const renameWorkspaceEntry = useCallback(
+    async (input: { entry: ProjectEntry; nextRelativePath: string }) => {
+      if (!workspaceRoot) {
+        throw new Error("Workspace root is unavailable.");
+      }
+      const api = readEnvironmentApi(environmentId);
+      if (!api) {
+        throw new Error("Environment connection is unavailable.");
+      }
+
+      const nextEntry = createProjectEntry(input.nextRelativePath, input.entry.kind);
+      const sourceParentPath = input.entry.parentPath ?? null;
+      const destinationParentPath = nextEntry.parentPath ?? null;
+
+      patchDirectoryEntriesIfLoaded(sourceParentPath, (current) =>
+        sourceParentPath === destinationParentPath
+          ? renameProjectListEntry(current, {
+              fromPath: input.entry.path,
+              toEntry: nextEntry,
+            })
+          : removeProjectListEntry(current, input.entry.path),
+      );
+      if (sourceParentPath !== destinationParentPath) {
+        patchDirectoryEntriesIfLoaded(destinationParentPath, (current) =>
+          upsertProjectListEntry(current, nextEntry),
+        );
+      }
+
+      try {
+        const result = await api.projects.renameEntry({
+          cwd: workspaceRoot,
+          fromRelativePath: input.entry.path,
+          toRelativePath: input.nextRelativePath,
+        });
+
+        invalidateProjectFileForEditor({
+          environmentId,
+          cwd: workspaceRoot,
+          relativePath: input.entry.path,
+        });
+        syncEditorPathAfterRename(input.entry.path, input.nextRelativePath);
+        void invalidateProjectEntryQueries(queryClient, {
+          environmentId,
+          cwd: workspaceRoot,
+          relativePaths: [input.entry.path, input.nextRelativePath],
+        });
+        toastManager.add({
+          type: "success",
+          title: result.kind === "directory" ? "Folder renamed" : "File renamed",
+          description: result.toRelativePath,
+        });
+        return {
+          fromPath: result.fromRelativePath,
+          toPath: result.toRelativePath,
+          kind: result.kind,
+        } as const;
+      } catch (error) {
+        void invalidateProjectEntryQueries(queryClient, {
+          environmentId,
+          cwd: workspaceRoot,
+          relativePaths: [input.entry.path, input.nextRelativePath],
+        });
+        toastManager.add({
+          type: "error",
+          title: "Unable to rename path",
+          description: normalizeWorkspaceMutationError(error),
+        });
+        throw error;
+      }
+    },
+    [
+      environmentId,
+      patchDirectoryEntriesIfLoaded,
+      queryClient,
+      syncEditorPathAfterRename,
+      workspaceRoot,
+    ],
+  );
+
+  const deleteWorkspaceEntry = useCallback(
+    async (entry: ProjectEntry) => {
+      if (!workspaceRoot) {
+        throw new Error("Workspace root is unavailable.");
+      }
+      const api = readEnvironmentApi(environmentId);
+      const localApi = readLocalApi();
+      if (!api || !localApi) {
+        throw new Error("Environment connection is unavailable.");
+      }
+
+      const openEditorPath = activeEditorTarget?.filePath ?? null;
+      if (
+        editorControlsState?.isDirty &&
+        editorControlsState.filePath &&
+        pathEqualsOrContainsParent(entry.path, editorControlsState.filePath)
+      ) {
+        toastManager.add({
+          type: "error",
+          title: "Save or close the file first",
+          description: editorControlsState.filePath,
+        });
+        throw new Error("Cannot delete a path containing the dirty editor file.");
+      }
+
+      const confirmed = await localApi.dialogs.confirm(
+        entry.kind === "directory"
+          ? `Delete folder '${entry.path}'?`
+          : `Delete file '${entry.path}'?`,
+      );
+      if (!confirmed) {
+        throw new Error("Delete cancelled.");
+      }
+
+      patchDirectoryEntriesIfLoaded(entry.parentPath ?? null, (current) =>
+        removeProjectListEntry(current, entry.path),
+      );
+
+      try {
+        await api.projects.deleteEntry({
+          cwd: workspaceRoot,
+          relativePath: entry.path,
+          recursive: entry.kind === "directory",
+        });
+
+        invalidateProjectFileForEditor({
+          environmentId,
+          cwd: workspaceRoot,
+          relativePath: entry.path,
+        });
+        if (openEditorPath && pathEqualsOrContainsParent(entry.path, openEditorPath)) {
+          setActiveEditorTarget(null);
+          navigateToCurrentRoute((previous) => buildDiffFilesSearch(previous));
+        }
+        void invalidateProjectEntryQueries(queryClient, {
+          environmentId,
+          cwd: workspaceRoot,
+          relativePaths: [entry.path],
+        });
+        toastManager.add({
+          type: "success",
+          title: entry.kind === "directory" ? "Folder deleted" : "File deleted",
+          description: entry.path,
+        });
+      } catch (error) {
+        void invalidateProjectEntryQueries(queryClient, {
+          environmentId,
+          cwd: workspaceRoot,
+          relativePaths: [entry.path],
+        });
+        toastManager.add({
+          type: "error",
+          title: "Unable to delete path",
+          description: normalizeWorkspaceMutationError(error),
+        });
+        throw error;
+      }
+    },
+    [
+      activeEditorTarget?.filePath,
+      editorControlsState?.filePath,
+      editorControlsState?.isDirty,
+      environmentId,
+      navigateToCurrentRoute,
+      patchDirectoryEntriesIfLoaded,
+      queryClient,
+      workspaceRoot,
+    ],
+  );
+
   return (
     <DiffPanelShell mode={mode}>
       {!workspaceRoot ? (
@@ -652,7 +1135,7 @@ export function WorkspaceFilesPanel({
         </div>
       ) : (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex shrink-0 h-12 items-center gap-2 border-b border-border px-3 py-2">
+          <div className="flex shrink-0 h-12 items-center gap-2 px-3 py-2">
             <HeaderIconActionButton
               onClick={() => {
                 if (editorVisible) {
@@ -666,25 +1149,6 @@ export function WorkspaceFilesPanel({
             >
               <XIcon className="size-2.5" />
             </HeaderIconActionButton>
-            <HeaderIconActionButton
-              onClick={toggleTreeCollapsed}
-              disabled={surfaceMode === "diff"}
-              aria-label={treeCollapsed ? "Show editor sidebar" : "Hide editor sidebar"}
-              title={treeCollapsed ? "Show editor sidebar" : "Hide editor sidebar"}
-            >
-              <SidebarToggleIcon className="size-3.5" />
-            </HeaderIconActionButton>
-            {supportsDiff ? (
-              <HeaderIconActionButton
-                className="shrink-0"
-                onClick={toggleDiffMode}
-                pressed={surfaceMode === "diff"}
-                aria-label="Toggle diff view"
-                title="Toggle diff view"
-              >
-                <DiffIcon className="size-3 fill-current" />
-              </HeaderIconActionButton>
-            ) : null}
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -707,6 +1171,41 @@ export function WorkspaceFilesPanel({
                     : "Toggle terminal drawer"}
               </TooltipPopup>
             </Tooltip>
+            {supportsDiff ? (
+              <HeaderIconActionButton
+                className="shrink-0"
+                onClick={toggleDiffMode}
+                pressed={surfaceMode === "diff"}
+                aria-label="Toggle diff view"
+                title="Toggle diff view"
+              >
+                <DiffIcon className="size-3 fill-current" />
+              </HeaderIconActionButton>
+            ) : null}
+            <div className="min-w-0 flex-1" />
+          </div>
+          <div className="border-b border-border/70" />
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/70 px-3 py-2">
+            <div className="flex min-w-0 items-center gap-1">
+              <HeaderIconActionButton
+                onClick={toggleTreeCollapsed}
+                disabled={surfaceMode === "diff"}
+                pressed={!treeCollapsed}
+                aria-label={treeCollapsed ? "Show editor sidebar" : "Hide editor sidebar"}
+                title={treeCollapsed ? "Show editor sidebar" : "Hide editor sidebar"}
+              >
+                <SidebarToggleIcon className="size-3.5" />
+              </HeaderIconActionButton>
+              <HeaderIconActionButton
+                onClick={toggleSidebarSearchVisible}
+                disabled={surfaceMode === "diff"}
+                pressed={sidebarSearchVisible}
+                aria-label={sidebarSearchVisible ? "Hide file search" : "Search files"}
+                title={sidebarSearchVisible ? "Hide file search" : "Search files"}
+              >
+                <SearchIcon className="size-3 fill-current" />
+              </HeaderIconActionButton>
+            </div>
             <div className="min-w-0 flex-1">
               {editorVisible && editorFilePath ? (
                 <div className="flex min-w-0 items-center gap-1 overflow-x-auto py-0.5">
@@ -730,6 +1229,19 @@ export function WorkspaceFilesPanel({
                       <XIconCircle className="size-3 fill-current/50" />
                     </button>
                   </div>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    className="shrink-0 rounded-full gap-1.5 px-2 cursor-pointer"
+                    onClick={() => openPreviewForFile(editorFilePath)}
+                    disabled={activeFilePreviewDisabledReason !== null}
+                    title={
+                      activeFilePreviewDisabledReason ??
+                      (activeFilePreviewOpen ? "Close preview" : "Open preview")
+                    }
+                  >
+                    {activeFilePreviewOpen ? "Previewing" : "Preview"}
+                  </Button>
                 </div>
               ) : null}
             </div>
@@ -771,45 +1283,78 @@ export function WorkspaceFilesPanel({
                   </Toggle>
                 </>
               ) : null}
-              {editorVisible && editorFilePath ? (
-                <>
-                  <Button
-                    size="xs"
-                    className="px-2"
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <HeaderIconActionButton aria-label="Editor options" title="Editor options">
+                      <EllipsisIcon className="size-3 fill-current rotate-90" />
+                    </HeaderIconActionButton>
+                  }
+                />
+                <MenuPopup align="end" className="w-64">
+                  <MenuItem
+                    disabled={!canTriggerSave}
                     onClick={() => {
                       setRequestedSaveNonce((current) => current + 1);
                     }}
-                    disabled={!canTriggerSave}
                   >
-                    {editorSaveInProgress ? "Saving..." : "Save"}
-                    <KbdGroup
-                      aria-hidden
-                      className="pointer-events-none inline-flex items-center gap-1"
-                    >
-                      <Kbd className="text-ui-2xs h-4 min-w-0 rounded-sm bg-primary-foreground/12 px-1 text-primary-foreground/80">
-                        ⌘
-                      </Kbd>
-                      <Kbd className="text-ui-2xs h-4 min-w-4 rounded-sm bg-primary-foreground/12 px-1 text-primary-foreground/80">
-                        S
-                      </Kbd>
-                    </KbdGroup>
-                  </Button>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    className="gap-1.5 px-2"
-                    onClick={() => openPreviewForFile(editorFilePath)}
-                    disabled={activeFilePreviewDisabledReason !== null}
-                    title={
-                      activeFilePreviewDisabledReason ??
-                      (activeFilePreviewOpen ? "Close preview" : "Open preview")
-                    }
+                    Save File
+                    <MenuShortcut>⌘S</MenuShortcut>
+                  </MenuItem>
+                  <MenuItem
+                    disabled={!canDiscardEditorChanges}
+                    onClick={() => {
+                      setRequestedDiscardNonce((current) => current + 1);
+                    }}
                   >
-                    <PreviewTriggerIcon className="size-3.5" />
-                    {activeFilePreviewOpen ? "Previewing" : "Preview"}
-                  </Button>
-                </>
-              ) : null}
+                    Discard Changes
+                  </MenuItem>
+                  <MenuSeparator />
+                  <MenuItem
+                    disabled={!editorFilePath}
+                    onClick={() => {
+                      if (!editorFilePath) {
+                        return;
+                      }
+                      copyRelativeWorkspacePath({
+                        path: editorFilePath,
+                        kind: "file",
+                        parentPath: resolveParentDirectoryLabel(editorFilePath) ?? undefined,
+                      });
+                    }}
+                  >
+                    Copy Relative Path
+                  </MenuItem>
+                  <MenuSeparator />
+                  <MenuCheckboxItem
+                    checked={editorLineNumbersVisible}
+                    onCheckedChange={(checked) => {
+                      setEditorLineNumbersVisible(Boolean(checked));
+                    }}
+                    variant="switch"
+                  >
+                    Line Numbers
+                  </MenuCheckboxItem>
+                  <MenuCheckboxItem
+                    checked={editorWordWrapEnabled}
+                    onCheckedChange={(checked) => {
+                      setEditorWordWrapEnabled(Boolean(checked));
+                    }}
+                    variant="switch"
+                  >
+                    Word Wrap
+                  </MenuCheckboxItem>
+                  <MenuCheckboxItem
+                    checked={editorAutoSaveEnabled}
+                    onCheckedChange={(checked) => {
+                      setEditorAutoSaveEnabled(Boolean(checked));
+                    }}
+                    variant="switch"
+                  >
+                    Auto Save
+                  </MenuCheckboxItem>
+                </MenuPopup>
+              </Menu>
             </div>
           </div>
           {surfaceMode === "diff" ? (
@@ -832,30 +1377,37 @@ export function WorkspaceFilesPanel({
               >
                 {treeCollapsed ? null : (
                   <>
-                    <div className="border-b border-border/60 px-2 py-2">
-                      <div className="relative">
-                        <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3 -translate-y-1/2 fill-muted-foreground/70" />
-                        <Input
-                          value={sidebarSearchQuery}
-                          onChange={(event) => {
-                            setSidebarSearchQuery(event.target.value);
-                          }}
-                          placeholder="Search files..."
-                          aria-label="Search files"
-                          className="h-8 pl-5 text-ui-xs"
-                        />
+                    {sidebarSearchVisible ? (
+                      <div className="border-b border-border/60 px-2 py-2">
+                        <div className="relative">
+                          <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-3 -translate-y-1/2 fill-muted-foreground/70" />
+                          <Input
+                            ref={sidebarSearchInputRef}
+                            value={sidebarSearchQuery}
+                            onChange={(event) => {
+                              setSidebarSearchQuery(event.target.value);
+                            }}
+                            placeholder="Search files..."
+                            aria-label="Search files"
+                            className="h-8 pl-5 text-ui-xs"
+                          />
+                        </div>
                       </div>
-                    </div>
+                    ) : null}
                     <ScrollArea className="min-h-0 flex-1 px-1.5 py-2">
-                      {sidebarSearchActive ? (
+                      {sidebarSearchVisible ? (
                         searchEntriesQuery.isLoading ? (
                           <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
                             <LoaderIcon className="size-3 animate-spin" />
                             Searching files…
                           </div>
-                        ) : searchedFileEntries.length === 0 ? (
+                        ) : sidebarSearchActive && searchedFileEntries.length === 0 ? (
                           <div className="px-2 py-2 text-xs text-muted-foreground">
                             No matching files.
+                          </div>
+                        ) : !sidebarSearchActive ? (
+                          <div className="px-2 py-2 text-xs text-muted-foreground">
+                            Type to search this project.
                           </div>
                         ) : (
                           <div className="space-y-0.5">
@@ -900,14 +1452,54 @@ export function WorkspaceFilesPanel({
                           </div>
                         )
                       ) : (
-                        <WorkspaceFilesTree
-                          cwd={workspaceRoot}
-                          environmentId={environmentId}
-                          sessionKey={`${panelKey}:${workspaceRoot}`}
-                          resolvedTheme={resolvedTheme}
-                          selectedFilePath={activeEditorTarget?.filePath ?? null}
-                          onSelectFile={selectFile}
-                        />
+                        <div className="space-y-2">
+                          <div className="group/header flex items-center gap-2 px-2 py-1">
+                            <div className="min-w-0 flex-1" title={workspaceRoot}>
+                              <div className="text-ui-xs truncate font-medium text-foreground/90">
+                                {workspaceRootLabel}
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/header:opacity-100 group-focus-within/header:opacity-100">
+                              <HeaderIconActionButton
+                                aria-label="New file"
+                                title="New file"
+                                onClick={() => requestRootCreate("file")}
+                              >
+                                <AddDocumentIcon className="size-3 fill-current" />
+                              </HeaderIconActionButton>
+                              <HeaderIconActionButton
+                                aria-label="New folder"
+                                title="New folder"
+                                onClick={() => requestRootCreate("directory")}
+                              >
+                                <AddProjectFolderIcon className="h-3 w-[13.5px]" />
+                              </HeaderIconActionButton>
+                              <HeaderIconActionButton
+                                aria-label="Refresh files"
+                                title="Refresh files"
+                                onClick={refreshWorkspaceTree}
+                              >
+                                <RefreshIcon className="size-3 fill-current" />
+                              </HeaderIconActionButton>
+                            </div>
+                          </div>
+                          <WorkspaceFilesTree
+                            cwd={workspaceRoot}
+                            environmentId={environmentId}
+                            sessionKey={`${panelKey}:${workspaceRoot}`}
+                            requestedRootCreate={requestedRootCreate}
+                            resolvedTheme={resolvedTheme}
+                            selectedFilePath={activeEditorTarget?.filePath ?? null}
+                            onCreateEntry={createWorkspaceEntry}
+                            onRenameEntry={renameWorkspaceEntry}
+                            onDeleteEntry={deleteWorkspaceEntry}
+                            onCopyRelativePath={copyRelativeWorkspacePath}
+                            onCopyAbsolutePath={copyAbsoluteWorkspacePath}
+                            onOpenInExternalEditor={openWorkspaceEntryInEditor}
+                            onRefresh={refreshWorkspaceTree}
+                            onSelectFile={selectFile}
+                          />
+                        </div>
                       )}
                     </ScrollArea>
                   </>
@@ -953,6 +1545,10 @@ export function WorkspaceFilesPanel({
                     }}
                     requestedNavigation={requestedNavigation}
                     requestedSaveNonce={requestedSaveNonce}
+                    requestedDiscardNonce={requestedDiscardNonce}
+                    lineNumbersVisible={editorLineNumbersVisible}
+                    wordWrapEnabled={editorWordWrapEnabled}
+                    autoSaveEnabled={editorAutoSaveEnabled}
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center px-6 text-center">

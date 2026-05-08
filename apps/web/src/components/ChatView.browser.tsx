@@ -215,12 +215,15 @@ function createBaseServerConfig(): ServerConfig {
 function createMockEnvironmentApi(input: {
   browse: EnvironmentApi["filesystem"]["browse"];
   dispatchCommand: EnvironmentApi["orchestration"]["dispatchCommand"];
+  createDirectory?: EnvironmentApi["projects"]["createDirectory"];
+  deleteEntry?: EnvironmentApi["projects"]["deleteEntry"];
   getFullThreadDiff?: EnvironmentApi["orchestration"]["getFullThreadDiff"];
   getLocalAgentInventory?: EnvironmentApi["projects"]["getLocalAgentInventory"];
   listEntries?: EnvironmentApi["projects"]["listEntries"];
   preview?: Partial<EnvironmentApi["preview"]>;
   getTurnDiff?: EnvironmentApi["orchestration"]["getTurnDiff"];
   readFile?: EnvironmentApi["projects"]["readFile"];
+  renameEntry?: EnvironmentApi["projects"]["renameEntry"];
   searchEntries?: EnvironmentApi["projects"]["searchEntries"];
   subscribeThread?: EnvironmentApi["orchestration"]["subscribeThread"];
   writeFile?: EnvironmentApi["projects"]["writeFile"];
@@ -239,6 +242,24 @@ function createMockEnvironmentApi(input: {
           skills: [],
           commands: [],
         })) as EnvironmentApi["projects"]["getLocalAgentInventory"]),
+      createDirectory:
+        input.createDirectory ??
+        ((async ({ relativePath }) => ({
+          relativePath,
+        })) as EnvironmentApi["projects"]["createDirectory"]),
+      renameEntry:
+        input.renameEntry ??
+        ((async ({ fromRelativePath, toRelativePath }) => ({
+          fromRelativePath,
+          toRelativePath,
+          kind: "file",
+        })) as EnvironmentApi["projects"]["renameEntry"]),
+      deleteEntry:
+        input.deleteEntry ??
+        ((async ({ relativePath }) => ({
+          relativePath,
+          kind: "file",
+        })) as EnvironmentApi["projects"]["deleteEntry"]),
       readFile:
         input.readFile ??
         ((() => {

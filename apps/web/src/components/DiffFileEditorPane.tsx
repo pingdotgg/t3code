@@ -92,6 +92,10 @@ interface DiffFileEditorPaneProps {
   onRequestFilePathChange: (filePath: string) => void;
   requestedNavigation?: DiffFileEditorRequestedNavigation | null | undefined;
   requestedSaveNonce?: number | undefined;
+  requestedDiscardNonce?: number | undefined;
+  lineNumbersVisible?: boolean | undefined;
+  wordWrapEnabled?: boolean | undefined;
+  autoSaveEnabled?: boolean | undefined;
   onEditorControlsStateChange?:
     | ((
         state: Readonly<{
@@ -444,6 +448,10 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     requestedNavigation,
     reuseMonacoModels = false,
     requestedSaveNonce,
+    requestedDiscardNonce,
+    lineNumbersVisible = true,
+    wordWrapEnabled = false,
+    autoSaveEnabled = false,
     showHeader = true,
     onPersisted,
     onAddCodeContext,
@@ -492,6 +500,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     requestedNavigation?.nonce,
   );
   const lastHandledRequestedSaveNonceRef = useRef<number | undefined>(requestedSaveNonce);
+  const lastHandledRequestedDiscardNonceRef = useRef<number | undefined>(requestedDiscardNonce);
   const [monacoReadyGeneration, setMonacoReadyGeneration] = useState(0);
   const editorContainerRef = useRef<HTMLDivElement | null>(null);
   const editorSubscriptionsRef = useRef<Array<{ dispose: () => void }>>([]);
@@ -872,6 +881,37 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   }, [handleSave, requestedSaveNonce]);
 
   useEffect(() => {
+    if (
+      requestedDiscardNonce === undefined ||
+      requestedDiscardNonce === lastHandledRequestedDiscardNonceRef.current
+    ) {
+      return;
+    }
+
+    lastHandledRequestedDiscardNonceRef.current = requestedDiscardNonce;
+    if (status === "loading" || status === "saving") {
+      return;
+    }
+
+    setDraftContents(baseContents);
+    setMessage(null);
+  }, [baseContents, requestedDiscardNonce, status]);
+
+  useEffect(() => {
+    if (!autoSaveEnabled || !isDirty || !canSave || status !== "ready") {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void handleSave();
+    }, 800);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [autoSaveEnabled, canSave, handleSave, isDirty, status]);
+
+  useEffect(() => {
     saveHandlerRef.current = handleSave;
   }, [handleSave]);
 
@@ -1056,13 +1096,14 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
     () => ({
       automaticLayout: true,
       fontSize: getCodeEditorFontSize(codeFontScale),
+      lineNumbers: lineNumbersVisible ? ("on" as const) : ("off" as const),
       minimap: { enabled: false },
       readOnly: status === "loading" || status === "saving",
       scrollBeyondLastLine: false,
       tabSize: 2,
-      wordWrap: "off" as const,
+      wordWrap: wordWrapEnabled ? ("on" as const) : ("off" as const),
     }),
-    [codeFontScale, status],
+    [codeFontScale, lineNumbersVisible, status, wordWrapEnabled],
   );
   const monacoTheme = useMemo(() => ensureAppMonacoTheme(resolvedTheme), [resolvedTheme]);
   const monacoLanguage = useMemo(

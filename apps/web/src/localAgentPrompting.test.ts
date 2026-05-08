@@ -14,6 +14,9 @@ const makeApi = (files: Record<string, string>): EnvironmentApi =>
     preview: {} as EnvironmentApi["preview"],
     projects: {
       listEntries: vi.fn(),
+      createDirectory: vi.fn(),
+      renameEntry: vi.fn(),
+      deleteEntry: vi.fn(),
       getLocalAgentInventory: vi.fn(),
       searchEntries: vi.fn(),
       writeFile: vi.fn(),

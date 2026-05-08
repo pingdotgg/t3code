@@ -49,6 +49,12 @@ import {
   OrchestrationRpcSchemas,
 } from "./orchestration.ts";
 import {
+  ProjectCreateDirectoryError,
+  ProjectCreateDirectoryInput,
+  ProjectCreateDirectoryResult,
+  ProjectDeleteEntryError,
+  ProjectDeleteEntryInput,
+  ProjectDeleteEntryResult,
   ProjectListEntriesError,
   ProjectListEntriesInput,
   ProjectListEntriesResult,
@@ -58,6 +64,9 @@ import {
   ProjectReadFileInput,
   ProjectReadFileResult,
   ProjectReadFileRpcError,
+  ProjectRenameEntryError,
+  ProjectRenameEntryInput,
+  ProjectRenameEntryResult,
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -128,6 +137,9 @@ export const WS_METHODS = {
   projectsGetLocalAgentInventory: "projects.getLocalAgentInventory",
   projectsReadFile: "projects.readFile",
   projectsWriteFile: "projects.writeFile",
+  projectsCreateDirectory: "projects.createDirectory",
+  projectsRenameEntry: "projects.renameEntry",
+  projectsDeleteEntry: "projects.deleteEntry",
   previewInspectProject: "preview.inspectProject",
   previewSearchComponents: "preview.searchComponents",
   previewResolveTarget: "preview.resolveTarget",
@@ -277,6 +289,24 @@ export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
   error: ProjectWriteFileRpcError,
+});
+
+export const WsProjectsCreateDirectoryRpc = Rpc.make(WS_METHODS.projectsCreateDirectory, {
+  payload: ProjectCreateDirectoryInput,
+  success: ProjectCreateDirectoryResult,
+  error: ProjectCreateDirectoryError,
+});
+
+export const WsProjectsRenameEntryRpc = Rpc.make(WS_METHODS.projectsRenameEntry, {
+  payload: ProjectRenameEntryInput,
+  success: ProjectRenameEntryResult,
+  error: ProjectRenameEntryError,
+});
+
+export const WsProjectsDeleteEntryRpc = Rpc.make(WS_METHODS.projectsDeleteEntry, {
+  payload: ProjectDeleteEntryInput,
+  success: ProjectDeleteEntryResult,
+  error: ProjectDeleteEntryError,
 });
 
 export const WsPreviewInspectProjectRpc = Rpc.make(WS_METHODS.previewInspectProject, {
@@ -551,6 +581,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsGetLocalAgentInventoryRpc,
   WsProjectsReadFileRpc,
   WsProjectsWriteFileRpc,
+  WsProjectsCreateDirectoryRpc,
+  WsProjectsRenameEntryRpc,
+  WsProjectsDeleteEntryRpc,
   WsPreviewInspectProjectRpc,
   WsPreviewSearchComponentsRpc,
   WsPreviewResolveTargetRpc,

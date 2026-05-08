@@ -1,4 +1,5 @@
 export * from "./AdvancedSettingsIcon";
+export * from "./AddDocumentIcon";
 export * from "./AddProjectFolderIcon";
 export * from "./AddProjectIcon";
 export * from "./FinderIcon";
