@@ -154,9 +154,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         });
       }
 
-      return yield* Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson))(
-        extractJsonObject(rawResult),
-      ).pipe(
+      const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
+      return yield* decodeOutput(extractJsonObject(rawResult)).pipe(
         Effect.catchTag("SchemaError", (cause) =>
           Effect.fail(
             new TextGenerationError({

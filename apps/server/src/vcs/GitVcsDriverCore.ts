@@ -28,6 +28,7 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
+const isGitCommandError = Schema.is(GitCommandError);
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -327,7 +328,7 @@ function toGitCommandError(
   detail: string,
 ) {
   return (cause: unknown) =>
-    Schema.is(GitCommandError)(cause)
+    isGitCommandError(cause)
       ? cause
       : new GitCommandError({
           operation: input.operation,

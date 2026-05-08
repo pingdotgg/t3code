@@ -44,6 +44,7 @@ export class BitbucketApiError extends Schema.TaggedErrorClass<BitbucketApiError
     return `Bitbucket API failed in ${this.operation}: ${this.detail}`;
   }
 }
+const isBitbucketApiErrorValue = Schema.is(BitbucketApiError);
 
 const RawBitbucketRepositorySchema = Schema.Struct({
   full_name: TrimmedNonEmptyString,
@@ -350,7 +351,7 @@ function requestError(operation: string, cause: unknown): BitbucketApiError {
 }
 
 function isBitbucketApiError(cause: unknown): cause is BitbucketApiError {
-  return Schema.is(BitbucketApiError)(cause);
+  return isBitbucketApiErrorValue(cause);
 }
 
 function responseError(

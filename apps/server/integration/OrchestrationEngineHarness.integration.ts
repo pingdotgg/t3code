@@ -79,6 +79,8 @@ import { VcsStatusBroadcaster } from "../src/vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../src/git/GitWorkflowService.ts";
 import * as VcsProcess from "../src/vcs/VcsProcess.ts";
 
+const decodeCodexSettings = Schema.decodeEffect(CodexSettings);
+
 function runGit(cwd: string, args: ReadonlyArray<string>) {
   return execFileSync("git", args, {
     cwd,
@@ -266,7 +268,7 @@ export const makeOrchestrationIntegrationHarness = (
     const realCodexRegistry = Layer.effect(
       ProviderAdapterRegistry,
       Effect.gen(function* () {
-        const codexSettings = Schema.decodeSync(CodexSettings)({});
+        const codexSettings = yield* decodeCodexSettings({});
         const codexAdapter = yield* makeCodexAdapter(codexSettings);
         return makeAdapterRegistryMock({
           [ProviderDriverKind.make("codex")]: codexAdapter,

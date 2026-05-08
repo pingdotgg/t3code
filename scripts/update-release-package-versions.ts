@@ -26,7 +26,7 @@ interface UpdateReleasePackageVersionsOptions {
 const PackageJsonSchema = Schema.Record(Schema.String, Schema.Unknown);
 const PackageJsonPrettyJson = fromJsonStringPretty(PackageJsonSchema);
 const decodePackageJson = Schema.decodeUnknownEffect(PackageJsonPrettyJson);
-const encodePackageJson = Schema.encodeSync(PackageJsonPrettyJson);
+const encodePackageJson = Schema.encodeEffect(PackageJsonPrettyJson);
 
 export const updateReleasePackageVersions = Effect.fn("updateReleasePackageVersions")(function* (
   version: string,
@@ -44,7 +44,8 @@ export const updateReleasePackageVersions = Effect.fn("updateReleasePackageVersi
       continue;
     }
 
-    yield* fs.writeFileString(filePath, `${encodePackageJson({ ...packageJson, version })}\n`);
+    const packageJsonString = yield* encodePackageJson({ ...packageJson, version });
+    yield* fs.writeFileString(filePath, `${packageJsonString}\n`);
     changed = true;
   }
 

@@ -16,6 +16,7 @@ import {
 } from "../opencodeRuntime.ts";
 import { checkOpenCodeProviderStatus } from "./OpenCodeProvider.ts";
 import type { OpenCodeInventory } from "../opencodeRuntime.ts";
+const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
 const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
 
@@ -106,7 +107,7 @@ const testLayer = Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe
 );
 
 const makeOpenCodeSettings = (overrides?: Partial<OpenCodeSettings>): OpenCodeSettings =>
-  Schema.decodeSync(OpenCodeSettings)({
+  decodeOpenCodeSettings({
     enabled: true,
     binaryPath: "opencode",
     serverUrl: "",

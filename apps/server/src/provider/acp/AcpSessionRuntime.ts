@@ -7,7 +7,6 @@ import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Context from "effect/Context";
-import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as EffectAcpClient from "effect-acp/client";
@@ -26,6 +25,10 @@ import {
   type AcpSessionModeState,
   type AcpToolCallState,
 } from "./AcpRuntimeModel.ts";
+
+function formatConfigOptionValue(value: string | boolean): string {
+  return JSON.stringify(value);
+}
 
 export interface AcpSpawnInput {
   readonly command: string;
@@ -277,7 +280,7 @@ const makeAcpSessionRuntime = (
           }
           return yield* new EffectAcpErrors.AcpRequestError({
             code: -32602,
-            errorMessage: `Invalid value ${Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(value)} for session config option "${configOption.id}": expected boolean`,
+            errorMessage: `Invalid value ${formatConfigOptionValue(value)} for session config option "${configOption.id}": expected boolean`,
             data: {
               configId: configOption.id,
               expectedType: "boolean",
@@ -288,7 +291,7 @@ const makeAcpSessionRuntime = (
         if (typeof value !== "string") {
           return yield* new EffectAcpErrors.AcpRequestError({
             code: -32602,
-            errorMessage: `Invalid value ${Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(value)} for session config option "${configOption.id}": expected string`,
+            errorMessage: `Invalid value ${formatConfigOptionValue(value)} for session config option "${configOption.id}": expected string`,
             data: {
               configId: configOption.id,
               expectedType: "string",
@@ -302,7 +305,7 @@ const makeAcpSessionRuntime = (
         }
         return yield* new EffectAcpErrors.AcpRequestError({
           code: -32602,
-          errorMessage: `Invalid value ${Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(value)} for session config option "${configOption.id}": expected one of ${allowedValues.join(", ")}`,
+          errorMessage: `Invalid value ${formatConfigOptionValue(value)} for session config option "${configOption.id}": expected one of ${allowedValues.join(", ")}`,
           data: {
             configId: configOption.id,
             allowedValues,

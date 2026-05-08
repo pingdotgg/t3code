@@ -9,6 +9,9 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { ensureEnvironmentApi } from "../environmentApi";
 
+const decodeFullThreadDiffInput = Schema.decodeUnknownOption(OrchestrationGetFullThreadDiffInput);
+const decodeTurnDiffInput = Schema.decodeUnknownOption(OrchestrationGetTurnDiffInput);
+
 interface CheckpointDiffQueryInput {
   environmentId: EnvironmentId | null;
   threadId: ThreadId | null;
@@ -36,14 +39,14 @@ export const providerQueryKeys = {
 
 function decodeCheckpointDiffRequest(input: CheckpointDiffQueryInput) {
   if (input.fromTurnCount === 0) {
-    return Schema.decodeUnknownOption(OrchestrationGetFullThreadDiffInput)({
+    return decodeFullThreadDiffInput({
       threadId: input.threadId,
       toTurnCount: input.toTurnCount,
       ignoreWhitespace: input.ignoreWhitespace,
     }).pipe(Option.map((fields) => ({ kind: "fullThreadDiff" as const, input: fields })));
   }
 
-  return Schema.decodeUnknownOption(OrchestrationGetTurnDiffInput)({
+  return decodeTurnDiffInput({
     threadId: input.threadId,
     fromTurnCount: input.fromTurnCount,
     toTurnCount: input.toTurnCount,

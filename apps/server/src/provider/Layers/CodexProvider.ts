@@ -26,6 +26,7 @@ import { buildServerProvider, type ServerProviderDraft } from "../providerSnapsh
 import { expandHomePath } from "../../pathExpansion.ts";
 import { scopedSafeTeardown } from "./scopedSafeTeardown.ts";
 import packageJson from "../../../package.json" with { type: "json" };
+const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 
 const PROVIDER_PROBE_TIMEOUT_MS = 8_000;
 const CODEX_PRESENTATION = {
@@ -450,7 +451,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   if (Result.isFailure(probeResult)) {
     const error = probeResult.failure;
-    const installed = !Schema.is(CodexErrors.CodexAppServerSpawnError)(error);
+    const installed = !isCodexAppServerSpawnError(error);
     return buildServerProvider({
       presentation: CODEX_PRESENTATION,
       enabled: codexSettings.enabled,

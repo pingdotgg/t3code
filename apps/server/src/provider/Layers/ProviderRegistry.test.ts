@@ -47,6 +47,7 @@ import type { ProviderInstance } from "../ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+const decodeServerSettings = Schema.decodeSync(ServerSettings);
 
 const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
 const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({});
@@ -255,7 +256,7 @@ function makeMutableServerSettingsService(
       updateSettings: (patch) =>
         Effect.gen(function* () {
           const current = yield* Ref.get(settingsRef);
-          const next = Schema.decodeSync(ServerSettings)(deepMerge(current, patch));
+          const next = decodeServerSettings(deepMerge(current, patch));
           yield* Ref.set(settingsRef, next);
           yield* PubSub.publish(changes, next);
           return next;
@@ -928,7 +929,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
         Effect.gen(function* () {
           const missingBinary = `t3code_codex_missing_`;
           const serverSettings = yield* makeMutableServerSettingsService(
-            Schema.decodeSync(ServerSettings)(
+            decodeServerSettings(
               deepMerge(DEFAULT_SERVER_SETTINGS, {
                 providers: {
                   // Disable every built-in probe that would otherwise spawn
@@ -1027,7 +1028,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           const firstMissing = `t3code_codex_first_`;
           const secondMissing = `t3code_codex_second_`;
           const serverSettings = yield* makeMutableServerSettingsService(
-            Schema.decodeSync(ServerSettings)(
+            decodeServerSettings(
               deepMerge(DEFAULT_SERVER_SETTINGS, {
                 providers: {
                   codex: { enabled: true, binaryPath: firstMissing },
@@ -1122,7 +1123,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
       it.effect("includes unavailable instance snapshots in getProviders", () =>
         Effect.gen(function* () {
           const serverSettings = yield* makeMutableServerSettingsService(
-            Schema.decodeSync(ServerSettings)(
+            decodeServerSettings(
               deepMerge(DEFAULT_SERVER_SETTINGS, {
                 providers: {
                   codex: { enabled: false },
@@ -1178,7 +1179,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
         () =>
           Effect.gen(function* () {
             const serverSettings = yield* makeMutableServerSettingsService(
-              Schema.decodeSync(ServerSettings)(
+              decodeServerSettings(
                 deepMerge(DEFAULT_SERVER_SETTINGS, {
                   providers: {
                     codex: {

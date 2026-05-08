@@ -445,27 +445,27 @@ describe("uiStateStore pure functions", () => {
   });
 });
 
-describe("uiStateStore persistence round-trip", () => {
-  function createLocalStorageStub(): Storage {
-    const store = new Map<string, string>();
-    return {
-      clear: () => {
-        store.clear();
-      },
-      getItem: (key) => store.get(key) ?? null,
-      key: (index) => [...store.keys()][index] ?? null,
-      get length() {
-        return store.size;
-      },
-      removeItem: (key) => {
-        store.delete(key);
-      },
-      setItem: (key, value) => {
-        store.set(key, value);
-      },
-    };
-  }
+function createLocalStorageStub(): Storage {
+  const store = new Map<string, string>();
+  return {
+    clear: () => {
+      store.clear();
+    },
+    getItem: (key) => store.get(key) ?? null,
+    key: (index) => [...store.keys()][index] ?? null,
+    get length() {
+      return store.size;
+    },
+    removeItem: (key) => {
+      store.delete(key);
+    },
+    setItem: (key, value) => {
+      store.set(key, value);
+    },
+  };
+}
 
+describe("uiStateStore persistence round-trip", () => {
   let localStorageStub: Storage;
 
   beforeEach(() => {

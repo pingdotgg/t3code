@@ -15,6 +15,7 @@ const ProjectVcsConfig = Schema.Struct({
   ),
   vcsKind: Schema.optional(VcsDriverKind),
 });
+const isProjectVcsConfig = Schema.is(ProjectVcsConfig);
 
 interface ProjectVcsConfigFile {
   readonly vcs?:
@@ -47,7 +48,7 @@ function configuredKind(config: ProjectVcsConfigFile): VcsDriverKindType | "auto
 function parseConfig(raw: string): ProjectVcsConfigFile | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
-    return Schema.is(ProjectVcsConfig)(parsed) ? parsed : null;
+    return isProjectVcsConfig(parsed) ? parsed : null;
   } catch {
     return null;
   }

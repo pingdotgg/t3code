@@ -25,6 +25,10 @@ import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 
+const decodeDesktopBackendBootstrap = Schema.decodeEffect(
+  Schema.fromJsonString(DesktopBackendBootstrap),
+);
+
 const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   executablePath: "/electron",
   entryPath: "/server/bin.mjs",
@@ -94,7 +98,7 @@ const healthyHttpClientLayer = httpClientLayer((request) =>
 );
 
 function decodeBootstrap(raw: string) {
-  return Schema.decodeEffect(Schema.fromJsonString(DesktopBackendBootstrap))(raw);
+  return decodeDesktopBackendBootstrap(raw);
 }
 
 function makeManagerLayer(input: {

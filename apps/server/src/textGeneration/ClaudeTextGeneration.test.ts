@@ -13,6 +13,7 @@ import { ServerConfig } from "../config.ts";
 import { type TextGenerationShape } from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
+const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const ClaudeTextGenerationTestLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3code-claude-text-generation-test-",
@@ -182,7 +183,7 @@ function withFakeClaudeEnv<A, E, R>(
         }),
     );
 
-    const config = Schema.decodeSync(ClaudeSettings)(input.claudeConfig ?? {});
+    const config = decodeClaudeSettings(input.claudeConfig ?? {});
     const textGeneration = yield* makeClaudeTextGeneration(config);
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);

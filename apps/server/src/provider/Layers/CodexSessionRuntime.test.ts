@@ -16,6 +16,7 @@ import {
   isRecoverableThreadResumeError,
   openCodexThread,
 } from "./CodexSessionRuntime.ts";
+const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 
 function makeThreadOpenResponse(
   threadId: string,
@@ -269,7 +270,7 @@ describe("openCodexThread", () => {
         }),
       ),
       (error: unknown) =>
-        Schema.is(CodexErrors.CodexAppServerRequestError)(error) &&
+        isCodexAppServerRequestError(error) &&
         error.errorMessage === "timed out waiting for server",
     );
   });

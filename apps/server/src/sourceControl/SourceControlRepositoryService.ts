@@ -22,6 +22,7 @@ import {
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
+const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 
 export interface SourceControlRepositoryServiceShape {
   readonly lookupRepository: (
@@ -69,7 +70,7 @@ function repositoryError(input: {
 
 function mapRepositoryError(operation: string, provider: SourceControlProviderKind) {
   return Effect.mapError((cause: unknown) =>
-    Schema.is(SourceControlRepositoryError)(cause)
+    isSourceControlRepositoryError(cause)
       ? cause
       : repositoryError({
           operation,

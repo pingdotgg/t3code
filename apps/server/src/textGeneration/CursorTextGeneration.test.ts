@@ -19,6 +19,7 @@ import { CursorSettings, ProviderInstanceId } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
 import { type TextGenerationShape } from "./TextGeneration.ts";
 import { makeCursorTextGeneration } from "./CursorTextGeneration.ts";
+const decodeCursorSettings = Schema.decodeSync(CursorSettings);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const mockAgentPath = path.join(__dirname, "../../scripts/acp-mock-agent.ts");
@@ -65,7 +66,7 @@ function withFakeAcpAgent<A, E, R>(
       }),
     );
     const agentPath = makeAcpAgentWrapper(tempDir, env);
-    const config = Schema.decodeSync(CursorSettings)({ binaryPath: agentPath });
+    const config = decodeCursorSettings({ binaryPath: agentPath });
     const textGeneration = yield* makeCursorTextGeneration(config);
     return yield* effectFn(textGeneration);
   }).pipe(Effect.scoped);

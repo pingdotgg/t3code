@@ -46,6 +46,7 @@ import {
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
 import { makeCodexAdapter } from "./CodexAdapter.ts";
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* CodexAdapter`.
 class CodexAdapter extends Context.Service<CodexAdapter, CodexAdapterShape>()(
@@ -224,7 +225,7 @@ const validationLayer = it.layer(
   Layer.effect(
     CodexAdapter,
     Effect.gen(function* () {
-      const codexConfig = Schema.decodeSync(CodexSettings)({});
+      const codexConfig = decodeCodexSettings({});
       return yield* makeCodexAdapter(codexConfig, {
         makeRuntime: validationRuntimeFactory.factory,
       });
@@ -293,7 +294,7 @@ const sessionErrorLayer = it.layer(
   Layer.effect(
     CodexAdapter,
     Effect.gen(function* () {
-      const codexConfig = Schema.decodeSync(CodexSettings)({});
+      const codexConfig = decodeCodexSettings({});
       return yield* makeCodexAdapter(codexConfig, {
         makeRuntime: sessionRuntimeFactory.factory,
       });
@@ -364,7 +365,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     const customLayer = Layer.effect(
       CodexAdapter,
       Effect.gen(function* () {
-        const codexConfig = Schema.decodeSync(CodexSettings)({});
+        const codexConfig = decodeCodexSettings({});
         return yield* makeCodexAdapter(codexConfig, {
           instanceId: customInstanceId,
           makeRuntime: customRuntimeFactory.factory,
@@ -419,7 +420,7 @@ const lifecycleLayer = it.layer(
   Layer.effect(
     CodexAdapter,
     Effect.gen(function* () {
-      const codexConfig = Schema.decodeSync(CodexSettings)({});
+      const codexConfig = decodeCodexSettings({});
       return yield* makeCodexAdapter(codexConfig, {
         makeRuntime: lifecycleRuntimeFactory.factory,
       });
@@ -1034,7 +1035,7 @@ const scopedLifecycleLayer = it.layer(
   Layer.effect(
     CodexAdapter,
     Effect.gen(function* () {
-      const codexConfig = Schema.decodeSync(CodexSettings)({});
+      const codexConfig = decodeCodexSettings({});
       return yield* makeCodexAdapter(codexConfig, {
         makeRuntime: scopedLifecycleRuntimeFactory.factory,
       });
@@ -1078,7 +1079,7 @@ const scopedFailureLayer = it.layer(
   Layer.effect(
     CodexAdapter,
     Effect.gen(function* () {
-      const codexConfig = Schema.decodeSync(CodexSettings)({});
+      const codexConfig = decodeCodexSettings({});
       return yield* makeCodexAdapter(codexConfig, {
         makeRuntime: scopedFailureRuntimeFactory.factory,
       });
@@ -1127,7 +1128,7 @@ it.effect("flushes managed native logs when the adapter layer shuts down", () =>
       const layer = Layer.effect(
         CodexAdapter,
         Effect.gen(function* () {
-          const codexConfig = Schema.decodeSync(CodexSettings)({});
+          const codexConfig = decodeCodexSettings({});
           return yield* makeCodexAdapter(codexConfig, {
             makeRuntime: runtimeFactory.factory,
             nativeEventLogPath: basePath,

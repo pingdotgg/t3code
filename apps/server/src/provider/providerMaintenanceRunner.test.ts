@@ -25,6 +25,7 @@ import {
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
 } from "./providerMaintenance.ts";
+const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
@@ -455,8 +456,8 @@ describe("providerMaintenanceRunner", () => {
       assert.strictEqual(Exit.isFailure(second), true);
       if (Exit.isFailure(second)) {
         const error = Cause.squash(second.cause);
-        assert.strictEqual(Schema.is(ServerProviderUpdateError)(error), true);
-        if (Schema.is(ServerProviderUpdateError)(error)) {
+        assert.strictEqual(isServerProviderUpdateError(error), true);
+        if (isServerProviderUpdateError(error)) {
           assert.include(error.reason, "already running");
         }
       }

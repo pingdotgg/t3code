@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
 import { TextGenerationError } from "@t3tools/contracts";
+const isTextGenerationError = Schema.is(TextGenerationError);
 
 /** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
 export function toJsonSchemaObject(schema: Schema.Top): unknown {
@@ -127,7 +128,7 @@ export function normalizeCliError(
   error: unknown,
   fallback: string,
 ): TextGenerationError {
-  if (Schema.is(TextGenerationError)(error)) {
+  if (isTextGenerationError(error)) {
     return error;
   }
 

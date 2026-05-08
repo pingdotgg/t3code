@@ -30,6 +30,8 @@ export class PersistenceDecodeError extends Schema.TaggedErrorClass<PersistenceD
     return `Decode error in ${this.operation}: ${this.issue}`;
   }
 }
+const isPersistenceSqlError = Schema.is(PersistenceSqlError);
+const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
 export function toPersistenceSqlError(operation: string) {
   return (cause: unknown): PersistenceSqlError =>
@@ -59,7 +61,7 @@ export function toPersistenceDecodeCauseError(operation: string) {
 }
 
 export const isPersistenceError = (u: unknown) =>
-  Schema.is(PersistenceSqlError)(u) || Schema.is(PersistenceDecodeError)(u);
+  isPersistenceSqlError(u) || isPersistenceDecodeError(u);
 
 // ===============================
 // Provider Session Repository Errors

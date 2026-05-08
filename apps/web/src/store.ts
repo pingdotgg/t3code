@@ -37,6 +37,7 @@ import {
 import { resolveEnvironmentHttpUrl } from "./environments/runtime";
 import { sanitizeThreadErrorMessage } from "./rpc/transportError";
 import { getThreadFromEnvironmentState } from "./threadDerivation";
+const isProviderDriverKindValue = Schema.is(ProviderDriverKind);
 
 export interface EnvironmentState {
   projectIds: ProjectId[];
@@ -1006,7 +1007,7 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderDriverKind {
-  if (Schema.is(ProviderDriverKind)(providerName)) {
+  if (isProviderDriverKindValue(providerName)) {
     return providerName;
   }
   return ProviderDriverKind.make("codex");

@@ -170,6 +170,10 @@ function encodeWhenAst(node: KeybindingWhenNode): string {
 
 const RawKeybindingsEntries = fromLenientJson(Schema.Array(Schema.Unknown));
 const KeybindingsConfigPrettyJson = fromJsonStringPretty(KeybindingsConfig);
+const decodeKeybindingRuleExit = Schema.decodeUnknownExit(KeybindingRule);
+const decodeResolvedKeybindingFromConfigExit = Schema.decodeExit(ResolvedKeybindingFromConfig);
+const decodeRawKeybindingsEntriesExit = Schema.decodeUnknownExit(RawKeybindingsEntries);
+const encodeKeybindingsConfigPrettyJson = Schema.encodeEffect(KeybindingsConfigPrettyJson);
 
 export interface KeybindingsConfigState {
   readonly keybindings: ResolvedKeybindingsConfig;
@@ -344,7 +348,7 @@ const makeKeybindings = Effect.gen(function* () {
 
     return yield* Effect.forEach(rawConfig, (entry) =>
       Effect.gen(function* () {
-        const decodedRule = Schema.decodeUnknownExit(KeybindingRule)(entry);
+        const decodedRule = decodeKeybindingRuleExit(entry);
         if (decodedRule._tag === "Failure") {
           yield* Effect.logWarning("ignoring invalid keybinding entry", {
             path: keybindingsConfigPath,
@@ -353,7 +357,7 @@ const makeKeybindings = Effect.gen(function* () {
           });
           return null;
         }
-        const resolved = Schema.decodeExit(ResolvedKeybindingFromConfig)(decodedRule.value);
+        const resolved = decodeResolvedKeybindingFromConfigExit(decodedRule.value);
         if (resolved._tag === "Failure") {
           yield* Effect.logWarning("ignoring invalid keybinding entry", {
             path: keybindingsConfigPath,
@@ -379,7 +383,7 @@ const makeKeybindings = Effect.gen(function* () {
     }
 
     const rawConfig = yield* readRawConfig;
-    const decodedEntries = Schema.decodeUnknownExit(RawKeybindingsEntries)(rawConfig);
+    const decodedEntries = decodeRawKeybindingsEntriesExit(rawConfig);
     if (decodedEntries._tag === "Failure") {
       const detail = `expected JSON array (${Cause.pretty(decodedEntries.cause)})`;
       return {
@@ -391,7 +395,7 @@ const makeKeybindings = Effect.gen(function* () {
     const keybindings: KeybindingRule[] = [];
     const issues: ServerConfigIssue[] = [];
     for (const [index, entry] of decodedEntries.value.entries()) {
-      const decodedRule = Schema.decodeUnknownExit(KeybindingRule)(entry);
+      const decodedRule = decodeKeybindingRuleExit(entry);
       if (decodedRule._tag === "Failure") {
         const detail = Cause.pretty(decodedRule.cause);
         issues.push(invalidEntryIssue(index, detail));
@@ -404,7 +408,7 @@ const makeKeybindings = Effect.gen(function* () {
         continue;
       }
 
-      const resolvedRule = Schema.decodeExit(ResolvedKeybindingFromConfig)(decodedRule.value);
+      const resolvedRule = decodeResolvedKeybindingFromConfigExit(decodedRule.value);
       if (resolvedRule._tag === "Failure") {
         const detail = Cause.pretty(resolvedRule.cause);
         issues.push(invalidEntryIssue(index, detail));
@@ -423,7 +427,7 @@ const makeKeybindings = Effect.gen(function* () {
   });
 
   const writeConfigAtomically = (rules: readonly KeybindingRule[]) => {
-    return Schema.encodeEffect(KeybindingsConfigPrettyJson)(rules).pipe(
+    return encodeKeybindingsConfigPrettyJson(rules).pipe(
       Effect.map((encoded) => `${encoded}\n`),
       Effect.flatMap((encoded) =>
         writeFileStringAtomically({

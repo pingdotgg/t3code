@@ -61,6 +61,12 @@ import {
   type CodexSessionRuntimeShape,
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+const isCodexAppServerProcessExitedError = Schema.is(CodexErrors.CodexAppServerProcessExitedError);
+const isCodexAppServerTransportError = Schema.is(CodexErrors.CodexAppServerTransportError);
+const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
+  CodexSessionRuntimeThreadIdMissingError,
+);
+const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
 const PROVIDER = ProviderDriverKind.make("codex");
 
@@ -91,10 +97,7 @@ function mapCodexRuntimeError(
   method: string,
   error: CodexSessionRuntimeError,
 ): ProviderAdapterError {
-  if (
-    Schema.is(CodexErrors.CodexAppServerProcessExitedError)(error) ||
-    Schema.is(CodexErrors.CodexAppServerTransportError)(error)
-  ) {
+  if (isCodexAppServerProcessExitedError(error) || isCodexAppServerTransportError(error)) {
     return new ProviderAdapterSessionClosedError({
       provider: PROVIDER,
       threadId,
@@ -102,7 +105,7 @@ function mapCodexRuntimeError(
     });
   }
 
-  if (Schema.is(CodexSessionRuntimeThreadIdMissingError)(error)) {
+  if (isCodexSessionRuntimeThreadIdMissingError(error)) {
     return new ProviderAdapterSessionNotFoundError({
       provider: PROVIDER,
       threadId,
@@ -134,7 +137,8 @@ function readPayload<A>(
   schema: Schema.Schema<A>,
   payload: ProviderEvent["payload"],
 ): A | undefined {
-  return Schema.is(schema)(payload) ? payload : undefined;
+  const isPayload = Schema.is(schema);
+  return isPayload(payload) ? payload : undefined;
 }
 
 function trimText(value: string | undefined | null): string | undefined {
@@ -1381,7 +1385,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           binaryPath: codexConfig.binaryPath,
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
-          ...(Schema.is(CodexResumeCursorSchema)(input.resumeCursor)
+          ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
             : {}),
           runtimeMode: input.runtimeMode,

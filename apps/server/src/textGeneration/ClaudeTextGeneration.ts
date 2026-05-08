@@ -53,6 +53,9 @@ const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
 });
 
+const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const decodeClaudeOutputEnvelope = Schema.decodeEffect(Schema.fromJsonString(ClaudeOutputEnvelope));
+
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
   claudeSettings: ClaudeSettings,
   environment: NodeJS.ProcessEnv = process.env,
@@ -72,6 +75,26 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
       Effect.mapError((cause) =>
         normalizeCliError("claude", operation, cause, "Failed to collect process output"),
+      ),
+    );
+
+  const encodeJsonForOperation = (
+    operation:
+      | "generateCommitMessage"
+      | "generatePrContent"
+      | "generateBranchName"
+      | "generateThreadTitle",
+    value: unknown,
+    detail: string,
+  ): Effect.Effect<string, TextGenerationError> =>
+    encodeJsonString(value).pipe(
+      Effect.mapError(
+        (cause) =>
+          new TextGenerationError({
+            operation,
+            detail,
+            cause,
+          }),
       ),
     );
 
@@ -96,8 +119,10 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     outputSchemaJson: S;
     modelSelection: ModelSelection;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
-    const jsonSchemaStr = Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(
+    const jsonSchemaStr = yield* encodeJsonForOperation(
+      operation,
       toJsonSchemaObject(outputSchemaJson),
+      "Failed to encode structured output schema.",
     );
     const caps = getClaudeModelCapabilities(modelSelection.model);
     const descriptors = getProviderOptionDescriptors({
@@ -118,6 +143,14 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
       ...(fastMode ? { fastMode: true } : {}),
     };
+    const settingsJson =
+      Object.keys(settings).length > 0
+        ? yield* encodeJsonForOperation(
+            operation,
+            settings,
+            "Failed to encode Claude CLI settings.",
+          )
+        : undefined;
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* () {
       const command = ChildProcess.make(
@@ -131,9 +164,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--model",
           resolveClaudeApiModelId(modelSelection),
           ...(cliEffort ? ["--effort", cliEffort] : []),
-          ...(Object.keys(settings).length > 0
-            ? ["--settings", Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(settings)]
-            : []),
+          ...(settingsJson ? ["--settings", settingsJson] : []),
           "--dangerously-skip-permissions",
         ],
         {
@@ -197,9 +228,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
     );
 
-    const envelope = yield* Schema.decodeEffect(Schema.fromJsonString(ClaudeOutputEnvelope))(
-      rawStdout,
-    ).pipe(
+    const envelope = yield* decodeClaudeOutputEnvelope(rawStdout).pipe(
       Effect.catchTag("SchemaError", (cause) =>
         Effect.fail(
           new TextGenerationError({
@@ -211,7 +240,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       ),
     );
 
-    return yield* Schema.decodeEffect(outputSchemaJson)(envelope.structured_output).pipe(
+    const decodeOutput = Schema.decodeEffect(outputSchemaJson);
+    return yield* decodeOutput(envelope.structured_output).pipe(
       Effect.catchTag("SchemaError", (cause) =>
         Effect.fail(
           new TextGenerationError({

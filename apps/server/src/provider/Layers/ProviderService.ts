@@ -56,6 +56,7 @@ import {
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { AnalyticsService } from "../../telemetry/Services/AnalyticsService.ts";
+const isModelSelection = Schema.is(ModelSelection);
 
 /**
  * Hook for tests that want to override the canonical event logger pulled
@@ -87,8 +88,9 @@ const decodeInputOrValidationError = <S extends Schema.Top>(input: {
   readonly operation: string;
   readonly schema: S;
   readonly payload: unknown;
-}) =>
-  Schema.decodeUnknownEffect(input.schema)(input.payload).pipe(
+}) => {
+  const decodeProviderRequestInput = Schema.decodeUnknownEffect(input.schema);
+  return decodeProviderRequestInput(input.payload).pipe(
     Effect.mapError(
       (schemaError) =>
         new ProviderValidationError({
@@ -98,6 +100,7 @@ const decodeInputOrValidationError = <S extends Schema.Top>(input: {
         }),
     ),
   );
+};
 
 function toRuntimeStatus(session: ProviderSession): "starting" | "running" | "stopped" | "error" {
   switch (session.status) {
@@ -142,7 +145,7 @@ function readPersistedModelSelection(
     return undefined;
   }
   const raw = "modelSelection" in runtimePayload ? runtimePayload.modelSelection : undefined;
-  return Schema.is(ModelSelection)(raw) ? raw : undefined;
+  return isModelSelection(raw) ? raw : undefined;
 }
 
 function readPersistedCwd(

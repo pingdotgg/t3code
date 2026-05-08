@@ -50,6 +50,7 @@ class ProcessDiagnosticsError extends Schema.TaggedErrorClass<ProcessDiagnostics
     cause: Schema.optional(Schema.Defect),
   },
 ) {}
+const isProcessDiagnosticsError = Schema.is(ProcessDiagnosticsError);
 
 function toProcessDiagnosticsError(message: string, cause?: unknown): ProcessDiagnosticsError {
   return new ProcessDiagnosticsError({
@@ -316,7 +317,7 @@ const runProcess = Effect.fn("runProcess")(
         }),
       ),
       Effect.mapError((cause) =>
-        Schema.is(ProcessDiagnosticsError)(cause)
+        isProcessDiagnosticsError(cause)
           ? cause
           : toProcessDiagnosticsError(input.errorMessage, cause),
       ),

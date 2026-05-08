@@ -44,6 +44,10 @@ import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
 } from "../Services/OrchestrationEngine.ts";
+const isOrchestrationCommandPreviouslyRejectedError = Schema.is(
+  OrchestrationCommandPreviouslyRejectedError,
+);
+const isOrchestrationCommandInvariantError = Schema.is(OrchestrationCommandInvariantError);
 
 interface CommandEnvelope {
   command: OrchestrationCommand;
@@ -245,7 +249,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           }
 
           const error = Cause.squash(exit.cause) as OrchestrationDispatchError;
-          if (!Schema.is(OrchestrationCommandPreviouslyRejectedError)(error)) {
+          if (!isOrchestrationCommandPreviouslyRejectedError(error)) {
             yield* reconcileReadModelAfterDispatchFailure.pipe(
               Effect.catch(() =>
                 Effect.logWarning(
@@ -259,7 +263,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
               ),
             );
 
-            if (Schema.is(OrchestrationCommandInvariantError)(error)) {
+            if (isOrchestrationCommandInvariantError(error)) {
               yield* commandReceiptRepository
                 .upsert({
                   commandId: envelope.command.commandId,

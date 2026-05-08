@@ -84,6 +84,8 @@ import {
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
+const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
@@ -92,6 +94,11 @@ type ClaudeToolResultStreamKind = Extract<
   "command_output" | "file_change_output"
 >;
 type ClaudeSdkEffort = NonNullable<ClaudeQueryOptions["effort"]>;
+
+function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
+  const result = encodeUnknownJsonStringExit(input);
+  return Exit.isSuccess(result) ? result.value : undefined;
+}
 
 type PromptQueueItem =
   | {
@@ -545,7 +552,7 @@ function summarizeToolRequest(toolName: string, input: Record<string, unknown>):
     }
   }
 
-  const serialized = Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(input);
+  const serialized = encodeJsonStringForDiagnostics(input) ?? "[unserializable input]";
   if (serialized.length <= 400) {
     return `${toolName}: ${serialized}`;
   }
@@ -810,22 +817,18 @@ function exitPlanCaptureKey(input: {
 }
 
 function tryParseJsonRecord(value: string): Record<string, unknown> | undefined {
-  try {
-    const parsed = Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(value);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : undefined;
-  } catch {
+  const result = decodeUnknownJsonStringExit(value);
+  if (!Exit.isSuccess(result)) {
     return undefined;
   }
+  const parsed = result.value;
+  return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : undefined;
 }
 
 function toolInputFingerprint(input: Record<string, unknown>): string | undefined {
-  try {
-    return Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(input);
-  } catch {
-    return undefined;
-  }
+  return encodeJsonStringForDiagnostics(input);
 }
 
 function toolResultStreamKind(itemType: CanonicalItemType): ClaudeToolResultStreamKind | undefined {
@@ -2941,12 +2944,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.include_partial_messages": true,
         "claude.query.additional_directories": input.cwd ? [input.cwd] : [],
         "claude.query.setting_sources": [...CLAUDE_SETTING_SOURCES],
-        "claude.query.settings_json": Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(
-          settings,
-        ),
-        "claude.query.extra_args_json": Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(
-          extraArgs,
-        ),
+        "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
+        "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",
         "claude.query.path_to_executable": claudeBinaryPath,
       });
 

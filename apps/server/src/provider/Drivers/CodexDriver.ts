@@ -51,6 +51,7 @@ import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
+const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("codex");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.minutes(5);
@@ -103,7 +104,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
     supportsMultipleInstances: true,
   },
   configSchema: CodexSettings,
-  defaultConfig: (): CodexSettings => Schema.decodeSync(CodexSettings)({}),
+  defaultConfig: (): CodexSettings => decodeCodexSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;

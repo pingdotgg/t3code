@@ -11,11 +11,11 @@ import { assert, it } from "@effect/vitest";
 import * as CodexError from "./errors.ts";
 import * as CodexProtocol from "./protocol.ts";
 import { makeInMemoryStdio } from "./_internal/stdio.ts";
+const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
 const encoder = new TextEncoder();
 
-const encodeJsonl = (value: unknown) =>
-  encoder.encode(`${Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(value)}\n`);
+const encodeJsonl = (value: unknown) => encoder.encode(`${encodeUnknownJsonString(value)}\n`);
 
 const decodeJson = Schema.decodeEffect(Schema.UnknownFromJsonString);
 
