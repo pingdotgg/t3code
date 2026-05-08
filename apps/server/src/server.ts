@@ -20,7 +20,7 @@ import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionD
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime.ts";
 import { ProviderAdapterRegistryLive } from "./provider/Layers/ProviderAdapterRegistry.ts";
 import { ProviderEventLoggersLive } from "./provider/Layers/ProviderEventLoggers.ts";
-import { ProviderServiceLive, makeProviderServiceLive } from "./provider/Layers/ProviderService.ts";
+import { ProviderServiceLive } from "./provider/Layers/ProviderService.ts";
 import { ProviderSessionReaperLive } from "./provider/Layers/ProviderSessionReaper.ts";
 import { ProviderUsageStateLive } from "./provider/Layers/ProviderUsageState.ts";
 import { OpenCodeRuntimeLive } from "./provider/opencodeRuntime.ts";

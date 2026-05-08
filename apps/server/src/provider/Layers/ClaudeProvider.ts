@@ -7,7 +7,7 @@ import {
   type ServerProviderModel,
   type ServerProviderSlashCommand,
 } from "@t3tools/contracts";
-import { Effect, Layer, Option, Path, Ref, Result, Cache, Duration, Stream, Equal } from "effect";
+import { Effect, Option, Path, Result } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import {
   createModelCapabilities,
@@ -35,11 +35,10 @@ import {
 } from "../providerSnapshot.ts";
 import { compareCliVersions } from "../cliVersion.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
-import { probeClaudeUsageLimits, parseClaudeUsageLimitsOutput } from "../claudeUsageProbe.ts";
+import { probeClaudeUsageLimits } from "../claudeUsageProbe.ts";
 import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 import type { PtyAdapterShape } from "../../terminal/Services/PTY.ts";
 import type { ProviderUsageStateShape } from "../Services/ProviderUsageState.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [],
