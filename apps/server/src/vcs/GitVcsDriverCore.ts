@@ -20,7 +20,8 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, type VcsRef } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
-import { compactTraceAttributes } from "../observability/Attributes.ts";
+import { compactTraceAttributes } from "@t3tools/shared/observability";
+import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { gitCommandDuration, gitCommandsTotal, withMetrics } from "../observability/Metrics.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
 import {
@@ -29,7 +30,6 @@ import {
   parseRemoteRefWithRemoteNames,
 } from "../git/remoteRefs.ts";
 import { ServerConfig } from "../config.ts";
-import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
@@ -528,7 +528,7 @@ const createTrace2Monitor = Effect.fn("createTrace2Monitor")(function* (
   };
 });
 
-const collectOutput = Effect.fn("collectOutput")(function* <E>(
+const collectOutput = Effect.fnUntraced(function* <E>(
   input: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args">,
   stream: Stream.Stream<Uint8Array, E>,
   maxOutputBytes: number,
@@ -541,7 +541,7 @@ const collectOutput = Effect.fn("collectOutput")(function* <E>(
   let lineBuffer = "";
   let truncated = false;
 
-  const emitCompleteLines = Effect.fn("emitCompleteLines")(function* (flush: boolean) {
+  const emitCompleteLines = Effect.fnUntraced(function* (flush: boolean) {
     let newlineIndex = lineBuffer.indexOf("\n");
     while (newlineIndex >= 0) {
       const line = lineBuffer.slice(0, newlineIndex).replace(/\r$/, "");
@@ -561,7 +561,7 @@ const collectOutput = Effect.fn("collectOutput")(function* <E>(
     }
   });
 
-  const processChunk = Effect.fn("processChunk")(function* (chunk: Uint8Array) {
+  const processChunk = Effect.fnUntraced(function* (chunk: Uint8Array) {
     if (truncateOutputAtMaxBytes && truncated) {
       return;
     }
@@ -602,20 +602,14 @@ const collectOutput = Effect.fn("collectOutput")(function* <E>(
   };
 });
 
-export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* (options?: {
-  executeOverride?: GitVcsDriver.GitVcsDriverShape["execute"];
-}) {
+export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const { worktreesDir } = yield* ServerConfig;
 
-  let executeRaw: GitVcsDriver.GitVcsDriverShape["execute"];
-
-  if (options?.executeOverride) {
-    executeRaw = options.executeOverride;
-  } else {
-    const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    executeRaw = Effect.fnUntraced(function* (input) {
+  const executeRaw: GitVcsDriver.GitVcsDriverShape["execute"] = Effect.fnUntraced(
+    function* (input) {
       const commandInput = {
         ...input,
         args: [...input.args],
@@ -712,8 +706,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           }),
         ),
       );
-    });
-  }
+    },
+  );
 
   const execute: GitVcsDriver.GitVcsDriverShape["execute"] = (input) =>
     executeRaw(input).pipe(
