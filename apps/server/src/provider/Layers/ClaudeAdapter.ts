@@ -823,7 +823,7 @@ function looksLikePlan(text: string): boolean {
   const bulletedListCount = (trimmed.match(/^\s*[-*]\s+\S/gm) || []).length;
   const totalListItems = orderedListCount + bulletedListCount;
 
-  const planHeadingMatch = /^#{1,4} [^\n]*(?:plan|approach|steps?|implementation|proposal)/i.test(
+  const planHeadingMatch = /^#{1,4} [^\n]*(?:plan|approach|steps?|implementation|proposal)/im.test(
     trimmed,
   );
 
@@ -2033,7 +2033,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         assistantTextBlocks: new Map(),
         assistantTextBlockOrder: [],
         capturedProposedPlanKeys: new Set(),
-        interactionMode: "default",
+        interactionMode: context.currentInteractionMode,
         nextSyntheticAssistantBlockIndex: -1,
       };
       context.session = {
