@@ -1983,18 +1983,12 @@ export default function ChatView(props: ChatViewProps) {
         scripts: input.nextScripts,
       });
 
-      if (isElectron) {
-        const localApi = readLocalApi();
-        if (!localApi) {
-          throw new Error("Local API unavailable.");
-        }
-        await syncProjectScriptKeybinding({
-          keybindings,
-          keybinding: input.keybinding,
-          command: input.keybindingCommand,
-          server: localApi.server,
-        });
-      }
+      await syncProjectScriptKeybinding({
+        keybindings,
+        keybinding: input.keybinding,
+        command: input.keybindingCommand,
+        server: isElectron ? readLocalApi()?.server : null,
+      });
     },
     [environmentId, keybindings],
   );
