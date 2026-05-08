@@ -12,6 +12,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import { AuthError, ServerAuth } from "./Services/ServerAuth.ts";
 import { SessionCredentialService } from "./Services/SessionCredentialService.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
+import { browserApiCorsHeaders } from "../httpCors.ts";
 
 export const respondToAuthError = (error: AuthError) =>
   Effect.gen(function* () {
@@ -25,7 +26,7 @@ export const respondToAuthError = (error: AuthError) =>
       {
         error: error.message,
       },
-      { status: error.status ?? 500 },
+      { status: error.status ?? 500, headers: browserApiCorsHeaders },
     );
   });
 
@@ -36,7 +37,10 @@ export const authSessionRouteLayer = HttpRouter.add(
     const request = yield* HttpServerRequest.HttpServerRequest;
     const serverAuth = yield* ServerAuth;
     const session = yield* serverAuth.getSessionState(request);
-    return HttpServerResponse.jsonUnsafe(session, { status: 200 });
+    return HttpServerResponse.jsonUnsafe(session, {
+      status: 200,
+      headers: browserApiCorsHeaders,
+    });
   }),
 );
 
@@ -79,7 +83,10 @@ export const authBootstrapRouteLayer = HttpRouter.add(
       deriveAuthClientMetadata({ request }),
     );
 
-    return yield* HttpServerResponse.jsonUnsafe(result.response, { status: 200 }).pipe(
+    return yield* HttpServerResponse.jsonUnsafe(result.response, {
+      status: 200,
+      headers: browserApiCorsHeaders,
+    }).pipe(
       HttpServerResponse.setCookie(sessions.cookieName, result.sessionToken, {
         expires: DateTime.toDate(result.response.expiresAt),
         httpOnly: true,
@@ -112,6 +119,7 @@ export const authBearerBootstrapRouteLayer = HttpRouter.add(
     );
     return HttpServerResponse.jsonUnsafe(result satisfies AuthBearerBootstrapResult, {
       status: 200,
+      headers: browserApiCorsHeaders,
     });
   }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
 );
@@ -126,6 +134,7 @@ export const authWebSocketTokenRouteLayer = HttpRouter.add(
     const result = yield* serverAuth.issueWebSocketToken(session);
     return HttpServerResponse.jsonUnsafe(result satisfies AuthWebSocketTokenResult, {
       status: 200,
+      headers: browserApiCorsHeaders,
     });
   }).pipe(Effect.catchTag("AuthError", (error) => respondToAuthError(error))),
 );
