@@ -311,16 +311,6 @@ function commonPrefixLength(left: string, right: string): number {
   return index;
 }
 
-function suffixPrefixOverlap(text: string, delta: string): number {
-  const maxLength = Math.min(text.length, delta.length);
-  for (let length = maxLength; length > 0; length -= 1) {
-    if (text.endsWith(delta.slice(0, length))) {
-      return length;
-    }
-  }
-  return 0;
-}
-
 function resolveLatestAssistantText(previousText: string | undefined, nextText: string): string {
   if (previousText && previousText.length > nextText.length && previousText.startsWith(nextText)) {
     return previousText;
@@ -349,10 +339,9 @@ export function appendOpenCodeAssistantTextDelta(
   readonly nextText: string;
   readonly deltaToEmit: string;
 } {
-  const deltaToEmit = delta.slice(suffixPrefixOverlap(previousText, delta));
   return {
-    nextText: previousText + deltaToEmit,
-    deltaToEmit,
+    nextText: previousText + delta,
+    deltaToEmit: delta,
   };
 }
 

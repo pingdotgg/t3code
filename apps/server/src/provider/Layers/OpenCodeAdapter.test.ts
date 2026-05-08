@@ -559,17 +559,98 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
-  it.effect("deduplicates overlapping assistant text deltas after part updates", () =>
+  it.effect("appends raw assistant text deltas and reconciles part update snapshots", () =>
     Effect.sync(() => {
       const firstUpdate = mergeOpenCodeAssistantText(undefined, "Hello");
       const overlapDelta = appendOpenCodeAssistantTextDelta(firstUpdate.latestText, "lo world");
-      const secondUpdate = mergeOpenCodeAssistantText(overlapDelta.nextText, "Hello world!");
+      const secondUpdate = mergeOpenCodeAssistantText(overlapDelta.nextText, "Hellolo world");
 
       assert.deepEqual(
         [firstUpdate.deltaToEmit, overlapDelta.deltaToEmit, secondUpdate.deltaToEmit],
-        ["Hello", " world", "!"],
+        ["Hello", "lo world", ""],
       );
-      assert.equal(secondUpdate.latestText, "Hello world!");
+      assert.equal(secondUpdate.latestText, "Hellolo world");
+    }),
+  );
+
+  it.effect("does not strip coincidental prefix overlap from OpenCode part deltas", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-raw-delta");
+      const part = {
+        id: "part-raw-delta",
+        sessionID: "http://127.0.0.1:9999/session",
+        messageID: "msg-raw-delta",
+        type: "text",
+        text: "A B",
+        time: { start: 1 },
+      };
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            info: {
+              id: "msg-raw-delta",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part,
+            time: 1,
+          },
+        },
+        {
+          type: "message.part.delta",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            messageID: "msg-raw-delta",
+            partID: "part-raw-delta",
+            field: "text",
+            delta: "Bonus",
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part: {
+              ...part,
+              text: "A BBonus",
+              time: { start: 1, end: 2 },
+            },
+            time: 2,
+          },
+        },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(5),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const deltas = events.filter((event) => event.type === "content.delta");
+      assert.deepEqual(
+        deltas.map((event) => (event.type === "content.delta" ? event.payload.delta : "")),
+        ["A B", "Bonus"],
+      );
+      assert.equal(events.at(-1)?.type, "item.completed");
+      const completed = events.at(-1);
+      if (completed?.type === "item.completed") {
+        assert.equal(completed.payload.detail, "A BBonus");
+      }
     }),
   );
 
