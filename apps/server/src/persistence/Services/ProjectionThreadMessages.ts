@@ -49,6 +49,20 @@ export const DeleteProjectionThreadMessagesInput = Schema.Struct({
 });
 export type DeleteProjectionThreadMessagesInput = typeof DeleteProjectionThreadMessagesInput.Type;
 
+export const AppendProjectionThreadMessageTextInput = Schema.Struct({
+  messageId: MessageId,
+  threadId: ThreadId,
+  turnId: Schema.NullOr(TurnId),
+  role: OrchestrationMessageRole,
+  textDelta: Schema.String,
+  attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  isStreaming: Schema.Boolean,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type AppendProjectionThreadMessageTextInput =
+  typeof AppendProjectionThreadMessageTextInput.Type;
+
 /**
  * ProjectionThreadMessageRepositoryShape - Service API for projected thread messages.
  */
@@ -60,6 +74,16 @@ export interface ProjectionThreadMessageRepositoryShape {
    */
   readonly upsert: (
     message: ProjectionThreadMessage,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
+
+  /**
+   * Insert a projected message or append a streaming text delta in-place.
+   *
+   * Upserts by `messageId`. Existing attachments are preserved unless the
+   * append carries replacement attachments.
+   */
+  readonly appendText: (
+    input: AppendProjectionThreadMessageTextInput,
   ) => Effect.Effect<void, ProjectionRepositoryError>;
 
   /**
