@@ -115,11 +115,12 @@ import {
   projectScriptIdFromCommand,
 } from "~/projectScripts";
 import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
-import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
+import { getProviderModelCapabilities } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import {
   deriveProviderInstanceEntries,
+  resolveProviderDriverKindForInstanceSelection,
   resolveSelectedProviderInstanceId,
   sortProviderInstanceEntries,
 } from "../providerInstances";
@@ -1266,10 +1267,13 @@ export default function ChatView(props: ChatViewProps) {
     () => sortProviderInstanceEntries(deriveProviderInstanceEntries(providerStatuses)),
     [providerStatuses],
   );
-  const unlockedSelectedProvider = resolveSelectableProvider(
-    providerStatuses,
-    selectedProviderByThreadId ?? threadProvider ?? ProviderDriverKind.make("codex"),
-  );
+  const explicitSelectedInstanceId = selectedProviderByThreadId ?? threadProvider;
+  const unlockedSelectedProvider =
+    resolveProviderDriverKindForInstanceSelection(
+      providerInstanceEntries,
+      providerStatuses,
+      explicitSelectedInstanceId,
+    ) ?? ProviderDriverKind.make("codex");
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const lockedContinuationGroupKey = useMemo((): string | null => {
     if (!lockedProvider || !activeThread) return null;
