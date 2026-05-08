@@ -34,4 +34,22 @@ describe("branding", () => {
     expect(branding.APP_STAGE_LABEL).toBe("Nightly");
     expect(branding.APP_DISPLAY_NAME).toBe("T3 Code (Nightly)");
   });
+
+  it("normalizes hosted app channel metadata", async () => {
+    vi.stubEnv("VITE_HOSTED_APP_CHANNEL", "nightly");
+
+    const branding = await import("./branding");
+
+    expect(branding.HOSTED_APP_CHANNEL).toBe("nightly");
+    expect(branding.HOSTED_APP_CHANNEL_LABEL).toBe("Nightly");
+  });
+
+  it("ignores unknown hosted app channels", async () => {
+    vi.stubEnv("VITE_HOSTED_APP_CHANNEL", "preview");
+
+    const branding = await import("./branding");
+
+    expect(branding.HOSTED_APP_CHANNEL).toBeNull();
+    expect(branding.HOSTED_APP_CHANNEL_LABEL).toBeNull();
+  });
 });

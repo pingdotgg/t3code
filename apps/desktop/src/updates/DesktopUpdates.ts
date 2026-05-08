@@ -54,6 +54,9 @@ const UpdateInfo = Schema.Struct({
 const DownloadProgressInfo = Schema.Struct({
   percent: Schema.Number,
 });
+const decodeAppUpdateYmlConfig = Schema.decodeUnknownEffect(AppUpdateYmlConfig);
+const decodeUpdateInfo = Schema.decodeUnknownEffect(UpdateInfo);
+const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressInfo);
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
@@ -115,7 +118,7 @@ function parseAppUpdateYml(raw: string): Effect.Effect<Option.Option<AppUpdateYm
     }
   }
 
-  return Schema.decodeUnknownEffect(AppUpdateYmlConfig)(entries).pipe(
+  return decodeAppUpdateYmlConfig(entries).pipe(
     Effect.map((config) => (config.provider ? Option.some(config) : Option.none())),
     Effect.catch(() => Effect.succeed(Option.none<AppUpdateYmlConfig>())),
   );
@@ -408,7 +411,7 @@ const make = Effect.gen(function* () {
   const handleUpdateAvailable = Effect.fn("desktop.updates.handleUpdateAvailable")(function* (
     raw: unknown,
   ) {
-    yield* Schema.decodeUnknownEffect(UpdateInfo)(raw).pipe(
+    yield* decodeUpdateInfo(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyUpdateAvailable")(function* (info) {
           const state = yield* Ref.get(updateStateRef);
@@ -479,7 +482,7 @@ const make = Effect.gen(function* () {
   const handleDownloadProgress = Effect.fn("desktop.updates.handleDownloadProgress")(function* (
     raw: unknown,
   ) {
-    yield* Schema.decodeUnknownEffect(DownloadProgressInfo)(raw).pipe(
+    yield* decodeDownloadProgressInfo(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyDownloadProgress")(function* (progress) {
           const state = yield* Ref.get(updateStateRef);
@@ -506,7 +509,7 @@ const make = Effect.gen(function* () {
   const handleUpdateDownloaded = Effect.fn("desktop.updates.handleUpdateDownloaded")(function* (
     raw: unknown,
   ) {
-    yield* Schema.decodeUnknownEffect(UpdateInfo)(raw).pipe(
+    yield* decodeUpdateInfo(raw).pipe(
       Effect.flatMap(
         Effect.fn("desktop.updates.applyUpdateDownloaded")(function* (info) {
           const state = yield* Ref.get(updateStateRef);

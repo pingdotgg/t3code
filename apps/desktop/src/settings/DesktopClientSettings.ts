@@ -20,10 +20,14 @@ const ClientSettingsDocumentSchema = Schema.Struct({
 
 const ClientSettingsJson = fromLenientJson(ClientSettingsSchema);
 const LegacyClientSettingsDocumentJson = fromLenientJson(ClientSettingsDocumentSchema);
+const decodeLegacyClientSettingsDocumentJson = Schema.decodeEffect(
+  LegacyClientSettingsDocumentJson,
+);
+const decodeClientSettingsJsonValue = Schema.decodeEffect(ClientSettingsJson);
 const decodeClientSettingsJson = (raw: string): Effect.Effect<ClientSettings, Schema.SchemaError> =>
-  Schema.decodeEffect(LegacyClientSettingsDocumentJson)(raw).pipe(
+  decodeLegacyClientSettingsDocumentJson(raw).pipe(
     Effect.map((document) => document.settings),
-    Effect.catch(() => Schema.decodeEffect(ClientSettingsJson)(raw)),
+    Effect.catch(() => decodeClientSettingsJsonValue(raw)),
   );
 const encodeClientSettingsJson = Schema.encodeEffect(ClientSettingsJson);
 

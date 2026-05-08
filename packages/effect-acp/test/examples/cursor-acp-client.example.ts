@@ -48,7 +48,7 @@ const program = Effect.gen(function* () {
         version: "0.0.0",
       },
     });
-    yield* Console.log("initialized", JSON.stringify(initialized, null, 4));
+    yield* Console.log("initialized", initialized);
 
     const session = yield* acp.agent.createSession({
       cwd: process.cwd(),
@@ -61,7 +61,7 @@ const program = Effect.gen(function* () {
       value: "claude-opus-4-6",
     });
 
-    yield* Console.log("config", JSON.stringify(config, null, 4));
+    yield* Console.log("config", config);
 
     const result = yield* acp.agent.prompt({
       sessionId: session.sessionId,
@@ -73,7 +73,7 @@ const program = Effect.gen(function* () {
       ],
     });
 
-    yield* Console.log("prompt result", JSON.stringify(result));
+    yield* Console.log("prompt result", result);
     yield* acp.agent.cancel({ sessionId: session.sessionId });
   }).pipe(Effect.provide(acpLayer));
 });

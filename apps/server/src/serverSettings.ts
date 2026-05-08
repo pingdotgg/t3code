@@ -27,25 +27,23 @@ import {
   ServerSettingsError,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
-import {
-  Cache,
-  Deferred,
-  Duration,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Path,
-  Equal,
-  PubSub,
-  Ref,
-  Schema,
-  SchemaIssue,
-  Scope,
-  Context,
-  Stream,
-  Cause,
-} from "effect";
+import * as Cache from "effect/Cache";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Equal from "effect/Equal";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
+import * as Scope from "effect/Scope";
+import * as Context from "effect/Context";
+import * as Stream from "effect/Stream";
+import * as Cause from "effect/Cause";
 import * as Semaphore from "effect/Semaphore";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { ServerConfig } from "./config.ts";
@@ -54,6 +52,7 @@ import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerSecretStore } from "./auth/Services/ServerSecretStore.ts";
+const decodeServerSettings = Schema.decodeEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -140,7 +139,7 @@ export class ServerSettingsService extends Context.Service<
           writeSemaphore.withPermits(1)(
             Ref.get(currentSettingsRef).pipe(
               Effect.flatMap((currentSettings) =>
-                Schema.decodeEffect(ServerSettings)(
+                decodeServerSettings(
                   applyServerSettingsPatch(currentSettings, makePatch(currentSettings)),
                 ).pipe(
                   Effect.mapError(
@@ -181,6 +180,7 @@ export class ServerSettingsService extends Context.Service<
 }
 
 const ServerSettingsJson = fromLenientJson(ServerSettings);
+const decodeServerSettingsJsonExit = Schema.decodeUnknownExit(ServerSettingsJson);
 
 type LegacyProviderSettings = ServerSettings["providers"][keyof ServerSettings["providers"]];
 
@@ -312,7 +312,7 @@ const makeServerSettings = Effect.gen(function* () {
     }
 
     const raw = yield* readRawConfig;
-    const decoded = Schema.decodeUnknownExit(ServerSettingsJson)(raw);
+    const decoded = decodeServerSettingsJsonExit(raw);
     if (decoded._tag === "Failure") {
       yield* Effect.logWarning("failed to parse settings.json, using defaults", {
         path: settingsPath,
@@ -558,7 +558,7 @@ const makeServerSettings = Effect.gen(function* () {
           current,
           applyServerSettingsPatch(current, makePatch(current)),
         );
-        const next = yield* Schema.decodeEffect(ServerSettings)(nextPersisted).pipe(
+        const next = yield* decodeServerSettings(nextPersisted).pipe(
           Effect.mapError(
             (cause) =>
               new ServerSettingsError({

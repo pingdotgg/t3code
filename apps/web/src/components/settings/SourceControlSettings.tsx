@@ -1,5 +1,5 @@
 import { GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
-import { Option } from "effect";
+import * as Option from "effect/Option";
 import { type ReactNode } from "react";
 import type {
   SourceControlProviderKind,

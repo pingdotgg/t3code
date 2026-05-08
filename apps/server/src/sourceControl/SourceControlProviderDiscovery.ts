@@ -3,7 +3,8 @@ import type {
   SourceControlProviderDiscoveryItem,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
-import { Effect, Option } from "effect";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import type * as VcsProcess from "../vcs/VcsProcess.ts";
 

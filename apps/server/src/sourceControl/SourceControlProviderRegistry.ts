@@ -1,4 +1,10 @@
-import { Cache, Context, Duration, Effect, Exit, Layer, Option } from "effect";
+import * as Cache from "effect/Cache";
+import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import {
   SourceControlProviderError,
   type SourceControlProviderDiscoveryItem,

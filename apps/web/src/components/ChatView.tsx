@@ -1983,11 +1983,17 @@ export default function ChatView(props: ChatViewProps) {
         scripts: input.nextScripts,
       });
 
+      const keybindingServer =
+        isElectron && input.keybinding !== undefined ? readLocalApi()?.server : null;
+      if (isElectron && input.keybinding !== undefined && !keybindingServer) {
+        throw new Error("Local API unavailable.");
+      }
+
       await syncProjectScriptKeybinding({
         keybindings,
         keybinding: input.keybinding,
         command: input.keybindingCommand,
-        server: isElectron ? readLocalApi()?.server : null,
+        server: keybindingServer,
       });
     },
     [environmentId, keybindings],
