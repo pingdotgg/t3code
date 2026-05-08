@@ -35,5 +35,5 @@
       }
     ]
   },
-  "include": ["src", "vite.config.ts", "test"]
+  "include": ["src", "vite.config.ts", "vercel.ts", "test"]
 }
