@@ -24,25 +24,23 @@ import {
   ServerSettingsError,
   type ServerSettingsPatch,
 } from "@t3tools/contracts";
-import {
-  Cache,
-  Deferred,
-  Duration,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Path,
-  Equal,
-  PubSub,
-  Ref,
-  Schema,
-  SchemaIssue,
-  Scope,
-  Context,
-  Stream,
-  Cause,
-} from "effect";
+import * as Cache from "effect/Cache";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Equal from "effect/Equal";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
+import * as Scope from "effect/Scope";
+import * as Context from "effect/Context";
+import * as Stream from "effect/Stream";
+import * as Cause from "effect/Cause";
 import * as Semaphore from "effect/Semaphore";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { ServerConfig } from "./config.ts";

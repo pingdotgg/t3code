@@ -18,8 +18,11 @@
  * @module provider/Services/ProviderInstanceRegistry
  */
 import type { ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
-import { Context } from "effect";
-import type { Effect, PubSub, Scope, Stream } from "effect";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
+import type * as PubSub from "effect/PubSub";
+import type * as Scope from "effect/Scope";
+import type * as Stream from "effect/Stream";
 
 import type { ProviderInstance } from "../ProviderDriver.ts";
 

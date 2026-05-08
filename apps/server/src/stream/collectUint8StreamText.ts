@@ -1,4 +1,5 @@
-import { Effect, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 export interface CollectedUint8StreamText {
   readonly text: string;

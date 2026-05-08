@@ -1,5 +1,8 @@
 import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
-import { Effect, Layer, References, Tracer } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as References from "effect/References";
+import * as Tracer from "effect/Tracer";
 import { OtlpMetrics, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
 import { ServerConfig } from "../../config.ts";

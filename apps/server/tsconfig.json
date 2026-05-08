@@ -3,21 +3,7 @@
   "compilerOptions": {
     "composite": true,
     "types": ["node", "bun"],
-    "lib": ["ESNext", "esnext.disposable"],
-    "plugins": [
-      {
-        "name": "@effect/language-service",
-        "namespaceImportPackages": ["@effect/platform-node"],
-        "diagnosticSeverity": {
-          "importFromBarrel": "error",
-          "anyUnknownInErrorContext": "warning",
-          "instanceOfSchema": "warning",
-          "deterministicKeys": "warning",
-          "preferSchemaOverJson": "off",
-          "globalErrorInEffectFailure": "off"
-        }
-      }
-    ]
+    "lib": ["ESNext", "esnext.disposable"]
   },
   "include": ["src", "tsdown.config.ts", "scripts", "integration", "../../scripts/lib"]
 }

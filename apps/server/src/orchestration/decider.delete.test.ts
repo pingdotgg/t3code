@@ -9,7 +9,7 @@ import {
   type OrchestrationReadModel,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vitest";
 
 import { decideOrchestrationCommand } from "./decider.ts";
@@ -21,7 +21,7 @@ const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 
 async function seedReadModel(): Promise<OrchestrationReadModel> {
-  const now = new Date().toISOString();
+  const now = "2026-01-01T00:00:00.000Z";
   const initial = createEmptyReadModel(now);
   const withProject = await Effect.runPromise(
     projectEvent(initial, {

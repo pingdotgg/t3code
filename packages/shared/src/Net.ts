@@ -4,22 +4,21 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Context from "effect/Context";
+import * as Predicate from "effect/Predicate";
 
 export class NetError extends Data.TaggedError("NetError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
 
-function isErrnoExceptionWithCode(cause: unknown): cause is {
+const isErrnoExceptionWithCode = (
+  cause: unknown,
+): cause is {
   readonly code: string;
-} {
-  return (
-    typeof cause === "object" &&
-    cause !== null &&
-    "code" in cause &&
-    typeof (cause as { readonly code: unknown }).code === "string"
-  );
-}
+} =>
+  Predicate.isObject(cause) &&
+  Predicate.hasProperty(cause, "code") &&
+  Predicate.isString(cause.code);
 
 const closeServer = (server: NodeNet.Server) => {
   try {
@@ -84,6 +83,13 @@ export interface NetServiceShape {
    */
   readonly findAvailablePort: (preferred: number) => Effect.Effect<number, NetError>;
 }
+
+/**
+ * NetService - Service tag for startup networking helpers.
+ */
+export class NetService extends Context.Service<NetService, NetServiceShape>()(
+  "@t3tools/shared/Net/NetService",
+) {}
 
 export const make = () => {
   /**
@@ -175,13 +181,4 @@ export const make = () => {
   } satisfies NetServiceShape;
 };
 
-/**
- * NetService - Service tag for startup networking helpers.
- */
-export class NetService extends Context.Service<NetService, NetServiceShape>()(
-  "@t3tools/shared/Net/NetService",
-) {
-  static readonly layer = Layer.sync(NetService, make);
-}
-
-export const layer = NetService.layer;
+export const layer = Layer.sync(NetService, make);

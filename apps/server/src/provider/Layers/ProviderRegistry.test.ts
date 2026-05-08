@@ -1,6 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, it, assert, live } from "@effect/vitest";
-import { Effect, Exit, Layer, PubSub, Ref, Schema, Scope, Sink, Stream } from "effect";
+import { describe, it, assert } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import {
   ClaudeSettings,
@@ -696,7 +705,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
               attempt < 50 && cachedProvider?.checkedAt !== refreshedProvider.checkedAt;
               attempt += 1
             ) {
-              yield* Effect.sleep("10 millis");
+              yield* TestClock.adjust("10 millis");
+              yield* Effect.yieldNow;
               cachedProvider = yield* readProviderStatusCache(filePath);
             }
 
@@ -840,8 +850,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           const changes = yield* PubSub.unbounded<void>();
           const instancesRef = yield* Ref.make<ReadonlyArray<ProviderInstance>>([codexInstance]);
           const failNextList = yield* Ref.make(false);
-          const wait = (millis: number) =>
-            Effect.promise<void>(() => new Promise((resolve) => setTimeout(resolve, millis)));
+          const wait = () => Effect.yieldNow;
           const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry, {
             getInstance: (instanceId) =>
               Ref.get(instancesRef).pipe(
@@ -892,7 +901,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
               !providers.some((provider) => provider.instanceId === claudeInstanceId);
               attempt += 1
             ) {
-              yield* wait(10);
+              yield* wait();
               providers = yield* registry.getProviders;
             }
 
@@ -917,7 +926,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
       // assertions below fail.
       it.effect("propagates real Codex probe failures to the aggregator at boot", () =>
         Effect.gen(function* () {
-          const missingBinary = `t3code_codex_missing_${process.pid}_${Date.now()}`;
+          const missingBinary = `t3code_codex_missing_`;
           const serverSettings = yield* makeMutableServerSettingsService(
             Schema.decodeSync(ServerSettings)(
               deepMerge(DEFAULT_SERVER_SETTINGS, {
@@ -1013,20 +1022,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
       // rebuilt instance's refresh (previous bug mode), the aggregator
       // keeps the old snapshot and this test fails.
       //
-      // `live` (imported from `@effect/vitest`) is used instead of
-      // `it.effect` so real timers coordinate the fibres that drive the
-      // settings → reconcile → sync pipeline. Under `it.effect`'s
-      // TestClock, `Effect.sleep` blocks until `TestClock.adjust`, which
-      // would require this test to reach into the internals of the
-      // reconcile pipeline to advance it step by step.
-      //
-      // The nested `it` handed to `it.layer(…, (it) => …)` is the
-      // `MethodsNonLive` variant and therefore lacks `.live`; the
-      // top-level `live` export from `@effect/vitest` is the equivalent.
-      live("re-probes when settings change the codex binaryPath", () =>
+      it.effect("re-probes when settings change the codex binaryPath", () =>
         Effect.gen(function* () {
-          const firstMissing = `t3code_codex_first_${process.pid}_${Date.now()}`;
-          const secondMissing = `t3code_codex_second_${process.pid}_${Date.now()}`;
+          const firstMissing = `t3code_codex_first_`;
+          const secondMissing = `t3code_codex_second_`;
           const serverSettings = yield* makeMutableServerSettingsService(
             Schema.decodeSync(ServerSettings)(
               deepMerge(DEFAULT_SERVER_SETTINGS, {
@@ -1093,11 +1092,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
               },
             });
 
-            // Poll with real timers (via `it.live`) until `checkedAt`
-            // advances or we hit a generous 3-second ceiling. Anything
-            // slower than that is a regression — the real probe fails
-            // fast on ENOENT, and the reconcile + sync pipeline is
-            // purely in-process.
+            // Poll with TestClock until `checkedAt` advances or we hit a
+            // generous virtual 3-second ceiling.
             const refreshed = yield* Effect.gen(function* () {
               for (let attempts = 0; attempts < 60; attempts += 1) {
                 const providers = yield* registry.getProviders;
@@ -1105,7 +1101,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
                 if (codex !== undefined && codex.checkedAt !== initialCheckedAt) {
                   return providers;
                 }
-                yield* Effect.sleep("50 millis");
+                yield* TestClock.adjust("50 millis");
+                yield* Effect.yieldNow;
               }
               return yield* registry.getProviders;
             });

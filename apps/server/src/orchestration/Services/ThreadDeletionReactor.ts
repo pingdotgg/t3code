@@ -6,8 +6,9 @@
  *
  * @module ThreadDeletionReactor
  */
-import { Context } from "effect";
-import type { Effect, Scope } from "effect";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
+import type * as Scope from "effect/Scope";
 
 /**
  * ThreadDeletionReactorShape - Service API for thread deletion cleanup.

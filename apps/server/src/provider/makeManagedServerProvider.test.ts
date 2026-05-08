@@ -1,7 +1,12 @@
 import { describe, it, assert } from "@effect/vitest";
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { Deferred, Effect, Fiber, PubSub, Ref, Stream } from "effect";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
 
@@ -108,7 +113,7 @@ describe("makeManagedServerProvider", () => {
             getSettings: Effect.succeed({ enabled: true }),
             streamSettings: Stream.empty,
             haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-            initialSnapshot: () => initialSnapshot,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
             checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
               Effect.flatMap(() => Deferred.await(releaseCheck)),
               Effect.as(refreshedSnapshot),
@@ -150,7 +155,7 @@ describe("makeManagedServerProvider", () => {
           getSettings: Ref.get(settingsRef),
           streamSettings: Stream.fromPubSub(settingsChanges),
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-          initialSnapshot: () => initialSnapshot,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
           checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
             Effect.flatMap((count) =>
               count === 1
@@ -192,7 +197,7 @@ describe("makeManagedServerProvider", () => {
           getSettings: Effect.succeed({ enabled: true }),
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-          initialSnapshot: () => initialSnapshot,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
           checkProvider: Deferred.await(releaseCheck).pipe(Effect.as(refreshedSnapshot)),
           enrichSnapshot: ({ publishSnapshot }) =>
             Deferred.await(releaseEnrichment).pipe(
@@ -233,7 +238,7 @@ describe("makeManagedServerProvider", () => {
           getSettings: Effect.succeed({ enabled: true }),
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-          initialSnapshot: () => initialSnapshot,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
           checkProvider: Ref.updateAndGet(refreshCount, (count) => count + 1).pipe(
             Effect.flatMap((count) =>
               count === 1

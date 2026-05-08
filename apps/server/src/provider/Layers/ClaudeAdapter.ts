@@ -51,20 +51,19 @@ import {
   getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
 } from "@t3tools/shared/model";
-import {
-  Cause,
-  DateTime,
-  Deferred,
-  Effect,
-  Exit,
-  FileSystem,
-  Fiber,
-  Path,
-  Queue,
-  Random,
-  Ref,
-  Stream,
-} from "effect";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
+import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Random from "effect/Random";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -222,11 +221,22 @@ function toMessage(cause: unknown, fallback: string): string {
   return fallback;
 }
 
-function toError(cause: unknown, fallback: string): Error {
-  return cause instanceof Error ? cause : new Error(toMessage(cause, fallback));
+function toProcessError(
+  cause: unknown,
+  fallback: string,
+  threadId: ThreadId,
+): ProviderAdapterProcessError {
+  return new ProviderAdapterProcessError({
+    provider: PROVIDER,
+    threadId,
+    detail: toMessage(cause, fallback),
+    cause,
+  });
 }
 
-function normalizeClaudeStreamMessages(cause: Cause.Cause<Error>): ReadonlyArray<string> {
+function normalizeClaudeStreamMessages(
+  cause: Cause.Cause<{ readonly message: string }>,
+): ReadonlyArray<string> {
   const errors = Cause.prettyErrors(cause)
     .map((error) => error.message.trim())
     .filter((message) => message.length > 0);
@@ -252,18 +262,23 @@ function isClaudeInterruptedMessage(message: string): boolean {
   );
 }
 
-function isClaudeInterruptedCause(cause: Cause.Cause<Error>): boolean {
+function isClaudeInterruptedCause(cause: Cause.Cause<{ readonly message: string }>): boolean {
   return (
     Cause.hasInterruptsOnly(cause) ||
     normalizeClaudeStreamMessages(cause).some(isClaudeInterruptedMessage)
   );
 }
 
-function messageFromClaudeStreamCause(cause: Cause.Cause<Error>, fallback: string): string {
+function messageFromClaudeStreamCause(
+  cause: Cause.Cause<{ readonly message: string }>,
+  fallback: string,
+): string {
   return normalizeClaudeStreamMessages(cause)[0] ?? fallback;
 }
 
-function interruptionMessageFromClaudeCause(cause: Cause.Cause<Error>): string {
+function interruptionMessageFromClaudeCause(
+  cause: Cause.Cause<{ readonly message: string }>,
+): string {
   const message = messageFromClaudeStreamCause(cause, "Claude runtime interrupted.");
   return isClaudeInterruptedMessage(message) ? "Claude runtime interrupted." : message;
 }
@@ -530,7 +545,7 @@ function summarizeToolRequest(toolName: string, input: Record<string, unknown>):
     }
   }
 
-  const serialized = JSON.stringify(input);
+  const serialized = Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(input);
   if (serialized.length <= 400) {
     return `${toolName}: ${serialized}`;
   }
@@ -796,7 +811,7 @@ function exitPlanCaptureKey(input: {
 
 function tryParseJsonRecord(value: string): Record<string, unknown> | undefined {
   try {
-    const parsed = JSON.parse(value);
+    const parsed = Schema.decodeUnknownSync(Schema.UnknownFromJsonString)(value);
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : undefined;
@@ -807,7 +822,7 @@ function tryParseJsonRecord(value: string): Record<string, unknown> | undefined 
 
 function toolInputFingerprint(input: Record<string, unknown>): string | undefined {
   try {
-    return JSON.stringify(input);
+    return Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(input);
   } catch {
     return undefined;
   }
@@ -1020,7 +1035,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return;
     }
 
-    const observedAt = new Date().toISOString();
+    const observedAt = yield* nowIso;
     const itemId = sdkNativeItemId(message);
 
     yield* nativeEventLogger.write(
@@ -1030,7 +1045,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           id:
             "uuid" in message && typeof message.uuid === "string"
               ? message.uuid
-              : crypto.randomUUID(),
+              : yield* Random.nextUUIDv4,
           kind: "notification",
           provider: PROVIDER,
           createdAt: observedAt,
@@ -2353,9 +2368,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
   });
 
-  const runSdkStream = (context: ClaudeSessionContext): Effect.Effect<void, Error> =>
+  const runSdkStream = (
+    context: ClaudeSessionContext,
+  ): Effect.Effect<void, ProviderAdapterProcessError> =>
     Stream.fromAsyncIterable(context.query, (cause) =>
-      toError(cause, "Claude runtime stream failed."),
+      toProcessError(cause, "Claude runtime stream failed.", context.session.threadId),
     ).pipe(
       Stream.takeWhile(() => !context.stopped),
       Stream.runForEach((message) => handleSdkMessage(context, message)),
@@ -2363,7 +2380,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const handleStreamExit = Effect.fn("handleStreamExit")(function* (
     context: ClaudeSessionContext,
-    exit: Exit.Exit<void, Error>,
+    exit: Exit.Exit<void, ProviderAdapterProcessError>,
   ) {
     if (context.stopped) {
       return;
@@ -2432,12 +2449,20 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       yield* Fiber.interrupt(streamFiber);
     }
 
-    // @effect-diagnostics-next-line tryCatchInEffectGen:off
-    try {
-      context.query.close();
-    } catch (cause) {
-      yield* emitRuntimeError(context, "Failed to close Claude runtime query.", cause);
-    }
+    yield* Effect.try({
+      try: () => context.query.close(),
+      catch: (cause) =>
+        new ProviderAdapterProcessError({
+          provider: PROVIDER,
+          threadId: context.session.threadId,
+          detail: toMessage(cause, "Failed to close Claude runtime query."),
+          cause,
+        }),
+    }).pipe(
+      Effect.catch((cause) =>
+        emitRuntimeError(context, "Failed to close Claude runtime query.", cause),
+      ),
+    );
 
     const updatedAt = yield* nowIso;
     context.session = {
@@ -2916,8 +2941,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.include_partial_messages": true,
         "claude.query.additional_directories": input.cwd ? [input.cwd] : [],
         "claude.query.setting_sources": [...CLAUDE_SETTING_SOURCES],
-        "claude.query.settings_json": JSON.stringify(settings),
-        "claude.query.extra_args_json": JSON.stringify(extraArgs),
+        "claude.query.settings_json": Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(
+          settings,
+        ),
+        "claude.query.extra_args_json": Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(
+          extraArgs,
+        ),
         "claude.query.path_to_executable": claudeBinaryPath,
       });
 

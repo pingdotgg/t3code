@@ -1,4 +1,11 @@
-import { Duration, Context, Effect, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import * as Duration from "effect/Duration";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {

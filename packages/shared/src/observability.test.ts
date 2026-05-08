@@ -1,11 +1,10 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-
 import { assert, describe, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Path from "effect/Path";
 import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Tracer from "effect/Tracer";
@@ -57,13 +56,14 @@ const makeRecord = (name: string, suffix = ""): TraceRecord => ({
   },
 });
 
-const readTraceRecords = (tracePath: string) =>
-  fs
-    .readFileSync(tracePath, "utf8")
+const readTraceRecords = Effect.fn("readTraceRecords")(function* (tracePath: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  return (yield* fileSystem.readFileString(tracePath))
     .trim()
     .split("\n")
     .filter((line) => line.length > 0)
     .map((line) => decodeTraceRecordLine(line));
+});
 
 const makeTestLayer = (tracePath: string) =>
   Layer.mergeAll(
@@ -106,9 +106,11 @@ describe("observability", () => {
   });
 
   it("normalizes invalid dates without throwing", () => {
+    // @effect-diagnostics-next-line globalDate:off
+    const invalidDate = new Date("not-a-real-date");
     assert.deepStrictEqual(
       compactTraceAttributes({
-        invalidDate: new Date("not-a-real-date"),
+        invalidDate,
       }),
       {
         invalidDate: "Invalid Date",
@@ -119,122 +121,116 @@ describe("observability", () => {
   it.effect("flushes buffered trace records on close", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-trace-sink-"));
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
         const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
-        try {
-          const sink = yield* makeTraceSink({
-            filePath: tracePath,
-            maxBytes: 1024,
-            maxFiles: 2,
-            batchWindowMs: 10_000,
-          });
+        const sink = yield* makeTraceSink({
+          filePath: tracePath,
+          maxBytes: 1024,
+          maxFiles: 2,
+          batchWindowMs: 10_000,
+        });
 
-          sink.push(makeRecord("alpha"));
-          sink.push(makeRecord("beta"));
-          yield* sink.close();
+        sink.push(makeRecord("alpha"));
+        sink.push(makeRecord("beta"));
+        yield* sink.close();
 
-          const lines = readTraceRecords(tracePath);
+        const lines = yield* readTraceRecords(tracePath);
 
-          assert.equal(lines.length, 2);
-          assert.equal(lines[0]?.name, "alpha");
-          assert.equal(lines[1]?.name, "beta");
-        } finally {
-          fs.rmSync(tempDir, { recursive: true, force: true });
-        }
-      }),
+        assert.equal(lines.length, 2);
+        assert.equal(lines[0]?.name, "alpha");
+        assert.equal(lines[1]?.name, "beta");
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 
   it.effect("rotates the trace file when the configured max size is exceeded", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-trace-sink-"));
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
         const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
-        try {
-          const sink = yield* makeTraceSink({
-            filePath: tracePath,
-            maxBytes: 180,
-            maxFiles: 2,
-            batchWindowMs: 10_000,
-          });
+        const sink = yield* makeTraceSink({
+          filePath: tracePath,
+          maxBytes: 180,
+          maxFiles: 2,
+          batchWindowMs: 10_000,
+        });
 
-          for (let index = 0; index < 8; index += 1) {
-            sink.push(makeRecord("rotate", `${index}-${"x".repeat(48)}`));
-            yield* sink.flush;
-          }
-          yield* sink.close();
-
-          const matchingFiles = fs
-            .readdirSync(tempDir)
-            .filter(
-              (entry) =>
-                entry === "shared.trace.ndjson" || entry.startsWith("shared.trace.ndjson."),
-            )
-            .toSorted();
-
-          assert.equal(
-            matchingFiles.some((entry) => entry === "shared.trace.ndjson.1"),
-            true,
-          );
-          assert.equal(
-            matchingFiles.some((entry) => entry === "shared.trace.ndjson.3"),
-            false,
-          );
-        } finally {
-          fs.rmSync(tempDir, { recursive: true, force: true });
+        for (let index = 0; index < 8; index += 1) {
+          sink.push(makeRecord("rotate", `${index}-${"x".repeat(48)}`));
+          yield* sink.flush;
         }
-      }),
+        yield* sink.close();
+
+        const matchingFiles = (yield* fileSystem.readDirectory(tempDir))
+          .filter(
+            (entry) => entry === "shared.trace.ndjson" || entry.startsWith("shared.trace.ndjson."),
+          )
+          .toSorted();
+
+        assert.equal(
+          matchingFiles.some((entry) => entry === "shared.trace.ndjson.1"),
+          true,
+        );
+        assert.equal(
+          matchingFiles.some((entry) => entry === "shared.trace.ndjson.3"),
+          false,
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 
   it.effect("drops only the invalid trace record when serialization fails", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-trace-sink-"));
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-trace-sink-" });
         const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
-        try {
-          const sink = yield* makeTraceSink({
-            filePath: tracePath,
-            maxBytes: 1024,
-            maxFiles: 2,
-            batchWindowMs: 10_000,
-          });
+        const sink = yield* makeTraceSink({
+          filePath: tracePath,
+          maxBytes: 1024,
+          maxFiles: 2,
+          batchWindowMs: 10_000,
+        });
 
-          const circular: Array<unknown> = [];
-          circular.push(circular);
+        const circular: Array<unknown> = [];
+        circular.push(circular);
 
-          sink.push(makeRecord("alpha"));
-          sink.push({
-            ...makeRecord("invalid"),
-            attributes: {
-              circular,
-            },
-          } as TraceRecord);
-          sink.push(makeRecord("beta"));
-          yield* sink.close();
+        sink.push(makeRecord("alpha"));
+        sink.push({
+          ...makeRecord("invalid"),
+          attributes: {
+            circular,
+          },
+        } as TraceRecord);
+        sink.push(makeRecord("beta"));
+        yield* sink.close();
 
-          const lines = readTraceRecords(tracePath);
+        const lines = yield* readTraceRecords(tracePath);
 
-          assert.deepStrictEqual(
-            lines.map((line) => line.name),
-            ["alpha", "beta"],
-          );
-        } finally {
-          fs.rmSync(tempDir, { recursive: true, force: true });
-        }
-      }),
+        assert.deepStrictEqual(
+          lines.map((line) => line.name),
+          ["alpha", "beta"],
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
 
   it.effect("writes nested spans to disk and captures log messages as span events", () =>
-    Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-local-tracer-"));
-      const tracePath = path.join(tempDir, "shared.trace.ndjson");
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-local-tracer-" });
+        const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
-      try {
         yield* Effect.scoped(
           Effect.gen(function* () {
             const program = Effect.gen(function* () {
@@ -254,7 +250,7 @@ describe("observability", () => {
           }),
         );
 
-        const records = readTraceRecords(tracePath);
+        const records = yield* readTraceRecords(tracePath);
         assert.equal(records.length, 2);
 
         const parent = records.find((record) => record.name === "parent-span");
@@ -281,18 +277,18 @@ describe("observability", () => {
           child.events.some((event) => event.attributes["effect.logLevel"] === "INFO"),
           true,
         );
-      } finally {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
   );
 
   it.effect("serializes interrupted spans with an interrupted exit status", () =>
-    Effect.gen(function* () {
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-local-tracer-"));
-      const tracePath = path.join(tempDir, "shared.trace.ndjson");
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-local-tracer-" });
+        const tracePath = path.join(tempDir, "shared.trace.ndjson");
 
-      try {
         yield* Effect.scoped(
           Effect.exit(
             Effect.interrupt.pipe(
@@ -302,13 +298,11 @@ describe("observability", () => {
           ),
         );
 
-        const records = readTraceRecords(tracePath);
+        const records = yield* readTraceRecords(tracePath);
         assert.equal(records.length, 1);
         assert.equal(records[0]?.name, "interrupt-span");
         assert.equal(records[0]?.exit?._tag, "Interrupted");
-      } finally {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-      }
-    }),
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
   );
 });

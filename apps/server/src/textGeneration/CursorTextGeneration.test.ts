@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as path from "node:path";
 import * as os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -5,7 +6,11 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, Layer, Schema } from "effect";
+import * as Clock from "effect/Clock";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 import { expect } from "vitest";
 
@@ -67,17 +72,19 @@ function withFakeAcpAgent<A, E, R>(
 }
 
 function waitForFileContent(path: string): Effect.Effect<string> {
-  return Effect.promise(async () => {
-    const deadline = Date.now() + 5_000;
+  return Effect.gen(function* () {
+    const deadline = (yield* Clock.currentTimeMillis) + 5_000;
     for (;;) {
-      try {
-        return readFileSync(path, "utf8");
-      } catch (error) {
-        if (Date.now() >= deadline) {
-          throw error instanceof Error ? error : new Error(String(error));
+      const result = yield* Effect.exit(Effect.sync(() => readFileSync(path, "utf8")));
+      if (Exit.isSuccess(result)) {
+        return result.value;
+      }
+      {
+        if ((yield* Clock.currentTimeMillis) >= deadline) {
+          return yield* Effect.die(result.cause);
         }
       }
-      await new Promise((resolve) => setTimeout(resolve, 25));
+      yield* Effect.sleep(25);
     }
   });
 }

@@ -1,18 +1,16 @@
-import { NetService } from "@t3tools/shared/Net";
+import * as NetService from "@t3tools/shared/Net";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
-import {
-  Config,
-  Duration,
-  Effect,
-  FileSystem,
-  LogLevel,
-  Option,
-  Path,
-  Schema,
-  SchemaIssue,
-  SchemaTransformation,
-} from "effect";
+import * as Config from "effect/Config";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as LogLevel from "effect/LogLevel";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Flag } from "effect/unstable/cli";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
@@ -215,7 +213,7 @@ export const resolveServerConfig = (
   },
 ) =>
   Effect.gen(function* () {
-    const { findAvailablePort } = yield* NetService;
+    const { findAvailablePort } = yield* NetService.NetService;
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const env = yield* EnvServerConfig;

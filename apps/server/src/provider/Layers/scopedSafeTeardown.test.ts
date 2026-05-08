@@ -1,5 +1,7 @@
 import { it } from "@effect/vitest";
-import { Cause, Effect, Exit } from "effect";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import { describe, expect } from "vitest";
 
 import { scopedSafeTeardown } from "./scopedSafeTeardown.ts";

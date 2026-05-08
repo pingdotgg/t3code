@@ -1,4 +1,5 @@
-import { Effect, Ref } from "effect";
+import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 
 export interface ProviderMaintenanceCommandCoordinatorShape<E> {

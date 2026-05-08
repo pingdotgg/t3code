@@ -1,13 +1,15 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NFS from "node:fs";
 import * as path from "node:path";
 import { execFileSync, spawn } from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { FileSystem, Schema } from "effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Schema from "effect/Schema";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
-import { TestClock } from "effect/testing";
+import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vitest";
 
 import { readBootstrapEnvelope, resolveFdPath } from "./bootstrap.ts";

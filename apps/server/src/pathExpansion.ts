@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import { homedir } from "node:os";
 import { join } from "node:path";
 

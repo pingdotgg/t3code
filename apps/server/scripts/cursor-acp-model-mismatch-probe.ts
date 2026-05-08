@@ -1,6 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import process from "node:process";
 import readline from "node:readline";
+import * as NodeTimers from "node:timers";
 
 type JsonPrimitive = null | boolean | number | string;
 type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
@@ -114,7 +116,8 @@ function matchesKeyword(option: SessionConfigOption, keyword: string): boolean {
 
 function sleep(ms: number) {
   return new Promise<void>((resolve) => {
-    setTimeout(resolve, ms);
+    // @effect-diagnostics-next-line globalTimers:off - Standalone Node probe script, not an Effect runtime test.
+    NodeTimers.setTimeout(resolve, ms);
   });
 }
 
@@ -177,7 +180,8 @@ class JsonRpcChild {
     const id = this.nextId++;
 
     const responsePromise = new Promise<JsonValue | undefined>((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      // @effect-diagnostics-next-line globalTimers:off - Standalone Node probe script request timeout.
+      const timeout = NodeTimers.setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Timed out waiting for ${method} response after ${timeoutMs}ms.`));
       }, timeoutMs);
@@ -185,11 +189,11 @@ class JsonRpcChild {
       this.pending.set(id, {
         method,
         resolve: (value) => {
-          clearTimeout(timeout);
+          NodeTimers.clearTimeout(timeout);
           resolve(value);
         },
         reject: (error) => {
-          clearTimeout(timeout);
+          NodeTimers.clearTimeout(timeout);
           reject(error);
         },
       });

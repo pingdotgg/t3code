@@ -17,9 +17,9 @@ import type {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { Context } from "effect";
-import type { Option } from "effect";
-import type { Effect } from "effect";
+import * as Context from "effect/Context";
+import type * as Option from "effect/Option";
+import type * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 

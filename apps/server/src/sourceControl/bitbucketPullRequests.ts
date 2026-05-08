@@ -1,4 +1,6 @@
-import { DateTime, Option, Schema } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
 
 export interface NormalizedBitbucketPullRequestRecord {

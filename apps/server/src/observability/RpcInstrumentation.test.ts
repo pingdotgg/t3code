@@ -1,7 +1,13 @@
 import { assert, describe, it } from "@effect/vitest";
 import { WS_METHODS } from "@t3tools/contracts";
-import { Duration, Effect, Exit, Fiber, Metric, Stream, Tracer } from "effect";
-import { TestClock } from "effect/testing";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Metric from "effect/Metric";
+import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   observeRpcEffect,

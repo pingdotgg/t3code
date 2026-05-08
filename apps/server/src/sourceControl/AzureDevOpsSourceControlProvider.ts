@@ -1,4 +1,5 @@
-import { Effect, Layer } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
@@ -30,7 +31,7 @@ function parseAzureAuth(input: SourceControlProviderDiscovery.SourceControlAuthP
     });
   }
 
-  if (account && account.length > 0) {
+  if (account !== undefined && account.length > 0) {
     return SourceControlProviderDiscovery.providerAuth({
       status: "authenticated",
       account,
@@ -90,7 +91,7 @@ export const make = Effect.fn("makeAzureDevOpsSourceControlProvider")(function* 
         .listPullRequests({
           cwd: input.cwd,
           headSelector: input.headSelector,
-          ...(source ? { source } : {}),
+          ...(source !== undefined ? { source } : {}),
           state: input.state,
           ...(input.limit !== undefined ? { limit: input.limit } : {}),
         })
@@ -111,8 +112,8 @@ export const make = Effect.fn("makeAzureDevOpsSourceControlProvider")(function* 
           cwd: input.cwd,
           baseBranch: input.baseRefName,
           headSelector: input.headSelector,
-          ...(source ? { source } : {}),
-          ...(input.target ? { target: input.target } : {}),
+          ...(source !== undefined ? { source } : {}),
+          ...(input.target !== undefined ? { target: input.target } : {}),
           title: input.title,
           bodyFile: input.bodyFile,
         })
@@ -135,7 +136,7 @@ export const make = Effect.fn("makeAzureDevOpsSourceControlProvider")(function* 
         .checkoutPullRequest({
           cwd: input.cwd,
           reference: input.reference,
-          ...(input.context ? { remoteName: input.context.remoteName } : {}),
+          ...(input.context !== undefined ? { remoteName: input.context.remoteName } : {}),
         })
         .pipe(Effect.mapError((error) => providerError("checkoutChangeRequest", error))),
   });

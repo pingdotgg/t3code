@@ -7,7 +7,10 @@
  *
  * @module ClaudeTextGeneration
  */
-import { Effect, Option, Schema, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { type ClaudeSettings, type ModelSelection } from "@t3tools/contracts";
@@ -93,7 +96,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     outputSchemaJson: S;
     modelSelection: ModelSelection;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
-    const jsonSchemaStr = JSON.stringify(toJsonSchemaObject(outputSchemaJson));
+    const jsonSchemaStr = Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(
+      toJsonSchemaObject(outputSchemaJson),
+    );
     const caps = getClaudeModelCapabilities(modelSelection.model);
     const descriptors = getProviderOptionDescriptors({
       caps,
@@ -126,7 +131,9 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--model",
           resolveClaudeApiModelId(modelSelection),
           ...(cliEffort ? ["--effort", cliEffort] : []),
-          ...(Object.keys(settings).length > 0 ? ["--settings", JSON.stringify(settings)] : []),
+          ...(Object.keys(settings).length > 0
+            ? ["--settings", Schema.encodeUnknownSync(Schema.UnknownFromJsonString)(settings)]
+            : []),
           "--dangerously-skip-permissions",
         ],
         {

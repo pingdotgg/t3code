@@ -1,4 +1,6 @@
-import { FileSystem, Path, Effect } from "effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Effect from "effect/Effect";
 import { assert, it } from "@effect/vitest";
 
 import { ensureNodePtySpawnHelperExecutable } from "./NodePTY.ts";

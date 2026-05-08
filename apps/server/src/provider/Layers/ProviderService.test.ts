@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -21,7 +22,17 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { it, assert, vi } from "@effect/vitest";
 
-import { Effect, Exit, Fiber, Layer, Metric, Option, PubSub, Ref, Scope, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Metric from "effect/Metric";
+import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
@@ -83,7 +94,7 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
 
   const startSession = vi.fn((input: ProviderSessionStartInput) =>
     Effect.sync(() => {
-      const now = new Date().toISOString();
+      const now = "2026-01-01T00:00:00.000Z";
       const session: ProviderSession = {
         provider,
         ...(input.providerInstanceId !== undefined
@@ -246,8 +257,8 @@ function makeFakeCodexAdapter(provider: ProviderDriverKind = CODEX_DRIVER) {
   };
 }
 
-const sleep = (ms: number) =>
-  Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+const advanceTestClock = (ms: number) =>
+  TestClock.adjust(`${ms} millis`).pipe(Effect.andThen(Effect.yieldNow));
 
 const hasMetricSnapshot = (
   snapshots: ReadonlyArray<Metric.Metric.Snapshot>,
@@ -572,18 +583,18 @@ it.effect("ProviderServiceLive writes canonical events to the emitting thread se
 
     yield* Effect.gen(function* () {
       yield* ProviderService;
-      yield* sleep(10);
+      yield* advanceTestClock(10);
       codex.emit({
         eventId: asEventId("evt-canonical-thread-segment"),
         provider: ProviderDriverKind.make("codex"),
         threadId: asThreadId("thread-canonical-thread-segment"),
-        createdAt: new Date().toISOString(),
+        createdAt: "2026-01-01T00:00:00.000Z",
         type: "turn.completed",
         payload: {
           state: "completed",
         },
       });
-      yield* sleep(20);
+      yield* advanceTestClock(20);
     }).pipe(Effect.provide(providerLayer));
 
     assert.equal(canonicalEvents.length, 1);
@@ -704,7 +715,7 @@ it.effect(
           ...existing,
           status: "ready",
           resumeCursor: updatedResumeCursor,
-          updatedAt: new Date(Date.now() + 1_000).toISOString(),
+          updatedAt: "2026-01-01T00:00:01.000Z",
         }));
         return session;
       }).pipe(Effect.provide(firstProviderLayer));
@@ -1403,20 +1414,20 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
       const consumer = yield* Stream.runForEach(provider.streamEvents, (event) =>
         Ref.update(eventsRef, (current) => [...current, event]),
       ).pipe(Effect.forkChild);
-      yield* sleep(50);
+      yield* advanceTestClock(50);
 
       const completedEvent: LegacyProviderRuntimeEvent = {
         type: "turn.completed",
         eventId: asEventId("evt-1"),
         provider: ProviderDriverKind.make("codex"),
-        createdAt: new Date().toISOString(),
+        createdAt: "2026-01-01T00:00:00.000Z",
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
         status: "completed",
       };
 
       fanout.codex.emit(completedEvent);
-      yield* sleep(50);
+      yield* advanceTestClock(50);
 
       const events = yield* Ref.get(eventsRef);
       yield* Fiber.interrupt(consumer);
@@ -1450,13 +1461,13 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         Stream.runForEach((event) => Ref.update(receivedRef, (current) => [...current, event])),
         Effect.forkChild,
       );
-      yield* sleep(50);
+      yield* advanceTestClock(50);
 
       fanout.codex.emit({
         type: "tool.started",
         eventId: asEventId("evt-seq-1"),
         provider: ProviderDriverKind.make("codex"),
-        createdAt: new Date().toISOString(),
+        createdAt: "2026-01-01T00:00:00.000Z",
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
         toolKind: "command",
@@ -1466,7 +1477,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         type: "tool.completed",
         eventId: asEventId("evt-seq-2"),
         provider: ProviderDriverKind.make("codex"),
-        createdAt: new Date().toISOString(),
+        createdAt: "2026-01-01T00:00:00.000Z",
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
         toolKind: "command",
@@ -1476,7 +1487,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         type: "turn.completed",
         eventId: asEventId("evt-seq-3"),
         provider: ProviderDriverKind.make("codex"),
-        createdAt: new Date().toISOString(),
+        createdAt: "2026-01-01T00:00:00.000Z",
         threadId: session.threadId,
         turnId: asTurnId("turn-1"),
         status: "completed",
@@ -1515,14 +1526,14 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
         Stream.runForEach(() => Effect.fail("listener crash")),
         Effect.forkChild,
       );
-      yield* sleep(50);
+      yield* advanceTestClock(50);
 
       const events: ReadonlyArray<LegacyProviderRuntimeEvent> = [
         {
           type: "tool.completed",
           eventId: asEventId("evt-ordered-1"),
           provider: ProviderDriverKind.make("codex"),
-          createdAt: new Date().toISOString(),
+          createdAt: "2026-01-01T00:00:00.000Z",
           threadId: session.threadId,
           turnId: asTurnId("turn-1"),
           toolKind: "command",
@@ -1533,7 +1544,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           type: "message.delta",
           eventId: asEventId("evt-ordered-2"),
           provider: ProviderDriverKind.make("codex"),
-          createdAt: new Date().toISOString(),
+          createdAt: "2026-01-01T00:00:00.000Z",
           threadId: session.threadId,
           turnId: asTurnId("turn-1"),
           delta: "hello",
@@ -1542,7 +1553,7 @@ fanout.layer("ProviderServiceLive fanout", (it) => {
           type: "turn.completed",
           eventId: asEventId("evt-ordered-3"),
           provider: ProviderDriverKind.make("codex"),
-          createdAt: new Date().toISOString(),
+          createdAt: "2026-01-01T00:00:00.000Z",
           threadId: session.threadId,
           turnId: asTurnId("turn-1"),
           status: "completed",
@@ -1758,7 +1769,7 @@ validation.layer("ProviderServiceLive validation", (it) => {
 
       validation.codex.startSession.mockImplementationOnce((input: ProviderSessionStartInput) =>
         Effect.sync(() => {
-          const now = new Date().toISOString();
+          const now = "2026-01-01T00:00:00.000Z";
           return {
             provider: ProviderDriverKind.make("codex"),
             status: "ready",

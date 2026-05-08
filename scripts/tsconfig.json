@@ -3,12 +3,7 @@
   "compilerOptions": {
     "composite": true,
     "types": ["node"],
-    "lib": ["ESNext", "esnext.disposable"],
-    "plugins": [
-      {
-        "name": "@effect/language-service"
-      }
-    ]
+    "lib": ["ESNext", "esnext.disposable"]
   },
   "include": ["**/*.ts"]
 }

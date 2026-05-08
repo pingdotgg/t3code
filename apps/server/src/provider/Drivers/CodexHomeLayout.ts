@@ -1,7 +1,10 @@
 import * as NodeOS from "node:os";
 
 import { ProviderDriverKind, type CodexSettings } from "@t3tools/contracts";
-import { Effect, FileSystem, Path, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import * as PlatformError from "effect/PlatformError";
 
 import { expandHomePath } from "../../pathExpansion.ts";

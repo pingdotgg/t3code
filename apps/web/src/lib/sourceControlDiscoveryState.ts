@@ -7,7 +7,7 @@ import {
   sourceControlDiscoveryStateAtom,
 } from "@t3tools/client-runtime";
 import { EnvironmentId, type SourceControlDiscoveryResult } from "@t3tools/contracts";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { Atom } from "effect/unstable/reactivity";
 
 import { readPrimaryEnvironmentDescriptor } from "../environments/primary";

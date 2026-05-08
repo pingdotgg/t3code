@@ -1,4 +1,8 @@
-import { Effect, Layer, Option, Result, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import {
   SourceControlProviderError,
   type ChangeRequest,

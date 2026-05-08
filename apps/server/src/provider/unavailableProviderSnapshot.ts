@@ -15,6 +15,8 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 
 import { buildServerProvider } from "./providerSnapshot.ts";
 
@@ -25,11 +27,14 @@ export interface UnavailableProviderSnapshotInput {
   readonly accentColor?: string | undefined;
   readonly reason: string;
   /**
-   * Optional override for `checkedAt`. Defaulted to `new Date()` so callers
+   * Optional override for `checkedAt`. Defaulted to the current Effect
+   * `DateTime` so callers
    * (notably tests) don't have to pass it.
    */
   readonly checkedAt?: string;
 }
+
+const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 /**
  * Produce a `ServerProvider` snapshot representing a configured instance
@@ -39,34 +44,36 @@ export interface UnavailableProviderSnapshotInput {
  */
 export function buildUnavailableProviderSnapshot(
   input: UnavailableProviderSnapshotInput,
-): ServerProvider {
-  const checkedAt = input.checkedAt ?? new Date().toISOString();
-  const displayName = input.displayName?.trim() || (input.driverKind as string);
+): Effect.Effect<ServerProvider> {
+  return Effect.gen(function* () {
+    const checkedAt = input.checkedAt ?? (yield* nowIso);
+    const displayName = input.displayName?.trim() || (input.driverKind as string);
 
-  const base = buildServerProvider({
-    presentation: { displayName },
-    enabled: false,
-    checkedAt,
-    models: [],
-    skills: [],
-    probe: {
-      installed: false,
-      version: null,
-      status: "error",
-      auth: { status: "unknown" },
-      message: input.reason,
-    },
+    const base = buildServerProvider({
+      presentation: { displayName },
+      enabled: false,
+      checkedAt,
+      models: [],
+      skills: [],
+      probe: {
+        installed: false,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: input.reason,
+      },
+    });
+
+    return {
+      ...base,
+      instanceId: input.instanceId,
+      ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+      driver:
+        typeof input.driverKind === "string"
+          ? ProviderDriverKind.make(input.driverKind)
+          : input.driverKind,
+      availability: "unavailable",
+      unavailableReason: input.reason,
+    };
   });
-
-  return {
-    ...base,
-    instanceId: input.instanceId,
-    ...(input.accentColor ? { accentColor: input.accentColor } : {}),
-    driver:
-      typeof input.driverKind === "string"
-        ? ProviderDriverKind.make(input.driverKind)
-        : input.driverKind,
-    availability: "unavailable",
-    unavailableReason: input.reason,
-  };
 }

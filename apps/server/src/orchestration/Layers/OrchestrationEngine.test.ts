@@ -8,9 +8,14 @@ import {
   TurnId,
   type OrchestrationEvent,
   ProviderInstanceId,
-  type OrchestrationReadModel,
 } from "@t3tools/contracts";
-import { Effect, Layer, ManagedRuntime, Metric, Option, Queue, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Metric from "effect/Metric";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vitest";
 
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
@@ -69,7 +74,7 @@ async function createOrchestrationSystem() {
 }
 
 function now() {
-  return new Date().toISOString();
+  return "2026-01-01T00:00:00.000Z";
 }
 
 const hasMetricSnapshot = (

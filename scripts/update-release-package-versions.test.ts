@@ -1,8 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ConfigProvider, Effect, FileSystem, Layer, Path, Schema, SchemaGetter } from "effect";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { Command, CliError } from "effect/unstable/cli";
 import * as TestConsole from "effect/testing/TestConsole";
+import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 
 import {
   releasePackageFiles,
@@ -13,17 +19,9 @@ import {
 const ScriptTestLayer = Layer.mergeAll(NodeServices.layer, TestConsole.layer);
 const runCli = Command.runWith(updateReleasePackageVersionsCommand, { version: "0.0.0" });
 const PackageJsonSchema = Schema.Record(Schema.String, Schema.Unknown);
-const PrettyJsonString = SchemaGetter.parseJson<string>().compose(
-  SchemaGetter.stringifyJson({ space: 2 }),
-);
-const PackageJsonPrettyJson = Schema.fromJsonString(PackageJsonSchema).pipe(
-  Schema.encode({
-    decode: PrettyJsonString,
-    encode: PrettyJsonString,
-  }),
-);
-const decodePackageJson = Schema.decodeUnknownEffect(PackageJsonPrettyJson);
-const encodePackageJson = Schema.encodeSync(PackageJsonPrettyJson);
+const PackageJsonPrettyJson = fromJsonStringPretty(PackageJsonSchema);
+const decodePackageJson = Schema.decodeEffect(PackageJsonPrettyJson);
+const encodePackageJson = Schema.encodeEffect(PackageJsonPrettyJson);
 
 const writePackageJsonFixtures = Effect.fn("writePackageJsonFixtures")(function* (
   rootDir: string,
@@ -37,7 +35,7 @@ const writePackageJsonFixtures = Effect.fn("writePackageJsonFixtures")(function*
     yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
     yield* fs.writeFileString(
       filePath,
-      `${encodePackageJson({
+      `${yield* encodePackageJson({
         name: relativePath,
         version,
         private: true,

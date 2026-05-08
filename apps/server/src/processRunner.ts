@@ -1,5 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import { type ChildProcess as ChildProcessHandle, spawn, spawnSync } from "node:child_process";
-
+import * as NodeTimers from "node:timers";
 export interface ProcessRunOptions {
   cwd?: string | undefined;
   timeoutMs?: number | undefined;
@@ -163,12 +164,14 @@ export async function runProcess(
     let stderrTruncated = false;
     let timedOut = false;
     let settled = false;
-    let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
+    let forceKillTimer: ReturnType<typeof NodeTimers.setTimeout> | null = null;
 
-    const timeoutTimer = setTimeout(() => {
+    // @effect-diagnostics-next-line globalTimers:off - Promise/child_process boundary; moving this runner to Effect timers is a separate refactor.
+    const timeoutTimer = NodeTimers.setTimeout(() => {
       timedOut = true;
       killChild(child, "SIGTERM");
-      forceKillTimer = setTimeout(() => {
+      // @effect-diagnostics-next-line globalTimers:off - Promise/child_process boundary; see timeout timer above.
+      forceKillTimer = NodeTimers.setTimeout(() => {
         killChild(child, "SIGKILL");
       }, 1_000);
     }, timeoutMs);
@@ -176,9 +179,9 @@ export async function runProcess(
     const finalize = (callback: () => void): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeoutTimer);
+      NodeTimers.clearTimeout(timeoutTimer);
       if (forceKillTimer) {
-        clearTimeout(forceKillTimer);
+        NodeTimers.clearTimeout(forceKillTimer);
       }
       callback();
     };

@@ -1,4 +1,8 @@
-import { Effect, FileSystem, Option, Schema } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { type ServerConfigShape } from "./config.ts";
@@ -30,14 +34,15 @@ const runtimeOriginForConfig = (
 export const makePersistedServerRuntimeState = (input: {
   readonly config: Pick<ServerConfigShape, "host">;
   readonly port: number;
-}): PersistedServerRuntimeState => ({
-  version: 1,
-  pid: process.pid,
-  ...(input.config.host ? { host: input.config.host } : {}),
-  port: input.port,
-  origin: runtimeOriginForConfig(input.config, input.port),
-  startedAt: new Date().toISOString(),
-});
+}): Effect.Effect<PersistedServerRuntimeState> =>
+  Effect.map(DateTime.now, (now) => ({
+    version: 1,
+    pid: process.pid,
+    ...(input.config.host ? { host: input.config.host } : {}),
+    port: input.port,
+    origin: runtimeOriginForConfig(input.config, input.port),
+    startedAt: DateTime.formatIso(now),
+  }));
 
 export const persistServerRuntimeState = (input: {
   readonly path: string;

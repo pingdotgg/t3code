@@ -3,7 +3,7 @@ import {
   type ProviderDriverKind,
   type ThreadId,
 } from "@t3tools/contracts";
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import {
