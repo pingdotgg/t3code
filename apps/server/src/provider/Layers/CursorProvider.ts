@@ -65,38 +65,40 @@ export const CURSOR_PARAMETERIZED_MODEL_PICKER_CAPABILITIES = {
 
 export function buildInitialCursorProviderSnapshot(
   cursorSettings: CursorSettings,
-): ServerProviderDraft {
-  const checkedAt = Effect.runSync(DateTime.now.pipe(Effect.map(DateTime.formatIso)));
-  const models = getCursorFallbackModels(cursorSettings);
+): Effect.Effect<ServerProviderDraft> {
+  return Effect.gen(function* () {
+    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+    const models = getCursorFallbackModels(cursorSettings);
 
-  if (!cursorSettings.enabled) {
+    if (!cursorSettings.enabled) {
+      return buildServerProvider({
+        presentation: CURSOR_PRESENTATION,
+        enabled: false,
+        checkedAt,
+        models,
+        probe: {
+          installed: false,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: "Cursor is disabled in T3 Code settings.",
+        },
+      });
+    }
+
     return buildServerProvider({
       presentation: CURSOR_PRESENTATION,
-      enabled: false,
+      enabled: true,
       checkedAt,
       models,
       probe: {
-        installed: false,
+        installed: true,
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Cursor is disabled in T3 Code settings.",
+        message: "Checking Cursor Agent availability...",
       },
     });
-  }
-
-  return buildServerProvider({
-    presentation: CURSOR_PRESENTATION,
-    enabled: true,
-    checkedAt,
-    models,
-    probe: {
-      installed: true,
-      version: null,
-      status: "warning",
-      auth: { status: "unknown" },
-      message: "Checking Cursor Agent availability...",
-    },
   });
 }
 

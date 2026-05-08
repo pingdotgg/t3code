@@ -34,6 +34,8 @@ export interface UnavailableProviderSnapshotInput {
   readonly checkedAt?: string;
 }
 
+const nowIso = Effect.map(DateTime.now, DateTime.formatIso))
+
 /**
  * Produce a `ServerProvider` snapshot representing a configured instance
  * whose driver the running build does not implement. The result is safe
@@ -42,35 +44,36 @@ export interface UnavailableProviderSnapshotInput {
  */
 export function buildUnavailableProviderSnapshot(
   input: UnavailableProviderSnapshotInput,
-): ServerProvider {
-  const checkedAt =
-    input.checkedAt ?? Effect.runSync(DateTime.now.pipe(Effect.map(DateTime.formatIso)));
-  const displayName = input.displayName?.trim() || (input.driverKind as string);
+): Effect.Effect<ServerProvider> {
+  return Effect.gen(function* () {
+    const checkedAt = input.checkedAt ?? (yield* nowIso);
+    const displayName = input.displayName?.trim() || (input.driverKind as string);
 
-  const base = buildServerProvider({
-    presentation: { displayName },
-    enabled: false,
-    checkedAt,
-    models: [],
-    skills: [],
-    probe: {
-      installed: false,
-      version: null,
-      status: "error",
-      auth: { status: "unknown" },
-      message: input.reason,
-    },
+    const base = buildServerProvider({
+      presentation: { displayName },
+      enabled: false,
+      checkedAt,
+      models: [],
+      skills: [],
+      probe: {
+        installed: false,
+        version: null,
+        status: "error",
+        auth: { status: "unknown" },
+        message: input.reason,
+      },
+    });
+
+    return {
+      ...base,
+      instanceId: input.instanceId,
+      ...(input.accentColor ? { accentColor: input.accentColor } : {}),
+      driver:
+        typeof input.driverKind === "string"
+          ? ProviderDriverKind.make(input.driverKind)
+          : input.driverKind,
+      availability: "unavailable",
+      unavailableReason: input.reason,
+    };
   });
-
-  return {
-    ...base,
-    instanceId: input.instanceId,
-    ...(input.accentColor ? { accentColor: input.accentColor } : {}),
-    driver:
-      typeof input.driverKind === "string"
-        ? ProviderDriverKind.make(input.driverKind)
-        : input.driverKind,
-    availability: "unavailable",
-    unavailableReason: input.reason,
-  };
 }

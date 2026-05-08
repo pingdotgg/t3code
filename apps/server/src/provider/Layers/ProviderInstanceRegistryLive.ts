@@ -124,7 +124,7 @@ const buildEntry = <R>(input: {
     if (!driver) {
       return {
         kind: "unavailable" as const,
-        snapshot: buildUnavailableProviderSnapshot({
+        snapshot: yield* buildUnavailableProviderSnapshot({
           driverKind: entry.driver,
           instanceId,
           displayName: entry.displayName,
@@ -146,7 +146,7 @@ const buildEntry = <R>(input: {
       });
       return {
         kind: "unavailable" as const,
-        snapshot: buildUnavailableProviderSnapshot({
+        snapshot: yield* buildUnavailableProviderSnapshot({
           driverKind: entry.driver,
           instanceId,
           displayName: entry.displayName,
@@ -184,7 +184,7 @@ const buildEntry = <R>(input: {
       yield* Scope.close(childScope, Exit.void).pipe(Effect.ignore);
       return {
         kind: "unavailable" as const,
-        snapshot: buildUnavailableProviderSnapshot({
+        snapshot: yield* buildUnavailableProviderSnapshot({
           driverKind: entry.driver,
           instanceId,
           displayName: entry.displayName,

@@ -668,19 +668,39 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   });
 });
 
-export const makePendingClaudeProvider = (claudeSettings: ClaudeSettings): ServerProviderDraft => {
-  const checkedAt = Effect.runSync(DateTime.now.pipe(Effect.map(DateTime.formatIso)));
-  const models = providerModelsFromSettings(
-    BUILT_IN_MODELS,
-    PROVIDER,
-    claudeSettings.customModels,
-    DEFAULT_CLAUDE_MODEL_CAPABILITIES,
-  );
+const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
-  if (!claudeSettings.enabled) {
+export const makePendingClaudeProvider = (
+  claudeSettings: ClaudeSettings,
+): Effect.Effect<ServerProviderDraft> =>
+  Effect.gen(function* () {
+    const checkedAt = yield* nowIso;
+    const models = providerModelsFromSettings(
+      BUILT_IN_MODELS,
+      PROVIDER,
+      claudeSettings.customModels,
+      DEFAULT_CLAUDE_MODEL_CAPABILITIES,
+    );
+
+    if (!claudeSettings.enabled) {
+      return buildServerProvider({
+        presentation: CLAUDE_PRESENTATION,
+        enabled: false,
+        checkedAt,
+        models,
+        probe: {
+          installed: false,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: "Claude is disabled in T3 Code settings.",
+        },
+      });
+    }
+
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
-      enabled: false,
+      enabled: true,
       checkedAt,
       models,
       probe: {
@@ -688,24 +708,9 @@ export const makePendingClaudeProvider = (claudeSettings: ClaudeSettings): Serve
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Claude is disabled in T3 Code settings.",
+        message: "Claude provider status has not been checked in this session yet.",
       },
     });
-  }
-
-  return buildServerProvider({
-    presentation: CLAUDE_PRESENTATION,
-    enabled: true,
-    checkedAt,
-    models,
-    probe: {
-      installed: false,
-      version: null,
-      status: "warning",
-      auth: { status: "unknown" },
-      message: "Claude provider status has not been checked in this session yet.",
-    },
   });
-};
 
 export { probeClaudeCapabilities };

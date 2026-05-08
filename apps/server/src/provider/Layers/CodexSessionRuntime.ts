@@ -737,7 +737,7 @@ export const makeCodexSessionRuntime = (
       Effect.provide(clientContext),
     );
     const serverNotifications = yield* Queue.unbounded<CodexServerNotification>();
-    const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+    const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
     const sessionCreatedAt = yield* nowIso;
     const initialSession = {

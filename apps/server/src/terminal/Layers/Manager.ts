@@ -725,7 +725,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
     const path = yield* Path.Path;
     const context = yield* Effect.context<never>();
     const runFork = Effect.runForkWith(context);
-    const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
+    const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
     const logsDir = options.logsDir;
     const historyLineLimit = options.historyLineLimit ?? DEFAULT_HISTORY_LINE_LIMIT;

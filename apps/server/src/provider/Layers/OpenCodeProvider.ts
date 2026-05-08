@@ -252,19 +252,38 @@ function flattenOpenCodeModels(input: OpenCodeInventory): ReadonlyArray<ServerPr
 
 export const makePendingOpenCodeProvider = (
   openCodeSettings: OpenCodeSettings,
-): ServerProviderDraft => {
-  const checkedAt = Effect.runSync(DateTime.now.pipe(Effect.map(DateTime.formatIso)));
-  const models = providerModelsFromSettings(
-    [],
-    PROVIDER,
-    openCodeSettings.customModels,
-    DEFAULT_OPENCODE_MODEL_CAPABILITIES,
-  );
+): Effect.Effect<ServerProviderDraft> =>
+  Effect.gen(function* () {
+    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+    const models = providerModelsFromSettings(
+      [],
+      PROVIDER,
+      openCodeSettings.customModels,
+      DEFAULT_OPENCODE_MODEL_CAPABILITIES,
+    );
 
-  if (!openCodeSettings.enabled) {
+    if (!openCodeSettings.enabled) {
+      return buildServerProvider({
+        presentation: OPENCODE_PRESENTATION,
+        enabled: false,
+        checkedAt,
+        models,
+        probe: {
+          installed: false,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message:
+            openCodeSettings.serverUrl.trim().length > 0
+              ? "OpenCode is disabled in T3 Code settings. A server URL is configured."
+              : "OpenCode is disabled in T3 Code settings.",
+        },
+      });
+    }
+
     return buildServerProvider({
       presentation: OPENCODE_PRESENTATION,
-      enabled: false,
+      enabled: true,
       checkedAt,
       models,
       probe: {
@@ -272,28 +291,10 @@ export const makePendingOpenCodeProvider = (
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message:
-          openCodeSettings.serverUrl.trim().length > 0
-            ? "OpenCode is disabled in T3 Code settings. A server URL is configured."
-            : "OpenCode is disabled in T3 Code settings.",
+        message: "OpenCode provider status has not been checked in this session yet.",
       },
     });
-  }
-
-  return buildServerProvider({
-    presentation: OPENCODE_PRESENTATION,
-    enabled: true,
-    checkedAt,
-    models,
-    probe: {
-      installed: false,
-      version: null,
-      status: "warning",
-      auth: { status: "unknown" },
-      message: "OpenCode provider status has not been checked in this session yet.",
-    },
   });
-};
 
 export const checkOpenCodeProviderStatus = Effect.fn("checkOpenCodeProviderStatus")(function* (
   openCodeSettings: OpenCodeSettings,

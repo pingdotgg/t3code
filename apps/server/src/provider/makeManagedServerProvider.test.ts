@@ -113,7 +113,7 @@ describe("makeManagedServerProvider", () => {
             getSettings: Effect.succeed({ enabled: true }),
             streamSettings: Stream.empty,
             haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-            initialSnapshot: () => initialSnapshot,
+            initialSnapshot: () => Effect.succeed(initialSnapshot),
             checkProvider: Ref.update(checkCalls, (count) => count + 1).pipe(
               Effect.flatMap(() => Deferred.await(releaseCheck)),
               Effect.as(refreshedSnapshot),
@@ -155,7 +155,7 @@ describe("makeManagedServerProvider", () => {
           getSettings: Ref.get(settingsRef),
           streamSettings: Stream.fromPubSub(settingsChanges),
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-          initialSnapshot: () => initialSnapshot,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
           checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
             Effect.flatMap((count) =>
               count === 1
@@ -197,7 +197,7 @@ describe("makeManagedServerProvider", () => {
           getSettings: Effect.succeed({ enabled: true }),
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-          initialSnapshot: () => initialSnapshot,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
           checkProvider: Deferred.await(releaseCheck).pipe(Effect.as(refreshedSnapshot)),
           enrichSnapshot: ({ publishSnapshot }) =>
             Deferred.await(releaseEnrichment).pipe(
@@ -238,7 +238,7 @@ describe("makeManagedServerProvider", () => {
           getSettings: Effect.succeed({ enabled: true }),
           streamSettings: Stream.empty,
           haveSettingsChanged: (previous, next) => previous.enabled !== next.enabled,
-          initialSnapshot: () => initialSnapshot,
+          initialSnapshot: () => Effect.succeed(initialSnapshot),
           checkProvider: Ref.updateAndGet(refreshCount, (count) => count + 1).pipe(
             Effect.flatMap((count) =>
               count === 1

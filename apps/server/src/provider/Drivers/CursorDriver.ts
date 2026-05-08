@@ -133,7 +133,8 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         getSettings: Effect.succeed(effectiveConfig),
         streamSettings: Stream.never,
         haveSettingsChanged: () => false,
-        initialSnapshot: (settings) => stampIdentity(buildInitialCursorProviderSnapshot(settings)),
+        initialSnapshot: (settings) =>
+          buildInitialCursorProviderSnapshot(settings).pipe(Effect.map(stampIdentity)),
         checkProvider,
         // Preserve the background ACP model-capability probe that used to
         // live on `CursorProviderLive`. Only fires when the snapshot reports

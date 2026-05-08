@@ -103,9 +103,7 @@ export interface OpenCodeAdapterLiveOptions {
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
-function nowIso(): string {
-  return Effect.runSync(DateTime.now.pipe(Effect.map(DateTime.formatIso)));
-}
+const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 /**
  * Map a tagged OpenCodeRuntimeError produced by {@link runOpenCodeSdk} into
@@ -148,12 +146,14 @@ const buildEventBase = (input: {
     "eventId" | "provider" | "threadId" | "createdAt" | "turnId" | "itemId" | "requestId" | "raw"
   >
 > =>
-  Random.nextUUIDv4.pipe(
-    Effect.map((uuid) => ({
+  Effect.gen(function* () {
+    const uuid = yield* Random.nextUUIDv4;
+    const createdAt = input.createdAt ?? (yield* nowIso);
+    return {
       eventId: EventId.make(uuid),
       provider: PROVIDER,
       threadId: input.threadId,
-      createdAt: input.createdAt ?? nowIso(),
+      createdAt,
       ...(input.turnId ? { turnId: input.turnId } : {}),
       ...(input.itemId ? { itemId: RuntimeItemId.make(input.itemId) } : {}),
       ...(input.requestId ? { requestId: RuntimeRequestId.make(input.requestId) } : {}),
@@ -165,8 +165,8 @@ const buildEventBase = (input: {
             },
           }
         : {}),
-    })),
-  );
+    };
+  });
 
 function toToolLifecycleItemType(toolName: string): ToolLifecycleItemType {
   const normalized = toolName.toLowerCase();
@@ -416,21 +416,24 @@ function updateProviderSession(
     readonly clearActiveTurnId?: boolean;
     readonly clearLastError?: boolean;
   },
-): ProviderSession {
-  const nextSession = {
-    ...context.session,
-    ...patch,
-    updatedAt: nowIso(),
-  } as ProviderSession & Record<string, unknown>;
-  const mutableSession = nextSession as Record<string, unknown>;
-  if (options?.clearActiveTurnId) {
-    delete mutableSession.activeTurnId;
-  }
-  if (options?.clearLastError) {
-    delete mutableSession.lastError;
-  }
-  context.session = nextSession;
-  return nextSession;
+): Effect.Effect<ProviderSession> {
+  return Effect.gen(function* () {
+    const updatedAt = yield* nowIso;
+    const nextSession = {
+      ...context.session,
+      ...patch,
+      updatedAt,
+    } as ProviderSession & Record<string, unknown>;
+    const mutableSession = nextSession as Record<string, unknown>;
+    if (options?.clearActiveTurnId) {
+      delete mutableSession.activeTurnId;
+    }
+    if (options?.clearLastError) {
+      delete mutableSession.lastError;
+    }
+    context.session = nextSession;
+    return nextSession;
+  });
 }
 
 const stopOpenCodeContext = Effect.fn("stopOpenCodeContext")(function* (
@@ -650,7 +653,7 @@ export function makeOpenCodeAdapter(
 
       const turnId = context.activeTurnId;
       yield* writeNativeEventBestEffort(context.session.threadId, {
-        observedAt: nowIso(),
+        observedAt: yield* nowIso,
         event: {
           provider: PROVIDER,
           threadId: context.session.threadId,
@@ -871,7 +874,7 @@ export function makeOpenCodeAdapter(
 
         case "session.status": {
           if (event.properties.status.type === "busy") {
-            updateProviderSession(context, {
+            yield* updateProviderSession(context, {
               status: "running",
               activeTurnId: turnId,
             });
@@ -895,7 +898,7 @@ export function makeOpenCodeAdapter(
 
           if (event.properties.status.type === "idle" && turnId) {
             context.activeTurnId = undefined;
-            updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
+            yield* updateProviderSession(context, { status: "ready" }, { clearActiveTurnId: true });
             yield* emit({
               ...(yield* buildEventBase({
                 threadId: context.session.threadId,
@@ -915,7 +918,7 @@ export function makeOpenCodeAdapter(
           const message = sessionErrorMessage(event.properties.error);
           const activeTurnId = context.activeTurnId;
           context.activeTurnId = undefined;
-          updateProviderSession(
+          yield* updateProviderSession(
             context,
             {
               status: "error",
@@ -1092,7 +1095,7 @@ export function makeOpenCodeAdapter(
           return raceWinner.session;
         }
 
-        const createdAt = nowIso();
+        const createdAt = yield* nowIso;
         const session: ProviderSession = {
           provider: PROVIDER,
           providerInstanceId: boundInstanceId,
@@ -1193,7 +1196,7 @@ export function makeOpenCodeAdapter(
       context.activeTurnId = turnId;
       context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
       context.activeVariant = variant;
-      updateProviderSession(
+      yield* updateProviderSession(
         context,
         {
           status: "running",
@@ -1231,7 +1234,7 @@ export function makeOpenCodeAdapter(
             context.activeTurnId = undefined;
             context.activeAgent = undefined;
             context.activeVariant = undefined;
-            updateProviderSession(
+            yield* updateProviderSession(
               context,
               {
                 status: "ready",
