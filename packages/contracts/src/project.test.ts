@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 
-import { ProjectDetails } from "./project.ts";
+import { ProjectActionEnvironment, ProjectDetails } from "./project.ts";
 
 const decodeProjectDetails = Schema.decodeUnknownSync(ProjectDetails);
+const decodeProjectActionEnvironment = Schema.decodeUnknownSync(ProjectActionEnvironment);
 
 const baseProjectDetails = {
   id: "project-1",
@@ -32,5 +33,19 @@ describe("ProjectDetails", () => {
     expect(decoded.defaultModelSelection).toBeNull();
     expect(decoded.scripts).toEqual([]);
     expect(decoded.settings.actionEnvironment).toEqual({});
+  });
+
+  it("rejects action environment keys reserved for T3Code runtime variables", () => {
+    expect(() =>
+      decodeProjectActionEnvironment({
+        T3CODE_PROJECT_ROOT: "/repo/elsewhere",
+      }),
+    ).toThrow(/reserved/);
+
+    expect(() =>
+      decodeProjectActionEnvironment({
+        T3CODE_CUSTOM: "1",
+      }),
+    ).toThrow(/reserved/);
   });
 });

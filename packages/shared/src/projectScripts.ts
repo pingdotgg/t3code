@@ -8,6 +8,14 @@ interface ProjectScriptRuntimeEnvInput {
   extraEnv?: Record<string, string>;
 }
 
+const T3CODE_RUNTIME_ENV_PREFIX = "T3CODE_";
+
+function userProjectScriptEnv(input: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(input).filter(([key]) => !key.startsWith(T3CODE_RUNTIME_ENV_PREFIX)),
+  );
+}
+
 export function projectScriptCwd(input: {
   project: {
     cwd: string;
@@ -27,7 +35,7 @@ export function projectScriptRuntimeEnv(
     env.T3CODE_WORKTREE_PATH = input.worktreePath;
   }
   if (input.extraEnv) {
-    return { ...env, ...input.extraEnv };
+    return { ...userProjectScriptEnv(input.extraEnv), ...env };
   }
   return env;
 }

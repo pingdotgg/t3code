@@ -68,7 +68,13 @@ export type ProjectRemoteOverride = typeof ProjectRemoteOverride.Type;
 
 const ProjectActionEnvironmentKey = Schema.String.check(
   Schema.isPattern(/^[A-Za-z_][A-Za-z0-9_]*$/),
-).check(Schema.isMaxLength(128));
+)
+  .check(Schema.isMaxLength(128))
+  .check(
+    Schema.makeFilter((key) =>
+      key.startsWith("T3CODE_") ? "T3CODE_* environment variables are reserved." : true,
+    ),
+  );
 const ProjectActionEnvironmentValue = Schema.String.check(Schema.isMaxLength(8_192));
 
 export const ProjectActionEnvironment = Schema.Record(

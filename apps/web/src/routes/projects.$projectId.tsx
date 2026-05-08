@@ -90,6 +90,7 @@ const DEFAULT_PROJECT_MODEL_SELECTION = createDefaultModelSelection();
 
 const EMPTY_ACTION_ENVIRONMENT: ProjectActionEnvironment = {};
 const ACTION_ENVIRONMENT_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const ACTION_ENVIRONMENT_RESERVED_PREFIX = "T3CODE_";
 
 interface RemoteOverrideDraft {
   readonly enabled: boolean;
@@ -149,6 +150,10 @@ function remoteProviderIcon(remote: ProjectDetectedRemote | null): Icon {
 
 function isValidActionEnvironmentKey(key: string): boolean {
   return ACTION_ENVIRONMENT_KEY_PATTERN.test(key) && key.length <= 128;
+}
+
+function isReservedActionEnvironmentKey(key: string): boolean {
+  return key.startsWith(ACTION_ENVIRONMENT_RESERVED_PREFIX);
 }
 
 function ProjectRouteView() {
@@ -382,6 +387,14 @@ function ProjectRouteView() {
         showProjectSettingsError(
           "Failed to update action environment",
           new Error(`"${invalidKey}" is not a valid environment variable name.`),
+        );
+        return;
+      }
+      const reservedKey = Object.keys(normalized).find(isReservedActionEnvironmentKey);
+      if (reservedKey) {
+        showProjectSettingsError(
+          "Failed to update action environment",
+          new Error(`"${reservedKey}" is reserved for T3Code runtime variables.`),
         );
         return;
       }
@@ -1076,6 +1089,16 @@ function ActionEnvironmentEditor({
           type: "error",
           title: "Failed to update action environment",
           description: `"${trimmedNextKey}" is already configured.`,
+        }),
+      );
+      return;
+    }
+    if (isReservedActionEnvironmentKey(trimmedNextKey)) {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Failed to update action environment",
+          description: `"${trimmedNextKey}" is reserved for T3Code runtime variables.`,
         }),
       );
       return;
