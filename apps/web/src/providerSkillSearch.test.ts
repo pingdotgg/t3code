@@ -48,6 +48,14 @@ describe("searchProviderSkills", () => {
     expect(searchProviderSkills(skills, "gfc").map((skill) => skill.name)).toEqual(["gh-fix-ci"]);
   });
 
+  it("strips skill invocation prefixes before searching", () => {
+    const skills = [makeSkill({ name: "review-diff", displayName: "Review Diff" })];
+
+    expect(searchProviderSkills(skills, "$/review-diff").map((skill) => skill.name)).toEqual([
+      "review-diff",
+    ]);
+  });
+
   it("omits disabled skills from results", () => {
     const skills = [
       makeSkill({ name: "ui", displayName: "Ui", enabled: false }),
