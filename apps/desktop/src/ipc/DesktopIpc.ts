@@ -46,35 +46,53 @@ export class DesktopIpc extends Context.Service<DesktopIpc, DesktopIpcShape>()("
 
 export const make = (ipcMain: DesktopIpcMain): DesktopIpcShape =>
   DesktopIpc.of({
-    handle: <E, R>({ channel, handler }: DesktopIpcMethod<E, R>) =>
-      Effect.gen(function* () {
-        const context = yield* Effect.context<R>();
-        const runPromise = Effect.runPromiseWith(context);
+    handle: Effect.fn("desktop.ipc.registerInvoke")(function* <E, R>({
+      channel,
+      handler,
+    }: DesktopIpcMethod<E, R>) {
+      yield* Effect.annotateCurrentSpan({ channel });
+      const context = yield* Effect.context<R>();
+      const runPromise = Effect.runPromiseWith(context);
 
-        yield* Effect.acquireRelease(
-          Effect.sync(() => {
-            ipcMain.removeHandler(channel);
-            ipcMain.handle(channel, (_event, raw) => runPromise(handler(raw)));
-          }),
-          () => Effect.sync(() => ipcMain.removeHandler(channel)),
-        );
-      }),
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          ipcMain.removeHandler(channel);
+          ipcMain.handle(channel, (_event, raw) =>
+            runPromise(
+              Effect.gen(function* () {
+                yield* Effect.annotateCurrentSpan({ channel });
+                return yield* handler(raw);
+              }).pipe(Effect.annotateLogs({ channel }), Effect.withSpan("desktop.ipc.invoke")),
+            ),
+          );
+        }),
+        () => Effect.sync(() => ipcMain.removeHandler(channel)),
+      );
+    }),
 
-    handleSync: <E, R>({ channel, handler }: DesktopSyncIpcMethod<E, R>) =>
-      Effect.gen(function* () {
-        const context = yield* Effect.context<R>();
-        const runSync = Effect.runSyncWith(context);
+    handleSync: Effect.fn("desktop.ipc.registerSync")(function* <E, R>({
+      channel,
+      handler,
+    }: DesktopSyncIpcMethod<E, R>) {
+      yield* Effect.annotateCurrentSpan({ channel });
+      const context = yield* Effect.context<R>();
+      const runSync = Effect.runSyncWith(context);
 
-        yield* Effect.acquireRelease(
-          Effect.sync(() => {
-            ipcMain.removeAllListeners(channel);
-            ipcMain.on(channel, (event) => {
-              event.returnValue = runSync(handler());
-            });
-          }),
-          () => Effect.sync(() => ipcMain.removeAllListeners(channel)),
-        );
-      }),
+      yield* Effect.acquireRelease(
+        Effect.sync(() => {
+          ipcMain.removeAllListeners(channel);
+          ipcMain.on(channel, (event) => {
+            event.returnValue = runSync(
+              Effect.gen(function* () {
+                yield* Effect.annotateCurrentSpan({ channel });
+                return yield* handler();
+              }).pipe(Effect.annotateLogs({ channel }), Effect.withSpan("desktop.ipc.invokeSync")),
+            );
+          });
+        }),
+        () => Effect.sync(() => ipcMain.removeAllListeners(channel)),
+      );
+    }),
   });
 
 /**
@@ -142,7 +160,12 @@ export const makeIpcMethod = <
 
   return {
     channel: method.channel,
-    handler: (raw) => decode(raw).pipe(Effect.flatMap(method.handler), Effect.flatMap(encode)),
+    handler: (raw) =>
+      decode(raw).pipe(
+        Effect.flatMap(method.handler),
+        Effect.flatMap(encode),
+        Effect.withSpan("desktop.ipc.method", { attributes: { channel: method.channel } }),
+      ),
   };
 };
 
@@ -185,6 +208,12 @@ export const makeSyncIpcMethod = <
 
   return {
     channel: method.channel,
-    handler: () => method.handler().pipe(Effect.flatMap(encode)),
+    handler: () =>
+      method
+        .handler()
+        .pipe(
+          Effect.flatMap(encode),
+          Effect.withSpan("desktop.ipc.method", { attributes: { channel: method.channel } }),
+        ),
   };
 };

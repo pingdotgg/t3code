@@ -73,10 +73,8 @@ const readPersistedBackendObservabilitySettings: Effect.Effect<
   };
 });
 
-const getOrCreateBootstrapToken = (
-  tokenRef: Ref.Ref<Option.Option<string>>,
-): Effect.Effect<string> =>
-  Effect.gen(function* () {
+const getOrCreateBootstrapToken = Effect.fn("desktop.backendConfiguration.bootstrapToken")(
+  function* (tokenRef: Ref.Ref<Option.Option<string>>) {
     const existing = yield* Ref.get(tokenRef);
     if (Option.isSome(existing)) {
       return existing.value;
@@ -89,17 +87,18 @@ const getOrCreateBootstrapToken = (
     token = token.slice(0, 48);
     yield* Ref.set(tokenRef, Option.some(token));
     return token;
-  });
+  },
+);
 
-const resolveBackendStartConfig = (input: {
-  readonly bootstrapToken: string;
-  readonly observabilitySettings: BackendObservabilitySettings;
-}): Effect.Effect<
-  DesktopBackendManager.DesktopBackendStartConfig,
-  never,
-  DesktopEnvironment.DesktopEnvironment | DesktopServerExposure.DesktopServerExposure
-> =>
-  Effect.gen(function* () {
+const resolveBackendStartConfig = Effect.fn("desktop.backendConfiguration.resolveStartConfig")(
+  function* (input: {
+    readonly bootstrapToken: string;
+    readonly observabilitySettings: BackendObservabilitySettings;
+  }): Effect.fn.Return<
+    DesktopBackendManager.DesktopBackendStartConfig,
+    never,
+    DesktopEnvironment.DesktopEnvironment | DesktopServerExposure.DesktopServerExposure
+  > {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
     const backendExposure = yield* serverExposure.backendConfig;
@@ -133,7 +132,8 @@ const resolveBackendStartConfig = (input: {
       httpBaseUrl: backendExposure.httpBaseUrl,
       captureOutput: true,
     };
-  });
+  },
+);
 
 export const layer = Layer.effect(
   DesktopBackendConfiguration,
@@ -157,7 +157,7 @@ export const layer = Layer.effect(
           Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
           Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
         );
-      }),
+      }).pipe(Effect.withSpan("desktop.backendConfiguration.resolve")),
     });
   }),
 );

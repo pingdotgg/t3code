@@ -20,56 +20,50 @@ export const getServerExposureState = makeIpcMethod({
   channel: IpcChannels.GET_SERVER_EXPOSURE_STATE_CHANNEL,
   payload: Schema.Void,
   result: DesktopServerExposureStateSchema,
-  handler: () =>
-    Effect.gen(function* () {
-      const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-      return yield* serverExposure.getState;
-    }),
+  handler: Effect.fn("desktop.ipc.serverExposure.getState")(function* () {
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+    return yield* serverExposure.getState;
+  }),
 });
 
 export const setServerExposureMode = makeIpcMethod({
   channel: IpcChannels.SET_SERVER_EXPOSURE_MODE_CHANNEL,
   payload: DesktopServerExposureModeSchema,
   result: DesktopServerExposureStateSchema,
-  handler: (mode) =>
-    Effect.gen(function* () {
-      const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-      const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-      const change = yield* serverExposure.setMode(mode);
-      if (change.requiresRelaunch) {
-        yield* lifecycle.relaunch(`serverExposureMode=${mode}`);
-      }
-      return change.state;
-    }),
+  handler: Effect.fn("desktop.ipc.serverExposure.setMode")(function* (mode) {
+    const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+    const change = yield* serverExposure.setMode(mode);
+    if (change.requiresRelaunch) {
+      yield* lifecycle.relaunch(`serverExposureMode=${mode}`);
+    }
+    return change.state;
+  }),
 });
 
 export const setTailscaleServeEnabled = makeIpcMethod({
   channel: IpcChannels.SET_TAILSCALE_SERVE_ENABLED_CHANNEL,
   payload: SetTailscaleServeEnabledInput,
   result: DesktopServerExposureStateSchema,
-  handler: (input) =>
-    Effect.gen(function* () {
-      const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
-      const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-      const change = yield* serverExposure.setTailscaleServeEnabled(input);
-      if (change.requiresRelaunch) {
-        yield* lifecycle.relaunch(
-          change.state.tailscaleServeEnabled
-            ? "tailscale-serve-enabled"
-            : "tailscale-serve-disabled",
-        );
-      }
-      return change.state;
-    }),
+  handler: Effect.fn("desktop.ipc.serverExposure.setTailscaleServeEnabled")(function* (input) {
+    const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+    const change = yield* serverExposure.setTailscaleServeEnabled(input);
+    if (change.requiresRelaunch) {
+      yield* lifecycle.relaunch(
+        change.state.tailscaleServeEnabled ? "tailscale-serve-enabled" : "tailscale-serve-disabled",
+      );
+    }
+    return change.state;
+  }),
 });
 
 export const getAdvertisedEndpoints = makeIpcMethod({
   channel: IpcChannels.GET_ADVERTISED_ENDPOINTS_CHANNEL,
   payload: Schema.Void,
   result: Schema.Array(AdvertisedEndpoint),
-  handler: () =>
-    Effect.gen(function* () {
-      const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-      return yield* serverExposure.getAdvertisedEndpoints;
-    }),
+  handler: Effect.fn("desktop.ipc.serverExposure.getAdvertisedEndpoints")(function* () {
+    const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+    return yield* serverExposure.getAdvertisedEndpoints;
+  }),
 });

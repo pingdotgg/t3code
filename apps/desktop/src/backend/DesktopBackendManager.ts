@@ -358,8 +358,10 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
           },
         ]);
 
-        const finalizeRun = (reason: string) =>
-          mutex.withPermits(1)(
+        const finalizeRun = Effect.fn("desktop.backendManager.finalizeRun")(function* (
+          reason: string,
+        ) {
+          yield* mutex.withPermits(1)(
             Effect.gen(function* () {
               const { isCurrentRun, nextState, pid } = yield* Ref.modify(
                 state,
@@ -416,50 +418,49 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
               }
             }),
           );
+        });
 
         const program = runBackendProcess({
           ...config,
-          onStarted: (pid) =>
-            Effect.gen(function* () {
-              yield* updateActiveRun(runId, (run) => ({
-                ...run,
-                pid: Option.some(pid),
-              }));
-              yield* backendOutputLog.writeSessionBoundary({
-                phase: "START",
-                details: `pid=${pid} port=${config.bootstrap.port} cwd=${config.cwd}`,
-              });
-            }),
-          onReady: () =>
-            Effect.gen(function* () {
-              const isCurrentRun = yield* Ref.modify(state, (latest) => {
-                const activeRun = Option.getOrUndefined(latest.active);
-                if (activeRun?.id !== runId) {
-                  return [false, latest] as const;
-                }
-
-                return [
-                  true,
-                  {
-                    ...latest,
-                    restartAttempt: 0,
-                    ready: true,
-                  },
-                ] as const;
-              });
-              if (!isCurrentRun) {
-                return;
+          onStarted: Effect.fn("desktop.backendManager.onStarted")(function* (pid) {
+            yield* updateActiveRun(runId, (run) => ({
+              ...run,
+              pid: Option.some(pid),
+            }));
+            yield* backendOutputLog.writeSessionBoundary({
+              phase: "START",
+              details: `pid=${pid} port=${config.bootstrap.port} cwd=${config.cwd}`,
+            });
+          }),
+          onReady: Effect.fn("desktop.backendManager.onReady")(function* () {
+            const isCurrentRun = yield* Ref.modify(state, (latest) => {
+              const activeRun = Option.getOrUndefined(latest.active);
+              if (activeRun?.id !== runId) {
+                return [false, latest] as const;
               }
 
-              yield* Ref.set(desktopState.backendReady, true);
-              yield* desktopWindow.handleBackendReady.pipe(
-                Effect.catch((error) =>
-                  Effect.logError("failed to open main window after backend readiness").pipe(
-                    Effect.annotateLogs({ message: error.message }),
-                  ),
+              return [
+                true,
+                {
+                  ...latest,
+                  restartAttempt: 0,
+                  ready: true,
+                },
+              ] as const;
+            });
+            if (!isCurrentRun) {
+              return;
+            }
+
+            yield* Ref.set(desktopState.backendReady, true);
+            yield* desktopWindow.handleBackendReady.pipe(
+              Effect.catch((error) =>
+                Effect.logError("failed to open main window after backend readiness").pipe(
+                  Effect.annotateLogs({ message: error.message }),
                 ),
-              );
-            }),
+              ),
+            );
+          }),
           onReadinessFailure: (error) =>
             Effect.logWarning("backend readiness check failed during bootstrap").pipe(
               Effect.annotateLogs({ error: error.message }),
@@ -483,99 +484,100 @@ const makeDesktopBackendManager = Effect.fn("makeDesktopBackendManager")(functio
         }));
       }),
     ),
-  );
+  ).pipe(Effect.withSpan("desktop.backendManager.start"));
 
-  const scheduleRestart = (reason: string): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      const scheduled = yield* Ref.modify(state, (latest) => {
-        if (!latest.desiredRunning || Option.isSome(latest.restartFiber)) {
-          return [Option.none<Duration.Duration>(), latest] as const;
-        }
+  const scheduleRestart = Effect.fn("desktop.backendManager.scheduleRestart")(function* (
+    reason: string,
+  ) {
+    const scheduled = yield* Ref.modify(state, (latest) => {
+      if (!latest.desiredRunning || Option.isSome(latest.restartFiber)) {
+        return [Option.none<Duration.Duration>(), latest] as const;
+      }
 
-        const delay = calculateRestartDelay(latest.restartAttempt);
-        return [
-          Option.some(delay),
+      const delay = calculateRestartDelay(latest.restartAttempt);
+      return [
+        Option.some(delay),
+        {
+          ...latest,
+          restartAttempt: latest.restartAttempt + 1,
+        },
+      ] as const;
+    });
+
+    yield* Option.match(scheduled, {
+      onNone: () => Effect.void,
+      onSome: Effect.fn("desktop.backendManager.scheduleRestartFiber")(function* (delay) {
+        yield* Effect.logError("backend exited unexpectedly; restart scheduled").pipe(
+          Effect.annotateLogs({
+            reason,
+            delayMs: Duration.toMillis(delay),
+          }),
+        );
+        const restartFiber = yield* Effect.forkIn(
+          Effect.sleep(delay).pipe(
+            Effect.andThen(
+              Ref.modify(state, (latest) => {
+                const shouldRestart = latest.desiredRunning;
+                return [
+                  shouldRestart,
+                  {
+                    ...latest,
+                    restartFiber: Option.none(),
+                  },
+                ] as const;
+              }),
+            ),
+            Effect.flatMap((shouldRestart) => (shouldRestart ? start : Effect.void)),
+            Effect.catchCause((cause) =>
+              Effect.logError("desktop backend restart fiber failed", { cause }),
+            ),
+          ),
+          parentScope,
+        );
+        yield* Ref.update(state, (latest) =>
+          Option.isNone(latest.restartFiber)
+            ? {
+                ...latest,
+                restartFiber: Option.some(restartFiber),
+              }
+            : latest,
+        );
+      }),
+    });
+  });
+
+  const stop = Effect.fn("desktop.backendManager.stop")(function* (options?: {
+    readonly timeout?: Duration.Duration;
+  }) {
+    const { active, restartFiber } = yield* mutex.withPermits(1)(
+      Effect.gen(function* () {
+        const result = yield* Ref.modify(state, (latest) => [
+          {
+            active: latest.active,
+            restartFiber: latest.restartFiber,
+          },
           {
             ...latest,
-            restartAttempt: latest.restartAttempt + 1,
+            desiredRunning: false,
+            ready: false,
+            active: Option.none<ActiveBackendRun>(),
+            restartFiber: Option.none<Fiber.Fiber<void, never>>(),
           },
-        ] as const;
-      });
+        ]);
+        yield* Ref.set(desktopState.backendReady, false);
+        return result;
+      }),
+    );
 
-      yield* Option.match(scheduled, {
-        onNone: () => Effect.void,
-        onSome: (delay) =>
-          Effect.gen(function* () {
-            yield* Effect.logError("backend exited unexpectedly; restart scheduled").pipe(
-              Effect.annotateLogs({
-                reason,
-                delayMs: Duration.toMillis(delay),
-              }),
-            );
-            const restartFiber = yield* Effect.forkIn(
-              Effect.sleep(delay).pipe(
-                Effect.andThen(
-                  Ref.modify(state, (latest) => {
-                    const shouldRestart = latest.desiredRunning;
-                    return [
-                      shouldRestart,
-                      {
-                        ...latest,
-                        restartFiber: Option.none(),
-                      },
-                    ] as const;
-                  }),
-                ),
-                Effect.flatMap((shouldRestart) => (shouldRestart ? start : Effect.void)),
-                Effect.catchCause((cause) =>
-                  Effect.logError("desktop backend restart fiber failed", { cause }),
-                ),
-              ),
-              parentScope,
-            );
-            yield* Ref.update(state, (latest) =>
-              Option.isNone(latest.restartFiber)
-                ? {
-                    ...latest,
-                    restartFiber: Option.some(restartFiber),
-                  }
-                : latest,
-            );
-          }),
-      });
+    yield* Option.match(restartFiber, {
+      onNone: () => Effect.void,
+      onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
     });
-
-  const stop = (options?: { readonly timeout?: Duration.Duration }): Effect.Effect<void> =>
-    Effect.gen(function* () {
-      const { active, restartFiber } = yield* mutex.withPermits(1)(
-        Effect.gen(function* () {
-          const result = yield* Ref.modify(state, (latest) => [
-            {
-              active: latest.active,
-              restartFiber: latest.restartFiber,
-            },
-            {
-              ...latest,
-              desiredRunning: false,
-              ready: false,
-              active: Option.none<ActiveBackendRun>(),
-              restartFiber: Option.none<Fiber.Fiber<void, never>>(),
-            },
-          ]);
-          yield* Ref.set(desktopState.backendReady, false);
-          return result;
-        }),
-      );
-
-      yield* Option.match(restartFiber, {
-        onNone: () => Effect.void,
-        onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid),
-      });
-      yield* Option.match(active, {
-        onNone: () => Effect.void,
-        onSome: (run) => closeRun(run, options),
-      });
+    yield* Option.match(active, {
+      onNone: () => Effect.void,
+      onSome: (run) => closeRun(run, options),
     });
+  });
 
   yield* Effect.addFinalizer(() => stop());
 

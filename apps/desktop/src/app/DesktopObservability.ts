@@ -3,7 +3,6 @@ import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serve
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
-import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -22,7 +21,6 @@ import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
 const DESKTOP_LOG_FILE_MAX_BYTES = 10 * 1024 * 1024;
 const DESKTOP_LOG_FILE_MAX_FILES = 10;
-const DESKTOP_LOG_BATCH_WINDOW = Duration.millis(250);
 const DESKTOP_BACKEND_CHILD_LOG_FIBER_ID = "#backend-child";
 const DESKTOP_TRACE_BATCH_WINDOW_MS = 200;
 
@@ -204,19 +202,6 @@ const makeRotatingLogFileWriter = Effect.fn("makeRotatingLogFileWriter")(functio
   } satisfies RotatingLogFileWriter;
 });
 
-const makeDesktopFileLogger = Effect.gen(function* () {
-  const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const writer = yield* makeRotatingLogFileWriter({
-    filePath: environment.path.join(environment.logDir, "desktop-main.log"),
-  });
-
-  return yield* Logger.batched(Logger.formatJson, {
-    window: DESKTOP_LOG_BATCH_WINDOW,
-    flush: (messages) =>
-      messages.length === 0 ? Effect.void : writer.writeText(`${messages.join("\n")}\n`),
-  });
-});
-
 const readPersistedOtlpTracesUrl: Effect.Effect<
   Option.Option<string>,
   never,
@@ -250,26 +235,29 @@ const writeDevelopmentConsoleOutput = (
     output.write(chunk);
   }).pipe(Effect.ignore);
 
-const writeBackendChildLogRecord = (
-  logFile: RotatingLogFileWriter,
-  input: {
-    readonly message: string;
-    readonly level: "INFO" | "ERROR";
-    readonly annotations: Record<string, unknown>;
+const writeBackendChildLogRecord = Effect.fn("desktop.observability.writeBackendChildLogRecord")(
+  function* (
+    logFile: RotatingLogFileWriter,
+    input: {
+      readonly message: string;
+      readonly level: "INFO" | "ERROR";
+      readonly annotations: Record<string, unknown>;
+    },
+  ): Effect.fn.Return<void> {
+    return yield* Effect.gen(function* () {
+      const timestamp = DateTime.formatIso(yield* DateTime.now);
+      const encoded = yield* encodeDesktopBackendChildLogRecord({
+        message: input.message,
+        level: input.level,
+        timestamp,
+        annotations: input.annotations,
+        spans: {},
+        fiberId: DESKTOP_BACKEND_CHILD_LOG_FIBER_ID,
+      });
+      yield* logFile.writeText(`${encoded}\n`);
+    }).pipe(Effect.ignore({ log: true }));
   },
-): Effect.Effect<void> =>
-  Effect.gen(function* () {
-    const timestamp = DateTime.formatIso(yield* DateTime.now);
-    const encoded = yield* encodeDesktopBackendChildLogRecord({
-      message: input.message,
-      level: input.level,
-      timestamp,
-      annotations: input.annotations,
-      spans: {},
-      fiberId: DESKTOP_BACKEND_CHILD_LOG_FIBER_ID,
-    });
-    yield* logFile.writeText(`${encoded}\n`);
-  }).pipe(Effect.ignore({ log: true }));
+);
 
 const backendOutputLogLayer = Layer.effect(
   DesktopBackendOutputLog,
@@ -284,22 +272,23 @@ const backendOutputLogLayer = Layer.effect(
       onNone: () => DesktopBackendOutputLogNoop,
       onSome: (logFile) =>
         ({
-          writeSessionBoundary: ({ phase, details }) =>
-            Effect.gen(function* () {
-              const runId = yield* currentDesktopRunId;
-              yield* writeBackendChildLogRecord(logFile, {
-                message: `backend child process session ${phase.toLowerCase()}`,
-                level: "INFO",
-                annotations: {
-                  component: "desktop-backend-child",
-                  runId,
-                  phase,
-                  details: sanitizeLogValue(details),
-                },
-              });
-            }),
-          writeOutputChunk: (streamName, chunk) =>
-            Effect.gen(function* () {
+          writeSessionBoundary: Effect.fn(
+            "desktop.observability.backendOutput.writeSessionBoundary",
+          )(function* ({ phase, details }) {
+            const runId = yield* currentDesktopRunId;
+            yield* writeBackendChildLogRecord(logFile, {
+              message: `backend child process session ${phase.toLowerCase()}`,
+              level: "INFO",
+              annotations: {
+                component: "desktop-backend-child",
+                runId,
+                phase,
+                details: sanitizeLogValue(details),
+              },
+            });
+          }),
+          writeOutputChunk: Effect.fn("desktop.observability.backendOutput.writeOutputChunk")(
+            function* (streamName, chunk) {
               if (environment.isDevelopment) {
                 yield* writeDevelopmentConsoleOutput(streamName, chunk);
               }
@@ -314,29 +303,16 @@ const backendOutputLogLayer = Layer.effect(
                   text: textDecoder.decode(chunk),
                 },
               });
-            }),
+            },
+          ),
         }) satisfies DesktopBackendOutputLogShape,
     });
   }),
 );
 
-const desktopLoggerLayer = Layer.unwrap(
-  Effect.gen(function* () {
-    const fileLogger = yield* makeDesktopFileLogger.pipe(Effect.option);
-    const loggers: Array<Logger.Logger<unknown, unknown>> = [
-      Logger.consolePretty(),
-      Logger.tracerLogger,
-    ];
-
-    if (Option.isSome(fileLogger)) {
-      loggers.push(fileLogger.value);
-    }
-
-    return Layer.mergeAll(
-      Logger.layer(loggers, { mergeWithExisting: false }),
-      Layer.succeed(References.MinimumLogLevel, "Info"),
-    );
-  }),
+const desktopLoggerLayer = Layer.mergeAll(
+  Logger.layer([Logger.consolePretty(), Logger.tracerLogger], { mergeWithExisting: false }),
+  Layer.succeed(References.MinimumLogLevel, "Info"),
 );
 
 const tracerLayer = Layer.unwrap(

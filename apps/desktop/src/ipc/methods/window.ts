@@ -38,105 +38,98 @@ function toWebSocketBaseUrl(httpBaseUrl: URL): string {
 export const getAppBranding = makeSyncIpcMethod({
   channel: IpcChannels.GET_APP_BRANDING_CHANNEL,
   result: Schema.NullOr(DesktopAppBrandingSchema),
-  handler: () =>
-    Effect.gen(function* () {
-      const environment = yield* DesktopEnvironment.DesktopEnvironment;
-      return environment.branding;
-    }),
+  handler: Effect.fn("desktop.ipc.window.getAppBranding")(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    return environment.branding;
+  }),
 });
 
 export const getLocalEnvironmentBootstrap = makeSyncIpcMethod({
   channel: IpcChannels.GET_LOCAL_ENVIRONMENT_BOOTSTRAP_CHANNEL,
   result: Schema.NullOr(DesktopEnvironmentBootstrapSchema),
-  handler: () =>
-    Effect.gen(function* () {
-      const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
-      const config = yield* backendManager.currentConfig;
-      return Option.match(config, {
-        onNone: () => null,
-        onSome: ({ bootstrap, httpBaseUrl }) => ({
-          label: "Local environment",
-          httpBaseUrl: httpBaseUrl.href,
-          wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
-          ...(bootstrap.desktopBootstrapToken
-            ? { bootstrapToken: bootstrap.desktopBootstrapToken }
-            : {}),
-        }),
-      });
-    }),
+  handler: Effect.fn("desktop.ipc.window.getLocalEnvironmentBootstrap")(function* () {
+    const backendManager = yield* DesktopBackendManager.DesktopBackendManager;
+    const config = yield* backendManager.currentConfig;
+    return Option.match(config, {
+      onNone: () => null,
+      onSome: ({ bootstrap, httpBaseUrl }) => ({
+        label: "Local environment",
+        httpBaseUrl: httpBaseUrl.href,
+        wsBaseUrl: toWebSocketBaseUrl(httpBaseUrl),
+        ...(bootstrap.desktopBootstrapToken
+          ? { bootstrapToken: bootstrap.desktopBootstrapToken }
+          : {}),
+      }),
+    });
+  }),
 });
 
 export const pickFolder = makeIpcMethod({
   channel: IpcChannels.PICK_FOLDER_CHANNEL,
   payload: Schema.UndefinedOr(PickFolderOptionsSchema),
   result: Schema.NullOr(Schema.String),
-  handler: (options) =>
-    Effect.gen(function* () {
-      const dialog = yield* ElectronDialog.ElectronDialog;
-      const electronWindow = yield* ElectronWindow.ElectronWindow;
-      const environment = yield* DesktopEnvironment.DesktopEnvironment;
-      const selectedPath = yield* dialog.pickFolder({
-        owner: yield* electronWindow.focusedMainOrFirst,
-        defaultPath: environment.resolvePickFolderDefaultPath(options),
-      });
-      return Option.getOrNull(selectedPath);
-    }),
+  handler: Effect.fn("desktop.ipc.window.pickFolder")(function* (options) {
+    const dialog = yield* ElectronDialog.ElectronDialog;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const selectedPath = yield* dialog.pickFolder({
+      owner: yield* electronWindow.focusedMainOrFirst,
+      defaultPath: environment.resolvePickFolderDefaultPath(options),
+    });
+    return Option.getOrNull(selectedPath);
+  }),
 });
 
 export const confirm = makeIpcMethod({
   channel: IpcChannels.CONFIRM_CHANNEL,
   payload: Schema.String,
   result: Schema.Boolean,
-  handler: (message) =>
-    Effect.gen(function* () {
-      const dialog = yield* ElectronDialog.ElectronDialog;
-      const electronWindow = yield* ElectronWindow.ElectronWindow;
-      return yield* electronWindow.focusedMainOrFirst.pipe(
-        Effect.flatMap((owner) => dialog.confirm({ owner, message })),
-      );
-    }),
+  handler: Effect.fn("desktop.ipc.window.confirm")(function* (message) {
+    const dialog = yield* ElectronDialog.ElectronDialog;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    return yield* electronWindow.focusedMainOrFirst.pipe(
+      Effect.flatMap((owner) => dialog.confirm({ owner, message })),
+    );
+  }),
 });
 
 export const setTheme = makeIpcMethod({
   channel: IpcChannels.SET_THEME_CHANNEL,
   payload: DesktopThemeSchema,
   result: Schema.Void,
-  handler: (theme) =>
-    Effect.gen(function* () {
-      const electronTheme = yield* ElectronTheme.ElectronTheme;
-      yield* electronTheme.setSource(theme);
-    }),
+  handler: Effect.fn("desktop.ipc.window.setTheme")(function* (theme) {
+    const electronTheme = yield* ElectronTheme.ElectronTheme;
+    yield* electronTheme.setSource(theme);
+  }),
 });
 
 export const showContextMenu = makeIpcMethod({
   channel: IpcChannels.CONTEXT_MENU_CHANNEL,
   payload: ContextMenuInput,
   result: Schema.NullOr(Schema.String),
-  handler: (input) =>
-    Effect.gen(function* () {
-      const electronMenu = yield* ElectronMenu.ElectronMenu;
-      const electronWindow = yield* ElectronWindow.ElectronWindow;
-      const window = yield* electronWindow.focusedMainOrFirst;
-      if (Option.isNone(window)) {
-        return null;
-      }
+  handler: Effect.fn("desktop.ipc.window.showContextMenu")(function* (input) {
+    const electronMenu = yield* ElectronMenu.ElectronMenu;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const window = yield* electronWindow.focusedMainOrFirst;
+    if (Option.isNone(window)) {
+      return null;
+    }
 
-      const selectedItemId = yield* electronMenu.showContextMenu({
-        window: window.value,
-        items: input.items,
-        position: Option.fromNullishOr(input.position),
-      });
-      return Option.getOrNull(selectedItemId);
-    }),
+    const selectedItemId = yield* electronMenu.showContextMenu({
+      window: window.value,
+      items: input.items,
+      position: Option.fromNullishOr(input.position),
+    });
+    return Option.getOrNull(selectedItemId);
+  }),
 });
 
 export const openExternal = makeIpcMethod({
   channel: IpcChannels.OPEN_EXTERNAL_CHANNEL,
   payload: Schema.String,
   result: Schema.Boolean,
-  handler: (url) =>
-    Effect.gen(function* () {
-      const shell = yield* ElectronShell.ElectronShell;
-      return yield* shell.openExternal(url);
-    }),
+  handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
+    const shell = yield* ElectronShell.ElectronShell;
+    return yield* shell.openExternal(url);
+  }),
 });

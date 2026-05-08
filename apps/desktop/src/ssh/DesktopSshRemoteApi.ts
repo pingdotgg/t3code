@@ -81,6 +81,7 @@ const make = Effect.gen(function* () {
         Effect.flatMap(decodeExecutionEnvironmentDescriptor),
         Effect.mapError(mapError("fetch-environment-descriptor")),
         provideHttpClient,
+        Effect.withSpan("desktop.sshRemoteApi.fetchEnvironmentDescriptor"),
       ),
     bootstrapBearerSession: ({ httpBaseUrl, credential }) =>
       fetchLoopbackSshJson<unknown>({
@@ -92,6 +93,7 @@ const make = Effect.gen(function* () {
         Effect.flatMap(decodeAuthBearerBootstrapResult),
         Effect.mapError(mapError("bootstrap-bearer-session")),
         provideHttpClient,
+        Effect.withSpan("desktop.sshRemoteApi.bootstrapBearerSession"),
       ),
     fetchSessionState: ({ httpBaseUrl, bearerToken }) =>
       fetchLoopbackSshJson<unknown>({
@@ -102,6 +104,7 @@ const make = Effect.gen(function* () {
         Effect.flatMap(decodeAuthSessionState),
         Effect.mapError(mapError("fetch-session-state")),
         provideHttpClient,
+        Effect.withSpan("desktop.sshRemoteApi.fetchSessionState"),
       ),
     issueWebSocketToken: ({ httpBaseUrl, bearerToken }) =>
       fetchLoopbackSshJson<unknown>({
@@ -113,6 +116,7 @@ const make = Effect.gen(function* () {
         Effect.flatMap(decodeAuthWebSocketTokenResult),
         Effect.mapError(mapError("issue-websocket-token")),
         provideHttpClient,
+        Effect.withSpan("desktop.sshRemoteApi.issueWebSocketToken"),
       ),
   });
 });

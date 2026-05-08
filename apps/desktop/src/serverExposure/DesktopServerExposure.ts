@@ -417,8 +417,9 @@ const make = Effect.gen(function* () {
   const getState = Ref.get(stateRef).pipe(Effect.map(toContractState));
   const backendConfig = Ref.get(stateRef).pipe(Effect.map(toBackendConfig));
 
-  const configureFromSettings = ({ port }: { readonly port: number }) =>
-    Effect.gen(function* () {
+  const configureFromSettings = Effect.fn("desktop.serverExposure.configureFromSettings")(
+    function* ({ port }: { readonly port: number }) {
+      yield* Effect.annotateCurrentSpan({ port });
       const settings = yield* desktopSettings.get;
       const currentNetworkInterfaces = yield* readNetworkInterfaces;
       const resolved = resolveRuntimeState({
@@ -430,48 +431,55 @@ const make = Effect.gen(function* () {
       });
       yield* Ref.set(stateRef, resolved.state);
       return toContractState(resolved.state);
+    },
+  );
+
+  const setMode = Effect.fn("desktop.serverExposure.setMode")(function* (
+    mode: DesktopServerExposureMode,
+  ) {
+    yield* Effect.annotateCurrentSpan({ mode });
+    const previous = yield* Ref.get(stateRef);
+    const currentSettings = yield* desktopSettings.get;
+    const nextSettings = {
+      ...currentSettings,
+      serverExposureMode: mode,
+    };
+    const currentNetworkInterfaces = yield* readNetworkInterfaces;
+    const resolved = resolveRuntimeState({
+      requestedMode: mode,
+      settings: nextSettings,
+      port: previous.port,
+      networkInterfaces: currentNetworkInterfaces,
+      advertisedHostOverride: config.desktopLanHostOverride,
     });
 
-  const setMode = (mode: DesktopServerExposureMode) =>
-    Effect.gen(function* () {
-      const previous = yield* Ref.get(stateRef);
-      const currentSettings = yield* desktopSettings.get;
-      const nextSettings = {
-        ...currentSettings,
-        serverExposureMode: mode,
-      };
-      const currentNetworkInterfaces = yield* readNetworkInterfaces;
-      const resolved = resolveRuntimeState({
-        requestedMode: mode,
-        settings: nextSettings,
-        port: previous.port,
-        networkInterfaces: currentNetworkInterfaces,
-        advertisedHostOverride: config.desktopLanHostOverride,
+    if (resolved.unavailable) {
+      return yield* new DesktopServerExposureNoNetworkAddressError({ port: previous.port });
+    }
+
+    const change = yield* desktopSettings.setServerExposureMode(mode).pipe(
+      Effect.mapError(
+        (cause) =>
+          new DesktopServerExposurePersistenceError({
+            operation: "server-exposure-mode",
+            cause,
+          }),
+      ),
+    );
+
+    yield* Ref.set(stateRef, resolved.state);
+    return {
+      state: toContractState(resolved.state),
+      requiresRelaunch: change.changed || requiresBackendRelaunch(previous, resolved.state),
+    };
+  });
+
+  const setTailscaleServeEnabled = Effect.fn("desktop.serverExposure.setTailscaleServeEnabled")(
+    function* (input: { readonly enabled: boolean; readonly port?: number }) {
+      yield* Effect.annotateCurrentSpan({
+        enabled: input.enabled,
+        ...(input.port === undefined ? {} : { port: input.port }),
       });
-
-      if (resolved.unavailable) {
-        return yield* new DesktopServerExposureNoNetworkAddressError({ port: previous.port });
-      }
-
-      const change = yield* desktopSettings.setServerExposureMode(mode).pipe(
-        Effect.mapError(
-          (cause) =>
-            new DesktopServerExposurePersistenceError({
-              operation: "server-exposure-mode",
-              cause,
-            }),
-        ),
-      );
-
-      yield* Ref.set(stateRef, resolved.state);
-      return {
-        state: toContractState(resolved.state),
-        requiresRelaunch: change.changed || requiresBackendRelaunch(previous, resolved.state),
-      };
-    });
-
-  const setTailscaleServeEnabled = (input: { readonly enabled: boolean; readonly port?: number }) =>
-    Effect.gen(function* () {
       const result = yield* desktopSettings
         .setTailscaleServe({
           enabled: input.enabled,
@@ -497,7 +505,8 @@ const make = Effect.gen(function* () {
         state: toContractState(nextState),
         requiresRelaunch: result.changed,
       };
-    });
+    },
+  );
 
   const getAdvertisedEndpoints = Effect.gen(function* () {
     const state = yield* Ref.get(stateRef);
@@ -517,7 +526,7 @@ const make = Effect.gen(function* () {
       Effect.provideService(HttpClient.HttpClient, httpClient),
     );
     return [...coreEndpoints, ...tailscaleEndpoints];
-  });
+  }).pipe(Effect.withSpan("desktop.serverExposure.getAdvertisedEndpoints"));
 
   return DesktopServerExposure.of({
     getState,

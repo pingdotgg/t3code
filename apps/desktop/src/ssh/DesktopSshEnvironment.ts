@@ -112,13 +112,17 @@ const make = Effect.gen(function* () {
 
   return DesktopSshEnvironment.of({
     discoverHosts: (input) =>
-      discoverDesktopSshHostsEffect(input).pipe(Effect.provide(runtimeContext)),
+      discoverDesktopSshHostsEffect(input).pipe(
+        Effect.provide(runtimeContext),
+        Effect.withSpan("desktop.ssh.discoverHosts"),
+      ),
     ensureEnvironment: (target, ensureOptions) =>
       manager
         .ensureEnvironment(target, ensureOptions)
         .pipe(
           Effect.provideService(SshPasswordPrompt, passwordPrompt),
           Effect.provide(runtimeContext),
+          Effect.withSpan("desktop.ssh.ensureEnvironment"),
         ),
     disconnectEnvironment: (target) =>
       manager
@@ -126,6 +130,7 @@ const make = Effect.gen(function* () {
         .pipe(
           Effect.provideService(SshPasswordPrompt, passwordPrompt),
           Effect.provide(runtimeContext),
+          Effect.withSpan("desktop.ssh.disconnectEnvironment"),
         ),
   });
 });

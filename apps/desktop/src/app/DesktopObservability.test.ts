@@ -63,35 +63,7 @@ const makeEnvironmentLayer = (baseDir: string) =>
   );
 
 describe("DesktopObservability", () => {
-  it.effect("persists desktop main logs in development", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-desktop-logging-test-",
-      });
-      const environmentLayer = makeEnvironmentLayer(baseDir);
-      const logPath = yield* Effect.gen(function* () {
-        const environment = yield* DesktopEnvironment.DesktopEnvironment;
-        return environment.path.join(environment.logDir, "desktop-main.log");
-      }).pipe(Effect.provide(environmentLayer));
-
-      yield* Effect.scoped(
-        Effect.logInfo("desktop file logger test").pipe(
-          Effect.annotateLogs({ testCase: "desktop-main-dev" }),
-          Effect.provide(DesktopObservability.layer.pipe(Layer.provideMerge(environmentLayer))),
-        ),
-      );
-
-      const log = yield* fileSystem.readFileString(logPath);
-      assert.include(log, "desktop file logger test");
-      assert.include(log, "desktop-main-dev");
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerUndici)),
-    ),
-  );
-
-  it.effect("persists desktop Effect spans to desktop.trace.ndjson", () =>
+  it.effect("persists desktop Effect logs as span events in desktop.trace.ndjson", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const baseDir = yield* fileSystem.makeTempDirectoryScoped({
@@ -101,6 +73,10 @@ describe("DesktopObservability", () => {
       const tracePath = yield* Effect.gen(function* () {
         const environment = yield* DesktopEnvironment.DesktopEnvironment;
         return environment.path.join(environment.logDir, "desktop.trace.ndjson");
+      }).pipe(Effect.provide(environmentLayer));
+      const logPath = yield* Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        return environment.path.join(environment.logDir, "desktop-main.log");
       }).pipe(Effect.provide(environmentLayer));
 
       yield* Effect.scoped(
@@ -129,6 +105,7 @@ describe("DesktopObservability", () => {
         record.events.some((event) => event.name === "desktop trace event"),
         true,
       );
+      assert.isFalse(yield* fileSystem.exists(logPath));
     }).pipe(
       Effect.scoped,
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeHttpClient.layerUndici)),

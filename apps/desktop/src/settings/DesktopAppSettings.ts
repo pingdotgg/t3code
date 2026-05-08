@@ -216,25 +216,23 @@ function readSettings(
   );
 }
 
-function writeSettings(input: {
+const writeSettings = Effect.fn("desktop.settings.writeSettings")(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly path: Path.Path;
   readonly settingsPath: string;
   readonly settings: DesktopSettings;
   readonly defaultSettings: DesktopSettings;
-}): Effect.Effect<void, PlatformError.PlatformError | Schema.SchemaError> {
-  return Effect.gen(function* () {
-    const directory = input.path.dirname(input.settingsPath);
-    const suffix = (yield* Random.nextUUIDv4).replace(/-/g, "");
-    const tempPath = `${input.settingsPath}.${process.pid}.${suffix}.tmp`;
-    const encoded = yield* encodeDesktopSettingsJson(
-      toDesktopSettingsDocument(input.settings, input.defaultSettings),
-    );
-    yield* input.fileSystem.makeDirectory(directory, { recursive: true });
-    yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`);
-    yield* input.fileSystem.rename(tempPath, input.settingsPath);
-  });
-}
+}): Effect.fn.Return<void, PlatformError.PlatformError | Schema.SchemaError> {
+  const directory = input.path.dirname(input.settingsPath);
+  const suffix = (yield* Random.nextUUIDv4).replace(/-/g, "");
+  const tempPath = `${input.settingsPath}.${process.pid}.${suffix}.tmp`;
+  const encoded = yield* encodeDesktopSettingsJson(
+    toDesktopSettingsDocument(input.settings, input.defaultSettings),
+  );
+  yield* input.fileSystem.makeDirectory(directory, { recursive: true });
+  yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`);
+  yield* input.fileSystem.rename(tempPath, input.settingsPath);
+});
 
 export const layer = Layer.effect(
   DesktopAppSettings,
@@ -274,10 +272,19 @@ export const layer = Layer.effect(
           environment.appVersion,
         );
         return yield* SynchronizedRef.setAndGet(settingsRef, settings);
-      }),
-      setServerExposureMode: (mode) => persist((settings) => setServerExposureMode(settings, mode)),
-      setTailscaleServe: (input) => persist((settings) => setTailscaleServe(settings, input)),
-      setUpdateChannel: (channel) => persist((settings) => setUpdateChannel(settings, channel)),
+      }).pipe(Effect.withSpan("desktop.settings.load")),
+      setServerExposureMode: (mode) =>
+        persist((settings) => setServerExposureMode(settings, mode)).pipe(
+          Effect.withSpan("desktop.settings.setServerExposureMode", { attributes: { mode } }),
+        ),
+      setTailscaleServe: (input) =>
+        persist((settings) => setTailscaleServe(settings, input)).pipe(
+          Effect.withSpan("desktop.settings.setTailscaleServe", { attributes: input }),
+        ),
+      setUpdateChannel: (channel) =>
+        persist((settings) => setUpdateChannel(settings, channel)).pipe(
+          Effect.withSpan("desktop.settings.setUpdateChannel", { attributes: { channel } }),
+        ),
     });
   }),
 );

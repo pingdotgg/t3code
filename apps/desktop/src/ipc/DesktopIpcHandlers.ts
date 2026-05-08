@@ -81,4 +81,4 @@ export const installDesktopIpcHandlers = Effect.gen(function* () {
   yield* ipc.handle(downloadUpdate);
   yield* ipc.handle(installUpdate);
   yield* ipc.handle(checkForUpdate);
-});
+}).pipe(Effect.withSpan("desktop.ipc.installHandlers"));

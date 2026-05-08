@@ -135,116 +135,115 @@ function resolveDesktopRuntimeInfo(input: {
   };
 }
 
-const makeDesktopEnvironment = (
+const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
   input: MakeDesktopEnvironmentInput,
-): Effect.Effect<DesktopEnvironmentShape, Config.ConfigError, Path.Path> =>
-  Effect.gen(function* () {
-    const path = yield* Path.Path;
-    const config = yield* DesktopConfig.DesktopConfig;
-    const homeDirectory = input.homeDirectory;
-    const devServerUrl = config.devServerUrl;
-    const isDevelopment = Option.isSome(devServerUrl);
-    const appDataDirectory =
-      input.platform === "win32"
-        ? Option.getOrElse(config.appDataDirectory, () =>
-            path.join(homeDirectory, "AppData", "Roaming"),
-          )
-        : input.platform === "darwin"
-          ? path.join(homeDirectory, "Library", "Application Support")
-          : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
-    const baseDir = Option.getOrElse(config.t3Home, () => path.join(homeDirectory, ".t3"));
-    const rootDir = path.resolve(input.dirname, "../../..");
-    const appRoot = input.isPackaged ? input.appPath : rootDir;
-    const branding = resolveDesktopAppBranding({
-      isDevelopment,
-      appVersion: input.appVersion,
-    });
-    const displayName = branding.displayName;
-    const stateDir = path.join(baseDir, isDevelopment ? "dev" : "userdata");
-    const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
-    const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
-    const resourcesPath = input.resourcesPath;
+): Effect.fn.Return<DesktopEnvironmentShape, Config.ConfigError, Path.Path> {
+  const path = yield* Path.Path;
+  const config = yield* DesktopConfig.DesktopConfig;
+  const homeDirectory = input.homeDirectory;
+  const devServerUrl = config.devServerUrl;
+  const isDevelopment = Option.isSome(devServerUrl);
+  const appDataDirectory =
+    input.platform === "win32"
+      ? Option.getOrElse(config.appDataDirectory, () =>
+          path.join(homeDirectory, "AppData", "Roaming"),
+        )
+      : input.platform === "darwin"
+        ? path.join(homeDirectory, "Library", "Application Support")
+        : Option.getOrElse(config.xdgConfigHome, () => path.join(homeDirectory, ".config"));
+  const baseDir = Option.getOrElse(config.t3Home, () => path.join(homeDirectory, ".t3"));
+  const rootDir = path.resolve(input.dirname, "../../..");
+  const appRoot = input.isPackaged ? input.appPath : rootDir;
+  const branding = resolveDesktopAppBranding({
+    isDevelopment,
+    appVersion: input.appVersion,
+  });
+  const displayName = branding.displayName;
+  const stateDir = path.join(baseDir, isDevelopment ? "dev" : "userdata");
+  const userDataDirName = isDevelopment ? "t3code-dev" : "t3code";
+  const legacyUserDataDirName = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Alpha)";
+  const resourcesPath = input.resourcesPath;
 
-    return DesktopEnvironment.of({
-      path,
-      dirname: input.dirname,
+  return DesktopEnvironment.of({
+    path,
+    dirname: input.dirname,
+    platform: input.platform,
+    processArch: input.processArch,
+    isPackaged: input.isPackaged,
+    isDevelopment,
+    appVersion: input.appVersion,
+    appPath: input.appPath,
+    resourcesPath,
+    homeDirectory,
+    appDataDirectory,
+    baseDir,
+    stateDir,
+    desktopSettingsPath: path.join(stateDir, "desktop-settings.json"),
+    clientSettingsPath: path.join(stateDir, "client-settings.json"),
+    savedEnvironmentRegistryPath: path.join(stateDir, "saved-environments.json"),
+    serverSettingsPath: path.join(stateDir, "settings.json"),
+    logDir: path.join(stateDir, "logs"),
+    rootDir,
+    appRoot,
+    backendEntryPath: path.join(appRoot, "apps/server/dist/bin.mjs"),
+    backendCwd: input.isPackaged ? homeDirectory : appRoot,
+    preloadPath: path.join(input.dirname, "preload.cjs"),
+    appUpdateYmlPath: input.isPackaged
+      ? path.join(resourcesPath, "app-update.yml")
+      : path.join(input.appPath, "dev-app-update.yml"),
+    devServerUrl,
+    devRemoteT3ServerEntryPath: config.devRemoteT3ServerEntryPath,
+    configuredBackendPort: config.configuredBackendPort,
+    commitHashOverride: config.commitHashOverride,
+    otlpTracesUrl: config.otlpTracesUrl,
+    otlpExportIntervalMs: config.otlpExportIntervalMs,
+    branding,
+    displayName,
+    appUserModelId: isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
+    linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
+    linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
+    userDataDirName,
+    legacyUserDataDirName,
+    defaultDesktopSettings: resolveDefaultDesktopSettings(input.appVersion),
+    runtimeInfo: resolveDesktopRuntimeInfo({
       platform: input.platform,
       processArch: input.processArch,
-      isPackaged: input.isPackaged,
-      isDevelopment,
-      appVersion: input.appVersion,
-      appPath: input.appPath,
-      resourcesPath,
-      homeDirectory,
-      appDataDirectory,
-      baseDir,
-      stateDir,
-      desktopSettingsPath: path.join(stateDir, "desktop-settings.json"),
-      clientSettingsPath: path.join(stateDir, "client-settings.json"),
-      savedEnvironmentRegistryPath: path.join(stateDir, "saved-environments.json"),
-      serverSettingsPath: path.join(stateDir, "settings.json"),
-      logDir: path.join(stateDir, "logs"),
-      rootDir,
-      appRoot,
-      backendEntryPath: path.join(appRoot, "apps/server/dist/bin.mjs"),
-      backendCwd: input.isPackaged ? homeDirectory : appRoot,
-      preloadPath: path.join(input.dirname, "preload.cjs"),
-      appUpdateYmlPath: input.isPackaged
-        ? path.join(resourcesPath, "app-update.yml")
-        : path.join(input.appPath, "dev-app-update.yml"),
-      devServerUrl,
-      devRemoteT3ServerEntryPath: config.devRemoteT3ServerEntryPath,
-      configuredBackendPort: config.configuredBackendPort,
-      commitHashOverride: config.commitHashOverride,
-      otlpTracesUrl: config.otlpTracesUrl,
-      otlpExportIntervalMs: config.otlpExportIntervalMs,
-      branding,
-      displayName,
-      appUserModelId: isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
-      linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
-      linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
-      userDataDirName,
-      legacyUserDataDirName,
-      defaultDesktopSettings: resolveDefaultDesktopSettings(input.appVersion),
-      runtimeInfo: resolveDesktopRuntimeInfo({
-        platform: input.platform,
-        processArch: input.processArch,
-        runningUnderArm64Translation: input.runningUnderArm64Translation,
-      }),
-      resolvePickFolderDefaultPath: (rawOptions) => {
-        if (typeof rawOptions !== "object" || rawOptions === null) {
-          return Option.none();
-        }
+      runningUnderArm64Translation: input.runningUnderArm64Translation,
+    }),
+    resolvePickFolderDefaultPath: (rawOptions) => {
+      if (typeof rawOptions !== "object" || rawOptions === null) {
+        return Option.none();
+      }
 
-        const { initialPath } = rawOptions as { initialPath?: unknown };
-        if (typeof initialPath !== "string") {
-          return Option.none();
-        }
+      const { initialPath } = rawOptions as { initialPath?: unknown };
+      if (typeof initialPath !== "string") {
+        return Option.none();
+      }
 
-        const trimmedPath = initialPath.trim();
-        if (trimmedPath.length === 0) {
-          return Option.none();
-        }
+      const trimmedPath = initialPath.trim();
+      if (trimmedPath.length === 0) {
+        return Option.none();
+      }
 
-        if (trimmedPath === "~") {
-          return Option.some(homeDirectory);
-        }
+      if (trimmedPath === "~") {
+        return Option.some(homeDirectory);
+      }
 
-        if (trimmedPath.startsWith("~/") || trimmedPath.startsWith("~\\")) {
-          return Option.some(path.join(homeDirectory, trimmedPath.slice(2)));
-        }
+      if (trimmedPath.startsWith("~/") || trimmedPath.startsWith("~\\")) {
+        return Option.some(path.join(homeDirectory, trimmedPath.slice(2)));
+      }
 
-        return Option.some(path.resolve(trimmedPath));
-      },
-      resolveResourcePathCandidates: (fileName) => [
-        path.join(input.dirname, "../resources", fileName),
-        path.join(input.dirname, "../prod-resources", fileName),
-        path.join(resourcesPath, "resources", fileName),
-        path.join(resourcesPath, fileName),
-      ],
-      developmentDockIconPath: path.join(rootDir, "assets", "dev", "blueprint-macos-1024.png"),
-    });
+      return Option.some(path.resolve(trimmedPath));
+    },
+    resolveResourcePathCandidates: (fileName) => [
+      path.join(input.dirname, "../resources", fileName),
+      path.join(input.dirname, "../prod-resources", fileName),
+      path.join(resourcesPath, "resources", fileName),
+      path.join(resourcesPath, fileName),
+    ],
+    developmentDockIconPath: path.join(rootDir, "assets", "dev", "blueprint-macos-1024.png"),
   });
+});
 
 export const layer = (input: MakeDesktopEnvironmentInput) =>
   Layer.effect(DesktopEnvironment, makeDesktopEnvironment(input));

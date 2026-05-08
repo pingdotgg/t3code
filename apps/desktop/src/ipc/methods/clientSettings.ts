@@ -11,20 +11,18 @@ export const getClientSettings = makeIpcMethod({
   channel: IpcChannels.GET_CLIENT_SETTINGS_CHANNEL,
   payload: Schema.Void,
   result: Schema.NullOr(ClientSettingsSchema),
-  handler: () =>
-    Effect.gen(function* () {
-      const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
-      return Option.getOrNull(yield* clientSettings.get);
-    }),
+  handler: Effect.fn("desktop.ipc.clientSettings.get")(function* () {
+    const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
+    return Option.getOrNull(yield* clientSettings.get);
+  }),
 });
 
 export const setClientSettings = makeIpcMethod({
   channel: IpcChannels.SET_CLIENT_SETTINGS_CHANNEL,
   payload: ClientSettingsSchema,
   result: Schema.Void,
-  handler: (settings) =>
-    Effect.gen(function* () {
-      const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
-      yield* clientSettings.set(settings);
-    }),
+  handler: Effect.fn("desktop.ipc.clientSettings.set")(function* (settings) {
+    const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
+    yield* clientSettings.set(settings);
+  }),
 });

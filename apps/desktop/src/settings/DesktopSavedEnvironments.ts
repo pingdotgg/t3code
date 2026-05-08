@@ -194,13 +194,13 @@ function readRegistryDocument(
   );
 }
 
-function writeRegistryDocument(input: {
-  readonly fileSystem: FileSystem.FileSystem;
-  readonly path: Path.Path;
-  readonly registryPath: string;
-  readonly document: SavedEnvironmentRegistryDocument;
-}): Effect.Effect<void, PlatformError.PlatformError | Schema.SchemaError> {
-  return Effect.gen(function* () {
+const writeRegistryDocument = Effect.fn("desktop.savedEnvironments.writeRegistryDocument")(
+  function* (input: {
+    readonly fileSystem: FileSystem.FileSystem;
+    readonly path: Path.Path;
+    readonly registryPath: string;
+    readonly document: SavedEnvironmentRegistryDocument;
+  }): Effect.fn.Return<void, PlatformError.PlatformError | Schema.SchemaError> {
     const directory = input.path.dirname(input.registryPath);
     const suffix = (yield* Random.nextUUIDv4).replace(/-/g, "");
     const tempPath = `${input.registryPath}.${process.pid}.${suffix}.tmp`;
@@ -208,8 +208,8 @@ function writeRegistryDocument(input: {
     yield* input.fileSystem.makeDirectory(directory, { recursive: true });
     yield* input.fileSystem.writeFileString(tempPath, `${encoded}\n`);
     yield* input.fileSystem.rename(tempPath, input.registryPath);
-  });
-}
+  },
+);
 
 function preserveExistingSecrets(
   currentDocument: SavedEnvironmentRegistryDocument,
@@ -261,89 +261,90 @@ export const layer = Layer.effect(
         Effect.map((document) =>
           document.records.map((record) => toPersistedSavedEnvironmentRecord(record)),
         ),
+        Effect.withSpan("desktop.savedEnvironments.getRegistry"),
       ),
-      setRegistry: (records) =>
-        Effect.gen(function* () {
-          const currentDocument = yield* readRegistryDocument(
-            fileSystem,
-            environment.savedEnvironmentRegistryPath,
-          );
-          yield* writeDocument(preserveExistingSecrets(currentDocument, records));
-        }),
-      getSecret: (environmentId) =>
-        Effect.gen(function* () {
-          const document = yield* readRegistryDocument(
-            fileSystem,
-            environment.savedEnvironmentRegistryPath,
-          );
-          const encoded = Option.fromNullishOr(
-            document.records.find((record) => record.environmentId === environmentId)
-              ?.encryptedBearerToken,
-          );
-          if (Option.isNone(encoded) || !(yield* safeStorage.isEncryptionAvailable)) {
-            return Option.none<string>();
-          }
+      setRegistry: Effect.fn("desktop.savedEnvironments.setRegistry")(function* (records) {
+        const currentDocument = yield* readRegistryDocument(
+          fileSystem,
+          environment.savedEnvironmentRegistryPath,
+        );
+        yield* writeDocument(preserveExistingSecrets(currentDocument, records));
+      }),
+      getSecret: Effect.fn("desktop.savedEnvironments.getSecret")(function* (environmentId) {
+        yield* Effect.annotateCurrentSpan({ environmentId });
+        const document = yield* readRegistryDocument(
+          fileSystem,
+          environment.savedEnvironmentRegistryPath,
+        );
+        const encoded = Option.fromNullishOr(
+          document.records.find((record) => record.environmentId === environmentId)
+            ?.encryptedBearerToken,
+        );
+        if (Option.isNone(encoded) || !(yield* safeStorage.isEncryptionAvailable)) {
+          return Option.none<string>();
+        }
 
-          const secretBytes = yield* decodeSecretBytes(encoded.value);
-          return Option.some(yield* safeStorage.decryptString(secretBytes));
-        }),
-      setSecret: ({ environmentId, secret }) =>
-        Effect.gen(function* () {
-          const document = yield* readRegistryDocument(
-            fileSystem,
-            environment.savedEnvironmentRegistryPath,
-          );
+        const secretBytes = yield* decodeSecretBytes(encoded.value);
+        return Option.some(yield* safeStorage.decryptString(secretBytes));
+      }),
+      setSecret: Effect.fn("desktop.savedEnvironments.setSecret")(function* (input) {
+        const { environmentId, secret } = input;
+        yield* Effect.annotateCurrentSpan({ environmentId });
+        const document = yield* readRegistryDocument(
+          fileSystem,
+          environment.savedEnvironmentRegistryPath,
+        );
 
-          if (!(yield* safeStorage.isEncryptionAvailable)) {
-            return false;
-          }
+        if (!(yield* safeStorage.isEncryptionAvailable)) {
+          return false;
+        }
 
-          const encryptedBearerToken = Encoding.encodeBase64(
-            yield* safeStorage.encryptString(secret),
-          );
-          let found = false;
-          const nextDocument: SavedEnvironmentRegistryDocument = {
-            version: document.version,
-            records: document.records.map((record) => {
-              if (record.environmentId !== environmentId) {
-                return record;
-              }
+        const encryptedBearerToken = Encoding.encodeBase64(
+          yield* safeStorage.encryptString(secret),
+        );
+        let found = false;
+        const nextDocument: SavedEnvironmentRegistryDocument = {
+          version: document.version,
+          records: document.records.map((record) => {
+            if (record.environmentId !== environmentId) {
+              return record;
+            }
 
-              found = true;
-              return toSavedEnvironmentStorageRecord(record, Option.some(encryptedBearerToken));
-            }),
-          };
+            found = true;
+            return toSavedEnvironmentStorageRecord(record, Option.some(encryptedBearerToken));
+          }),
+        };
 
-          if (found) {
-            yield* writeDocument(nextDocument);
-          }
-          return found;
-        }),
-      removeSecret: (environmentId) =>
-        Effect.gen(function* () {
-          const document = yield* readRegistryDocument(
-            fileSystem,
-            environment.savedEnvironmentRegistryPath,
-          );
-          if (
-            !document.records.some(
-              (record) =>
-                record.environmentId === environmentId && record.encryptedBearerToken !== undefined,
-            )
-          ) {
-            return;
-          }
+        if (found) {
+          yield* writeDocument(nextDocument);
+        }
+        return found;
+      }),
+      removeSecret: Effect.fn("desktop.savedEnvironments.removeSecret")(function* (environmentId) {
+        yield* Effect.annotateCurrentSpan({ environmentId });
+        const document = yield* readRegistryDocument(
+          fileSystem,
+          environment.savedEnvironmentRegistryPath,
+        );
+        if (
+          !document.records.some(
+            (record) =>
+              record.environmentId === environmentId && record.encryptedBearerToken !== undefined,
+          )
+        ) {
+          return;
+        }
 
-          yield* writeDocument({
-            version: document.version,
-            records: document.records.map((record) => {
-              if (record.environmentId !== environmentId) {
-                return record;
-              }
-              return toPersistedSavedEnvironmentRecord(record);
-            }),
-          });
-        }),
+        yield* writeDocument({
+          version: document.version,
+          records: document.records.map((record) => {
+            if (record.environmentId !== environmentId) {
+              return record;
+            }
+            return toPersistedSavedEnvironmentRecord(record);
+          }),
+        });
+      }),
     });
   }),
 );

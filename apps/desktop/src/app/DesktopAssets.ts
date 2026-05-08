@@ -21,48 +21,46 @@ export class DesktopAssets extends Context.Service<DesktopAssets, DesktopAssetsS
   "t3/desktop/Assets",
 ) {}
 
-const resolveResourcePath = (
+const resolveResourcePath = Effect.fn("desktop.assets.resolveResourcePath")(function* (
   fileName: string,
-): Effect.Effect<
+): Effect.fn.Return<
   Option.Option<string>,
   never,
   FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment
-> =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    const candidates = environment.resolveResourcePathCandidates(fileName);
-    for (const candidate of candidates) {
-      const exists = yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
-      if (exists) {
-        return Option.some(candidate);
-      }
+> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const candidates = environment.resolveResourcePathCandidates(fileName);
+  for (const candidate of candidates) {
+    const exists = yield* fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false));
+    if (exists) {
+      return Option.some(candidate);
     }
-    return Option.none<string>();
-  });
+  }
+  return Option.none<string>();
+});
 
-const resolveIconPath = (
+const resolveIconPath = Effect.fn("desktop.assets.resolveIconPath")(function* (
   ext: keyof DesktopIconPaths,
-): Effect.Effect<
+): Effect.fn.Return<
   Option.Option<string>,
   never,
   FileSystem.FileSystem | DesktopEnvironment.DesktopEnvironment
-> =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const environment = yield* DesktopEnvironment.DesktopEnvironment;
-    if (environment.isDevelopment && process.platform === "darwin" && ext === "png") {
-      const developmentDockIconPath = environment.developmentDockIconPath;
-      const developmentDockIconExists = yield* fileSystem
-        .exists(developmentDockIconPath)
-        .pipe(Effect.orElseSucceed(() => false));
-      if (developmentDockIconExists) {
-        return Option.some(developmentDockIconPath);
-      }
+> {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  if (environment.isDevelopment && process.platform === "darwin" && ext === "png") {
+    const developmentDockIconPath = environment.developmentDockIconPath;
+    const developmentDockIconExists = yield* fileSystem
+      .exists(developmentDockIconPath)
+      .pipe(Effect.orElseSucceed(() => false));
+    if (developmentDockIconExists) {
+      return Option.some(developmentDockIconPath);
     }
+  }
 
-    return yield* resolveResourcePath(`icon.${ext}`);
-  });
+  return yield* resolveResourcePath(`icon.${ext}`);
+});
 
 const make = Effect.gen(function* () {
   const context = yield* Effect.context<
@@ -76,7 +74,11 @@ const make = Effect.gen(function* () {
 
   return DesktopAssets.of({
     iconPaths: Effect.succeed(iconPaths),
-    resolveResourcePath: (fileName) => resolveResourcePath(fileName).pipe(Effect.provide(context)),
+    resolveResourcePath: Effect.fn("desktop.assets.resolveResourcePath.scoped")(
+      function* (fileName) {
+        return yield* resolveResourcePath(fileName).pipe(Effect.provide(context));
+      },
+    ),
   });
 });
 

@@ -15,53 +15,48 @@ export const getUpdateState = makeIpcMethod({
   channel: IpcChannels.UPDATE_GET_STATE_CHANNEL,
   payload: Schema.Void,
   result: DesktopUpdateStateSchema,
-  handler: () =>
-    Effect.gen(function* () {
-      const updates = yield* DesktopUpdates.DesktopUpdates;
-      return yield* updates.getState;
-    }),
+  handler: Effect.fn("desktop.ipc.updates.getState")(function* () {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    return yield* updates.getState;
+  }),
 });
 
 export const setUpdateChannel = makeIpcMethod({
   channel: IpcChannels.UPDATE_SET_CHANNEL_CHANNEL,
   payload: DesktopUpdateChannelSchema,
   result: DesktopUpdateStateSchema,
-  handler: (channel) =>
-    Effect.gen(function* () {
-      const updates = yield* DesktopUpdates.DesktopUpdates;
-      return yield* updates.setChannel(channel);
-    }),
+  handler: Effect.fn("desktop.ipc.updates.setChannel")(function* (channel) {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    return yield* updates.setChannel(channel);
+  }),
 });
 
 export const downloadUpdate = makeIpcMethod({
   channel: IpcChannels.UPDATE_DOWNLOAD_CHANNEL,
   payload: Schema.Void,
   result: DesktopUpdateActionResultSchema,
-  handler: () =>
-    Effect.gen(function* () {
-      const updates = yield* DesktopUpdates.DesktopUpdates;
-      return yield* updates.download;
-    }),
+  handler: Effect.fn("desktop.ipc.updates.download")(function* () {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    return yield* updates.download;
+  }),
 });
 
 export const installUpdate = makeIpcMethod({
   channel: IpcChannels.UPDATE_INSTALL_CHANNEL,
   payload: Schema.Void,
   result: DesktopUpdateActionResultSchema,
-  handler: () =>
-    Effect.gen(function* () {
-      const updates = yield* DesktopUpdates.DesktopUpdates;
-      return yield* updates.install;
-    }),
+  handler: Effect.fn("desktop.ipc.updates.install")(function* () {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    return yield* updates.install;
+  }),
 });
 
 export const checkForUpdate = makeIpcMethod({
   channel: IpcChannels.UPDATE_CHECK_CHANNEL,
   payload: Schema.Void,
   result: DesktopUpdateCheckResultSchema,
-  handler: () =>
-    Effect.gen(function* () {
-      const updates = yield* DesktopUpdates.DesktopUpdates;
-      return yield* updates.check("web-ui");
-    }),
+  handler: Effect.fn("desktop.ipc.updates.check")(function* () {
+    const updates = yield* DesktopUpdates.DesktopUpdates;
+    return yield* updates.check("web-ui");
+  }),
 });

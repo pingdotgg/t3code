@@ -90,7 +90,7 @@ const make = Effect.gen(function* () {
     return legacyPathExists
       ? legacyPath
       : environment.path.join(environment.appDataDirectory, environment.userDataDirName);
-  });
+  }).pipe(Effect.withSpan("desktop.appIdentity.resolveUserDataPath"));
 
   const configure = Effect.gen(function* () {
     const commitHash = yield* resolveAboutCommitHash;
@@ -116,7 +116,7 @@ const make = Effect.gen(function* () {
         onSome: electronApp.setDockIcon,
       });
     }
-  });
+  }).pipe(Effect.withSpan("desktop.appIdentity.configure"));
 
   return DesktopAppIdentity.of({
     resolveUserDataPath,

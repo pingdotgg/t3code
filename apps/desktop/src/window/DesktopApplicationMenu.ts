@@ -22,13 +22,17 @@ export class DesktopApplicationMenu extends Context.Service<
   DesktopApplicationMenuShape
 >()("t3/desktop/ApplicationMenu") {}
 
-const dispatchMenuAction = (
+type DesktopApplicationMenuRuntimeServices =
+  | DesktopUpdates.DesktopUpdates
+  | DesktopWindow.DesktopWindow
+  | ElectronDialog.ElectronDialog;
+
+const dispatchMenuAction = Effect.fn("desktop.menu.dispatchMenuAction")(function* (
   action: string,
-): Effect.Effect<void, DesktopWindow.DesktopWindowError, DesktopWindow.DesktopWindow> =>
-  Effect.gen(function* () {
-    const desktopWindow = yield* DesktopWindow.DesktopWindow;
-    yield* desktopWindow.dispatchMenuAction(action);
-  });
+): Effect.fn.Return<void, DesktopWindow.DesktopWindowError, DesktopWindow.DesktopWindow> {
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
+  yield* desktopWindow.dispatchMenuAction(action);
+});
 
 const checkForUpdatesFromMenu: Effect.Effect<
   void,
@@ -56,7 +60,7 @@ const checkForUpdatesFromMenu: Effect.Effect<
       buttons: ["OK"],
     });
   }
-});
+}).pipe(Effect.withSpan("desktop.menu.checkForUpdates"));
 
 const handleCheckForUpdatesMenuClick: Effect.Effect<
   void,
@@ -86,30 +90,37 @@ const handleCheckForUpdatesMenuClick: Effect.Effect<
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   yield* desktopWindow.ensureMain;
   yield* checkForUpdatesFromMenu;
-});
+}).pipe(Effect.withSpan("desktop.menu.handleCheckForUpdatesClick"));
 
 const make = Effect.gen(function* () {
   const electronApp = yield* ElectronApp.ElectronApp;
   const electronMenu = yield* ElectronMenu.ElectronMenu;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const appName = yield* electronApp.name;
+  const context = yield* Effect.context<DesktopApplicationMenuRuntimeServices>();
+  const runPromise = Effect.runPromiseWith(context);
 
-  const configure = Effect.gen(function* () {
-    const context = yield* Effect.context<never>();
-    const runMenuEffect = <E, R>(action: string, effect: Effect.Effect<void, E, R>) => {
-      void Effect.runPromiseWith(context as unknown as Context.Context<R>)(
-        effect.pipe(
-          Effect.catchCause((cause) =>
-            Effect.logError("desktop menu action failed").pipe(
-              Effect.annotateLogs({
-                action,
-                cause: Cause.pretty(cause),
-              }),
-            ),
+  const runMenuEffect = <E>(
+    action: string,
+    effect: Effect.Effect<void, E, DesktopApplicationMenuRuntimeServices>,
+  ) => {
+    void runPromise(
+      effect.pipe(
+        Effect.annotateLogs({ action }),
+        Effect.withSpan("desktop.menu.action"),
+        Effect.catchCause((cause) =>
+          Effect.logError("desktop menu action failed").pipe(
+            Effect.annotateLogs({
+              action,
+              cause: Cause.pretty(cause),
+            }),
           ),
         ),
-      );
-    };
+      ),
+    );
+  };
+
+  const configure = Effect.gen(function* () {
     const checkForUpdatesClick = () => {
       runMenuEffect("check-for-updates", handleCheckForUpdatesMenuClick);
     };
@@ -191,7 +202,7 @@ const make = Effect.gen(function* () {
     );
 
     yield* electronMenu.setApplicationMenu(template);
-  });
+  }).pipe(Effect.withSpan("desktop.menu.configure"));
 
   return DesktopApplicationMenu.of({
     configure,

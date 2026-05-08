@@ -33,49 +33,47 @@ export class ElectronDialog extends Context.Service<ElectronDialog, ElectronDial
 ) {}
 
 const make = ElectronDialog.of({
-  pickFolder: (input) =>
-    Effect.gen(function* () {
-      const openDialogOptions: Electron.OpenDialogOptions = Option.match(input.defaultPath, {
-        onNone: () => ({
-          properties: ["openDirectory", "createDirectory"],
-        }),
-        onSome: (defaultPath) => ({
-          properties: ["openDirectory", "createDirectory"],
-          defaultPath,
-        }),
-      });
-      const result = yield* Option.match(input.owner, {
-        onNone: () => Effect.promise(() => Electron.dialog.showOpenDialog(openDialogOptions)),
-        onSome: (owner) =>
-          Effect.promise(() => Electron.dialog.showOpenDialog(owner, openDialogOptions)),
-      });
+  pickFolder: Effect.fn("desktop.electron.dialog.pickFolder")(function* (input) {
+    const openDialogOptions: Electron.OpenDialogOptions = Option.match(input.defaultPath, {
+      onNone: () => ({
+        properties: ["openDirectory", "createDirectory"],
+      }),
+      onSome: (defaultPath) => ({
+        properties: ["openDirectory", "createDirectory"],
+        defaultPath,
+      }),
+    });
+    const result = yield* Option.match(input.owner, {
+      onNone: () => Effect.promise(() => Electron.dialog.showOpenDialog(openDialogOptions)),
+      onSome: (owner) =>
+        Effect.promise(() => Electron.dialog.showOpenDialog(owner, openDialogOptions)),
+    });
 
-      if (result.canceled) {
-        return Option.none();
-      }
-      return Option.fromNullishOr(result.filePaths[0]);
-    }),
-  confirm: (input) =>
-    Effect.gen(function* () {
-      const normalizedMessage = input.message.trim();
-      if (normalizedMessage.length === 0) {
-        return false;
-      }
+    if (result.canceled) {
+      return Option.none();
+    }
+    return Option.fromNullishOr(result.filePaths[0]);
+  }),
+  confirm: Effect.fn("desktop.electron.dialog.confirm")(function* (input) {
+    const normalizedMessage = input.message.trim();
+    if (normalizedMessage.length === 0) {
+      return false;
+    }
 
-      const options = {
-        type: "question" as const,
-        buttons: ["No", "Yes"],
-        defaultId: 0,
-        cancelId: 0,
-        noLink: true,
-        message: normalizedMessage,
-      };
-      const result = yield* Option.match(input.owner, {
-        onNone: () => Effect.promise(() => Electron.dialog.showMessageBox(options)),
-        onSome: (owner) => Effect.promise(() => Electron.dialog.showMessageBox(owner, options)),
-      });
-      return result.response === CONFIRM_BUTTON_INDEX;
-    }),
+    const options = {
+      type: "question" as const,
+      buttons: ["No", "Yes"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+      message: normalizedMessage,
+    };
+    const result = yield* Option.match(input.owner, {
+      onNone: () => Effect.promise(() => Electron.dialog.showMessageBox(options)),
+      onSome: (owner) => Effect.promise(() => Electron.dialog.showMessageBox(owner, options)),
+    });
+    return result.response === CONFIRM_BUTTON_INDEX;
+  }),
   showMessageBox: (options) => Effect.promise(() => Electron.dialog.showMessageBox(options)),
   showErrorBox: (title, content) =>
     Effect.sync(() => {

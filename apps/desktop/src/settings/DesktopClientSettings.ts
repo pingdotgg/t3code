@@ -88,14 +88,19 @@ export const layer = Layer.effect(
     const path = yield* Path.Path;
 
     return DesktopClientSettings.of({
-      get: readClientSettings(fileSystem, environment.clientSettingsPath),
+      get: readClientSettings(fileSystem, environment.clientSettingsPath).pipe(
+        Effect.withSpan("desktop.clientSettings.get"),
+      ),
       set: (settings) =>
         writeClientSettings({
           fileSystem,
           path,
           settingsPath: environment.clientSettingsPath,
           settings,
-        }).pipe(Effect.mapError((cause) => new DesktopClientSettingsWriteError({ cause }))),
+        }).pipe(
+          Effect.mapError((cause) => new DesktopClientSettingsWriteError({ cause })),
+          Effect.withSpan("desktop.clientSettings.set"),
+        ),
     });
   }),
 );

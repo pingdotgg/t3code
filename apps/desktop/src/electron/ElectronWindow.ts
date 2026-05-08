@@ -118,13 +118,14 @@ const make = Effect.gen(function* () {
         window.destroy();
       }
     }),
-    syncAllAppearance: (sync) =>
-      Effect.gen(function* () {
-        const windows = Electron.BrowserWindow.getAllWindows();
-        for (const window of windows) {
-          yield* sync(window);
-        }
-      }),
+    syncAllAppearance: Effect.fn("desktop.electron.window.syncAllAppearance")(function* <E, R>(
+      sync: (window: Electron.BrowserWindow) => Effect.Effect<void, E, R>,
+    ) {
+      const windows = Electron.BrowserWindow.getAllWindows();
+      for (const window of windows) {
+        yield* sync(window);
+      }
+    }),
   });
 });
 
