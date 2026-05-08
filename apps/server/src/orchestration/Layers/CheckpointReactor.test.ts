@@ -170,7 +170,7 @@ async function waitForThread(
     if ((await Effect.runPromise(Clock.currentTimeMillis)) >= deadline) {
       throw new Error("Timed out waiting for thread state.");
     }
-    await Effect.runPromise(Effect.yieldNow);
+    await Effect.runPromise(Effect.sleep("10 millis"));
     return poll();
   };
   return poll();
@@ -192,7 +192,7 @@ async function waitForEvent(
     if ((await Effect.runPromise(Clock.currentTimeMillis)) >= deadline) {
       throw new Error("Timed out waiting for orchestration event.");
     }
-    await Effect.runPromise(Effect.yieldNow);
+    await Effect.runPromise(Effect.sleep("10 millis"));
     return poll();
   };
   return poll();
@@ -239,7 +239,7 @@ async function waitForGitRefExists(cwd: string, ref: string, timeoutMs = 15_000)
     if ((await Effect.runPromise(Clock.currentTimeMillis)) >= deadline) {
       throw new Error(`Timed out waiting for git ref '${ref}'.`);
     }
-    await Effect.runPromise(Effect.yieldNow);
+    await Effect.runPromise(Effect.sleep("10 millis"));
     return poll();
   };
   return poll();
