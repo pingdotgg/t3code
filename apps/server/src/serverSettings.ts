@@ -139,9 +139,14 @@ export class ServerSettingsService extends Context.Service<
     Layer.effect(
       ServerSettingsService,
       Effect.gen(function* () {
-        const initialSettings = yield* normalizeServerSettings(
-          deepMerge(DEFAULT_SERVER_SETTINGS, overrides),
-        );
+        const { automaticGitFetchInterval, ...overridesForMerge } = overrides;
+        const merged = deepMerge(DEFAULT_SERVER_SETTINGS, overridesForMerge);
+        const initialSettings = yield* normalizeServerSettings({
+          ...merged,
+          ...(automaticGitFetchInterval !== undefined
+            ? { automaticGitFetchInterval: automaticGitFetchInterval as Duration.Duration }
+            : {}),
+        });
         const currentSettingsRef = yield* Ref.make<ServerSettings>(initialSettings);
 
         return {
