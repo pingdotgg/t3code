@@ -354,6 +354,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           }),
       );
 
+      it.effect("passes the configured cwd to the app-server probe", () =>
+        Effect.gen(function* () {
+          const expectedCwd = NodePath.join(NodeOS.tmpdir(), "t3code-codex-cwd");
+          let observedCwd: string | null = null;
+          const status = yield* checkCodexProviderStatus(
+            defaultCodexSettings,
+            (input) => {
+              observedCwd = input.cwd;
+              return Effect.succeed(makeCodexProbeSnapshot());
+            },
+            process.env,
+            expectedCwd,
+          );
+
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(observedCwd, expectedCwd);
+        }),
+      );
+
       it.effect("returns an api key label for codex api key auth", () =>
         Effect.gen(function* () {
           const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
@@ -1588,6 +1607,43 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           assert.deepStrictEqual(status.slashCommands, [
             { name: "review-diff", description: "Native command wins" },
           ]);
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+          Effect.ensuring(Effect.sync(() => NodeFS.rmSync(root, { force: true, recursive: true }))),
+        );
+      });
+
+      it.effect("skips Claude skill discovery when capabilities are unavailable", () => {
+        const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-claude-provider-"));
+        const home = NodePath.join(root, "home");
+        const workspace = NodePath.join(root, "workspace", "package");
+        const skillDir = NodePath.join(root, "workspace", ".claude", "skills", "review-diff");
+        NodeFS.mkdirSync(NodePath.join(root, "workspace", ".git"), { recursive: true });
+        NodeFS.mkdirSync(workspace, { recursive: true });
+        NodeFS.mkdirSync(skillDir, { recursive: true });
+        NodeFS.writeFileSync(
+          NodePath.join(skillDir, "SKILL.md"),
+          ["---", "name: review-diff", "description: Review the current diff.", "---"].join("\n"),
+          "utf8",
+        );
+
+        return Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            { ...defaultClaudeSettings, homePath: home },
+            noClaudeCapabilities,
+            process.env,
+            workspace,
+          );
+
+          assert.strictEqual(status.status, "warning");
+          assert.deepStrictEqual(status.skills, []);
+          assert.deepStrictEqual(status.slashCommands, []);
         }).pipe(
           Effect.provide(
             mockSpawnerLayer((args) => {

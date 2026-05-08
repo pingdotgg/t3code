@@ -628,10 +628,6 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     : undefined;
   const slashCommands = capabilities?.slashCommands ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
-  const claudeHome = yield* resolveClaudeHomePath(claudeSettings);
-  const discoveredSkills = yield* discoverClaudeSkills({ cwd, homeDir: claudeHome });
-  const skills = mergeProviderSkills([], discoveredSkills);
-  const mergedSlashCommands = mergeSkillsIntoSlashCommands(dedupedSlashCommands, skills);
 
   if (!capabilities) {
     return buildServerProvider({
@@ -639,8 +635,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       enabled: claudeSettings.enabled,
       checkedAt,
       models,
-      slashCommands: mergedSlashCommands,
-      skills,
+      slashCommands: dedupedSlashCommands,
+      skills: [],
       probe: {
         installed: true,
         version: parsedVersion,
@@ -650,6 +646,11 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       },
     });
   }
+
+  const claudeHome = yield* resolveClaudeHomePath(claudeSettings);
+  const discoveredSkills = yield* discoverClaudeSkills({ cwd, homeDir: claudeHome });
+  const skills = mergeProviderSkills([], discoveredSkills);
+  const mergedSlashCommands = mergeSkillsIntoSlashCommands(dedupedSlashCommands, skills);
 
   const authMetadata = claudeAuthMetadata({
     subscriptionType: capabilities.subscriptionType,
