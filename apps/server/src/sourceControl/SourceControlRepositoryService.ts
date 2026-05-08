@@ -153,13 +153,11 @@ export const make = Effect.fn("makeSourceControlRepositoryService")(function* ()
     function* (destinationPath: string) {
       const trimmed = destinationPath.trim();
       if (trimmed.length === 0) {
-        return yield* Effect.fail(
-          repositoryError({
-            operation: "cloneRepository",
-            provider: "unknown",
-            detail: "Choose a destination path before cloning.",
-          }),
-        );
+        return yield* repositoryError({
+          operation: "cloneRepository",
+          provider: "unknown",
+          detail: "Choose a destination path before cloning.",
+        });
       }
 
       return path.resolve(expandHomePath(trimmed, path));
@@ -183,13 +181,11 @@ export const make = Effect.fn("makeSourceControlRepositoryService")(function* ()
             ),
           );
         if (entries.length > 0) {
-          return yield* Effect.fail(
-            repositoryError({
-              operation: "cloneRepository",
-              provider: "unknown",
-              detail: "Destination path already exists and is not empty.",
-            }),
-          );
+          return yield* repositoryError({
+            operation: "cloneRepository",
+            provider: "unknown",
+            detail: "Destination path already exists and is not empty.",
+          });
         }
       } else {
         yield* fileSystem.makeDirectory(path.dirname(normalizedDestination), { recursive: true });
@@ -222,13 +218,11 @@ export const make = Effect.fn("makeSourceControlRepositoryService")(function* ()
     }
 
     if (!remoteUrl) {
-      return yield* Effect.fail(
-        repositoryError({
-          operation: "cloneRepository",
-          provider,
-          detail: "Enter a repository path or clone URL before cloning.",
-        }),
-      );
+      return yield* repositoryError({
+        operation: "cloneRepository",
+        provider,
+        detail: "Enter a repository path or clone URL before cloning.",
+      });
     }
 
     yield* git.execute({

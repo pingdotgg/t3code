@@ -1,6 +1,7 @@
 import { it } from "@effect/vitest";
 import { describe, expect } from "vitest";
-import { Deferred, Effect } from "effect";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
 
 import { makeKeyedCoalescingWorker } from "./KeyedCoalescingWorker.ts";
 
@@ -73,7 +74,7 @@ describe("makeKeyedCoalescingWorker", () => {
               if (value === "first") {
                 yield* Deferred.succeed(firstStarted, undefined).pipe(Effect.orDie);
                 yield* Deferred.await(releaseFailure);
-                yield* Effect.fail("boom");
+                return yield* Effect.fail("boom");
               }
 
               if (value === "second") {

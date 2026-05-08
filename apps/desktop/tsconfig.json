@@ -3,7 +3,19 @@
   "compilerOptions": {
     "composite": true,
     "types": ["node", "electron"],
-    "lib": ["ESNext", "DOM", "esnext.disposable"]
+    "lib": ["ESNext", "DOM", "esnext.disposable"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "namespaceImportPackages": ["@effect/platform-node", "effect"],
+        "diagnosticSeverity": {
+          "importFromBarrel": "error",
+          "anyUnknownInErrorContext": "error",
+          "instanceOfSchema": "warning",
+          "deterministicKeys": "warning"
+        }
+      }
+    ]
   },
   "include": ["src", "tsdown.config.ts"]
 }

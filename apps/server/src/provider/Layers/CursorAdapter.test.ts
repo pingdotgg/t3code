@@ -113,6 +113,7 @@ async function waitForFileContent(filePath: string, attempts = 40) {
 // tests assumed.
 const makeResolveCursorSettings = Effect.gen(function* () {
   const serverSettings = yield* ServerSettingsService;
+  // @effect-diagnostics effect/returnEffectInGen:off
   return serverSettings.getSettings.pipe(
     Effect.map((snapshot) => snapshot.providers.cursor),
     Effect.orDie,

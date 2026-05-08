@@ -1,6 +1,6 @@
-import { Schema } from "effect";
 import { assert, it } from "@effect/vitest";
-import { Effect } from "effect";
+import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 
 import {
   KeybindingsConfig,

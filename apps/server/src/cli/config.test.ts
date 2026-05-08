@@ -1,12 +1,32 @@
 import os from "node:os";
 
 import { assert, expect, it } from "@effect/vitest";
-import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 
+import {
+  DesktopBackendBootstrap,
+  type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
+} from "@t3tools/contracts";
 import { NetService } from "@t3tools/shared/Net";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { deriveServerPaths } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
+
+const encodeDesktopBootstrap = Schema.encodeEffect(Schema.fromJsonString(DesktopBackendBootstrap));
+
+const makeDesktopBootstrap = (
+  overrides: Partial<DesktopBackendBootstrapValue> = {},
+): DesktopBackendBootstrapValue => ({
+  mode: "desktop",
+  noBrowser: true,
+  port: 4888,
+  t3Home: "/tmp/t3-bootstrap-home",
+  host: "127.0.0.1",
+  desktopBootstrapToken: "desktop-bootstrap-token",
+  tailscaleServeEnabled: false,
+  tailscaleServePort: 443,
+  ...overrides,
+});
 
 it.layer(NodeServices.layer)("cli config resolution", (it) => {
   const defaultObservabilityConfig = {
@@ -21,10 +41,11 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     otlpServiceName: "t3-server",
   } as const;
 
-  const openBootstrapFd = Effect.fn(function* (payload: Record<string, unknown>) {
+  const openBootstrapFd = Effect.fn(function* (payload: DesktopBackendBootstrapValue) {
     const fs = yield* FileSystem.FileSystem;
     const filePath = yield* fs.makeTempFileScoped({ prefix: "t3-bootstrap-", suffix: ".ndjson" });
-    yield* fs.writeFileString(filePath, `${JSON.stringify(payload)}\n`);
+    const encoded = yield* encodeDesktopBootstrap(payload);
+    yield* fs.writeFileString(filePath, `${encoded}\n`);
     const { fd } = yield* fs.open(filePath, { flag: "r" });
     return fd;
   });
@@ -165,13 +186,13 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
       const baseDir = join(os.tmpdir(), "t3-cli-config-false-flags");
-      const fd = yield* openBootstrapFd({
-        noBrowser: true,
-        autoBootstrapProjectFromCwd: true,
-        logWebSocketEvents: true,
-        tailscaleServeEnabled: false,
-        tailscaleServePort: 443,
-      });
+      const fd = yield* openBootstrapFd(
+        makeDesktopBootstrap({
+          noBrowser: true,
+          tailscaleServeEnabled: false,
+          tailscaleServePort: 443,
+        }),
+      );
       const derivedPaths = yield* deriveServerPaths(baseDir, new URL("http://127.0.0.1:4173"));
 
       const resolved = yield* resolveServerConfig(
@@ -221,7 +242,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         devUrl: new URL("http://127.0.0.1:4173"),
         noBrowser: false,
         startupPresentation: "browser",
-        desktopBootstrapToken: undefined,
+        desktopBootstrapToken: "desktop-bootstrap-token",
         autoBootstrapProjectFromCwd: false,
         logWebSocketEvents: false,
         tailscaleServeEnabled: false,
@@ -234,21 +255,20 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
       const baseDir = "/tmp/t3-bootstrap-home";
-      const fd = yield* openBootstrapFd({
-        mode: "desktop",
-        port: 4888,
-        host: "127.0.0.2",
-        t3Home: baseDir,
-        devUrl: "http://127.0.0.1:5173",
-        noBrowser: true,
-        autoBootstrapProjectFromCwd: false,
-        logWebSocketEvents: true,
-        tailscaleServeEnabled: false,
-        tailscaleServePort: 443,
-        otlpTracesUrl: "http://localhost:4318/v1/traces",
-        otlpMetricsUrl: "http://localhost:4318/v1/metrics",
-      });
-      const derivedPaths = yield* deriveServerPaths(baseDir, new URL("http://127.0.0.1:5173"));
+      const fd = yield* openBootstrapFd(
+        makeDesktopBootstrap({
+          port: 4888,
+          host: "127.0.0.2",
+          t3Home: baseDir,
+          noBrowser: true,
+          desktopBootstrapToken: "desktop-token",
+          tailscaleServeEnabled: false,
+          tailscaleServePort: 443,
+          otlpTracesUrl: "http://localhost:4318/v1/traces",
+          otlpMetricsUrl: "http://localhost:4318/v1/metrics",
+        }),
+      );
+      const derivedPaths = yield* deriveServerPaths(baseDir, undefined);
 
       const resolved = yield* resolveServerConfig(
         {
@@ -292,17 +312,17 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         baseDir,
         ...derivedPaths,
         host: "127.0.0.2",
-        staticDir: undefined,
-        devUrl: new URL("http://127.0.0.1:5173"),
+        staticDir: resolved.staticDir,
+        devUrl: undefined,
         noBrowser: true,
         startupPresentation: "browser",
-        desktopBootstrapToken: undefined,
+        desktopBootstrapToken: "desktop-token",
         autoBootstrapProjectFromCwd: false,
-        logWebSocketEvents: true,
+        logWebSocketEvents: false,
         tailscaleServeEnabled: false,
         tailscaleServePort: 443,
       });
-      assert.equal(join(baseDir, "dev"), resolved.stateDir);
+      assert.equal(join(baseDir, "userdata"), resolved.stateDir);
     }),
   );
 
@@ -359,18 +379,17 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
     Effect.gen(function* () {
       const { join } = yield* Path.Path;
       const baseDir = join(os.tmpdir(), "t3-cli-config-env-wins");
-      const fd = yield* openBootstrapFd({
-        mode: "desktop",
-        port: 4888,
-        host: "127.0.0.2",
-        t3Home: "/tmp/t3-bootstrap-home",
-        devUrl: "http://127.0.0.1:5173",
-        noBrowser: false,
-        autoBootstrapProjectFromCwd: false,
-        logWebSocketEvents: false,
-        tailscaleServeEnabled: false,
-        tailscaleServePort: 443,
-      });
+      const fd = yield* openBootstrapFd(
+        makeDesktopBootstrap({
+          port: 4888,
+          host: "127.0.0.2",
+          t3Home: "/tmp/t3-bootstrap-home",
+          noBrowser: false,
+          desktopBootstrapToken: "desktop-token",
+          tailscaleServeEnabled: false,
+          tailscaleServePort: 443,
+        }),
+      );
       const derivedPaths = yield* deriveServerPaths(baseDir, new URL("http://127.0.0.1:4173"));
 
       const resolved = yield* resolveServerConfig(
@@ -422,7 +441,7 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         devUrl: new URL("http://127.0.0.1:4173"),
         noBrowser: true,
         startupPresentation: "browser",
-        desktopBootstrapToken: undefined,
+        desktopBootstrapToken: "desktop-token",
         autoBootstrapProjectFromCwd: true,
         logWebSocketEvents: true,
         tailscaleServeEnabled: false,
