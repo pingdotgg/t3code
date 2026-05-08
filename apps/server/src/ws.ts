@@ -20,6 +20,7 @@ import {
   type ProjectEffectiveRemote,
   type ProjectRemoteOverride,
   type ProjectSettings,
+  type ProjectSettingsPatch,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
@@ -690,34 +691,17 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
       const updateProjectSettings = (input: {
         readonly projectId: ProjectId;
-        readonly patch: Partial<ProjectSettings>;
+        readonly patch: ProjectSettingsPatch;
       }) =>
-        serverSettings
-          .updateSettingsWith((settings) => {
-            const current = settings.projectSettings[input.projectId] ?? emptyProjectSettings;
-            const nextProjectSettings = {
-              ...current,
-              ...input.patch,
-            };
-            return {
-              projectSettings: {
-                ...settings.projectSettings,
-                [input.projectId]: nextProjectSettings,
-              },
-            };
-          })
-          .pipe(
-            Effect.map(
-              (settings) => settings.projectSettings[input.projectId] ?? emptyProjectSettings,
-            ),
-            Effect.mapError(
-              (cause) =>
-                new ProjectDetailsError({
-                  message: "Failed to update project settings.",
-                  cause,
-                }),
-            ),
-          );
+        serverSettings.updateProjectSettings(input.projectId, input.patch).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProjectDetailsError({
+                message: "Failed to update project settings.",
+                cause,
+              }),
+          ),
+        );
 
       return WsRpcGroup.of({
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>

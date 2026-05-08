@@ -16,6 +16,9 @@ import {
   DEFAULT_SERVER_SETTINGS,
   isProviderDriverKind,
   type ModelSelection,
+  type ProjectId,
+  type ProjectSettings,
+  type ProjectSettingsPatch,
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   ProviderDriverKind,
@@ -54,6 +57,10 @@ import { ServerSecretStore } from "./auth/Services/ServerSecretStore.ts";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const emptyProjectSettings: ProjectSettings = {
+  remoteOverride: null,
+  actionEnvironment: {},
+};
 
 function providerEnvironmentSecretName(input: {
   readonly instanceId: string;
@@ -106,10 +113,11 @@ export interface ServerSettingsShape {
     patch: ServerSettingsPatch,
   ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
-  /** Patch settings from the latest persisted snapshot and persist atomically. */
-  readonly updateSettingsWith: (
-    makePatch: (current: ServerSettings) => ServerSettingsPatch,
-  ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+  /** Update one project's settings from the latest persisted snapshot. */
+  readonly updateProjectSettings: (
+    projectId: ProjectId,
+    patch: ProjectSettingsPatch,
+  ) => Effect.Effect<ProjectSettings, ServerSettingsError>;
 
   /** Stream of settings change events. */
   readonly streamChanges: Stream.Stream<ServerSettings>;
@@ -126,32 +134,46 @@ export class ServerSettingsService extends Context.Service<
         const currentSettingsRef = yield* Ref.make<ServerSettings>(
           deepMerge(DEFAULT_SERVER_SETTINGS, overrides),
         );
+        const writeSemaphore = yield* Semaphore.make(1);
 
-        const updateSettingsWith = (makePatch: (current: ServerSettings) => ServerSettingsPatch) =>
-          Ref.get(currentSettingsRef).pipe(
-            Effect.flatMap((currentSettings) =>
-              Schema.decodeEffect(ServerSettings)(
-                applyServerSettingsPatch(currentSettings, makePatch(currentSettings)),
-              ).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ServerSettingsError({
-                      settingsPath: "<memory>",
-                      detail: `failed to normalize server settings: ${SchemaIssue.makeFormatterDefault()(cause.issue)}`,
-                      cause,
-                    }),
+        const commitSettings = (makePatch: (current: ServerSettings) => ServerSettingsPatch) =>
+          writeSemaphore.withPermits(1)(
+            Ref.get(currentSettingsRef).pipe(
+              Effect.flatMap((currentSettings) =>
+                Schema.decodeEffect(ServerSettings)(
+                  applyServerSettingsPatch(currentSettings, makePatch(currentSettings)),
+                ).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ServerSettingsError({
+                        settingsPath: "<memory>",
+                        detail: `failed to normalize server settings: ${SchemaIssue.makeFormatterDefault()(cause.issue)}`,
+                        cause,
+                      }),
+                  ),
                 ),
               ),
+              Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
             ),
-            Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
           );
 
         return {
           start: Effect.void,
           ready: Effect.void,
           getSettings: Ref.get(currentSettingsRef),
-          updateSettings: (patch) => updateSettingsWith(() => patch),
-          updateSettingsWith,
+          updateSettings: (patch) => commitSettings(() => patch),
+          updateProjectSettings: (projectId, patch) =>
+            commitSettings((settings) => ({
+              projectSettings: {
+                ...settings.projectSettings,
+                [projectId]: {
+                  ...(settings.projectSettings[projectId] ?? emptyProjectSettings),
+                  ...patch,
+                },
+              },
+            })).pipe(
+              Effect.map((settings) => settings.projectSettings[projectId] ?? emptyProjectSettings),
+            ),
           streamChanges: Stream.empty,
         } satisfies ServerSettingsShape;
       }),
@@ -528,7 +550,7 @@ const makeServerSettings = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
-  const updateSettingsWith = (makePatch: (current: ServerSettings) => ServerSettingsPatch) =>
+  const commitSettings = (makePatch: (current: ServerSettings) => ServerSettingsPatch) =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* getSettingsFromCache;
@@ -561,8 +583,19 @@ const makeServerSettings = Effect.gen(function* () {
       Effect.flatMap(materializeProviderEnvironmentSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
-    updateSettings: (patch) => updateSettingsWith(() => patch),
-    updateSettingsWith,
+    updateSettings: (patch) => commitSettings(() => patch),
+    updateProjectSettings: (projectId, patch) =>
+      commitSettings((settings) => ({
+        projectSettings: {
+          ...settings.projectSettings,
+          [projectId]: {
+            ...(settings.projectSettings[projectId] ?? emptyProjectSettings),
+            ...patch,
+          },
+        },
+      })).pipe(
+        Effect.map((settings) => settings.projectSettings[projectId] ?? emptyProjectSettings),
+      ),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub).pipe(
         Stream.mapEffect((settings) =>

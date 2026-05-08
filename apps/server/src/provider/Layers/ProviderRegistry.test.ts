@@ -240,9 +240,7 @@ function makeMutableServerSettingsService(
     const settingsRef = yield* Ref.make(initial);
     const changes = yield* PubSub.unbounded<ContractServerSettings>();
 
-    const updateSettingsWith = (
-      makePatch: (current: ContractServerSettings) => ServerSettingsPatch,
-    ) =>
+    const commitSettings = (makePatch: (current: ContractServerSettings) => ServerSettingsPatch) =>
       Effect.gen(function* () {
         const current = yield* Ref.get(settingsRef);
         const next = Schema.decodeSync(ServerSettings)(deepMerge(current, makePatch(current)));
@@ -255,8 +253,28 @@ function makeMutableServerSettingsService(
       start: Effect.void,
       ready: Effect.void,
       getSettings: Ref.get(settingsRef),
-      updateSettings: (patch) => updateSettingsWith(() => patch),
-      updateSettingsWith,
+      updateSettings: (patch) => commitSettings(() => patch),
+      updateProjectSettings: (projectId, patch) =>
+        commitSettings((settings) => ({
+          projectSettings: {
+            ...settings.projectSettings,
+            [projectId]: {
+              ...(settings.projectSettings[projectId] ?? {
+                remoteOverride: null,
+                actionEnvironment: {},
+              }),
+              ...patch,
+            },
+          },
+        })).pipe(
+          Effect.map(
+            (settings) =>
+              settings.projectSettings[projectId] ?? {
+                remoteOverride: null,
+                actionEnvironment: {},
+              },
+          ),
+        ),
       get streamChanges() {
         return Stream.fromPubSub(changes);
       },
@@ -371,6 +389,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(status.auth.type, "apiKey");
           assert.strictEqual(status.auth.label, "OpenAI API Key");
+        }),
+      );
+
+      it.effect("returns an Amazon Bedrock label for codex Bedrock auth", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                account: {
+                  account: { type: "amazonBedrock" },
+                  requiresOpenaiAuth: false,
+                },
+              }),
+            ),
+          );
+
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "amazonBedrock");
+          assert.strictEqual(status.auth.label, "Amazon Bedrock");
         }),
       );
 
