@@ -486,7 +486,7 @@ const buildAppUnderTest = (options?: {
         Layer.provide(WorkspacePathsLive),
         Layer.provide(workspaceEntriesLayer),
       ),
-      ProjectFaviconResolverLive,
+      ProjectFaviconResolverLive.pipe(Layer.provide(vcsDriverRegistryLayer)),
     );
     const gitWorkflowLayer = GitWorkflowService.layer.pipe(
       Layer.provideMerge(vcsDriverRegistryLayer),
