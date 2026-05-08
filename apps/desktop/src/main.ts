@@ -32,7 +32,7 @@ import * as DesktopBackendManager from "./backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
-import * as DesktopServerExposure from "./serverExposure/DesktopServerExposure.ts";
+import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
 import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
 import * as DesktopAppSettings from "./settings/DesktopAppSettings.ts";

@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
-import * as DesktopServerExposure from "../../serverExposure/DesktopServerExposure.ts";
+import * as DesktopServerExposure from "../../backend/DesktopServerExposure.ts";
 import * as IpcChannels from "../channels.ts";
 import { makeIpcMethod } from "../DesktopIpc.ts";
 

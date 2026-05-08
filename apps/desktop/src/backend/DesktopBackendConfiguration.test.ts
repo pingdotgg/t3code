@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
-import * as DesktopServerExposure from "../serverExposure/DesktopServerExposure.ts";
+import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 
 const PersistedServerObservabilitySettingsDocument = Schema.Struct({
   observability: Schema.Struct({

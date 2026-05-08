@@ -10,7 +10,7 @@ import * as Ref from "effect/Ref";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
-import * as DesktopServerExposure from "../serverExposure/DesktopServerExposure.ts";
+import * as DesktopServerExposure from "./DesktopServerExposure.ts";
 
 export interface DesktopBackendConfigurationShape {
   readonly resolve: Effect.Effect<DesktopBackendManager.DesktopBackendStartConfig>;
