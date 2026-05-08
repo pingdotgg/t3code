@@ -4,11 +4,14 @@ import fsPromises from "node:fs/promises";
 import { Effect, Layer, Path } from "effect";
 import {
   PROJECT_TEXT_FILE_MAX_BYTES,
+  ProjectCreateDirectoryError,
+  ProjectDeleteEntryError,
   ProjectFileBinaryError,
   ProjectFileNotFoundError,
   ProjectFileTooLargeError,
   ProjectFileVersionConflictError,
   ProjectReadFileError,
+  ProjectRenameEntryError,
   ProjectWriteFileError,
 } from "@forma/contracts";
 
@@ -45,6 +48,14 @@ function formatCauseMessage(cause: unknown): string {
 
 function hasNodeErrorCode(cause: unknown, code: string): cause is { code: string } {
   return cause !== null && typeof cause === "object" && "code" in cause && cause.code === code;
+}
+
+function parentPathOf(pathValue: string): string | undefined {
+  const separatorIndex = pathValue.lastIndexOf("/");
+  if (separatorIndex === -1) {
+    return undefined;
+  }
+  return pathValue.slice(0, separatorIndex);
 }
 
 export const makeWorkspaceFileSystem = Effect.gen(function* () {
@@ -229,7 +240,193 @@ export const makeWorkspaceFileSystem = Effect.gen(function* () {
     };
   });
 
-  return { readFile, writeFile } satisfies WorkspaceFileSystemShape;
+  const createDirectory: WorkspaceFileSystemShape["createDirectory"] = Effect.fn(
+    "WorkspaceFileSystem.createDirectory",
+  )(function* (input) {
+    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: input.cwd,
+      relativePath: input.relativePath,
+    });
+
+    const existingStat = yield* Effect.tryPromise({
+      try: async () => {
+        try {
+          return await fsPromises.stat(target.absolutePath);
+        } catch (cause) {
+          if (hasNodeErrorCode(cause, "ENOENT")) {
+            return null;
+          }
+          throw cause;
+        }
+      },
+      catch: (cause) =>
+        new ProjectCreateDirectoryError({
+          message: `Failed to validate workspace directory before create: ${formatCauseMessage(cause)}`,
+          cause,
+        }),
+    });
+
+    if (existingStat !== null) {
+      return yield* new ProjectCreateDirectoryError({
+        message: `Workspace path already exists: ${target.relativePath}`,
+      });
+    }
+
+    yield* Effect.tryPromise({
+      try: () => fsPromises.mkdir(target.absolutePath, { recursive: true }),
+      catch: (cause) =>
+        new ProjectCreateDirectoryError({
+          message: `Failed to create workspace directory: ${formatCauseMessage(cause)}`,
+          cause,
+        }),
+    });
+    yield* workspaceEntries.invalidate(input.cwd);
+
+    return {
+      relativePath: target.relativePath,
+    };
+  });
+
+  const renameEntry: WorkspaceFileSystemShape["renameEntry"] = Effect.fn(
+    "WorkspaceFileSystem.renameEntry",
+  )(function* (input) {
+    const source = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: input.cwd,
+      relativePath: input.fromRelativePath,
+    });
+    const destination = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: input.cwd,
+      relativePath: input.toRelativePath,
+    });
+
+    if (source.relativePath === destination.relativePath) {
+      return yield* new ProjectRenameEntryError({
+        message: `Workspace path is already named '${source.relativePath}'.`,
+      });
+    }
+
+    const sourceStat = yield* Effect.tryPromise({
+      try: () => fsPromises.stat(source.absolutePath),
+      catch: (cause) => {
+        if (hasNodeErrorCode(cause, "ENOENT")) {
+          return new ProjectRenameEntryError({
+            message: `Workspace path not found: ${source.relativePath}`,
+            cause,
+          });
+        }
+        return new ProjectRenameEntryError({
+          message: `Failed to inspect workspace path before rename: ${formatCauseMessage(cause)}`,
+          cause,
+        });
+      },
+    });
+
+    const destinationStat = yield* Effect.tryPromise({
+      try: async () => {
+        try {
+          return await fsPromises.stat(destination.absolutePath);
+        } catch (cause) {
+          if (hasNodeErrorCode(cause, "ENOENT")) {
+            return null;
+          }
+          throw cause;
+        }
+      },
+      catch: (cause) =>
+        new ProjectRenameEntryError({
+          message: `Failed to validate workspace rename target: ${formatCauseMessage(cause)}`,
+          cause,
+        }),
+    });
+
+    if (destinationStat !== null) {
+      return yield* new ProjectRenameEntryError({
+        message: `Workspace path already exists: ${destination.relativePath}`,
+      });
+    }
+
+    yield* Effect.tryPromise({
+      try: () => fsPromises.mkdir(path.dirname(destination.absolutePath), { recursive: true }),
+      catch: (cause) =>
+        new ProjectRenameEntryError({
+          message: `Failed to create parent directories for rename target: ${formatCauseMessage(cause)}`,
+          cause,
+        }),
+    });
+    yield* Effect.tryPromise({
+      try: () => fsPromises.rename(source.absolutePath, destination.absolutePath),
+      catch: (cause) =>
+        new ProjectRenameEntryError({
+          message: `Failed to rename workspace path: ${formatCauseMessage(cause)}`,
+          cause,
+        }),
+    });
+    yield* workspaceEntries.invalidate(input.cwd);
+
+    return {
+      fromRelativePath: source.relativePath,
+      toRelativePath: destination.relativePath,
+      kind: sourceStat.isDirectory() ? "directory" : "file",
+    };
+  });
+
+  const deleteEntry: WorkspaceFileSystemShape["deleteEntry"] = Effect.fn(
+    "WorkspaceFileSystem.deleteEntry",
+  )(function* (input) {
+    const target = yield* workspacePaths.resolveRelativePathWithinRoot({
+      workspaceRoot: input.cwd,
+      relativePath: input.relativePath,
+    });
+
+    const stat = yield* Effect.tryPromise({
+      try: () => fsPromises.stat(target.absolutePath),
+      catch: (cause) => {
+        if (hasNodeErrorCode(cause, "ENOENT")) {
+          return new ProjectDeleteEntryError({
+            message: `Workspace path not found: ${target.relativePath}`,
+            cause,
+          });
+        }
+        return new ProjectDeleteEntryError({
+          message: `Failed to inspect workspace path before delete: ${formatCauseMessage(cause)}`,
+          cause,
+        });
+      },
+    });
+
+    if (stat.isDirectory() && !input.recursive) {
+      return yield* new ProjectDeleteEntryError({
+        message: `Workspace directory delete requires recursive=true: ${target.relativePath}`,
+      });
+    }
+
+    yield* Effect.tryPromise({
+      try: () =>
+        fsPromises.rm(target.absolutePath, {
+          force: false,
+          recursive: stat.isDirectory(),
+        }),
+      catch: (cause) =>
+        new ProjectDeleteEntryError({
+          message: `Failed to delete workspace path: ${formatCauseMessage(cause)}`,
+          cause,
+        }),
+    });
+    yield* workspaceEntries.invalidate(input.cwd);
+
+    return {
+      relativePath: target.relativePath,
+      kind: stat.isDirectory() ? "directory" : "file",
+    };
+  });
+
+  return {
+    readFile,
+    writeFile,
+    createDirectory,
+    renameEntry,
+    deleteEntry,
+  } satisfies WorkspaceFileSystemShape;
 });
 
 export const WorkspaceFileSystemLive = Layer.effect(WorkspaceFileSystem, makeWorkspaceFileSystem);

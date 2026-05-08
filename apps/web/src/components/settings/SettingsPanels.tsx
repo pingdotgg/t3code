@@ -20,18 +20,21 @@ import {
 import { scopeThreadRef } from "@forma/client-runtime";
 import {
   DEFAULT_CODE_FONT_SIZE_PX,
+  DEFAULT_APP_ICON_ID,
   DEFAULT_MAC_OS_FONT_SMOOTHING,
   DEFAULT_UI_FONT_SIZE_PX,
   DEFAULT_UNIFIED_SETTINGS,
   MAX_INTERFACE_FONT_SIZE_PX,
   MIN_INTERFACE_FONT_SIZE_PX,
   type ThreadCleanupInactiveDays,
+  type AppIconId,
   type CodeFontSizePx,
   type UiFontSizePx,
 } from "@forma/contracts/settings";
 import { createModelSelection, normalizeModelSlug } from "@forma/shared/model";
 import { Equal } from "effect";
 import { APP_VERSION } from "../../branding";
+import { APP_ICON_OPTIONS, resolveAppIconOption } from "../../appIcon";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -519,6 +522,65 @@ function AboutVersionSection() {
   );
 }
 
+function AppIconPreview({ id, src }: { id: AppIconId; src: string }) {
+  const [failed, setFailed] = useState(false);
+  const initials = id
+    .replace("forma-", "")
+    .split("-")
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("")
+    .slice(0, 2);
+
+  return (
+    <span className="relative flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border/70 bg-muted/50 shadow-sm/4">
+      {!failed ? (
+        <img
+          src={src}
+          alt=""
+          className="size-full object-cover"
+          draggable={false}
+          onError={() => setFailed(true)}
+        />
+      ) : (
+        <span className="text-ui-xs font-semibold text-muted-foreground">{initials}</span>
+      )}
+    </span>
+  );
+}
+
+function AppIconPicker({
+  value,
+  onChange,
+}: {
+  value: AppIconId;
+  onChange: (value: AppIconId) => void;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-2 pt-4 pb-5 sm:grid-cols-4">
+      {APP_ICON_OPTIONS.map((option) => {
+        const selected = option.id === value;
+        return (
+          <button
+            key={option.id}
+            type="button"
+            aria-pressed={selected}
+            className={cn(
+              "group flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg border px-2 py-3 text-center transition-colors",
+              selected
+                ? "border-foreground/55 bg-foreground/[0.04] text-foreground"
+                : "border-border/70 bg-background/40 text-muted-foreground hover:border-foreground/25 hover:bg-muted/50 hover:text-foreground",
+            )}
+            onClick={() => onChange(option.id)}
+          >
+            <AppIconPreview id={option.id} src={option.previewSrc} />
+            <span className="text-ui-xs font-medium">{option.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function isTextGenerationModelDirty(settings: typeof DEFAULT_UNIFIED_SETTINGS) {
   return !Equal.equals(
     settings.textGenerationModelSelection ?? null,
@@ -640,6 +702,7 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
           ...(theme.saturation !== DEFAULT_CUSTOM_THEME_SETTINGS.saturation
             ? ["Theme saturation"]
             : []),
+          ...(settings.appIcon !== DEFAULT_APP_ICON_ID ? ["App icon"] : []),
           ...(settings.uiFontScale !== DEFAULT_UI_FONT_SIZE_PX ? ["UI font size"] : []),
           ...(settings.codeFontScale !== DEFAULT_CODE_FONT_SIZE_PX ? ["Code font size"] : []),
           ...(settings.macOsFontSmoothing !== DEFAULT_MAC_OS_FONT_SMOOTHING
@@ -701,6 +764,7 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
     isGitWritingModelDirty,
     scope,
     settings.addProjectBaseDirectory,
+    settings.appIcon,
     settings.codeFontScale,
     settings.confirmThreadArchive,
     settings.confirmThreadDelete,
@@ -736,6 +800,7 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
         setThemeSaturation(DEFAULT_CUSTOM_THEME_SETTINGS.saturation);
         updateSettings({
           uiFontScale: DEFAULT_UI_FONT_SIZE_PX,
+          appIcon: DEFAULT_APP_ICON_ID,
           codeFontScale: DEFAULT_CODE_FONT_SIZE_PX,
           macOsFontSmoothing: DEFAULT_MAC_OS_FONT_SMOOTHING,
           timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
@@ -842,6 +907,29 @@ export function InterfaceSettingsPanel() {
             onSaturationChange={setThemeSaturation}
             resolvedTheme={resolvedTheme}
             theme={theme}
+          />
+        </SettingsRow>
+
+        <SettingsRow
+          title="App icon"
+          description="Choose the app artwork used for browser chrome and the desktop dock or window icon."
+          status={`Selected: ${resolveAppIconOption(settings.appIcon).label}`}
+          resetAction={
+            settings.appIcon !== DEFAULT_APP_ICON_ID ? (
+              <SettingResetButton
+                label="app icon"
+                onClick={() =>
+                  updateSettings({
+                    appIcon: DEFAULT_APP_ICON_ID,
+                  })
+                }
+              />
+            ) : null
+          }
+        >
+          <AppIconPicker
+            value={settings.appIcon}
+            onChange={(appIcon) => updateSettings({ appIcon })}
           />
         </SettingsRow>
       </SettingsSection>

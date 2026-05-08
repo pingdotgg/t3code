@@ -1,4 +1,5 @@
 import { readBrowserClientSettings } from "./clientPersistenceStorage";
+import { applyAppIconPreferenceToDocument } from "./appIcon";
 import { applyInterfaceSettingsToDocument } from "./interfaceAppearance";
 import {
   THEME_MEDIA_QUERY,
@@ -18,5 +19,6 @@ applyThemePreferenceToDocument(readStoredThemeSettings(), {
 
 const clientSettings = readBrowserClientSettings();
 if (clientSettings) {
+  applyAppIconPreferenceToDocument(clientSettings, document);
   applyInterfaceSettingsToDocument(clientSettings, document);
 }

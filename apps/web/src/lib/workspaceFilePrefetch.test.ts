@@ -106,6 +106,9 @@ describe("workspaceFilePrefetch", () => {
     __setEnvironmentApiOverrideForTests(environmentId, {
       projects: {
         listEntries: vi.fn(),
+        createDirectory: vi.fn(),
+        renameEntry: vi.fn(),
+        deleteEntry: vi.fn(),
         readFile,
         searchEntries: vi.fn(),
         writeFile: vi.fn(),

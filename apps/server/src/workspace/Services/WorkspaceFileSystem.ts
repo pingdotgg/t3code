@@ -10,17 +10,26 @@ import { Context } from "effect";
 import type { Effect } from "effect";
 
 import type {
+  ProjectCreateDirectoryInput,
+  ProjectCreateDirectoryResult,
+  ProjectDeleteEntryInput,
+  ProjectDeleteEntryResult,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectRenameEntryInput,
+  ProjectRenameEntryResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "@forma/contracts";
 import {
+  ProjectCreateDirectoryError,
+  ProjectDeleteEntryError,
   ProjectFileBinaryError,
   ProjectFileNotFoundError,
   ProjectFileTooLargeError,
   ProjectFileVersionConflictError,
   ProjectReadFileError,
+  ProjectRenameEntryError,
   ProjectWriteFileError,
 } from "@forma/contracts";
 import { WorkspacePathOutsideRootError } from "./WorkspacePaths.ts";
@@ -56,6 +65,27 @@ export interface WorkspaceFileSystemShape {
   ) => Effect.Effect<
     ProjectWriteFileResult,
     ProjectFileVersionConflictError | ProjectWriteFileError | WorkspacePathOutsideRootError
+  >;
+
+  readonly createDirectory: (
+    input: ProjectCreateDirectoryInput,
+  ) => Effect.Effect<
+    ProjectCreateDirectoryResult,
+    ProjectCreateDirectoryError | WorkspacePathOutsideRootError
+  >;
+
+  readonly renameEntry: (
+    input: ProjectRenameEntryInput,
+  ) => Effect.Effect<
+    ProjectRenameEntryResult,
+    ProjectRenameEntryError | WorkspacePathOutsideRootError
+  >;
+
+  readonly deleteEntry: (
+    input: ProjectDeleteEntryInput,
+  ) => Effect.Effect<
+    ProjectDeleteEntryResult,
+    ProjectDeleteEntryError | WorkspacePathOutsideRootError
   >;
 }
 

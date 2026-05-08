@@ -2368,6 +2368,100 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc projects.createDirectory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "forma-ws-project-create-directory-",
+      });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsCreateDirectory]({
+            cwd: workspaceDir,
+            relativePath: "src/components",
+          }),
+        ),
+      );
+
+      assert.equal(response.relativePath, "src/components");
+      const stat = yield* fs.stat(path.join(workspaceDir, "src", "components"));
+      assert.equal(stat.type, "Directory");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.renameEntry", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "forma-ws-project-rename-entry-",
+      });
+      yield* fs.writeFileString(path.join(workspaceDir, "a.ts"), "export const a = true;\n");
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsRenameEntry]({
+            cwd: workspaceDir,
+            fromRelativePath: "a.ts",
+            toRelativePath: "b.ts",
+          }),
+        ),
+      );
+
+      assert.deepEqual(response, {
+        fromRelativePath: "a.ts",
+        toRelativePath: "b.ts",
+        kind: "file",
+      });
+      const persisted = yield* fs.readFileString(path.join(workspaceDir, "b.ts"));
+      assert.equal(persisted, "export const a = true;\n");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.deleteEntry", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "forma-ws-project-delete-entry-",
+      });
+      yield* fs
+        .makeDirectory(path.join(workspaceDir, "src"), { recursive: true })
+        .pipe(Effect.orDie);
+      yield* fs.writeFileString(path.join(workspaceDir, "src", "a.ts"), "export const a = true;\n");
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsDeleteEntry]({
+            cwd: workspaceDir,
+            relativePath: "src",
+            recursive: true,
+          }),
+        ),
+      );
+
+      assert.deepEqual(response, {
+        relativePath: "src",
+        kind: "directory",
+      });
+      const stat = yield* fs
+        .stat(path.join(workspaceDir, "src"))
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      assert.equal(stat, null);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc projects.readFile", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -2458,6 +2552,92 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assertTrue(result._tag === "Failure");
       assertTrue(result.failure._tag === "ProjectWriteFileError");
+      assert.equal(
+        result.failure.message,
+        "Workspace file path must stay within the project root.",
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.createDirectory errors", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "forma-ws-project-create-directory-error-",
+      });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsCreateDirectory]({
+            cwd: workspaceDir,
+            relativePath: "../escape",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ProjectCreateDirectoryError");
+      assert.equal(
+        result.failure.message,
+        "Workspace file path must stay within the project root.",
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.renameEntry errors", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "forma-ws-project-rename-entry-error-",
+      });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsRenameEntry]({
+            cwd: workspaceDir,
+            fromRelativePath: "../escape",
+            toRelativePath: "ok",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ProjectRenameEntryError");
+      assert.equal(
+        result.failure.message,
+        "Workspace file path must stay within the project root.",
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.deleteEntry errors", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "forma-ws-project-delete-entry-error-",
+      });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsDeleteEntry]({
+            cwd: workspaceDir,
+            relativePath: "../escape",
+            recursive: true,
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ProjectDeleteEntryError");
       assert.equal(
         result.failure.message,
         "Workspace file path must stay within the project root.",

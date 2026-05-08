@@ -16,10 +16,8 @@ import {
   IconChevronDown as ChevronDownIcon,
   IconChevronUp as ChevronUpIcon,
   IconExclamationmarkCircle as CircleAlertIcon,
-  IconCheckmarkCircle as CircleCheckIcon,
   IconDocumentOnDocument as CopyIcon,
   IconInfoCircle as InfoIcon,
-  IconProgressIndicator as LoaderCircleIcon,
   IconExclamationmarkTriangle as TriangleAlertIcon,
   IconXmark as XIcon,
 } from "symbols-react";
@@ -27,9 +25,11 @@ import {
 import { MICRO_FADE_MOTION_CLASS_NAME } from "~/lib/motion";
 import { cn } from "~/lib/utils";
 import { buttonVariants } from "~/components/ui/button";
+import { SidebarCompletedIcon } from "~/components/icons/custom";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { resolveThreadRouteTarget } from "~/threadRoutes";
+import { PixelGridLoader } from "./pixel-grid-loader";
 import {
   buildVisibleToastLayout,
   shouldHideCollapsedToastContent,
@@ -66,10 +66,16 @@ const threadToastVisibleTimeoutRemainingMs = new Map<ToastId, number>();
 const TOAST_ICONS = {
   error: CircleAlertIcon,
   info: InfoIcon,
-  loading: LoaderCircleIcon,
-  success: CircleCheckIcon,
   warning: TriangleAlertIcon,
 } as const;
+const CUSTOM_TOAST_ICON_TYPES = new Set(["loading", "success"]);
+
+function resolveToastIconType(type: string | undefined): string | null {
+  if (!type) return null;
+  if (CUSTOM_TOAST_ICON_TYPES.has(type)) return type;
+  if (type in TOAST_ICONS) return type;
+  return null;
+}
 
 /** Visually shorten long error bodies; clipboard copy still uses the full `description` string. */
 const ERROR_DESCRIPTION_CLAMP_MIN_CHARS = 180;
@@ -231,10 +237,8 @@ function ToastDescriptionAndExpandable({
   );
 }
 
-type ToastIconComponent = (typeof TOAST_ICONS)[keyof typeof TOAST_ICONS];
-
 interface ToastBodyDescriptor {
-  readonly Icon: ToastIconComponent | null | undefined;
+  readonly iconType: string | null;
   readonly stackedActionLayout: boolean;
   readonly actionVariant: NonNullable<ThreadToastData["actionVariant"]>;
   readonly copyErrorText: string | null;
@@ -248,7 +252,7 @@ function deriveToastBodyDescriptor(toast: {
   readonly actionProps?: unknown;
   readonly data?: ThreadToastData | undefined;
 }): ToastBodyDescriptor {
-  const Icon = toast.type ? TOAST_ICONS[toast.type as keyof typeof TOAST_ICONS] : null;
+  const iconType = resolveToastIconType(toast.type);
   const stackedActionLayout =
     toast.actionProps !== undefined && toast.data?.actionLayout === "stacked-end";
   const actionVariant: NonNullable<ThreadToastData["actionVariant"]> =
@@ -260,13 +264,34 @@ function deriveToastBodyDescriptor(toast: {
   const hasTrailingControls = copyErrorText !== null || toast.actionProps !== undefined;
   const inlineContentEndPad = hasTrailingControls ? "pr-6" : "pr-10";
   return {
-    Icon,
+    iconType,
     stackedActionLayout,
     actionVariant,
     copyErrorText,
     hasTrailingControls,
     inlineContentEndPad,
   };
+}
+
+export function ToastStatusIcon({ type }: { readonly type: unknown }) {
+  if (type === "loading") {
+    return (
+      <PixelGridLoader
+        className="in-data-[type=loading]:opacity-80 text-current"
+        variant="sidebar"
+      />
+    );
+  }
+  if (type === "success") {
+    return <SidebarCompletedIcon className="in-data-[type=success]:text-success size-4" />;
+  }
+
+  const Icon = typeof type === "string" ? TOAST_ICONS[type as keyof typeof TOAST_ICONS] : undefined;
+  if (!Icon) return null;
+
+  return (
+    <Icon className="in-data-[type=error]:fill-destructive in-data-[type=info]:fill-info in-data-[type=warning]:fill-warning" />
+  );
 }
 
 interface ToastBodyContentProps extends ToastBodyDescriptor {
@@ -278,7 +303,7 @@ interface ToastBodyContentProps extends ToastBodyDescriptor {
 
 function ToastBodyContent({
   stackedActionLayout,
-  Icon,
+  iconType,
   copyErrorText,
   actionProps,
   actionVariant,
@@ -290,12 +315,12 @@ function ToastBodyContent({
   return (
     <>
       <div className={cn("flex min-w-0 gap-2", !stackedActionLayout && "flex-1")}>
-        {Icon && (
+        {iconType && (
           <div
-            className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
+            className="inline-flex h-lh w-4 shrink-0 items-center justify-center text-current [&_svg]:pointer-events-none [&_svg]:shrink-0"
             data-slot="toast-icon"
           >
-            <Icon className="in-data-[type=loading]:animate-spin in-data-[type=error]:fill-destructive in-data-[type=info]:fill-info in-data-[type=success]:fill-success in-data-[type=warning]:fill-warning in-data-[type=loading]:opacity-80" />
+            <ToastStatusIcon type={iconType} />
           </div>
         )}
         <div

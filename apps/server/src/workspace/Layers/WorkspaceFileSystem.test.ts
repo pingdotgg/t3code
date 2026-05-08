@@ -298,4 +298,212 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
       }),
     );
   });
+
+  describe("directory and entry mutations", () => {
+    it.effect("creates directories without scanning the workspace", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+
+        const result = yield* workspaceFileSystem.createDirectory({
+          cwd,
+          relativePath: "src/components",
+        });
+
+        expect(result).toEqual({ relativePath: "src/components" });
+        const stat = yield* fileSystem.stat(path.join(cwd, "src", "components")).pipe(Effect.orDie);
+        expect(stat.type).toBe("Directory");
+      }),
+    );
+
+    it.effect("invalidates workspace entry search cache after directory create", () =>
+      Effect.gen(function* () {
+        const workspaceEntries = yield* WorkspaceEntries;
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+
+        const beforeCreate = yield* workspaceEntries.search({
+          cwd,
+          query: "components",
+          limit: 10,
+        });
+        expect(beforeCreate).toEqual({
+          entries: [],
+          truncated: false,
+        });
+
+        yield* workspaceFileSystem.createDirectory({
+          cwd,
+          relativePath: "src/components",
+        });
+
+        const afterCreate = yield* workspaceEntries.search({
+          cwd,
+          query: "components",
+          limit: 10,
+        });
+        expect(afterCreate.entries).toEqual(
+          expect.arrayContaining([expect.objectContaining({ path: "src/components" })]),
+        );
+      }),
+    );
+
+    it.effect("renames files", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/a.ts", "export const a = true;\n");
+
+        const result = yield* workspaceFileSystem.renameEntry({
+          cwd,
+          fromRelativePath: "src/a.ts",
+          toRelativePath: "src/b.ts",
+        });
+
+        expect(result).toEqual({
+          fromRelativePath: "src/a.ts",
+          toRelativePath: "src/b.ts",
+          kind: "file",
+        });
+        const moved = yield* fileSystem
+          .readFileString(path.join(cwd, "src", "b.ts"))
+          .pipe(Effect.orDie);
+        expect(moved).toBe("export const a = true;\n");
+      }),
+    );
+
+    it.effect("renames directories", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/old/index.ts", "export {};\n");
+
+        const result = yield* workspaceFileSystem.renameEntry({
+          cwd,
+          fromRelativePath: "src/old",
+          toRelativePath: "src/new",
+        });
+
+        expect(result.kind).toBe("directory");
+        const moved = yield* fileSystem
+          .readFileString(path.join(cwd, "src", "new", "index.ts"))
+          .pipe(Effect.orDie);
+        expect(moved).toBe("export {};\n");
+      }),
+    );
+
+    it.effect("rejects rename destination conflicts", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/a.ts", "export const a = true;\n");
+        yield* writeTextFile(cwd, "src/b.ts", "export const b = true;\n");
+
+        const error = yield* workspaceFileSystem
+          .renameEntry({
+            cwd,
+            fromRelativePath: "src/a.ts",
+            toRelativePath: "src/b.ts",
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("ProjectRenameEntryError");
+      }),
+    );
+
+    it.effect("deletes files", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/a.ts", "export const a = true;\n");
+
+        const result = yield* workspaceFileSystem.deleteEntry({
+          cwd,
+          relativePath: "src/a.ts",
+          recursive: false,
+        });
+
+        expect(result).toEqual({
+          relativePath: "src/a.ts",
+          kind: "file",
+        });
+        const stat = yield* fileSystem
+          .stat(path.join(cwd, "src", "a.ts"))
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        expect(stat).toBeNull();
+      }),
+    );
+
+    it.effect("deletes directories recursively", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/components/button.tsx", "export const Button = true;\n");
+
+        const result = yield* workspaceFileSystem.deleteEntry({
+          cwd,
+          relativePath: "src/components",
+          recursive: true,
+        });
+
+        expect(result).toEqual({
+          relativePath: "src/components",
+          kind: "directory",
+        });
+        const stat = yield* fileSystem
+          .stat(path.join(cwd, "src", "components"))
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        expect(stat).toBeNull();
+      }),
+    );
+
+    it.effect("rejects mutation paths outside the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+
+        const createError = yield* workspaceFileSystem
+          .createDirectory({
+            cwd,
+            relativePath: "../escape",
+          })
+          .pipe(Effect.flip);
+        expect(createError.message).toContain(
+          "Workspace file path must be relative to the project root",
+        );
+
+        const renameError = yield* workspaceFileSystem
+          .renameEntry({
+            cwd,
+            fromRelativePath: "../escape",
+            toRelativePath: "src/ok",
+          })
+          .pipe(Effect.flip);
+        expect(renameError.message).toContain(
+          "Workspace file path must be relative to the project root",
+        );
+
+        const deleteError = yield* workspaceFileSystem
+          .deleteEntry({
+            cwd,
+            relativePath: "../escape",
+            recursive: true,
+          })
+          .pipe(Effect.flip);
+        expect(deleteError.message).toContain(
+          "Workspace file path must be relative to the project root",
+        );
+      }),
+    );
+  });
 });

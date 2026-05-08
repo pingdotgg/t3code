@@ -55,6 +55,9 @@ const rpcClientMock = {
   },
   projects: {
     listEntries: vi.fn(),
+    createDirectory: vi.fn(),
+    renameEntry: vi.fn(),
+    deleteEntry: vi.fn(),
     readFile: vi.fn(),
     searchEntries: vi.fn(),
     writeFile: vi.fn(),
@@ -479,6 +482,67 @@ describe("wsApi", () => {
     });
   });
 
+  it("forwards workspace directory creation to the project RPC", async () => {
+    rpcClientMock.projects.createDirectory.mockResolvedValue({
+      relativePath: "src/components",
+    });
+    const { createEnvironmentApi } = await import("./environmentApi");
+
+    const api = createEnvironmentApi(rpcClientMock as never);
+    await api.projects.createDirectory({
+      cwd: "/tmp/project",
+      relativePath: "src/components",
+    });
+
+    expect(rpcClientMock.projects.createDirectory).toHaveBeenCalledWith({
+      cwd: "/tmp/project",
+      relativePath: "src/components",
+    });
+  });
+
+  it("forwards workspace entry renames to the project RPC", async () => {
+    rpcClientMock.projects.renameEntry.mockResolvedValue({
+      fromRelativePath: "src/a.ts",
+      toRelativePath: "src/b.ts",
+      kind: "file",
+    });
+    const { createEnvironmentApi } = await import("./environmentApi");
+
+    const api = createEnvironmentApi(rpcClientMock as never);
+    await api.projects.renameEntry({
+      cwd: "/tmp/project",
+      fromRelativePath: "src/a.ts",
+      toRelativePath: "src/b.ts",
+    });
+
+    expect(rpcClientMock.projects.renameEntry).toHaveBeenCalledWith({
+      cwd: "/tmp/project",
+      fromRelativePath: "src/a.ts",
+      toRelativePath: "src/b.ts",
+    });
+  });
+
+  it("forwards workspace entry deletes to the project RPC", async () => {
+    rpcClientMock.projects.deleteEntry.mockResolvedValue({
+      relativePath: "src/a.ts",
+      kind: "file",
+    });
+    const { createEnvironmentApi } = await import("./environmentApi");
+
+    const api = createEnvironmentApi(rpcClientMock as never);
+    await api.projects.deleteEntry({
+      cwd: "/tmp/project",
+      relativePath: "src/a.ts",
+      recursive: false,
+    });
+
+    expect(rpcClientMock.projects.deleteEntry).toHaveBeenCalledWith({
+      cwd: "/tmp/project",
+      relativePath: "src/a.ts",
+      recursive: false,
+    });
+  });
+
   it("forwards workspace entry listing to the project RPC", async () => {
     rpcClientMock.projects.listEntries.mockResolvedValue({
       entries: [{ path: "src", kind: "directory", parentPath: undefined }],
@@ -604,6 +668,7 @@ describe("wsApi", () => {
 
   it("reads and writes persistence through the desktop bridge when available", async () => {
     const clientSettings: ClientSettings = {
+      appIcon: "forma-fluted",
       autoOpenPlanSidebar: false,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
@@ -669,6 +734,7 @@ describe("wsApi", () => {
     const { createLocalApi } = await import("./localApi");
     const api = createLocalApi(rpcClientMock as never);
     const clientSettings: ClientSettings = {
+      appIcon: "forma-foil",
       autoOpenPlanSidebar: false,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
