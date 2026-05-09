@@ -1,8 +1,6 @@
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-// @effect-diagnostics-next-line nodeBuiltinImport:off - pre-ready Electron setup reads persisted settings synchronously before app services are available.
-import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -27,7 +25,6 @@ import * as ElectronTheme from "./electron/ElectronTheme.ts";
 import * as ElectronUpdater from "./electron/ElectronUpdater.ts";
 import * as ElectronWindow from "./electron/ElectronWindow.ts";
 import * as DesktopApp from "./app/DesktopApp.ts";
-import * as DesktopEarlyElectronStartup from "./app/DesktopEarlyElectronStartup.ts";
 import * as DesktopAppIdentity from "./app/DesktopAppIdentity.ts";
 import * as DesktopApplicationMenu from "./window/DesktopApplicationMenu.ts";
 import * as DesktopAssets from "./app/DesktopAssets.ts";
@@ -40,6 +37,7 @@ import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
 import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
 import * as DesktopAppSettings from "./settings/DesktopAppSettings.ts";
+import * as DesktopPreReadyPlatform from "./app/DesktopPreReadyPlatform.ts";
 import * as DesktopShellEnvironment from "./shell/DesktopShellEnvironment.ts";
 import * as DesktopSshEnvironment from "./ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./ssh/DesktopSshPasswordPrompts.ts";
@@ -50,13 +48,7 @@ import * as DesktopWindow from "./window/DesktopWindow.ts";
 
 const configureElectronBeforeReady = Effect.sync(() => {
   if (process.platform === "linux") {
-    const options = DesktopEarlyElectronStartup.resolveEarlyLinuxElectronOptions({
-      env: process.env,
-      exists: existsSync,
-      homeDirectory: homedir(),
-      readFileString: (path) => readFileSync(path, "utf8"),
-      uid: process.getuid?.(),
-    });
+    const options = DesktopPreReadyPlatform.resolveEarlyLinuxElectronOptionsFromProcess();
     if (options.dbusSessionBusAddress !== null) {
       process.env.DBUS_SESSION_BUS_ADDRESS = options.dbusSessionBusAddress;
     }
