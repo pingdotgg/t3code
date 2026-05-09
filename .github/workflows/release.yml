@@ -641,7 +641,7 @@ jobs:
 
           echo "Deploying hosted web app for $channel_name channel."
           deployment_url="$(
-            bunx vercel@53.1.1 deploy apps/web \
+            bunx vercel@53.1.1 deploy \
               --prod \
               --skip-domain \
               --yes \
