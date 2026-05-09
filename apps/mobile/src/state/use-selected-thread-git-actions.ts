@@ -15,9 +15,9 @@ import {
 import { uuidv4 } from "../lib/uuid";
 import { getEnvironmentClient } from "./environment-session-registry";
 import { setPendingConnectionError } from "./use-remote-environment-registry";
-import { gitActionManager, showGitActionResult } from "./use-git-action-state";
+import { vcsActionManager, showGitActionResult } from "./use-vcs-action-state";
 import { vcsRefManager } from "./use-vcs-refs";
-import { gitStatusManager } from "./use-git-status";
+import { vcsStatusManager } from "./use-vcs-status";
 import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
 
@@ -68,9 +68,9 @@ export function useSelectedThreadGitActions() {
           return null;
         }
 
-        const status = await gitActionManager.refreshStatus(
+        const status = await vcsActionManager.refreshStatus(
           { environmentId: selectedThread.environmentId, cwd },
-          { ...client.vcs, runStackedAction: client.git.runStackedAction },
+          { ...client.vcs, runChangeRequest: client.git.runStackedAction },
           options,
         );
         setPendingConnectionError(null);
@@ -190,7 +190,7 @@ export function useSelectedThreadGitActions() {
   const onCheckoutSelectedThreadBranch = useCallback(
     async (branch: string) => {
       await runSelectedThreadGitMutation(async ({ thread, cwd }) => {
-        const result = await gitActionManager.switchRef(
+        const result = await vcsActionManager.switchRef(
           { environmentId: thread.environmentId, cwd },
           { refName: branch },
         );
@@ -210,7 +210,7 @@ export function useSelectedThreadGitActions() {
   const onCreateSelectedThreadBranch = useCallback(
     async (branch: string) => {
       await runSelectedThreadGitMutation(async ({ thread, cwd }) => {
-        const result = await gitActionManager.createRef(
+        const result = await vcsActionManager.createRef(
           { environmentId: thread.environmentId, cwd },
           {
             refName: branch,
@@ -233,7 +233,7 @@ export function useSelectedThreadGitActions() {
   const onCreateSelectedThreadWorktree = useCallback(
     async (nextWorktree: { readonly baseBranch: string; readonly newBranch: string }) => {
       await runSelectedThreadGitMutation(async ({ thread, project }) => {
-        const result = await gitActionManager.createWorktree(
+        const result = await vcsActionManager.createWorktree(
           { environmentId: thread.environmentId, cwd: project.workspaceRoot },
           {
             refName: nextWorktree.baseBranch,
@@ -261,7 +261,7 @@ export function useSelectedThreadGitActions() {
 
   const onPullSelectedThreadBranch = useCallback(async () => {
     await runSelectedThreadGitMutation(async ({ thread, cwd }) => {
-      const result = await gitActionManager.pull({ environmentId: thread.environmentId, cwd });
+      const result = await vcsActionManager.pull({ environmentId: thread.environmentId, cwd });
       await refreshSelectedThreadGitStatus({ quiet: true, cwd });
       if (result) {
         showGitActionResult({
@@ -278,7 +278,7 @@ export function useSelectedThreadGitActions() {
   const onRunSelectedThreadGitAction = useCallback(
     async (input: GitActionRequestInput): Promise<GitRunStackedActionResult | null> => {
       return await runSelectedThreadGitMutation(async ({ thread, cwd }) => {
-        const result = await gitActionManager.runStackedAction(
+        const result = await vcsActionManager.runChangeRequest(
           { environmentId: thread.environmentId, cwd },
           {
             actionId: uuidv4(),
@@ -288,7 +288,7 @@ export function useSelectedThreadGitActions() {
             ...(input.filePaths?.length ? { filePaths: [...input.filePaths] } : {}),
           },
           {
-            gitStatus: gitStatusManager.getSnapshot({
+            gitStatus: vcsStatusManager.getSnapshot({
               environmentId: thread.environmentId,
               cwd,
             }).data,

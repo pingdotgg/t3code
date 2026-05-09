@@ -1,36 +1,37 @@
 import type {
   GitActionProgressEvent,
-  GitCreateBranchInput,
-  GitCreateBranchResult,
-  GitCreateWorktreeInput,
-  GitCreateWorktreeResult,
-  GitCheckoutInput,
-  GitCheckoutResult,
-  GitPullInput,
-  GitPullResult,
   GitRunStackedActionInput,
   GitRunStackedActionResult,
   GitStackedAction,
-  GitStatusResult,
   EnvironmentId,
+  VcsCreateRefInput,
+  VcsCreateRefResult,
+  VcsCreateWorktreeInput,
+  VcsCreateWorktreeResult,
+  VcsPullInput,
+  VcsPullResult,
+  VcsStatusResult,
+  VcsSwitchRefInput,
+  VcsSwitchRefResult,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { Atom, type AtomRegistry } from "effect/unstable/reactivity";
 
 import { buildGitActionProgressStages } from "./gitActions.ts";
 import type { WsRpcClient } from "./wsRpcClient.ts";
 
-export type GitActionOperation =
+export type VcsActionOperation =
   | "refresh_status"
-  | "run_stacked_action"
+  | "run_change_request"
   | "pull"
-  | "checkout"
-  | "create_branch"
+  | "switch_ref"
+  | "create_ref"
   | "create_worktree"
   | "init";
 
-export interface GitActionState {
+export interface VcsActionState {
   readonly isRunning: boolean;
-  readonly operation: GitActionOperation | null;
+  readonly operation: VcsActionOperation | null;
   readonly actionId: string | null;
   readonly action: GitStackedAction | null;
   readonly currentLabel: string | null;
@@ -42,23 +43,19 @@ export interface GitActionState {
   readonly error: string | null;
 }
 
-export interface GitActionTarget {
+export interface VcsActionTarget {
   readonly environmentId: EnvironmentId | null;
   readonly cwd: string | null;
 }
 
-export type GitActionClient = Pick<
-  WsRpcClient["git"],
-  | "refreshStatus"
-  | "runStackedAction"
-  | "pull"
-  | "checkout"
-  | "createBranch"
-  | "createWorktree"
-  | "init"
->;
+export type VcsActionClient = Pick<
+  WsRpcClient["vcs"],
+  "refreshStatus" | "pull" | "switchRef" | "createRef" | "createWorktree" | "init"
+> & {
+  readonly runChangeRequest: WsRpcClient["git"]["runStackedAction"];
+};
 
-export const EMPTY_GIT_ACTION_STATE = Object.freeze<GitActionState>({
+export const EMPTY_VCS_ACTION_STATE = Object.freeze<VcsActionState>({
   isRunning: false,
   operation: null,
   actionId: null,
@@ -72,33 +69,35 @@ export const EMPTY_GIT_ACTION_STATE = Object.freeze<GitActionState>({
   error: null,
 });
 
-const knownGitActionKeys = new Set<string>();
+const knownVcsActionKeys = new Set<string>();
+let nextGeneratedActionId = 0;
+const nowMs = () => DateTime.toEpochMillis(DateTime.nowUnsafe());
 
-export const gitActionStateAtom = Atom.family((key: string) => {
-  knownGitActionKeys.add(key);
-  return Atom.make(EMPTY_GIT_ACTION_STATE).pipe(
+export const vcsActionStateAtom = Atom.family((key: string) => {
+  knownVcsActionKeys.add(key);
+  return Atom.make(EMPTY_VCS_ACTION_STATE).pipe(
     Atom.keepAlive,
-    Atom.withLabel(`git-action:${key}`),
+    Atom.withLabel(`vcs-action:${key}`),
   );
 });
 
-export const EMPTY_GIT_ACTION_ATOM = Atom.make(EMPTY_GIT_ACTION_STATE).pipe(
+export const EMPTY_VCS_ACTION_ATOM = Atom.make(EMPTY_VCS_ACTION_STATE).pipe(
   Atom.keepAlive,
-  Atom.withLabel("git-action:null"),
+  Atom.withLabel("vcs-action:null"),
 );
 
-export function getGitActionTargetKey(target: GitActionTarget): string | null {
+export function getVcsActionTargetKey(target: VcsActionTarget): string | null {
   if (target.environmentId === null || target.cwd === null) {
     return null;
   }
   return `${target.environmentId}:${target.cwd}`;
 }
 
-export function applyGitActionProgressEvent(
-  current: GitActionState,
+export function applyVcsActionProgressEvent(
+  current: VcsActionState,
   event: GitActionProgressEvent,
-): GitActionState {
-  const now = Date.now();
+): VcsActionState {
+  const now = nowMs();
 
   switch (event.kind) {
     case "action_started":
@@ -107,7 +106,7 @@ export function applyGitActionProgressEvent(
         isRunning: true,
         actionId: event.actionId,
         action: event.action,
-        operation: "run_stacked_action",
+        operation: "run_change_request",
         phaseStartedAtMs: now,
         hookStartedAtMs: null,
         hookName: null,
@@ -120,7 +119,7 @@ export function applyGitActionProgressEvent(
         isRunning: true,
         actionId: event.actionId,
         action: event.action,
-        operation: "run_stacked_action",
+        operation: "run_change_request",
         currentLabel: event.label,
         currentPhaseLabel: event.label,
         phaseStartedAtMs: now,
@@ -135,7 +134,7 @@ export function applyGitActionProgressEvent(
         isRunning: true,
         actionId: event.actionId,
         action: event.action,
-        operation: "run_stacked_action",
+        operation: "run_change_request",
         currentLabel: `Running ${event.hookName}...`,
         hookName: event.hookName,
         hookStartedAtMs: now,
@@ -148,7 +147,7 @@ export function applyGitActionProgressEvent(
         isRunning: true,
         actionId: event.actionId,
         action: event.action,
-        operation: "run_stacked_action",
+        operation: "run_change_request",
         lastOutputLine: event.text,
         error: null,
       };
@@ -158,7 +157,7 @@ export function applyGitActionProgressEvent(
         isRunning: true,
         actionId: event.actionId,
         action: event.action,
-        operation: "run_stacked_action",
+        operation: "run_change_request",
         currentLabel: current.currentPhaseLabel,
         hookName: null,
         hookStartedAtMs: null,
@@ -171,35 +170,36 @@ export function applyGitActionProgressEvent(
         isRunning: false,
         actionId: event.actionId,
         action: event.action,
-        operation: "run_stacked_action",
+        operation: "run_change_request",
         error: null,
       };
     case "action_failed":
       return {
-        ...EMPTY_GIT_ACTION_STATE,
+        ...EMPTY_VCS_ACTION_STATE,
         actionId: event.actionId,
         action: event.action,
-        operation: "run_stacked_action",
+        operation: "run_change_request",
         error: event.message,
       };
   }
 }
 
-export interface GitActionManagerConfig {
+export interface VcsActionManagerConfig {
   readonly getRegistry: () => AtomRegistry.AtomRegistry;
-  readonly getClient: (environmentId: EnvironmentId) => GitActionClient | null;
+  readonly getClient: (environmentId: EnvironmentId) => VcsActionClient | null;
   readonly getActionId?: () => string;
+  readonly onInvalidate?: (target: VcsActionTarget) => void | Promise<void>;
 }
 
-export function createGitActionManager(config: GitActionManagerConfig) {
-  function setState(targetKey: string, nextState: GitActionState): void {
-    config.getRegistry().set(gitActionStateAtom(targetKey), nextState);
+export function createVcsActionManager(config: VcsActionManagerConfig) {
+  function setState(targetKey: string, nextState: VcsActionState): void {
+    config.getRegistry().set(vcsActionStateAtom(targetKey), nextState);
   }
 
   function startOperation(
     targetKey: string,
     input: {
-      readonly operation: GitActionOperation;
+      readonly operation: VcsActionOperation;
       readonly actionId?: string;
       readonly action?: GitStackedAction;
       readonly label: string;
@@ -214,46 +214,47 @@ export function createGitActionManager(config: GitActionManagerConfig) {
       currentPhaseLabel: input.label,
       hookName: null,
       lastOutputLine: null,
-      phaseStartedAtMs: Date.now(),
+      phaseStartedAtMs: nowMs(),
       hookStartedAtMs: null,
       error: null,
     });
   }
 
   function finishOperation(targetKey: string): void {
-    setState(targetKey, EMPTY_GIT_ACTION_STATE);
+    setState(targetKey, EMPTY_VCS_ACTION_STATE);
   }
 
   function failOperation(
     targetKey: string,
     error: unknown,
     input: {
-      readonly operation: GitActionOperation;
+      readonly operation: VcsActionOperation;
       readonly actionId?: string;
       readonly action?: GitStackedAction;
     },
   ): void {
     setState(targetKey, {
-      ...EMPTY_GIT_ACTION_STATE,
+      ...EMPTY_VCS_ACTION_STATE,
       operation: input.operation,
       actionId: input.actionId ?? null,
       action: input.action ?? null,
-      error: error instanceof Error ? error.message : "Git action failed.",
+      error: error instanceof Error ? error.message : "Source control action failed.",
     });
   }
 
   async function runOperation<TResult>(
-    target: GitActionTarget,
+    target: VcsActionTarget,
     input: {
-      readonly operation: GitActionOperation;
+      readonly operation: VcsActionOperation;
       readonly label: string;
       readonly actionId?: string;
       readonly action?: GitStackedAction;
-      readonly client?: GitActionClient | undefined;
-      readonly execute: (client: GitActionClient) => Promise<TResult>;
+      readonly client?: VcsActionClient | undefined;
+      readonly invalidateOnSuccess?: boolean;
+      readonly execute: (client: VcsActionClient) => Promise<TResult>;
     },
   ): Promise<TResult | null> {
-    const targetKey = getGitActionTargetKey(target);
+    const targetKey = getVcsActionTargetKey(target);
     if (targetKey === null || target.environmentId === null || target.cwd === null) {
       return null;
     }
@@ -267,6 +268,9 @@ export function createGitActionManager(config: GitActionManagerConfig) {
     try {
       const result = await input.execute(resolved);
       finishOperation(targetKey);
+      if (input.invalidateOnSuccess ?? true) {
+        await config.onInvalidate?.(target);
+      }
       return result;
     } catch (error) {
       failOperation(targetKey, error, input);
@@ -274,20 +278,20 @@ export function createGitActionManager(config: GitActionManagerConfig) {
     }
   }
 
-  function getSnapshot(target: GitActionTarget): GitActionState {
-    const targetKey = getGitActionTargetKey(target);
+  function getSnapshot(target: VcsActionTarget): VcsActionState {
+    const targetKey = getVcsActionTargetKey(target);
     if (targetKey === null) {
-      return EMPTY_GIT_ACTION_STATE;
+      return EMPTY_VCS_ACTION_STATE;
     }
 
-    return config.getRegistry().get(gitActionStateAtom(targetKey));
+    return config.getRegistry().get(vcsActionStateAtom(targetKey));
   }
 
   async function refreshStatus(
-    target: GitActionTarget,
-    client?: GitActionClient,
+    target: VcsActionTarget,
+    client?: VcsActionClient,
     options?: { readonly quiet?: boolean },
-  ): Promise<Awaited<ReturnType<GitActionClient["refreshStatus"]>> | null> {
+  ): Promise<Awaited<ReturnType<VcsActionClient["refreshStatus"]>> | null> {
     if (options?.quiet) {
       if (target.environmentId === null || target.cwd === null) {
         return null;
@@ -298,59 +302,60 @@ export function createGitActionManager(config: GitActionManagerConfig) {
 
     return runOperation(target, {
       operation: "refresh_status",
-      label: "Refreshing git status",
+      label: "Refreshing source control status",
       client,
+      invalidateOnSuccess: false,
       execute: (resolved) => resolved.refreshStatus({ cwd: target.cwd! }),
     });
   }
 
   async function pull(
-    target: GitActionTarget,
-    client?: GitActionClient,
+    target: VcsActionTarget,
+    client?: VcsActionClient,
     options?: { readonly label?: string },
-  ): Promise<GitPullResult | null> {
+  ): Promise<VcsPullResult | null> {
     return runOperation(target, {
       operation: "pull",
       label: options?.label ?? "Pulling latest changes",
       client,
-      execute: (resolved) => resolved.pull({ cwd: target.cwd! } satisfies GitPullInput),
+      execute: (resolved) => resolved.pull({ cwd: target.cwd! } satisfies VcsPullInput),
     });
   }
 
-  async function checkout(
-    target: GitActionTarget,
-    input: Omit<GitCheckoutInput, "cwd">,
-    client?: GitActionClient,
+  async function switchRef(
+    target: VcsActionTarget,
+    input: Omit<VcsSwitchRefInput, "cwd">,
+    client?: VcsActionClient,
     options?: { readonly label?: string },
-  ): Promise<GitCheckoutResult | null> {
+  ): Promise<VcsSwitchRefResult | null> {
     return runOperation(target, {
-      operation: "checkout",
-      label: options?.label ?? "Checking out branch",
+      operation: "switch_ref",
+      label: options?.label ?? "Switching branch",
       client,
-      execute: (resolved) => resolved.checkout({ cwd: target.cwd!, ...input }),
+      execute: (resolved) => resolved.switchRef({ cwd: target.cwd!, ...input }),
     });
   }
 
-  async function createBranch(
-    target: GitActionTarget,
-    input: Omit<GitCreateBranchInput, "cwd">,
-    client?: GitActionClient,
+  async function createRef(
+    target: VcsActionTarget,
+    input: Omit<VcsCreateRefInput, "cwd">,
+    client?: VcsActionClient,
     options?: { readonly label?: string },
-  ): Promise<GitCreateBranchResult | null> {
+  ): Promise<VcsCreateRefResult | null> {
     return runOperation(target, {
-      operation: "create_branch",
+      operation: "create_ref",
       label: options?.label ?? "Creating branch",
       client,
-      execute: (resolved) => resolved.createBranch({ cwd: target.cwd!, ...input }),
+      execute: (resolved) => resolved.createRef({ cwd: target.cwd!, ...input }),
     });
   }
 
   async function createWorktree(
-    target: GitActionTarget,
-    input: Omit<GitCreateWorktreeInput, "cwd">,
-    client?: GitActionClient,
+    target: VcsActionTarget,
+    input: Omit<VcsCreateWorktreeInput, "cwd">,
+    client?: VcsActionClient,
     options?: { readonly label?: string },
-  ): Promise<GitCreateWorktreeResult | null> {
+  ): Promise<VcsCreateWorktreeResult | null> {
     return runOperation(target, {
       operation: "create_worktree",
       label: options?.label ?? "Creating worktree",
@@ -360,35 +365,35 @@ export function createGitActionManager(config: GitActionManagerConfig) {
   }
 
   async function init(
-    target: GitActionTarget,
-    client?: GitActionClient,
+    target: VcsActionTarget,
+    client?: VcsActionClient,
     options?: { readonly label?: string },
-  ): Promise<Awaited<ReturnType<GitActionClient["init"]>> | null> {
+  ): Promise<Awaited<ReturnType<VcsActionClient["init"]>> | null> {
     return runOperation(target, {
       operation: "init",
-      label: options?.label ?? "Initializing git repository",
+      label: options?.label ?? "Initializing repository",
       client,
       execute: (resolved) => resolved.init({ cwd: target.cwd! }),
     });
   }
 
-  async function runStackedAction(
-    target: GitActionTarget,
+  async function runChangeRequest(
+    target: VcsActionTarget,
     input: Omit<GitRunStackedActionInput, "cwd" | "actionId"> & { readonly actionId?: string },
     options?: {
-      readonly client?: GitActionClient;
-      readonly gitStatus?: GitStatusResult | null;
+      readonly client?: VcsActionClient;
+      readonly gitStatus?: VcsStatusResult | null;
       readonly onProgress?: (event: GitActionProgressEvent) => void;
     },
   ): Promise<GitRunStackedActionResult | null> {
     const actionId =
       input.actionId ??
       config.getActionId?.() ??
-      `git-action-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    const targetKey = getGitActionTargetKey(target);
+      `vcs-action-${nowMs()}-${++nextGeneratedActionId}`;
+    const targetKey = getVcsActionTargetKey(target);
 
     return runOperation(target, {
-      operation: "run_stacked_action",
+      operation: "run_change_request",
       label:
         buildGitActionProgressStages({
           action: input.action,
@@ -399,12 +404,12 @@ export function createGitActionManager(config: GitActionManagerConfig) {
             input.action === "create_pr" &&
             (!(options?.gitStatus?.hasUpstream ?? false) ||
               (options?.gitStatus?.aheadCount ?? 0) > 0),
-        })[0] ?? "Running git action",
+        })[0] ?? "Running source control action",
       actionId,
       action: input.action,
       client: options?.client,
       execute: async (resolved) => {
-        const result = await resolved.runStackedAction(
+        const result = await resolved.runChangeRequest(
           {
             cwd: target.cwd!,
             actionId,
@@ -414,7 +419,7 @@ export function createGitActionManager(config: GitActionManagerConfig) {
             onProgress: (event) => {
               if (targetKey !== null) {
                 const current = getSnapshot(target);
-                setState(targetKey, applyGitActionProgressEvent(current, event));
+                setState(targetKey, applyVcsActionProgressEvent(current, event));
               }
               options?.onProgress?.(event);
             },
@@ -425,9 +430,17 @@ export function createGitActionManager(config: GitActionManagerConfig) {
     });
   }
 
-  function reset(): void {
-    for (const key of knownGitActionKeys) {
-      setState(key, EMPTY_GIT_ACTION_STATE);
+  function reset(target?: VcsActionTarget): void {
+    if (target) {
+      const targetKey = getVcsActionTargetKey(target);
+      if (targetKey !== null) {
+        setState(targetKey, EMPTY_VCS_ACTION_STATE);
+      }
+      return;
+    }
+
+    for (const key of knownVcsActionKeys) {
+      setState(key, EMPTY_VCS_ACTION_STATE);
     }
   }
 
@@ -435,11 +448,11 @@ export function createGitActionManager(config: GitActionManagerConfig) {
     getSnapshot,
     refreshStatus,
     pull,
-    checkout,
-    createBranch,
+    switchRef,
+    createRef,
     createWorktree,
     init,
-    runStackedAction,
+    runChangeRequest,
     reset,
   };
 }

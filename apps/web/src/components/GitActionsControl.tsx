@@ -70,7 +70,7 @@ import {
   useVcsInitAction,
   useVcsPullAction,
 } from "~/lib/sourceControlActions";
-import { refreshGitStatus, useGitStatus } from "~/lib/gitStatusState";
+import { refreshVcsStatus, useVcsStatus } from "~/lib/vcsStatusState";
 import { useSourceControlDiscovery } from "~/lib/sourceControlDiscoveryState";
 import { newCommandId, randomUUID } from "~/lib/utils";
 import { resolvePathLinkTarget } from "~/terminal-links";
@@ -478,7 +478,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
           setPublishResult(result);
           setPublishWizardStep(2);
         });
-        void refreshGitStatus({ environmentId: props.environmentId, cwd: props.gitCwd }).catch(
+        void refreshVcsStatus({ environmentId: props.environmentId, cwd: props.gitCwd }).catch(
           () => undefined,
         );
       })
@@ -1057,7 +1057,7 @@ export default function GitActionsControl({
     [persistThreadBranchSync],
   );
 
-  const { data: gitStatus = null, error: gitStatusError } = useGitStatus({
+  const { data: gitStatus = null, error: gitStatusError } = useVcsStatus({
     environmentId: activeEnvironmentId,
     cwd: gitCwd,
   });
@@ -1162,7 +1162,7 @@ export default function GitActionsControl({
       }
       refreshTimeout = window.setTimeout(() => {
         refreshTimeout = null;
-        void refreshGitStatus({ environmentId: activeEnvironmentId, cwd: gitCwd }).catch(
+        void refreshVcsStatus({ environmentId: activeEnvironmentId, cwd: gitCwd }).catch(
           () => undefined,
         );
       }, GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS);
@@ -1657,7 +1657,7 @@ export default function GitActionsControl({
           <Menu
             onOpenChange={(open) => {
               if (open) {
-                void refreshGitStatus({
+                void refreshVcsStatus({
                   environmentId: activeEnvironmentId,
                   cwd: gitCwd,
                 }).catch(() => undefined);

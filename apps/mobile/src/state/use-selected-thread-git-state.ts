@@ -2,7 +2,7 @@ import { useMemo } from "react";
 
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 
-import { useGitActionState } from "./use-git-action-state";
+import { useVcsActionState } from "./use-vcs-action-state";
 import { useVcsRefs } from "./use-vcs-refs";
 import { useSourceControlDiscovery } from "./use-source-control-discovery";
 import { useThreadSelection } from "./use-thread-selection";
@@ -19,7 +19,7 @@ export function useSelectedThreadGitState() {
     }),
     [selectedThread?.environmentId, selectedThreadCwd],
   );
-  const gitActionState = useGitActionState(selectedThreadGitTarget);
+  const gitActionState = useVcsActionState(selectedThreadGitTarget);
   const sourceControlDiscovery = useSourceControlDiscovery(selectedThread?.environmentId ?? null);
 
   const selectedThreadBranchTarget = useMemo(

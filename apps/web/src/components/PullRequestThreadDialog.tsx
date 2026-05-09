@@ -7,7 +7,7 @@ import {
   usePreparePullRequestThreadAction,
   usePullRequestResolution,
 } from "~/lib/sourceControlActions";
-import { useGitStatus } from "~/lib/gitStatusState";
+import { useVcsStatus } from "~/lib/vcsStatusState";
 import { cn } from "~/lib/utils";
 import { parsePullRequestReference } from "~/pullRequestReference";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
@@ -52,7 +52,7 @@ export function PullRequestThreadDialog({
     { wait: 450 },
     (debouncerState) => ({ isPending: debouncerState.isPending }),
   );
-  const { data: gitStatus = null } = useGitStatus({ environmentId, cwd });
+  const { data: gitStatus = null } = useVcsStatus({ environmentId, cwd });
   const sourceControlPresentation = useMemo(
     () => getSourceControlPresentation(gitStatus?.sourceControlProvider),
     [gitStatus?.sourceControlProvider],

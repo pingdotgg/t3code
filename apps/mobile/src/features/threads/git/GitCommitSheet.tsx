@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useThemeColor } from "../../../lib/useThemeColor";
 
 import { AppText as Text, AppTextInput as TextInput } from "../../../components/AppText";
-import { useGitStatus } from "../../../state/use-git-status";
+import { useVcsStatus } from "../../../state/use-vcs-status";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
@@ -27,7 +27,7 @@ export function GitCommitSheet() {
   const inputBg = useThemeColor("--color-input");
   const foregroundColor = useThemeColor("--color-foreground");
 
-  const gitStatus = useGitStatus({
+  const gitStatus = useVcsStatus({
     environmentId: selectedThread?.environmentId ?? null,
     cwd: selectedThreadCwd,
   });

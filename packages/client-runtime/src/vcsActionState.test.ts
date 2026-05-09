@@ -1,21 +1,21 @@
 import {
   EnvironmentId,
   type GitActionProgressEvent,
-  type GitCreateBranchResult,
-  type GitCreateWorktreeResult,
-  type GitCheckoutResult,
-  type GitPullResult,
   type GitRunStackedActionResult,
-  type GitStatusResult,
+  type VcsCreateRefResult,
+  type VcsCreateWorktreeResult,
+  type VcsPullResult,
+  type VcsStatusResult,
+  type VcsSwitchRefResult,
 } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  type GitActionClient,
-  createGitActionManager,
-  EMPTY_GIT_ACTION_STATE,
-} from "./gitActionState.ts";
+  type VcsActionClient,
+  createVcsActionManager,
+  EMPTY_VCS_ACTION_STATE,
+} from "./vcsActionState.ts";
 
 let atomRegistry = AtomRegistry.make();
 
@@ -36,11 +36,11 @@ function createDeferred<T>() {
 
 const TARGET = { environmentId: EnvironmentId.make("env-local"), cwd: "/repo" } as const;
 
-const BASE_STATUS: GitStatusResult = {
+const BASE_STATUS: VcsStatusResult = {
   isRepo: true,
-  hasOriginRemote: true,
-  isDefaultBranch: false,
-  branch: "feature/test",
+  hasPrimaryRemote: true,
+  isDefaultRef: false,
+  refName: "feature/test",
   hasWorkingTreeChanges: true,
   workingTree: { files: [], insertions: 0, deletions: 0 },
   hasUpstream: true,
@@ -120,25 +120,25 @@ function createActionFinishedEvent(): Extract<GitActionProgressEvent, { kind: "a
 }
 
 function createMockClient() {
-  const refreshDeferred = createDeferred<GitStatusResult>();
-  const pullDeferred = createDeferred<GitPullResult>();
-  const checkoutDeferred = createDeferred<GitCheckoutResult>();
-  const createBranchDeferred = createDeferred<GitCreateBranchResult>();
-  const createWorktreeDeferred = createDeferred<GitCreateWorktreeResult>();
+  const refreshDeferred = createDeferred<VcsStatusResult>();
+  const pullDeferred = createDeferred<VcsPullResult>();
+  const switchRefDeferred = createDeferred<VcsSwitchRefResult>();
+  const createRefDeferred = createDeferred<VcsCreateRefResult>();
+  const createWorktreeDeferred = createDeferred<VcsCreateWorktreeResult>();
   const initDeferred = createDeferred<void>();
-  const runStackedActionDeferred = createDeferred<GitRunStackedActionResult>();
-  let runStackedActionProgressListener: ((event: GitActionProgressEvent) => void) | null = null;
+  const runChangeRequestDeferred = createDeferred<GitRunStackedActionResult>();
+  let runChangeRequestProgressListener: ((event: GitActionProgressEvent) => void) | null = null;
 
-  const client: GitActionClient = {
+  const client: VcsActionClient = {
     refreshStatus: vi.fn(() => refreshDeferred.promise),
     pull: vi.fn(() => pullDeferred.promise),
-    checkout: vi.fn(() => checkoutDeferred.promise),
-    createBranch: vi.fn(() => createBranchDeferred.promise),
+    switchRef: vi.fn(() => switchRefDeferred.promise),
+    createRef: vi.fn(() => createRefDeferred.promise),
     createWorktree: vi.fn(() => createWorktreeDeferred.promise),
     init: vi.fn(() => initDeferred.promise),
-    runStackedAction: vi.fn((_, options) => {
-      runStackedActionProgressListener = options?.onProgress ?? null;
-      return runStackedActionDeferred.promise;
+    runChangeRequest: vi.fn((_, options) => {
+      runChangeRequestProgressListener = options?.onProgress ?? null;
+      return runChangeRequestDeferred.promise;
     }),
   };
 
@@ -146,25 +146,25 @@ function createMockClient() {
     client,
     refreshDeferred,
     pullDeferred,
-    checkoutDeferred,
-    createBranchDeferred,
+    switchRefDeferred,
+    createRefDeferred,
     createWorktreeDeferred,
     initDeferred,
-    runStackedActionDeferred,
+    runChangeRequestDeferred,
     emitProgress(event: GitActionProgressEvent) {
-      runStackedActionProgressListener?.(event);
+      runChangeRequestProgressListener?.(event);
     },
   };
 }
 
-describe("createGitActionManager", () => {
+describe("createVcsActionManager", () => {
   afterEach(() => {
     resetAtomRegistry();
   });
 
   it("tracks refreshStatus progress and clears state on success", async () => {
     const mock = createMockClient();
-    const manager = createGitActionManager({
+    const manager = createVcsActionManager({
       getRegistry: () => atomRegistry,
       getClient: () => mock.client,
     });
@@ -174,33 +174,34 @@ describe("createGitActionManager", () => {
     expect(manager.getSnapshot(TARGET)).toMatchObject({
       isRunning: true,
       operation: "refresh_status",
-      currentLabel: "Refreshing git status",
+      currentLabel: "Refreshing source control status",
       error: null,
     });
 
     mock.refreshDeferred.resolve(BASE_STATUS);
 
     await expect(promise).resolves.toEqual(BASE_STATUS);
-    expect(manager.getSnapshot(TARGET)).toEqual(EMPTY_GIT_ACTION_STATE);
+    expect(manager.getSnapshot(TARGET)).toEqual(EMPTY_VCS_ACTION_STATE);
   });
 
-  it("tracks runStackedAction progress events", async () => {
+  it("tracks runChangeRequest progress events", async () => {
     const mock = createMockClient();
-    const manager = createGitActionManager({
+    const onProgress = vi.fn();
+    const manager = createVcsActionManager({
       getRegistry: () => atomRegistry,
       getClient: () => mock.client,
       getActionId: () => "action-123",
     });
 
-    const promise = manager.runStackedAction(
+    const promise = manager.runChangeRequest(
       TARGET,
       { action: "commit_push", commitMessage: "Test commit" },
-      { client: mock.client, gitStatus: BASE_STATUS },
+      { client: mock.client, gitStatus: BASE_STATUS, onProgress },
     );
 
     expect(manager.getSnapshot(TARGET)).toMatchObject({
       isRunning: true,
-      operation: "run_stacked_action",
+      operation: "run_change_request",
       actionId: "action-123",
       currentLabel: "Committing...",
       error: null,
@@ -208,6 +209,7 @@ describe("createGitActionManager", () => {
 
     mock.emitProgress(createPhaseStartedEvent());
     expect(manager.getSnapshot(TARGET).currentLabel).toBe("Committing...");
+    expect(onProgress).toHaveBeenLastCalledWith(createPhaseStartedEvent());
 
     mock.emitProgress(createHookStartedEvent());
     expect(manager.getSnapshot(TARGET)).toMatchObject({
@@ -227,15 +229,15 @@ describe("createGitActionManager", () => {
     });
 
     const result = createActionFinishedEvent().result;
-    mock.runStackedActionDeferred.resolve(result);
+    mock.runChangeRequestDeferred.resolve(result);
 
     await expect(promise).resolves.toEqual(result);
-    expect(manager.getSnapshot(TARGET)).toEqual(EMPTY_GIT_ACTION_STATE);
+    expect(manager.getSnapshot(TARGET)).toEqual(EMPTY_VCS_ACTION_STATE);
   });
 
   it("stores the error when an operation fails", async () => {
     const mock = createMockClient();
-    const manager = createGitActionManager({
+    const manager = createVcsActionManager({
       getRegistry: () => atomRegistry,
       getClient: () => mock.client,
     });
@@ -253,13 +255,38 @@ describe("createGitActionManager", () => {
     });
   });
 
+  it("invalidates after successful mutations but not refreshStatus", async () => {
+    const mock = createMockClient();
+    const onInvalidate = vi.fn();
+    const manager = createVcsActionManager({
+      getRegistry: () => atomRegistry,
+      getClient: () => mock.client,
+      onInvalidate,
+    });
+
+    const refreshPromise = manager.refreshStatus(TARGET, mock.client);
+    mock.refreshDeferred.resolve(BASE_STATUS);
+    await expect(refreshPromise).resolves.toEqual(BASE_STATUS);
+    expect(onInvalidate).not.toHaveBeenCalled();
+
+    const pullPromise = manager.pull(TARGET, mock.client);
+    const pullResult: VcsPullResult = {
+      status: "skipped_up_to_date",
+      refName: "main",
+      upstreamRef: null,
+    };
+    mock.pullDeferred.resolve(pullResult);
+    await expect(pullPromise).resolves.toEqual(pullResult);
+    expect(onInvalidate).toHaveBeenCalledWith(TARGET);
+  });
+
   it("returns null when no client is available", async () => {
-    const manager = createGitActionManager({
+    const manager = createVcsActionManager({
       getRegistry: () => atomRegistry,
       getClient: () => null,
     });
 
-    await expect(manager.checkout(TARGET, { branch: "main" })).resolves.toBeNull();
-    expect(manager.getSnapshot(TARGET)).toEqual(EMPTY_GIT_ACTION_STATE);
+    await expect(manager.switchRef(TARGET, { refName: "main" })).resolves.toBeNull();
+    expect(manager.getSnapshot(TARGET)).toEqual(EMPTY_VCS_ACTION_STATE);
   });
 });

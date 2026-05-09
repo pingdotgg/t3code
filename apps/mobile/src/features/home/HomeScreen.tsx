@@ -1,7 +1,7 @@
 import type {
   EnvironmentScopedProjectShell,
   EnvironmentScopedThreadShell,
-  GitStatusState,
+  VcsStatusState,
 } from "@t3tools/client-runtime";
 import { SymbolView } from "expo-symbols";
 import { useCallback, useMemo, useState } from "react";
@@ -14,7 +14,7 @@ import { ProjectFavicon } from "../../components/ProjectFavicon";
 import type { SavedRemoteConnection } from "../../lib/connection";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { relativeTime } from "../../lib/time";
-import { useGitStatus } from "../../state/use-git-status";
+import { useVcsStatus } from "../../state/use-vcs-status";
 import { threadStatusTone } from "../threads/threadPresentation";
 
 /* ─── Types ──────────────────────────────────────────────────────────── */
@@ -97,7 +97,7 @@ function ProjectGroupLabel(props: {
 
 /* ─── Git summary line ──────────────────────────────────────────────── */
 
-function gitSummaryParts(gitStatus: GitStatusState): ReadonlyArray<string> {
+function gitSummaryParts(gitStatus: VcsStatusState): ReadonlyArray<string> {
   if (!gitStatus.data) return [];
   const { data } = gitStatus;
   const parts: string[] = [];
@@ -127,7 +127,7 @@ function ThreadRow(props: {
   // Subscribe to live git status — only when thread has a branch set.
   // Threads sharing the same cwd share one WS subscription via ref-counting.
   const cwd = branch ? (props.thread.worktreePath ?? props.projectCwd) : null;
-  const gitStatus = useGitStatus({
+  const gitStatus = useVcsStatus({
     environmentId: cwd ? props.thread.environmentId : null,
     cwd,
   });

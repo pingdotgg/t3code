@@ -15,7 +15,7 @@ import {
 
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
-import { useGitStatus } from "../lib/gitStatusState";
+import { useVcsStatus } from "../lib/vcsStatusState";
 import { useVcsRefs, vcsRefManager } from "../lib/vcsRefState";
 import { newCommandId } from "../lib/utils";
 import { cn } from "../lib/utils";
@@ -201,7 +201,7 @@ export function BranchToolbarBranchSelector({
   const [branchQuery, setBranchQuery] = useState("");
   const deferredBranchQuery = useDeferredValue(branchQuery);
 
-  const branchStatusQuery = useGitStatus({ environmentId, cwd: branchCwd });
+  const branchStatusQuery = useVcsStatus({ environmentId, cwd: branchCwd });
   const trimmedBranchQuery = branchQuery.trim();
   const deferredTrimmedBranchQuery = deferredBranchQuery.trim();
   const branchRefTarget = useMemo(

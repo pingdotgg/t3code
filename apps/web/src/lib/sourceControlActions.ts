@@ -1,3 +1,13 @@
+import { useAtomValue } from "@effect/atom-react";
+import {
+  type VcsActionOperation,
+  type VcsActionState,
+  EMPTY_VCS_ACTION_ATOM,
+  EMPTY_VCS_ACTION_STATE,
+  createVcsActionManager,
+  getVcsActionTargetKey,
+  vcsActionStateAtom,
+} from "@t3tools/client-runtime";
 import {
   type EnvironmentId,
   type GitActionProgressEvent,
@@ -20,8 +30,9 @@ import {
 } from "react";
 
 import { ensureEnvironmentApi } from "../environmentApi";
-import { requireEnvironmentConnection } from "../environments/runtime";
-import { refreshGitStatus } from "./gitStatusState";
+import { readEnvironmentConnection } from "../environments/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { getVcsStatusSnapshot, refreshVcsStatus } from "./vcsStatusState";
 import { vcsRefManager } from "./vcsRefState";
 
 type SourceControlActionKind =
@@ -42,6 +53,15 @@ interface SourceControlActionState<TArgs extends ReadonlyArray<unknown>, TResult
   readonly run: (...args: TArgs) => Promise<TResult>;
   readonly resetError: () => void;
 }
+
+export const vcsActionManager = createVcsActionManager({
+  getRegistry: () => appAtomRegistry,
+  getClient: (environmentId) => {
+    const client = readEnvironmentConnection(environmentId)?.client;
+    return client ? { ...client.vcs, runChangeRequest: client.git.runStackedAction } : null;
+  },
+  onInvalidate: (target) => invalidateSourceControlState(target),
+});
 
 const actionListeners = new Set<() => void>();
 const activeActionCounts = new Map<string, number>();
@@ -89,6 +109,28 @@ function isAnyActionRunning(
   return kinds.some((kind) => (activeActionCounts.get(actionKey(kind, scope)) ?? 0) > 0);
 }
 
+function getVcsActionOperationForKind(kind: SourceControlActionKind): VcsActionOperation | null {
+  switch (kind) {
+    case "init":
+      return "init";
+    case "pull":
+      return "pull";
+    case "runStackedAction":
+      return "run_change_request";
+    case "publishRepository":
+    case "preparePullRequestThread":
+      return null;
+  }
+}
+
+function useVcsActionStateForScope(scope: SourceControlActionScope): VcsActionState {
+  const targetKey = getVcsActionTargetKey(scope);
+  const state = useAtomValue(
+    targetKey !== null ? vcsActionStateAtom(targetKey) : EMPTY_VCS_ACTION_ATOM,
+  );
+  return targetKey === null ? EMPTY_VCS_ACTION_STATE : state;
+}
+
 export function invalidateSourceControlState(scope?: {
   readonly environmentId?: EnvironmentId | null;
   readonly cwd?: string | null;
@@ -98,7 +140,7 @@ export function invalidateSourceControlState(scope?: {
   if (cwd !== null) {
     vcsRefManager.invalidateScope({ environmentId, cwd });
     if (environmentId !== null) {
-      return refreshGitStatus({ environmentId, cwd }).then(
+      return refreshVcsStatus({ environmentId, cwd }).then(
         () => undefined,
         () => undefined,
       );
@@ -163,22 +205,71 @@ export function useSourceControlActionRunning(
   kinds: ReadonlyArray<SourceControlActionKind>,
 ): boolean {
   const stableKinds = useMemo(() => [...kinds].sort(), [kinds]);
-  return useSyncExternalStore(
+  const appActionRunning = useSyncExternalStore(
     subscribeActionState,
     () => isAnyActionRunning(stableKinds, scope),
     () => false,
   );
+  const vcsActionState = useVcsActionStateForScope(scope);
+  const vcsActionRunning =
+    vcsActionState.isRunning &&
+    stableKinds.some((kind) => getVcsActionOperationForKind(kind) === vcsActionState.operation);
+
+  return appActionRunning || vcsActionRunning;
+}
+
+function useVcsManagerAction<TArgs extends ReadonlyArray<unknown>, TResult>(input: {
+  readonly operation: VcsActionOperation;
+  readonly scope: SourceControlActionScope;
+  readonly unavailableMessage: string;
+  readonly action: (...args: TArgs) => Promise<TResult | null>;
+}): SourceControlActionState<TArgs, TResult> {
+  const { action, operation, scope, unavailableMessage } = input;
+  const vcsActionState = useVcsActionStateForScope(scope);
+  const [error, setError] = useState<unknown>(null);
+  const [isTransitionPending, startTransition] = useTransition();
+
+  const resetError = useCallback(() => {
+    vcsActionManager.reset(scope);
+    startTransition(() => setError(null));
+  }, [scope, startTransition]);
+
+  const run = useCallback(
+    async (...args: TArgs): Promise<TResult> => {
+      startTransition(() => setError(null));
+      try {
+        const result = await action(...args);
+        if (result === null) {
+          throw new Error(unavailableMessage);
+        }
+        return result;
+      } catch (nextError) {
+        startTransition(() => setError(nextError));
+        throw nextError;
+      }
+    },
+    [action, startTransition, unavailableMessage],
+  );
+
+  return {
+    error: error ?? vcsActionState.error,
+    isPending:
+      isTransitionPending || (vcsActionState.isRunning && vcsActionState.operation === operation),
+    resetError,
+    run,
+  };
 }
 
 export function useVcsInitAction(scope: SourceControlActionScope) {
   const action = useCallback(async () => {
     if (!scope.cwd || !scope.environmentId) throw new Error("Git init is unavailable.");
-    return ensureEnvironmentApi(scope.environmentId).vcs.init({ cwd: scope.cwd });
+    return vcsActionManager.init(scope);
   }, [scope]);
 
-  return useSourceControlAction({
-    kind: "init",
+  return useVcsManagerAction({
+    operation: "init",
     scope,
+    unavailableMessage: "Git init is unavailable.",
     action,
   });
 }
@@ -199,39 +290,44 @@ export function useGitStackedAction(scope: SourceControlActionScope) {
       featureBranch?: boolean;
       filePaths?: string[];
       onProgress?: (event: GitActionProgressEvent) => void;
-    }): Promise<GitRunStackedActionResult> => {
+    }): Promise<GitRunStackedActionResult | null> => {
       if (!scope.cwd || !scope.environmentId) throw new Error("Git action is unavailable.");
-      return requireEnvironmentConnection(scope.environmentId).client.git.runStackedAction(
+      return vcsActionManager.runChangeRequest(
+        scope,
         {
-          action,
           actionId,
-          cwd: scope.cwd,
+          action,
           ...(commitMessage ? { commitMessage } : {}),
           ...(featureBranch ? { featureBranch: true } : {}),
           ...(filePaths && filePaths.length > 0 ? { filePaths } : {}),
         },
-        ...(onProgress ? [{ onProgress }] : []),
+        {
+          gitStatus: getVcsStatusSnapshot(scope).data,
+          ...(onProgress ? { onProgress } : {}),
+        },
       );
     },
     [scope],
   );
 
-  return useSourceControlAction({
-    kind: "runStackedAction",
+  return useVcsManagerAction({
+    operation: "run_change_request",
     scope,
+    unavailableMessage: "Git action is unavailable.",
     action,
   });
 }
 
 export function useVcsPullAction(scope: SourceControlActionScope) {
-  const action = useCallback(async (): Promise<VcsPullResult> => {
+  const action = useCallback(async (): Promise<VcsPullResult | null> => {
     if (!scope.cwd || !scope.environmentId) throw new Error("Git pull is unavailable.");
-    return ensureEnvironmentApi(scope.environmentId).vcs.pull({ cwd: scope.cwd });
+    return vcsActionManager.pull(scope);
   }, [scope]);
 
-  return useSourceControlAction({
-    kind: "pull",
+  return useVcsManagerAction({
+    operation: "pull",
     scope,
+    unavailableMessage: "Git pull is unavailable.",
     action,
   });
 }

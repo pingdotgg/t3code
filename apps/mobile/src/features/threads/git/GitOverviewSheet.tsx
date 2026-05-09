@@ -14,7 +14,7 @@ import { useThemeColor } from "../../../lib/useThemeColor";
 
 import { AppText as Text } from "../../../components/AppText";
 import { buildThreadReviewRoutePath } from "../../../lib/routes";
-import { useGitStatus } from "../../../state/use-git-status";
+import { useVcsStatus } from "../../../state/use-vcs-status";
 import { useThreadSelection } from "../../../state/use-thread-selection";
 import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-git-actions";
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
@@ -36,7 +36,7 @@ export function GitOverviewSheet() {
   const iconColor = useThemeColor("--color-icon");
   const borderColor = useThemeColor("--color-border");
 
-  const gitStatus = useGitStatus({
+  const gitStatus = useVcsStatus({
     environmentId: selectedThread?.environmentId ?? null,
     cwd: selectedThreadCwd,
   });

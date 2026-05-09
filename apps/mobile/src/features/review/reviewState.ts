@@ -11,7 +11,6 @@ const EMPTY_GIT_REVIEW_SECTIONS = Object.freeze<ReadonlyArray<ReviewDiffPreviewS
 const EMPTY_REVIEW_TURN_DIFFS = Object.freeze<Readonly<Record<string, string>>>({});
 const EMPTY_REVIEW_LOADING_TURN_IDS = Object.freeze<Readonly<Record<string, boolean>>>({});
 const EMPTY_REVIEW_ASYNC_STATE = Object.freeze<ReviewAsyncState>({
-  loadingGitDiffs: false,
   loadingTurnIds: EMPTY_REVIEW_LOADING_TURN_IDS,
   error: null,
 });
@@ -109,7 +108,6 @@ export interface ReviewCacheForThread {
 }
 
 export interface ReviewAsyncState {
-  readonly loadingGitDiffs: boolean;
   readonly loadingTurnIds: Readonly<Record<string, boolean>>;
   readonly error: string | null;
 }
@@ -198,13 +196,6 @@ function updateReviewAsyncState(
 ): void {
   const atom = reviewAsyncStateByThreadKeyAtom(threadKey);
   appAtomRegistry.set(atom, update(appAtomRegistry.get(atom)));
-}
-
-export function setReviewGitDiffsLoading(threadKey: string, loadingGitDiffs: boolean): void {
-  updateReviewAsyncState(threadKey, (current) => ({
-    ...current,
-    loadingGitDiffs,
-  }));
 }
 
 export function setReviewTurnDiffLoading(

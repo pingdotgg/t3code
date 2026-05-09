@@ -27,7 +27,7 @@ const {
   activeDraftThreadRef,
   hasServerThreadRef,
   invalidateSourceControlStateSpy,
-  refreshGitStatusSpy,
+  refreshVcsStatusSpy,
   runStackedActionSpy,
   setDraftThreadContextSpy,
   setThreadBranchSpy,
@@ -40,7 +40,7 @@ const {
   activeDraftThreadRef: { current: null as unknown },
   hasServerThreadRef: { current: true },
   invalidateSourceControlStateSpy: vi.fn(() => Promise.resolve()),
-  refreshGitStatusSpy: vi.fn(() => Promise.resolve(null)),
+  refreshVcsStatusSpy: vi.fn(() => Promise.resolve(null)),
   runStackedActionSpy: vi.fn(() => activeRunStackedActionDeferredRef.current.promise),
   setDraftThreadContextSpy: vi.fn(),
   setThreadBranchSpy: vi.fn(),
@@ -93,10 +93,10 @@ vi.mock("~/lib/sourceControlActions", () => ({
   })),
 }));
 
-vi.mock("~/lib/gitStatusState", () => ({
-  refreshGitStatus: refreshGitStatusSpy,
-  resetGitStatusStateForTests: () => undefined,
-  useGitStatus: vi.fn(() => ({
+vi.mock("~/lib/vcsStatusState", () => ({
+  refreshVcsStatus: refreshVcsStatusSpy,
+  resetVcsStatusStateForTests: () => undefined,
+  useVcsStatus: vi.fn(() => ({
     data: {
       isRepo: true,
       sourceControlProvider: {
@@ -362,14 +362,14 @@ describe("GitActionsControl thread-scoped progress toast", () => {
       visibilityState = "visible";
       document.dispatchEvent(new Event("visibilitychange"));
 
-      expect(refreshGitStatusSpy).not.toHaveBeenCalled();
+      expect(refreshVcsStatusSpy).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(249);
-      expect(refreshGitStatusSpy).not.toHaveBeenCalled();
+      expect(refreshVcsStatusSpy).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(1);
-      expect(refreshGitStatusSpy).toHaveBeenCalledTimes(1);
-      expect(refreshGitStatusSpy).toHaveBeenCalledWith({
+      expect(refreshVcsStatusSpy).toHaveBeenCalledTimes(1);
+      expect(refreshVcsStatusSpy).toHaveBeenCalledWith({
         environmentId: ENVIRONMENT_A,
         cwd: GIT_CWD,
       });

@@ -65,11 +65,11 @@ import { BrowserWsRpcHarness, type NormalizedWsRpcRequestBody } from "../../test
 
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-vi.mock("../lib/gitStatusState", () => ({
-  useGitStatus: () => ({ data: null, error: null, cause: null, isPending: false }),
-  useGitStatuses: () => new Map(),
-  refreshGitStatus: () => Promise.resolve(null),
-  resetGitStatusStateForTests: () => undefined,
+vi.mock("../lib/vcsStatusState", () => ({
+  useVcsStatus: () => ({ data: null, error: null, cause: null, isPending: false }),
+  useVcsStatuses: () => new Map(),
+  refreshVcsStatus: () => Promise.resolve(null),
+  resetVcsStatusStateForTests: () => undefined,
 }));
 
 const THREAD_ID = "thread-browser-test" as ThreadId;

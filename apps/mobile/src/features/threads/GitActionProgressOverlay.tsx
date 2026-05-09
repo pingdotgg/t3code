@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/AppText";
 import { useThemeColor } from "../../lib/useThemeColor";
-import type { GitActionProgress } from "../../state/use-git-action-state";
+import type { GitActionProgress } from "../../state/use-vcs-action-state";
 
 export function GitActionProgressOverlay(props: {
   readonly progress: GitActionProgress;

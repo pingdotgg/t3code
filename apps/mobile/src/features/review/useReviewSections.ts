@@ -3,8 +3,10 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { EnvironmentId, OrchestrationCheckpointSummary, ThreadId } from "@t3tools/contracts";
 
 import { getEnvironmentClient } from "../../state/environment-session-registry";
+import { checkpointDiffManager, loadCheckpointDiff } from "../../state/use-checkpoint-diff";
 import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useSelectedThreadDetail } from "../../state/use-thread-detail";
+import { useReviewDiffPreview } from "./reviewDiffPreviewState";
 import {
   buildReviewSectionItems,
   getDefaultReviewSectionId,
@@ -13,7 +15,6 @@ import {
 } from "./reviewModel";
 import {
   setReviewAsyncError,
-  setReviewGitDiffsLoading,
   setReviewGitSections,
   setReviewSelectedSectionId,
   setReviewTurnDiffLoading,
@@ -29,12 +30,22 @@ export function useReviewSections(input: {
   const { environmentId, reviewCache, threadId } = input;
   const selectedThread = useSelectedThreadDetail();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
-  const { error, loadingGitDiffs, loadingTurnIds } = reviewCache.asyncState;
+  const diffPreview = useReviewDiffPreview({ environmentId, cwd: selectedThreadCwd });
+  const refreshDiffPreview = diffPreview.refresh;
+  const { loadingTurnIds } = reviewCache.asyncState;
+  const error = diffPreview.error ?? reviewCache.asyncState.error;
+  const loadingGitDiffs = diffPreview.isPending;
   const turnDiffByIdRef = useRef(reviewCache.turnDiffById);
 
   useEffect(() => {
     turnDiffByIdRef.current = reviewCache.turnDiffById;
   }, [reviewCache.turnDiffById]);
+
+  useEffect(() => {
+    if (reviewCache.threadKey && diffPreview.data) {
+      setReviewGitSections(reviewCache.threadKey, diffPreview.data.sources);
+    }
+  }, [diffPreview.data, reviewCache.threadKey]);
 
   const readyCheckpoints = useMemo(
     () => getReadyReviewCheckpoints(selectedThread?.checkpoints ?? []),
@@ -78,42 +89,6 @@ export function useReviewSections(input: {
     [reviewCache.selectedSectionId, reviewSections],
   );
 
-  const loadGitDiffs = useCallback(async () => {
-    if (!environmentId || !selectedThreadCwd) {
-      return;
-    }
-
-    const client = getEnvironmentClient(environmentId);
-    if (!client) {
-      if (reviewCache.threadKey) {
-        setReviewAsyncError(reviewCache.threadKey, "Remote connection is not ready.");
-      }
-      return;
-    }
-
-    if (reviewCache.threadKey) {
-      setReviewGitDiffsLoading(reviewCache.threadKey, true);
-      setReviewAsyncError(reviewCache.threadKey, null);
-    }
-    try {
-      const result = await client.review.getDiffPreview({ cwd: selectedThreadCwd });
-      if (reviewCache.threadKey) {
-        setReviewGitSections(reviewCache.threadKey, result.sources);
-      }
-    } catch (cause) {
-      if (reviewCache.threadKey) {
-        setReviewAsyncError(
-          reviewCache.threadKey,
-          cause instanceof Error ? cause.message : "Failed to load review diffs.",
-        );
-      }
-    } finally {
-      if (reviewCache.threadKey) {
-        setReviewGitDiffsLoading(reviewCache.threadKey, false);
-      }
-    }
-  }, [environmentId, reviewCache.threadKey, selectedThreadCwd]);
-
   const loadTurnDiff = useCallback(
     async (checkpoint: OrchestrationCheckpointSummary, force = false) => {
       if (!environmentId || !threadId) {
@@ -129,8 +104,23 @@ export function useReviewSections(input: {
         return;
       }
 
-      const client = getEnvironmentClient(environmentId);
-      if (!client) {
+      const target = {
+        environmentId,
+        threadId,
+        fromTurnCount: Math.max(0, checkpoint.checkpointTurnCount - 1),
+        toTurnCount: checkpoint.checkpointTurnCount,
+        ignoreWhitespace: false,
+        cacheScope: sectionId,
+      };
+      const cached = checkpointDiffManager.getSnapshot(target).data;
+      if (!force && cached) {
+        if (reviewCache.threadKey) {
+          setReviewTurnDiff(reviewCache.threadKey, sectionId, cached.diff);
+        }
+        return;
+      }
+
+      if (!getEnvironmentClient(environmentId)) {
         if (reviewCache.threadKey) {
           setReviewAsyncError(reviewCache.threadKey, "Remote connection is not ready.");
         }
@@ -142,13 +132,11 @@ export function useReviewSections(input: {
         setReviewAsyncError(reviewCache.threadKey, null);
       }
       try {
-        const result = await client.orchestration.getTurnDiff({
-          threadId,
-          fromTurnCount: Math.max(0, checkpoint.checkpointTurnCount - 1),
-          toTurnCount: checkpoint.checkpointTurnCount,
-        });
+        const result = await loadCheckpointDiff(target, { force });
         if (reviewCache.threadKey) {
-          setReviewTurnDiff(reviewCache.threadKey, sectionId, result.diff);
+          if (result) {
+            setReviewTurnDiff(reviewCache.threadKey, sectionId, result.diff);
+          }
         }
       } catch (cause) {
         if (reviewCache.threadKey) {
@@ -165,10 +153,6 @@ export function useReviewSections(input: {
     },
     [environmentId, reviewCache.threadKey, threadId],
   );
-
-  useEffect(() => {
-    void loadGitDiffs();
-  }, [loadGitDiffs]);
 
   useEffect(() => {
     if (!hasReviewSections) {
@@ -237,8 +221,8 @@ export function useReviewSections(input: {
       return;
     }
 
-    await loadGitDiffs();
-  }, [checkpointBySectionId, loadGitDiffs, loadTurnDiff, selectedSection]);
+    refreshDiffPreview();
+  }, [checkpointBySectionId, loadTurnDiff, refreshDiffPreview, selectedSection]);
 
   const selectSection = useCallback(
     (sectionId: string) => {

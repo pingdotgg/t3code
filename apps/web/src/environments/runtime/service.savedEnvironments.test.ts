@@ -108,12 +108,6 @@ vi.mock("~/orchestrationEventEffects", () => ({
   })),
 }));
 
-vi.mock("~/lib/providerReactQuery", () => ({
-  providerQueryKeys: {
-    all: ["providers"],
-  },
-}));
-
 vi.mock("~/store", () => ({
   useStore: {
     getState: () => ({

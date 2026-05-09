@@ -1,12 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
-  type GitActionState,
-  type GitActionTarget,
-  EMPTY_GIT_ACTION_ATOM,
-  EMPTY_GIT_ACTION_STATE,
-  createGitActionManager,
-  getGitActionTargetKey,
-  gitActionStateAtom,
+  type VcsActionState,
+  type VcsActionTarget,
+  EMPTY_VCS_ACTION_ATOM,
+  EMPTY_VCS_ACTION_STATE,
+  createVcsActionManager,
+  getVcsActionTargetKey,
+  vcsActionStateAtom,
 } from "@t3tools/client-runtime";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -14,21 +14,21 @@ import { uuidv4 } from "../lib/uuid";
 import { appAtomRegistry } from "./atom-registry";
 import { getEnvironmentClient } from "./environment-session-registry";
 
-export const gitActionManager = createGitActionManager({
+export const vcsActionManager = createVcsActionManager({
   getRegistry: () => appAtomRegistry,
   getClient: (environmentId) => {
     const client = getEnvironmentClient(environmentId);
-    return client ? client.git : null;
+    return client ? { ...client.vcs, runChangeRequest: client.git.runStackedAction } : null;
   },
   getActionId: uuidv4,
 });
 
-export function useGitActionState(target: GitActionTarget): GitActionState {
-  const targetKey = getGitActionTargetKey(target);
+export function useVcsActionState(target: VcsActionTarget): VcsActionState {
+  const targetKey = getVcsActionTargetKey(target);
   const state = useAtomValue(
-    targetKey !== null ? gitActionStateAtom(targetKey) : EMPTY_GIT_ACTION_ATOM,
+    targetKey !== null ? vcsActionStateAtom(targetKey) : EMPTY_VCS_ACTION_ATOM,
   );
-  return targetKey === null ? EMPTY_GIT_ACTION_STATE : state;
+  return targetKey === null ? EMPTY_VCS_ACTION_STATE : state;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,8 +110,8 @@ function formatElapsedSeconds(ms: number | null): string | null {
   return `Running for ${elapsed}s`;
 }
 
-export function useGitActionProgress(target: GitActionTarget): GitActionProgress {
-  const actionState = useGitActionState(target);
+export function useGitActionProgress(target: VcsActionTarget): GitActionProgress {
+  const actionState = useVcsActionState(target);
   const { result } = useGitActionResultNotification();
 
   const [, forceUpdate] = useState(0);

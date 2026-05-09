@@ -33,11 +33,11 @@ import { useStore } from "../store";
 import { createAuthenticatedSessionHandlers } from "../../test/authHttpHandlers";
 import { BrowserWsRpcHarness } from "../../test/wsRpcHarness";
 
-vi.mock("../lib/gitStatusState", () => ({
-  useGitStatus: () => ({ data: null, error: null, cause: null, isPending: false }),
-  useGitStatuses: () => new Map(),
-  refreshGitStatus: () => Promise.resolve(null),
-  resetGitStatusStateForTests: () => undefined,
+vi.mock("../lib/vcsStatusState", () => ({
+  useVcsStatus: () => ({ data: null, error: null, cause: null, isPending: false }),
+  useVcsStatuses: () => new Map(),
+  refreshVcsStatus: () => Promise.resolve(null),
+  resetVcsStatusStateForTests: () => undefined,
 }));
 
 const THREAD_ID = "thread-kb-toast-test" as ThreadId;

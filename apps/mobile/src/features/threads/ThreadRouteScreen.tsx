@@ -7,8 +7,8 @@ import { EnvironmentId, type ProjectScript } from "@t3tools/contracts";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { Pressable, ScrollView, Text as RNText, View, useColorScheme } from "react-native";
 import { useThemeColor } from "../../lib/useThemeColor";
-import { useGitStatus, gitStatusManager } from "../../state/use-git-status";
-import { dismissGitActionResult, useGitActionProgress } from "../../state/use-git-action-state";
+import { useVcsStatus, vcsStatusManager } from "../../state/use-vcs-status";
+import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
 
 import { EmptyState } from "../../components/EmptyState";
 import { LoadingScreen } from "../../components/LoadingScreen";
@@ -94,7 +94,7 @@ export function ThreadRouteScreen() {
   const secondaryFg = isDark ? "#a3a3a3" : "#525252";
 
   /* ─── Git status for native header trigger ───────────────────────── */
-  const gitStatus = useGitStatus({
+  const gitStatus = useVcsStatus({
     environmentId: selectedThread?.environmentId ?? null,
     cwd: selectedThreadCwd,
   });
@@ -124,7 +124,7 @@ export function ThreadRouteScreen() {
 
   const handleRefreshGitStatus = useCallback(async () => {
     if (!selectedThread) return;
-    await gitStatusManager.refresh({
+    await vcsStatusManager.refresh({
       environmentId: selectedThread.environmentId,
       cwd: selectedThreadCwd,
     });

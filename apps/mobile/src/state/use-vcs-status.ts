@@ -1,12 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
-  type GitStatusState,
-  type GitStatusTarget,
-  EMPTY_GIT_STATUS_ATOM,
-  EMPTY_GIT_STATUS_STATE,
-  createGitStatusManager,
-  getGitStatusTargetKey,
-  gitStatusStateAtom,
+  type VcsStatusState,
+  type VcsStatusTarget,
+  EMPTY_VCS_STATUS_ATOM,
+  EMPTY_VCS_STATUS_STATE,
+  createVcsStatusManager,
+  getVcsStatusTargetKey,
+  vcsStatusStateAtom,
 } from "@t3tools/client-runtime";
 import { useEffect } from "react";
 
@@ -17,7 +17,7 @@ import {
 } from "./environment-session-registry";
 
 /**
- * Singleton git status manager for the mobile app.
+ * Singleton VCS status manager for the mobile app.
  *
  * Uses ref-counted `onStatus` subscriptions (one per unique cwd)
  * rather than one-shot `refreshStatus` RPCs. Multiple threads
@@ -28,7 +28,7 @@ import {
  * even when the WS connection isn't ready at mount time, and
  * re-established on reconnection.
  */
-export const gitStatusManager = createGitStatusManager({
+export const vcsStatusManager = createVcsStatusManager({
   getRegistry: () => appAtomRegistry,
   getClient: (environmentId) => {
     const client = getEnvironmentClient(environmentId);
@@ -41,22 +41,22 @@ export const gitStatusManager = createGitStatusManager({
 });
 
 /**
- * Subscribe to live git status for a target (environmentId + cwd).
+ * Subscribe to live VCS status for a target (environmentId + cwd).
  *
- * Mirrors the web's `useGitStatus` hook. Automatically subscribes
+ * Mirrors the web's `useVcsStatus` hook. Automatically subscribes
  * on mount, ref-counts shared cwds, and unsubscribes on unmount.
- * Returns reactive `GitStatusState` via Effect atoms.
+ * Returns reactive `VcsStatusState` via Effect atoms.
  */
-export function useGitStatus(target: GitStatusTarget): GitStatusState {
-  const targetKey = getGitStatusTargetKey(target);
+export function useVcsStatus(target: VcsStatusTarget): VcsStatusState {
+  const targetKey = getVcsStatusTargetKey(target);
 
   useEffect(
-    () => gitStatusManager.watch({ environmentId: target.environmentId, cwd: target.cwd }),
+    () => vcsStatusManager.watch({ environmentId: target.environmentId, cwd: target.cwd }),
     [target.environmentId, target.cwd],
   );
 
   const state = useAtomValue(
-    targetKey !== null ? gitStatusStateAtom(targetKey) : EMPTY_GIT_STATUS_ATOM,
+    targetKey !== null ? vcsStatusStateAtom(targetKey) : EMPTY_VCS_STATUS_ATOM,
   );
-  return targetKey === null ? EMPTY_GIT_STATUS_STATE : state;
+  return targetKey === null ? EMPTY_VCS_STATUS_STATE : state;
 }
