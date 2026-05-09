@@ -180,7 +180,10 @@ const emptyProjectSettings: ProjectSettings = {
   remoteOverride: null,
   automaticGitFetchInterval: null,
   actionEnvironment: {},
+  disabledProviderInstanceIds: [],
 };
+
+const isProjectDetailsError = Schema.is(ProjectDetailsError);
 
 function toAuthAccessStreamEvent(
   change: BootstrapCredentialChange | SessionCredentialChange,
@@ -592,19 +595,62 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           );
         });
 
+      const validateProjectProviderAccess = (
+        command: OrchestrationCommand,
+      ): Effect.Effect<void, OrchestrationDispatchCommandError> =>
+        Effect.gen(function* () {
+          if (command.type !== "thread.turn.start") {
+            return;
+          }
+
+          const bootstrapProjectId = command.bootstrap?.createThread?.projectId;
+          const bootstrapModelSelection = command.bootstrap?.createThread?.modelSelection;
+          const thread = bootstrapProjectId
+            ? Option.none()
+            : yield* projectionSnapshotQuery
+                .getThreadShellById(command.threadId)
+                .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+          const projectId = bootstrapProjectId ?? Option.getOrUndefined(thread)?.projectId;
+          const modelSelection =
+            command.modelSelection ??
+            bootstrapModelSelection ??
+            Option.getOrUndefined(thread)?.modelSelection;
+          if (!projectId || !modelSelection) {
+            return;
+          }
+
+          const settings = yield* serverSettings.getSettings.pipe(
+            Effect.mapError((cause) =>
+              toDispatchCommandError(cause, "Failed to read project provider settings"),
+            ),
+          );
+          const disabledProviderInstanceIds =
+            settings.projectSettings[projectId]?.disabledProviderInstanceIds ?? [];
+          if (!disabledProviderInstanceIds.includes(modelSelection.instanceId)) {
+            return;
+          }
+
+          return yield* new OrchestrationDispatchCommandError({
+            message: `Provider instance "${modelSelection.instanceId}" is disabled for this project.`,
+          });
+        });
+
       const dispatchNormalizedCommand = (
         normalizedCommand: OrchestrationCommand,
       ): Effect.Effect<{ readonly sequence: number }, OrchestrationDispatchCommandError> => {
-        const dispatchEffect =
-          normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
-            ? dispatchBootstrapTurnStart(normalizedCommand)
-            : orchestrationEngine
-                .dispatch(normalizedCommand)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+        const dispatchEffect = validateProjectProviderAccess(normalizedCommand).pipe(
+          Effect.flatMap(() =>
+            normalizedCommand.type === "thread.turn.start" && normalizedCommand.bootstrap
+              ? dispatchBootstrapTurnStart(normalizedCommand)
+              : orchestrationEngine
+                  .dispatch(normalizedCommand)
+                  .pipe(
+                    Effect.mapError((cause) =>
+                      toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
+                    ),
                   ),
-                );
+          ),
+        );
 
         return startup
           .enqueueCommand(dispatchEffect)
@@ -727,13 +773,35 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         readonly projectId: ProjectId;
         readonly patch: ProjectSettingsPatch;
       }) =>
-        serverSettings.updateProjectSettings(input.projectId, input.patch).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ProjectDetailsError({
-                message: "Failed to update project settings.",
-                cause,
-              }),
+        Effect.gen(function* () {
+          if (input.patch.disabledProviderInstanceIds !== undefined) {
+            const providers = yield* providerRegistry.getProviders;
+            const disabledProviderInstanceIds = new Set(input.patch.disabledProviderInstanceIds);
+            const appEnabledProviders = providers.filter(
+              (provider) => provider.enabled && provider.availability !== "unavailable",
+            );
+            const hasProjectEnabledProvider =
+              appEnabledProviders.length === 0 ||
+              appEnabledProviders.some(
+                (provider) => !disabledProviderInstanceIds.has(provider.instanceId),
+              );
+
+            if (!hasProjectEnabledProvider) {
+              return yield* new ProjectDetailsError({
+                message: "At least one provider must stay enabled for this project.",
+              });
+            }
+          }
+
+          return yield* serverSettings.updateProjectSettings(input.projectId, input.patch);
+        }).pipe(
+          Effect.mapError((cause) =>
+            isProjectDetailsError(cause)
+              ? cause
+              : new ProjectDetailsError({
+                  message: "Failed to update project settings.",
+                  cause,
+                }),
           ),
         );
 
@@ -1094,7 +1162,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               };
             }).pipe(
               Effect.mapError((cause) =>
-                Schema.is(ProjectDetailsError)(cause)
+                isProjectDetailsError(cause)
                   ? cause
                   : new ProjectDetailsError({
                       message: "Failed to load project details.",
@@ -1121,7 +1189,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                     }),
               ),
               Effect.mapError((cause) =>
-                Schema.is(ProjectDetailsError)(cause)
+                isProjectDetailsError(cause)
                   ? cause
                   : new ProjectDetailsError({
                       message: "Failed to update project settings.",

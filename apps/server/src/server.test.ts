@@ -540,6 +540,7 @@ const buildAppUnderTest = (options?: {
               remoteOverride: null,
               automaticGitFetchInterval: null,
               actionEnvironment: {},
+              disabledProviderInstanceIds: [],
             }),
           streamChanges: Stream.empty,
           ...options?.layers?.serverSettings,

@@ -218,6 +218,7 @@ function createMockEnvironmentApi(input: {
           remoteOverride: null,
           automaticGitFetchInterval: null,
           actionEnvironment: {},
+          disabledProviderInstanceIds: [],
         },
         detected: {
           gitRoot: "/repo/project",
@@ -234,6 +235,7 @@ function createMockEnvironmentApi(input: {
         remoteOverride: null,
         automaticGitFetchInterval: null,
         actionEnvironment: {},
+        disabledProviderInstanceIds: [],
       })),
       searchEntries: vi.fn(async () => ({
         entries: [],

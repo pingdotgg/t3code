@@ -1141,6 +1141,10 @@ export default function ChatView(props: ChatViewProps) {
     primaryEnvironmentId && activeThread?.environmentId === primaryEnvironmentId
       ? primaryServerConfig
       : (activeEnvRuntimeState?.serverConfig ?? primaryServerConfig);
+  const activeEnvironmentSettings = useMemo(
+    () => (serverConfig ? { ...settings, ...serverConfig.settings } : settings),
+    [serverConfig, settings],
+  );
   const versionMismatch = resolveServerConfigVersionMismatch(serverConfig);
   const versionMismatchDismissKey =
     versionMismatch && activeThread
@@ -3658,7 +3662,7 @@ export default function ChatView(props: ChatViewProps) {
                   activeThreadModelSelection={activeThread?.modelSelection}
                   activeThreadActivities={activeThread?.activities}
                   resolvedTheme={resolvedTheme}
-                  settings={settings}
+                  settings={activeEnvironmentSettings}
                   keybindings={keybindings}
                   terminalOpen={Boolean(terminalState.terminalOpen)}
                   gitCwd={gitCwd}

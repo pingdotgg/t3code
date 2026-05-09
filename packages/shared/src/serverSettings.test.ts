@@ -208,6 +208,7 @@ describe("serverSettings helpers", () => {
             API_BASE_URL: "https://api.example.test",
             DEBUG: "1",
           },
+          disabledProviderInstanceIds: [],
         },
       },
     };
@@ -221,6 +222,7 @@ describe("serverSettings helpers", () => {
             actionEnvironment: {
               API_BASE_URL: "https://api.example.test",
             },
+            disabledProviderInstanceIds: [],
           },
         },
       }).projectSettings[projectId]?.actionEnvironment,
@@ -235,6 +237,7 @@ describe("serverSettings helpers", () => {
             remoteOverride: null,
             automaticGitFetchInterval: null,
             actionEnvironment: {},
+            disabledProviderInstanceIds: [],
           },
         },
       }).projectSettings[projectId]?.actionEnvironment,

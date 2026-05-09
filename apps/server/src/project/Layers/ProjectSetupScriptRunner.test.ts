@@ -119,6 +119,7 @@ describe("ProjectSetupScriptRunner", () => {
                     actionEnvironment: {
                       API_BASE_URL: "https://api.example.test",
                     },
+                    disabledProviderInstanceIds: [],
                   },
                 },
               }),

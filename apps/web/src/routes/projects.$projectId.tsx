@@ -6,7 +6,9 @@ import * as Duration from "effect/Duration";
 import type {
   KeybindingCommand,
   ModelSelection,
+  ProviderInstanceId,
   ProjectActionEnvironment,
+  ProjectDetails,
   ProjectEffectiveRemote,
   ProjectRemoteOverride,
   ProjectScript,
@@ -65,9 +67,14 @@ import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionForInstance,
 } from "../modelSelection";
-import { deriveProviderInstanceEntries, sortProviderInstanceEntries } from "../providerInstances";
+import {
+  deriveProviderInstanceEntries,
+  resolveProjectProviderInstancePolicy,
+  sortProviderInstanceEntries,
+} from "../providerInstances";
 import { ProviderModelPicker } from "../components/chat/ProviderModelPicker";
 import { TraitsPicker } from "../components/chat/TraitsPicker";
+import { ProviderInstanceIcon } from "../components/chat/ProviderInstanceIcon";
 
 const PROVIDER_LABELS: Record<SourceControlProviderKind, string> = {
   github: "GitHub",
@@ -82,6 +89,7 @@ const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL_MS = Duration.toMillis(Duration.secon
 const GIT_FETCH_INTERVAL_STEP_SECONDS = 5;
 
 const EMPTY_ACTION_ENVIRONMENT: ProjectActionEnvironment = {};
+const EMPTY_DISABLED_PROVIDER_INSTANCE_IDS: ProviderInstanceId[] = [];
 const ACTION_ENVIRONMENT_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const ACTION_ENVIRONMENT_RESERVED_PREFIX = "T3CODE_";
 
@@ -104,6 +112,7 @@ interface ProjectSettingsDraft {
   readonly defaultModelSelection?: ModelSelection | null;
   readonly automaticGitFetchInterval?: number | null;
   readonly actionEnvironment?: ProjectActionEnvironment;
+  readonly disabledProviderInstanceIds?: ProviderInstanceId[];
 }
 
 function buildRemoteOverride(draft: RemoteOverrideDraft): ProjectRemoteOverride | null {
@@ -182,22 +191,6 @@ function ProjectRouteView() {
     () => getCustomModelOptionsByInstance(settings, serverProviders),
     [serverProviders, settings],
   );
-  const fallbackModelSelection = useMemo(() => {
-    const entry =
-      providerInstanceEntries.find((candidate) => candidate.enabled && candidate.isAvailable) ??
-      providerInstanceEntries[0] ??
-      null;
-    if (!entry) return DEFAULT_PROJECT_MODEL_SELECTION;
-    const model =
-      resolveAppModelSelectionForInstance(entry.instanceId, settings, serverProviders, null) ??
-      entry.models[0]?.slug ??
-      DEFAULT_MODEL;
-    return {
-      instanceId: entry.instanceId,
-      model,
-    } satisfies ModelSelection;
-  }, [providerInstanceEntries, serverProviders, settings]);
-
   const projectDetails = useQuery(
     projectDetailsQueryOptions({
       environmentId: project?.environmentId ?? null,
@@ -245,6 +238,36 @@ function ProjectRouteView() {
     currentDraft?.actionEnvironment ??
     details?.settings.actionEnvironment ??
     EMPTY_ACTION_ENVIRONMENT;
+  const disabledProviderInstanceIds =
+    currentDraft?.disabledProviderInstanceIds ??
+    details?.settings.disabledProviderInstanceIds ??
+    EMPTY_DISABLED_PROVIDER_INSTANCE_IDS;
+  const projectProviderPolicy = useMemo(
+    () =>
+      resolveProjectProviderInstancePolicy(providerInstanceEntries, {
+        disabledProviderInstanceIds,
+      }),
+    [disabledProviderInstanceIds, providerInstanceEntries],
+  );
+  const globallyEnabledProviderInstanceEntries = projectProviderPolicy.appEnabledEntries;
+  const projectProviderInstanceEntries = projectProviderPolicy.projectEnabledEntries;
+  const fallbackModelSelection = useMemo(() => {
+    const entry =
+      projectProviderInstanceEntries.find(
+        (candidate) => candidate.enabled && candidate.isAvailable,
+      ) ??
+      projectProviderInstanceEntries[0] ??
+      null;
+    if (!entry) return DEFAULT_PROJECT_MODEL_SELECTION;
+    const model =
+      resolveAppModelSelectionForInstance(entry.instanceId, settings, serverProviders, null) ??
+      entry.models[0]?.slug ??
+      DEFAULT_MODEL;
+    return {
+      instanceId: entry.instanceId,
+      model,
+    } satisfies ModelSelection;
+  }, [projectProviderInstanceEntries, serverProviders, settings]);
   const stageDraft = useCallback(
     (patch: Partial<Omit<ProjectSettingsDraft, "projectKey">>) => {
       if (!projectDraftKey) return;
@@ -297,6 +320,7 @@ function ProjectRouteView() {
       remoteOverride?: ProjectRemoteOverride | null;
       automaticGitFetchInterval?: number | null;
       actionEnvironment?: ProjectActionEnvironment;
+      disabledProviderInstanceIds?: ProviderInstanceId[];
     }) => {
       const nextCommit = settingsCommitQueueRef.current
         .catch(() => undefined)
@@ -304,10 +328,13 @@ function ProjectRouteView() {
           if (!project) return;
           const api = ensureEnvironmentApi(project.environmentId);
           try {
-            await api.projects.updateSettings({
+            const nextSettings = await api.projects.updateSettings({
               projectId: project.id,
               patch,
             });
+            queryClient.setQueryData(queryKey, (current: ProjectDetails | undefined) =>
+              current ? { ...current, settings: nextSettings } : current,
+            );
             await invalidateProjectDetails();
           } catch (error) {
             showProjectSettingsError("Failed to update project settings", error);
@@ -316,7 +343,7 @@ function ProjectRouteView() {
       settingsCommitQueueRef.current = nextCommit.catch(() => undefined);
       return nextCommit;
     },
-    [invalidateProjectDetails, project, showProjectSettingsError],
+    [invalidateProjectDetails, project, queryClient, queryKey, showProjectSettingsError],
   );
 
   const persistRemoteOverrideIfValid = useCallback(
@@ -409,6 +436,46 @@ function ProjectRouteView() {
       commitProjectSettings,
       projectDetails.data?.settings.actionEnvironment,
       showProjectSettingsError,
+      stageDraft,
+    ],
+  );
+
+  const commitProviderInstanceAllowed = useCallback(
+    (instanceId: ProviderInstanceId, allowed: boolean) => {
+      const current = disabledProviderInstanceIds;
+      const currentSet = new Set(current);
+      if (!allowed && !currentSet.has(instanceId) && projectProviderInstanceEntries.length <= 1) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "At least one provider is required",
+            description: "Enable another provider before disabling this one.",
+          }),
+        );
+        return;
+      }
+      if (allowed) {
+        currentSet.delete(instanceId);
+      } else {
+        currentSet.add(instanceId);
+      }
+      const knownInstanceIds = new Set(
+        globallyEnabledProviderInstanceEntries.map((entry) => entry.instanceId),
+      );
+      const nextDisabledProviderInstanceIds = globallyEnabledProviderInstanceEntries
+        .map((entry) => entry.instanceId)
+        .filter((id) => currentSet.has(id))
+        .concat(current.filter((id) => !knownInstanceIds.has(id)));
+      stageDraft({ disabledProviderInstanceIds: nextDisabledProviderInstanceIds });
+      void commitProjectSettings({
+        disabledProviderInstanceIds: nextDisabledProviderInstanceIds,
+      });
+    },
+    [
+      commitProjectSettings,
+      disabledProviderInstanceIds,
+      globallyEnabledProviderInstanceEntries,
+      projectProviderInstanceEntries.length,
       stageDraft,
     ],
   );
@@ -572,9 +639,17 @@ function ProjectRouteView() {
   });
 
   const effectiveRemote = projectDetails.data?.effective.remote ?? null;
-  const displayedModelSelection = defaultModelSelection ?? fallbackModelSelection;
+  const defaultModelSelectionAllowed =
+    defaultModelSelection === null ||
+    projectProviderInstanceEntries.some(
+      (entry) => entry.instanceId === defaultModelSelection.instanceId,
+    );
+  const displayedModelSelection =
+    defaultModelSelection && defaultModelSelectionAllowed
+      ? defaultModelSelection
+      : fallbackModelSelection;
   const displayedModelInstanceEntry =
-    providerInstanceEntries.find(
+    projectProviderInstanceEntries.find(
       (entry) => entry.instanceId === displayedModelSelection.instanceId,
     ) ?? null;
   return (
@@ -632,7 +707,7 @@ function ProjectRouteView() {
                   </div>
                 </section>
 
-                <SettingsSection title="Project">
+                <SettingsSection title="General">
                   <ProjectSettingRow
                     title="Name"
                     control={
@@ -655,12 +730,13 @@ function ProjectRouteView() {
                           activeInstanceId={displayedModelSelection.instanceId}
                           model={displayedModelSelection.model}
                           lockedProvider={null}
-                          instanceEntries={providerInstanceEntries}
+                          instanceEntries={projectProviderInstanceEntries}
                           keybindings={keybindings}
                           modelOptionsByInstance={modelOptionsByInstance}
                           terminalOpen={false}
                           triggerVariant="outline"
                           triggerClassName="max-w-md"
+                          disabled={projectProviderInstanceEntries.length === 0}
                           onInstanceModelChange={(instanceId, model) =>
                             commitDefaultModelSelection(createModelSelection(instanceId, model))
                           }
@@ -694,6 +770,58 @@ function ProjectRouteView() {
                     title="Path"
                     control={<ProjectPathLink path={projectDetails.data.workspaceRoot} />}
                   />
+                </SettingsSection>
+
+                <SettingsSection title="Providers">
+                  <div className="grid">
+                    {globallyEnabledProviderInstanceEntries.map((entry) => {
+                      const allowed = !disabledProviderInstanceIds.includes(entry.instanceId);
+                      const isLastAllowedProvider =
+                        allowed && projectProviderInstanceEntries.length <= 1;
+                      const duplicateDriverCount = globallyEnabledProviderInstanceEntries.filter(
+                        (candidate) => candidate.driverKind === entry.driverKind,
+                      ).length;
+                      return (
+                        <div
+                          key={entry.instanceId}
+                          className="flex min-w-0 items-center justify-between gap-3 border-t border-border/60 px-4 py-3.5 first:border-t-0 sm:px-5"
+                        >
+                          <div className="flex min-w-0 items-center gap-2.5">
+                            <ProviderInstanceIcon
+                              driverKind={entry.driverKind}
+                              displayName={entry.displayName}
+                              accentColor={entry.accentColor}
+                              showBadge={Boolean(entry.accentColor) || duplicateDriverCount > 1}
+                              className={duplicateDriverCount > 1 ? "size-5" : "size-4"}
+                              iconClassName="size-4"
+                              badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 text-[7px]"
+                            />
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-medium text-foreground">
+                                {entry.displayName}
+                              </div>
+                              <div className="truncate text-xs text-muted-foreground">
+                                {entry.instanceId}
+                              </div>
+                            </div>
+                          </div>
+                          <Switch
+                            checked={allowed}
+                            disabled={isLastAllowedProvider}
+                            aria-label={`${allowed ? "Disable" : "Enable"} ${entry.displayName} for this project`}
+                            title={
+                              isLastAllowedProvider
+                                ? "At least one provider must stay enabled for this project."
+                                : undefined
+                            }
+                            onCheckedChange={(checked) =>
+                              commitProviderInstanceAllowed(entry.instanceId, Boolean(checked))
+                            }
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
                 </SettingsSection>
 
                 <SettingsSection title="Git info">

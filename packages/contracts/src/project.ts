@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { PositiveInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { RepositoryIdentity } from "./environment.ts";
 import { ModelSelection, ProjectScript } from "./orchestration.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import { SourceControlProviderInfo, SourceControlProviderKind } from "./sourceControl.ts";
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
@@ -92,6 +93,9 @@ export const ProjectSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   actionEnvironment: ProjectActionEnvironment.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  disabledProviderInstanceIds: Schema.Array(ProviderInstanceId).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
 });
 export type ProjectSettings = typeof ProjectSettings.Type;
 
@@ -99,6 +103,7 @@ export const ProjectSettingsPatch = Schema.Struct({
   remoteOverride: Schema.optionalKey(Schema.NullOr(ProjectRemoteOverride)),
   automaticGitFetchInterval: Schema.optionalKey(Schema.NullOr(ProjectAutomaticGitFetchIntervalMs)),
   actionEnvironment: Schema.optionalKey(ProjectActionEnvironment),
+  disabledProviderInstanceIds: Schema.optionalKey(Schema.Array(ProviderInstanceId)),
 });
 export type ProjectSettingsPatch = typeof ProjectSettingsPatch.Type;
 

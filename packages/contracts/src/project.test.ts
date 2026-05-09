@@ -34,6 +34,7 @@ describe("ProjectDetails", () => {
     expect(decoded.scripts).toEqual([]);
     expect(decoded.settings.automaticGitFetchInterval).toBeNull();
     expect(decoded.settings.actionEnvironment).toEqual({});
+    expect(decoded.settings.disabledProviderInstanceIds).toEqual([]);
   });
 
   it("rejects action environment keys reserved for T3Code runtime variables", () => {

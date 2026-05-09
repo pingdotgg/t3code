@@ -60,6 +60,7 @@ const emptyProjectSettings: ProjectSettings = {
   remoteOverride: null,
   automaticGitFetchInterval: null,
   actionEnvironment: {},
+  disabledProviderInstanceIds: [],
 };
 
 function providerEnvironmentSecretName(input: {
