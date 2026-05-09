@@ -19,11 +19,15 @@ const isomorphicLocalStorage: Storage =
         };
       })();
 
-const decode = <T, E>(schema: Schema.Codec<T, E>, value: string) =>
-  Schema.decodeSync(Schema.fromJsonString(schema))(value);
+const decode = <T, E>(schema: Schema.Codec<T, E>, value: string) => {
+  const decodeJson = Schema.decodeSync(Schema.fromJsonString(schema));
+  return decodeJson(value);
+};
 
-const encode = <T, E>(schema: Schema.Codec<T, E>, value: T) =>
-  Schema.encodeSync(Schema.fromJsonString(schema))(value);
+const encode = <T, E>(schema: Schema.Codec<T, E>, value: T) => {
+  const encodeJson = Schema.encodeSync(Schema.fromJsonString(schema));
+  return encodeJson(value);
+};
 
 export const getLocalStorageItem = <T, E>(key: string, schema: Schema.Codec<T, E>): T | null => {
   const item = isomorphicLocalStorage.getItem(key);

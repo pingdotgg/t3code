@@ -1,5 +1,8 @@
 import type { ServerProviderUsageLimits, ServerProviderUsageWindow } from "@t3tools/contracts";
 
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
+
 import type { OpenCodeInventory } from "./opencodeRuntime.ts";
 import { getOpenCodeManagedProviderDescriptor } from "./opencodeRuntime.ts";
 import { clampPercent } from "./providerUsageLimits.ts";
@@ -22,8 +25,8 @@ function readIsoDateTime(value: unknown): string | undefined {
   if (!trimmed) {
     return undefined;
   }
-  const date = new Date(trimmed);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : undefined;
+  const dt = DateTime.make(trimmed);
+  return Option.isSome(dt) ? DateTime.formatIso(dt.value) : undefined;
 }
 
 function toUsageWindow(

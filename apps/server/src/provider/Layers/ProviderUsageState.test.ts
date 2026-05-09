@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { Effect, Layer, PubSub, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Stream from "effect/Stream";
 import { ProviderDriverKind, type ProviderRuntimeEvent, type ThreadId } from "@t3tools/contracts";
 
 import { ProviderUsageState } from "../Services/ProviderUsageState.ts";

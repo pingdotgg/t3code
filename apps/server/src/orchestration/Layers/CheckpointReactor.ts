@@ -8,7 +8,12 @@ import {
   type OrchestrationEvent,
   type ProviderRuntimeEvent,
 } from "@t3tools/contracts";
-import { Cause, Effect, Layer, Option, Stream } from "effect";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { parseTurnDiffFilesFromUnifiedDiff } from "../../checkpointing/Diffs.ts";
@@ -27,6 +32,8 @@ import type { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { WorkspaceEntries } from "../../workspace/Services/WorkspaceEntries.ts";
+
+const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 type ReactorInput =
   | {
@@ -584,7 +591,7 @@ const make = Effect.gen(function* () {
   const handleRevertRequested = Effect.fn("handleRevertRequested")(function* (
     event: Extract<OrchestrationEvent, { type: "thread.checkpoint-revert-requested" }>,
   ) {
-    const now = new Date().toISOString();
+    const now = DateTime.formatIso(yield* DateTime.now);
 
     const thread = yield* resolveThreadDetail(event.payload.threadId);
     if (!thread) {
@@ -717,12 +724,14 @@ const make = Effect.gen(function* () {
     if (event.type === "thread.checkpoint-revert-requested") {
       yield* handleRevertRequested(event).pipe(
         Effect.catch((error) =>
-          appendRevertFailureActivity({
-            threadId: event.payload.threadId,
-            turnCount: event.payload.turnCount,
-            detail: error.message,
-            createdAt: new Date().toISOString(),
-          }),
+          Effect.flatMap(nowIso, (createdAt) =>
+            appendRevertFailureActivity({
+              threadId: event.payload.threadId,
+              turnCount: event.payload.turnCount,
+              detail: error.message,
+              createdAt,
+            }),
+          ),
         ),
       );
       return;
@@ -736,12 +745,14 @@ const make = Effect.gen(function* () {
     if (event.type === "thread.turn-diff-completed") {
       yield* captureCheckpointFromPlaceholder(event).pipe(
         Effect.catch((error) =>
-          appendCaptureFailureActivity({
-            threadId: event.payload.threadId,
-            turnId: event.payload.turnId,
-            detail: error.message,
-            createdAt: new Date().toISOString(),
-          }).pipe(Effect.catch(() => Effect.void)),
+          Effect.flatMap(nowIso, (createdAt) =>
+            appendCaptureFailureActivity({
+              threadId: event.payload.threadId,
+              turnId: event.payload.turnId,
+              detail: error.message,
+              createdAt,
+            }).pipe(Effect.catch(() => Effect.void)),
+          ),
         ),
       );
     }
@@ -760,12 +771,14 @@ const make = Effect.gen(function* () {
       yield* refreshLocalGitStatusFromTurnCompletion(event);
       yield* captureCheckpointFromTurnCompletion(event).pipe(
         Effect.catch((error) =>
-          appendCaptureFailureActivity({
-            threadId: event.threadId,
-            turnId,
-            detail: error.message,
-            createdAt: new Date().toISOString(),
-          }).pipe(Effect.catch(() => Effect.void)),
+          Effect.flatMap(nowIso, (createdAt) =>
+            appendCaptureFailureActivity({
+              threadId: event.threadId,
+              turnId,
+              detail: error.message,
+              createdAt,
+            }).pipe(Effect.catch(() => Effect.void)),
+          ),
         ),
       );
       return;

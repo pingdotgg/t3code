@@ -6,7 +6,15 @@ import {
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import { ServerProviderUpdateError } from "@t3tools/contracts";
-import { Cause, Effect, Exit, Fiber, Layer, Ref, Schema, Sink, Stream } from "effect";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -17,6 +25,7 @@ import {
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilities,
 } from "./providerMaintenance.ts";
+const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
@@ -447,8 +456,8 @@ describe("providerMaintenanceRunner", () => {
       assert.strictEqual(Exit.isFailure(second), true);
       if (Exit.isFailure(second)) {
         const error = Cause.squash(second.cause);
-        assert.strictEqual(Schema.is(ServerProviderUpdateError)(error), true);
-        if (Schema.is(ServerProviderUpdateError)(error)) {
+        assert.strictEqual(isServerProviderUpdateError(error), true);
+        if (isServerProviderUpdateError(error)) {
           assert.include(error.reason, "already running");
         }
       }

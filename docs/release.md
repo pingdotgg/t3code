@@ -24,7 +24,60 @@ This document covers the unified release workflow for stable and nightly desktop
 - Publishes the CLI package (`apps/server`, npm package `t3`) with OIDC trusted publishing from the same workflow file:
   - stable releases publish npm dist-tag `latest`
   - nightly releases publish npm dist-tag `nightly`
+- Deploys the hosted web app to Vercel only after a release is published:
+  - stable releases are aliased to the `latest` hosted app channel
+  - nightly releases are aliased to the `nightly` hosted app channel
 - Signing is optional and auto-detected per platform from secrets.
+
+## Hosted web app release deployment
+
+The hosted app is intentionally not deployed by Vercel's Git integration. The
+web project disables automatic Git deployments in `apps/web/vercel.ts` via
+`git.deploymentEnabled: false`, and `.github/workflows/release.yml` deploys the
+web app with Vercel CLI after the GitHub Release succeeds.
+
+Required GitHub Actions secrets:
+
+- `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID`
+
+Optional GitHub Actions variables:
+
+- `VERCEL_TEAM_SLUG`: overrides the Vercel CLI scope when the team slug is preferred over the `VERCEL_ORG_ID` secret.
+- `T3CODE_WEB_ROUTER_URL`: defaults to `https://app.t3.codes`.
+- `T3CODE_WEB_LATEST_DOMAIN`: defaults to `latest.app.t3.codes`.
+- `T3CODE_WEB_NIGHTLY_DOMAIN`: defaults to `nightly.app.t3.codes`.
+
+Required Vercel domains:
+
+- `app.t3.codes`: the stable router domain users open.
+- `latest.app.t3.codes`: channel alias updated by stable releases.
+- `nightly.app.t3.codes`: channel alias updated by nightly releases.
+
+The router domain uses `apps/web/vercel.ts` routes. Users opt into a channel by
+visiting `/__t3code/channel?channel=latest` or
+`/__t3code/channel?channel=nightly`; the router stores the
+`t3code_web_channel` cookie and rewrites future requests on `app.t3.codes` to
+the matching channel alias.
+
+The release deploy job rewrites release package versions before upload so the
+hosted app's About panel renders the release version. It also passes
+`VITE_HOSTED_APP_CHANNEL=latest|nightly`, which renders the hosted update track
+selector in the About panel. Changing the selector navigates through
+`/__t3code/channel` on the router domain so the user's channel cookie is updated
+before redirecting to the hosted app root.
+
+One-time Vercel dashboard setup:
+
+1. Confirm the web project root directory remains `apps/web`.
+2. Add the three domains above to the web project.
+3. Disable automatic Git deployments in the dashboard if desired; the committed
+   `vercel.ts` setting is the source-of-truth, but disconnecting Git in the
+   dashboard is also safe.
+4. Promote or alias one deployment containing the router rules in `apps/web/vercel.ts` to
+   `app.t3.codes` once. Future release jobs should only update the channel
+   aliases.
 
 ## Nightly builds
 

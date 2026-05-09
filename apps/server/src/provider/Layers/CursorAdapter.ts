@@ -3,7 +3,6 @@
  *
  * @module CursorAdapterLive
  */
-import * as nodePath from "node:path";
 
 import {
   ApprovalRequestId,
@@ -22,21 +21,21 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import {
-  DateTime,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  FileSystem,
-  Option,
-  PubSub,
-  Random,
-  Scope,
-  Semaphore,
-  Stream,
-  SynchronizedRef,
-} from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
+import * as Random from "effect/Random";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
@@ -77,12 +76,18 @@ import {
 import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 
 const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_RESUME_VERSION = 1 as const;
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
 const ACP_APPROVAL_MODE_ALIASES = ["ask"];
+
+function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
+  const result = encodeUnknownJsonStringExit(input);
+  return Exit.isSuccess(result) ? result.value : undefined;
+}
 
 export interface CursorAdapterLiveOptions {
   readonly environment?: NodeJS.ProcessEnv;
@@ -307,6 +312,7 @@ export function makeCursorAdapter(
   return Effect.gen(function* () {
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("cursor");
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const serverConfig = yield* Effect.service(ServerConfig);
     const nativeEventLogger =
@@ -363,12 +369,12 @@ export function makeCursorAdapter(
     ) =>
       Effect.gen(function* () {
         if (!nativeEventLogger) return;
-        const observedAt = new Date().toISOString();
+        const observedAt = yield* nowIso;
         yield* nativeEventLogger.write(
           {
             observedAt,
             event: {
-              id: crypto.randomUUID(),
+              id: yield* Random.nextUUIDv4,
               kind: "notification",
               provider: PROVIDER,
               createdAt: observedAt,
@@ -395,7 +401,7 @@ export function makeCursorAdapter(
       method: string,
     ) =>
       Effect.gen(function* () {
-        const fingerprint = `${ctx.activeTurnId ?? "no-turn"}:${JSON.stringify(payload)}`;
+        const fingerprint = `${ctx.activeTurnId ?? "no-turn"}:${encodeJsonStringForDiagnostics(payload) ?? "[unserializable payload]"}`;
         if (ctx.lastPlanFingerprint === fingerprint) {
           return;
         }
@@ -465,7 +471,7 @@ export function makeCursorAdapter(
             });
           }
 
-          const cwd = nodePath.resolve(input.cwd.trim());
+          const cwd = path.resolve(input.cwd.trim());
           const cursorModelSelection =
             input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
           const existing = sessions.get(input.threadId);
@@ -643,7 +649,10 @@ export function makeCursorAdapter(
                     turnId: ctx?.activeTurnId,
                     requestId: runtimeRequestId,
                     permissionRequest,
-                    detail: permissionRequest.detail ?? JSON.stringify(params).slice(0, 2000),
+                    detail:
+                      permissionRequest.detail ??
+                      encodeJsonStringForDiagnostics(params)?.slice(0, 2000) ??
+                      "[unserializable params]",
                     args: params,
                     source: "acp.jsonrpc",
                     method: "session/request_permission",

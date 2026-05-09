@@ -6,7 +6,12 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { ProviderDriverKind as ProviderDriverKindSchema } from "@t3tools/contracts";
-import { Effect, Layer, Ref, Stream } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import { parseClaudeRuntimeUsageLimits } from "../claudeUsageProbe.ts";
 import { runtimeUsageToProviderUsageLimits } from "../runtimeUsageToProviderUsageLimits.ts";
@@ -115,27 +120,29 @@ export const ProviderUsageStateLive = Layer.effect(
           }),
         ),
       set: (provider, providerInstanceId, threadId, usage) =>
-        Ref.update(stateRef, (state) => {
-          const next = new Map(state);
-          const key = makeProviderInstanceKey(provider, providerInstanceId);
-          if (usage === undefined) {
-            const existingThreadMap = next.get(key);
-            if (existingThreadMap) {
-              const newThreadMap = new Map(existingThreadMap);
-              newThreadMap.delete(threadId);
-              if (newThreadMap.size === 0) {
-                next.delete(key);
-              } else {
-                next.set(key, newThreadMap);
+        Effect.flatMap(Effect.map(DateTime.now, DateTime.toEpochMillis), (updatedAtMs) =>
+          Ref.update(stateRef, (state) => {
+            const next = new Map(state);
+            const key = makeProviderInstanceKey(provider, providerInstanceId);
+            if (usage === undefined) {
+              const existingThreadMap = next.get(key);
+              if (existingThreadMap) {
+                const newThreadMap = new Map(existingThreadMap);
+                newThreadMap.delete(threadId);
+                if (newThreadMap.size === 0) {
+                  next.delete(key);
+                } else {
+                  next.set(key, newThreadMap);
+                }
               }
+            } else {
+              const threadMap = new Map(next.get(key) ?? []);
+              next.set(key, threadMap);
+              threadMap.set(threadId, { usage, updatedAtMs });
             }
-          } else {
-            const threadMap = new Map(next.get(key) ?? []);
-            next.set(key, threadMap);
-            threadMap.set(threadId, { usage, updatedAtMs: Date.now() });
-          }
-          return next;
-        }),
+            return next;
+          }),
+        ),
       clear: (provider, providerInstanceId) =>
         Ref.update(stateRef, (state) => {
           const next = new Map(state);
@@ -160,12 +167,16 @@ export const ProviderUsageStateLive = Layer.effect(
             return;
           }
 
+          const cursorMaybeDate = DateTime.make(event.createdAt);
+          const cursorUpdatedAtMs = Option.isSome(cursorMaybeDate)
+            ? DateTime.toEpochMillis(cursorMaybeDate.value)
+            : DateTime.toEpochMillis(yield* DateTime.now);
           yield* setThreadUsage(
             CURSOR_DRIVER,
             providerInstanceId,
             event.threadId,
             usage,
-            Date.parse(event.createdAt) || Date.now(),
+            cursorUpdatedAtMs,
           );
           return;
         }
@@ -187,12 +198,16 @@ export const ProviderUsageStateLive = Layer.effect(
           return;
         }
 
+        const claudeMaybeDate = DateTime.make(event.createdAt);
+        const claudeUpdatedAtMs = Option.isSome(claudeMaybeDate)
+          ? DateTime.toEpochMillis(claudeMaybeDate.value)
+          : DateTime.toEpochMillis(yield* DateTime.now);
         yield* setThreadUsage(
           CLAUDE_DRIVER,
           providerInstanceId,
           event.threadId,
           usage,
-          Date.parse(event.createdAt) || Date.now(),
+          claudeUpdatedAtMs,
         );
       }),
     ).pipe(Effect.forkScoped);

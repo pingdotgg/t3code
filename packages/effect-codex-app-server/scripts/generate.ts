@@ -3,7 +3,12 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { make as makeJsonSchemaGenerator } from "@effect/openapi-generator/JsonSchemaGenerator";
-import { Effect, FileSystem, Layer, Logger, Path, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import {
   FetchHttpClient,
   HttpClient,
@@ -12,7 +17,7 @@ import {
 } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-const UPSTREAM_REF = "be75785504ff152fa6333e380a2d50642f42fba0";
+const UPSTREAM_REF = "07b695190f30a450e4921f71f77473e564395c59";
 const USER_AGENT = "effect-codex-app-server-generator";
 const GITHUB_API_BASE =
   "https://api.github.com/repos/openai/codex/contents/codex-rs/app-server-protocol";
@@ -33,6 +38,8 @@ const JsonSchemaDocument = Schema.StructWithRest(
   }),
   [Schema.Record(Schema.String, Schema.Json)],
 );
+const decodeGithubContentEntries = Schema.decodeEffect(Schema.fromJsonString(GithubContentEntries));
+const decodeJsonSchemaDocument = Schema.decodeEffect(Schema.fromJsonString(JsonSchemaDocument));
 
 interface GeneratedPaths {
   readonly generatedDir: string;
@@ -173,7 +180,7 @@ const fetchText = Effect.fn("fetchText")(function* (url: string) {
 
 const fetchDirectoryEntries = Effect.fn("fetchDirectoryEntries")(function* (path: string) {
   const raw = yield* fetchText(`${GITHUB_API_BASE}/${path}?ref=${UPSTREAM_REF}`);
-  return yield* Schema.decodeEffect(Schema.fromJsonString(GithubContentEntries))(raw);
+  return yield* decodeGithubContentEntries(raw);
 });
 
 function collectSchemaEntries(
@@ -540,7 +547,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
 
   for (const file of jsonSchemaFiles) {
     const raw = yield* fetchText(file.downloadUrl);
-    const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(JsonSchemaDocument))(raw);
+    const parsed = yield* decodeJsonSchemaDocument(raw);
     const localDefinitionNames = new Map(
       Object.keys(parsed.definitions ?? {}).map((definitionName) => [
         definitionName,

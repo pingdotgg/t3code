@@ -1,5 +1,7 @@
 import type { ServerProviderUsageLimits } from "@t3tools/contracts";
-import { Effect } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import type { PtyAdapterShape, PtyProcess } from "../terminal/Services/PTY.ts";
 import { makeUnavailableUsageLimits, makeUsageLimitsSnapshot } from "./providerUsageLimits.ts";
 
@@ -52,8 +54,7 @@ function toRateLimitResetTimestamp(value: unknown): string | undefined {
     return undefined;
   }
 
-  const parsed = new Date(timestampSeconds * 1000);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
+  return DateTime.formatIso(DateTime.makeUnsafe(timestampSeconds * 1000));
 }
 
 export function parseClaudeRuntimeUsageLimits(input: {
@@ -155,8 +156,8 @@ function extractResetTimestamp(value: string): string | undefined {
   if (!hasExplicitTimezone) {
     return undefined;
   }
-  const parsed = Date.parse(candidate);
-  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+  const dt = DateTime.make(candidate);
+  return Option.isSome(dt) ? DateTime.formatIso(dt.value) : undefined;
 }
 
 function parseClaudeUsageWindowSegment(
