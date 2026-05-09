@@ -2434,36 +2434,11 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           ghScenario: {
             prListSequenceByHeadSelector: {
               "octocat:statemachine": [
-                JSON.stringify([
-                  {
-                    number: 41,
-                    title: "Ambiguous fork PR",
-                    url: "https://github.com/pingdotgg/codething-mvp/pull/41",
-                    baseRefName: "main",
-                    headRefName: "statemachine",
-                    state: "OPEN",
-                  },
-                ]),
-                JSON.stringify([
-                  {
-                    number: 142,
-                    title: "Add stacked git actions",
-                    url: "https://github.com/pingdotgg/codething-mvp/pull/142",
-                    baseRefName: "main",
-                    headRefName: "statemachine",
-                    state: "OPEN",
-                    isCrossRepository: true,
-                    headRepository: {
-                      nameWithOwner: "octocat/codething-mvp",
-                    },
-                    headRepositoryOwner: {
-                      login: "octocat",
-                    },
-                  },
-                ]),
+                `[{"number":41,"title":"Ambiguous fork PR","url":"https://github.com/pingdotgg/codething-mvp/pull/41","baseRefName":"main","headRefName":"statemachine","state":"OPEN"}]`,
+                `[{"number":142,"title":"Add stacked git actions","url":"https://github.com/pingdotgg/codething-mvp/pull/142","baseRefName":"main","headRefName":"statemachine","state":"OPEN","isCrossRepository":true,"headRepository":{"nameWithOwner":"octocat/codething-mvp"},"headRepositoryOwner":{"login":"octocat"}}]`,
               ],
-              "fork-seed:statemachine": [JSON.stringify([])],
-              statemachine: [JSON.stringify([])],
+              "fork-seed:statemachine": ["[]"],
+              statemachine: ["[]"],
             },
           },
         });
