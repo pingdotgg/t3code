@@ -634,10 +634,8 @@ jobs:
             channel_name="nightly"
           fi
 
-          vercel_scope_args=()
-          if [[ -n "${VERCEL_TEAM_SLUG:-}" ]]; then
-            vercel_scope_args=(--scope "$VERCEL_TEAM_SLUG")
-          fi
+          vercel_scope="${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"
+          vercel_scope_args=(--scope "$vercel_scope")
 
           echo "Deploying hosted web app for $channel_name channel."
           deployment_url="$(
