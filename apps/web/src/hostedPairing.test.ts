@@ -79,4 +79,16 @@ describe("hostedPairing", () => {
     vi.stubEnv("VITE_HTTP_URL", "https://backend.example.com");
     expect(isHostedStaticApp(new URL("https://preview.t3.codes/"))).toBe(false);
   });
+
+  it("detects hosted channel aliases as static apps", () => {
+    vi.stubEnv("VITE_HOSTED_APP_URL", "https://app.t3.codes");
+    vi.stubEnv("VITE_HOSTED_APP_CHANNEL", "nightly");
+    vi.stubEnv("VITE_HTTP_URL", "");
+    vi.stubEnv("VITE_WS_URL", "");
+
+    expect(isHostedStaticApp(new URL("https://nightly.app.t3.codes/"))).toBe(true);
+
+    vi.stubEnv("VITE_HTTP_URL", "https://backend.example.com");
+    expect(isHostedStaticApp(new URL("https://nightly.app.t3.codes/"))).toBe(false);
+  });
 });

@@ -1,6 +1,6 @@
+import { TextGenerationError } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
-import { TextGenerationError } from "@t3tools/contracts";
 const isTextGenerationError = Schema.is(TextGenerationError);
 
 /** Convert an Effect Schema to a flat JSON Schema object, inlining `$defs` when present. */
@@ -17,54 +17,6 @@ export function limitSection(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   const truncated = value.slice(0, maxChars);
   return `${truncated}\n\n[truncated]`;
-}
-
-export function extractJsonObject(raw: string): string {
-  const trimmed = raw.trim();
-  if (trimmed.length === 0) {
-    return trimmed;
-  }
-
-  const start = trimmed.indexOf("{");
-  if (start < 0) {
-    return trimmed;
-  }
-
-  let depth = 0;
-  let inString = false;
-  let escaping = false;
-  for (let index = start; index < trimmed.length; index += 1) {
-    const char = trimmed[index];
-    if (inString) {
-      if (escaping) {
-        escaping = false;
-      } else if (char === "\\") {
-        escaping = true;
-      } else if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      depth += 1;
-      continue;
-    }
-
-    if (char === "}") {
-      depth -= 1;
-      if (depth === 0) {
-        return trimmed.slice(start, index + 1);
-      }
-    }
-  }
-
-  return trimmed.slice(start);
 }
 
 /** Normalise a raw commit subject to imperative-mood, ≤72 chars, no trailing period. */
