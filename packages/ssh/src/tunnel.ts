@@ -2,24 +2,23 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
-import { type NetError, NetService } from "@t3tools/shared/Net";
-import { fromLenientJson } from "@t3tools/shared/schemaJson";
-import {
-  Deferred,
-  Context,
-  Duration,
-  Effect,
-  Exit,
-  FileSystem,
-  Layer,
-  Option,
-  Path,
-  Ref,
-  Schema,
-  Scope,
-  Schedule,
-  Stream,
-} from "effect";
+import * as NetService from "@t3tools/shared/Net";
+import { extractJsonObject, fromLenientJson } from "@t3tools/shared/schemaJson";
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -60,11 +59,12 @@ const REMOTE_REUSE_READY_TIMEOUT_MS = 2_000;
 export interface RemoteT3RunnerOptions {
   readonly packageSpec?: string;
   readonly nodeScriptPath?: string | null;
+  readonly nodeEngineRange?: string | null;
 }
 
 export interface SshEnvironmentManagerOptions {
   readonly resolveCliPackageSpec?: () => string;
-  readonly resolveCliRunner?: () => RemoteT3RunnerOptions;
+  readonly resolveCliRunner?: Effect.Effect<RemoteT3RunnerOptions>;
 }
 
 interface SshTunnelEntry {
@@ -84,7 +84,7 @@ type SshEnvironmentEffectContext =
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
-  | NetService
+  | NetService.NetService
   | SshPasswordPrompt;
 
 type SshEnvironmentEffectError =
@@ -94,7 +94,7 @@ type SshEnvironmentEffectError =
   | SshPairingError
   | SshReadinessError
   | SshPasswordPromptError
-  | NetError;
+  | NetService.NetError;
 
 function makeSshTunnelCancelledError(target: DesktopSshEnvironmentTarget): SshCommandError {
   return new SshCommandError({
@@ -167,6 +167,50 @@ const RemoteHttpError = Schema.Struct({
 const decodeRemoteLaunchResult = Schema.decodeEffect(fromLenientJson(RemoteLaunchResult));
 const decodeRemotePairingResult = Schema.decodeEffect(fromLenientJson(RemotePairingResult));
 const decodeRemoteHttpError = Schema.decodeEffect(Schema.fromJsonString(RemoteHttpError));
+
+const decodeRemoteJsonOutput = <A, E>(
+  stdout: string,
+  decode: (input: string) => Effect.Effect<A, E>,
+): Effect.Effect<A, E> =>
+  decode(stdout).pipe(
+    Effect.catch((error) =>
+      Effect.gen(function* () {
+        const jsonObject = extractJsonObject(stdout);
+        if (jsonObject === stdout.trim()) {
+          return yield* Effect.fail(error);
+        }
+        const exit = yield* Effect.exit(decode(jsonObject));
+        if (Exit.isSuccess(exit)) {
+          return exit.value;
+        }
+        return yield* Effect.fail(error);
+      }),
+    ),
+  );
+
+const decodeRemoteLaunchOutput = (stdout: string) =>
+  decodeRemoteJsonOutput(stdout, decodeRemoteLaunchResult);
+
+const decodeRemotePairingOutput = (stdout: string) =>
+  decodeRemoteJsonOutput(stdout, decodeRemotePairingResult);
+
+const remoteNodeEngineCheckMain = function remoteNodeEngineCheckMain() {
+  const range = process.argv[2] || "";
+  const rawVersion =
+    process.versions && process.versions.node ? process.versions.node : process.version;
+
+  if (!satisfiesSemverRange(rawVersion, range)) {
+    process.stderr.write(
+      "Remote node " + rawVersion + " does not satisfy required range " + range + ".\n",
+    );
+    process.exit(1);
+  }
+};
+
+function buildRemoteNodeEngineCheckScript(): string {
+  return `${satisfiesSemverRange.toString()}
+(${remoteNodeEngineCheckMain.toString()})();`;
+}
 
 export function normalizeSshErrorMessage(stderr: string, fallbackMessage: string): string {
   const cleaned = stderr.trim();
@@ -301,10 +345,108 @@ function probe() {
 })().catch(() => process.exit(1));
 `;
 
+export const REMOTE_NODE_ENV_SCRIPT = `prepend_path_if_dir() {
+  if [ -d "$1" ]; then
+    case ":$PATH:" in
+      *":$1:"*) ;;
+      *) PATH="$1:$PATH" ;;
+    esac
+  fi
+}
+
+remote_node_satisfies_engine() {
+  T3_NODE_ENGINE_RANGE=@@T3_NODE_ENGINE_RANGE@@
+  if [ -z "$T3_NODE_ENGINE_RANGE" ]; then
+    return 0
+  fi
+  node - "$T3_NODE_ENGINE_RANGE" <<'NODE'
+@@T3_NODE_ENGINE_CHECK_SCRIPT@@
+NODE
+}
+
+ensure_remote_node_path() {
+  if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
+    return 0
+  fi
+
+  prepend_path_if_dir "$HOME/.local/bin"
+  prepend_path_if_dir "$HOME/bin"
+  prepend_path_if_dir "/opt/homebrew/bin"
+  prepend_path_if_dir "/usr/local/bin"
+  prepend_path_if_dir "/usr/bin"
+  prepend_path_if_dir "/bin"
+
+  if [ -z "\${VOLTA_HOME:-}" ]; then
+    VOLTA_HOME="$HOME/.volta"
+  fi
+  export VOLTA_HOME
+  prepend_path_if_dir "$VOLTA_HOME/bin"
+
+  prepend_path_if_dir "$HOME/.asdf/shims"
+  prepend_path_if_dir "$HOME/.asdf/bin"
+  if [ ! -x "$HOME/.asdf/shims/node" ] && [ -s "$HOME/.asdf/asdf.sh" ]; then
+    # shellcheck disable=SC1090
+    . "$HOME/.asdf/asdf.sh"
+  fi
+
+  prepend_path_if_dir "$HOME/.local/share/mise/shims"
+  prepend_path_if_dir "$HOME/.mise/shims"
+  if ! command -v node >/dev/null 2>&1 && command -v mise >/dev/null 2>&1; then
+    eval "$(mise activate sh)" >/dev/null 2>&1 || true
+  fi
+
+  if [ -z "\${FNM_DIR:-}" ]; then
+    FNM_DIR="$HOME/.local/share/fnm"
+  fi
+  export FNM_DIR
+  prepend_path_if_dir "$FNM_DIR"
+  prepend_path_if_dir "$HOME/.fnm"
+  if ! command -v node >/dev/null 2>&1 && command -v fnm >/dev/null 2>&1; then
+    eval "$(fnm env --use-on-cd --shell sh)" >/dev/null 2>&1 || eval "$(fnm env --shell sh)" >/dev/null 2>&1 || true
+  fi
+
+  prepend_path_if_dir "$HOME/.nodenv/bin"
+  prepend_path_if_dir "$HOME/.nodenv/shims"
+  if ! command -v node >/dev/null 2>&1 && command -v nodenv >/dev/null 2>&1; then
+    eval "$(nodenv init -)" >/dev/null 2>&1 || true
+  fi
+
+  if [ -z "\${NVM_DIR:-}" ]; then
+    NVM_DIR="$HOME/.nvm"
+  fi
+  export NVM_DIR
+
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    # shellcheck disable=SC1090
+    . "$NVM_DIR/nvm.sh"
+    if ! command -v node >/dev/null 2>&1 && command -v nvm >/dev/null 2>&1; then
+      nvm use --silent default >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1 || nvm use --silent --lts >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if ! command -v node >/dev/null 2>&1 && [ -d "$NVM_DIR/versions/node" ]; then
+    for T3_NODE_BIN in "$NVM_DIR"/versions/node/*/bin; do
+      if [ -x "$T3_NODE_BIN/node" ]; then
+        PATH="$T3_NODE_BIN:$PATH"
+        export PATH
+      fi
+    done
+  fi
+
+  command -v node >/dev/null 2>&1 && remote_node_satisfies_engine
+}
+`;
+
 export const REMOTE_RUNNER_SCRIPT = `#!/bin/sh
 set -eu
+@@T3_NODE_ENV_SCRIPT@@
+ensure_remote_node_path || true
 T3_NODE_SCRIPT_PATH=@@T3_NODE_SCRIPT_PATH@@
 if [ -n "$T3_NODE_SCRIPT_PATH" ]; then
+  if ! command -v node >/dev/null 2>&1; then
+    printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
+    exit 1
+  fi
   exec node "$T3_NODE_SCRIPT_PATH" "$@"
 fi
 if command -v t3 >/dev/null 2>&1; then
@@ -316,11 +458,12 @@ fi
 if command -v npm >/dev/null 2>&1; then
   exec npm exec --yes @@T3_PACKAGE_SPEC@@ -- "$@"
 fi
-printf 'Remote host is missing the t3 CLI and could not install @@T3_PACKAGE_SPEC@@ because npx and npm are unavailable on PATH.\\n' >&2
+printf 'Remote host is missing the t3 CLI and could not install @@T3_PACKAGE_SPEC@@ because node/npm/npx are unavailable on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
 exit 1
 `;
 
 export const REMOTE_LAUNCH_SCRIPT = `set -eu
+@@T3_NODE_ENV_SCRIPT@@
 STATE_KEY="$1"
 STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
 DEFAULT_SERVER_HOME="$HOME/.t3"
@@ -345,6 +488,10 @@ if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
 fi
 mv "$RUNNER_NEXT" "$RUNNER_FILE"
 chmod 700 "$RUNNER_FILE"
+if ! ensure_remote_node_path; then
+  printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\\n' >&2
+  exit 1
+fi
 pick_port() {
   node - "$PORT_FILE" "@@T3_DEFAULT_REMOTE_PORT@@" "@@T3_REMOTE_PORT_SCAN_WINDOW@@" <<'NODE'
 @@T3_PICK_PORT_SCRIPT@@
@@ -368,18 +515,18 @@ resolve_default_runtime_port() {
 const fs = require("node:fs");
 const runtimePath = process.argv[2] ?? "";
 try {
-  const runtime = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
-  const pid = Number(runtime.pid);
-  const port = Number(runtime.port);
-  if (!Number.isInteger(pid) || !Number.isInteger(port)) {
-    process.exit(1);
-  }
+	  const runtime = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
+	  const pid = Number(runtime.pid);
+	  const port = Number(runtime.port);
+	  if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) {
+	    process.exit(1);
+	  }
   const origin = new URL(String(runtime.origin ?? ""));
   if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
     process.exit(1);
   }
   process.kill(pid, 0);
-  process.stdout.write(String(port));
+  process.stdout.write(\`\${pid} \${port}\`);
 } catch {
   process.exit(1);
 }
@@ -388,18 +535,34 @@ NODE
 REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
 REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
 REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
-DEFAULT_REMOTE_PORT="$(resolve_default_runtime_port 2>/dev/null || true)"
+DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+DEFAULT_RUNTIME_PID=""
+DEFAULT_REMOTE_PORT=""
+if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
+  DEFAULT_RUNTIME_PID="\${DEFAULT_RUNTIME_INFO%% *}"
+  DEFAULT_REMOTE_PORT="\${DEFAULT_RUNTIME_INFO#* }"
+fi
 if [ -n "$DEFAULT_REMOTE_PORT" ]; then
   REMOTE_PORT="$DEFAULT_REMOTE_PORT"
   if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
-    if [ "$REMOTE_MANAGED" = "managed" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
-      kill "$REMOTE_PID" 2>/dev/null || true
-      wait_for_pid_exit "$REMOTE_PID"
+    if [ "$REMOTE_MANAGED" = "managed" ]; then
+      PID_TO_STOP="\${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
+      if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
+        kill "$PID_TO_STOP" 2>/dev/null || true
+        wait_for_pid_exit "$PID_TO_STOP"
+      fi
+      REMOTE_PID=""
+      REMOTE_PORT="$DEFAULT_REMOTE_PORT"
+      REMOTE_MANAGED="external"
+      rm -f "$PID_FILE"
+      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+      printf 'external\\n' >"$MANAGED_FILE"
+    else
+      printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
+      printf 'external\\n' >"$MANAGED_FILE"
+      REMOTE_PID=""
+      REMOTE_MANAGED="external"
     fi
-    printf '%s\\n' "$REMOTE_PORT" >"$PORT_FILE"
-    printf 'external\\n' >"$MANAGED_FILE"
-    REMOTE_PID=""
-    REMOTE_MANAGED="external"
   else
     REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
     REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
@@ -431,7 +594,7 @@ else
   REMOTE_PORT=""
   REMOTE_MANAGED=""
 fi
-if [ -z "$REMOTE_PID" ] || [ -z "$REMOTE_PORT" ]; then
+if [ -z "$REMOTE_PORT" ]; then
   REMOTE_PORT="$(pick_port)" || true
   if [ -z "$REMOTE_PORT" ]; then
     printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\\n' >&2
@@ -501,12 +664,23 @@ export function buildRemoteT3RunnerScript(input?: RemoteT3RunnerOptions): string
     applyScriptPlaceholders(REMOTE_RUNNER_SCRIPT, {
       T3_PACKAGE_SPEC: packageSpec,
       T3_NODE_SCRIPT_PATH: shellSingleQuote(nodeScriptPath),
+      T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
+    }),
+  );
+}
+
+function buildRemoteNodeEnvScript(input?: RemoteT3RunnerOptions): string {
+  return stripTrailingNewlines(
+    applyScriptPlaceholders(REMOTE_NODE_ENV_SCRIPT, {
+      T3_NODE_ENGINE_RANGE: shellSingleQuote(input?.nodeEngineRange?.trim() || ""),
+      T3_NODE_ENGINE_CHECK_SCRIPT: stripTrailingNewlines(buildRemoteNodeEngineCheckScript()),
     }),
   );
 }
 
 export function buildRemoteLaunchScript(input?: RemoteT3RunnerOptions): string {
   return applyScriptPlaceholders(REMOTE_LAUNCH_SCRIPT, {
+    T3_NODE_ENV_SCRIPT: buildRemoteNodeEnvScript(input),
     T3_RUNNER_SCRIPT: stripTrailingNewlines(buildRemoteT3RunnerScript(input)),
     T3_PICK_PORT_SCRIPT: stripTrailingNewlines(REMOTE_PICK_PORT_SCRIPT),
     T3_WAIT_READY_SCRIPT: stripTrailingNewlines(REMOTE_WAIT_READY_SCRIPT),
@@ -568,7 +742,7 @@ export const launchOrReuseRemoteServer = Effect.fn("ssh/tunnel.launchOrReuseRemo
         stdout: result.stdout,
       });
     }
-    const parsed = yield* decodeRemoteLaunchResult(result.stdout).pipe(
+    const parsed = yield* decodeRemoteLaunchOutput(result.stdout).pipe(
       Effect.mapError(
         (cause) =>
           new SshLaunchError({
@@ -625,7 +799,7 @@ export const issueRemotePairingToken = Effect.fn("ssh/tunnel.issueRemotePairingT
       stdout: result.stdout,
     });
   }
-  const parsed = yield* decodeRemotePairingResult(result.stdout).pipe(
+  const parsed = yield* decodeRemotePairingOutput(result.stdout).pipe(
     Effect.mapError(
       (cause) =>
         new SshPairingError({
@@ -905,7 +1079,7 @@ export const fetchLoopbackSshJson = Effect.fn("ssh/tunnel.fetchLoopbackSshJson")
 });
 
 const reserveLocalTunnelPort = Effect.fn("ssh/tunnel.reserveLocalTunnelPort")(function* () {
-  const net = yield* NetService;
+  const net = yield* NetService.NetService;
   return yield* net.reserveLoopbackPort();
 });
 
@@ -925,7 +1099,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
-  | NetService
+  | NetService.NetService
   | Scope.Scope
 > {
   const hostSpec = yield* buildSshHostSpecEffect(input.resolvedTarget);
@@ -1078,7 +1252,7 @@ const startSshTunnel = Effect.fn("ssh/tunnel.startSshTunnel")(function* (input: 
     ),
     Effect.tapError((cause) =>
       Effect.gen(function* () {
-        const net = yield* NetService;
+        const net = yield* NetService.NetService;
         const processRunningExit = yield* Effect.exit(child.isRunning);
         const localPortAvailableExit = yield* Effect.exit(
           net.canListenOnHost(input.localPort, "127.0.0.1"),
@@ -1502,7 +1676,11 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
     });
     const packageSpec = options.resolveCliPackageSpec?.();
     const runner =
-      options.resolveCliRunner?.() ?? (packageSpec === undefined ? undefined : { packageSpec });
+      options.resolveCliRunner === undefined
+        ? packageSpec === undefined
+          ? undefined
+          : { packageSpec }
+        : yield* options.resolveCliRunner;
     yield* Effect.logDebug("ssh.environment.runner.resolved", {
       ...sshTargetLogFields(resolvedTarget),
       ...sshRunnerLogFields(runner),

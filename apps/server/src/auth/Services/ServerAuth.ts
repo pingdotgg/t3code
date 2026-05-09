@@ -12,8 +12,10 @@ import type {
   ServerAuthSessionMethod,
   AuthWebSocketTokenResult,
 } from "@t3tools/contracts";
-import { Data, DateTime, Context } from "effect";
-import type { Effect } from "effect";
+import * as Data from "effect/Data";
+import * as DateTime from "effect/DateTime";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
 import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import type { SessionRole } from "./SessionCredentialService.ts";
 

@@ -8,10 +8,14 @@ import type {
   ServerProviderModel,
   ServerProviderState,
 } from "@t3tools/contracts";
-import { Effect, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Data from "effect/Data";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import { isWindowsCommandNotFound } from "../processRunner.ts";
+import { createProviderVersionAdvisory } from "./providerMaintenance.ts";
+import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 
 export const DEFAULT_TIMEOUT_MS = 4_000;
 // Auth status checks involve disk/network lookups and can be slow on first run (especially Windows)
@@ -22,6 +26,12 @@ export interface CommandResult {
   readonly stderr: string;
   readonly code: number;
 }
+
+export class ProviderCommandExecutionError extends Data.TaggedError(
+  "ProviderCommandExecutionError",
+)<{
+  readonly message: string;
+}> {}
 
 export interface ProviderProbeResult {
   readonly installed: boolean;
@@ -45,7 +55,7 @@ export function nonEmptyTrimmed(value: string | undefined): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-export function isCommandMissingCause(error: Error): boolean {
+export function isCommandMissingCause(error: { readonly message: string }): boolean {
   const lower = error.message.toLowerCase();
   return lower.includes("enoent") || lower.includes("notfound");
 }
@@ -65,7 +75,7 @@ export const spawnAndCollect = (binaryPath: string, command: ChildProcess.Comman
 
     const result: CommandResult = { stdout, stderr, code: exitCode };
     if (isWindowsCommandNotFound(exitCode, stderr)) {
-      return yield* Effect.fail(new Error(`spawn ${binaryPath} ENOENT`));
+      return yield* new ProviderCommandExecutionError({ message: `spawn ${binaryPath} ENOENT` });
     }
     return result;
   }).pipe(Effect.scoped);
@@ -182,6 +192,7 @@ export function buildBooleanOptionDescriptor(input: {
 }
 
 export function buildServerProvider(input: {
+  driver?: ProviderDriverKind;
   presentation: ServerProviderPresentation;
   enabled: boolean;
   checkedAt: string;
@@ -190,6 +201,13 @@ export function buildServerProvider(input: {
   skills?: ReadonlyArray<ServerProviderSkill>;
   probe: ProviderProbeResult;
 }): ServerProviderDraft {
+  const versionAdvisory = input.driver
+    ? createProviderVersionAdvisory({
+        driver: input.driver,
+        currentVersion: input.probe.version,
+        checkedAt: input.checkedAt,
+      })
+    : undefined;
   return {
     displayName: input.presentation.displayName,
     ...(input.presentation.badgeLabel ? { badgeLabel: input.presentation.badgeLabel } : {}),
@@ -206,16 +224,11 @@ export function buildServerProvider(input: {
     models: input.models,
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
+    ...(versionAdvisory ? { versionAdvisory } : {}),
   };
 }
 
 export const collectStreamAsString = <E>(
   stream: Stream.Stream<Uint8Array, E>,
 ): Effect.Effect<string, E> =>
-  stream.pipe(
-    Stream.decodeText(),
-    Stream.runFold(
-      () => "",
-      (acc, chunk) => acc + chunk,
-    ),
-  );
+  collectUint8StreamText({ stream }).pipe(Effect.map((collected) => collected.text));

@@ -20,8 +20,8 @@ import type {
   ProviderTurnStartResult,
   TurnId,
 } from "@t3tools/contracts";
-import type { Effect } from "effect";
-import type { Stream } from "effect";
+import type * as Effect from "effect/Effect";
+import type * as Stream from "effect/Stream";
 
 export type ProviderSessionModelSwitchMode = "in-session" | "unsupported";
 

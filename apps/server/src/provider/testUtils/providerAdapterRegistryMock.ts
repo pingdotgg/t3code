@@ -18,7 +18,11 @@ import {
   ProviderDriverKind,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
-import { Effect, PubSub, Record, Result, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as PubSub from "effect/PubSub";
+import * as Record from "effect/Record";
+import * as Result from "effect/Result";
+import * as Stream from "effect/Stream";
 
 import { ProviderUnsupportedError, type ProviderAdapterError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";

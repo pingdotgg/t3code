@@ -10,21 +10,50 @@ import {
   type DesktopUpdateChannel,
   type DesktopUpdateState,
   type LocalApi,
+  ProviderDriverKind,
+  ProviderInstanceId,
   type ServerConfig,
+  type ServerProvider,
   type SourceControlDiscoveryResult,
 } from "@t3tools/contracts";
-import { DateTime, Option } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import { page } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
+import type { ReactNode } from "react";
+import {
+  RouterProvider,
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+} from "@tanstack/react-router";
 
 import { __resetLocalApiForTests } from "../../localApi";
 import { AppAtomRegistryProvider, resetAppAtomRegistryForTests } from "../../rpc/atomRegistry";
 import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
 import { useUiStateStore } from "../../uiStateStore";
 import { ConnectionsSettings } from "./ConnectionsSettings";
-import { GeneralSettingsPanel } from "./SettingsPanels";
+import { DiagnosticsSettingsPanel } from "./DiagnosticsSettings";
+import { GeneralSettingsPanel, ProviderSettingsPanel } from "./SettingsPanels";
 import { SourceControlSettingsPanel } from "./SourceControlSettings";
+
+function renderWithTestRouter(children: ReactNode) {
+  const rootRoute = createRootRoute({
+    component: () => children,
+  });
+  const indexRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/",
+  });
+  const router = createRouter({
+    routeTree: rootRoute.addChildren([indexRoute]),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  });
+
+  return render(<RouterProvider router={router} />);
+}
 
 const authAccessHarness = vi.hoisted(() => {
   type Snapshot = AuthAccessSnapshot;
@@ -207,8 +236,33 @@ function createBaseServerConfig(): ServerConfig {
   };
 }
 
+function createOutdatedProvider(driver: string): ServerProvider {
+  return {
+    instanceId: ProviderInstanceId.make(driver),
+    driver: ProviderDriverKind.make(driver),
+    enabled: true,
+    installed: true,
+    version: "1.0.0",
+    status: "ready",
+    auth: { status: "authenticated" },
+    checkedAt: "2026-05-04T10:00:00.000Z",
+    models: [],
+    slashCommands: [],
+    skills: [],
+    versionAdvisory: {
+      status: "behind_latest",
+      currentVersion: "1.0.0",
+      latestVersion: "1.1.0",
+      message: "Update available.",
+      checkedAt: "2026-05-04T10:00:00.000Z",
+      updateCommand: "npm install -g openai/codex@latest",
+      canUpdate: true,
+    },
+  };
+}
+
 function makeUtc(value: string) {
-  return DateTime.makeUnsafe(Date.parse(value));
+  return DateTime.makeUnsafe(value);
 }
 
 function makePairingLink(input: {
@@ -666,25 +720,24 @@ describe("GeneralSettingsPanel observability", () => {
     await expect.element(page.getByText("http://127.0.0.1:3773/").first()).toBeInTheDocument();
   });
 
-  it("shows diagnostics inside About with a single logs-folder action", async () => {
+  it("shows diagnostics inside About with a diagnostics link", async () => {
     setServerConfigSnapshot(createBaseServerConfig());
 
-    mounted = await render(
+    mounted = await renderWithTestRouter(
       <AppAtomRegistryProvider>
         <GeneralSettingsPanel />
       </AppAtomRegistryProvider>,
     );
 
     await expect.element(page.getByText("About")).toBeInTheDocument();
-    await expect.element(page.getByText("Diagnostics")).toBeInTheDocument();
-    await expect.element(page.getByText("Open logs folder")).toBeInTheDocument();
     await expect
-      .element(page.getByText("/repo/project/.t3/logs", { exact: true }))
+      .element(page.getByRole("heading", { name: "Diagnostics", exact: true }))
       .toBeInTheDocument();
+    await expect.element(page.getByRole("link", { name: "View diagnostics" })).toBeInTheDocument();
     await expect
       .element(
         page.getByText(
-          "Local trace file. OTLP exporting traces to http://localhost:4318/v1/traces.",
+          "Local trace file. Exporting OTEL traces to http://localhost:4318/v1/traces.",
         ),
       )
       .toBeInTheDocument();
@@ -992,8 +1045,44 @@ describe("GeneralSettingsPanel observability", () => {
   it("opens the logs folder in the preferred editor", async () => {
     const openInEditor = vi.fn<LocalApi["shell"]["openInEditor"]>().mockResolvedValue(undefined);
     window.nativeApi = {
+      persistence: {
+        getClientSettings: vi.fn().mockResolvedValue(null),
+        setClientSettings: vi.fn().mockResolvedValue(undefined),
+      },
       shell: {
         openInEditor,
+      },
+      server: {
+        getProcessDiagnostics: vi.fn().mockResolvedValue({
+          serverPid: 1234,
+          readAt: makeUtc("2036-04-07T00:00:00.000Z"),
+          processCount: 0,
+          totalRssBytes: 0,
+          totalCpuPercent: 0,
+          processes: [],
+          error: Option.none(),
+        }),
+        getTraceDiagnostics: vi.fn().mockResolvedValue({
+          traceFilePath: "/repo/project/.t3/traces.jsonl",
+          scannedFilePaths: ["/repo/project/.t3/traces.jsonl"],
+          readAt: makeUtc("2036-04-07T00:00:00.000Z"),
+          recordCount: 0,
+          parseErrorCount: 0,
+          firstSpanAt: Option.none(),
+          lastSpanAt: Option.none(),
+          failureCount: 0,
+          interruptionCount: 0,
+          slowSpanThresholdMs: 5_000,
+          slowSpanCount: 0,
+          logLevelCounts: {},
+          topSpansByCount: [],
+          slowestSpans: [],
+          commonFailures: [],
+          latestFailures: [],
+          latestWarningAndErrorLogs: [],
+          partialFailure: Option.none(),
+          error: Option.none(),
+        }),
       },
     } as unknown as LocalApi;
 
@@ -1001,11 +1090,11 @@ describe("GeneralSettingsPanel observability", () => {
 
     mounted = await render(
       <AppAtomRegistryProvider>
-        <GeneralSettingsPanel />
+        <DiagnosticsSettingsPanel />
       </AppAtomRegistryProvider>,
     );
 
-    const openLogsButton = page.getByText("Open logs folder");
+    const openLogsButton = page.getByLabelText("Open logs folder");
     await openLogsButton.click();
 
     expect(openInEditor).toHaveBeenCalledWith("/repo/project/.t3/logs", "cursor");
@@ -1016,7 +1105,7 @@ describe("GeneralSettingsPanel observability", () => {
 
     mounted = await render(
       <AppAtomRegistryProvider>
-        <GeneralSettingsPanel />
+        <ProviderSettingsPanel />
       </AppAtomRegistryProvider>,
     );
 
@@ -1030,6 +1119,41 @@ describe("GeneralSettingsPanel observability", () => {
     await expect.element(page.getByPlaceholder("http://127.0.0.1:4096")).toBeInTheDocument();
     await expect.element(page.getByText("Server password")).toBeInTheDocument();
     await expect.element(page.getByPlaceholder("Optional")).toBeInTheDocument();
+  });
+
+  it("runs one-click provider updates from the provider card", async () => {
+    const updateProvider = vi.fn<LocalApi["server"]["updateProvider"]>().mockResolvedValue({
+      providers: [createOutdatedProvider("codex")],
+    });
+    window.nativeApi = {
+      persistence: {
+        getClientSettings: vi.fn().mockResolvedValue(null),
+        setClientSettings: vi.fn().mockResolvedValue(undefined),
+      },
+      server: {
+        updateProvider,
+      },
+    } as unknown as LocalApi;
+
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [createOutdatedProvider("codex")],
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ProviderSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByRole("button", { name: "Update available — view details" }).click();
+    await expect.element(page.getByRole("button", { name: "Update now" })).toBeInTheDocument();
+    await page.getByRole("button", { name: "Update now" }).click();
+
+    expect(updateProvider).toHaveBeenCalledWith({
+      provider: ProviderDriverKind.make("codex"),
+      instanceId: ProviderInstanceId.make("codex"),
+    });
   });
 });
 
@@ -1132,8 +1256,45 @@ describe("SourceControlSettingsPanel discovery states", () => {
       </AppAtomRegistryProvider>,
     );
 
-    await expect.element(page.getByRole("heading", { name: "Git" })).toBeInTheDocument();
+    await expect.element(page.getByRole("switch", { name: "Git availability" })).toBeDisabled();
     await expect.element(page.getByText("Nothing detected yet")).not.toBeInTheDocument();
+  });
+
+  it("shows Git fetch interval settings inside the Git details dropdown", async () => {
+    setSourceControlDiscoveryStub(async () => ({
+      versionControlSystems: [
+        {
+          kind: "git",
+          label: "Git",
+          executable: "git",
+          implemented: true,
+          status: "available",
+          version: Option.some("git version 2.50.0"),
+          installHint: "Install Git.",
+          detail: Option.none(),
+        },
+      ],
+      sourceControlProviders: [],
+    }));
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    const toggle = page.getByRole("button", { name: "Toggle Git details" });
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+
+    await toggle.click();
+
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect
+      .element(page.getByLabelText("Automatic Git fetch interval in seconds"))
+      .toBeVisible();
+    await expect
+      .element(page.getByText("Automatic Git fetches run every 30 seconds"))
+      .not.toBeInTheDocument();
   });
 
   it("does not rescan on remount while the discovery atom is fresh", async () => {
@@ -1163,7 +1324,7 @@ describe("SourceControlSettingsPanel discovery states", () => {
       </AppAtomRegistryProvider>,
     );
 
-    await expect.element(page.getByRole("heading", { name: "Git" })).toBeInTheDocument();
+    await expect.element(page.getByRole("switch", { name: "Git availability" })).toBeDisabled();
     expect(calls).toBe(1);
 
     const teardown = mounted.cleanup ?? mounted.unmount;
@@ -1177,7 +1338,7 @@ describe("SourceControlSettingsPanel discovery states", () => {
       </AppAtomRegistryProvider>,
     );
 
-    await expect.element(page.getByRole("heading", { name: "Git" })).toBeInTheDocument();
+    await expect.element(page.getByRole("switch", { name: "Git availability" })).toBeDisabled();
     expect(calls).toBe(1);
   });
 });
