@@ -29,7 +29,6 @@ import {
   type ProjectDetectedRemote,
   type ProjectEffectiveRemote,
   type ProjectRemoteOverride,
-  type ProjectSettings,
   type ProjectSettingsPatch,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
@@ -61,7 +60,11 @@ import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
-import { redactServerSettingsForClient, ServerSettingsService } from "./serverSettings.ts";
+import {
+  emptyProjectSettings,
+  redactServerSettingsForClient,
+  ServerSettingsService,
+} from "./serverSettings.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
@@ -175,13 +178,6 @@ function pickPrimaryRemote(remotes: ReadonlyArray<ProjectDetectedRemote>) {
     null
   );
 }
-
-const emptyProjectSettings: ProjectSettings = {
-  remoteOverride: null,
-  automaticGitFetchInterval: null,
-  actionEnvironment: {},
-  disabledProviderInstanceIds: [],
-};
 
 const isProjectDetailsError = Schema.is(ProjectDetailsError);
 

@@ -59,7 +59,7 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
-const emptyProjectSettings: ProjectSettings = {
+export const emptyProjectSettings: ProjectSettings = {
   remoteOverride: null,
   automaticGitFetchInterval: null,
   actionEnvironment: {},
