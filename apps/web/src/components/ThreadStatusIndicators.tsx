@@ -153,6 +153,7 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const gitStatus = useGitStatus({
     environmentId: thread.environmentId,
     cwd: thread.branch != null ? gitCwd : null,
+    projectId: thread.projectId,
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);

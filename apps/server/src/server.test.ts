@@ -538,6 +538,7 @@ const buildAppUnderTest = (options?: {
           updateProjectSettings: () =>
             Effect.succeed({
               remoteOverride: null,
+              automaticGitFetchInterval: null,
               actionEnvironment: {},
             }),
           streamChanges: Stream.empty,

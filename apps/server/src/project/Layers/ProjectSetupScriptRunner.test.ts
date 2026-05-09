@@ -115,6 +115,7 @@ describe("ProjectSetupScriptRunner", () => {
                 projectSettings: {
                   [project.id]: {
                     remoteOverride: null,
+                    automaticGitFetchInterval: null,
                     actionEnvironment: {
                       API_BASE_URL: "https://api.example.test",
                     },

@@ -76,6 +76,7 @@ const ProjectActionEnvironmentKey = Schema.String.check(
     ),
   );
 const ProjectActionEnvironmentValue = Schema.String.check(Schema.isMaxLength(8_192));
+const ProjectAutomaticGitFetchIntervalMs = Schema.Number.check(Schema.isGreaterThanOrEqualTo(0));
 
 export const ProjectActionEnvironment = Schema.Record(
   ProjectActionEnvironmentKey,
@@ -87,12 +88,16 @@ export const ProjectSettings = Schema.Struct({
   remoteOverride: Schema.NullOr(ProjectRemoteOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  automaticGitFetchInterval: Schema.NullOr(ProjectAutomaticGitFetchIntervalMs).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   actionEnvironment: ProjectActionEnvironment.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ProjectSettings = typeof ProjectSettings.Type;
 
 export const ProjectSettingsPatch = Schema.Struct({
   remoteOverride: Schema.optionalKey(Schema.NullOr(ProjectRemoteOverride)),
+  automaticGitFetchInterval: Schema.optionalKey(Schema.NullOr(ProjectAutomaticGitFetchIntervalMs)),
   actionEnvironment: Schema.optionalKey(ProjectActionEnvironment),
 });
 export type ProjectSettingsPatch = typeof ProjectSettingsPatch.Type;

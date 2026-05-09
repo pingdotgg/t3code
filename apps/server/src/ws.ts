@@ -123,6 +123,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
+const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
 
 function detectedRemotesFromGitRemoteVerboseOutput(stdout: string): ProjectDetectedRemote[] {
   return [...GitVcsDriver.parseGitRemoteVerboseOutput(stdout).entries()].flatMap(([name, remote]) =>
@@ -177,6 +178,7 @@ function pickPrimaryRemote(remotes: ReadonlyArray<ProjectDetectedRemote>) {
 
 const emptyProjectSettings: ProjectSettings = {
   remoteOverride: null,
+  automaticGitFetchInterval: null,
   actionEnvironment: {},
 };
 
@@ -705,6 +707,22 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           Effect.map((settings) => settings.projectSettings[projectId] ?? emptyProjectSettings),
         );
 
+      const automaticGitFetchIntervalForProject = (projectId: ProjectId | undefined) =>
+        projectId
+          ? getProjectSettings(projectId).pipe(
+              Effect.map((settings) =>
+                settings.automaticGitFetchInterval === null
+                  ? DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL
+                  : Duration.millis(settings.automaticGitFetchInterval),
+              ),
+              Effect.catch((cause) =>
+                Effect.logWarning("Failed to read project Git fetch interval setting", {
+                  detail: cause.message,
+                }).pipe(Effect.as(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL)),
+              ),
+            )
+          : Effect.succeed(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL);
+
       const updateProjectSettings = (input: {
         readonly projectId: ProjectId;
         readonly patch: ProjectSettingsPatch;
@@ -1164,7 +1182,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(
             WS_METHODS.subscribeVcsStatus,
-            vcsStatusBroadcaster.streamStatus(input),
+            vcsStatusBroadcaster.streamStatus(input, {
+              automaticRemoteRefreshInterval: automaticGitFetchIntervalForProject(input.projectId),
+            }),
             {
               "rpc.aggregate": "vcs",
             },

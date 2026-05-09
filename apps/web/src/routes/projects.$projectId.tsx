@@ -2,6 +2,7 @@ import { ArrowLeftIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect, useCanGoBack, useNavigate } from "@tanstack/react-router";
 import { createDefaultModelSelection, createModelSelection } from "@t3tools/shared/model";
+import * as Duration from "effect/Duration";
 import type {
   KeybindingCommand,
   ModelSelection,
@@ -25,6 +26,13 @@ import {
   useStore,
 } from "../store";
 import { Button } from "../components/ui/button";
+import {
+  NumberField,
+  NumberFieldDecrement,
+  NumberFieldGroup,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from "../components/ui/number-field";
 import {
   Select,
   SelectItem,
@@ -70,6 +78,8 @@ const PROVIDER_LABELS: Record<SourceControlProviderKind, string> = {
 };
 
 const DEFAULT_PROJECT_MODEL_SELECTION = createDefaultModelSelection();
+const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL_MS = Duration.toMillis(Duration.seconds(30));
+const GIT_FETCH_INTERVAL_STEP_SECONDS = 5;
 
 const EMPTY_ACTION_ENVIRONMENT: ProjectActionEnvironment = {};
 const ACTION_ENVIRONMENT_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -92,6 +102,7 @@ interface ProjectSettingsDraft {
   readonly remoteUrl?: string;
   readonly webUrl?: string;
   readonly defaultModelSelection?: ModelSelection | null;
+  readonly automaticGitFetchInterval?: number | null;
   readonly actionEnvironment?: ProjectActionEnvironment;
 }
 
@@ -115,6 +126,17 @@ function isValidActionEnvironmentKey(key: string): boolean {
 
 function isReservedActionEnvironmentKey(key: string): boolean {
   return key.startsWith(ACTION_ENVIRONMENT_RESERVED_PREFIX);
+}
+
+function millisecondsToSeconds(milliseconds: number): number {
+  return Math.round(milliseconds / 1_000);
+}
+
+function normalizeFetchIntervalSeconds(value: number | null): number {
+  if (value === null || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.round(value));
 }
 
 function ProjectRouteView() {
@@ -212,6 +234,13 @@ function ProjectRouteView() {
     currentDraft && "defaultModelSelection" in currentDraft
       ? currentDraft.defaultModelSelection
       : (details?.defaultModelSelection ?? null);
+  const automaticGitFetchInterval =
+    currentDraft && "automaticGitFetchInterval" in currentDraft
+      ? currentDraft.automaticGitFetchInterval
+      : (details?.settings.automaticGitFetchInterval ?? null);
+  const automaticGitFetchIntervalSeconds = millisecondsToSeconds(
+    automaticGitFetchInterval ?? DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL_MS,
+  );
   const actionEnvironment =
     currentDraft?.actionEnvironment ??
     details?.settings.actionEnvironment ??
@@ -266,6 +295,7 @@ function ProjectRouteView() {
   const commitProjectSettings = useCallback(
     (patch: {
       remoteOverride?: ProjectRemoteOverride | null;
+      automaticGitFetchInterval?: number | null;
       actionEnvironment?: ProjectActionEnvironment;
     }) => {
       const nextCommit = settingsCommitQueueRef.current
@@ -328,6 +358,18 @@ function ProjectRouteView() {
       }
     },
     [commitProjectMeta, projectDetails.data?.defaultModelSelection, stageDraft],
+  );
+
+  const commitAutomaticGitFetchInterval = useCallback(
+    (nextIntervalMs: number | null) => {
+      stageDraft({ automaticGitFetchInterval: nextIntervalMs });
+      const currentIntervalMs = projectDetails.data?.settings.automaticGitFetchInterval ?? null;
+      if (nextIntervalMs === currentIntervalMs) {
+        return;
+      }
+      void commitProjectSettings({ automaticGitFetchInterval: nextIntervalMs });
+    },
+    [commitProjectSettings, projectDetails.data?.settings.automaticGitFetchInterval, stageDraft],
   );
 
   const commitActionEnvironment = useCallback(
@@ -779,6 +821,43 @@ function ProjectRouteView() {
                             </label>
                           </div>
                         ) : null}
+                      </div>
+                    }
+                  />
+                  <ProjectSettingRow
+                    title="Fetch interval"
+                    description="Refresh remote branch status in the background. Set this to 0 seconds to only fetch during explicit Git actions."
+                    resetAction={
+                      projectDetails.data.settings.automaticGitFetchInterval !== null ? (
+                        <SettingResetButton
+                          label="fetch interval"
+                          onClick={() => commitAutomaticGitFetchInterval(null)}
+                        />
+                      ) : null
+                    }
+                    control={
+                      <div className="flex shrink-0 items-center gap-2">
+                        <NumberField
+                          value={automaticGitFetchIntervalSeconds}
+                          min={0}
+                          step={GIT_FETCH_INTERVAL_STEP_SECONDS}
+                          size="sm"
+                          className="w-32"
+                          onValueChange={(value) =>
+                            commitAutomaticGitFetchInterval(
+                              Duration.toMillis(
+                                Duration.seconds(normalizeFetchIntervalSeconds(value)),
+                              ),
+                            )
+                          }
+                        >
+                          <NumberFieldGroup>
+                            <NumberFieldDecrement aria-label="Decrease fetch interval" />
+                            <NumberFieldInput aria-label="Automatic Git fetch interval in seconds" />
+                            <NumberFieldIncrement aria-label="Increase fetch interval" />
+                          </NumberFieldGroup>
+                        </NumberField>
+                        <span className="text-xs text-muted-foreground">seconds</span>
                       </div>
                     }
                   />

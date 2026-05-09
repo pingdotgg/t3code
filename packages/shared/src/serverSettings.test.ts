@@ -203,6 +203,7 @@ describe("serverSettings helpers", () => {
       projectSettings: {
         [projectId]: {
           remoteOverride: null,
+          automaticGitFetchInterval: null,
           actionEnvironment: {
             API_BASE_URL: "https://api.example.test",
             DEBUG: "1",
@@ -216,6 +217,7 @@ describe("serverSettings helpers", () => {
         projectSettings: {
           [projectId]: {
             remoteOverride: null,
+            automaticGitFetchInterval: null,
             actionEnvironment: {
               API_BASE_URL: "https://api.example.test",
             },
@@ -231,6 +233,7 @@ describe("serverSettings helpers", () => {
         projectSettings: {
           [projectId]: {
             remoteOverride: null,
+            automaticGitFetchInterval: null,
             actionEnvironment: {},
           },
         },

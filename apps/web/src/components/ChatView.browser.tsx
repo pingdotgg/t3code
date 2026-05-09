@@ -216,6 +216,7 @@ function createMockEnvironmentApi(input: {
         scripts: [],
         settings: {
           remoteOverride: null,
+          automaticGitFetchInterval: null,
           actionEnvironment: {},
         },
         detected: {
@@ -231,6 +232,7 @@ function createMockEnvironmentApi(input: {
       })),
       updateSettings: vi.fn(async () => ({
         remoteOverride: null,
+        automaticGitFetchInterval: null,
         actionEnvironment: {},
       })),
       searchEntries: vi.fn(async () => ({

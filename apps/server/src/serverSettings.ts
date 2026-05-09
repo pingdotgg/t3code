@@ -58,6 +58,7 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const emptyProjectSettings: ProjectSettings = {
   remoteOverride: null,
+  automaticGitFetchInterval: null,
   actionEnvironment: {},
 };
 

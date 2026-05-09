@@ -32,6 +32,7 @@ describe("ProjectDetails", () => {
 
     expect(decoded.defaultModelSelection).toBeNull();
     expect(decoded.scripts).toEqual([]);
+    expect(decoded.settings.automaticGitFetchInterval).toBeNull();
     expect(decoded.settings.actionEnvironment).toEqual({});
   });
 

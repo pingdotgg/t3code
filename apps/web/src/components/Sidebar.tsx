@@ -371,6 +371,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const gitStatus = useGitStatus({
     environmentId: thread.environmentId,
     cwd: thread.branch != null ? gitCwd : null,
+    projectId: thread.projectId,
   });
   const isHighlighted = isActive || isSelected;
   const isThreadRunning =

@@ -272,6 +272,7 @@ function makeMutableServerSettingsService(
             [projectId]: {
               ...(settings.projectSettings[projectId] ?? {
                 remoteOverride: null,
+                automaticGitFetchInterval: null,
                 actionEnvironment: {},
               }),
               ...patch,
@@ -282,6 +283,7 @@ function makeMutableServerSettingsService(
             (settings) =>
               settings.projectSettings[projectId] ?? {
                 remoteOverride: null,
+                automaticGitFetchInterval: null,
                 actionEnvironment: {},
               },
           ),
