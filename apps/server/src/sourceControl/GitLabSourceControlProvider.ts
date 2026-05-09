@@ -91,7 +91,7 @@ function refineUnknownGitLabRemote(
 
   return {
     kind: "gitlab",
-    name: host === "gitlab.com" ? "GitLab" : "GitLab Self-Hosted",
+    name: "GitLab Self-Hosted",
     baseUrl: input.context.provider.baseUrl,
   } as const;
 }
