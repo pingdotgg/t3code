@@ -26,7 +26,6 @@
     }
   },
   "scripts": {
-    "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

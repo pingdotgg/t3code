@@ -2,7 +2,13 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Config, Data, Effect, Layer, Logger, Schema } from "effect";
+import * as Config from "effect/Config";
+import * as Data from "effect/Data";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import {
   FetchHttpClient,
@@ -201,6 +207,7 @@ export const notifyDiscordReleaseCommand = Command.make(
       );
 
       const webhookUrl = yield* DiscordWebhookUrl;
+      const timestamp = DateTime.formatIso(yield* DateTime.now);
       const payload = buildDiscordReleaseAnnouncement({
         target,
         roleId,
@@ -208,7 +215,7 @@ export const notifyDiscordReleaseCommand = Command.make(
         version: releaseVersion,
         tag,
         releaseUrl,
-        timestamp: new Date().toISOString(),
+        timestamp,
       });
 
       yield* Effect.logInfo("discord release announcement payload built").pipe(

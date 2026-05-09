@@ -6,8 +6,8 @@
  *
  * @module ProjectFaviconResolver
  */
-import { Context } from "effect";
-import type { Effect } from "effect";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
 
 /**
  * ProjectFaviconResolverShape - Service API for project favicon lookup.

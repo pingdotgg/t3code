@@ -17,15 +17,19 @@ import type {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { Context } from "effect";
-import type { Option } from "effect";
-import type { Effect } from "effect";
+import * as Context from "effect/Context";
+import type * as Option from "effect/Option";
+import type * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 
 export interface ProjectionSnapshotCounts {
   readonly projectCount: number;
   readonly threadCount: number;
+}
+
+export interface ProjectionSnapshotSequence {
+  readonly snapshotSequence: number;
 }
 
 export interface ProjectionThreadCheckpointContext {
@@ -40,6 +44,15 @@ export interface ProjectionThreadCheckpointContext {
  * ProjectionSnapshotQueryShape - Service API for read-model snapshots.
  */
 export interface ProjectionSnapshotQueryShape {
+  /**
+   * Read the lightweight command snapshot used to bootstrap the in-memory
+   * orchestration engine without hydrating message/activity/checkpoint bodies.
+   */
+  readonly getCommandReadModel: () => Effect.Effect<
+    OrchestrationReadModel,
+    ProjectionRepositoryError
+  >;
+
   /**
    * Read the latest orchestration projection snapshot.
    *
@@ -56,6 +69,26 @@ export interface ProjectionSnapshotQueryShape {
    */
   readonly getShellSnapshot: () => Effect.Effect<
     OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
+
+  /**
+   * Read archived thread shell summaries for the archive page.
+   *
+   * This query is separate from the main shell snapshot so archived threads
+   * are never bootstrapped into normal navigation state.
+   */
+  readonly getArchivedShellSnapshot: () => Effect.Effect<
+    OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
+
+  /**
+   * Read the latest projection snapshot sequence without hydrating read-model
+   * entities.
+   */
+  readonly getSnapshotSequence: () => Effect.Effect<
+    ProjectionSnapshotSequence,
     ProjectionRepositoryError
   >;
 

@@ -1,6 +1,11 @@
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ConfigProvider, DateTime, Effect, FileSystem, Layer, Option } from "effect";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
@@ -287,7 +292,18 @@ it.effect("expands all-state pull request listing instead of relying on Bitbucke
 
 it.effect("reads repository clone URLs and default branch", () => {
   const { layer } = makeLayer({
-    response: () => Response.json(repositoryJson),
+    response: (request) =>
+      Response.json(
+        request.url.endsWith("/branching-model")
+          ? {
+              development: {
+                branch: { name: "main" },
+                name: "main",
+                use_mainbranch: true,
+              },
+            }
+          : repositoryJson,
+      ),
   });
 
   return Effect.gen(function* () {
@@ -306,6 +322,86 @@ it.effect("reads repository clone URLs and default branch", () => {
     assert.strictEqual(defaultBranch, "main");
   }).pipe(Effect.provide(layer));
 });
+
+it.effect(
+  "prefers the Bitbucket branching model development branch as the default PR target",
+  () => {
+    const { execute, layer } = makeLayer({
+      response: (request) =>
+        Response.json(
+          request.url.endsWith("/branching-model")
+            ? {
+                development: {
+                  branch: { name: "develop" },
+                  name: "develop",
+                  use_mainbranch: false,
+                },
+              }
+            : repositoryJson,
+        ),
+    });
+
+    return Effect.gen(function* () {
+      const bitbucket = yield* BitbucketApi.BitbucketApi;
+      const defaultBranch = yield* bitbucket.getDefaultBranch({ cwd: "/repo" });
+
+      assert.strictEqual(defaultBranch, "develop");
+      assert.deepStrictEqual(
+        execute.mock.calls.map((call) => call[0].url).toSorted(),
+        [
+          "https://api.test.local/2.0/repositories/pingdotgg/t3code",
+          "https://api.test.local/2.0/repositories/pingdotgg/t3code/branching-model",
+        ].toSorted(),
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "falls back to the repository main branch when the Bitbucket development branch is invalid",
+  () => {
+    const { layer } = makeLayer({
+      response: (request) =>
+        Response.json(
+          request.url.endsWith("/branching-model")
+            ? {
+                development: {
+                  name: "develop",
+                  use_mainbranch: false,
+                  is_valid: false,
+                },
+              }
+            : repositoryJson,
+        ),
+    });
+
+    return Effect.gen(function* () {
+      const bitbucket = yield* BitbucketApi.BitbucketApi;
+      const defaultBranch = yield* bitbucket.getDefaultBranch({ cwd: "/repo" });
+
+      assert.strictEqual(defaultBranch, "main");
+    }).pipe(Effect.provide(layer));
+  },
+);
+
+it.effect(
+  "falls back to the repository main branch when the Bitbucket branching model is unavailable",
+  () => {
+    const { layer } = makeLayer({
+      response: (request) =>
+        request.url.endsWith("/branching-model")
+          ? Response.json({ error: { message: "Not found" } }, { status: 404 })
+          : Response.json(repositoryJson),
+    });
+
+    return Effect.gen(function* () {
+      const bitbucket = yield* BitbucketApi.BitbucketApi;
+      const defaultBranch = yield* bitbucket.getDefaultBranch({ cwd: "/repo" });
+
+      assert.strictEqual(defaultBranch, "main");
+    }).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect("creates repositories through the Bitbucket REST API", () => {
   const { execute, layer } = makeLayer({
@@ -332,6 +428,7 @@ it.effect("creates repositories through the Bitbucket REST API", () => {
     assert.ok(request);
     const rawBody = (request.body as { readonly body?: Uint8Array }).body;
     assert.ok(rawBody);
+    // @effect-diagnostics-next-line preferSchemaOverJson:off
     assert.deepStrictEqual(JSON.parse(new TextDecoder().decode(rawBody)), {
       scm: "git",
       is_private: true,
@@ -367,6 +464,7 @@ it.effect("creates pull requests using the official REST payload shape", () => {
     assert.ok(request);
     const rawBody = (request.body as { readonly body?: Uint8Array }).body;
     assert.ok(rawBody);
+    // @effect-diagnostics-next-line preferSchemaOverJson:off
     assert.deepStrictEqual(JSON.parse(new TextDecoder().decode(rawBody)), {
       title: "Provider PR",
       description: "PR body",

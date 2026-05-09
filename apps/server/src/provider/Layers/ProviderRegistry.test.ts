@@ -1,6 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { describe, it, assert, live } from "@effect/vitest";
-import { Effect, Exit, Layer, PubSub, Ref, Schema, Scope, Sink, Stream } from "effect";
+import { describe, it, assert } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
 import {
   ClaudeSettings,
@@ -14,9 +23,11 @@ import {
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import * as PlatformError from "effect/PlatformError";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { deepMerge } from "@t3tools/shared/Struct";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
 import { checkCodexProviderStatus, type CodexAppServerProviderSnapshot } from "./CodexProvider.ts";
 import { checkClaudeProviderStatus } from "./ClaudeProvider.ts";
@@ -26,13 +37,20 @@ import { ProviderInstanceRegistryHydrationLive } from "./ProviderInstanceRegistr
 import {
   haveProvidersChanged,
   mergeProviderSnapshot,
+  mergeProviderSnapshots,
   ProviderRegistryLive,
+  selectProvidersByKind,
 } from "./ProviderRegistry.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService, type ServerSettingsShape } from "../../serverSettings.ts";
+import { readProviderStatusCache, resolveProviderStatusCachePath } from "../providerStatusCache.ts";
 import type { ProviderInstance } from "../ProviderDriver.ts";
 import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
 import { ProviderRegistry } from "../Services/ProviderRegistry.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+const decodeServerSettings = Schema.decodeSync(ServerSettings);
+const encodeServerSettings = Schema.encodeSync(ServerSettings);
+const encodedDefaultServerSettings = encodeServerSettings(DEFAULT_SERVER_SETTINGS);
 
 const defaultClaudeSettings: ClaudeSettings = Schema.decodeSync(ClaudeSettings)({});
 const defaultCodexSettings: CodexSettings = Schema.decodeSync(CodexSettings)({});
@@ -45,6 +63,13 @@ process.env.T3CODE_CURSOR_ENABLED = "1";
 // ── Test helpers ────────────────────────────────────────────────────
 
 const encoder = new TextEncoder();
+
+const TestHttpClientLive = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) =>
+    Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }))),
+  ),
+);
 
 function selectDescriptor(
   id: string,
@@ -234,7 +259,8 @@ function makeMutableServerSettingsService(
       updateSettings: (patch) =>
         Effect.gen(function* () {
           const current = yield* Ref.get(settingsRef);
-          const next = Schema.decodeSync(ServerSettings)(deepMerge(current, patch));
+          const next = applyServerSettingsPatch(current, patch);
+          encodeServerSettings(next);
           yield* Ref.set(settingsRef, next);
           yield* PubSub.publish(changes, next);
           return next;
@@ -246,7 +272,7 @@ function makeMutableServerSettingsService(
   });
 }
 
-it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
+it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), TestHttpClientLive))(
   "ProviderRegistry",
   (it) => {
     describe("checkCodexProviderStatus", () => {
@@ -353,6 +379,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           assert.strictEqual(status.auth.status, "authenticated");
           assert.strictEqual(status.auth.type, "apiKey");
           assert.strictEqual(status.auth.label, "OpenAI API Key");
+        }),
+      );
+
+      it.effect("returns an Amazon Bedrock label for codex Bedrock auth", () =>
+        Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.succeed(
+              makeCodexProbeSnapshot({
+                account: {
+                  account: { type: "amazonBedrock" },
+                  requiresOpenaiAuth: false,
+                },
+              }),
+            ),
+          );
+
+          assert.strictEqual(status.status, "ready");
+          assert.strictEqual(status.auth.status, "authenticated");
+          assert.strictEqual(status.auth.type, "amazonBedrock");
+          assert.strictEqual(status.auth.label, "Amazon Bedrock");
         }),
       );
 
@@ -500,6 +546,183 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         ]);
       });
 
+      it("persists merged provider snapshots for the providers that were refreshed", () => {
+        const previousProviders = [
+          {
+            instanceId: ProviderInstanceId.make("cursor"),
+            driver: ProviderDriverKind.make("cursor"),
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-04-14T00:00:00.000Z",
+            version: "2026.04.09-f2b0fcd",
+            models: [
+              {
+                slug: "claude-opus-4-6",
+                name: "Opus 4.6",
+                isCustom: false,
+                capabilities: createModelCapabilities({
+                  optionDescriptors: [
+                    selectDescriptor("reasoning", "Reasoning", [
+                      { id: "high", label: "High", isDefault: true },
+                    ]),
+                    booleanDescriptor("fastMode", "Fast Mode"),
+                    booleanDescriptor("thinking", "Thinking"),
+                  ],
+                }),
+              },
+            ],
+            slashCommands: [],
+            skills: [],
+          },
+          {
+            instanceId: ProviderInstanceId.make("codex"),
+            driver: ProviderDriverKind.make("codex"),
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-04-14T00:00:00.000Z",
+            version: "1.0.0",
+            models: [],
+            slashCommands: [],
+            skills: [],
+          },
+        ] as const satisfies ReadonlyArray<ServerProvider>;
+        const refreshedCursor = {
+          ...previousProviders[0],
+          checkedAt: "2026-04-14T00:01:00.000Z",
+          models: [],
+        } satisfies ServerProvider;
+
+        const mergedProviders = mergeProviderSnapshots(previousProviders, [refreshedCursor]);
+        const persistedProviders = selectProvidersByKind(
+          mergedProviders,
+          new Set([ProviderDriverKind.make("cursor")]),
+        );
+
+        assert.deepStrictEqual(persistedProviders, [
+          {
+            ...refreshedCursor,
+            models: [...previousProviders[0].models],
+          },
+        ]);
+      });
+
+      it.effect("persists the merged snapshot when a live update has empty models", () =>
+        Effect.gen(function* () {
+          const cursorDriver = ProviderDriverKind.make("cursor");
+          const cursorInstanceId = ProviderInstanceId.make("cursor");
+          const initialProvider = {
+            instanceId: cursorInstanceId,
+            driver: cursorDriver,
+            status: "ready",
+            enabled: true,
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-04-14T00:00:00.000Z",
+            version: "2026.04.09-f2b0fcd",
+            models: [
+              {
+                slug: "claude-opus-4-6",
+                name: "Opus 4.6",
+                isCustom: false,
+                capabilities: createModelCapabilities({
+                  optionDescriptors: [
+                    selectDescriptor("reasoning", "Reasoning", [
+                      { id: "high", label: "High", isDefault: true },
+                    ]),
+                  ],
+                }),
+              },
+            ],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const refreshedProvider = {
+            ...initialProvider,
+            checkedAt: "2026-04-14T00:01:00.000Z",
+            models: [],
+          } satisfies ServerProvider;
+          const changes = yield* PubSub.unbounded<ServerProvider>();
+          const instance = {
+            instanceId: cursorInstanceId,
+            driverKind: cursorDriver,
+            continuationIdentity: {
+              driverKind: cursorDriver,
+              continuationKey: "cursor:instance:cursor",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                provider: cursorDriver,
+                packageName: null,
+              }),
+              getSnapshot: Effect.succeed(initialProvider),
+              refresh: Effect.succeed(refreshedProvider),
+              streamChanges: Stream.fromPubSub(changes),
+            },
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+          const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry, {
+            getInstance: (instanceId) =>
+              Effect.succeed(instanceId === cursorInstanceId ? instance : undefined),
+            listInstances: Effect.succeed([instance]),
+            listUnavailable: Effect.succeed([]),
+            streamChanges: Stream.empty,
+            subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
+              PubSub.subscribe(pubsub),
+            ),
+          });
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-merged-persist-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry;
+            const config = yield* ServerConfig;
+            const filePath = yield* resolveProviderStatusCachePath({
+              cacheDir: config.providerStatusCacheDir,
+              instanceId: cursorInstanceId,
+            });
+
+            assert.deepStrictEqual((yield* registry.getProviders)[0]?.models, [
+              ...initialProvider.models,
+            ]);
+            yield* PubSub.publish(changes, refreshedProvider);
+
+            let cachedProvider = yield* readProviderStatusCache(filePath);
+            for (
+              let attempt = 0;
+              attempt < 50 && cachedProvider?.checkedAt !== refreshedProvider.checkedAt;
+              attempt += 1
+            ) {
+              yield* TestClock.adjust("10 millis");
+              yield* Effect.yieldNow;
+              cachedProvider = yield* readProviderStatusCache(filePath);
+            }
+
+            assert.deepStrictEqual(cachedProvider, {
+              ...refreshedProvider,
+              models: [...initialProvider.models],
+            });
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
       it.effect("returns the cached provider list when a manual refresh fails", () =>
         Effect.gen(function* () {
           const codexDriver = ProviderDriverKind.make("codex");
@@ -527,6 +750,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             displayName: undefined,
             enabled: true,
             snapshot: {
+              maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                provider: codexDriver,
+                packageName: null,
+              }),
               getSnapshot: Effect.succeed(cachedProvider),
               refresh: Effect.die(new Error("simulated refresh failure")),
               streamChanges: Stream.empty,
@@ -612,6 +839,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
             displayName: undefined,
             enabled: true,
             snapshot: {
+              maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+                provider: provider.driver,
+                packageName: null,
+              }),
               getSnapshot: Effect.succeed(provider),
               refresh: Effect.succeed(provider),
               streamChanges: Stream.empty,
@@ -624,8 +855,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
           const changes = yield* PubSub.unbounded<void>();
           const instancesRef = yield* Ref.make<ReadonlyArray<ProviderInstance>>([codexInstance]);
           const failNextList = yield* Ref.make(false);
-          const wait = (millis: number) =>
-            Effect.promise<void>(() => new Promise((resolve) => setTimeout(resolve, millis)));
+          const wait = () => Effect.yieldNow;
           const instanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry, {
             getInstance: (instanceId) =>
               Ref.get(instancesRef).pipe(
@@ -676,7 +906,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               !providers.some((provider) => provider.instanceId === claudeInstanceId);
               attempt += 1
             ) {
-              yield* wait(10);
+              yield* wait();
               providers = yield* registry.getProviders;
             }
 
@@ -701,10 +931,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
       // assertions below fail.
       it.effect("propagates real Codex probe failures to the aggregator at boot", () =>
         Effect.gen(function* () {
-          const missingBinary = `t3code_codex_missing_${process.pid}_${Date.now()}`;
+          const missingBinary = `t3code_codex_missing_`;
           const serverSettings = yield* makeMutableServerSettingsService(
-            Schema.decodeSync(ServerSettings)(
-              deepMerge(DEFAULT_SERVER_SETTINGS, {
+            decodeServerSettings(
+              deepMerge(encodedDefaultServerSettings, {
                 providers: {
                   // Disable every built-in probe that would otherwise spawn
                   // on the CI host. `enabled: false` short-circuits each
@@ -748,6 +978,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                 prefix: "t3-provider-registry-",
               }),
             ),
+            Layer.provideMerge(TestHttpClientLive),
             Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
             Layer.provideMerge(OpenCodeRuntimeLive),
             // NO spawner mock — `ChildProcessSpawner` is supplied by the
@@ -796,23 +1027,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
       // rebuilt instance's refresh (previous bug mode), the aggregator
       // keeps the old snapshot and this test fails.
       //
-      // `live` (imported from `@effect/vitest`) is used instead of
-      // `it.effect` so real timers coordinate the fibres that drive the
-      // settings → reconcile → sync pipeline. Under `it.effect`'s
-      // TestClock, `Effect.sleep` blocks until `TestClock.adjust`, which
-      // would require this test to reach into the internals of the
-      // reconcile pipeline to advance it step by step.
-      //
-      // The nested `it` handed to `it.layer(…, (it) => …)` is the
-      // `MethodsNonLive` variant and therefore lacks `.live`; the
-      // top-level `live` export from `@effect/vitest` is the equivalent.
-      live("re-probes when settings change the codex binaryPath", () =>
+      it.effect("re-probes when settings change the codex binaryPath", () =>
         Effect.gen(function* () {
-          const firstMissing = `t3code_codex_first_${process.pid}_${Date.now()}`;
-          const secondMissing = `t3code_codex_second_${process.pid}_${Date.now()}`;
+          const firstMissing = `t3code_codex_first_`;
+          const secondMissing = `t3code_codex_second_`;
           const serverSettings = yield* makeMutableServerSettingsService(
-            Schema.decodeSync(ServerSettings)(
-              deepMerge(DEFAULT_SERVER_SETTINGS, {
+            decodeServerSettings(
+              deepMerge(encodedDefaultServerSettings, {
                 providers: {
                   codex: { enabled: true, binaryPath: firstMissing },
                   claudeAgent: { enabled: false },
@@ -832,6 +1053,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                 prefix: "t3-provider-registry-",
               }),
             ),
+            Layer.provideMerge(TestHttpClientLive),
             Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
             Layer.provideMerge(OpenCodeRuntimeLive),
             // `it.live` does not inherit layers from the outer `it.layer`
@@ -875,11 +1097,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
               },
             });
 
-            // Poll with real timers (via `it.live`) until `checkedAt`
-            // advances or we hit a generous 3-second ceiling. Anything
-            // slower than that is a regression — the real probe fails
-            // fast on ENOENT, and the reconcile + sync pipeline is
-            // purely in-process.
+            // Poll with TestClock until `checkedAt` advances or we hit a
+            // generous virtual 3-second ceiling.
             const refreshed = yield* Effect.gen(function* () {
               for (let attempts = 0; attempts < 60; attempts += 1) {
                 const providers = yield* registry.getProviders;
@@ -887,7 +1106,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                 if (codex !== undefined && codex.checkedAt !== initialCheckedAt) {
                   return providers;
                 }
-                yield* Effect.sleep("50 millis");
+                yield* TestClock.adjust("50 millis");
+                yield* Effect.yieldNow;
               }
               return yield* registry.getProviders;
             });
@@ -907,8 +1127,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
       it.effect("includes unavailable instance snapshots in getProviders", () =>
         Effect.gen(function* () {
           const serverSettings = yield* makeMutableServerSettingsService(
-            Schema.decodeSync(ServerSettings)(
-              deepMerge(DEFAULT_SERVER_SETTINGS, {
+            decodeServerSettings(
+              deepMerge(encodedDefaultServerSettings, {
                 providers: {
                   codex: { enabled: false },
                   claudeAgent: { enabled: false },
@@ -936,6 +1156,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                 prefix: "t3-provider-registry-",
               }),
             ),
+            Layer.provideMerge(TestHttpClientLive),
             Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
             Layer.provideMerge(OpenCodeRuntimeLive),
             Layer.provideMerge(NodeServices.layer),
@@ -962,8 +1183,8 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
         () =>
           Effect.gen(function* () {
             const serverSettings = yield* makeMutableServerSettingsService(
-              Schema.decodeSync(ServerSettings)(
-                deepMerge(DEFAULT_SERVER_SETTINGS, {
+              decodeServerSettings(
+                deepMerge(encodedDefaultServerSettings, {
                   providers: {
                     codex: {
                       enabled: false,
@@ -986,6 +1207,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest()))(
                   prefix: "t3-provider-registry-",
                 }),
               ),
+              Layer.provideMerge(TestHttpClientLive),
               Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
               Layer.provideMerge(OpenCodeRuntimeLive),
               Layer.provideMerge(

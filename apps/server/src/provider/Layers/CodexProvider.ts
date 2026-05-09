@@ -1,4 +1,11 @@
-import { DateTime, Duration, Effect, Layer, Option, Result, Schema, Types } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
+import * as Types from "effect/Types";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as CodexClient from "effect-codex-app-server/client";
 import * as CodexSchema from "effect-codex-app-server/schema";
@@ -15,11 +22,11 @@ import type {
 import { ServerSettingsError } from "@t3tools/contracts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
-
 import { buildServerProvider, type ServerProviderDraft } from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { scopedSafeTeardown } from "./scopedSafeTeardown.ts";
 import packageJson from "../../../package.json" with { type: "json" };
+const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 
 const PROVIDER_PROBE_TIMEOUT_MS = 8_000;
 const CODEX_PRESENTATION = {
@@ -46,6 +53,8 @@ const REASONING_EFFORT_LABELS: Record<CodexSchema.V2ModelListResponse__Reasoning
 function codexAccountAuthLabel(account: CodexSchema.V2GetAccountResponse["account"]) {
   if (!account) return undefined;
   if (account.type === "apiKey") return "OpenAI API Key";
+  if (account.type === "amazonBedrock") return "Amazon Bedrock";
+  if (account.type !== "chatgpt") return undefined;
 
   switch (account.planType) {
     case "free":
@@ -324,14 +333,33 @@ const emptyCodexModelsFromSettings = (codexSettings: CodexSettings): ServerProvi
       capabilities: null,
     }));
 
-const makePendingCodexProvider = (codexSettings: CodexSettings): ServerProviderDraft => {
-  const checkedAt = new Date().toISOString();
-  const models = emptyCodexModelsFromSettings(codexSettings);
+const makePendingCodexProvider = (
+  codexSettings: CodexSettings,
+): Effect.Effect<ServerProviderDraft> =>
+  Effect.gen(function* () {
+    const checkedAt = yield* Effect.map(DateTime.now, DateTime.formatIso);
+    const models = emptyCodexModelsFromSettings(codexSettings);
 
-  if (!codexSettings.enabled) {
+    if (!codexSettings.enabled) {
+      return buildServerProvider({
+        presentation: CODEX_PRESENTATION,
+        enabled: false,
+        checkedAt,
+        models,
+        skills: [],
+        probe: {
+          installed: false,
+          version: null,
+          status: "warning",
+          auth: { status: "unknown" },
+          message: "Codex is disabled in T3 Code settings.",
+        },
+      });
+    }
+
     return buildServerProvider({
       presentation: CODEX_PRESENTATION,
-      enabled: false,
+      enabled: true,
       checkedAt,
       models,
       skills: [],
@@ -340,26 +368,10 @@ const makePendingCodexProvider = (codexSettings: CodexSettings): ServerProviderD
         version: null,
         status: "warning",
         auth: { status: "unknown" },
-        message: "Codex is disabled in T3 Code settings.",
+        message: "Codex provider status has not been checked in this session yet.",
       },
     });
-  }
-
-  return buildServerProvider({
-    presentation: CODEX_PRESENTATION,
-    enabled: true,
-    checkedAt,
-    models,
-    skills: [],
-    probe: {
-      installed: false,
-      version: null,
-      status: "warning",
-      auth: { status: "unknown" },
-      message: "Codex provider status has not been checked in this session yet.",
-    },
   });
-};
 
 function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]): {
   readonly status: Exclude<ServerProviderState, "disabled">;
@@ -439,7 +451,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
 
   if (Result.isFailure(probeResult)) {
     const error = probeResult.failure;
-    const installed = !Schema.is(CodexErrors.CodexAppServerSpawnError)(error);
+    const installed = !isCodexAppServerSpawnError(error);
     return buildServerProvider({
       presentation: CODEX_PRESENTATION,
       enabled: codexSettings.enabled,

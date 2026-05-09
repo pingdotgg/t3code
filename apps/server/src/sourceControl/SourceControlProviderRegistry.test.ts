@@ -1,7 +1,10 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DateTime, Effect, Layer, Option } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import { ServerConfig } from "../config.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";

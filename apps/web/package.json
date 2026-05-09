@@ -1,12 +1,11 @@
 {
   "name": "@t3tools/web",
-  "version": "0.0.21",
+  "version": "0.0.22",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "prepare": "effect-language-service patch",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
@@ -14,7 +13,7 @@
     "test:browser:install": "playwright install --with-deps chromium"
   },
   "dependencies": {
-    "@base-ui/react": "^1.2.0",
+    "@base-ui/react": "^1.4.1",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
@@ -23,7 +22,7 @@
     "@formkit/auto-animate": "^0.9.0",
     "@legendapp/list": "3.0.0-beta.44",
     "@lexical/react": "^0.41.0",
-    "@pierre/diffs": "^1.1.0-beta.16",
+    "@pierre/diffs": "catalog:",
     "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
@@ -51,6 +50,7 @@
     "@types/babel__core": "^7.20.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@vercel/config": "^0.3.0",
     "@vitejs/plugin-react": "^6.0.0",
     "@vitest/browser-playwright": "^4.0.18",
     "babel-plugin-react-compiler": "^19.0.0-beta-e552027-20250112",

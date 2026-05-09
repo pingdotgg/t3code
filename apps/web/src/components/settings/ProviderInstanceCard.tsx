@@ -1,6 +1,15 @@
 "use client";
 
-import { ChevronDownIcon, PlusIcon, Trash2Icon, XIcon } from "lucide-react";
+import {
+  ArrowUpCircleIcon,
+  ChevronDownIcon,
+  CopyIcon,
+  DownloadIcon,
+  LoaderIcon,
+  PlusIcon,
+  Trash2Icon,
+  XIcon,
+} from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import {
   isProviderDriverKind,
@@ -13,12 +22,15 @@ import {
 } from "@t3tools/contracts";
 
 import { cn } from "../../lib/utils";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Switch } from "../ui/switch";
+import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { DriverOption } from "./providerDriverMeta";
 import { ProviderSettingsForm } from "./ProviderSettingsForm";
@@ -26,6 +38,7 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
 import {
+  getProviderVersionAdvisoryPresentation,
   PROVIDER_STATUS_STYLES,
   getProviderSummary,
   getProviderVersionLabel,
@@ -405,6 +418,8 @@ interface ProviderInstanceCardProps {
   readonly onHiddenModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
+  readonly onRunUpdate?: (() => void) | undefined;
+  readonly isUpdating?: boolean | undefined;
 }
 
 /**
@@ -447,6 +462,8 @@ export function ProviderInstanceCard({
   onHiddenModelsChange,
   onFavoriteModelsChange,
   onModelOrderChange,
+  onRunUpdate,
+  isUpdating = false,
 }: ProviderInstanceCardProps) {
   const enabled = instance.enabled ?? true;
   // The server-reported status wins when present; otherwise fall back to
@@ -464,10 +481,30 @@ export function ProviderInstanceCard({
     : null;
   const summary = rawSummary;
   const versionLabel = getProviderVersionLabel(liveProvider?.version);
+  const versionAdvisory = getProviderVersionAdvisoryPresentation(liveProvider?.versionAdvisory);
+  const updateCommand = versionAdvisory?.updateCommand ?? null;
   const FallbackIconComponent = driverOption?.icon;
   const displayName =
     instance.displayName?.trim() || driverOption?.label || String(instance.driver);
   const accentColor = normalizeProviderAccentColor(instance.accentColor);
+  const { copyToClipboard } = useCopyToClipboard<{ providerName: string }>({
+    onCopy: ({ providerName }) => {
+      toastManager.add({
+        type: "success",
+        title: `${providerName} update command copied`,
+        description: "Run it in a terminal when you are ready to update.",
+      });
+    },
+    onError: (error, { providerName }) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: `Could not copy ${providerName} update command`,
+          description: error.message,
+        }),
+      );
+    },
+  });
 
   // Narrow `instance.driver` for callers that key on the closed
   // `ProviderDriverKind` union (e.g. `normalizeModelSlug`'s alias table). Custom
@@ -535,97 +572,203 @@ export function ProviderInstanceCard({
     );
   };
 
+  const titleIconNode = driverKind ? (
+    <ProviderInstanceIcon
+      driverKind={driverKind}
+      displayName={displayName}
+      accentColor={accentColor}
+      showBadge={Boolean(accentColor)}
+      statusDotClassName={statusStyle.dot}
+      className="size-5"
+      iconClassName="size-4 text-foreground/80"
+      badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 text-[7px]"
+    />
+  ) : FallbackIconComponent ? (
+    <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
+      <FallbackIconComponent className="size-4 text-foreground/80" aria-hidden />
+      <span
+        className={cn(
+          "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
+          statusStyle.dot,
+        )}
+        aria-hidden
+      />
+    </span>
+  ) : (
+    <span className={cn("size-2 shrink-0 rounded-full", statusStyle.dot)} />
+  );
+
+  const titleHeadNode = (
+    <>
+      {titleIconNode}
+      <h3 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">
+        {displayName}
+      </h3>
+      {String(instanceId) !== String(instance.driver) ? (
+        <code className="truncate rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground">
+          {instanceId}
+        </code>
+      ) : null}
+      {driverOption?.badgeLabel ? (
+        <Badge variant="warning" size="sm" className="shrink-0">
+          {driverOption.badgeLabel}
+        </Badge>
+      ) : null}
+    </>
+  );
+
+  const titleTailNode = (
+    <>
+      {headerAction ? (
+        <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+          {headerAction}
+        </span>
+      ) : null}
+      {onDelete ? (
+        <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="icon-xs"
+                  variant="ghost"
+                  className="size-5 rounded-sm p-0 text-muted-foreground hover:text-destructive"
+                  onClick={onDelete}
+                  aria-label={`Delete provider instance ${instanceId}`}
+                >
+                  <Trash2Icon className="size-3" />
+                </Button>
+              }
+            />
+            <TooltipPopup side="top">Delete instance</TooltipPopup>
+          </Tooltip>
+        </span>
+      ) : null}
+    </>
+  );
+
+  const authRowNode = (
+    <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground/80">
+      {hasAuthenticatedEmail ? (
+        <>
+          <span>Authenticated as</span>
+          <ProviderAuthEmail email={authEmail} />
+          {authenticatedDetail ? <span>· {authenticatedDetail}</span> : null}
+        </>
+      ) : (
+        <>
+          <span>{summary.headline}</span>
+          <ProviderAuthEmail email={authEmail} separator prefix="Email" />
+        </>
+      )}
+      {summary.detail ? <span>- {summary.detail}</span> : null}
+    </p>
+  );
+
+  const versionCodeNode = versionLabel ? (
+    <code className="text-xs text-muted-foreground">{versionLabel}</code>
+  ) : null;
+
   return (
-    <div className="border-t border-border first:border-t-0">
-      <div className="px-4 py-4 sm:px-5">
+    <div className="border-t border-border/60 first:border-t-0">
+      <div className="px-4 py-3.5 sm:px-5">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 flex-1 space-y-1">
-            <div className="flex min-h-5 items-center gap-1.5">
-              {driverKind ? (
-                <ProviderInstanceIcon
-                  driverKind={driverKind}
-                  displayName={displayName}
-                  accentColor={accentColor}
-                  showBadge={Boolean(accentColor)}
-                  statusDotClassName={statusStyle.dot}
-                  className="size-5"
-                  iconClassName="size-4 text-foreground/80"
-                  badgeClassName="right-[-0.125rem] bottom-[-0.125rem] h-3 min-w-3 text-[7px]"
-                />
-              ) : FallbackIconComponent ? (
-                <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
-                  <FallbackIconComponent className="size-4 text-foreground/80" aria-hidden />
-                  <span
-                    className={cn(
-                      "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
-                      statusStyle.dot,
-                    )}
-                    aria-hidden
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              {titleHeadNode}
+              {versionCodeNode}
+              {versionAdvisory ? (
+                <Popover>
+                  <PopoverTrigger
+                    render={
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="ghost"
+                        className={cn(
+                          "size-5 rounded-sm p-0",
+                          versionAdvisory.emphasis === "strong"
+                            ? "text-warning hover:text-warning"
+                            : "text-primary hover:text-primary",
+                        )}
+                        aria-label="Update available — view details"
+                      >
+                        <ArrowUpCircleIcon className="size-3.5 [animation:bounce_2.4s_ease-in-out_infinite] motion-reduce:animate-none" />
+                      </Button>
+                    }
                   />
-                </span>
-              ) : (
-                <span className={cn("size-2 shrink-0 rounded-full", statusStyle.dot)} />
-              )}
-              <h3 className="truncate text-sm font-medium text-foreground">{displayName}</h3>
-              {String(instanceId) !== String(instance.driver) ? (
-                // Hide the id chip on a default slot whose id === the
-                // driver slug — it's redundant with the driver icon +
-                // label. Custom instances (and any instance the user has
-                // since renamed) keep the chip so their slug stays
-                // visible for copy/paste + disambiguation.
-                <code className="truncate rounded bg-muted/60 px-1 py-0.5 text-[10px] text-muted-foreground">
-                  {instanceId}
-                </code>
-              ) : null}
-              {driverOption?.badgeLabel ? (
-                <Badge variant="warning" size="sm" className="shrink-0">
-                  {driverOption.badgeLabel}
-                </Badge>
-              ) : null}
-              {versionLabel ? (
-                <code className="text-xs text-muted-foreground">{versionLabel}</code>
-              ) : null}
-              {headerAction ? (
-                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-                  {headerAction}
-                </span>
-              ) : null}
-              {onDelete ? (
-                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <Button
-                          size="icon-xs"
-                          variant="ghost"
-                          className="size-5 rounded-sm p-0 text-muted-foreground hover:text-destructive"
-                          onClick={onDelete}
-                          aria-label={`Delete provider instance ${instanceId}`}
+                  <PopoverPopup side="bottom" align="start" className="w-84">
+                    <div className="grid gap-3">
+                      <div className="grid gap-0.5">
+                        <p className="text-[13px] font-semibold leading-tight text-foreground">
+                          Update available
+                        </p>
+                        <p
+                          className={cn(
+                            "text-xs leading-snug",
+                            versionAdvisory.emphasis === "strong"
+                              ? "text-warning"
+                              : "text-muted-foreground",
+                          )}
                         >
-                          <Trash2Icon className="size-3" />
+                          {versionAdvisory.detail}
+                        </p>
+                      </div>
+                      {onRunUpdate ? (
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="default"
+                          className="w-full"
+                          disabled={isUpdating}
+                          onClick={onRunUpdate}
+                        >
+                          {isUpdating ? <LoaderIcon className="animate-spin" /> : <DownloadIcon />}
+                          {isUpdating ? "Updating" : "Update now"}
                         </Button>
-                      }
-                    />
-                    <TooltipPopup side="top">Delete instance</TooltipPopup>
-                  </Tooltip>
-                </span>
+                      ) : null}
+                      {onRunUpdate && updateCommand ? (
+                        <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                          <span aria-hidden className="h-px flex-1 bg-border" />
+                          or, update manually using
+                          <span aria-hidden className="h-px flex-1 bg-border" />
+                        </div>
+                      ) : null}
+                      {updateCommand ? (
+                        <div className="flex items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
+                          <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11px] text-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                            {updateCommand}
+                          </code>
+                          <Tooltip>
+                            <TooltipTrigger
+                              render={
+                                <Button
+                                  type="button"
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  className="size-6 shrink-0 rounded-sm p-0 text-muted-foreground hover:text-foreground"
+                                  onClick={() =>
+                                    copyToClipboard(updateCommand, {
+                                      providerName: displayName,
+                                    })
+                                  }
+                                  aria-label="Copy update command"
+                                >
+                                  <CopyIcon className="size-3" />
+                                </Button>
+                              }
+                            />
+                            <TooltipPopup side="top">Copy command</TooltipPopup>
+                          </Tooltip>
+                        </div>
+                      ) : null}
+                    </div>
+                  </PopoverPopup>
+                </Popover>
               ) : null}
+              {titleTailNode}
             </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
-              {hasAuthenticatedEmail ? (
-                <>
-                  <span>Authenticated as</span>
-                  <ProviderAuthEmail email={authEmail} />
-                  {authenticatedDetail ? <span>· {authenticatedDetail}</span> : null}
-                </>
-              ) : (
-                <>
-                  <span>{summary.headline}</span>
-                  <ProviderAuthEmail email={authEmail} separator prefix="Email" />
-                </>
-              )}
-              {summary.detail ? <span>- {summary.detail}</span> : null}
-            </p>
+            {authRowNode}
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
             <Button
