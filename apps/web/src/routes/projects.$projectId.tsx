@@ -1,13 +1,11 @@
-import { ArrowLeftIcon, ExternalLinkIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { ArrowLeftIcon, PlusIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, redirect, useCanGoBack, useNavigate } from "@tanstack/react-router";
-import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import { createDefaultModelSelection, createModelSelection } from "@t3tools/shared/model";
 import type {
   KeybindingCommand,
   ModelSelection,
   ProjectActionEnvironment,
-  ProjectDetectedRemote,
   ProjectEffectiveRemote,
   ProjectRemoteOverride,
   ProjectScript,
@@ -52,14 +50,6 @@ import { useSavedEnvironmentRuntimeStore } from "../environments/runtime";
 import ProjectScriptsControl, {
   type NewProjectScriptInput,
 } from "../components/ProjectScriptsControl";
-import {
-  AzureDevOpsIcon,
-  BitbucketIcon,
-  GitHubIcon,
-  GitIcon,
-  GitLabIcon,
-  type Icon,
-} from "../components/Icons";
 import { commandForProjectScript, nextProjectScriptId } from "../projectScripts";
 import { syncProjectScriptKeybinding } from "../lib/projectScriptKeybindings";
 import { useSettings } from "../hooks/useSettings";
@@ -77,13 +67,6 @@ const PROVIDER_LABELS: Record<SourceControlProviderKind, string> = {
   "azure-devops": "Azure DevOps",
   bitbucket: "Bitbucket",
   unknown: "Generic",
-};
-
-const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, Icon>> = {
-  github: GitHubIcon,
-  gitlab: GitLabIcon,
-  "azure-devops": AzureDevOpsIcon,
-  bitbucket: BitbucketIcon,
 };
 
 const DEFAULT_PROJECT_MODEL_SELECTION = createDefaultModelSelection();
@@ -124,28 +107,6 @@ function buildRemoteOverride(draft: RemoteOverrideDraft): ProjectRemoteOverride 
     remoteUrl,
     ...(webUrl ? { webUrl } : {}),
   };
-}
-
-function formatGitRemoteRepositoryLabel(remote: ProjectDetectedRemote) {
-  const segments = normalizeGitRemoteUrl(remote.url).split("/").slice(1).filter(Boolean);
-  const azureGitMarkerIndex = segments.findIndex((segment) => segment.toLowerCase() === "_git");
-  const azureProject = segments[azureGitMarkerIndex - 1];
-  const azureRepo = segments[azureGitMarkerIndex + 1];
-
-  if (azureGitMarkerIndex > 0 && azureProject && azureRepo) {
-    return `${azureProject}/${azureRepo}`;
-  }
-
-  if (segments.length >= 2) {
-    return segments.slice(-2).join("/");
-  }
-
-  return segments[0] ?? remote.name;
-}
-
-function remoteProviderIcon(remote: ProjectDetectedRemote | null): Icon {
-  if (!remote?.provider) return GitIcon;
-  return SOURCE_CONTROL_PROVIDER_ICONS[remote.provider.kind] ?? GitIcon;
 }
 
 function isValidActionEnvironmentKey(key: string): boolean {
@@ -569,8 +530,6 @@ function ProjectRouteView() {
   });
 
   const effectiveRemote = projectDetails.data?.effective.remote ?? null;
-  const detectedRemote =
-    projectDetails.data?.detected.primaryRemote ?? projectDetails.data?.detected.remotes[0] ?? null;
   const displayedModelSelection = defaultModelSelection ?? fallbackModelSelection;
   const displayedModelInstanceEntry =
     providerInstanceEntries.find(
@@ -695,15 +654,15 @@ function ProjectRouteView() {
                   />
                 </SettingsSection>
 
-                <SettingsSection
-                  title="Git info"
-                  headerAction={
-                    effectiveRemote?.webUrl ? <OpenRemoteButton remote={effectiveRemote} /> : null
-                  }
-                >
+                <SettingsSection title="Git info">
                   <ProjectSettingRow
                     title="Remote"
-                    align={overrideEnabled ? "start" : "center"}
+                    description={
+                      overrideEnabled ? undefined : (
+                        <RemoteSettingDescription remote={effectiveRemote} />
+                      )
+                    }
+                    align="start"
                     resetAction={
                       projectDetails.data.settings.remoteOverride !== null ? (
                         <SettingResetButton
@@ -717,14 +676,7 @@ function ProjectRouteView() {
                     }
                     control={
                       <div className="grid w-full min-w-0 gap-4">
-                        <div className="flex w-full min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          {overrideEnabled ? (
-                            <div className="min-w-0 text-sm text-muted-foreground">
-                              Custom remote
-                            </div>
-                          ) : (
-                            <DetectedRemoteSummary remote={detectedRemote} />
-                          )}
+                        <div className="flex w-full justify-end">
                           <div className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
                             <span>Custom</span>
                             <Switch
@@ -952,53 +904,46 @@ function ProjectSettingsLoading() {
   );
 }
 
-function DetectedRemoteSummary({ remote }: { remote: ProjectDetectedRemote | null }) {
-  const Icon = remoteProviderIcon(remote);
-
+function RemoteSettingDescription({ remote }: { remote: ProjectEffectiveRemote | null }) {
   if (!remote) {
     return (
-      <div className="flex min-w-0 flex-1 items-center gap-3 py-1 text-left">
-        <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-          <Icon className="size-5" aria-hidden />
-        </span>
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-foreground">
-            No Git remote configured.
-          </div>
-          <div className="mt-0.5 text-xs text-muted-foreground">
-            Enable custom remote to set one manually.
-          </div>
-        </div>
+      <div className="grid gap-0.5">
+        <span>No Git remote configured.</span>
+        <span>Enable custom remote to set one manually.</span>
       </div>
     );
   }
 
-  const remoteValue = formatGitRemoteValue(remote);
-  const providerLabel = remote.provider?.name ?? "Git remote";
+  const remoteValue = formatEffectiveGitRemoteValue(remote);
+  const openUrl = remote.webUrl;
+  const content = (
+    <span className="flex min-w-0 max-w-full items-center gap-2">
+      <span className="shrink-0 text-muted-foreground">{remote.remoteName}:</span>
+      <span
+        className="truncate font-mono text-[11px] text-muted-foreground group-hover:underline"
+        title={remoteValue}
+      >
+        {remoteValue}
+      </span>
+    </span>
+  );
+
+  if (!openUrl) return <div className="min-w-0">{content}</div>;
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-3 py-1 text-left">
-      <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-md bg-muted text-foreground">
-        <Icon className="size-5" aria-hidden />
-      </span>
-      <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-foreground" title={remoteValue}>
-          {formatGitRemoteRepositoryLabel(remote)}
-        </div>
-        <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-          <span className="truncate">{providerLabel}</span>
-          <span aria-hidden>-</span>
-          <span className="truncate">{remote.name}</span>
-        </div>
-      </div>
-    </div>
+    <button
+      type="button"
+      className="group block min-w-0 max-w-full rounded-md text-left transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      title={`Open ${openUrl}`}
+      onClick={() => openExternalUrl(openUrl, "Unable to open remote")}
+    >
+      {content}
+    </button>
   );
 }
 
-function formatGitRemoteValue(remote: ProjectDetectedRemote) {
-  return remote.pushUrl && remote.pushUrl !== remote.url
-    ? `${remote.url} (push: ${remote.pushUrl})`
-    : remote.url;
+function formatEffectiveGitRemoteValue(remote: ProjectEffectiveRemote) {
+  return remote.remoteUrl;
 }
 
 function ProjectSettingRow({
@@ -1041,9 +986,9 @@ function ProjectSettingRow({
             </span>
           </div>
           {description ? (
-            <p className="mt-2 max-w-sm text-xs font-normal leading-5 text-muted-foreground">
+            <div className="mt-2 max-w-sm text-xs font-normal leading-5 text-muted-foreground">
               {description}
-            </p>
+            </div>
           ) : null}
         </div>
         <div className={cn("min-w-0 sm:flex-1", alignStart && control && "sm:self-stretch")}>
@@ -1191,27 +1136,17 @@ function ProjectNotice({ title, description }: { title: string; description: str
   );
 }
 
-function OpenRemoteButton({ remote }: { remote: ProjectEffectiveRemote }) {
-  const openRemote = () => {
-    const url = remote.webUrl ?? remote.providerInfo?.baseUrl;
-    if (!url) return;
-    const api = readLocalApi();
-    void api?.shell.openExternal(url).catch((error) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Unable to open remote",
-          description: error instanceof Error ? error.message : "An error occurred.",
-        }),
-      );
-    });
-  };
-  return (
-    <Button size="xs" variant="ghost" onClick={openRemote}>
-      <ExternalLinkIcon className="size-3.5" />
-      Open
-    </Button>
-  );
+function openExternalUrl(url: string, title: string) {
+  const api = readLocalApi();
+  void api?.shell.openExternal(url).catch((error) => {
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title,
+        description: error instanceof Error ? error.message : "An error occurred.",
+      }),
+    );
+  });
 }
 
 export const Route = createFileRoute("/projects/$projectId")({
