@@ -44,7 +44,7 @@ Required GitHub Actions secrets:
 
 Optional GitHub Actions variables:
 
-- `VERCEL_TEAM_SLUG`: required only if the token needs an explicit Vercel team scope.
+- `VERCEL_TEAM_SLUG`: overrides the Vercel CLI scope when the team slug is preferred over the `VERCEL_ORG_ID` secret.
 - `T3CODE_WEB_ROUTER_URL`: defaults to `https://app.t3.codes`.
 - `T3CODE_WEB_LATEST_DOMAIN`: defaults to `latest.app.t3.codes`.
 - `T3CODE_WEB_NIGHTLY_DOMAIN`: defaults to `nightly.app.t3.codes`.
