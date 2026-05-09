@@ -115,6 +115,43 @@ After setup, the renderer connects to a local forwarded HTTP/WebSocket endpoint.
 
 SSH launch is a desktop feature because it needs local process and SSH access. Once the environment is paired and saved, it uses the same environment list and connection model as direct LAN, Tailscale, HTTPS, or future tunnel-backed environments.
 
+#### SSH Launch Troubleshooting
+
+The desktop SSH launcher connects with a non-interactive `sh` session, writes a small launcher script under `~/.t3/ssh-launch/<host-key>/`, starts or reuses a remote T3 server, and forwards the remote loopback port back to your desktop.
+
+The remote host must have a compatible Node.js runtime. T3 Code uses the server package's `engines.node` requirement:
+
+```text
+^22.16 || ^23.11 || >=24.10
+```
+
+During SSH launch, T3 Code first checks whether `node` is already available on `PATH`. If it is missing, the launcher tries common non-interactive shell locations and version-manager shims/activation hooks:
+
+- `~/.local/bin`, `~/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `/bin`
+- Volta via `~/.volta/bin`
+- asdf via `~/.asdf/shims`, `~/.asdf/bin`, or `~/.asdf/asdf.sh`
+- mise via `~/.local/share/mise/shims`, `~/.mise/shims`, or `mise activate sh`
+- fnm via `fnm env --use-on-cd --shell sh` or `fnm env --shell sh`
+- nodenv via `~/.nodenv/bin`, `~/.nodenv/shims`, or `nodenv init -`
+- nvm via `$NVM_DIR/nvm.sh`, then `nvm use default`, `nvm use node`, or `nvm use --lts`
+- installed nvm versions under `$NVM_DIR/versions/node/*/bin`
+
+If launch fails with `node: command not found`, a port-scan failure, or a message that the remote Node version does not satisfy the required range, SSH into the host and check the same non-interactive shell path T3 Code uses:
+
+```bash
+ssh user@example.com 'sh -lc "command -v node && node --version"'
+```
+
+If that does not print a compatible Node version, configure your version manager for non-interactive shells or install a compatible Node binary in one of the searched locations. For example, with nvm you may need a default alias:
+
+```bash
+nvm alias default 24
+```
+
+With mise/asdf/fnm/nodenv, make sure the tool's shim directory is installed and points at a Node version satisfying the range above.
+
+If reconnecting after an app update fails, retry the SSH launch once. The launcher now compares its generated runner script, stops stale launcher-managed remote servers, clears the SSH launch PID/port state, and starts a fresh remote server. You should not normally need to delete `~/.t3/ssh-launch` or kill `t3` processes manually.
+
 ## How Pairing Works
 
 The remote device does not need a long-lived secret up front.

@@ -18,6 +18,7 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
+import { compareSemverVersions } from "@t3tools/shared/semver";
 import {
   query as claudeQuery,
   type SlashCommand as ClaudeSlashCommand,
@@ -36,7 +37,6 @@ import {
   spawnAndCollect,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import { compareCliVersions } from "../cliVersion.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 
 const DEFAULT_CLAUDE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
@@ -180,7 +180,7 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
 ];
 
 function supportsClaudeOpus47(version: string | null | undefined): boolean {
-  return version ? compareCliVersions(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0 : false;
+  return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0 : false;
 }
 
 function getBuiltInClaudeModelsForVersion(

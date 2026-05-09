@@ -1,11 +1,15 @@
-import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
+import {
+  ServerSettings as ServerSettingsSchema,
+  type ServerSettings,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { deepMerge } from "./Struct.ts";
 import { fromLenientJson } from "./schemaJson.ts";
 import { createModelSelection } from "./model.ts";
 
-const ServerSettingsJson = fromLenientJson(ServerSettings);
+const ServerSettingsJson = fromLenientJson(ServerSettingsSchema);
 const decodeServerSettingsJson = Schema.decodeUnknownOption(ServerSettingsJson);
 
 export interface PersistedServerObservabilitySettings {
@@ -76,13 +80,15 @@ export function applyServerSettingsPatch(
   patch: ServerSettingsPatch,
 ): ServerSettings {
   const selectionPatch = patch.textGenerationModelSelection;
-  const next = deepMerge(current, patch);
+  const { automaticGitFetchInterval, ...patchForMerge } = patch;
+  const next = deepMerge(current, patchForMerge);
   const nextWithReplacements = {
     ...next,
     ...(patch.providerInstances !== undefined
       ? { providerInstances: patch.providerInstances }
       : {}),
     ...(patch.projectSettings !== undefined ? { projectSettings: patch.projectSettings } : {}),
+    ...(automaticGitFetchInterval !== undefined ? { automaticGitFetchInterval } : {}),
   };
   if (!selectionPatch) {
     return nextWithReplacements;

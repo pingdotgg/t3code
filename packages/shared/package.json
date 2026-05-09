@@ -28,6 +28,10 @@
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
     },
+    "./semver": {
+      "types": "./src/semver.ts",
+      "import": "./src/semver.ts"
+    },
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"

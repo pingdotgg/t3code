@@ -10,6 +10,7 @@ import {
 import { createModelSelection } from "@t3tools/shared/model";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -462,6 +463,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             serverPassword: "secret-password",
           },
         },
+        automaticGitFetchInterval: Duration.seconds(10),
       });
 
       assert.equal(next.providers.codex.binaryPath, "/opt/homebrew/bin/codex");
@@ -483,6 +485,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             serverPassword: "secret-password",
           },
         },
+        automaticGitFetchInterval: 10_000,
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
