@@ -10,6 +10,10 @@ export const BRAND_ASSET_PATHS = {
   nightlyMacIconPng: "assets/nightly/blueprint-macos-1024.png",
   nightlyLinuxIconPng: "assets/nightly/blueprint-universal-1024.png",
   nightlyWindowsIconIco: "assets/nightly/blueprint-windows.ico",
+  nightlyWebFaviconIco: "assets/nightly/blueprint-web-favicon.ico",
+  nightlyWebFavicon16Png: "assets/nightly/blueprint-web-favicon-16x16.png",
+  nightlyWebFavicon32Png: "assets/nightly/blueprint-web-favicon-32x32.png",
+  nightlyWebAppleTouchIconPng: "assets/nightly/blueprint-web-apple-touch-180.png",
 
   developmentDesktopIconPng: "assets/dev/blueprint-macos-1024.png",
   developmentWindowsIconIco: "assets/dev/blueprint-windows.ico",
@@ -19,7 +23,15 @@ export const BRAND_ASSET_PATHS = {
   developmentWebAppleTouchIconPng: "assets/dev/blueprint-web-apple-touch-180.png",
 } as const;
 
-export type WebAssetBrand = "development" | "production";
+export type WebAssetBrand = "development" | "nightly" | "production";
+
+export const WEB_ASSET_CHANNELS = ["latest", "nightly"] as const;
+
+export type WebAssetChannel = (typeof WEB_ASSET_CHANNELS)[number];
+
+export function resolveWebAssetBrandForChannel(channel: WebAssetChannel): WebAssetBrand {
+  return channel === "nightly" ? "nightly" : "production";
+}
 
 export interface IconOverride {
   readonly sourceRelativePath: string;
@@ -39,6 +51,12 @@ const WEB_ICON_SOURCE_PATHS_BY_BRAND = {
     favicon16Png: BRAND_ASSET_PATHS.developmentWebFavicon16Png,
     favicon32Png: BRAND_ASSET_PATHS.developmentWebFavicon32Png,
     appleTouchIconPng: BRAND_ASSET_PATHS.developmentWebAppleTouchIconPng,
+  },
+  nightly: {
+    faviconIco: BRAND_ASSET_PATHS.nightlyWebFaviconIco,
+    favicon16Png: BRAND_ASSET_PATHS.nightlyWebFavicon16Png,
+    favicon32Png: BRAND_ASSET_PATHS.nightlyWebFavicon32Png,
+    appleTouchIconPng: BRAND_ASSET_PATHS.nightlyWebAppleTouchIconPng,
   },
   production: {
     faviconIco: BRAND_ASSET_PATHS.productionWebFaviconIco,
