@@ -1,4 +1,6 @@
+import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import {
   DEFAULT_LINUX_PASSWORD_STORE,
@@ -31,6 +33,13 @@ const trimNonEmpty = (value: string | undefined): string | null => {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : null;
 };
+
+const EarlyDesktopSettingsJson = fromLenientJson(
+  Schema.Struct({
+    linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
+  }),
+);
+const decodeEarlyDesktopSettingsJson = Schema.decodeSync(EarlyDesktopSettingsJson);
 
 const isDevelopmentEnvironment = (env: NodeJS.ProcessEnv): boolean =>
   trimNonEmpty(env.VITE_DEV_SERVER_URL) !== null;
@@ -67,13 +76,8 @@ export function resolveEarlyLinuxPasswordStorePreference(
 ): LinuxPasswordStorePreference {
   const settingsPath = resolveEarlyDesktopSettingsPath(input);
   try {
-    const parsed = JSON.parse(input.readFileString(settingsPath)) as unknown;
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      return DEFAULT_LINUX_PASSWORD_STORE;
-    }
-    return normalizeLinuxPasswordStorePreference(
-      (parsed as { readonly linuxPasswordStore?: unknown }).linuxPasswordStore,
-    );
+    const parsed = decodeEarlyDesktopSettingsJson(input.readFileString(settingsPath));
+    return normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore);
   } catch {
     return DEFAULT_LINUX_PASSWORD_STORE;
   }
