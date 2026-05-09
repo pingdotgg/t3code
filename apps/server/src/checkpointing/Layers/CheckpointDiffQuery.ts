@@ -2,7 +2,6 @@ import {
   type CheckpointRef,
   OrchestrationGetTurnDiffResult,
   type ThreadId,
-  type OrchestrationGetFullThreadDiffInput,
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffResult as OrchestrationGetTurnDiffResultType,
 } from "@t3tools/contracts";

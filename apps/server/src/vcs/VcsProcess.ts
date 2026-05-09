@@ -10,14 +10,8 @@ import {
   VcsProcessSpawnError,
   VcsProcessTimeoutError,
 } from "@t3tools/contracts";
-import {
-  ProcessOutputLimitError,
-  ProcessReadError,
-  runProcess,
-  ProcessSpawnError,
-  ProcessStdinError,
-  ProcessTimeoutError,
-} from "../processRunner.ts";
+import { runProcess } from "../processRunner.ts";
+import * as Match from "effect/Match";
 
 export interface VcsProcessInput {
   readonly operation: string;
@@ -81,51 +75,23 @@ export const make = Effect.fn("makeVcsProcess")(function* () {
       truncatedMarker: input.appendTruncationMarker ? OUTPUT_TRUNCATED_MARKER : "",
       timeoutBehavior: "error",
     }).pipe(
-      Effect.mapError((cause) => {
-        if (cause instanceof ProcessSpawnError) {
-          return new VcsProcessSpawnError({
-            ...baseError,
-            cause: cause.cause,
-          });
-        }
-        if (cause instanceof ProcessStdinError) {
-          return new VcsOutputDecodeError({
-            ...baseError,
-            detail: "failed to write process stdin",
-            cause: cause.cause,
-          });
-        }
-        if (cause instanceof ProcessReadError) {
-          return new VcsOutputDecodeError({
-            ...baseError,
-            detail:
-              cause.stream === "exitCode"
-                ? "failed to read process exit code"
-                : `failed to read process ${cause.stream}`,
-            cause: cause.cause,
-          });
-        }
-        if (cause instanceof ProcessOutputLimitError) {
-          return new VcsOutputDecodeError({
-            ...baseError,
-            detail: `process ${cause.stream} exceeded ${cause.maxBytes} bytes`,
-          });
-        }
-        if (cause instanceof ProcessTimeoutError) {
-          return new VcsProcessTimeoutError({
-            ...baseError,
-            timeoutMs: cause.timeoutMs,
-          });
-        }
-        return cause;
-      }),
+      Effect.mapError((cause) =>
+        Match.valueTags(cause, {
+          ProcessSpawnError: (error) =>
+            VcsProcessSpawnError.fromProcessSpawnError(baseError, error),
+          ProcessOutputLimitError: (error) =>
+            VcsOutputDecodeError.fromProcessOutputLimitError(baseError, error),
+          ProcessTimeoutError: (error) =>
+            VcsProcessTimeoutError.fromProcessTimeoutError(baseError, error),
+          ProcessStdinError: (error) =>
+            VcsOutputDecodeError.fromProcessStdinError(baseError, error),
+          ProcessReadError: (error) => VcsOutputDecodeError.fromProcessReadError(baseError, error),
+        }),
+      ),
     );
 
     if (result.code === null) {
-      return yield* new VcsOutputDecodeError({
-        ...baseError,
-        detail: "process completed without an exit code",
-      });
+      return yield* VcsOutputDecodeError.missingExitCode(baseError);
     }
 
     const exitCode = result.code as ChildProcessSpawner.ExitCode;

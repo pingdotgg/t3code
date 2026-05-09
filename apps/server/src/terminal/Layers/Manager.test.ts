@@ -33,16 +33,6 @@ import {
 } from "../Services/PTY.ts";
 import { makeTerminalManagerWithOptions } from "./Manager.ts";
 
-function joinPath(...parts: ReadonlyArray<string>): string {
-  return parts
-    .map((part, index) => {
-      if (index === 0) return part.replace(/[\\/]+$/g, "");
-      return part.replace(/^[\\/]+|[\\/]+$/g, "");
-    })
-    .filter((part) => part.length > 0)
-    .join("/");
-}
-
 class WaitForConditionError extends Data.TaggedError("WaitForConditionError")<{
   readonly message: string;
 }> {}
@@ -194,16 +184,19 @@ function multiTerminalHistoryLogName(threadId: string, terminalId: string): stri
   return `${threadPart}_${Encoding.encodeBase64Url(terminalId)}.log`;
 }
 
-function historyLogPath(logsDir: string, threadId = "thread-1"): string {
-  return joinPath(logsDir, historyLogName(threadId));
+type PathJoin = (...paths: ReadonlyArray<string>) => string;
+
+function historyLogPath(join: PathJoin, logsDir: string, threadId = "thread-1"): string {
+  return join(logsDir, historyLogName(threadId));
 }
 
 function multiTerminalHistoryLogPath(
+  join: PathJoin,
   logsDir: string,
   threadId = "thread-1",
   terminalId = "default",
 ): string {
-  return joinPath(logsDir, multiTerminalHistoryLogName(threadId, terminalId));
+  return join(logsDir, multiTerminalHistoryLogName(threadId, terminalId));
 }
 
 interface CreateManagerOptions {
@@ -220,6 +213,7 @@ interface CreateManagerOptions {
 interface ManagerFixture {
   readonly baseDir: string;
   readonly logsDir: string;
+  readonly join: PathJoin;
   readonly ptyAdapter: FakePtyAdapter;
   readonly manager: TerminalManagerShape;
   readonly getEvents: Effect.Effect<ReadonlyArray<TerminalEvent>>;
@@ -235,8 +229,9 @@ const createManager = (
 > =>
   Effect.flatMap(Effect.service(FileSystem.FileSystem), (fs) =>
     Effect.gen(function* () {
+      const { join } = yield* Path.Path;
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-terminal-" });
-      const logsDir = joinPath(baseDir, "userdata", "logs", "terminals");
+      const logsDir = join(baseDir, "userdata", "logs", "terminals");
       const ptyAdapter = options.ptyAdapter ?? new FakePtyAdapter();
 
       const manager = yield* makeTerminalManagerWithOptions({
@@ -267,6 +262,7 @@ const createManager = (
       return {
         baseDir,
         logsDir,
+        join,
         ptyAdapter,
         manager,
         getEvents: Ref.get(eventsRef),
@@ -315,9 +311,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
     Effect.gen(function* () {
       if (process.platform === "win32") return;
 
-      const { manager, baseDir } = yield* createManager();
-      const blockedRoot = joinPath(baseDir, "blocked-root");
-      const blockedCwd = joinPath(blockedRoot, "cwd");
+      const { manager, baseDir, join } = yield* createManager();
+      const blockedRoot = join(baseDir, "blocked-root");
+      const blockedCwd = join(blockedRoot, "cwd");
       yield* makeDirectory(blockedCwd);
       yield* chmod(blockedRoot, 0o000);
 
@@ -410,16 +406,18 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("clears transcript and emits cleared event", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter, logsDir, getEvents } = yield* createManager();
+      const { manager, ptyAdapter, logsDir, join, getEvents } = yield* createManager();
       yield* manager.open(openInput());
       const process = ptyAdapter.processes[0];
       expect(process).toBeDefined();
       if (!process) return;
 
       process.emitData("hello\n");
-      yield* waitFor(pathExists(historyLogPath(logsDir)));
+      yield* waitFor(pathExists(historyLogPath(join, logsDir)));
       yield* manager.clear({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
-      yield* waitFor(Effect.map(readFileString(historyLogPath(logsDir)), (text) => text === ""));
+      yield* waitFor(
+        Effect.map(readFileString(historyLogPath(join, logsDir)), (text) => text === ""),
+      );
 
       const events = yield* getEvents;
       expect(events.some((event) => event.type === "cleared")).toBe(true);
@@ -436,27 +434,29 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("restarts terminal with empty transcript and respawns pty", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      const { manager, ptyAdapter, logsDir, join } = yield* createManager();
       yield* manager.open(openInput());
       const firstProcess = ptyAdapter.processes[0];
       expect(firstProcess).toBeDefined();
       if (!firstProcess) return;
       firstProcess.emitData("before restart\n");
-      yield* waitFor(pathExists(historyLogPath(logsDir)));
+      yield* waitFor(pathExists(historyLogPath(join, logsDir)));
 
       const snapshot = yield* manager.restart(restartInput());
       assert.equal(snapshot.history, "");
       assert.equal(snapshot.status, "running");
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
-      yield* waitFor(Effect.map(readFileString(historyLogPath(logsDir)), (text) => text === ""));
+      yield* waitFor(
+        Effect.map(readFileString(historyLogPath(join, logsDir)), (text) => text === ""),
+      );
     }),
   );
 
   it.effect("propagates explicit worktree metadata through snapshots and lifecycle events", () =>
     Effect.gen(function* () {
-      const { manager, getEvents, baseDir } = yield* createManager();
-      const firstWorktreePath = joinPath(baseDir, "worktrees", "feature-a");
-      const secondWorktreePath = joinPath(baseDir, "worktrees", "feature-b");
+      const { manager, getEvents, baseDir, join } = yield* createManager();
+      const firstWorktreePath = join(baseDir, "worktrees", "feature-a");
+      const secondWorktreePath = join(baseDir, "worktrees", "feature-b");
       yield* makeDirectory(firstWorktreePath);
       yield* makeDirectory(secondWorktreePath);
       const startedSnapshot = yield* manager.open(
@@ -491,8 +491,8 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("preserves worktree metadata when reopening an exited session", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter, getEvents, baseDir } = yield* createManager();
-      const worktreePath = joinPath(baseDir, "worktrees", "feature-a");
+      const { manager, ptyAdapter, getEvents, baseDir, join } = yield* createManager();
+      const worktreePath = join(baseDir, "worktrees", "feature-a");
       yield* makeDirectory(worktreePath);
 
       yield* manager.open(
@@ -533,13 +533,13 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("emits exited event and reopens with clean transcript after exit", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter, logsDir, getEvents } = yield* createManager();
+      const { manager, ptyAdapter, logsDir, join, getEvents } = yield* createManager();
       yield* manager.open(openInput());
       const process = ptyAdapter.processes[0];
       expect(process).toBeDefined();
       if (!process) return;
       process.emitData("old data\n");
-      yield* waitFor(pathExists(historyLogPath(logsDir)));
+      yield* waitFor(pathExists(historyLogPath(join, logsDir)));
       process.emitExit({ exitCode: 0, signal: 0 });
 
       yield* waitFor(
@@ -549,7 +549,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
       assert.equal(reopened.history, "");
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
-      expect(yield* readFileString(historyLogPath(logsDir))).toBe("");
+      expect(yield* readFileString(historyLogPath(join, logsDir))).toBe("");
     }),
   );
 
@@ -730,22 +730,22 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("deletes history file when close(deleteHistory=true)", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      const { manager, ptyAdapter, logsDir, join } = yield* createManager();
       yield* manager.open(openInput());
       const process = ptyAdapter.processes[0];
       expect(process).toBeDefined();
       if (!process) return;
       process.emitData("bye\n");
-      yield* waitFor(pathExists(historyLogPath(logsDir)));
+      yield* waitFor(pathExists(historyLogPath(join, logsDir)));
 
       yield* manager.close({ threadId: "thread-1", deleteHistory: true });
-      expect(yield* pathExists(historyLogPath(logsDir))).toBe(false);
+      expect(yield* pathExists(historyLogPath(join, logsDir))).toBe(false);
     }),
   );
 
   it.effect("closes all terminals for a thread when close omits terminalId", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter, logsDir } = yield* createManager();
+      const { manager, ptyAdapter, logsDir, join } = yield* createManager();
       yield* manager.open(openInput({ terminalId: "default" }));
       yield* manager.open(openInput({ terminalId: "sidecar" }));
       const defaultProcess = ptyAdapter.processes[0];
@@ -756,19 +756,19 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
       defaultProcess.emitData("default\n");
       sidecarProcess.emitData("sidecar\n");
-      yield* waitFor(pathExists(multiTerminalHistoryLogPath(logsDir, "thread-1", "default")));
-      yield* waitFor(pathExists(multiTerminalHistoryLogPath(logsDir, "thread-1", "sidecar")));
+      yield* waitFor(pathExists(multiTerminalHistoryLogPath(join, logsDir, "thread-1", "default")));
+      yield* waitFor(pathExists(multiTerminalHistoryLogPath(join, logsDir, "thread-1", "sidecar")));
 
       yield* manager.close({ threadId: "thread-1", deleteHistory: true });
 
       assert.equal(defaultProcess.killed, true);
       assert.equal(sidecarProcess.killed, true);
-      expect(yield* pathExists(multiTerminalHistoryLogPath(logsDir, "thread-1", "default"))).toBe(
-        false,
-      );
-      expect(yield* pathExists(multiTerminalHistoryLogPath(logsDir, "thread-1", "sidecar"))).toBe(
-        false,
-      );
+      expect(
+        yield* pathExists(multiTerminalHistoryLogPath(join, logsDir, "thread-1", "default")),
+      ).toBe(false);
+      expect(
+        yield* pathExists(multiTerminalHistoryLogPath(join, logsDir, "thread-1", "sidecar")),
+      ).toBe(false);
     }),
   );
 
@@ -792,7 +792,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("evicts oldest inactive terminal sessions when retention limit is exceeded", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter, logsDir, getEvents } = yield* createManager(5, {
+      const { manager, ptyAdapter, logsDir, join, getEvents } = yield* createManager(5, {
         maxRetainedInactiveSessions: 1,
       });
 
@@ -807,7 +807,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
       first.emitData("first-history\n");
       second.emitData("second-history\n");
-      yield* waitFor(pathExists(historyLogPath(logsDir, "thread-1")));
+      yield* waitFor(pathExists(historyLogPath(join, logsDir, "thread-1")));
       first.emitExit({ exitCode: 0, signal: 0 });
       yield* Effect.sleep(Duration.millis(5));
       second.emitExit({ exitCode: 0, signal: 0 });
@@ -829,9 +829,9 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("migrates legacy transcript filenames to terminal-scoped history path on open", () =>
     Effect.gen(function* () {
-      const { manager, logsDir } = yield* createManager();
-      const legacyPath = joinPath(logsDir, "thread-1.log");
-      const nextPath = historyLogPath(logsDir);
+      const { manager, logsDir, join } = yield* createManager();
+      const legacyPath = join(logsDir, "thread-1.log");
+      const nextPath = historyLogPath(join, logsDir);
       yield* writeFileString(legacyPath, "legacy-line\n");
 
       const snapshot = yield* manager.open(openInput());

@@ -1,124 +1,138 @@
-import { afterAll, describe, expect, it } from "vitest";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { describe, expect, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as ManagedRuntime from "effect/ManagedRuntime";
+import { TestClock } from "effect/testing";
 
 import { VcsProcessExitError, VcsProcessTimeoutError } from "@t3tools/contracts";
 import * as VcsProcess from "./VcsProcess.ts";
 
-const runtime = ManagedRuntime.make(VcsProcess.layer.pipe(Layer.provide(NodeServices.layer)));
+const run = (input: VcsProcess.VcsProcessInput) =>
+  Effect.gen(function* () {
+    const process = yield* VcsProcess.VcsProcess;
+    return yield* process.run(input);
+  });
 
-afterAll(async () => {
-  await runtime.dispose();
-});
+const liveLayer = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
 
-async function run(input: VcsProcess.VcsProcessInput) {
-  return await runtime.runPromise(
-    Effect.gen(function* () {
-      const process = yield* VcsProcess.VcsProcess;
-      return yield* process.run(input);
-    }),
-  );
-}
+const provideLive = <A, E, R>(effect: Effect.Effect<A, E, R | VcsProcess.VcsProcess>) =>
+  effect.pipe(Effect.provide(liveLayer));
 
 describe("VcsProcess.run", () => {
-  it("collects stdout", async () => {
-    const result = await run({
-      operation: "test.stdout",
-      command: "node",
-      args: ["-e", "process.stdout.write('hello')"],
-      cwd: process.cwd(),
-    });
+  it.effect("collects stdout", () =>
+    Effect.gen(function* () {
+      const result = yield* run({
+        operation: "test.stdout",
+        command: "node",
+        args: ["-e", "process.stdout.write('hello')"],
+        cwd: process.cwd(),
+      });
 
-    expect(result.stdout).toBe("hello");
-    expect(result.stderr).toBe("");
-    expect(result.stdoutTruncated).toBe(false);
-    expect(result.stderrTruncated).toBe(false);
-  });
+      expect(result.stdout).toBe("hello");
+      expect(result.stderr).toBe("");
+      expect(result.stdoutTruncated).toBe(false);
+      expect(result.stderrTruncated).toBe(false);
+    }).pipe(provideLive),
+  );
 
-  it("writes stdin before waiting for exit", async () => {
-    const result = await run({
-      operation: "test.stdin",
-      command: "node",
-      args: [
-        "-e",
-        [
-          "process.stdin.setEncoding('utf8');",
-          "let data='';",
-          "process.stdin.on('data', chunk => { data += chunk; });",
-          "process.stdin.on('end', () => { process.stdout.write(data); });",
-        ].join(""),
-      ],
-      cwd: process.cwd(),
-      stdin: "stdin payload",
-    });
+  it.effect("writes stdin before waiting for exit", () =>
+    Effect.gen(function* () {
+      const result = yield* run({
+        operation: "test.stdin",
+        command: "node",
+        args: [
+          "-e",
+          [
+            "process.stdin.setEncoding('utf8');",
+            "let data='';",
+            "process.stdin.on('data', chunk => { data += chunk; });",
+            "process.stdin.on('end', () => { process.stdout.write(data); });",
+          ].join(""),
+        ],
+        cwd: process.cwd(),
+        stdin: "stdin payload",
+      });
 
-    expect(result.stdout).toBe("stdin payload");
-  });
+      expect(result.stdout).toBe("stdin payload");
+    }).pipe(provideLive),
+  );
 
-  it("fails with VcsProcessExitError for non-zero exits by default", async () => {
-    await expect(
-      run({
+  it.effect("fails with VcsProcessExitError for non-zero exits by default", () =>
+    Effect.gen(function* () {
+      const error = yield* run({
         operation: "test.exit",
         command: "node",
         args: ["-e", "process.stderr.write('boom'); process.exit(2)"],
         cwd: process.cwd(),
-      }),
-    ).rejects.toBeInstanceOf(VcsProcessExitError);
-  });
+      }).pipe(Effect.flip);
 
-  it("returns output when non-zero exits are allowed", async () => {
-    const result = await run({
-      operation: "test.allowed-exit",
-      command: "node",
-      args: ["-e", "process.stderr.write('boom'); process.exit(2)"],
-      cwd: process.cwd(),
-      allowNonZeroExit: true,
-    });
+      expect(error).toBeInstanceOf(VcsProcessExitError);
+    }).pipe(provideLive),
+  );
 
-    expect(result.exitCode).toBe(2);
-    expect(result.stderr).toBe("boom");
-  });
+  it.effect("returns output when non-zero exits are allowed", () =>
+    Effect.gen(function* () {
+      const result = yield* run({
+        operation: "test.allowed-exit",
+        command: "node",
+        args: ["-e", "process.stderr.write('boom'); process.exit(2)"],
+        cwd: process.cwd(),
+        allowNonZeroExit: true,
+      });
 
-  it("truncates output and appends the marker when requested", async () => {
-    const result = await run({
-      operation: "test.truncate-marker",
-      command: "node",
-      args: ["-e", "process.stdout.write('x'.repeat(2048))"],
-      cwd: process.cwd(),
-      maxOutputBytes: 128,
-      appendTruncationMarker: true,
-    });
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toBe("boom");
+    }).pipe(provideLive),
+  );
 
-    expect(result.stdoutTruncated).toBe(true);
-    expect(result.stdout).toContain("[truncated]");
-    expect(result.stderrTruncated).toBe(false);
-  });
+  it.effect("truncates output and appends the marker when requested", () =>
+    Effect.gen(function* () {
+      const result = yield* run({
+        operation: "test.truncate-marker",
+        command: "node",
+        args: ["-e", "process.stdout.write('x'.repeat(2048))"],
+        cwd: process.cwd(),
+        maxOutputBytes: 128,
+        appendTruncationMarker: true,
+      });
 
-  it("truncates without the marker when truncation markers are disabled", async () => {
-    const result = await run({
-      operation: "test.truncate-silent",
-      command: "node",
-      args: ["-e", "process.stdout.write('x'.repeat(2048))"],
-      cwd: process.cwd(),
-      maxOutputBytes: 128,
-    });
+      expect(result.stdoutTruncated).toBe(true);
+      expect(result.stdout).toContain("[truncated]");
+      expect(result.stderrTruncated).toBe(false);
+    }).pipe(provideLive),
+  );
 
-    expect(result.stdoutTruncated).toBe(true);
-    expect(result.stdout).not.toContain("[truncated]");
-  });
+  it.effect("truncates without the marker when truncation markers are disabled", () =>
+    Effect.gen(function* () {
+      const result = yield* run({
+        operation: "test.truncate-silent",
+        command: "node",
+        args: ["-e", "process.stdout.write('x'.repeat(2048))"],
+        cwd: process.cwd(),
+        maxOutputBytes: 128,
+      });
 
-  it("fails with VcsProcessTimeoutError on timeout", async () => {
-    await expect(
-      run({
+      expect(result.stdoutTruncated).toBe(true);
+      expect(result.stdout).not.toContain("[truncated]");
+    }).pipe(provideLive),
+  );
+
+  it.effect("fails with VcsProcessTimeoutError on timeout", () =>
+    Effect.gen(function* () {
+      const errorFiber = yield* run({
         operation: "test.timeout",
         command: "node",
         args: ["-e", "setTimeout(() => {}, 5000)"],
         cwd: process.cwd(),
         timeoutMs: 50,
-      }),
-    ).rejects.toBeInstanceOf(VcsProcessTimeoutError);
-  });
+      }).pipe(Effect.flip, Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.millis(50));
+      const error = yield* Fiber.join(errorFiber);
+
+      expect(error).toBeInstanceOf(VcsProcessTimeoutError);
+    }).pipe(provideLive),
+  );
 });
