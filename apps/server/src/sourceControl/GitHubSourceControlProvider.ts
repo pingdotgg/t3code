@@ -52,7 +52,7 @@ function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeReq
 
 function parseGitHubAuth(input: SourceControlProviderDiscovery.SourceControlAuthProbeInput) {
   const output = SourceControlProviderDiscovery.combinedAuthOutput(input);
-  const authStatus = parseGitHubAuthStatus(output);
+  const authStatus = parseGitHubAuthStatus(input.stdout);
   const authenticatedAccount = findAuthenticatedGitHubAccount(authStatus.accounts);
   const host = authenticatedAccount?.host;
 

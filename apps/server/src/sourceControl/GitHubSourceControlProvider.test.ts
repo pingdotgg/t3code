@@ -208,6 +208,41 @@ it("accepts active authenticated GitHub accounts when another account fails", ()
   );
 });
 
+it("parses GitHub auth JSON from stdout when stderr has warnings", () => {
+  const auth = GitHubSourceControlProvider.discovery.parseAuth(
+    processResult(
+      JSON.stringify({
+        hosts: {
+          "github.com": [
+            {
+              state: "success",
+              active: true,
+              host: "github.com",
+              login: "active-user",
+              tokenSource: "keyring",
+              gitProtocol: "ssh",
+            },
+          ],
+        },
+      }),
+      { stderr: "warning: ignored diagnostic from gh\n" },
+    ),
+  );
+
+  assert.deepStrictEqual(
+    {
+      status: auth.status,
+      account: auth.account,
+      host: auth.host,
+    },
+    {
+      status: "authenticated",
+      account: Option.some("active-user"),
+      host: Option.some("github.com"),
+    },
+  );
+});
+
 it("parses GitHub auth status accounts by host and active state", () => {
   assert.deepStrictEqual(
     parseGitHubAuthStatus(
