@@ -6,11 +6,12 @@ import type {
   ResolvedKeybindingsConfig,
   ThreadId,
 } from "@forma/contracts";
+import type { RefObject } from "react";
 import { IconEllipsis as EllipsisIcon } from "symbols-react";
 
 import { type DraftId } from "~/composerDraftStore";
 
-import GitActionsControl from "../GitActionsControl";
+import GitActionsControl, { type GitActionsControlHandle } from "../GitActionsControl";
 import { HeaderIconActionButton } from "../HeaderIconActionButton";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import {
@@ -33,6 +34,7 @@ interface ChatHeaderActionsMenuProps {
   activeProjectScripts: ProjectScript[] | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
+  gitActionsRef?: RefObject<GitActionsControlHandle | null> | undefined;
   availableEditors: ReadonlyArray<EditorId>;
   gitCwd: string | null;
   workspaceRoot: string | null;
@@ -57,6 +59,7 @@ export function ChatHeaderActionsMenu({
   activeProjectScripts,
   preferredScriptId,
   keybindings,
+  gitActionsRef,
   availableEditors,
   gitCwd,
   workspaceRoot,
@@ -113,9 +116,11 @@ export function ChatHeaderActionsMenu({
           ) : null}
           {hasGitActions ? (
             <GitActionsControl
+              ref={gitActionsRef}
               renderMode="menu-items"
               gitCwd={gitCwd}
               activeThreadRef={activeThreadRef}
+              keybindings={keybindings}
               {...(draftId ? { draftId } : {})}
             />
           ) : null}

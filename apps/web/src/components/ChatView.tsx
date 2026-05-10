@@ -101,6 +101,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { deriveLatestContextWindowSnapshot } from "../lib/contextWindow";
 import { resolveShortcutCommand } from "../keybindings";
+import { isGitActionKeybindingCommand } from "../gitActionCommands";
 import { ComposerMetaBar } from "./ComposerMetaBar";
 import PlanSidebar from "./PlanSidebar";
 import { IconChevronDown as ChevronDownIcon } from "symbols-react";
@@ -149,6 +150,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
+import type { GitActionsControlHandle } from "./GitActionsControl";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
@@ -504,6 +506,7 @@ export default function ChatView(props: ChatViewProps) {
   const composerCodeContextsRef = useRef<CodeContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
+  const gitActionsRef = useRef<GitActionsControlHandle | null>(null);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -2210,6 +2213,15 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (isGitActionKeybindingCommand(command)) {
+        if (!gitActionsRef.current?.runKeybindingCommand(command)) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2233,6 +2245,7 @@ export default function ChatView(props: ChatViewProps) {
     keybindings,
     onRequestWorkspaceDiffToggle,
     diffAvailable,
+    gitActionsRef,
     workspacePanelDisplayMode,
     toggleTerminalVisibility,
   ]);
@@ -3358,7 +3371,7 @@ export default function ChatView(props: ChatViewProps) {
       {/* Top bar */}
       <header
         className={cn(
-          "border-b border-border px-5",
+          "border-b border-border px-2.5",
           isElectron
             ? cn(
                 "drag-region h-12 flex items-center wco:h-[env(titlebar-area-height)]",
@@ -3382,6 +3395,7 @@ export default function ChatView(props: ChatViewProps) {
             activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
           }
           keybindings={keybindings}
+          gitActionsRef={gitActionsRef}
           availableEditors={availableEditors}
           gitCwd={gitCwd}
           workspaceRoot={activeWorkspaceRoot ?? null}

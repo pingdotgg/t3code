@@ -158,6 +158,26 @@ function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | null): st
   return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
 }
 
+function isGitHubPullRequestUrlForRepository(
+  url: string,
+  repositoryNameWithOwner: string | null,
+): boolean {
+  if (repositoryNameWithOwner === null) {
+    return true;
+  }
+
+  try {
+    const parsed = new URL(url.trim());
+    const normalizedPath = parsed.pathname.replace(/\/+$/, "").toLowerCase();
+    return (
+      parsed.hostname.toLowerCase() === "github.com" &&
+      normalizedPath.startsWith(`/${repositoryNameWithOwner.toLowerCase()}/pull/`)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
   const trimmed = nameWithOwner?.trim() ?? "";
   if (trimmed.length === 0) {
@@ -1340,6 +1360,59 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     },
   );
 
+  const listOpenPullRequests: GitManagerShape["listOpenPullRequests"] = Effect.fn(
+    "listOpenPullRequests",
+  )(function* (input) {
+    const originRemoteUrl = yield* readConfigValueNullable(input.cwd, "remote.origin.url");
+    const repositoryNameWithOwner =
+      parseGitHubRepositoryNameWithOwnerFromRemoteUrl(originRemoteUrl);
+    const repositoryArgs =
+      repositoryNameWithOwner === null ? [] : ["--repo", repositoryNameWithOwner];
+
+    const result = yield* gitHubCli.execute({
+      cwd: input.cwd,
+      args: [
+        "pr",
+        "list",
+        ...repositoryArgs,
+        "--state",
+        "open",
+        "--limit",
+        "50",
+        "--json",
+        "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+      ],
+    });
+    const raw = result.stdout.trim();
+    if (raw.length === 0) {
+      return { pullRequests: [] };
+    }
+
+    const decoded = yield* Effect.sync(() => decodeGitHubPullRequestListJson(raw)).pipe(
+      Effect.flatMap((result) => {
+        if (!Result.isSuccess(result)) {
+          return Effect.fail(
+            gitManagerError(
+              "listOpenPullRequests",
+              `GitHub CLI returned invalid PR list JSON: ${formatGitHubJsonDecodeError(result.failure)}`,
+              result.failure,
+            ),
+          );
+        }
+
+        return Effect.succeed(result.success);
+      }),
+    );
+
+    return {
+      pullRequests: decoded
+        .filter((pullRequest) =>
+          isGitHubPullRequestUrlForRepository(pullRequest.url, repositoryNameWithOwner),
+        )
+        .map((pullRequest) => toStatusPr(toPullRequestInfo(pullRequest))),
+    };
+  });
+
   const preparePullRequestThread: GitManagerShape["preparePullRequestThread"] = Effect.fn(
     "preparePullRequestThread",
   )(function* (input) {
@@ -1726,6 +1799,7 @@ export const makeGitManager = Effect.fn("makeGitManager")(function* () {
     invalidateRemoteStatus,
     invalidateStatus,
     resolvePullRequest,
+    listOpenPullRequests,
     preparePullRequestThread,
     runStackedAction,
   } satisfies GitManagerShape;

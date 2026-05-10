@@ -193,7 +193,7 @@ export default function DiffPanel({
     routeThreadRef?.environmentId ?? null,
     routeThreadRef?.threadId ?? null,
   );
-  const [internalDiffRenderMode] = useState<DiffRenderMode>("stacked");
+  const [internalDiffRenderMode] = useState<DiffRenderMode>("split");
   const [internalDiffWordWrap, setInternalDiffWordWrap] = useState(settings.diffWordWrap);
   const [savedOverridesByKey, setSavedOverridesByKey] = useState<
     Record<string, PersistedDiffFileEditOverride | undefined>

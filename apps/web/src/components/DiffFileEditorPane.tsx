@@ -22,7 +22,7 @@ import {
   type CodeContextSelection,
 } from "../lib/codeContext";
 import { resolveMonacoLanguage } from "../lib/monacoLanguage";
-import { ensureAppMonacoTheme, ensureMonacoConfigured } from "../lib/monaco";
+import { ensureAppMonacoTheme, ensureMonacoConfigured, preloadMonaco } from "../lib/monaco";
 import {
   normalizeProjectFileEditError,
   resolveProjectFileEditorError,
@@ -51,6 +51,10 @@ import { Kbd, KbdGroup } from "./ui/kbd";
 import { toastManager } from "./ui/toast";
 
 ensureMonacoConfigured();
+
+export function preloadDiffFileEditorRuntime(): void {
+  void preloadMonaco().catch(() => undefined);
+}
 
 export interface DiffFileEditorRequestedNavigation {
   nonce: number;
@@ -122,6 +126,7 @@ const SELECTION_ACTION_OFFSET_PX = 8;
 const SELECTION_ACTION_HEIGHT_PX = 28;
 const SELECTION_ACTION_MIN_EDGE_PX = 8;
 const MAX_WARM_EDITOR_MODELS = 20;
+const EDITOR_LOADING_FALLBACK = <div aria-hidden="true" className="h-full bg-background" />;
 
 interface CachedEditorSessionState {
   filePath: string;
@@ -1113,6 +1118,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
   const showUnavailableState =
     status === "missing" || status === "unsupported" || status === "error";
   const showPersistentEditor = reuseMonacoModels || status !== "loading";
+  const showFileLoadingOverlay = status === "loading" && !reuseMonacoModels;
 
   return (
     <>
@@ -1243,7 +1249,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                 </div>
               ) : (
                 <div ref={editorContainerRef} className="relative min-h-0 flex-1 overflow-hidden">
-                  {status === "loading" ? (
+                  {showFileLoadingOverlay ? (
                     <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center gap-2 bg-background/80 px-4 py-6 text-sm text-muted-foreground backdrop-blur-[1px]">
                       <LoaderIcon className="size-4 animate-spin" />
                       Loading file…
@@ -1276,11 +1282,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                     <Editor
                       height="100%"
                       keepCurrentModel={true}
-                      loading={
-                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                          Loading editor…
-                        </div>
-                      }
+                      loading={EDITOR_LOADING_FALLBACK}
                       onChange={(value) => setDraftContents(value ?? "")}
                       onMount={handleEditorMount}
                       options={editorOptions}
@@ -1295,11 +1297,7 @@ export function DiffFileEditorPane(props: DiffFileEditorPaneProps) {
                       key={filePath}
                       height="100%"
                       keepCurrentModel={false}
-                      loading={
-                        <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-                          Loading editor…
-                        </div>
-                      }
+                      loading={EDITOR_LOADING_FALLBACK}
                       onChange={(value) => setDraftContents(value ?? "")}
                       onMount={handleEditorMount}
                       options={editorOptions}

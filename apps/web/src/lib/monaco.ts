@@ -323,6 +323,17 @@ export function ensureMonacoConfigured(): void {
   configured = true;
 }
 
+let monacoPreloadPromise: Promise<typeof monaco> | null = null;
+
+export function preloadMonaco(): Promise<typeof monaco> {
+  ensureMonacoConfigured();
+  monacoPreloadPromise ??= loader.init().catch((error: unknown) => {
+    monacoPreloadPromise = null;
+    throw error;
+  });
+  return monacoPreloadPromise;
+}
+
 export function ensureAppMonacoTheme(
   mode: ResolvedThemeMode,
   targetDocument?: Document | null,

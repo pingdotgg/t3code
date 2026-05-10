@@ -10,6 +10,8 @@ import {
   GitActionProgressEvent,
   GitPreparePullRequestThreadInput,
   GitPreparePullRequestThreadResult,
+  GitListOpenPullRequestsInput,
+  GitListOpenPullRequestsResult,
   GitPullRequestRefInput,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
@@ -78,6 +80,13 @@ export interface GitManagerShape {
   readonly resolvePullRequest: (
     input: GitPullRequestRefInput,
   ) => Effect.Effect<GitResolvePullRequestResult, GitManagerServiceError>;
+
+  /**
+   * List open pull requests for the repository.
+   */
+  readonly listOpenPullRequests: (
+    input: GitListOpenPullRequestsInput,
+  ) => Effect.Effect<GitListOpenPullRequestsResult, GitManagerServiceError>;
 
   /**
    * Prepare a new thread workspace from a pull request in local or worktree mode.

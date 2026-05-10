@@ -1,6 +1,6 @@
 import { scopeThreadRef } from "@forma/client-runtime";
 import { ThreadId } from "@forma/contracts";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
@@ -35,6 +35,7 @@ const {
   toastCloseSpy,
   toastPromiseSpy,
   toastUpdateSpy,
+  useGitStatusSpy,
 } = vi.hoisted(() => ({
   activeRunStackedActionDeferredRef: { current: createDeferredPromise<never>() },
   activeDraftThreadRef: { current: null as unknown },
@@ -48,6 +49,19 @@ const {
   toastCloseSpy: vi.fn(),
   toastPromiseSpy: vi.fn(),
   toastUpdateSpy: vi.fn(),
+  useGitStatusSpy: vi.fn(() => ({
+    data: {
+      branch: BRANCH_NAME,
+      hasWorkingTreeChanges: false,
+      workingTree: { files: [], insertions: 0, deletions: 0 },
+      hasUpstream: true,
+      aheadCount: 1,
+      behindCount: 0,
+      pr: null,
+    },
+    error: null,
+    isPending: false,
+  })),
 }));
 
 vi.mock("@tanstack/react-query", async () => {
@@ -106,24 +120,13 @@ vi.mock("~/lib/gitReactQuery", () => ({
   gitPullMutationOptions: vi.fn(() => ({ __kind: "pull" })),
   gitRunStackedActionMutationOptions: vi.fn(() => ({ __kind: "run-stacked-action" })),
   invalidateGitQueries: invalidateGitQueriesSpy,
+  sourceControlPublishRepositoryMutationOptions: vi.fn(() => ({ __kind: "publish-repository" })),
 }));
 
 vi.mock("~/lib/gitStatusState", () => ({
   refreshGitStatus: refreshGitStatusSpy,
   resetGitStatusStateForTests: () => undefined,
-  useGitStatus: vi.fn(() => ({
-    data: {
-      branch: BRANCH_NAME,
-      hasWorkingTreeChanges: false,
-      workingTree: { files: [], insertions: 0, deletions: 0 },
-      hasUpstream: true,
-      aheadCount: 1,
-      behindCount: 0,
-      pr: null,
-    },
-    error: null,
-    isPending: false,
-  })),
+  useGitStatus: useGitStatusSpy,
 }));
 
 vi.mock("~/localApi", () => ({
@@ -250,7 +253,7 @@ vi.mock("~/terminal-links", () => ({
   resolvePathLinkTarget: vi.fn(),
 }));
 
-import GitActionsControl from "./GitActionsControl";
+import GitActionsControl, { type GitActionsControlHandle } from "./GitActionsControl";
 
 function findButtonByText(text: string): HTMLButtonElement | null {
   return (Array.from(document.querySelectorAll("button")).find((button) =>
@@ -276,6 +279,23 @@ function Forma() {
   );
 }
 
+function GitShortcutHarness(props: { command: "git.commit" | "git.push" | "git.pr" }) {
+  const ref = useRef<GitActionsControlHandle | null>(null);
+
+  return (
+    <>
+      <button type="button" onClick={() => ref.current?.runKeybindingCommand(props.command)}>
+        Run git shortcut
+      </button>
+      <GitActionsControl
+        ref={ref}
+        gitCwd={GIT_CWD}
+        activeThreadRef={scopeThreadRef(ENVIRONMENT_A, SHARED_THREAD_ID)}
+      />
+    </>
+  );
+}
+
 describe("GitActionsControl thread-scoped progress toast", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -284,6 +304,20 @@ describe("GitActionsControl thread-scoped progress toast", () => {
     activeDraftThreadRef.current = null;
     hasServerThreadRef.current = true;
     document.body.innerHTML = "";
+  });
+
+  it("uses the explicit environment when no active thread is selected", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    await render(
+      <GitActionsControl gitCwd={GIT_CWD} activeThreadRef={null} environmentId={ENVIRONMENT_B} />,
+      { container: host },
+    );
+
+    expect(useGitStatusSpy).toHaveBeenCalledWith({
+      environmentId: ENVIRONMENT_B,
+      cwd: GIT_CWD,
+    });
   });
 
   it("keeps an in-flight git action toast pinned to the thread ref that started it", async () => {
@@ -462,6 +496,36 @@ describe("GitActionsControl thread-scoped progress toast", () => {
       expect(setDraftThreadContextSpy).not.toHaveBeenCalled();
       expect(setThreadBranchSpy).not.toHaveBeenCalled();
     } finally {
+      await screen.unmount();
+      host.remove();
+    }
+  });
+
+  it("runs push from the git shortcut controller", async () => {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const screen = await render(<GitShortcutHarness command="git.push" />, {
+      container: host,
+    });
+
+    try {
+      const trigger = findButtonByText("Run git shortcut");
+      expect(trigger, 'Unable to find button containing "Run git shortcut"').toBeTruthy();
+      if (!(trigger instanceof HTMLButtonElement)) {
+        throw new Error('Unable to find button containing "Run git shortcut"');
+      }
+
+      trigger.click();
+      await Promise.resolve();
+
+      expect(runStackedActionMutateAsyncSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: "push",
+        }),
+      );
+    } finally {
+      activeRunStackedActionDeferredRef.current.reject(new Error("test cleanup"));
+      await Promise.resolve();
       await screen.unmount();
       host.remove();
     }

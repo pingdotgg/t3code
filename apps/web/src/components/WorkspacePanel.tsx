@@ -1,6 +1,7 @@
 import type { EnvironmentId, ScopedProjectRef } from "@forma/contracts";
 
 import { type ThreadRouteTarget } from "../threadRoutes";
+import { preloadDiffFileEditorRuntime } from "./DiffFileEditorPane";
 import DiffPanel, { DiffWorkerPoolProvider } from "./DiffPanel";
 import { type DiffPanelMode } from "./DiffPanelShell";
 import { WorkspaceFilesPanel } from "./WorkspaceFilesPanel";
@@ -14,6 +15,10 @@ interface WorkspacePanelProps {
   activeProjectRef: ScopedProjectRef | null;
   supportsDiff: boolean;
   requestedDiffToggleNonce?: number | undefined;
+}
+
+export function preloadWorkspacePanelRuntime(): void {
+  preloadDiffFileEditorRuntime();
 }
 
 export default function WorkspacePanel(props: WorkspacePanelProps) {

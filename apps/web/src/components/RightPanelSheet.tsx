@@ -21,7 +21,7 @@ export function RightPanelSheet(props: {
         side="right"
         showCloseButton={false}
         keepMounted
-        className={RIGHT_PANEL_SHEET_CLASS_NAME}
+        className={`${RIGHT_PANEL_SHEET_CLASS_NAME} transition-none`}
       >
         {props.children}
       </SheetPopup>

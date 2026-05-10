@@ -26,6 +26,8 @@ export const gitQueryKeys = {
     ["git", "branches", environmentId ?? null, cwd] as const,
   branchSearch: (environmentId: EnvironmentId | null, cwd: string | null, query: string) =>
     ["git", "branches", environmentId ?? null, cwd, "search", query] as const,
+  openPullRequests: (environmentId: EnvironmentId | null, cwd: string | null) =>
+    ["git", "pull-requests", "open", environmentId ?? null, cwd] as const,
 };
 
 export const sourceControlQueryKeys = {
@@ -138,6 +140,25 @@ export function gitResolvePullRequestQueryOptions(input: {
     staleTime: 30_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+  });
+}
+
+export function gitListOpenPullRequestsQueryOptions(input: {
+  environmentId: EnvironmentId | null;
+  cwd: string | null;
+}) {
+  return queryOptions({
+    queryKey: gitQueryKeys.openPullRequests(input.environmentId, input.cwd),
+    queryFn: async () => {
+      if (!input.cwd || !input.environmentId) {
+        throw new Error("Pull request lookup is unavailable.");
+      }
+      return ensureEnvironmentApi(input.environmentId).git.listOpenPullRequests({ cwd: input.cwd });
+    },
+    enabled: input.environmentId !== null && input.cwd !== null,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 }
 

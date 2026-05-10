@@ -1,12 +1,23 @@
-import { type ScopedThreadRef } from "@forma/contracts";
+import { type EnvironmentId, type ScopedThreadRef } from "@forma/contracts";
 import type {
+  GitKeybindingCommand,
   GitActionProgressEvent,
   GitRunStackedActionResult,
   GitStackedAction,
   GitStatusResult,
+  ResolvedKeybindingsConfig,
 } from "@forma/contracts";
 import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   IconChevronDown as ChevronDownIcon,
   IconIcloudAndArrowUp as CloudUploadIcon,
@@ -40,12 +51,13 @@ import {
   DialogTitle,
 } from "~/components/ui/dialog";
 import { Group, GroupSeparator } from "~/components/ui/group";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "~/components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Textarea } from "~/components/ui/textarea";
 import { stackedThreadToast, toastManager, type ThreadToastData } from "~/components/ui/toast";
 import { openInPreferredEditor } from "~/editorPreferences";
+import { shortcutLabelForCommand } from "~/keybindings";
 import {
   gitInitMutationOptions,
   gitMutationKeys,
@@ -63,13 +75,20 @@ import { useStore } from "~/store";
 import { createThreadSelectorByRef } from "~/storeSelectors";
 import { topBarButtonLabelClassName, topBarGroupSeparatorClassName } from "./topBarActionStyles";
 import { Input } from "./ui/input";
+import { isGitActionKeybindingCommand } from "~/gitActionCommands";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadRef: ScopedThreadRef | null;
+  environmentId?: EnvironmentId | null;
   draftId?: DraftId;
   compact?: boolean;
   renderMode?: "split-button" | "menu-items";
+  keybindings?: ResolvedKeybindingsConfig;
+}
+
+export interface GitActionsControlHandle {
+  runKeybindingCommand: (command: GitKeybindingCommand) => boolean;
 }
 
 interface PendingDefaultBranchAction {
@@ -221,1129 +240,1224 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({
-  gitCwd,
-  activeThreadRef,
-  draftId,
-  compact = false,
-  renderMode = "split-button",
-}: GitActionsControlProps) {
-  const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
-  const threadToastData = useMemo(
-    () => (activeThreadRef ? { threadRef: activeThreadRef } : undefined),
-    [activeThreadRef],
-  );
-  const activeServerThreadSelector = useMemo(
-    () => createThreadSelectorByRef(activeThreadRef),
-    [activeThreadRef],
-  );
-  const activeServerThread = useStore(activeServerThreadSelector);
-  const activeDraftThread = useComposerDraftStore((store) =>
-    draftId
-      ? store.getDraftSession(draftId)
-      : activeThreadRef
-        ? store.getDraftThreadByRef(activeThreadRef)
-        : null,
-  );
-  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
-  const setThreadBranch = useStore((store) => store.setThreadBranch);
-  const queryClient = useQueryClient();
-  const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
-  const [dialogCommitMessage, setDialogCommitMessage] = useState("");
-  const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
-  const [isEditingFiles, setIsEditingFiles] = useState(false);
-  const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
-    useState<PendingDefaultBranchAction | null>(null);
-  const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
-  const [publishProvider, setPublishProvider] = useState<"github" | "gitlab">("github");
-  const [publishRepository, setPublishRepository] = useState("");
-  const [publishPrivate, setPublishPrivate] = useState(true);
-  const activeGitActionProgressRef = useRef<ActiveGitActionProgress | null>(null);
-  const primaryButtonLabelClassName = topBarButtonLabelClassName(compact);
-  const groupSeparatorClassName = topBarGroupSeparatorClassName(compact);
-  let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
+const GitActionsControl = forwardRef<GitActionsControlHandle, GitActionsControlProps>(
+  function GitActionsControl(
+    {
+      gitCwd,
+      activeThreadRef,
+      environmentId,
+      draftId,
+      compact = false,
+      renderMode = "split-button",
+      keybindings,
+    }: GitActionsControlProps,
+    ref,
+  ) {
+    const activeEnvironmentId = activeThreadRef?.environmentId ?? environmentId ?? null;
+    const threadToastData = useMemo(
+      () => (activeThreadRef ? { threadRef: activeThreadRef } : undefined),
+      [activeThreadRef],
+    );
+    const activeServerThreadSelector = useMemo(
+      () => createThreadSelectorByRef(activeThreadRef),
+      [activeThreadRef],
+    );
+    const activeServerThread = useStore(activeServerThreadSelector);
+    const activeDraftThread = useComposerDraftStore((store) =>
+      draftId
+        ? store.getDraftSession(draftId)
+        : activeThreadRef
+          ? store.getDraftThreadByRef(activeThreadRef)
+          : null,
+    );
+    const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+    const setThreadBranch = useStore((store) => store.setThreadBranch);
+    const queryClient = useQueryClient();
+    const [isCommitDialogOpen, setIsCommitDialogOpen] = useState(false);
+    const [dialogCommitMessage, setDialogCommitMessage] = useState("");
+    const [excludedFiles, setExcludedFiles] = useState<ReadonlySet<string>>(new Set());
+    const [isEditingFiles, setIsEditingFiles] = useState(false);
+    const [pendingDefaultBranchAction, setPendingDefaultBranchAction] =
+      useState<PendingDefaultBranchAction | null>(null);
+    const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
+    const [publishProvider, setPublishProvider] = useState<"github" | "gitlab">("github");
+    const [publishRepository, setPublishRepository] = useState("");
+    const [publishPrivate, setPublishPrivate] = useState(true);
+    const activeGitActionProgressRef = useRef<ActiveGitActionProgress | null>(null);
+    const primaryButtonLabelClassName = topBarButtonLabelClassName(compact);
+    const groupSeparatorClassName = topBarGroupSeparatorClassName(compact);
+    let runGitActionWithToast: (input: RunGitActionWithToastInput) => Promise<void>;
 
-  const updateActiveProgressToast = useCallback(() => {
-    const progress = activeGitActionProgressRef.current;
-    if (!progress) {
-      return;
-    }
-    toastManager.update(progress.toastId, {
-      type: "loading",
-      title: progress.title,
-      description: resolveProgressDescription(progress),
-      timeout: 0,
-      data: progress.toastData,
-    });
-  }, []);
-
-  const persistThreadBranchSync = useCallback(
-    (branch: string | null) => {
-      if (!activeThreadRef) {
+    const updateActiveProgressToast = useCallback(() => {
+      const progress = activeGitActionProgressRef.current;
+      if (!progress) {
         return;
       }
+      toastManager.update(progress.toastId, {
+        type: "loading",
+        title: progress.title,
+        description: resolveProgressDescription(progress),
+        timeout: 0,
+        data: progress.toastData,
+      });
+    }, []);
 
-      if (activeServerThread) {
-        if (activeServerThread.branch === branch) {
+    const persistThreadBranchSync = useCallback(
+      (branch: string | null) => {
+        if (!activeThreadRef) {
           return;
         }
 
-        const worktreePath = activeServerThread.worktreePath;
-        const api = readEnvironmentApi(activeThreadRef.environmentId);
-        if (api) {
-          void api.orchestration
-            .dispatchCommand({
-              type: "thread.meta.update",
-              commandId: newCommandId(),
-              threadId: activeThreadRef.threadId,
-              branch,
-              worktreePath,
-            })
-            .catch(() => undefined);
+        if (activeServerThread) {
+          if (activeServerThread.branch === branch) {
+            return;
+          }
+
+          const worktreePath = activeServerThread.worktreePath;
+          const api = readEnvironmentApi(activeThreadRef.environmentId);
+          if (api) {
+            void api.orchestration
+              .dispatchCommand({
+                type: "thread.meta.update",
+                commandId: newCommandId(),
+                threadId: activeThreadRef.threadId,
+                branch,
+                worktreePath,
+              })
+              .catch(() => undefined);
+          }
+
+          setThreadBranch(activeThreadRef, branch, worktreePath);
+          return;
         }
 
-        setThreadBranch(activeThreadRef, branch, worktreePath);
+        if (!activeDraftThread || activeDraftThread.branch === branch) {
+          return;
+        }
+
+        setDraftThreadContext(draftId ?? activeThreadRef, {
+          branch,
+          worktreePath: activeDraftThread.worktreePath,
+        });
+      },
+      [
+        activeDraftThread,
+        activeServerThread,
+        activeThreadRef,
+        draftId,
+        setDraftThreadContext,
+        setThreadBranch,
+      ],
+    );
+
+    const syncThreadBranchAfterGitAction = useCallback(
+      (result: GitRunStackedActionResult) => {
+        const branchUpdate = resolveThreadBranchUpdate(result);
+        if (!branchUpdate) {
+          return;
+        }
+
+        persistThreadBranchSync(branchUpdate.branch);
+      },
+      [persistThreadBranchSync],
+    );
+
+    const { data: gitStatus = null, error: gitStatusError } = useGitStatus({
+      environmentId: activeEnvironmentId,
+      cwd: gitCwd,
+    });
+    // Default to true while loading so we don't flash init controls.
+    const isRepo = gitStatus?.isRepo ?? true;
+    const hasOriginRemote = gitStatus?.hasOriginRemote ?? false;
+    const gitStatusForActions = gitStatus;
+
+    const allFiles = gitStatusForActions?.workingTree.files ?? [];
+    const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
+    const allSelected = excludedFiles.size === 0;
+    const noneSelected = selectedFiles.length === 0;
+
+    const initMutation = useMutation(
+      gitInitMutationOptions({ environmentId: activeEnvironmentId, cwd: gitCwd, queryClient }),
+    );
+
+    const runImmediateGitActionMutation = useMutation(
+      gitRunStackedActionMutationOptions({
+        environmentId: activeEnvironmentId,
+        cwd: gitCwd,
+        queryClient,
+      }),
+    );
+    const pullMutation = useMutation(
+      gitPullMutationOptions({ environmentId: activeEnvironmentId, cwd: gitCwd, queryClient }),
+    );
+    const publishRepositoryMutation = useMutation(
+      sourceControlPublishRepositoryMutationOptions({
+        environmentId: activeEnvironmentId,
+        cwd: gitCwd,
+        queryClient,
+      }),
+    );
+
+    const isRunStackedActionRunning =
+      useIsMutating({
+        mutationKey: gitMutationKeys.runStackedAction(activeEnvironmentId, gitCwd),
+      }) > 0;
+    const isPullRunning =
+      useIsMutating({ mutationKey: gitMutationKeys.pull(activeEnvironmentId, gitCwd) }) > 0;
+    const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
+    const isSelectingWorktreeBase =
+      !activeServerThread &&
+      activeDraftThread?.envMode === "worktree" &&
+      activeDraftThread.worktreePath === null;
+
+    useEffect(() => {
+      if (isGitActionRunning || isSelectingWorktreeBase) {
         return;
       }
 
-      if (!activeDraftThread || activeDraftThread.branch === branch) {
-        return;
-      }
-
-      setDraftThreadContext(draftId ?? activeThreadRef, {
-        branch,
-        worktreePath: activeDraftThread.worktreePath,
+      const branchUpdate = resolveLiveThreadBranchUpdate({
+        threadBranch: activeServerThread?.branch ?? activeDraftThread?.branch ?? null,
+        gitStatus: gitStatusForActions,
       });
-    },
-    [
-      activeDraftThread,
-      activeServerThread,
-      activeThreadRef,
-      draftId,
-      setDraftThreadContext,
-      setThreadBranch,
-    ],
-  );
-
-  const syncThreadBranchAfterGitAction = useCallback(
-    (result: GitRunStackedActionResult) => {
-      const branchUpdate = resolveThreadBranchUpdate(result);
       if (!branchUpdate) {
         return;
       }
 
       persistThreadBranchSync(branchUpdate.branch);
-    },
-    [persistThreadBranchSync],
-  );
+    }, [
+      activeServerThread?.branch,
+      activeDraftThread?.branch,
+      gitStatusForActions,
+      isGitActionRunning,
+      isSelectingWorktreeBase,
+      persistThreadBranchSync,
+    ]);
 
-  const { data: gitStatus = null, error: gitStatusError } = useGitStatus({
-    environmentId: activeEnvironmentId,
-    cwd: gitCwd,
-  });
-  // Default to true while loading so we don't flash init controls.
-  const isRepo = gitStatus?.isRepo ?? true;
-  const hasOriginRemote = gitStatus?.hasOriginRemote ?? false;
-  const gitStatusForActions = gitStatus;
+    const isDefaultBranch = useMemo(() => {
+      return gitStatusForActions?.isDefaultBranch ?? false;
+    }, [gitStatusForActions?.isDefaultBranch]);
 
-  const allFiles = gitStatusForActions?.workingTree.files ?? [];
-  const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
-  const allSelected = excludedFiles.size === 0;
-  const noneSelected = selectedFiles.length === 0;
+    const gitActionMenuItems = useMemo(
+      () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasOriginRemote),
+      [gitStatusForActions, hasOriginRemote, isGitActionRunning],
+    );
+    const quickAction = useMemo(
+      () =>
+        resolveQuickAction(
+          gitStatusForActions,
+          isGitActionRunning,
+          isDefaultBranch,
+          hasOriginRemote,
+        ),
+      [gitStatusForActions, hasOriginRemote, isDefaultBranch, isGitActionRunning],
+    );
+    const quickActionDisabledReason = quickAction.disabled
+      ? (quickAction.hint ?? "This action is currently unavailable.")
+      : null;
+    const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
+      ? resolveDefaultBranchActionDialogCopy({
+          action: pendingDefaultBranchAction.action,
+          branchName: pendingDefaultBranchAction.branchName,
+          includesCommit: pendingDefaultBranchAction.includesCommit,
+        })
+      : null;
 
-  const initMutation = useMutation(
-    gitInitMutationOptions({ environmentId: activeEnvironmentId, cwd: gitCwd, queryClient }),
-  );
-
-  const runImmediateGitActionMutation = useMutation(
-    gitRunStackedActionMutationOptions({
-      environmentId: activeEnvironmentId,
-      cwd: gitCwd,
-      queryClient,
-    }),
-  );
-  const pullMutation = useMutation(
-    gitPullMutationOptions({ environmentId: activeEnvironmentId, cwd: gitCwd, queryClient }),
-  );
-  const publishRepositoryMutation = useMutation(
-    sourceControlPublishRepositoryMutationOptions({
-      environmentId: activeEnvironmentId,
-      cwd: gitCwd,
-      queryClient,
-    }),
-  );
-
-  const isRunStackedActionRunning =
-    useIsMutating({
-      mutationKey: gitMutationKeys.runStackedAction(activeEnvironmentId, gitCwd),
-    }) > 0;
-  const isPullRunning =
-    useIsMutating({ mutationKey: gitMutationKeys.pull(activeEnvironmentId, gitCwd) }) > 0;
-  const isGitActionRunning = isRunStackedActionRunning || isPullRunning;
-  const isSelectingWorktreeBase =
-    !activeServerThread &&
-    activeDraftThread?.envMode === "worktree" &&
-    activeDraftThread.worktreePath === null;
-
-  useEffect(() => {
-    if (isGitActionRunning || isSelectingWorktreeBase) {
-      return;
-    }
-
-    const branchUpdate = resolveLiveThreadBranchUpdate({
-      threadBranch: activeServerThread?.branch ?? activeDraftThread?.branch ?? null,
-      gitStatus: gitStatusForActions,
-    });
-    if (!branchUpdate) {
-      return;
-    }
-
-    persistThreadBranchSync(branchUpdate.branch);
-  }, [
-    activeServerThread?.branch,
-    activeDraftThread?.branch,
-    gitStatusForActions,
-    isGitActionRunning,
-    isSelectingWorktreeBase,
-    persistThreadBranchSync,
-  ]);
-
-  const isDefaultBranch = useMemo(() => {
-    return gitStatusForActions?.isDefaultBranch ?? false;
-  }, [gitStatusForActions?.isDefaultBranch]);
-
-  const gitActionMenuItems = useMemo(
-    () => buildMenuItems(gitStatusForActions, isGitActionRunning, hasOriginRemote),
-    [gitStatusForActions, hasOriginRemote, isGitActionRunning],
-  );
-  const quickAction = useMemo(
-    () =>
-      resolveQuickAction(gitStatusForActions, isGitActionRunning, isDefaultBranch, hasOriginRemote),
-    [gitStatusForActions, hasOriginRemote, isDefaultBranch, isGitActionRunning],
-  );
-  const quickActionDisabledReason = quickAction.disabled
-    ? (quickAction.hint ?? "This action is currently unavailable.")
-    : null;
-  const pendingDefaultBranchActionCopy = pendingDefaultBranchAction
-    ? resolveDefaultBranchActionDialogCopy({
-        action: pendingDefaultBranchAction.action,
-        branchName: pendingDefaultBranchAction.branchName,
-        includesCommit: pendingDefaultBranchAction.includesCommit,
-      })
-    : null;
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      if (!activeGitActionProgressRef.current) {
-        return;
-      }
-      updateActiveProgressToast();
-    }, 1000);
-
-    return () => {
-      window.clearInterval(interval);
-    };
-  }, [updateActiveProgressToast]);
-
-  useEffect(() => {
-    if (gitCwd === null) {
-      return;
-    }
-
-    let refreshTimeout: number | null = null;
-    const scheduleRefreshCurrentGitStatus = () => {
-      if (refreshTimeout !== null) {
-        window.clearTimeout(refreshTimeout);
-      }
-      refreshTimeout = window.setTimeout(() => {
-        refreshTimeout = null;
-        void refreshGitStatus({ environmentId: activeEnvironmentId, cwd: gitCwd }).catch(
-          () => undefined,
-        );
-      }, GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS);
-    };
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        scheduleRefreshCurrentGitStatus();
-      }
-    };
-
-    window.addEventListener("focus", scheduleRefreshCurrentGitStatus);
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    return () => {
-      if (refreshTimeout !== null) {
-        window.clearTimeout(refreshTimeout);
-      }
-      window.removeEventListener("focus", scheduleRefreshCurrentGitStatus);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-    };
-  }, [activeEnvironmentId, gitCwd]);
-
-  const openExistingPr = useCallback(async () => {
-    const api = readLocalApi();
-    if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Link opening is unavailable.",
-        data: threadToastData,
-      });
-      return;
-    }
-    const prUrl = gitStatusForActions?.pr?.state === "open" ? gitStatusForActions.pr.url : null;
-    if (!prUrl) {
-      toastManager.add({
-        type: "error",
-        title: "No open PR found.",
-        data: threadToastData,
-      });
-      return;
-    }
-    void api.shell.openExternal(prUrl).catch((err: unknown) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Unable to open PR link",
-          description: err instanceof Error ? err.message : "An error occurred.",
-          ...(threadToastData !== undefined ? { data: threadToastData } : {}),
-        }),
-      );
-    });
-  }, [gitStatusForActions, threadToastData]);
-
-  runGitActionWithToast = useEffectEvent(
-    async ({
-      action,
-      commitMessage,
-      onConfirmed,
-      skipDefaultBranchPrompt = false,
-      statusOverride,
-      featureBranch = false,
-      progressToastId,
-      filePaths,
-    }: RunGitActionWithToastInput) => {
-      const actionStatus = statusOverride ?? gitStatusForActions;
-      const actionBranch = actionStatus?.branch ?? null;
-      const actionIsDefaultBranch = featureBranch ? false : isDefaultBranch;
-      const actionCanCommit =
-        action === "commit" || action === "commit_push" || action === "commit_push_pr";
-      const includesCommit =
-        actionCanCommit &&
-        (action === "commit" || !!actionStatus?.hasWorkingTreeChanges || featureBranch);
-      if (
-        !skipDefaultBranchPrompt &&
-        requiresDefaultBranchConfirmation(action, actionIsDefaultBranch) &&
-        actionBranch
-      ) {
-        if (
-          action !== "push" &&
-          action !== "create_pr" &&
-          action !== "commit_push" &&
-          action !== "commit_push_pr"
-        ) {
+    useEffect(() => {
+      const interval = window.setInterval(() => {
+        if (!activeGitActionProgressRef.current) {
           return;
         }
-        setPendingDefaultBranchAction({
-          action,
-          branchName: actionBranch,
-          includesCommit,
-          ...(commitMessage ? { commitMessage } : {}),
-          ...(onConfirmed ? { onConfirmed } : {}),
-          ...(filePaths ? { filePaths } : {}),
-        });
-        return;
-      }
-      onConfirmed?.();
-
-      const progressStages = buildGitActionProgressStages({
-        action,
-        hasCustomCommitMessage: !!commitMessage?.trim(),
-        hasWorkingTreeChanges: !!actionStatus?.hasWorkingTreeChanges,
-        featureBranch,
-        shouldPushBeforePr:
-          action === "create_pr" &&
-          (!actionStatus?.hasUpstream || (actionStatus?.aheadCount ?? 0) > 0),
-      });
-      const scopedToastData = threadToastData ? { ...threadToastData } : undefined;
-      const actionId = randomUUID();
-      const resolvedProgressToastId =
-        progressToastId ??
-        toastManager.add({
-          type: "loading",
-          title: progressStages[0] ?? "Running git action...",
-          description: "Waiting for Git...",
-          timeout: 0,
-          data: scopedToastData,
-        });
-
-      activeGitActionProgressRef.current = {
-        toastId: resolvedProgressToastId,
-        toastData: scopedToastData,
-        actionId,
-        title: progressStages[0] ?? "Running git action...",
-        phaseStartedAtMs: null,
-        hookStartedAtMs: null,
-        hookName: null,
-        lastOutputLine: null,
-        currentPhaseLabel: progressStages[0] ?? "Running git action...",
-      };
-
-      if (progressToastId) {
-        toastManager.update(progressToastId, {
-          type: "loading",
-          title: progressStages[0] ?? "Running git action...",
-          description: "Waiting for Git...",
-          timeout: 0,
-          data: scopedToastData,
-        });
-      }
-
-      const applyProgressEvent = (event: GitActionProgressEvent) => {
-        const progress = activeGitActionProgressRef.current;
-        if (!progress) {
-          return;
-        }
-        if (gitCwd && event.cwd !== gitCwd) {
-          return;
-        }
-        if (progress.actionId !== event.actionId) {
-          return;
-        }
-
-        const now = Date.now();
-        switch (event.kind) {
-          case "action_started":
-            progress.phaseStartedAtMs = now;
-            progress.hookStartedAtMs = null;
-            progress.hookName = null;
-            progress.lastOutputLine = null;
-            break;
-          case "phase_started":
-            progress.title = event.label;
-            progress.currentPhaseLabel = event.label;
-            progress.phaseStartedAtMs = now;
-            progress.hookStartedAtMs = null;
-            progress.hookName = null;
-            progress.lastOutputLine = null;
-            break;
-          case "hook_started":
-            progress.title = `Running ${event.hookName}...`;
-            progress.hookName = event.hookName;
-            progress.hookStartedAtMs = now;
-            progress.lastOutputLine = null;
-            break;
-          case "hook_output":
-            progress.lastOutputLine = event.text;
-            break;
-          case "hook_finished":
-            progress.title = progress.currentPhaseLabel ?? "Committing...";
-            progress.hookName = null;
-            progress.hookStartedAtMs = null;
-            progress.lastOutputLine = null;
-            break;
-          case "action_finished":
-            // Let the resolved mutation update the toast so we keep the
-            // elapsed description visible until the final success state renders.
-            return;
-          case "action_failed":
-            // Let the rejected mutation publish the error toast to avoid a
-            // transient intermediate state before the final failure message.
-            return;
-        }
-
         updateActiveProgressToast();
+      }, 1000);
+
+      return () => {
+        window.clearInterval(interval);
+      };
+    }, [updateActiveProgressToast]);
+
+    useEffect(() => {
+      if (gitCwd === null) {
+        return;
+      }
+
+      let refreshTimeout: number | null = null;
+      const scheduleRefreshCurrentGitStatus = () => {
+        if (refreshTimeout !== null) {
+          window.clearTimeout(refreshTimeout);
+        }
+        refreshTimeout = window.setTimeout(() => {
+          refreshTimeout = null;
+          void refreshGitStatus({ environmentId: activeEnvironmentId, cwd: gitCwd }).catch(
+            () => undefined,
+          );
+        }, GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS);
+      };
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === "visible") {
+          scheduleRefreshCurrentGitStatus();
+        }
       };
 
-      const promise = runImmediateGitActionMutation.mutateAsync({
-        actionId,
-        action,
-        ...(commitMessage ? { commitMessage } : {}),
-        ...(featureBranch ? { featureBranch } : {}),
-        ...(filePaths ? { filePaths } : {}),
-        onProgress: applyProgressEvent,
-      });
+      window.addEventListener("focus", scheduleRefreshCurrentGitStatus);
+      document.addEventListener("visibilitychange", handleVisibilityChange);
 
-      try {
-        const result = await promise;
-        activeGitActionProgressRef.current = null;
-        syncThreadBranchAfterGitAction(result);
-        const closeResultToast = () => {
-          toastManager.close(resolvedProgressToastId);
-        };
-
-        const toastCta = result.toast.cta;
-        let toastActionProps: {
-          children: string;
-          onClick: () => void;
-        } | null = null;
-        if (toastCta.kind === "run_action") {
-          toastActionProps = {
-            children: toastCta.label,
-            onClick: () => {
-              closeResultToast();
-              void runGitActionWithToast({
-                action: toastCta.action.kind,
-              });
-            },
-          };
-        } else if (toastCta.kind === "open_pr") {
-          toastActionProps = {
-            children: toastCta.label,
-            onClick: () => {
-              const api = readLocalApi();
-              if (!api) return;
-              closeResultToast();
-              void api.shell.openExternal(toastCta.url);
-            },
-          };
+      return () => {
+        if (refreshTimeout !== null) {
+          window.clearTimeout(refreshTimeout);
         }
+        window.removeEventListener("focus", scheduleRefreshCurrentGitStatus);
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      };
+    }, [activeEnvironmentId, gitCwd]);
 
-        const successToastData = {
-          ...scopedToastData,
-          dismissAfterVisibleMs: 10_000,
-        };
-
-        if (toastActionProps) {
-          toastManager.update(
-            resolvedProgressToastId,
-            stackedThreadToast({
-              type: "success",
-              title: result.toast.title,
-              description: result.toast.description,
-              timeout: 0,
-              actionProps: toastActionProps,
-              actionVariant: "outline",
-              data: successToastData,
-            }),
-          );
-        } else {
-          toastManager.update(resolvedProgressToastId, {
-            type: "success",
-            title: result.toast.title,
-            description: result.toast.description,
-            timeout: 0,
-            data: successToastData,
-          });
-        }
-      } catch (err) {
-        activeGitActionProgressRef.current = null;
-        toastManager.update(
-          resolvedProgressToastId,
-          stackedThreadToast({
-            type: "error",
-            title: "Action failed",
-            description: err instanceof Error ? err.message : "An error occurred.",
-            ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
-          }),
-        );
-      }
-    },
-  );
-
-  const continuePendingDefaultBranchAction = () => {
-    if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
-    setPendingDefaultBranchAction(null);
-    void runGitActionWithToast({
-      action,
-      ...(commitMessage ? { commitMessage } : {}),
-      ...(onConfirmed ? { onConfirmed } : {}),
-      ...(filePaths ? { filePaths } : {}),
-      skipDefaultBranchPrompt: true,
-    });
-  };
-
-  const checkoutFeatureBranchAndContinuePendingAction = () => {
-    if (!pendingDefaultBranchAction) return;
-    const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
-    setPendingDefaultBranchAction(null);
-    void runGitActionWithToast({
-      action,
-      ...(commitMessage ? { commitMessage } : {}),
-      ...(onConfirmed ? { onConfirmed } : {}),
-      ...(filePaths ? { filePaths } : {}),
-      featureBranch: true,
-      skipDefaultBranchPrompt: true,
-    });
-  };
-
-  const runDialogActionOnNewBranch = () => {
-    if (!isCommitDialogOpen) return;
-    const commitMessage = dialogCommitMessage.trim();
-
-    setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
-
-    void runGitActionWithToast({
-      action: "commit",
-      ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
-      featureBranch: true,
-      skipDefaultBranchPrompt: true,
-    });
-  };
-
-  const runQuickAction = () => {
-    if (quickAction.kind === "open_pr") {
-      void openExistingPr();
-      return;
-    }
-    if (quickAction.kind === "run_pull") {
-      const promise = pullMutation.mutateAsync();
-      void toastManager.promise<
-        Awaited<ReturnType<typeof pullMutation.mutateAsync>>,
-        ThreadToastData
-      >(promise, {
-        loading: { title: "Pulling...", data: threadToastData },
-        success: (result) => ({
-          title: result.status === "pulled" ? "Pulled" : "Already up to date",
-          description:
-            result.status === "pulled"
-              ? `Updated ${result.branch} from ${result.upstreamBranch ?? "upstream"}`
-              : `${result.branch} is already synchronized.`,
-          data: threadToastData,
-        }),
-        error: (err) => ({
-          title: "Pull failed",
-          description: err instanceof Error ? err.message : "An error occurred.",
-          data: threadToastData,
-        }),
-      });
-      void promise.catch(() => undefined);
-      return;
-    }
-    if (quickAction.kind === "show_hint") {
-      toastManager.add({
-        type: "info",
-        title: quickAction.label,
-        description: quickAction.hint,
-        data: threadToastData,
-      });
-      return;
-    }
-    if (quickAction.action) {
-      void runGitActionWithToast({ action: quickAction.action });
-    }
-  };
-
-  const openDialogForMenuItem = (item: GitActionMenuItem) => {
-    if (item.disabled) return;
-    if (item.kind === "open_pr") {
-      void openExistingPr();
-      return;
-    }
-    if (item.dialogAction === "push") {
-      void runGitActionWithToast({ action: "push" });
-      return;
-    }
-    if (item.dialogAction === "create_pr") {
-      void runGitActionWithToast({ action: "create_pr" });
-      return;
-    }
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
-    setIsCommitDialogOpen(true);
-  };
-
-  const openPublishDialog = () => {
-    setPublishRepository("");
-    setPublishProvider("github");
-    setPublishPrivate(true);
-    setIsPublishDialogOpen(true);
-  };
-
-  const runPublishRepository = () => {
-    if (!gitCwd || !publishRepository.trim()) return;
-    const repository = publishRepository.trim();
-    const promise = publishRepositoryMutation.mutateAsync({
-      cwd: gitCwd,
-      provider: publishProvider,
-      repository,
-      visibility: publishPrivate ? "private" : "public",
-      protocol: "auto",
-    });
-    setIsPublishDialogOpen(false);
-    void toastManager.promise(promise, {
-      loading: { title: `Publishing ${repository}...`, data: threadToastData },
-      success: (result) => ({
-        title: `Published to ${publishProvider === "github" ? "GitHub" : "GitLab"}`,
-        description: `Pushed ${result.branch} to ${result.remoteName}.`,
-        data: threadToastData,
-      }),
-      error: (err) => ({
-        title: "Publish failed",
-        description: err instanceof Error ? err.message : "An error occurred.",
-        data: threadToastData,
-      }),
-    });
-    void promise
-      .then(() => refreshGitStatus({ environmentId: activeEnvironmentId, cwd: gitCwd }))
-      .catch(() => undefined);
-  };
-
-  const runDialogAction = () => {
-    if (!isCommitDialogOpen) return;
-    const commitMessage = dialogCommitMessage.trim();
-    setIsCommitDialogOpen(false);
-    setDialogCommitMessage("");
-    setExcludedFiles(new Set());
-    setIsEditingFiles(false);
-    void runGitActionWithToast({
-      action: "commit",
-      ...(commitMessage ? { commitMessage } : {}),
-      ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
-    });
-  };
-
-  const openChangedFileInEditor = useCallback(
-    (filePath: string) => {
+    const openExistingPr = useCallback(async () => {
       const api = readLocalApi();
-      if (!api || !gitCwd) {
+      if (!api) {
         toastManager.add({
           type: "error",
-          title: "Editor opening is unavailable.",
+          title: "Link opening is unavailable.",
           data: threadToastData,
         });
         return;
       }
-      const target = resolvePathLinkTarget(filePath, gitCwd);
-      void openInPreferredEditor(api, target).catch((error) => {
+      const prUrl = gitStatusForActions?.pr?.state === "open" ? gitStatusForActions.pr.url : null;
+      if (!prUrl) {
+        toastManager.add({
+          type: "error",
+          title: "No open PR found.",
+          data: threadToastData,
+        });
+        return;
+      }
+      void api.shell.openExternal(prUrl).catch((err: unknown) => {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open file",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: "Unable to open PR link",
+            description: err instanceof Error ? err.message : "An error occurred.",
             ...(threadToastData !== undefined ? { data: threadToastData } : {}),
           }),
         );
       });
-    },
-    [gitCwd, threadToastData],
-  );
+    }, [gitStatusForActions, threadToastData]);
 
-  const gitMenuItemsContent = !isRepo ? (
-    <MenuItem disabled={initMutation.isPending} onClick={() => initMutation.mutate()}>
-      <FolderGit2Icon className="size-4" />
-      {initMutation.isPending ? "Initializing Git..." : "Initialize Git"}
-    </MenuItem>
-  ) : (
-    <>
-      {!hasOriginRemote ? (
-        <MenuItem disabled={publishRepositoryMutation.isPending} onClick={openPublishDialog}>
-          <CloudUploadIcon className="size-4" />
-          {publishRepositoryMutation.isPending ? "Publishing..." : "Publish repository"}
-        </MenuItem>
-      ) : null}
-      {gitActionMenuItems.map((item) => {
-        const disabledReason = getMenuActionDisabledReason({
-          item,
-          gitStatus: gitStatusForActions,
-          isBusy: isGitActionRunning,
-          hasOriginRemote,
+    runGitActionWithToast = useEffectEvent(
+      async ({
+        action,
+        commitMessage,
+        onConfirmed,
+        skipDefaultBranchPrompt = false,
+        statusOverride,
+        featureBranch = false,
+        progressToastId,
+        filePaths,
+      }: RunGitActionWithToastInput) => {
+        const actionStatus = statusOverride ?? gitStatusForActions;
+        const actionBranch = actionStatus?.branch ?? null;
+        const actionIsDefaultBranch = featureBranch ? false : isDefaultBranch;
+        const actionCanCommit =
+          action === "commit" || action === "commit_push" || action === "commit_push_pr";
+        const includesCommit =
+          actionCanCommit &&
+          (action === "commit" || !!actionStatus?.hasWorkingTreeChanges || featureBranch);
+        if (
+          !skipDefaultBranchPrompt &&
+          requiresDefaultBranchConfirmation(action, actionIsDefaultBranch) &&
+          actionBranch
+        ) {
+          if (
+            action !== "push" &&
+            action !== "create_pr" &&
+            action !== "commit_push" &&
+            action !== "commit_push_pr"
+          ) {
+            return;
+          }
+          setPendingDefaultBranchAction({
+            action,
+            branchName: actionBranch,
+            includesCommit,
+            ...(commitMessage ? { commitMessage } : {}),
+            ...(onConfirmed ? { onConfirmed } : {}),
+            ...(filePaths ? { filePaths } : {}),
+          });
+          return;
+        }
+        onConfirmed?.();
+
+        const progressStages = buildGitActionProgressStages({
+          action,
+          hasCustomCommitMessage: !!commitMessage?.trim(),
+          hasWorkingTreeChanges: !!actionStatus?.hasWorkingTreeChanges,
+          featureBranch,
+          shouldPushBeforePr:
+            action === "create_pr" &&
+            (!actionStatus?.hasUpstream || (actionStatus?.aheadCount ?? 0) > 0),
         });
-        if (item.disabled && disabledReason) {
-          return (
-            <Popover key={`${item.id}-${item.label}`}>
-              <PopoverTrigger
-                openOnHover
-                nativeButton={false}
-                render={<span className="block w-max cursor-not-allowed" />}
-              >
-                <MenuItem className="w-full" disabled>
-                  <GitActionItemIcon icon={item.icon} />
-                  {item.label}
-                </MenuItem>
-              </PopoverTrigger>
-              <PopoverPopup tooltipStyle side="left" align="center">
-                {disabledReason}
-              </PopoverPopup>
-            </Popover>
-          );
+        const scopedToastData = threadToastData ? { ...threadToastData } : undefined;
+        const actionId = randomUUID();
+        const resolvedProgressToastId =
+          progressToastId ??
+          toastManager.add({
+            type: "loading",
+            title: progressStages[0] ?? "Running git action...",
+            description: "Waiting for Git...",
+            timeout: 0,
+            data: scopedToastData,
+          });
+
+        activeGitActionProgressRef.current = {
+          toastId: resolvedProgressToastId,
+          toastData: scopedToastData,
+          actionId,
+          title: progressStages[0] ?? "Running git action...",
+          phaseStartedAtMs: null,
+          hookStartedAtMs: null,
+          hookName: null,
+          lastOutputLine: null,
+          currentPhaseLabel: progressStages[0] ?? "Running git action...",
+        };
+
+        if (progressToastId) {
+          toastManager.update(progressToastId, {
+            type: "loading",
+            title: progressStages[0] ?? "Running git action...",
+            description: "Waiting for Git...",
+            timeout: 0,
+            data: scopedToastData,
+          });
         }
 
-        return (
-          <MenuItem
-            key={`${item.id}-${item.label}`}
-            disabled={item.disabled}
-            onClick={() => {
-              openDialogForMenuItem(item);
-            }}
-          >
-            <GitActionItemIcon icon={item.icon} />
-            {item.label}
+        const applyProgressEvent = (event: GitActionProgressEvent) => {
+          const progress = activeGitActionProgressRef.current;
+          if (!progress) {
+            return;
+          }
+          if (gitCwd && event.cwd !== gitCwd) {
+            return;
+          }
+          if (progress.actionId !== event.actionId) {
+            return;
+          }
+
+          const now = Date.now();
+          switch (event.kind) {
+            case "action_started":
+              progress.phaseStartedAtMs = now;
+              progress.hookStartedAtMs = null;
+              progress.hookName = null;
+              progress.lastOutputLine = null;
+              break;
+            case "phase_started":
+              progress.title = event.label;
+              progress.currentPhaseLabel = event.label;
+              progress.phaseStartedAtMs = now;
+              progress.hookStartedAtMs = null;
+              progress.hookName = null;
+              progress.lastOutputLine = null;
+              break;
+            case "hook_started":
+              progress.title = `Running ${event.hookName}...`;
+              progress.hookName = event.hookName;
+              progress.hookStartedAtMs = now;
+              progress.lastOutputLine = null;
+              break;
+            case "hook_output":
+              progress.lastOutputLine = event.text;
+              break;
+            case "hook_finished":
+              progress.title = progress.currentPhaseLabel ?? "Committing...";
+              progress.hookName = null;
+              progress.hookStartedAtMs = null;
+              progress.lastOutputLine = null;
+              break;
+            case "action_finished":
+              // Let the resolved mutation update the toast so we keep the
+              // elapsed description visible until the final success state renders.
+              return;
+            case "action_failed":
+              // Let the rejected mutation publish the error toast to avoid a
+              // transient intermediate state before the final failure message.
+              return;
+          }
+
+          updateActiveProgressToast();
+        };
+
+        const promise = runImmediateGitActionMutation.mutateAsync({
+          actionId,
+          action,
+          ...(commitMessage ? { commitMessage } : {}),
+          ...(featureBranch ? { featureBranch } : {}),
+          ...(filePaths ? { filePaths } : {}),
+          onProgress: applyProgressEvent,
+        });
+
+        try {
+          const result = await promise;
+          activeGitActionProgressRef.current = null;
+          syncThreadBranchAfterGitAction(result);
+          const closeResultToast = () => {
+            toastManager.close(resolvedProgressToastId);
+          };
+
+          const toastCta = result.toast.cta;
+          let toastActionProps: {
+            children: string;
+            onClick: () => void;
+          } | null = null;
+          if (toastCta.kind === "run_action") {
+            toastActionProps = {
+              children: toastCta.label,
+              onClick: () => {
+                closeResultToast();
+                void runGitActionWithToast({
+                  action: toastCta.action.kind,
+                });
+              },
+            };
+          } else if (toastCta.kind === "open_pr") {
+            toastActionProps = {
+              children: toastCta.label,
+              onClick: () => {
+                const api = readLocalApi();
+                if (!api) return;
+                closeResultToast();
+                void api.shell.openExternal(toastCta.url);
+              },
+            };
+          }
+
+          const successToastData = {
+            ...scopedToastData,
+            dismissAfterVisibleMs: 10_000,
+          };
+
+          if (toastActionProps) {
+            toastManager.update(
+              resolvedProgressToastId,
+              stackedThreadToast({
+                type: "success",
+                title: result.toast.title,
+                description: result.toast.description,
+                timeout: 0,
+                actionProps: toastActionProps,
+                actionVariant: "outline",
+                data: successToastData,
+              }),
+            );
+          } else {
+            toastManager.update(resolvedProgressToastId, {
+              type: "success",
+              title: result.toast.title,
+              description: result.toast.description,
+              timeout: 0,
+              data: successToastData,
+            });
+          }
+        } catch (err) {
+          activeGitActionProgressRef.current = null;
+          toastManager.update(
+            resolvedProgressToastId,
+            stackedThreadToast({
+              type: "error",
+              title: "Action failed",
+              description: err instanceof Error ? err.message : "An error occurred.",
+              ...(scopedToastData !== undefined ? { data: scopedToastData } : {}),
+            }),
+          );
+        }
+      },
+    );
+
+    const continuePendingDefaultBranchAction = () => {
+      if (!pendingDefaultBranchAction) return;
+      const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
+      setPendingDefaultBranchAction(null);
+      void runGitActionWithToast({
+        action,
+        ...(commitMessage ? { commitMessage } : {}),
+        ...(onConfirmed ? { onConfirmed } : {}),
+        ...(filePaths ? { filePaths } : {}),
+        skipDefaultBranchPrompt: true,
+      });
+    };
+
+    const checkoutFeatureBranchAndContinuePendingAction = () => {
+      if (!pendingDefaultBranchAction) return;
+      const { action, commitMessage, onConfirmed, filePaths } = pendingDefaultBranchAction;
+      setPendingDefaultBranchAction(null);
+      void runGitActionWithToast({
+        action,
+        ...(commitMessage ? { commitMessage } : {}),
+        ...(onConfirmed ? { onConfirmed } : {}),
+        ...(filePaths ? { filePaths } : {}),
+        featureBranch: true,
+        skipDefaultBranchPrompt: true,
+      });
+    };
+
+    const runDialogActionOnNewBranch = () => {
+      if (!isCommitDialogOpen) return;
+      const commitMessage = dialogCommitMessage.trim();
+
+      setIsCommitDialogOpen(false);
+      setDialogCommitMessage("");
+      setExcludedFiles(new Set());
+      setIsEditingFiles(false);
+
+      void runGitActionWithToast({
+        action: "commit",
+        ...(commitMessage ? { commitMessage } : {}),
+        ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+        featureBranch: true,
+        skipDefaultBranchPrompt: true,
+      });
+    };
+
+    const runQuickAction = () => {
+      if (quickAction.kind === "open_pr") {
+        void openExistingPr();
+        return;
+      }
+      if (quickAction.kind === "run_pull") {
+        const promise = pullMutation.mutateAsync();
+        void toastManager.promise<
+          Awaited<ReturnType<typeof pullMutation.mutateAsync>>,
+          ThreadToastData
+        >(promise, {
+          loading: { title: "Pulling...", data: threadToastData },
+          success: (result) => ({
+            title: result.status === "pulled" ? "Pulled" : "Already up to date",
+            description:
+              result.status === "pulled"
+                ? `Updated ${result.branch} from ${result.upstreamBranch ?? "upstream"}`
+                : `${result.branch} is already synchronized.`,
+            data: threadToastData,
+          }),
+          error: (err) => ({
+            title: "Pull failed",
+            description: err instanceof Error ? err.message : "An error occurred.",
+            data: threadToastData,
+          }),
+        });
+        void promise.catch(() => undefined);
+        return;
+      }
+      if (quickAction.kind === "show_hint") {
+        toastManager.add({
+          type: "info",
+          title: quickAction.label,
+          description: quickAction.hint,
+          data: threadToastData,
+        });
+        return;
+      }
+      if (quickAction.action) {
+        void runGitActionWithToast({ action: quickAction.action });
+      }
+    };
+
+    const openDialogForMenuItem = useCallback(
+      (item: GitActionMenuItem) => {
+        if (item.disabled) return;
+        if (item.kind === "open_pr") {
+          void openExistingPr();
+          return;
+        }
+        if (item.dialogAction === "push") {
+          void runGitActionWithToast({ action: "push" });
+          return;
+        }
+        if (item.dialogAction === "create_pr") {
+          void runGitActionWithToast({ action: "create_pr" });
+          return;
+        }
+        setExcludedFiles(new Set());
+        setIsEditingFiles(false);
+        setIsCommitDialogOpen(true);
+      },
+      [openExistingPr, runGitActionWithToast],
+    );
+
+    const openPublishDialog = useCallback(() => {
+      setPublishRepository("");
+      setPublishProvider("github");
+      setPublishPrivate(true);
+      setIsPublishDialogOpen(true);
+    }, []);
+
+    const runKeybindingCommand = useCallback(
+      (command: GitKeybindingCommand): boolean => {
+        if (!gitCwd || !isGitActionKeybindingCommand(command)) {
+          return false;
+        }
+
+        if (command === "git.init") {
+          if (isRepo) {
+            return false;
+          }
+          initMutation.mutate();
+          return true;
+        }
+
+        if (!isRepo) {
+          return false;
+        }
+
+        if (command === "git.publish") {
+          if (hasOriginRemote || publishRepositoryMutation.isPending) {
+            return false;
+          }
+          openPublishDialog();
+          return true;
+        }
+
+        const targetMenuItem =
+          command === "git.commit"
+            ? gitActionMenuItems.find((item) => item.id === "commit")
+            : command === "git.push"
+              ? gitActionMenuItems.find((item) => item.id === "push")
+              : gitActionMenuItems.find((item) => item.id === "pr");
+        if (!targetMenuItem || targetMenuItem.disabled) {
+          return false;
+        }
+
+        openDialogForMenuItem(targetMenuItem);
+        return true;
+      },
+      [
+        gitActionMenuItems,
+        gitCwd,
+        hasOriginRemote,
+        initMutation,
+        isRepo,
+        openDialogForMenuItem,
+        openPublishDialog,
+        publishRepositoryMutation.isPending,
+      ],
+    );
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        runKeybindingCommand,
+      }),
+      [runKeybindingCommand],
+    );
+
+    const runPublishRepository = () => {
+      if (!gitCwd || !publishRepository.trim()) return;
+      const repository = publishRepository.trim();
+      const promise = publishRepositoryMutation.mutateAsync({
+        cwd: gitCwd,
+        provider: publishProvider,
+        repository,
+        visibility: publishPrivate ? "private" : "public",
+        protocol: "auto",
+      });
+      setIsPublishDialogOpen(false);
+      void toastManager.promise(promise, {
+        loading: { title: `Publishing ${repository}...`, data: threadToastData },
+        success: (result) => ({
+          title: `Published to ${publishProvider === "github" ? "GitHub" : "GitLab"}`,
+          description: `Pushed ${result.branch} to ${result.remoteName}.`,
+          data: threadToastData,
+        }),
+        error: (err) => ({
+          title: "Publish failed",
+          description: err instanceof Error ? err.message : "An error occurred.",
+          data: threadToastData,
+        }),
+      });
+      void promise
+        .then(() => refreshGitStatus({ environmentId: activeEnvironmentId, cwd: gitCwd }))
+        .catch(() => undefined);
+    };
+
+    const runDialogAction = () => {
+      if (!isCommitDialogOpen) return;
+      const commitMessage = dialogCommitMessage.trim();
+      setIsCommitDialogOpen(false);
+      setDialogCommitMessage("");
+      setExcludedFiles(new Set());
+      setIsEditingFiles(false);
+      void runGitActionWithToast({
+        action: "commit",
+        ...(commitMessage ? { commitMessage } : {}),
+        ...(!allSelected ? { filePaths: selectedFiles.map((f) => f.path) } : {}),
+      });
+    };
+
+    const openChangedFileInEditor = useCallback(
+      (filePath: string) => {
+        const api = readLocalApi();
+        if (!api || !gitCwd) {
+          toastManager.add({
+            type: "error",
+            title: "Editor opening is unavailable.",
+            data: threadToastData,
+          });
+          return;
+        }
+        const target = resolvePathLinkTarget(filePath, gitCwd);
+        void openInPreferredEditor(api, target).catch((error) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Unable to open file",
+              description: error instanceof Error ? error.message : "An error occurred.",
+              ...(threadToastData !== undefined ? { data: threadToastData } : {}),
+            }),
+          );
+        });
+      },
+      [gitCwd, threadToastData],
+    );
+
+    const gitMenuItemsContent = !isRepo ? (
+      <MenuItem disabled={initMutation.isPending} onClick={() => initMutation.mutate()}>
+        <FolderGit2Icon className="size-4" />
+        {initMutation.isPending ? "Initializing Git..." : "Initialize Git"}
+        {keybindings && shortcutLabelForCommand(keybindings, "git.init") ? (
+          <MenuShortcut>{shortcutLabelForCommand(keybindings, "git.init")}</MenuShortcut>
+        ) : null}
+      </MenuItem>
+    ) : (
+      <>
+        {!hasOriginRemote ? (
+          <MenuItem disabled={publishRepositoryMutation.isPending} onClick={openPublishDialog}>
+            <CloudUploadIcon className="size-4" />
+            {publishRepositoryMutation.isPending ? "Publishing..." : "Publish repository"}
+            {keybindings && shortcutLabelForCommand(keybindings, "git.publish") ? (
+              <MenuShortcut>{shortcutLabelForCommand(keybindings, "git.publish")}</MenuShortcut>
+            ) : null}
           </MenuItem>
-        );
-      })}
-      {gitStatusForActions?.branch === null ? (
-        <p className="px-2 py-1.5 text-xs text-warning">
-          Detached HEAD: create and checkout a branch to enable push and PR actions.
-        </p>
-      ) : null}
-      {gitStatusForActions &&
-      gitStatusForActions.branch !== null &&
-      !gitStatusForActions.hasWorkingTreeChanges &&
-      gitStatusForActions.behindCount > 0 &&
-      gitStatusForActions.aheadCount === 0 ? (
-        <p className="px-2 py-1.5 text-xs text-warning">Behind upstream. Pull/rebase first.</p>
-      ) : null}
-      {gitStatusError ? (
-        <p className="px-2 py-1.5 text-xs text-destructive">{gitStatusError.message}</p>
-      ) : null}
-    </>
-  );
+        ) : null}
+        {gitActionMenuItems.map((item) => {
+          const shortcutCommand =
+            item.id === "commit" ? "git.commit" : item.id === "push" ? "git.push" : "git.pr";
+          const shortcutLabel = keybindings
+            ? shortcutLabelForCommand(keybindings, shortcutCommand)
+            : null;
+          const disabledReason = getMenuActionDisabledReason({
+            item,
+            gitStatus: gitStatusForActions,
+            isBusy: isGitActionRunning,
+            hasOriginRemote,
+          });
+          if (item.disabled && disabledReason) {
+            return (
+              <Popover key={`${item.id}-${item.label}`}>
+                <PopoverTrigger
+                  openOnHover
+                  nativeButton={false}
+                  render={<span className="block w-max cursor-not-allowed" />}
+                >
+                  <MenuItem className="w-full" disabled>
+                    <GitActionItemIcon icon={item.icon} />
+                    {item.label}
+                    {shortcutLabel ? <MenuShortcut>{shortcutLabel}</MenuShortcut> : null}
+                  </MenuItem>
+                </PopoverTrigger>
+                <PopoverPopup tooltipStyle side="left" align="center">
+                  {disabledReason}
+                </PopoverPopup>
+              </Popover>
+            );
+          }
 
-  if (!gitCwd) return null;
+          return (
+            <MenuItem
+              key={`${item.id}-${item.label}`}
+              disabled={item.disabled}
+              onClick={() => {
+                openDialogForMenuItem(item);
+              }}
+            >
+              <GitActionItemIcon icon={item.icon} />
+              {item.label}
+              {shortcutLabel ? <MenuShortcut>{shortcutLabel}</MenuShortcut> : null}
+            </MenuItem>
+          );
+        })}
+        {gitStatusForActions?.branch === null ? (
+          <p className="px-2 py-1.5 text-xs text-warning">
+            Detached HEAD: create and checkout a branch to enable push and PR actions.
+          </p>
+        ) : null}
+        {gitStatusForActions &&
+        gitStatusForActions.branch !== null &&
+        !gitStatusForActions.hasWorkingTreeChanges &&
+        gitStatusForActions.behindCount > 0 &&
+        gitStatusForActions.aheadCount === 0 ? (
+          <p className="px-2 py-1.5 text-xs text-warning">Behind upstream. Pull/rebase first.</p>
+        ) : null}
+        {gitStatusError ? (
+          <p className="px-2 py-1.5 text-xs text-destructive">{gitStatusError.message}</p>
+        ) : null}
+      </>
+    );
 
-  return (
-    <>
-      {renderMode === "menu-items" ? (
-        gitMenuItemsContent
-      ) : !isRepo ? (
-        <Button
-          variant="outline"
-          size="xs"
-          disabled={initMutation.isPending}
-          onClick={() => initMutation.mutate()}
-          title={compact ? "Initialize Git" : undefined}
-        >
-          {compact ? (
-            <>
-              <FolderGit2Icon className="size-3.5" />
-              <span className="sr-only">
-                {initMutation.isPending ? "Initializing Git" : "Initialize Git"}
-              </span>
-            </>
-          ) : initMutation.isPending ? (
-            "Initializing..."
-          ) : (
-            "Initialize Git"
-          )}
-        </Button>
-      ) : (
-        <Group aria-label="Git actions" className="shrink-0">
-          {quickActionDisabledReason ? (
-            <Popover>
-              <PopoverTrigger
-                openOnHover
-                render={
-                  <Button
-                    aria-disabled="true"
-                    className="cursor-not-allowed rounded-e-none border-e-0 opacity-64 before:rounded-e-none"
-                    size="xs"
-                    variant="outline"
-                    title={compact ? quickAction.label : undefined}
-                  />
-                }
+    if (!gitCwd) return null;
+
+    return (
+      <>
+        {renderMode === "menu-items" ? (
+          gitMenuItemsContent
+        ) : !isRepo ? (
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={initMutation.isPending}
+            onClick={() => initMutation.mutate()}
+            title={compact ? "Initialize Git" : undefined}
+          >
+            {compact ? (
+              <>
+                <FolderGit2Icon className="size-3.5" />
+                <span className="sr-only">
+                  {initMutation.isPending ? "Initializing Git" : "Initialize Git"}
+                </span>
+              </>
+            ) : initMutation.isPending ? (
+              "Initializing..."
+            ) : (
+              "Initialize Git"
+            )}
+          </Button>
+        ) : (
+          <Group aria-label="Git actions" className="shrink-0">
+            {quickActionDisabledReason ? (
+              <Popover>
+                <PopoverTrigger
+                  openOnHover
+                  render={
+                    <Button
+                      aria-disabled="true"
+                      className="cursor-not-allowed rounded-e-none border-e-0 opacity-64 before:rounded-e-none"
+                      size="xs"
+                      variant="outline"
+                      title={compact ? quickAction.label : undefined}
+                    />
+                  }
+                >
+                  <GitQuickActionIcon quickAction={quickAction} />
+                  <span className={primaryButtonLabelClassName}>{quickAction.label}</span>
+                </PopoverTrigger>
+                <PopoverPopup tooltipStyle side="bottom" align="start">
+                  {quickActionDisabledReason}
+                </PopoverPopup>
+              </Popover>
+            ) : (
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={isGitActionRunning || quickAction.disabled}
+                onClick={runQuickAction}
+                title={compact ? quickAction.label : undefined}
               >
                 <GitQuickActionIcon quickAction={quickAction} />
                 <span className={primaryButtonLabelClassName}>{quickAction.label}</span>
-              </PopoverTrigger>
-              <PopoverPopup tooltipStyle side="bottom" align="start">
-                {quickActionDisabledReason}
-              </PopoverPopup>
-            </Popover>
-          ) : (
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={isGitActionRunning || quickAction.disabled}
-              onClick={runQuickAction}
-              title={compact ? quickAction.label : undefined}
-            >
-              <GitQuickActionIcon quickAction={quickAction} />
-              <span className={primaryButtonLabelClassName}>{quickAction.label}</span>
-            </Button>
-          )}
-          <GroupSeparator className={groupSeparatorClassName} />
-          <Menu
-            onOpenChange={(open) => {
-              if (open) {
-                void refreshGitStatus({
-                  environmentId: activeEnvironmentId,
-                  cwd: gitCwd,
-                }).catch(() => undefined);
-              }
-            }}
-          >
-            <MenuTrigger
-              render={<Button aria-label="Git action options" size="icon-xs" variant="outline" />}
-              disabled={isGitActionRunning}
-            >
-              <ChevronDownIcon aria-hidden="true" className="size-2.5" />
-            </MenuTrigger>
-            <MenuPopup align="end" className="w-full">
-              {gitMenuItemsContent}
-            </MenuPopup>
-          </Menu>
-        </Group>
-      )}
-
-      <Dialog
-        open={isCommitDialogOpen}
-        onOpenChange={(open) => {
-          if (!open) {
-            setIsCommitDialogOpen(false);
-            setDialogCommitMessage("");
-            setExcludedFiles(new Set());
-            setIsEditingFiles(false);
-          }
-        }}
-      >
-        <DialogPopup>
-          <DialogHeader>
-            <DialogTitle>{COMMIT_DIALOG_TITLE}</DialogTitle>
-            <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
-          </DialogHeader>
-          <DialogPanel className="space-y-4">
-            <div className="space-y-3 rounded-lg border border-input bg-muted/40 p-3 text-xs">
-              <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
-                <span className="text-muted-foreground">Branch</span>
-                <span className="flex items-center justify-between gap-2">
-                  <span className="font-medium">
-                    {gitStatusForActions?.branch ?? "(detached HEAD)"}
-                  </span>
-                  {isDefaultBranch && (
-                    <span className="text-right text-warning text-xs">Warning: default branch</span>
-                  )}
-                </span>
-              </div>
-              <div className="space-y-1">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {isEditingFiles && allFiles.length > 0 && (
-                      <Checkbox
-                        checked={allSelected}
-                        indeterminate={!allSelected && !noneSelected}
-                        onCheckedChange={() => {
-                          setExcludedFiles(
-                            allSelected ? new Set(allFiles.map((f) => f.path)) : new Set(),
-                          );
-                        }}
-                      />
-                    )}
-                    <span className="text-muted-foreground">Files</span>
-                    {!allSelected && !isEditingFiles && (
-                      <span className="text-muted-foreground">
-                        ({selectedFiles.length} of {allFiles.length})
-                      </span>
-                    )}
-                  </div>
-                  {allFiles.length > 0 && (
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => setIsEditingFiles((prev) => !prev)}
-                    >
-                      {isEditingFiles ? "Done" : "Edit"}
-                    </Button>
-                  )}
-                </div>
-                {!gitStatusForActions || allFiles.length === 0 ? (
-                  <p className="font-medium">none</p>
-                ) : (
-                  <div className="space-y-2">
-                    <ScrollArea className="h-44 rounded-md border border-input bg-background">
-                      <div className="space-y-1 p-1">
-                        {allFiles.map((file) => {
-                          const isExcluded = excludedFiles.has(file.path);
-                          return (
-                            <div
-                              key={file.path}
-                              className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono text-xs transition-colors hover:bg-accent/50"
-                            >
-                              {isEditingFiles && (
-                                <Checkbox
-                                  checked={!excludedFiles.has(file.path)}
-                                  onCheckedChange={() => {
-                                    setExcludedFiles((prev) => {
-                                      const next = new Set(prev);
-                                      if (next.has(file.path)) {
-                                        next.delete(file.path);
-                                      } else {
-                                        next.add(file.path);
-                                      }
-                                      return next;
-                                    });
-                                  }}
-                                />
-                              )}
-                              <button
-                                type="button"
-                                className="flex flex-1 items-center justify-between gap-3 text-left truncate"
-                                onClick={() => openChangedFileInEditor(file.path)}
-                              >
-                                <span
-                                  className={`truncate${isExcluded ? " text-muted-foreground" : ""}`}
-                                >
-                                  {file.path}
-                                </span>
-                                <span className="shrink-0">
-                                  {isExcluded ? (
-                                    <span className="text-muted-foreground">Excluded</span>
-                                  ) : (
-                                    <>
-                                      <span className="text-success">+{file.insertions}</span>
-                                      <span className="text-muted-foreground"> / </span>
-                                      <span className="text-destructive">-{file.deletions}</span>
-                                    </>
-                                  )}
-                                </span>
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </ScrollArea>
-                    <div className="flex justify-end font-mono">
-                      <span className="text-success">
-                        +{selectedFiles.reduce((sum, f) => sum + f.insertions, 0)}
-                      </span>
-                      <span className="text-muted-foreground"> / </span>
-                      <span className="text-destructive">
-                        -{selectedFiles.reduce((sum, f) => sum + f.deletions, 0)}
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="space-y-1">
-              <p className="text-xs font-medium">Commit message (optional)</p>
-              <Textarea
-                value={dialogCommitMessage}
-                onChange={(event) => setDialogCommitMessage(event.target.value)}
-                placeholder="Leave empty to auto-generate"
-                size="sm"
-              />
-            </div>
-          </DialogPanel>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setIsCommitDialogOpen(false);
-                setDialogCommitMessage("");
-                setExcludedFiles(new Set());
-                setIsEditingFiles(false);
+              </Button>
+            )}
+            <GroupSeparator className={groupSeparatorClassName} />
+            <Menu
+              onOpenChange={(open) => {
+                if (open) {
+                  void refreshGitStatus({
+                    environmentId: activeEnvironmentId,
+                    cwd: gitCwd,
+                  }).catch(() => undefined);
+                }
               }}
             >
-              Cancel
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={noneSelected}
-              onClick={runDialogActionOnNewBranch}
-            >
-              Commit on new branch
-            </Button>
-            <Button size="sm" disabled={noneSelected} onClick={runDialogAction}>
-              Commit
-            </Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
-
-      <Dialog
-        open={isPublishDialogOpen}
-        onOpenChange={(open) => {
-          setIsPublishDialogOpen(open);
-          if (!open) {
-            setPublishRepository("");
-          }
-        }}
-      >
-        <DialogPopup className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Publish repository</DialogTitle>
-            <DialogDescription>
-              Create a remote repository, add it as origin, and push.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel className="space-y-4">
-            <div className="grid grid-cols-2 gap-2">
-              <Button
-                type="button"
-                variant={publishProvider === "github" ? "default" : "outline"}
-                size="sm"
-                onClick={() => setPublishProvider("github")}
+              <MenuTrigger
+                render={<Button aria-label="Git action options" size="icon-xs" variant="outline" />}
+                disabled={isGitActionRunning}
               >
-                <GitHubIcon className="size-3.5" />
-                GitHub
+                <ChevronDownIcon aria-hidden="true" className="size-2.5" />
+              </MenuTrigger>
+              <MenuPopup align="end" className="w-full">
+                {gitMenuItemsContent}
+              </MenuPopup>
+            </Menu>
+          </Group>
+        )}
+
+        <Dialog
+          open={isCommitDialogOpen}
+          onOpenChange={(open) => {
+            if (!open) {
+              setIsCommitDialogOpen(false);
+              setDialogCommitMessage("");
+              setExcludedFiles(new Set());
+              setIsEditingFiles(false);
+            }
+          }}
+        >
+          <DialogPopup>
+            <DialogHeader>
+              <DialogTitle>{COMMIT_DIALOG_TITLE}</DialogTitle>
+              <DialogDescription>{COMMIT_DIALOG_DESCRIPTION}</DialogDescription>
+            </DialogHeader>
+            <DialogPanel className="space-y-4">
+              <div className="space-y-3 rounded-lg border border-input bg-muted/40 p-3 text-xs">
+                <div className="grid grid-cols-[auto_1fr] items-center gap-x-2 gap-y-1">
+                  <span className="text-muted-foreground">Branch</span>
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="font-medium">
+                      {gitStatusForActions?.branch ?? "(detached HEAD)"}
+                    </span>
+                    {isDefaultBranch && (
+                      <span className="text-right text-warning text-xs">
+                        Warning: default branch
+                      </span>
+                    )}
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {isEditingFiles && allFiles.length > 0 && (
+                        <Checkbox
+                          checked={allSelected}
+                          indeterminate={!allSelected && !noneSelected}
+                          onCheckedChange={() => {
+                            setExcludedFiles(
+                              allSelected ? new Set(allFiles.map((f) => f.path)) : new Set(),
+                            );
+                          }}
+                        />
+                      )}
+                      <span className="text-muted-foreground">Files</span>
+                      {!allSelected && !isEditingFiles && (
+                        <span className="text-muted-foreground">
+                          ({selectedFiles.length} of {allFiles.length})
+                        </span>
+                      )}
+                    </div>
+                    {allFiles.length > 0 && (
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => setIsEditingFiles((prev) => !prev)}
+                      >
+                        {isEditingFiles ? "Done" : "Edit"}
+                      </Button>
+                    )}
+                  </div>
+                  {!gitStatusForActions || allFiles.length === 0 ? (
+                    <p className="font-medium">none</p>
+                  ) : (
+                    <div className="space-y-2">
+                      <ScrollArea className="h-44 rounded-md border border-input bg-background">
+                        <div className="space-y-1 p-1">
+                          {allFiles.map((file) => {
+                            const isExcluded = excludedFiles.has(file.path);
+                            return (
+                              <div
+                                key={file.path}
+                                className="flex w-full items-center gap-2 rounded-md px-2 py-1 font-mono text-xs transition-colors hover:bg-accent/50"
+                              >
+                                {isEditingFiles && (
+                                  <Checkbox
+                                    checked={!excludedFiles.has(file.path)}
+                                    onCheckedChange={() => {
+                                      setExcludedFiles((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(file.path)) {
+                                          next.delete(file.path);
+                                        } else {
+                                          next.add(file.path);
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                )}
+                                <button
+                                  type="button"
+                                  className="flex flex-1 items-center justify-between gap-3 text-left truncate"
+                                  onClick={() => openChangedFileInEditor(file.path)}
+                                >
+                                  <span
+                                    className={`truncate${isExcluded ? " text-muted-foreground" : ""}`}
+                                  >
+                                    {file.path}
+                                  </span>
+                                  <span className="shrink-0">
+                                    {isExcluded ? (
+                                      <span className="text-muted-foreground">Excluded</span>
+                                    ) : (
+                                      <>
+                                        <span className="text-success">+{file.insertions}</span>
+                                        <span className="text-muted-foreground"> / </span>
+                                        <span className="text-destructive">-{file.deletions}</span>
+                                      </>
+                                    )}
+                                  </span>
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </ScrollArea>
+                      <div className="flex justify-end font-mono">
+                        <span className="text-success">
+                          +{selectedFiles.reduce((sum, f) => sum + f.insertions, 0)}
+                        </span>
+                        <span className="text-muted-foreground"> / </span>
+                        <span className="text-destructive">
+                          -{selectedFiles.reduce((sum, f) => sum + f.deletions, 0)}
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-medium">Commit message (optional)</p>
+                <Textarea
+                  value={dialogCommitMessage}
+                  onChange={(event) => setDialogCommitMessage(event.target.value)}
+                  placeholder="Leave empty to auto-generate"
+                  size="sm"
+                />
+              </div>
+            </DialogPanel>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setIsCommitDialogOpen(false);
+                  setDialogCommitMessage("");
+                  setExcludedFiles(new Set());
+                  setIsEditingFiles(false);
+                }}
+              >
+                Cancel
               </Button>
               <Button
-                type="button"
-                variant={publishProvider === "gitlab" ? "default" : "outline"}
+                variant="outline"
                 size="sm"
-                onClick={() => setPublishProvider("gitlab")}
+                disabled={noneSelected}
+                onClick={runDialogActionOnNewBranch}
               >
-                GitLab
+                Commit on new branch
               </Button>
-            </div>
-            <div className="space-y-1.5">
-              <p className="text-xs font-medium">Repository path</p>
-              <Input
-                value={publishRepository}
-                onChange={(event) => setPublishRepository(event.target.value)}
-                placeholder={publishProvider === "github" ? "owner/repo" : "group/project"}
-              />
-            </div>
-            <label className="flex items-center gap-2 text-sm">
-              <Checkbox
-                checked={publishPrivate}
-                onCheckedChange={(checked) => setPublishPrivate(checked === true)}
-              />
-              Private repository
-            </label>
-          </DialogPanel>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setIsPublishDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              disabled={
-                publishRepositoryMutation.isPending || publishRepository.trim().length === 0
-              }
-              onClick={runPublishRepository}
-            >
-              Publish
-            </Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
+              <Button size="sm" disabled={noneSelected} onClick={runDialogAction}>
+                Commit
+              </Button>
+            </DialogFooter>
+          </DialogPopup>
+        </Dialog>
 
-      <Dialog
-        open={pendingDefaultBranchAction !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setPendingDefaultBranchAction(null);
-          }
-        }}
-      >
-        <DialogPopup className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>
-              {pendingDefaultBranchActionCopy?.title ?? "Run action on default branch?"}
-            </DialogTitle>
-            <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setPendingDefaultBranchAction(null)}>
-              Abort
-            </Button>
-            <Button variant="outline" size="sm" onClick={continuePendingDefaultBranchAction}>
-              {pendingDefaultBranchActionCopy?.continueLabel ?? "Continue"}
-            </Button>
-            <Button size="sm" onClick={checkoutFeatureBranchAndContinuePendingAction}>
-              Checkout feature branch & continue
-            </Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
-    </>
-  );
-}
+        <Dialog
+          open={isPublishDialogOpen}
+          onOpenChange={(open) => {
+            setIsPublishDialogOpen(open);
+            if (!open) {
+              setPublishRepository("");
+            }
+          }}
+        >
+          <DialogPopup className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Publish repository</DialogTitle>
+              <DialogDescription>
+                Create a remote repository, add it as origin, and push.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogPanel className="space-y-4">
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  type="button"
+                  variant={publishProvider === "github" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setPublishProvider("github")}
+                >
+                  <GitHubIcon className="size-3.5" />
+                  GitHub
+                </Button>
+                <Button
+                  type="button"
+                  variant={publishProvider === "gitlab" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setPublishProvider("gitlab")}
+                >
+                  GitLab
+                </Button>
+              </div>
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium">Repository path</p>
+                <Input
+                  value={publishRepository}
+                  onChange={(event) => setPublishRepository(event.target.value)}
+                  placeholder={publishProvider === "github" ? "owner/repo" : "group/project"}
+                />
+              </div>
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={publishPrivate}
+                  onCheckedChange={(checked) => setPublishPrivate(checked === true)}
+                />
+                Private repository
+              </label>
+            </DialogPanel>
+            <DialogFooter>
+              <Button variant="outline" size="sm" onClick={() => setIsPublishDialogOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={
+                  publishRepositoryMutation.isPending || publishRepository.trim().length === 0
+                }
+                onClick={runPublishRepository}
+              >
+                Publish
+              </Button>
+            </DialogFooter>
+          </DialogPopup>
+        </Dialog>
+
+        <Dialog
+          open={pendingDefaultBranchAction !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setPendingDefaultBranchAction(null);
+            }
+          }}
+        >
+          <DialogPopup className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle>
+                {pendingDefaultBranchActionCopy?.title ?? "Run action on default branch?"}
+              </DialogTitle>
+              <DialogDescription>{pendingDefaultBranchActionCopy?.description}</DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPendingDefaultBranchAction(null)}
+              >
+                Abort
+              </Button>
+              <Button variant="outline" size="sm" onClick={continuePendingDefaultBranchAction}>
+                {pendingDefaultBranchActionCopy?.continueLabel ?? "Continue"}
+              </Button>
+              <Button size="sm" onClick={checkoutFeatureBranchAndContinuePendingAction}>
+                Checkout feature branch & continue
+              </Button>
+            </DialogFooter>
+          </DialogPopup>
+        </Dialog>
+      </>
+    );
+  },
+);
+
+export default GitActionsControl;

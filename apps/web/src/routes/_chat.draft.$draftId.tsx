@@ -1,22 +1,10 @@
 import { scopeProjectRef } from "@forma/client-runtime";
 import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
-import {
-  Suspense,
-  lazy,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ComponentProps,
-} from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ChatView from "../components/ChatView";
 import { BottomDrawerHost } from "../components/BottomDrawerHost";
 import { threadHasStarted } from "../components/ChatView.logic";
-import {
-  DiffPanelLoadingState,
-  DiffPanelShell,
-  type DiffPanelMode,
-} from "../components/DiffPanelShell";
+import { LazyWorkspacePanel, preloadWorkspacePanel } from "../components/LazyWorkspacePanel";
 import { WorkspacePanelHost } from "../components/WorkspacePanelHost";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import {
@@ -29,24 +17,6 @@ import { SidebarInset } from "../components/ui/sidebar";
 import { createThreadSelectorAcrossEnvironments } from "../storeSelectors";
 import { selectProjectByRef, useStore } from "../store";
 import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
-
-const WorkspacePanel = lazy(() => import("../components/WorkspacePanel"));
-
-const WorkspacePanelLoadingFallback = (props: { mode: DiffPanelMode }) => {
-  return (
-    <DiffPanelShell mode={props.mode}>
-      <DiffPanelLoadingState label="Loading workspace panel..." />
-    </DiffPanelShell>
-  );
-};
-
-const LazyWorkspacePanel = (props: ComponentProps<typeof WorkspacePanel>) => {
-  return (
-    <Suspense fallback={<WorkspacePanelLoadingFallback mode={props.mode ?? "inline"} />}>
-      <WorkspacePanel {...props} />
-    </Suspense>
-  );
-};
 
 function DraftChatThreadRouteView() {
   const navigate = useNavigate();
@@ -115,6 +85,7 @@ function DraftChatThreadRouteView() {
     });
   }, [draftId, navigate]);
   const openPanel = useCallback(() => {
+    preloadWorkspacePanel();
     markWorkspacePanelOpened();
     void navigate({
       to: "/draft/$draftId",
@@ -122,6 +93,10 @@ function DraftChatThreadRouteView() {
       search: (previous) => buildDiffFilesSearch(previous),
     });
   }, [draftId, markWorkspacePanelOpened, navigate]);
+
+  useEffect(() => {
+    preloadWorkspacePanel();
+  }, []);
 
   useEffect(() => {
     if (!canonicalThreadRef) {

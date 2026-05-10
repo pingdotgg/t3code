@@ -68,6 +68,8 @@ function makeTestLayer(state: {
       }),
     invalidateStatus: () => Effect.die("invalidateStatus should not be called in this test"),
     resolvePullRequest: () => Effect.die("resolvePullRequest should not be called in this test"),
+    listOpenPullRequests: () =>
+      Effect.die("listOpenPullRequests should not be called in this test"),
     preparePullRequestThread: () =>
       Effect.die("preparePullRequestThread should not be called in this test"),
     runStackedAction: () => Effect.die("runStackedAction should not be called in this test"),
@@ -266,6 +268,8 @@ describe("GitStatusBroadcasterLive", () => {
           invalidateStatus: () => Effect.die("invalidateStatus should not be called in this test"),
           resolvePullRequest: () =>
             Effect.die("resolvePullRequest should not be called in this test"),
+          listOpenPullRequests: () =>
+            Effect.die("listOpenPullRequests should not be called in this test"),
           preparePullRequestThread: () =>
             Effect.die("preparePullRequestThread should not be called in this test"),
           runStackedAction: () => Effect.die("runStackedAction should not be called in this test"),

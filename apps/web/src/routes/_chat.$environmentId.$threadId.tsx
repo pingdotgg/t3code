@@ -1,22 +1,10 @@
 import { scopeProjectRef } from "@forma/client-runtime";
 import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
-import {
-  Suspense,
-  lazy,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ComponentProps,
-} from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
-import {
-  DiffPanelLoadingState,
-  DiffPanelShell,
-  type DiffPanelMode,
-} from "../components/DiffPanelShell";
+import { LazyWorkspacePanel, preloadWorkspacePanel } from "../components/LazyWorkspacePanel";
 import { WorkspacePanelHost } from "../components/WorkspacePanelHost";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import {
@@ -35,24 +23,6 @@ import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
 import { BottomDrawerHost } from "../components/BottomDrawerHost";
 import { SidebarInset } from "~/components/ui/sidebar";
-
-const WorkspacePanel = lazy(() => import("../components/WorkspacePanel"));
-
-const WorkspacePanelLoadingFallback = (props: { mode: DiffPanelMode }) => {
-  return (
-    <DiffPanelShell mode={props.mode}>
-      <DiffPanelLoadingState label="Loading workspace panel..." />
-    </DiffPanelShell>
-  );
-};
-
-const LazyWorkspacePanel = (props: ComponentProps<typeof WorkspacePanel>) => {
-  return (
-    <Suspense fallback={<WorkspacePanelLoadingFallback mode={props.mode ?? "inline"} />}>
-      <WorkspacePanel {...props} />
-    </Suspense>
-  );
-};
 
 function ChatThreadRouteView() {
   const navigate = useNavigate();
@@ -130,6 +100,7 @@ function ChatThreadRouteView() {
     if (!threadRef) {
       return;
     }
+    preloadWorkspacePanel();
     markWorkspacePanelOpened();
     void navigate({
       to: "/$environmentId/$threadId",
@@ -139,6 +110,10 @@ function ChatThreadRouteView() {
   }, [markWorkspacePanelOpened, navigate, threadRef]);
   const requestWorkspaceDiffToggle = useCallback(() => {
     setWorkspaceDiffToggleRequestNonce((current) => current + 1);
+  }, []);
+
+  useEffect(() => {
+    preloadWorkspacePanel();
   }, []);
 
   useEffect(() => {

@@ -1,5 +1,6 @@
 import { scopeProjectRef, scopeThreadRef } from "@forma/client-runtime";
-import type { ScopedThreadRef } from "@forma/contracts";
+import type { GitStatusPr, ScopedThreadRef } from "@forma/contracts";
+import { useQueries } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
   IconChevronRight as ChevronRightIcon,
@@ -24,8 +25,10 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useSettings } from "../hooks/useSettings";
 import { useThreadRowActions } from "../hooks/useThreadRowActions";
 import { openProjectOrCreateThread } from "../lib/chatThreadActions";
+import { gitListOpenPullRequestsQueryOptions } from "../lib/gitReactQuery";
 import { MICRO_FADE_MOTION_CLASS_NAME } from "../lib/motion";
 import { cn } from "../lib/utils";
+import { readLocalApi } from "../localApi";
 import {
   selectProjectsAcrossEnvironments,
   selectSidebarThreadsAcrossEnvironments,
@@ -44,16 +47,18 @@ import {
 import { LogomarkForma } from "./LogomarkForma";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { DesktopSidebarReopenButton } from "./sidebar/DesktopSidebarReopenButton";
+import GitActionsControl from "./GitActionsControl";
 import {
   ThreadBreadcrumbChipContent,
   ThreadBreadcrumbProjectChipContent,
   THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME,
 } from "./ThreadBreadcrumb";
-import { ThreadRowLeadingStatus } from "./ThreadStatusIndicators";
+import { prStatusIndicator, ThreadRowLeadingStatus } from "./ThreadStatusIndicators";
 import { AddProjectIcon, NewThreadIcon, SettingsHexIcon, SidebarArchiveIcon } from "./icons/custom";
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./ui/menu";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 import { SidebarInset, SidebarTrigger, useSidebar } from "~/components/ui/sidebar";
 
 const ACTION_CARD_CLASS_NAME =
@@ -67,6 +72,7 @@ const LIST_TABLE_HEADER_ROW_CLASS_NAME = "hidden items-center gap-4 px-4 py-2 md
 const LIST_TABLE_HEADER_CELL_CLASS_NAME =
   "text-ui-2xs font-semibold uppercase tracking-[0.14em] text-muted-foreground/68";
 const RECENT_THREAD_TABLE_GRID_CLASS_NAME = "md:grid-cols-[minmax(0,1fr)_3rem]";
+const PULL_REQUEST_TABLE_GRID_CLASS_NAME = "md:grid-cols-[minmax(0,1fr)_5rem]";
 const PROJECT_TABLE_GRID_CLASS_NAME = "md:grid-cols-[minmax(0,0.75fr)_minmax(0,1fr)_auto]";
 
 interface ActionCardProps {
@@ -456,6 +462,121 @@ function ThreadListRow({
   );
 }
 
+function openPullRequestUrl(url: string) {
+  const api = readLocalApi();
+  if (!api) {
+    toastManager.add({
+      type: "error",
+      title: "Link opening is unavailable.",
+    });
+    return;
+  }
+
+  void api.shell.openExternal(url).catch((error) => {
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Unable to open PR link",
+        description: error instanceof Error ? error.message : "An error occurred.",
+      }),
+    );
+  });
+}
+
+function PullRequestListRow({
+  pullRequest,
+  project,
+  thread,
+  onOpenThread,
+}: {
+  pullRequest: GitStatusPr;
+  project: Project;
+  thread: SidebarThreadSummary | null;
+  onOpenThread: (() => void) | null;
+}) {
+  const prStatus = prStatusIndicator(pullRequest);
+
+  const handleOpenPr = useCallback(
+    (event: MouseEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openPullRequestUrl(pullRequest.url);
+    },
+    [pullRequest.url],
+  );
+
+  if (!prStatus) {
+    return null;
+  }
+
+  const PrIcon = prStatus.icon;
+  const handleOpenRow = onOpenThread ?? (() => openPullRequestUrl(pullRequest.url));
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      data-testid={`no-active-thread-pr-row-${pullRequest.number}`}
+      className={cn(
+        "group/pr-row flex w-full flex-col gap-3 border-t border-border/45 px-4 py-3 text-left first:border-t-0 transition-colors hover:bg-accent/12 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset focus-visible:bg-accent/12",
+        PULL_REQUEST_TABLE_GRID_CLASS_NAME,
+        "md:grid md:items-center md:gap-4",
+      )}
+      onClick={handleOpenRow}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) {
+          return;
+        }
+        if (event.key !== "Enter" && event.key !== " ") {
+          return;
+        }
+        event.preventDefault();
+        handleOpenRow();
+      }}
+    >
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-2">
+          <PrIcon className={cn("size-3.5 shrink-0", prStatus.toneClass)} strokeWidth={2.25} />
+          <span className="truncate text-sm font-medium leading-5 text-foreground">
+            #{pullRequest.number} {pullRequest.title}
+          </span>
+        </div>
+        <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5 text-xs text-muted-foreground/72">
+          <span
+            className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} text-ui-xs leading-none`}
+            title={project.cwd}
+          >
+            <ThreadBreadcrumbProjectChipContent
+              icon={renderThreadProjectBreadcrumbIcon()}
+              label={project.name}
+            />
+          </span>
+          <span
+            className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} text-ui-xs leading-none`}
+            title={pullRequest.headBranch}
+          >
+            <ThreadBreadcrumbChipContent
+              icon={<ThreadBranchIcon />}
+              label={pullRequest.headBranch}
+            />
+          </span>
+          {thread ? (
+            <span className="text-ui-xs shrink-0 text-muted-foreground/68">
+              {formatRelativeTimeLabel(getThreadTimestamp(thread))}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <Button size="xs" variant="outline" onClick={handleOpenPr}>
+          View
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function ProjectListRow({
   item,
   onClick,
@@ -562,7 +683,43 @@ export function NoActiveThreadState() {
     ],
   );
   const singleProject = projects.length === 1 ? (projects[0] ?? null) : null;
+  const singleProjectGitCwd = singleProject?.cwd ?? null;
   const showSidebarControls = isElectron || isMobile || !open;
+  const pullRequestProjects = useMemo(
+    () => (singleProject ? [singleProject] : projectItems.map((item) => item.project)),
+    [projectItems, singleProject],
+  );
+  const openPullRequestQueries = useQueries({
+    queries: pullRequestProjects.map((project) =>
+      gitListOpenPullRequestsQueryOptions({
+        environmentId: project.environmentId,
+        cwd: project.cwd,
+      }),
+    ),
+  });
+  const openPullRequestRows = pullRequestProjects.flatMap((project, index) =>
+    (openPullRequestQueries[index]?.data?.pullRequests ?? []).map((pullRequest) => ({
+      project,
+      pullRequest,
+    })),
+  );
+  const isLoadingPullRequests = openPullRequestQueries.some(
+    (query) => query.isPending || query.isFetching,
+  );
+  const recentThreadByBranch = useMemo(() => {
+    const threadByBranch = new Map<string, SidebarThreadSummary>();
+    for (const item of recentThreadItems) {
+      if (!item.thread.branch) {
+        continue;
+      }
+      const key = `${item.thread.environmentId}:${item.thread.projectId}:${item.thread.branch}`;
+      if (threadByBranch.has(key)) {
+        continue;
+      }
+      threadByBranch.set(key, item.thread);
+    }
+    return threadByBranch;
+  }, [recentThreadItems]);
 
   const openThread = useCallback(
     async (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => {
@@ -692,6 +849,16 @@ export function NoActiveThreadState() {
                   <DesktopSidebarReopenButton />
                 </>
               ) : null}
+              {singleProject ? (
+                <div className="no-drag-region ml-auto">
+                  <GitActionsControl
+                    compact
+                    gitCwd={singleProjectGitCwd}
+                    activeThreadRef={null}
+                    environmentId={singleProject.environmentId}
+                  />
+                </div>
+              ) : null}
             </div>
           ) : (
             <div className="flex min-h-7 items-center gap-2 sm:min-h-6">
@@ -700,6 +867,16 @@ export function NoActiveThreadState() {
                   <SidebarTrigger className="size-7 shrink-0 md:hidden" />
                   <DesktopSidebarReopenButton />
                 </>
+              ) : null}
+              {singleProject ? (
+                <div className="ml-auto">
+                  <GitActionsControl
+                    compact
+                    gitCwd={singleProjectGitCwd}
+                    activeThreadRef={null}
+                    environmentId={singleProject.environmentId}
+                  />
+                </div>
               ) : null}
             </div>
           )}
@@ -718,6 +895,49 @@ export function NoActiveThreadState() {
                 <ActionCard key={action.testId} {...action} />
               ))}
             </section>
+
+            {projects.length > 0 ? (
+              <section className="space-y-3">
+                <div className={SECTION_HEADING_CLASS_NAME}>Pull requests</div>
+                <div className={LIST_TABLE_SHELL_CLASS_NAME}>
+                  <div
+                    className={cn(
+                      LIST_TABLE_HEADER_ROW_CLASS_NAME,
+                      PULL_REQUEST_TABLE_GRID_CLASS_NAME,
+                    )}
+                  >
+                    <div className={LIST_TABLE_HEADER_CELL_CLASS_NAME}>Pull request</div>
+                    <div className={`${LIST_TABLE_HEADER_CELL_CLASS_NAME} text-right`}>Link</div>
+                  </div>
+                  <Card className={LIST_TABLE_INNER_CLASS_NAME}>
+                    {openPullRequestRows.length === 0 ? (
+                      <div className="px-4 py-3 text-sm text-muted-foreground">
+                        {isLoadingPullRequests
+                          ? "Loading pull requests..."
+                          : "No open pull requests found."}
+                      </div>
+                    ) : null}
+                    {openPullRequestRows.map(({ project, pullRequest }) => {
+                      const matchingThread =
+                        recentThreadByBranch.get(
+                          `${project.environmentId}:${project.id}:${pullRequest.headBranch}`,
+                        ) ?? null;
+                      return (
+                        <PullRequestListRow
+                          key={`${project.environmentId}:${project.id}:${pullRequest.number}`}
+                          pullRequest={pullRequest}
+                          project={project}
+                          thread={matchingThread}
+                          onOpenThread={
+                            matchingThread ? () => void openThread(matchingThread) : null
+                          }
+                        />
+                      );
+                    })}
+                  </Card>
+                </div>
+              </section>
+            ) : null}
 
             {variant === "recent-threads" ? (
               <section className="space-y-3">

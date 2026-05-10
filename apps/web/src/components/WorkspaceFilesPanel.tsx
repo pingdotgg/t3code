@@ -19,7 +19,6 @@ import {
   IconRectangleSplit3x1 as Rows3Icon,
   IconTextWordSpacing as TextWrapIcon,
   IconXmarkCircleFill as XIconCircle,
-  IconXmark as XIcon,
 } from "symbols-react";
 import {
   useCallback,
@@ -85,7 +84,12 @@ import { DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { HeaderIconActionButton } from "./HeaderIconActionButton";
 import { WorkspaceFilesTree } from "./WorkspaceFilesTree";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
-import { AddDocumentIcon, AddProjectFolderIcon, TerminalToggleIcon } from "./icons/custom";
+import {
+  AddDocumentIcon,
+  AddProjectFolderIcon,
+  SidebarPanelIcon,
+  TerminalToggleIcon,
+} from "./icons/custom";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import {
@@ -367,7 +371,7 @@ export function WorkspaceFilesPanel({
     editorControlsState.isDirty;
   const editorSessionKey = workspaceRoot ? `workspace-surface:${panelKey}` : undefined;
   const workspaceRootLabel = workspaceRoot ? resolveWorkspaceRootLabel(workspaceRoot) : null;
-  const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
+  const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("split");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
   const previousDiffVisibleRef = useRef(surfaceMode === "diff");
   const { copyToClipboard: copyWorkspacePathToClipboard } = useCopyToClipboard<{
@@ -1131,20 +1135,7 @@ export function WorkspaceFilesPanel({
         </div>
       ) : (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex shrink-0 h-12 items-center gap-2 px-3 py-2">
-            <HeaderIconActionButton
-              onClick={() => {
-                if (editorVisible) {
-                  issueNavigationRequest("close-panel");
-                  return;
-                }
-                closeWorkspacePanel();
-              }}
-              aria-label="Close files panel"
-              title="Close files panel"
-            >
-              <XIcon className="size-2.5" />
-            </HeaderIconActionButton>
+          <div className="flex shrink-0 items-center gap-2 px-2.5 py-2">
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1179,6 +1170,19 @@ export function WorkspaceFilesPanel({
               </HeaderIconActionButton>
             ) : null}
             <div className="min-w-0 flex-1" />
+            <HeaderIconActionButton
+              onClick={() => {
+                if (editorVisible) {
+                  issueNavigationRequest("close-panel");
+                  return;
+                }
+                closeWorkspacePanel();
+              }}
+              aria-label="Close files panel"
+              title="Close files panel"
+            >
+              <SidebarPanelIcon className="size-4 rotate-180" />
+            </HeaderIconActionButton>
           </div>
           <div className="border-b border-border/70" />
           <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/70 px-3 py-2">

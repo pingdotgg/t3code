@@ -74,6 +74,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       createBranch: rpcClient.git.createBranch,
       checkout: rpcClient.git.checkout,
       init: rpcClient.git.init,
+      listOpenPullRequests: rpcClient.git.listOpenPullRequests,
       resolvePullRequest: rpcClient.git.resolvePullRequest,
       preparePullRequestThread: rpcClient.git.preparePullRequestThread,
     },

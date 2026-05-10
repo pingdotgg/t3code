@@ -5,6 +5,7 @@ import {
   type ResolvedKeybindingsConfig,
   type ThreadId,
 } from "@forma/contracts";
+import type { RefObject } from "react";
 import { memo } from "react";
 import { type DraftId } from "~/composerDraftStore";
 import { IconChevronRight as ChevronRightIcon, IconCube as CubeIcon } from "symbols-react";
@@ -22,6 +23,7 @@ import { SidebarTrigger } from "../ui/sidebar";
 import { HeaderIconActionButton } from "../HeaderIconActionButton";
 import { SidebarPanelIcon } from "../icons/custom";
 import { ChatHeaderActionsMenu } from "./ChatHeaderActionsMenu";
+import { type GitActionsControlHandle } from "../GitActionsControl";
 
 interface ChatHeaderProps {
   routeKind: "server" | "draft";
@@ -35,6 +37,7 @@ interface ChatHeaderProps {
   activeProjectScripts: ProjectScript[] | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
+  gitActionsRef?: RefObject<GitActionsControlHandle | null> | undefined;
   availableEditors: ReadonlyArray<EditorId>;
   gitCwd: string | null;
   workspaceRoot: string | null;
@@ -66,6 +69,7 @@ export const ChatHeader = memo(function ChatHeader({
   activeProjectScripts,
   preferredScriptId,
   keybindings,
+  gitActionsRef,
   availableEditors,
   gitCwd,
   workspaceRoot,
@@ -139,6 +143,7 @@ export const ChatHeader = memo(function ChatHeader({
           activeProjectScripts={activeProjectScripts}
           preferredScriptId={preferredScriptId}
           keybindings={keybindings}
+          gitActionsRef={gitActionsRef}
           availableEditors={availableEditors}
           gitCwd={gitCwd}
           workspaceRoot={workspaceRoot}
@@ -153,25 +158,26 @@ export const ChatHeader = memo(function ChatHeader({
           onArchiveThread={onArchiveThread}
           onDeleteThread={onDeleteThread}
         />
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <HeaderIconActionButton
-                pressed={filesOpen}
-                onClick={onToggleFiles}
-                aria-label="Toggle files panel"
-                disabled={!filesAvailable}
-              >
-                <SidebarPanelIcon className="size-4 rotate-180" />
-              </HeaderIconActionButton>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {!filesAvailable
-              ? "Files panel is unavailable until this thread has an active project."
-              : "Toggle files panel"}
-          </TooltipPopup>
-        </Tooltip>
+        {!filesOpen ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <HeaderIconActionButton
+                  onClick={onToggleFiles}
+                  aria-label="Toggle files panel"
+                  disabled={!filesAvailable}
+                >
+                  <SidebarPanelIcon className="size-4 rotate-180" />
+                </HeaderIconActionButton>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {!filesAvailable
+                ? "Files panel is unavailable until this thread has an active project."
+                : "Toggle files panel"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
     </div>
   );

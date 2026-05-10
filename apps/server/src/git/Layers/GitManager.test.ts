@@ -619,6 +619,10 @@ function resolvePullRequest(manager: GitManagerShape, input: { cwd: string; refe
   return manager.resolvePullRequest(input);
 }
 
+function listOpenPullRequests(manager: GitManagerShape, input: { cwd: string }) {
+  return manager.listOpenPullRequests(input);
+}
+
 function preparePullRequestThread(
   manager: GitManagerShape,
   input: GitPreparePullRequestThreadInput,
@@ -747,6 +751,56 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         headBranch: "feature/status-trimmed-pr",
         state: "open",
       });
+    }),
+  );
+
+  it.effect("lists open PRs from the origin repository instead of the fork parent", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("forma-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, [
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/stevesarmiento/harness.git",
+      ]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            JSON.stringify([
+              {
+                number: 1,
+                title: "Fork PR",
+                url: "https://github.com/stevesarmiento/harness/pull/1",
+                baseRefName: "main",
+                headRefName: "tests",
+              },
+              {
+                number: 2625,
+                title: "Upstream PR",
+                url: "https://github.com/pingdotgg/t3code/pull/2625",
+                baseRefName: "main",
+                headRefName: "fix/upstream",
+              },
+            ]),
+          ],
+        },
+      });
+
+      const result = yield* listOpenPullRequests(manager, { cwd: repoDir });
+
+      expect(ghCalls[0]).toContain("pr list --repo stevesarmiento/harness --state open");
+      expect(result.pullRequests).toEqual([
+        {
+          number: 1,
+          title: "Fork PR",
+          url: "https://github.com/stevesarmiento/harness/pull/1",
+          baseBranch: "main",
+          headBranch: "tests",
+          state: "open",
+        },
+      ]);
     }),
   );
 

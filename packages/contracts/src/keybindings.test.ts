@@ -53,6 +53,18 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedCommandPalette.command, "commandPalette.toggle");
 
+    const parsedGitCommit = yield* decode(KeybindingRule, {
+      key: "mod+shift+c",
+      command: "git.commit",
+    });
+    assert.strictEqual(parsedGitCommit.command, "git.commit");
+
+    const parsedGitPr = yield* decode(KeybindingRule, {
+      key: "mod+shift+p",
+      command: "git.pr",
+    });
+    assert.strictEqual(parsedGitPr.command, "git.pr");
+
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",

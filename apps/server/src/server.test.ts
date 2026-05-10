@@ -2822,6 +2822,19 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   state: "open",
                 },
               }),
+            listOpenPullRequests: () =>
+              Effect.succeed({
+                pullRequests: [
+                  {
+                    number: 1,
+                    title: "Demo PR",
+                    url: "https://example.com/pr/1",
+                    baseBranch: "main",
+                    headBranch: "feature/demo",
+                    state: "open",
+                  },
+                ],
+              }),
             preparePullRequestThread: () =>
               Effect.succeed({
                 pullRequest: {
