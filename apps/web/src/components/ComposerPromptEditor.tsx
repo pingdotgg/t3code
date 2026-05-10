@@ -56,6 +56,7 @@ import {
 } from "~/composer-logic";
 import {
   selectionTouchesMentionBoundary,
+  serializeComposerMentionPath,
   splitPromptIntoComposerSegments,
 } from "~/composer-editor-mentions";
 import {
@@ -198,7 +199,7 @@ class ComposerMentionNode extends DecoratorNode<React.ReactElement> {
   }
 
   override getTextContent(): string {
-    return `@${this.__path}`;
+    return `@${serializeComposerMentionPath(this.__path)}`;
   }
 
   override isInline(): true {
