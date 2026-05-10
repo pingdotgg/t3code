@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
+  type ComposerSubmitKeybinding,
   defaultInstanceIdForDriver,
   type DesktopUpdateChannel,
   PROVIDER_DISPLAY_NAMES,
@@ -98,6 +99,26 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const COMPOSER_SUBMIT_KEYBINDING_OPTIONS = [
+  { value: "enter", label: "Enter (Default)" },
+  { value: "shiftEnter", label: "Enter + shift" },
+  { value: "metaEnter", label: "Enter + Command/Meta" },
+  { value: "altEnter", label: "Enter + Option/Alt" },
+  { value: "ctrlEnter", label: "Enter + Ctrl" },
+  { value: "buttonOnly", label: "Button only" },
+] as const satisfies ReadonlyArray<{
+  readonly value: ComposerSubmitKeybinding;
+  readonly label: string;
+}>;
+
+const COMPOSER_SUBMIT_KEYBINDING_LABELS = Object.fromEntries(
+  COMPOSER_SUBMIT_KEYBINDING_OPTIONS.map((option) => [option.value, option.label]),
+) as Record<ComposerSubmitKeybinding, string>;
+
+function isComposerSubmitKeybinding(value: string | null): value is ComposerSubmitKeybinding {
+  return COMPOSER_SUBMIT_KEYBINDING_OPTIONS.some((option) => option.value === value);
+}
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
@@ -405,6 +426,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
+      ...(settings.composerSubmitKeybinding !== DEFAULT_UNIFIED_SETTINGS.composerSubmitKeybinding
+        ? ["Composer submit"]
+        : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
@@ -432,6 +456,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
+      settings.composerSubmitKeybinding,
       settings.defaultThreadEnvMode,
       settings.diffIgnoreWhitespace,
       settings.diffWordWrap,
@@ -460,6 +485,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
+      composerSubmitKeybinding: DEFAULT_UNIFIED_SETTINGS.composerSubmitKeybinding,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
@@ -692,6 +718,47 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Open the task panel automatically"
             />
+          }
+        />
+
+        <SettingsRow
+          title="Composer submit"
+          description="Choose which Enter shortcut submits prompts from the composer."
+          resetAction={
+            settings.composerSubmitKeybinding !==
+            DEFAULT_UNIFIED_SETTINGS.composerSubmitKeybinding ? (
+              <SettingResetButton
+                label="Composer submit"
+                onClick={() =>
+                  updateSettings({
+                    composerSubmitKeybinding: DEFAULT_UNIFIED_SETTINGS.composerSubmitKeybinding,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.composerSubmitKeybinding}
+              onValueChange={(value) => {
+                if (isComposerSubmitKeybinding(value)) {
+                  updateSettings({ composerSubmitKeybinding: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-56" aria-label="Composer submit">
+                <SelectValue>
+                  {COMPOSER_SUBMIT_KEYBINDING_LABELS[settings.composerSubmitKeybinding]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {COMPOSER_SUBMIT_KEYBINDING_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
           }
         />
 

@@ -39,8 +39,22 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
 
+export const ComposerSubmitKeybinding = Schema.Literals([
+  "enter",
+  "shiftEnter",
+  "metaEnter",
+  "altEnter",
+  "ctrlEnter",
+  "buttonOnly",
+]);
+export type ComposerSubmitKeybinding = typeof ComposerSubmitKeybinding.Type;
+export const DEFAULT_COMPOSER_SUBMIT_KEYBINDING: ComposerSubmitKeybinding = "enter";
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  composerSubmitKeybinding: ComposerSubmitKeybinding.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_COMPOSER_SUBMIT_KEYBINDING)),
+  ),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
@@ -476,6 +490,7 @@ export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
+  composerSubmitKeybinding: Schema.optionalKey(ComposerSubmitKeybinding),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),

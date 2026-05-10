@@ -8,8 +8,58 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
+  shouldSubmitComposerOnEnter,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+
+const enterEvent = (
+  modifiers: Partial<{
+    key: string;
+    shiftKey: boolean;
+    metaKey: boolean;
+    altKey: boolean;
+    ctrlKey: boolean;
+  }> = {},
+) => ({
+  key: modifiers.key ?? "Enter",
+  shiftKey: modifiers.shiftKey ?? false,
+  metaKey: modifiers.metaKey ?? false,
+  altKey: modifiers.altKey ?? false,
+  ctrlKey: modifiers.ctrlKey ?? false,
+});
+
+describe("shouldSubmitComposerOnEnter", () => {
+  it("matches exact configured Enter shortcuts", () => {
+    expect(shouldSubmitComposerOnEnter("enter", enterEvent())).toBe(true);
+    expect(shouldSubmitComposerOnEnter("shiftEnter", enterEvent({ shiftKey: true }))).toBe(true);
+    expect(shouldSubmitComposerOnEnter("metaEnter", enterEvent({ metaKey: true }))).toBe(true);
+    expect(shouldSubmitComposerOnEnter("altEnter", enterEvent({ altKey: true }))).toBe(true);
+    expect(shouldSubmitComposerOnEnter("ctrlEnter", enterEvent({ ctrlKey: true }))).toBe(true);
+  });
+
+  it("does not submit on non-matching modifiers", () => {
+    expect(shouldSubmitComposerOnEnter("enter", enterEvent({ shiftKey: true }))).toBe(false);
+    expect(shouldSubmitComposerOnEnter("shiftEnter", enterEvent())).toBe(false);
+    expect(
+      shouldSubmitComposerOnEnter("metaEnter", enterEvent({ metaKey: true, shiftKey: true })),
+    ).toBe(false);
+    expect(
+      shouldSubmitComposerOnEnter("altEnter", enterEvent({ altKey: true, ctrlKey: true })),
+    ).toBe(false);
+  });
+
+  it("lets every Enter shortcut insert text when button-only is selected", () => {
+    expect(shouldSubmitComposerOnEnter("buttonOnly", enterEvent())).toBe(false);
+    expect(shouldSubmitComposerOnEnter("buttonOnly", enterEvent({ shiftKey: true }))).toBe(false);
+    expect(shouldSubmitComposerOnEnter("buttonOnly", enterEvent({ metaKey: true }))).toBe(false);
+    expect(shouldSubmitComposerOnEnter("buttonOnly", enterEvent({ altKey: true }))).toBe(false);
+    expect(shouldSubmitComposerOnEnter("buttonOnly", enterEvent({ ctrlKey: true }))).toBe(false);
+  });
+
+  it("ignores non-Enter keys", () => {
+    expect(shouldSubmitComposerOnEnter("enter", enterEvent({ key: "Tab" }))).toBe(false);
+  });
+});
 
 describe("detectComposerTrigger", () => {
   it("detects @path trigger at cursor", () => {

@@ -40,8 +40,9 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   replaceTextRange,
+  shouldSubmitComposerOnEnter,
 } from "../../composer-logic";
-import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
+import { deriveComposerSubmitState, readFileAsDataUrl } from "../ChatView.logic";
 import {
   type ComposerImageAttachment,
   type DraftId,
@@ -817,11 +818,11 @@ export const ChatComposer = memo(
     const dragDepthRef = useRef(0);
 
     // ------------------------------------------------------------------
-    // Derived: composer send state
+    // Derived: composer submit state
     // ------------------------------------------------------------------
-    const composerSendState = useMemo(
+    const composerSubmitState = useMemo(
       () =>
-        deriveComposerSendState({
+        deriveComposerSubmitState({
           prompt,
           imageCount: composerImages.length,
           terminalContexts: composerTerminalContexts,
@@ -973,11 +974,11 @@ export const ChatComposer = memo(
       if (showPlanFollowUpPrompt) {
         return prompt.trim().length > 0 ? "plan:refine" : "plan:implement";
       }
-      return `idle:${composerSendState.hasSendableContent}:${isSendBusy}:${isConnecting}:${isPreparingWorktree}`;
+      return `idle:${composerSubmitState.hasSendableContent}:${isSendBusy}:${isConnecting}:${isPreparingWorktree}`;
     }, [
       activePendingIsResponding,
       activePendingProgress,
-      composerSendState.hasSendableContent,
+      composerSubmitState.hasSendableContent,
       isConnecting,
       isPreparingWorktree,
       isSendBusy,
@@ -1053,7 +1054,7 @@ export const ChatComposer = memo(
       [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
     );
     const collapsedComposerPrimaryActionDisabled =
-      phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
+      phase === "running" || isSendBusy || isConnecting || !composerSubmitState.hasSendableContent;
     const collapsedComposerPrimaryActionLabel = "Send message";
     const showMobilePendingAnswerActions =
       isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
@@ -1605,11 +1606,11 @@ export const ChatComposer = memo(
       if (activePendingProgress) {
         return activePendingProgress.isLastQuestion && Boolean(activePendingResolvedAnswers);
       }
-      return showPlanFollowUpPrompt || composerSendState.hasSendableContent;
+      return showPlanFollowUpPrompt || composerSubmitState.hasSendableContent;
     }, [
       activePendingProgress,
       activePendingResolvedAnswers,
-      composerSendState.hasSendableContent,
+      composerSubmitState.hasSendableContent,
       isConnecting,
       isMobileViewport,
       isSendBusy,
@@ -1678,7 +1679,7 @@ export const ChatComposer = memo(
           return true;
         }
       }
-      if (key === "Enter" && !event.shiftKey) {
+      if (shouldSubmitComposerOnEnter(settings.composerSubmitKeybinding, event)) {
         submitComposer();
         return true;
       }
@@ -2406,7 +2407,7 @@ export const ChatComposer = memo(
                     isConnecting={isConnecting}
                     isEnvironmentUnavailable={environmentUnavailable !== null}
                     isPreparingWorktree={isPreparingWorktree}
-                    hasSendableContent={composerSendState.hasSendableContent}
+                    hasSendableContent={composerSubmitState.hasSendableContent}
                     preserveComposerFocusOnPointerDown={isMobileViewport}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}

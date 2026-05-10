@@ -1,5 +1,6 @@
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+import type { ComposerSubmitKeybinding } from "@t3tools/contracts/settings";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
@@ -9,6 +10,43 @@ export interface ComposerTrigger {
   query: string;
   rangeStart: number;
   rangeEnd: number;
+}
+
+export interface ComposerEnterKeyEventLike {
+  readonly key: string;
+  readonly shiftKey: boolean;
+  readonly metaKey: boolean;
+  readonly altKey: boolean;
+  readonly ctrlKey: boolean;
+}
+
+export function shouldSubmitComposerOnEnter(
+  keybinding: ComposerSubmitKeybinding,
+  event: ComposerEnterKeyEventLike,
+): boolean {
+  if (event.key !== "Enter" || keybinding === "buttonOnly") {
+    return false;
+  }
+
+  const modifiers = {
+    shift: event.shiftKey,
+    meta: event.metaKey,
+    alt: event.altKey,
+    ctrl: event.ctrlKey,
+  };
+
+  switch (keybinding) {
+    case "enter":
+      return !modifiers.shift && !modifiers.meta && !modifiers.alt && !modifiers.ctrl;
+    case "shiftEnter":
+      return modifiers.shift && !modifiers.meta && !modifiers.alt && !modifiers.ctrl;
+    case "metaEnter":
+      return modifiers.meta && !modifiers.shift && !modifiers.alt && !modifiers.ctrl;
+    case "altEnter":
+      return modifiers.alt && !modifiers.shift && !modifiers.meta && !modifiers.ctrl;
+    case "ctrlEnter":
+      return modifiers.ctrl && !modifiers.shift && !modifiers.meta && !modifiers.alt;
+  }
 }
 
 const isInlineTokenSegment = (
