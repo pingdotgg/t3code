@@ -216,8 +216,6 @@ function formatShortcutKeyLabel(key: string): string {
   if (key === "arrowdown") return "Down";
   if (key === "arrowleft") return "Left";
   if (key === "arrowright") return "Right";
-  if (key === "pageup") return "PgUp";
-  if (key === "pagedown") return "PgDn";
   return key.slice(0, 1).toUpperCase() + key.slice(1);
 }
 
