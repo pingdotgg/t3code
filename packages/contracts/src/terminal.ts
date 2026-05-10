@@ -1,4 +1,5 @@
-import { Effect, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const DEFAULT_TERMINAL_ID = "default";
@@ -169,10 +170,13 @@ export class TerminalCwdError extends Schema.TaggedErrorClass<TerminalCwdError>(
       return `Terminal cwd does not exist: ${this.cwd}`;
     }
     const causeMessage =
-      this.cause && typeof this.cause === "object" && "message" in this.cause
+      this.cause !== undefined &&
+      this.cause !== null &&
+      typeof this.cause === "object" &&
+      "message" in this.cause
         ? this.cause.message
         : undefined;
-    return causeMessage
+    return typeof causeMessage === "string" && causeMessage.length > 0
       ? `Failed to access terminal cwd: ${this.cwd} (${causeMessage})`
       : `Failed to access terminal cwd: ${this.cwd}`;
   }

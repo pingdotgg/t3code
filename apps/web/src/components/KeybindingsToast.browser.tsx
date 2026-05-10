@@ -11,12 +11,15 @@ import {
   ProviderInstanceId,
   type ServerConfig,
   type ServerLifecycleWelcomePayload,
+  ServerConfig as ServerConfigSchema,
+  ServerSettings,
   type ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
 import { ws, http, HttpResponse } from "msw";
 import { setupWorker } from "msw/browser";
+import * as Schema from "effect/Schema";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
@@ -50,6 +53,8 @@ interface TestFixture {
 
 let fixture: TestFixture;
 const rpcHarness = new BrowserWsRpcHarness();
+const encodeServerConfig = Schema.encodeSync(ServerConfigSchema);
+const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
 
@@ -254,7 +259,7 @@ function buildFixture(): TestFixture {
 
 function resolveWsRpc(tag: string): unknown {
   if (tag === WS_METHODS.serverGetConfig) {
-    return fixture.serverConfig;
+    return encodeServerConfig(fixture.serverConfig);
   }
   if (tag === WS_METHODS.vcsListRefs) {
     return {
@@ -394,7 +399,7 @@ async function waitForServerConfigStreamReady(): Promise<void> {
     rpcHarness.emitStreamValue(WS_METHODS.subscribeServerConfig, {
       version: 1,
       type: "settingsUpdated",
-      payload: { settings: fixture.serverConfig.settings },
+      payload: { settings: encodeServerSettings(fixture.serverConfig.settings) },
     });
 
     try {
@@ -485,7 +490,7 @@ describe("Keybindings update toast", () => {
             {
               version: 1,
               type: "snapshot",
-              config: fixture.serverConfig,
+              config: encodeServerConfig(fixture.serverConfig),
             },
           ];
         }

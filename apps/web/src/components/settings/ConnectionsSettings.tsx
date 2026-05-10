@@ -17,7 +17,7 @@ import {
   type DesktopServerExposureState,
   type EnvironmentId,
 } from "@t3tools/contracts";
-import { DateTime } from "effect";
+import * as DateTime from "effect/DateTime";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { cn } from "../../lib/utils";
@@ -2662,14 +2662,26 @@ export function ConnectionsSettings() {
               }
             }}
           >
-            <DialogTrigger
-              render={
-                <Button size="xs" variant="outline">
-                  <PlusIcon className="size-3" />
-                  Add environment
-                </Button>
-              }
-            />
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <DialogTrigger
+                    render={
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
+                        aria-label="Add environment"
+                      >
+                        <PlusIcon className="size-3" />
+                        <span>Add environment</span>
+                      </Button>
+                    }
+                  />
+                }
+              />
+              <TooltipPopup side="top">Add environment</TooltipPopup>
+            </Tooltip>
             <DialogPopup className="max-h-[80dvh] sm:max-w-3xl">
               <DialogHeader>
                 <DialogTitle>Add Environment</DialogTitle>

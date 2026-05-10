@@ -1,17 +1,16 @@
-import { NetService } from "@t3tools/shared/Net";
+import * as NetService from "@t3tools/shared/Net";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
-import {
-  Config,
-  Duration,
-  Effect,
-  FileSystem,
-  LogLevel,
-  Option,
-  Path,
-  Schema,
-  SchemaIssue,
-  SchemaTransformation,
-} from "effect";
+import { DesktopBackendBootstrap, PortSchema } from "@t3tools/contracts";
+import * as Config from "effect/Config";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as LogLevel from "effect/LogLevel";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { Argument, Flag } from "effect/unstable/cli";
 
 import { readBootstrapEnvelope } from "../bootstrap.ts";
@@ -25,24 +24,6 @@ import {
   type StartupPresentation,
 } from "../config.ts";
 import { expandHomePath, resolveBaseDir } from "../os-jank.ts";
-
-export const PortSchema = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 65535 }));
-
-const BootstrapEnvelopeSchema = Schema.Struct({
-  mode: Schema.optional(RuntimeMode),
-  port: Schema.optional(PortSchema),
-  host: Schema.optional(Schema.String),
-  t3Home: Schema.optional(Schema.String),
-  devUrl: Schema.optional(Schema.URLFromString),
-  noBrowser: Schema.optional(Schema.Boolean),
-  desktopBootstrapToken: Schema.optional(Schema.String),
-  autoBootstrapProjectFromCwd: Schema.optional(Schema.Boolean),
-  logWebSocketEvents: Schema.optional(Schema.Boolean),
-  tailscaleServeEnabled: Schema.optional(Schema.Boolean),
-  tailscaleServePort: Schema.optional(PortSchema),
-  otlpTracesUrl: Schema.optional(Schema.String),
-  otlpMetricsUrl: Schema.optional(Schema.String),
-});
 
 export const modeFlag = Flag.choice("mode", RuntimeMode.literals).pipe(
   Flag.withDescription("Runtime mode. `desktop` keeps loopback defaults unless overridden."),
@@ -232,7 +213,7 @@ export const resolveServerConfig = (
   },
 ) =>
   Effect.gen(function* () {
-    const { findAvailablePort } = yield* NetService;
+    const { findAvailablePort } = yield* NetService.NetService;
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
     const env = yield* EnvServerConfig;
@@ -253,7 +234,7 @@ export const resolveServerConfig = (
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
       bootstrapFd !== undefined
-        ? yield* readBootstrapEnvelope(BootstrapEnvelopeSchema, bootstrapFd)
+        ? yield* readBootstrapEnvelope(DesktopBackendBootstrap, bootstrapFd)
         : Option.none();
     const bootstrap = Option.getOrUndefined(bootstrapEnvelope);
 
@@ -283,11 +264,7 @@ export const resolveServerConfig = (
       },
     );
     const devUrl = Option.getOrElse(
-      resolveOptionPrecedence(
-        normalizedFlags.devUrl,
-        Option.fromUndefinedOr(env.devUrl),
-        Option.fromUndefinedOr(bootstrap?.devUrl),
-      ),
+      resolveOptionPrecedence(normalizedFlags.devUrl, Option.fromUndefinedOr(env.devUrl)),
       () => undefined,
     );
     const baseDir = yield* resolveBaseDir(
@@ -327,7 +304,6 @@ export const resolveServerConfig = (
         isHeadlessStartup ? Option.some(false) : Option.none(),
         normalizedFlags.autoBootstrapProjectFromCwd,
         Option.fromUndefinedOr(env.autoBootstrapProjectFromCwd),
-        Option.fromUndefinedOr(bootstrap?.autoBootstrapProjectFromCwd),
       ),
       () => mode === "web",
     );
@@ -335,7 +311,6 @@ export const resolveServerConfig = (
       resolveOptionPrecedence(
         normalizedFlags.logWebSocketEvents,
         Option.fromUndefinedOr(env.logWebSocketEvents),
-        Option.fromUndefinedOr(bootstrap?.logWebSocketEvents),
       ),
       () => Boolean(devUrl),
     );

@@ -244,6 +244,68 @@ jobs:
                exit $code
              }
 
+      - name: Prepare Azure Trusted Signing
+        if: matrix.platform == 'win'
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $requiredSecrets = @(
+            $env:AZURE_TENANT_ID,
+            $env:AZURE_CLIENT_ID,
+            $env:AZURE_CLIENT_SECRET,
+            $env:AZURE_TRUSTED_SIGNING_ENDPOINT,
+            $env:AZURE_TRUSTED_SIGNING_ACCOUNT_NAME,
+            $env:AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME,
+            $env:AZURE_TRUSTED_SIGNING_PUBLISHER_NAME
+          )
+          if ($requiredSecrets | Where-Object { [string]::IsNullOrWhiteSpace($_) }) {
+            Write-Host "Azure Trusted Signing disabled; skipping TrustedSigning module preparation."
+            exit 0
+          }
+
+          try {
+            Install-PackageProvider `
+              -Name NuGet `
+              -MinimumVersion 2.8.5.201 `
+              -Force `
+              -Scope CurrentUser `
+              -ErrorAction Stop
+          } catch {
+            Write-Warning "Could not bootstrap NuGet package provider. Continuing because the runner may already have a usable provider. $($_.Exception.Message)"
+          }
+
+          Install-Module `
+            -Name TrustedSigning `
+            -MinimumVersion 0.5.0 `
+            -Force `
+            -AllowClobber `
+            -Repository PSGallery `
+            -Scope CurrentUser `
+            -ErrorAction Stop
+
+          Import-Module TrustedSigning -MinimumVersion 0.5.0 -Force
+          Get-Command Invoke-TrustedSigning -ErrorAction Stop
+
+          $moduleRoots = @(
+            [System.IO.Path]::Combine([Environment]::GetFolderPath("MyDocuments"), "PowerShell", "Modules"),
+            [System.IO.Path]::Combine([Environment]::GetFolderPath("MyDocuments"), "WindowsPowerShell", "Modules"),
+            [System.IO.Path]::Combine($env:ProgramFiles, "PowerShell", "Modules"),
+            [System.IO.Path]::Combine($env:ProgramFiles, "WindowsPowerShell", "Modules")
+          )
+          $modulePathEntries = @($moduleRoots + ($env:PSModulePath -split ";")) |
+            Where-Object { $_ -and (Test-Path $_) } |
+            Select-Object -Unique
+          "PSModulePath=$($modulePathEntries -join ';')" >> $env:GITHUB_ENV
+
       - name: Build desktop artifact
         shell: bash
         env:
@@ -511,6 +573,88 @@ jobs:
           fail_on_unmatched_files: true
           token: ${{ steps.app_token.outputs.token }}
 
+  deploy_web:
+    name: Deploy hosted web app
+    needs: [preflight, release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      T3CODE_WEB_ROUTER_URL: ${{ vars.T3CODE_WEB_ROUTER_URL }}
+      T3CODE_WEB_LATEST_DOMAIN: ${{ vars.T3CODE_WEB_LATEST_DOMAIN }}
+      T3CODE_WEB_NIGHTLY_DOMAIN: ${{ vars.T3CODE_WEB_NIGHTLY_DOMAIN }}
+      VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - name: Install release tooling dependencies
+        run: bun install --frozen-lockfile --filter=@t3tools/scripts --filter=@t3tools/web
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+
+      - name: Refresh release lockfile
+        run: bun install --lockfile-only --ignore-scripts
+
+      - name: Deploy and alias channel
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${VERCEL_TOKEN:-}" || -z "${VERCEL_ORG_ID:-}" || -z "${VERCEL_PROJECT_ID:-}" ]]; then
+            echo "Missing one or more required Vercel secrets: VERCEL_TOKEN, VERCEL_ORG_ID, VERCEL_PROJECT_ID." >&2
+            exit 1
+          fi
+
+          router_url="${T3CODE_WEB_ROUTER_URL:-https://app.t3.codes}"
+          latest_domain="${T3CODE_WEB_LATEST_DOMAIN:-latest.app.t3.codes}"
+          nightly_domain="${T3CODE_WEB_NIGHTLY_DOMAIN:-nightly.app.t3.codes}"
+
+          if [[ "${{ needs.preflight.outputs.release_channel }}" == "stable" ]]; then
+            channel_domain="$latest_domain"
+            channel_name="latest"
+          else
+            channel_domain="$nightly_domain"
+            channel_name="nightly"
+          fi
+
+          vercel_scope="${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"
+          vercel_scope_args=(--scope "$vercel_scope")
+
+          echo "Deploying hosted web app for $channel_name channel."
+          deployment_url="$(
+            bunx vercel@53.1.1 deploy \
+              --prod \
+              --skip-domain \
+              --yes \
+              --token "$VERCEL_TOKEN" \
+              "${vercel_scope_args[@]}" \
+              --build-env "APP_VERSION=${{ needs.preflight.outputs.version }}" \
+              --build-env "VITE_HOSTED_APP_URL=$router_url" \
+              --build-env "VITE_HOSTED_APP_CHANNEL=$channel_name"
+          )"
+
+          echo "Aliasing $deployment_url to $channel_domain."
+          bunx vercel@53.1.1 alias set "$deployment_url" "$channel_domain" \
+            --token "$VERCEL_TOKEN" \
+            "${vercel_scope_args[@]}"
+
   finalize:
     name: Finalize release
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && needs.preflight.outputs.release_channel == 'stable' }}
@@ -595,8 +739,9 @@ jobs:
       always() && !cancelled() &&
       needs.preflight.result == 'success' &&
       needs.release.result == 'success' &&
+      needs.deploy_web.result == 'success' &&
       (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
-    needs: [preflight, release, finalize]
+    needs: [preflight, release, deploy_web, finalize]
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:

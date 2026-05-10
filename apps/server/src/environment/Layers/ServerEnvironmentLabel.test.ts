@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import { vi } from "vitest";
 
 vi.mock("../../processRunner.ts", () => ({

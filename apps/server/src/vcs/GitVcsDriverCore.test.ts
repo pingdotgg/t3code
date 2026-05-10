@@ -1,6 +1,11 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, describe } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, PlatformError, Scope } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as Scope from "effect/Scope";
 
 import { GitCommandError } from "@t3tools/contracts";
 import { ServerConfig } from "../config.ts";
@@ -122,6 +127,65 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         assert.equal(status.aheadCount, 0);
         assert.equal(status.behindCount, 0);
         assert.equal(status.aheadOfDefaultCount, 1);
+      }),
+    );
+
+    it.effect("disables SSH askpass for background upstream status fetches", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const tempDir = yield* makeTmpDir("git-vcs-driver-ssh-env-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const sshLogPath = pathService.join(tempDir, "ssh-env.txt");
+        const sshWrapperPath = pathService.join(tempDir, "ssh-wrapper.sh");
+        const previousGitSsh = process.env.GIT_SSH;
+        const previousAskpassRequire = process.env.SSH_ASKPASS_REQUIRE;
+        const previousAskpassLog = process.env.T3_TEST_SSH_ASKPASS_LOG;
+
+        yield* fileSystem.writeFileString(
+          sshWrapperPath,
+          [
+            "#!/bin/sh",
+            'printf "%s\\n" "${SSH_ASKPASS_REQUIRE:-}" > "$T3_TEST_SSH_ASKPASS_LOG"',
+            "exit 1",
+            "",
+          ].join("\n"),
+        );
+        yield* fileSystem.chmod(sshWrapperPath, 0o755);
+        yield* git(cwd, ["remote", "add", "origin", "ssh://example.invalid/repo.git"]);
+        yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, "HEAD"]);
+        yield* git(cwd, ["branch", "--set-upstream-to", `origin/${initialBranch}`]);
+
+        yield* Effect.gen(function* () {
+          process.env.GIT_SSH = sshWrapperPath;
+          process.env.SSH_ASKPASS_REQUIRE = "force";
+          process.env.T3_TEST_SSH_ASKPASS_LOG = sshLogPath;
+
+          yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+
+          assert.equal((yield* fileSystem.readFileString(sshLogPath)).trim(), "never");
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previousGitSsh === undefined) {
+                delete process.env.GIT_SSH;
+              } else {
+                process.env.GIT_SSH = previousGitSsh;
+              }
+              if (previousAskpassRequire === undefined) {
+                delete process.env.SSH_ASKPASS_REQUIRE;
+              } else {
+                process.env.SSH_ASKPASS_REQUIRE = previousAskpassRequire;
+              }
+              if (previousAskpassLog === undefined) {
+                delete process.env.T3_TEST_SSH_ASKPASS_LOG;
+              } else {
+                process.env.T3_TEST_SSH_ASKPASS_LOG = previousAskpassLog;
+              }
+            }),
+          ),
+        );
       }),
     );
 

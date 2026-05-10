@@ -1,8 +1,12 @@
-import { Effect, Option, Ref, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { type CursorSettings, type ModelSelection } from "@t3tools/contracts";
 import { sanitizeBranchFragment, sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { extractJsonObject } from "@t3tools/shared/schemaJson";
 
 import { TextGenerationError } from "@t3tools/contracts";
 import { type ThreadTitleGenerationResult, type TextGenerationShape } from "./TextGeneration.ts";
@@ -13,7 +17,6 @@ import {
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
 import {
-  extractJsonObject,
   sanitizeCommitSubject,
   sanitizePrTitle,
   sanitizeThreadTitle,
@@ -151,9 +154,8 @@ export const makeCursorTextGeneration = Effect.fn("makeCursorTextGeneration")(fu
         });
       }
 
-      return yield* Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson))(
-        extractJsonObject(rawResult),
-      ).pipe(
+      const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
+      return yield* decodeOutput(extractJsonObject(rawResult)).pipe(
         Effect.catchTag("SchemaError", (cause) =>
           Effect.fail(
             new TextGenerationError({

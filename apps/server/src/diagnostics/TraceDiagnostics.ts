@@ -89,22 +89,12 @@ function toNumberValue(value: unknown): number | null {
 function unixNanoToDateTime(value: unknown): DateTime.Utc | null {
   const text = toStringValue(value);
   if (!text) return null;
-
   try {
     const millis = Number(BigInt(text) / 1_000_000n);
-    if (!Number.isFinite(millis)) return null;
-    return DateTime.makeUnsafe(millis);
+    return Option.getOrNull(DateTime.make(millis));
   } catch {
     return null;
   }
-}
-
-function isAfter(left: DateTime.Utc, right: DateTime.Utc): boolean {
-  return DateTime.toEpochMillis(left) > DateTime.toEpochMillis(right);
-}
-
-function isBefore(left: DateTime.Utc, right: DateTime.Utc): boolean {
-  return DateTime.toEpochMillis(left) < DateTime.toEpochMillis(right);
 }
 
 function readExitTag(exit: unknown): string | null {
@@ -254,10 +244,11 @@ export function aggregateTraceDiagnostics(
 
       recordCount += 1;
       firstSpanAt =
-        startedAt && (firstSpanAt === null || isBefore(startedAt, firstSpanAt))
+        startedAt && (firstSpanAt === null || DateTime.isLessThan(startedAt, firstSpanAt))
           ? startedAt
           : firstSpanAt;
-      lastSpanAt = lastSpanAt === null || isAfter(endedAt, lastSpanAt) ? endedAt : lastSpanAt;
+      lastSpanAt =
+        lastSpanAt === null || DateTime.isGreaterThan(endedAt, lastSpanAt) ? endedAt : lastSpanAt;
 
       const exitTag = readExitTag(parsed.exit);
       const isFailure = exitTag === "Failure";
@@ -289,7 +280,7 @@ export function aggregateTraceDiagnostics(
 
         const failureKey = `${name}\0${cause}`;
         const existing = failuresByKey.get(failureKey);
-        const isLatestFailure = !existing || isAfter(endedAt, existing.lastSeenAt);
+        const isLatestFailure = !existing || DateTime.isGreaterThan(endedAt, existing.lastSeenAt);
         failuresByKey.set(failureKey, {
           name,
           cause,

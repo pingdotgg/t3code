@@ -17,9 +17,9 @@ import type {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { Context } from "effect";
-import type { Option } from "effect";
-import type { Effect } from "effect";
+import * as Context from "effect/Context";
+import type * as Option from "effect/Option";
+import type * as Effect from "effect/Effect";
 
 import type { ProjectionRepositoryError } from "../../persistence/Errors.ts";
 
@@ -68,6 +68,17 @@ export interface ProjectionSnapshotQueryShape {
    * lightweight navigation state without hydrating every thread body.
    */
   readonly getShellSnapshot: () => Effect.Effect<
+    OrchestrationShellSnapshot,
+    ProjectionRepositoryError
+  >;
+
+  /**
+   * Read archived thread shell summaries for the archive page.
+   *
+   * This query is separate from the main shell snapshot so archived threads
+   * are never bootstrapped into normal navigation state.
+   */
+  readonly getArchivedShellSnapshot: () => Effect.Effect<
     OrchestrationShellSnapshot,
     ProjectionRepositoryError
   >;

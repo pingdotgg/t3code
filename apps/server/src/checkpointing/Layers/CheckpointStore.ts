@@ -11,7 +11,10 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { Effect, Layer, FileSystem, Path } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import { CheckpointInvariantError } from "../Errors.ts";
 import { VcsProcessExitError } from "@t3tools/contracts";
