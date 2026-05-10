@@ -1684,7 +1684,7 @@ export async function removeSavedEnvironment(environmentId: EnvironmentId): Prom
   useStore.getState().removeEnvironmentState(environmentId);
 
   if (record?.desktopSsh && typeof window !== "undefined") {
-    void window.desktopBridge?.disconnectSshEnvironment(record.desktopSsh).catch((error) => {
+    void window.desktopBridge?.disconnectSshEnvironment(record.desktopSsh)?.catch((error) => {
       console.warn("[SAVED_ENVIRONMENTS] SSH cleanup after removal failed", error);
     });
   }

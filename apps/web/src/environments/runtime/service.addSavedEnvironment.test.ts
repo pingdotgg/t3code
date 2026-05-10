@@ -773,6 +773,40 @@ describe("addSavedEnvironment", () => {
     await resetEnvironmentServiceForTests();
   });
 
+  it("removes a saved ssh environment when the desktop bridge is unavailable", async () => {
+    mockSavedRecords = [
+      {
+        environmentId: EnvironmentId.make("environment-1"),
+        label: "Remote environment",
+        httpBaseUrl: "http://127.0.0.1:3774/",
+        wsBaseUrl: "ws://127.0.0.1:3774/",
+        createdAt: "2026-04-14T00:00:00.000Z",
+        lastConnectedAt: null,
+        desktopSsh: {
+          alias: "devbox",
+          hostname: "devbox.example.com",
+          username: "julius",
+          port: 22,
+        },
+      },
+    ];
+    vi.stubGlobal("window", {});
+
+    const { removeSavedEnvironment, resetEnvironmentServiceForTests } = await import("./service");
+
+    await expect(removeSavedEnvironment(EnvironmentId.make("environment-1"))).resolves.toBe(
+      undefined,
+    );
+
+    expect(mockRemovePersistedSavedEnvironment).toHaveBeenCalledWith(
+      EnvironmentId.make("environment-1"),
+    );
+    expect(mockDisconnectSshEnvironment).not.toHaveBeenCalled();
+    expect(mockSavedRecords).toEqual([]);
+
+    await resetEnvironmentServiceForTests();
+  });
+
   it("disconnects a saved ssh environment without removing its saved record", async () => {
     mockSavedRecords = [
       {
