@@ -77,7 +77,7 @@ interface ExecuteGitOptions {
   fallbackErrorMessage?: string | undefined;
   env?: NodeJS.ProcessEnv | undefined;
   maxOutputBytes?: number | undefined;
-  truncateOutputAtMaxBytes?: boolean | undefined;
+  appendTruncationMarker?: boolean | undefined;
   progress?: GitVcsDriver.ExecuteGitProgress | undefined;
 }
 
@@ -535,7 +535,7 @@ const collectOutput = Effect.fnUntraced(function* <E>(
   input: Pick<GitVcsDriver.ExecuteGitInput, "operation" | "cwd" | "args">,
   stream: Stream.Stream<Uint8Array, E>,
   maxOutputBytes: number,
-  truncateOutputAtMaxBytes: boolean,
+  appendTruncationMarker: boolean,
   onLine: ((line: string) => Effect.Effect<void, never>) | undefined,
 ): Effect.fn.Return<{ readonly text: string; readonly truncated: boolean }, GitCommandError> {
   const decoder = new TextDecoder();
@@ -565,11 +565,11 @@ const collectOutput = Effect.fnUntraced(function* <E>(
   });
 
   const processChunk = Effect.fnUntraced(function* (chunk: Uint8Array) {
-    if (truncateOutputAtMaxBytes && truncated) {
+    if (appendTruncationMarker && truncated) {
       return;
     }
     const nextBytes = bytes + chunk.byteLength;
-    if (!truncateOutputAtMaxBytes && nextBytes > maxOutputBytes) {
+    if (!appendTruncationMarker && nextBytes > maxOutputBytes) {
       return yield* new GitCommandError({
         operation: input.operation,
         command: quoteGitCommand(input.args),
@@ -579,11 +579,11 @@ const collectOutput = Effect.fnUntraced(function* <E>(
     }
 
     const chunkToDecode =
-      truncateOutputAtMaxBytes && nextBytes > maxOutputBytes
+      appendTruncationMarker && nextBytes > maxOutputBytes
         ? chunk.subarray(0, Math.max(0, maxOutputBytes - bytes))
         : chunk;
     bytes += chunkToDecode.byteLength;
-    truncated = truncateOutputAtMaxBytes && nextBytes > maxOutputBytes;
+    truncated = appendTruncationMarker && nextBytes > maxOutputBytes;
 
     const decoded = decoder.decode(chunkToDecode, { stream: !truncated });
     text += decoded;
@@ -619,7 +619,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       } as const;
       const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
       const maxOutputBytes = input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES;
-      const truncateOutputAtMaxBytes = input.truncateOutputAtMaxBytes ?? false;
+      const appendTruncationMarker = input.appendTruncationMarker ?? false;
 
       const runGitCommand = Effect.fn("runGitCommand")(function* () {
         const trace2Monitor = yield* createTrace2Monitor(commandInput, input.progress).pipe(
@@ -646,14 +646,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               commandInput,
               child.stdout,
               maxOutputBytes,
-              truncateOutputAtMaxBytes,
+              appendTruncationMarker,
               input.progress?.onStdoutLine,
             ),
             collectOutput(
               commandInput,
               child.stderr,
               maxOutputBytes,
-              truncateOutputAtMaxBytes,
+              appendTruncationMarker,
               input.progress?.onStderrLine,
             ),
             child.exitCode.pipe(
@@ -746,8 +746,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       allowNonZeroExit: true,
       ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.maxOutputBytes !== undefined ? { maxOutputBytes: options.maxOutputBytes } : {}),
-      ...(options.truncateOutputAtMaxBytes !== undefined
-        ? { truncateOutputAtMaxBytes: options.truncateOutputAtMaxBytes }
+      ...(options.appendTruncationMarker !== undefined
+        ? { appendTruncationMarker: options.appendTruncationMarker }
         : {}),
       ...(options.progress ? { progress: options.progress } : {}),
     }).pipe(
@@ -1379,7 +1379,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["diff", "--cached", "--patch", "--minimal"],
       {
         maxOutputBytes: PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES,
-        truncateOutputAtMaxBytes: true,
+        appendTruncationMarker: true,
       },
     );
 
@@ -1598,7 +1598,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ["log", "--oneline", range],
           {
             maxOutputBytes: RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES,
-            truncateOutputAtMaxBytes: true,
+            appendTruncationMarker: true,
           },
         ),
         runGitStdoutWithOptions(
@@ -1607,7 +1607,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ["diff", "--stat", range],
           {
             maxOutputBytes: RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES,
-            truncateOutputAtMaxBytes: true,
+            appendTruncationMarker: true,
           },
         ),
         runGitStdoutWithOptions(
@@ -1616,7 +1616,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ["diff", "--patch", "--minimal", range],
           {
             maxOutputBytes: RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES,
-            truncateOutputAtMaxBytes: true,
+            appendTruncationMarker: true,
           },
         ),
       ],

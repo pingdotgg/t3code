@@ -1,4 +1,5 @@
 import { assert, it, describe } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -15,9 +16,13 @@ const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
   stderrTruncated: false,
 });
 
+const normalizeGitArgs = (args: ReadonlyArray<string>): ReadonlyArray<string> =>
+  args[0] === "-C" && args.length >= 2 ? args.slice(2) : args;
+
 describe("VcsDriverRegistry", () => {
   it.effect("routes directly by VCS driver kind for non-repository workflows", () => {
     const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make()).pipe(
+      Layer.provide(NodeServices.layer),
       Layer.provide(
         Layer.mock(VcsProjectConfig.VcsProjectConfig)({
           resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
@@ -41,6 +46,7 @@ describe("VcsDriverRegistry", () => {
   it.effect("caches repository detection for repeated resolves in the same cwd and kind", () => {
     const calls: VcsProcess.VcsProcessInput[] = [];
     const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make()).pipe(
+      Layer.provide(NodeServices.layer),
       Layer.provide(
         Layer.mock(VcsProjectConfig.VcsProjectConfig)({
           resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
@@ -51,7 +57,9 @@ describe("VcsDriverRegistry", () => {
           run: (input) =>
             Effect.sync(() => {
               calls.push(input);
-              const command = input.args.join(" ");
+              const normalizedArgs =
+                input.args[0] === "-C" && input.args.length >= 2 ? input.args.slice(2) : input.args;
+              const command = normalizedArgs.join(" ");
               if (command === "rev-parse --is-inside-work-tree") {
                 return processOutput("true\n");
               }
@@ -75,7 +83,7 @@ describe("VcsDriverRegistry", () => {
       assert.equal(first.repository.rootPath, "/repo");
       assert.equal(second.repository.rootPath, "/repo");
       assert.deepStrictEqual(
-        calls.map((call) => call.args.join(" ")),
+        calls.map((call) => normalizeGitArgs(call.args).join(" ")),
         [
           "rev-parse --is-inside-work-tree",
           "rev-parse --show-toplevel",
