@@ -2,7 +2,7 @@ import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
 import type { EnvironmentId, VcsRef, ThreadId } from "@t3tools/contracts";
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
-import { ChevronDownIcon, TriangleAlertIcon } from "lucide-react";
+import { ChevronDownIcon, GitBranchIcon, TriangleAlertIcon } from "lucide-react";
 import {
   useCallback,
   useDeferredValue,
@@ -44,8 +44,8 @@ import {
   ComboboxStatus,
   ComboboxTrigger,
 } from "./ui/combobox";
-import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface BranchToolbarBranchSelectorProps {
   className?: string;
@@ -199,7 +199,6 @@ export function BranchToolbarBranchSelector({
   // ---------------------------------------------------------------------------
   const queryClient = useQueryClient();
   const [isBranchMenuOpen, setIsBranchMenuOpen] = useState(false);
-  const [isMismatchPopoverOpen, setIsMismatchPopoverOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const branchPickerAnchorRef = useRef<HTMLDivElement | null>(null);
   const deferredBranchQuery = useDeferredValue(branchQuery);
@@ -430,7 +429,7 @@ export function BranchToolbarBranchSelector({
         const nextBranchName = checkoutResult.refName ?? localCheckoutBranchMismatch.threadBranch;
         setOptimisticBranch(nextBranchName);
         setThreadBranch(nextBranchName, null);
-        setIsMismatchPopoverOpen(false);
+        setIsBranchMenuOpen(false);
         onComposerFocusRequest?.();
       } catch (error) {
         setOptimisticBranch(previousBranch);
@@ -451,7 +450,7 @@ export function BranchToolbarBranchSelector({
     }
 
     setThreadBranch(localCheckoutBranchMismatch.currentBranch, null);
-    setIsMismatchPopoverOpen(false);
+    setIsBranchMenuOpen(false);
     onComposerFocusRequest?.();
   };
 
@@ -623,73 +622,17 @@ export function BranchToolbarBranchSelector({
   }
 
   return (
-    <div ref={branchPickerAnchorRef} className="relative flex min-w-0 items-center justify-end">
+    <div
+      ref={branchPickerAnchorRef}
+      className="relative flex min-w-0 items-center justify-end ml-auto"
+    >
       {localCheckoutBranchMismatch ? (
-        <Popover open={isMismatchPopoverOpen} onOpenChange={setIsMismatchPopoverOpen}>
-          <PopoverTrigger
-            openOnHover
-            delay={120}
-            closeDelay={100}
-            render={
-              <button
-                type="button"
-                className="absolute left-1.5 top-1/2 z-10 flex size-4.5 -translate-y-1/2 items-center justify-center rounded-sm text-warning outline-none transition-colors hover:bg-warning/10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
-                aria-label="Thread branch does not match current checkout"
-              />
-            }
-          >
-            <TriangleAlertIcon aria-hidden="true" className="size-3.5" />
-          </PopoverTrigger>
-          <PopoverPopup
-            tooltipStyle
-            side="top"
-            align="center"
-            sideOffset={8}
-            anchor={branchPickerAnchorRef}
-            className="w-[28rem] max-w-[calc(100vw-2rem)] px-2 py-2"
-          >
-            <div className="chat-markdown space-y-2.5 text-xs leading-snug">
-              <div className="grid grid-cols-[5.25rem_minmax(0,1fr)] gap-x-2.5 gap-y-1.5">
-                <span className="text-muted-foreground">Thread</span>
-                <code className="max-w-full justify-self-start">
-                  {localCheckoutBranchMismatch.threadBranch}
-                </code>
-                <span className="text-muted-foreground">Checkout</span>
-                <code className="max-w-full justify-self-start">
-                  {localCheckoutBranchMismatch.currentBranch}
-                </code>
-              </div>
-              <p className="!my-0 border-border/70 border-t pt-2 text-muted-foreground">
-                This thread was last associated with{" "}
-                <code>{localCheckoutBranchMismatch.threadBranch}</code>, but your checkout is on
-                another branch. Switch to keep working there, or use current to update the thread to
-                this checkout.
-              </p>
-              <div className="mt-2 flex justify-end gap-1.5">
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  className="h-6 px-1.5 text-[11px] text-muted-foreground hover:text-foreground"
-                  disabled={isBranchActionPending}
-                  title={`Associate this thread with ${localCheckoutBranchMismatch.currentBranch}`}
-                  onClick={useCurrentCheckoutForThread}
-                >
-                  Use current
-                </Button>
-                <Button
-                  variant="outline"
-                  size="xs"
-                  className="h-6 px-1.5 text-[11px]"
-                  disabled={isBranchActionPending}
-                  title={`Checkout ${localCheckoutBranchMismatch.threadBranch}`}
-                  onClick={switchCheckoutToThreadBranch}
-                >
-                  Switch
-                </Button>
-              </div>
-            </div>
-          </PopoverPopup>
-        </Popover>
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute left-1.5 top-1/2 z-10 flex size-4.5 -translate-y-1/2 items-center justify-center text-warning"
+        >
+          <GitBranchIcon className="size-3.5" />
+        </span>
       ) : null}
       <Combobox
         items={branchPickerItems}
@@ -722,7 +665,67 @@ export function BranchToolbarBranchSelector({
           <span className="min-w-0 max-w-[240px] truncate">{triggerLabel}</span>
           <ChevronDownIcon className="shrink-0" />
         </ComboboxTrigger>
-        <ComboboxPopup align="end" side="top" className="w-80">
+        <ComboboxPopup align="end" side="top" className="w-80 overflow-hidden">
+          {localCheckoutBranchMismatch ? (
+            <div className="space-y-1.5 border-b bg-warning/5 px-3 py-2 text-xs">
+              <div className="flex items-center gap-1.5">
+                <TriangleAlertIcon aria-hidden="true" className="size-3.5 shrink-0 text-warning" />
+                <span className="font-medium text-foreground">Branches diverged</span>
+              </div>
+              <div className="space-y-0.5 text-[11px]">
+                <div className="flex items-center gap-2">
+                  <span className="w-14 shrink-0 text-muted-foreground">thread</span>
+                  <code className="min-w-0 flex-1 truncate text-foreground">
+                    {localCheckoutBranchMismatch.threadBranch}
+                  </code>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="w-14 shrink-0 text-warning/80">checkout</span>
+                  <code className="min-w-0 flex-1 truncate text-warning">
+                    {localCheckoutBranchMismatch.currentBranch}
+                  </code>
+                </div>
+              </div>
+              <div className="flex gap-1.5">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        className="h-7 flex-1 justify-center text-[11px]"
+                        disabled={isBranchActionPending}
+                        onClick={useCurrentCheckoutForThread}
+                      >
+                        Update thread
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top" align="center">
+                    Associate this thread with {localCheckoutBranchMismatch.currentBranch}
+                  </TooltipPopup>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="xs"
+                        className="h-7 flex-1 justify-center text-[11px] text-muted-foreground hover:text-foreground"
+                        disabled={isBranchActionPending}
+                        onClick={switchCheckoutToThreadBranch}
+                      >
+                        Switch checkout
+                      </Button>
+                    }
+                  />
+                  <TooltipPopup side="top" align="center">
+                    Checkout {localCheckoutBranchMismatch.threadBranch}
+                  </TooltipPopup>
+                </Tooltip>
+              </div>
+            </div>
+          ) : null}
           <div className="border-b p-1">
             <ComboboxInput
               className="[&_input]:font-sans rounded-md"
@@ -750,11 +753,14 @@ export function BranchToolbarBranchSelector({
                     void fetchNextPage().catch(() => undefined);
                   }
                 }}
-                style={{ maxHeight: "14rem" }}
+                style={{ maxHeight: localCheckoutBranchMismatch ? "10rem" : "14rem" }}
               />
             </ComboboxListVirtualized>
           ) : (
-            <ComboboxList ref={setBranchListRef} className="max-h-56">
+            <ComboboxList
+              ref={setBranchListRef}
+              className={cn(localCheckoutBranchMismatch ? "max-h-40" : "max-h-56")}
+            >
               {filteredBranchPickerItems.map((itemValue, index) =>
                 renderPickerItem(itemValue, index),
               )}
