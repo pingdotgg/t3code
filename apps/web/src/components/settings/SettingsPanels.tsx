@@ -1,11 +1,15 @@
 import {
   IconArchivebox as ArchiveIcon,
   IconArchivebox as ArchiveX,
+  IconCircleLefthalfFilledRighthalfStripedHorizontalInverse as ContrastIcon,
   IconChevronDown as ChevronDownIcon,
+  IconDisplay as DisplayIcon,
   IconInfoCircle as InfoIcon,
+  IconMoonFill as MoonIcon,
   IconProgressIndicator as LoaderIcon,
   IconPlus as PlusIcon,
   IconArrowClockwise as RefreshCwIcon,
+  IconSunMaxFill as SunIcon,
   IconXmark as XIcon,
 } from "symbols-react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -97,7 +101,7 @@ import {
   useServerProviders,
 } from "../../rpc/serverState";
 import { ThemePreferenceSelector } from "./ThemePreferenceSelector";
-import { DEFAULT_CUSTOM_THEME_SETTINGS } from "../../theme";
+import { DEFAULT_CUSTOM_THEME_SETTINGS, type ThemeMode } from "../../theme";
 import { formatProviderKindLabel } from "../../providerModels";
 
 const TIMESTAMP_FORMAT_LABELS = {
@@ -111,7 +115,30 @@ const THEME_MODE_LABELS = {
   system: "System",
   light: "Light",
   dark: "Dark",
+  highContrast: "High Contrast",
 } as const;
+
+const THEME_MODE_ICONS = {
+  system: DisplayIcon,
+  light: SunIcon,
+  dark: MoonIcon,
+  highContrast: ContrastIcon,
+} as const satisfies Record<ThemeMode, typeof DisplayIcon>;
+
+function ThemeModeOptionLabel({ mode }: { mode: ThemeMode }) {
+  const Icon = THEME_MODE_ICONS[mode];
+
+  return (
+    <span className="flex items-center gap-2">
+      <Icon className="size-3.5 shrink-0 fill-current opacity-40" />
+      <span className="truncate">{THEME_MODE_LABELS[mode]}</span>
+    </span>
+  );
+}
+
+function ThemeModeTriggerLabel({ mode }: { mode: ThemeMode }) {
+  return <span className="truncate">{THEME_MODE_LABELS[mode]}</span>;
+}
 
 type InstallProviderSettings = {
   provider: ProviderKind;
@@ -1017,17 +1044,22 @@ export function InterfaceSettingsPanel() {
               onValueChange={(value) => setThemeMode(value as typeof theme.mode)}
             >
               <SelectTrigger className="w-full sm:w-44" aria-label="Theme mode">
-                <SelectValue>{THEME_MODE_LABELS[theme.mode]}</SelectValue>
+                <SelectValue>
+                  <ThemeModeTriggerLabel mode={theme.mode} />
+                </SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem hideIndicator value="system">
-                  {THEME_MODE_LABELS.system}
+                  <ThemeModeOptionLabel mode="system" />
                 </SelectItem>
                 <SelectItem hideIndicator value="light">
-                  {THEME_MODE_LABELS.light}
+                  <ThemeModeOptionLabel mode="light" />
                 </SelectItem>
                 <SelectItem hideIndicator value="dark">
-                  {THEME_MODE_LABELS.dark}
+                  <ThemeModeOptionLabel mode="dark" />
+                </SelectItem>
+                <SelectItem hideIndicator value="highContrast">
+                  <ThemeModeOptionLabel mode="highContrast" />
                 </SelectItem>
               </SelectPopup>
             </Select>

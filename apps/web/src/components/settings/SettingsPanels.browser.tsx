@@ -551,8 +551,23 @@ describe("Settings panels", () => {
     await expect.element(page.getByText("Saturation", { exact: true })).toBeInTheDocument();
     await expect.element(page.getByLabelText("Theme saturation")).toBeInTheDocument();
     await expect.element(page.getByText("App icon", { exact: true })).toBeInTheDocument();
+    expect(document.querySelector('[aria-label="Theme mode"] svg')).toBeNull();
+    await page.getByLabelText("Theme mode").click();
+    await expect.element(page.getByText("High Contrast", { exact: true })).toBeInTheDocument();
+    expect(document.querySelector('[data-slot="select-list"] svg')).not.toBeNull();
     expect(document.querySelector('[data-theme-preview-card="true"]')).toBeNull();
     expect(document.querySelector('[aria-label="Theme hue wheel"]')).toBeNull();
+  });
+
+  it("renders hue and saturation as full-width nested theme rows", async () => {
+    await renderSettingsPanel(<InterfaceSettingsPanel />);
+
+    const hueSlider = document.querySelector('[aria-label="Theme hue"]');
+    const saturationSlider = document.querySelector('[aria-label="Theme saturation"]');
+
+    expect(hueSlider?.closest("[data-settings-subrows]")).not.toBeNull();
+    expect(hueSlider?.closest("[data-settings-subrow]")).not.toBeNull();
+    expect(saturationSlider?.closest("[data-settings-subrow]")).not.toBeNull();
   });
 
   it("updates stored and document theme state when editing the custom theme", async () => {
@@ -574,6 +589,24 @@ describe("Settings panels", () => {
       expect(document.documentElement.dataset.themeMode).toBe("dark");
       expect(document.documentElement.dataset.themeHue).toBe("288");
       expect(document.documentElement.dataset.themeSaturation).toBe("44");
+    });
+  });
+
+  it("persists high contrast mode while resolving the rendered theme as dark", async () => {
+    await renderSettingsPanel(<InterfaceSettingsPanel />);
+
+    await selectOption("Theme mode", "High Contrast");
+
+    await vi.waitFor(() => {
+      expect(JSON.parse(localStorage.getItem(THEME_STORAGE_KEY) ?? "{}")).toMatchObject({
+        version: 2,
+        mode: "highContrast",
+      });
+      expect(document.documentElement.dataset.themePreferenceMode).toBe("highContrast");
+      expect(document.documentElement.dataset.themeMode).toBe("dark");
+      expect(document.querySelector('[aria-label="Theme mode"]')?.textContent).toContain(
+        "High Contrast",
+      );
     });
   });
 

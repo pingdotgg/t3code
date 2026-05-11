@@ -3,7 +3,7 @@ import type { DesktopTheme } from "@forma/contracts";
 export const THEME_STORAGE_KEY = "forma:theme";
 export const THEME_MEDIA_QUERY = "(prefers-color-scheme: dark)";
 
-export type ThemeMode = "system" | "light" | "dark";
+export type ThemeMode = "system" | "light" | "dark" | "highContrast";
 export type ResolvedThemeMode = "light" | "dark";
 
 export type CustomThemeSettings = {
@@ -95,19 +95,27 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function normalizeHue(value: unknown): number {
-  return clamp(Math.round(Number(value) || DEFAULT_THEME_HUE), MIN_THEME_HUE, MAX_THEME_HUE);
+  const numericValue = Number(value);
+  return clamp(
+    Number.isFinite(numericValue) ? Math.round(numericValue) : DEFAULT_THEME_HUE,
+    MIN_THEME_HUE,
+    MAX_THEME_HUE,
+  );
 }
 
 function normalizeSaturation(value: unknown): number {
+  const numericValue = Number(value);
   return clamp(
-    Math.round(Number(value) || DEFAULT_THEME_SATURATION),
+    Number.isFinite(numericValue) ? Math.round(numericValue) : DEFAULT_THEME_SATURATION,
     MIN_THEME_SATURATION,
     MAX_THEME_SATURATION,
   );
 }
 
 function normalizeThemeMode(value: unknown): ThemeMode {
-  return value === "light" || value === "dark" || value === "system" ? value : "system";
+  return value === "light" || value === "dark" || value === "system" || value === "highContrast"
+    ? value
+    : "system";
 }
 
 export function normalizeThemeSettings(
@@ -136,10 +144,16 @@ export function resolveThemeMode(
 ): ResolvedThemeMode {
   if (typeof theme === "string") {
     const mode = normalizeThemeMode(theme);
-    return mode === "system" ? (systemDark ? "dark" : "light") : mode;
+    if (mode === "system") {
+      return systemDark ? "dark" : "light";
+    }
+    return mode === "highContrast" ? "dark" : mode;
   }
   const normalized = normalizeThemeSettings(theme);
-  return normalized.mode === "system" ? (systemDark ? "dark" : "light") : normalized.mode;
+  if (normalized.mode === "system") {
+    return systemDark ? "dark" : "light";
+  }
+  return normalized.mode === "highContrast" ? "dark" : normalized.mode;
 }
 
 function hsl(hue: number, saturation: number, lightness: number): string {
@@ -214,51 +228,63 @@ export function generateTheme(
   const theme = normalizeThemeSettings(input);
   const resolvedMode = resolveThemeMode(theme, options?.systemDark ?? false);
   const isDark = resolvedMode === "dark";
+  const isHighContrast = theme.mode === "highContrast";
   const hue = theme.hue;
   const saturation = theme.saturation;
-  const neutralSaturation = Math.max(4, Math.round(saturation * (isDark ? 0.18 : 0.16)));
-  const softSaturation = Math.max(6, Math.round(saturation * (isDark ? 0.26 : 0.22)));
+  const neutralSaturation = Math.round(saturation * (isHighContrast ? 0.14 : isDark ? 0.18 : 0.16));
+  const softSaturation = Math.round(saturation * (isHighContrast ? 0.18 : isDark ? 0.26 : 0.22));
   const primarySaturation = 100;
-  const accentSaturation = Math.max(18, Math.round(saturation * (isDark ? 0.44 : 0.52)));
+  const accentSaturation = Math.round(saturation * (isHighContrast ? 0.52 : isDark ? 0.44 : 0.52));
+  const foregroundSaturation = Math.round(saturation * (isDark ? 0.12 : 0.14));
+  const subduedForegroundSaturation = Math.round(saturation * (isDark ? 0.1 : 0.12));
+  const borderSaturation = Math.round(saturation * (isHighContrast ? 0.26 : isDark ? 0.15 : 0.18));
+  const inputSaturation = Math.round(saturation * (isHighContrast ? 0.22 : isDark ? 0.13 : 0.16));
+  const ringSaturation = Math.max(
+    Math.round(saturation * (isHighContrast ? 1.1 : 0.92)),
+    isHighContrast ? 12 : 0,
+  );
+  const infoSaturation = Math.round(saturation * (isHighContrast ? 1.05 : 0.9));
   const primaryGlowSaturation = clamp(Math.max(58, primarySaturation), 0, 100);
-  const primaryGlowLight = isDark ? 40 : 44;
-  const primaryGlowDeepLight = isDark ? 18 : 28;
+  const primaryGlowLight = isHighContrast ? 46 : isDark ? 40 : 44;
+  const primaryGlowDeepLight = isHighContrast ? 14 : isDark ? 18 : 28;
 
   const cssVariables = isDark
     ? {
-        "--background": hsl(hue, neutralSaturation, 8),
-        "--app-chrome-background": hsl(hue, neutralSaturation, 8),
-        "--foreground": hsl(hue, 8, 93),
-        "--card": hsl(hue, softSaturation, 11),
-        "--card-foreground": hsl(hue, 8, 93),
-        "--popover": hsl(hue, softSaturation, 12),
-        "--popover-foreground": hsl(hue, 8, 93),
-        "--primary": hsl(hue, primarySaturation, 64),
+        "--background": hsl(hue, neutralSaturation, isHighContrast ? 5 : 8),
+        "--app-chrome-background": hsl(hue, neutralSaturation, isHighContrast ? 5 : 8),
+        "--foreground": hsl(hue, foregroundSaturation, 93),
+        "--card": hsl(hue, softSaturation, isHighContrast ? 8 : 11),
+        "--card-foreground": hsl(hue, foregroundSaturation, 93),
+        "--popover": hsl(hue, softSaturation, isHighContrast ? 9 : 12),
+        "--popover-foreground": hsl(hue, foregroundSaturation, 93),
+        "--primary": hsl(hue, primarySaturation, isHighContrast ? 70 : 64),
         "--primary-foreground": hsl(hue, 18, 12),
-        "--secondary": hsl(hue, softSaturation, 16),
-        "--secondary-foreground": hsl(hue, 8, 90),
-        "--muted": hsl(hue, softSaturation, 15),
-        "--muted-foreground": hsl(hue, 8, 66),
-        "--accent": hsl(hue, accentSaturation, 20),
-        "--accent-foreground": hsl(hue, 12, 92),
+        "--secondary": hsl(hue, softSaturation, isHighContrast ? 12 : 16),
+        "--secondary-foreground": hsl(hue, foregroundSaturation, 90),
+        "--muted": hsl(hue, softSaturation, isHighContrast ? 11 : 15),
+        "--muted-foreground": hsl(hue, subduedForegroundSaturation, isHighContrast ? 74 : 66),
+        "--accent": hsl(hue, accentSaturation, isHighContrast ? 24 : 20),
+        "--accent-foreground": hsl(hue, foregroundSaturation, 92),
         "--destructive": hsl(5, 72, 58),
-        "--border": hsl(hue, 10, 22),
-        "--input": hsl(hue, 10, 24),
-        "--ring": hsl(hue, Math.max(42, saturation), 68),
+        "--border": hsl(hue, borderSaturation, isHighContrast ? 36 : 22),
+        "--input": hsl(hue, inputSaturation, isHighContrast ? 32 : 24),
+        "--ring": hsl(hue, ringSaturation, isHighContrast ? 76 : 68),
         "--destructive-foreground": hsl(5, 88, 82),
-        "--info": hsl((hue + 10) % 360, Math.max(36, saturation), 64),
+        "--info": hsl((hue + 10) % 360, infoSaturation, isHighContrast ? 70 : 64),
         "--info-foreground": hsl((hue + 10) % 360, 92, 88),
         "--success": hsl(146, 42, 50),
         "--success-foreground": hsl(146, 72, 88),
         "--warning": hsl(43, 82, 56),
         "--warning-foreground": hsl(43, 95, 18),
-        "--diff-surface-bg": "rgb(18, 23, 31)",
-        "--diff-surface-elevated-bg": "rgb(22, 28, 37)",
-        "--diff-surface-context-bg": "rgb(19, 24, 33)",
-        "--diff-surface-hover-bg": "rgb(25, 32, 42)",
-        "--diff-surface-separator-bg": "rgb(23, 29, 38)",
-        "--diff-surface-buffer-bg": "rgb(16, 21, 29)",
-        "--diff-surface-border": "rgba(255, 255, 255, 0.08)",
+        "--diff-surface-bg": isHighContrast ? "rgb(10, 12, 16)" : "rgb(18, 23, 31)",
+        "--diff-surface-elevated-bg": isHighContrast ? "rgb(14, 17, 22)" : "rgb(22, 28, 37)",
+        "--diff-surface-context-bg": isHighContrast ? "rgb(12, 15, 20)" : "rgb(19, 24, 33)",
+        "--diff-surface-hover-bg": isHighContrast ? "rgb(18, 22, 28)" : "rgb(25, 32, 42)",
+        "--diff-surface-separator-bg": isHighContrast ? "rgb(16, 20, 26)" : "rgb(23, 29, 38)",
+        "--diff-surface-buffer-bg": isHighContrast ? "rgb(8, 10, 14)" : "rgb(16, 21, 29)",
+        "--diff-surface-border": isHighContrast
+          ? "rgba(255, 255, 255, 0.18)"
+          : "rgba(255, 255, 255, 0.08)",
         "--diff-surface-foreground": "rgb(228, 232, 240)",
         "--diff-surface-title-hover": "rgb(148, 163, 184)",
         "--diff-surface-addition-bg": "rgba(34, 197, 94, 0.12)",
@@ -275,39 +301,68 @@ export function generateTheme(
           primaryGlowLight,
           0.05,
         )}`,
-        "--composer-surface-fill": `linear-gradient(180deg, ${hsla(hue, softSaturation, 14, 0.9)} 0%, ${hsla(hue, softSaturation, 10, 0.82)} 100%)`,
-        "--composer-surface-border": hsla(hue, 8, 92, 0.08),
+        "--composer-surface-fill": isHighContrast
+          ? `linear-gradient(180deg, ${hsla(hue, softSaturation, 10, 0.96)} 0%, ${hsla(hue, softSaturation, 6, 0.9)} 100%)`
+          : `linear-gradient(180deg, ${hsla(hue, softSaturation, 14, 0.9)} 0%, ${hsla(hue, softSaturation, 10, 0.82)} 100%)`,
+        "--composer-surface-border": hsla(hue, 10, 96, isHighContrast ? 0.18 : 0.08),
         "--composer-surface-shadow": `inset 0 1px 2px ${hsla(hue, 18, 96, 0.12)}, inset 0 -14px 60px ${hsla(
           hue,
           primaryGlowSaturation,
           primaryGlowDeepLight,
-          0.16,
-        )}, inset 0 -4px 10px ${hsla(hue, primaryGlowSaturation, primaryGlowLight, 0.12)}, 0 18px 40px ${hsla(
+          isHighContrast ? 0.22 : 0.16,
+        )}, inset 0 -4px 10px ${hsla(
+          hue,
+          primaryGlowSaturation,
+          primaryGlowLight,
+          isHighContrast ? 0.18 : 0.12,
+        )}, 0 18px 40px ${hsla(
           hue,
           Math.max(18, Math.round(saturation * 0.42)),
-          5,
-          0.34,
-        )}, 0 4px 16px rgba(0, 0, 0, 0.4)`,
+          isHighContrast ? 2 : 5,
+          isHighContrast ? 0.48 : 0.34,
+        )}, 0 4px 16px rgba(0, 0, 0, ${isHighContrast ? "0.62" : "0.4"})`,
         "--composer-surface-focus-shadow": `inset 0 1px 2px ${hsla(hue, 18, 96, 0.16)}, inset 0 -16px 64px ${hsla(
           hue,
           primaryGlowSaturation,
           primaryGlowDeepLight,
-          0.16,
-        )}, inset 0 -4px 12px ${hsla(hue, primaryGlowSaturation, primaryGlowLight, 0.15)}, 0 22px 48px ${hsla(
+          isHighContrast ? 0.24 : 0.16,
+        )}, inset 0 -4px 12px ${hsla(
+          hue,
+          primaryGlowSaturation,
+          primaryGlowLight,
+          isHighContrast ? 0.2 : 0.15,
+        )}, 0 22px 48px ${hsla(
           hue,
           Math.max(24, Math.round(saturation * 0.5)),
-          6,
-          0.4,
-        )}, 0 4px 20px rgba(0, 0, 0, 0.5)`,
-        "--composer-banner-background": `linear-gradient(180deg, ${hsla(hue, softSaturation, 16, 0.84)} 0%, ${hsla(
+          isHighContrast ? 3 : 6,
+          isHighContrast ? 0.54 : 0.4,
+        )}, 0 4px 20px rgba(0, 0, 0, ${isHighContrast ? "0.7" : "0.5"})`,
+        "--composer-banner-background": isHighContrast
+          ? `linear-gradient(180deg, ${hsla(hue, softSaturation, 12, 0.92)} 0%, ${hsla(
+              hue,
+              softSaturation,
+              8,
+              0.86,
+            )} 100%)`
+          : `linear-gradient(180deg, ${hsla(hue, softSaturation, 16, 0.84)} 0%, ${hsla(
+              hue,
+              softSaturation,
+              12,
+              0.74,
+            )} 100%)`,
+        "--composer-banner-border": hsla(hue, 10, 96, isHighContrast ? 0.16 : 0.08),
+        "--composer-banner-shadow": `inset 0 1px 0 ${hsla(
           hue,
-          softSaturation,
           12,
-          0.74,
-        )} 100%)`,
-        "--composer-banner-border": hsla(hue, 10, 96, 0.08),
-        "--composer-banner-shadow": `inset 0 1px 0 ${hsla(hue, 12, 96, 0.08)}, inset 0 -1px 0 rgba(0, 0, 0, 0.22)`,
-        "--composer-footer-separator-background-color": hsla(hue, 8, 90, 0.1),
+          96,
+          isHighContrast ? 0.16 : 0.08,
+        )}, inset 0 -1px 0 rgba(0, 0, 0, ${isHighContrast ? "0.36" : "0.22"})`,
+        "--composer-footer-separator-background-color": hsla(
+          hue,
+          8,
+          90,
+          isHighContrast ? 0.18 : 0.1,
+        ),
         "--composer-footer-separator-background-opacity": "100%",
         "--composer-footer-separator-border-color": "rgba(0, 0, 0, 0.88)",
         "--composer-footer-separator-border-opacity": "90%",
@@ -315,25 +370,25 @@ export function generateTheme(
     : {
         "--background": hsl(hue, neutralSaturation, 97),
         "--app-chrome-background": hsl(hue, neutralSaturation, 97),
-        "--foreground": hsl(hue, 14, 18),
+        "--foreground": hsl(hue, foregroundSaturation, 18),
         "--card": hsl(hue, softSaturation, 99),
-        "--card-foreground": hsl(hue, 14, 18),
+        "--card-foreground": hsl(hue, foregroundSaturation, 18),
         "--popover": hsl(hue, softSaturation, 100),
-        "--popover-foreground": hsl(hue, 14, 18),
+        "--popover-foreground": hsl(hue, foregroundSaturation, 18),
         "--primary": hsl(hue, primarySaturation, 49),
         "--primary-foreground": hsl(hue, 18, 99),
         "--secondary": hsl(hue, softSaturation, 91),
-        "--secondary-foreground": hsl(hue, 14, 18),
+        "--secondary-foreground": hsl(hue, foregroundSaturation, 18),
         "--muted": hsl(hue, softSaturation, 93),
-        "--muted-foreground": hsl(hue, 10, 42),
+        "--muted-foreground": hsl(hue, subduedForegroundSaturation, 42),
         "--accent": hsl(hue, accentSaturation, 87),
-        "--accent-foreground": hsl(hue, 18, 22),
+        "--accent-foreground": hsl(hue, foregroundSaturation, 22),
         "--destructive": hsl(5, 76, 56),
-        "--border": hsl(hue, 12, 82),
-        "--input": hsl(hue, 12, 78),
-        "--ring": hsl(hue, Math.max(42, saturation), 52),
+        "--border": hsl(hue, borderSaturation, 82),
+        "--input": hsl(hue, inputSaturation, 78),
+        "--ring": hsl(hue, ringSaturation, 52),
         "--destructive-foreground": hsl(5, 68, 32),
-        "--info": hsl((hue + 10) % 360, Math.max(36, saturation), 50),
+        "--info": hsl((hue + 10) % 360, infoSaturation, 50),
         "--info-foreground": hsl((hue + 10) % 360, 72, 24),
         "--success": hsl(146, 44, 42),
         "--success-foreground": hsl(146, 70, 24),
@@ -480,6 +535,9 @@ export function writeStoredThemeSettings(
 export function resolveDesktopTheme(theme: CustomThemeSettings, systemDark = false): DesktopTheme {
   if (theme.mode === "system") {
     return "system";
+  }
+  if (theme.mode === "highContrast") {
+    return "dark";
   }
   return resolveThemeMode(theme, systemDark);
 }

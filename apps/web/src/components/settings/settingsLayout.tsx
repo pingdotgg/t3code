@@ -65,24 +65,74 @@ export function SettingsRow({
         children ? "pt-4 pb-0" : "py-4",
       )}
     >
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-h-5 items-center gap-1.5">
-            <h3 className="text-ui-sm font-semibold tracking-[-0.01em] text-foreground">{title}</h3>
-            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-              {resetAction}
-            </span>
-          </div>
-          <p className="text-xs leading-relaxed text-muted-foreground/80">{description}</p>
-          {status ? <div className="text-ui-xs pt-0.5 text-muted-foreground">{status}</div> : null}
-        </div>
-        {control ? (
-          <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            {control}
-          </div>
-        ) : null}
-      </div>
+      <SettingsRowBody
+        control={control}
+        description={description}
+        resetAction={resetAction}
+        status={status}
+        title={title}
+      />
       {children}
+    </div>
+  );
+}
+
+function SettingsRowBody({
+  title,
+  description,
+  status,
+  resetAction,
+  control,
+}: {
+  title: ReactNode;
+  description: string;
+  status?: ReactNode;
+  resetAction?: ReactNode;
+  control?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="flex min-h-5 items-center gap-1.5">
+          <h3 className="text-ui-sm font-semibold tracking-[-0.01em] text-foreground">{title}</h3>
+          <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+            {resetAction}
+          </span>
+        </div>
+        <p className="text-xs leading-relaxed text-muted-foreground/80">{description}</p>
+        {status ? <div className="text-ui-xs pt-0.5 text-muted-foreground">{status}</div> : null}
+      </div>
+      {control ? (
+        <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          {control}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function SettingsSubRows({ children }: { children: ReactNode }) {
+  return (
+    <div className="mt-4 -mx-4 sm:-mx-5" data-settings-subrows>
+      {children}
+    </div>
+  );
+}
+
+export function SettingsSubRow({
+  title,
+  description,
+  status,
+  control,
+}: {
+  title: ReactNode;
+  description: string;
+  status?: ReactNode;
+  control?: ReactNode;
+}) {
+  return (
+    <div className="border-t border-border/60 px-4 py-4 sm:px-5" data-settings-subrow>
+      <SettingsRowBody control={control} description={description} status={status} title={title} />
     </div>
   );
 }

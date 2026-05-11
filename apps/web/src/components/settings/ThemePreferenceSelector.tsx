@@ -1,5 +1,5 @@
 import type { CustomThemeSettings } from "../../theme";
-import { SettingsRow } from "./settingsLayout";
+import { SettingsSubRow, SettingsSubRows } from "./settingsLayout";
 import { Slider } from "../ui/slider";
 
 function clampHue(value: number): number {
@@ -40,8 +40,8 @@ export function ThemePreferenceSelector({
   })`;
 
   return (
-    <>
-      <SettingsRow
+    <SettingsSubRows>
+      <SettingsSubRow
         title={
           <span className="flex items-center gap-2">
             <span>Hue</span>
@@ -64,7 +64,7 @@ export function ThemePreferenceSelector({
         }
       />
 
-      <SettingsRow
+      <SettingsSubRow
         title={
           <span className="flex items-center gap-2">
             <span>Saturation</span>
@@ -88,6 +88,6 @@ export function ThemePreferenceSelector({
           </div>
         }
       />
-    </>
+    </SettingsSubRows>
   );
 }
