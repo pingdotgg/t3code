@@ -8,7 +8,7 @@ export interface CollectedUint8StreamText {
 }
 
 interface CollectState {
-  readonly chunks: Uint8Array[];
+  chunks: Uint8Array[];
   readonly bytes: number;
   readonly truncated: boolean;
 }
