@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 

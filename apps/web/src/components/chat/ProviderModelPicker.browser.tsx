@@ -1,12 +1,22 @@
-import { type ProviderKind, type ServerProvider } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
 import { EnvironmentId } from "@t3tools/contracts";
+import { createModelCapabilities } from "@t3tools/shared/model";
 import { page, userEvent } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { getCustomModelOptionsByProvider } from "../../modelSelection";
-import { DEFAULT_CLIENT_SETTINGS, DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import { getCustomModelOptionsByInstance } from "../../modelSelection";
+import {
+  deriveProviderInstanceEntries,
+  sortProviderInstanceEntries,
+} from "../../providerInstances";
+import type { ModelEsque } from "./providerIconUtils";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_UNIFIED_SETTINGS,
+  type UnifiedSettings,
+} from "@t3tools/contracts/settings";
 import { __resetLocalApiForTests } from "../../localApi";
 
 // Mock the environments/runtime module to provide a mock primary environment connection
@@ -66,17 +76,35 @@ vi.mock("../../environments/runtime", () => {
   };
 });
 
-function effort(value: string, isDefault = false) {
+function selectDescriptor(
+  id: string,
+  label: string,
+  options: ReadonlyArray<{ id: string; label: string; isDefault?: boolean }>,
+) {
   return {
-    value,
-    label: value,
-    ...(isDefault ? { isDefault: true } : {}),
+    id,
+    label,
+    type: "select" as const,
+    options: [...options],
+    ...(options.find((option) => option.isDefault)?.id
+      ? { currentValue: options.find((option) => option.isDefault)?.id }
+      : {}),
+  };
+}
+
+function booleanDescriptor(id: string, label: string) {
+  return {
+    id,
+    label,
+    type: "boolean" as const,
   };
 }
 
 const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
   {
-    provider: "codex",
+    driver: ProviderDriverKind.make("codex"),
+    instanceId: ProviderInstanceId.make("codex"),
+    displayName: "Codex",
     enabled: true,
     installed: true,
     version: "0.116.0",
@@ -90,30 +118,38 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
         slug: "gpt-5-codex",
         name: "GPT-5 Codex",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-          supportsFastMode: true,
-          supportsThinkingToggle: false,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("reasoningEffort", "Reasoning", [
+              { id: "low", label: "low" },
+              { id: "medium", label: "medium", isDefault: true },
+              { id: "high", label: "high" },
+            ]),
+            booleanDescriptor("fastMode", "Fast Mode"),
+          ],
+        }),
       },
       {
         slug: "gpt-5.3-codex",
         name: "GPT-5.3 Codex",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-          supportsFastMode: true,
-          supportsThinkingToggle: false,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("reasoningEffort", "Reasoning", [
+              { id: "low", label: "low" },
+              { id: "medium", label: "medium", isDefault: true },
+              { id: "high", label: "high" },
+            ]),
+            booleanDescriptor("fastMode", "Fast Mode"),
+          ],
+        }),
       },
     ],
   },
   {
-    provider: "claudeAgent",
+    driver: ProviderDriverKind.make("claudeAgent"),
+    instanceId: ProviderInstanceId.make("claudeAgent"),
+    displayName: "Claude",
     enabled: true,
     installed: true,
     version: "1.0.0",
@@ -127,55 +163,62 @@ const TEST_PROVIDERS: ReadonlyArray<ServerProvider> = [
         slug: "claude-opus-4-6",
         name: "Claude Opus 4.6",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [
-            effort("low"),
-            effort("medium", true),
-            effort("high"),
-            effort("max"),
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("effort", "Reasoning", [
+              { id: "low", label: "low" },
+              { id: "medium", label: "medium", isDefault: true },
+              { id: "high", label: "high" },
+              { id: "max", label: "max" },
+            ]),
+            booleanDescriptor("thinking", "Thinking"),
           ],
-          supportsFastMode: false,
-          supportsThinkingToggle: true,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        }),
       },
       {
         slug: "claude-sonnet-4-6",
         name: "Claude Sonnet 4.6",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [
-            effort("low"),
-            effort("medium", true),
-            effort("high"),
-            effort("max"),
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("effort", "Reasoning", [
+              { id: "low", label: "low" },
+              { id: "medium", label: "medium", isDefault: true },
+              { id: "high", label: "high" },
+              { id: "max", label: "max" },
+            ]),
+            booleanDescriptor("thinking", "Thinking"),
           ],
-          supportsFastMode: false,
-          supportsThinkingToggle: true,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        }),
       },
       {
         slug: "claude-haiku-4-5",
         name: "Claude Haiku 4.5",
         isCustom: false,
-        capabilities: {
-          reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-          supportsFastMode: false,
-          supportsThinkingToggle: true,
-          contextWindowOptions: [],
-          promptInjectedEffortLevels: [],
-        },
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            selectDescriptor("effort", "Reasoning", [
+              { id: "low", label: "low" },
+              { id: "medium", label: "medium", isDefault: true },
+              { id: "high", label: "high" },
+            ]),
+            booleanDescriptor("thinking", "Thinking"),
+          ],
+        }),
       },
     ],
   },
 ];
 
+const CODEX_INSTANCE_ID = ProviderInstanceId.make("codex");
+const CLAUDE_INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
+const OPENCODE_INSTANCE_ID = ProviderInstanceId.make("opencode");
+
 function buildCodexProvider(models: ServerProvider["models"]): ServerProvider {
   return {
-    provider: "codex",
+    driver: ProviderDriverKind.make("codex"),
+    instanceId: ProviderInstanceId.make("codex"),
+    displayName: "Codex",
     enabled: true,
     installed: true,
     version: "0.116.0",
@@ -190,7 +233,8 @@ function buildCodexProvider(models: ServerProvider["models"]): ServerProvider {
 
 function buildOpenCodeProvider(models: ServerProvider["models"]): ServerProvider {
   return {
-    provider: "opencode",
+    driver: ProviderDriverKind.make("opencode"),
+    instanceId: ProviderInstanceId.make("opencode"),
     enabled: true,
     installed: true,
     version: "1.0.0",
@@ -204,37 +248,47 @@ function buildOpenCodeProvider(models: ServerProvider["models"]): ServerProvider
 }
 
 async function mountPicker(props: {
-  provider: ProviderKind;
+  activeInstanceId?: ProviderInstanceId;
   model: string;
-  lockedProvider: ProviderKind | null;
+  lockedProvider: ProviderDriverKind | null;
+  lockedContinuationGroupKey?: string | null;
   providers?: ReadonlyArray<ServerProvider>;
+  settings?: UnifiedSettings;
   triggerVariant?: "ghost" | "outline";
 }) {
   const host = document.createElement("div");
   document.body.append(host);
-  const onProviderModelChange = vi.fn();
+  const onInstanceModelChange = vi.fn();
   const providers = props.providers ?? TEST_PROVIDERS;
-  const modelOptionsByProvider = getCustomModelOptionsByProvider(
-    DEFAULT_UNIFIED_SETTINGS,
+  const instanceEntries = sortProviderInstanceEntries(deriveProviderInstanceEntries(providers));
+  const activeInstanceId = props.activeInstanceId ?? CODEX_INSTANCE_ID;
+  const modelOptionsByInstance = getCustomModelOptionsByInstance(
+    props.settings ?? DEFAULT_UNIFIED_SETTINGS,
     providers,
-    props.provider,
+    activeInstanceId,
     props.model,
   );
   const screen = await render(
     <ProviderModelPicker
-      provider={props.provider}
+      activeInstanceId={activeInstanceId}
       model={props.model}
       lockedProvider={props.lockedProvider}
-      providers={providers}
-      modelOptionsByProvider={modelOptionsByProvider}
+      lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}
+      instanceEntries={instanceEntries}
+      modelOptionsByInstance={modelOptionsByInstance}
       triggerVariant={props.triggerVariant}
-      onProviderModelChange={onProviderModelChange}
+      onInstanceModelChange={onInstanceModelChange}
     />,
     { container: host },
   );
 
   return {
-    onProviderModelChange,
+    onInstanceModelChange,
+    // Back-compat alias used by callers that still assert on the old callback
+    // name. Delegates to the instance-aware mock so existing expectations work.
+    get onProviderModelChange() {
+      return onInstanceModelChange;
+    },
     cleanup: async () => {
       await screen.unmount();
       host.remove();
@@ -277,7 +331,7 @@ describe("ProviderModelPicker", () => {
 
   it("shows provider sidebar in unlocked mode", async () => {
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
       lockedProvider: null,
     });
@@ -298,7 +352,7 @@ describe("ProviderModelPicker", () => {
 
   it("shows favorites first in the provider sidebar", async () => {
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
       lockedProvider: null,
     });
@@ -320,7 +374,7 @@ describe("ProviderModelPicker", () => {
 
   it("filters models by selected provider in sidebar", async () => {
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
       lockedProvider: null,
     });
@@ -352,9 +406,37 @@ describe("ProviderModelPicker", () => {
     }
   });
 
+  it("uses client model visibility and ordering preferences", async () => {
+    const mounted = await mountPicker({
+      activeInstanceId: CLAUDE_INSTANCE_ID,
+      model: "claude-opus-4-6",
+      lockedProvider: null,
+      settings: {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        providerModelPreferences: {
+          [CLAUDE_INSTANCE_ID]: {
+            hiddenModels: ["claude-opus-4-6"],
+            modelOrder: ["claude-haiku-4-5", "claude-sonnet-4-6"],
+          },
+        },
+      },
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        expect(getVisibleModelNames()).toEqual(["Claude Haiku 4.5", "Claude Sonnet 4.6"]);
+        expect(getModelPickerListText()).not.toContain("Claude Opus 4.6");
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("focuses the search input after selecting a sidebar provider", async () => {
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
       lockedProvider: null,
     });
@@ -392,9 +474,9 @@ describe("ProviderModelPicker", () => {
     );
 
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
-      lockedProvider: "claudeAgent",
+      lockedProvider: ProviderDriverKind.make("claudeAgent"),
     });
 
     try {
@@ -416,27 +498,115 @@ describe("ProviderModelPicker", () => {
     }
   });
 
+  it("keeps an instance sidebar in locked mode when that provider has multiple instances", async () => {
+    const defaultCodexModels: ServerProvider["models"] = [
+      {
+        slug: "gpt-work",
+        name: "GPT Work",
+        isCustom: false,
+        capabilities: createModelCapabilities({ optionDescriptors: [] }),
+      },
+    ];
+    const personalCodexModels: ServerProvider["models"] = [
+      {
+        slug: "gpt-personal",
+        name: "GPT Personal",
+        isCustom: false,
+        capabilities: createModelCapabilities({ optionDescriptors: [] }),
+      },
+    ];
+    const isolatedCodexModels: ServerProvider["models"] = [
+      {
+        slug: "gpt-isolated",
+        name: "GPT Isolated",
+        isCustom: false,
+        capabilities: createModelCapabilities({ optionDescriptors: [] }),
+      },
+    ];
+    const providers: ReadonlyArray<ServerProvider> = [
+      {
+        ...buildCodexProvider(defaultCodexModels),
+        instanceId: "codex" as ProviderInstanceId,
+        displayName: "Codex Work",
+        accentColor: "#2563eb",
+        continuation: { groupKey: "codex:home:/Users/julius/.codex" },
+      },
+      {
+        ...buildCodexProvider(personalCodexModels),
+        instanceId: "codex_personal" as ProviderInstanceId,
+        displayName: "Codex Personal",
+        accentColor: "#dc2626",
+        continuation: { groupKey: "codex:home:/Users/julius/.codex" },
+      },
+      {
+        ...buildCodexProvider(isolatedCodexModels),
+        instanceId: "codex_isolated" as ProviderInstanceId,
+        displayName: "Codex Isolated",
+        accentColor: "#16a34a",
+        continuation: { groupKey: "codex:home:/Users/julius/.codex_isolated" },
+      },
+      TEST_PROVIDERS[1]!,
+    ];
+    const mounted = await mountPicker({
+      activeInstanceId: "codex" as ProviderInstanceId,
+      model: "gpt-work",
+      lockedProvider: ProviderDriverKind.make("codex"),
+      lockedContinuationGroupKey: "codex:home:/Users/julius/.codex",
+      providers,
+    });
+
+    try {
+      await page.getByRole("button").click();
+
+      await vi.waitFor(() => {
+        expect(getSidebarProviderOrder()).toEqual(["codex", "codex_personal"]);
+        expect(getModelPickerListText()).not.toContain("Codex Isolated");
+        expect(
+          document.querySelector<HTMLElement>('[data-model-picker-provider="codex_personal"]')
+            ?.dataset.providerAccentColor,
+        ).toBe("#dc2626");
+        expect(getModelPickerListText()).toContain("Codex Work");
+        expect(getVisibleModelNames()).toEqual(["GPT Work"]);
+      });
+
+      await page.getByRole("button", { name: "Codex Personal" }).click();
+
+      await vi.waitFor(() => {
+        expect(getModelPickerListText()).toContain("Codex Personal");
+        expect(getVisibleModelNames()).toEqual(["GPT Personal"]);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("falls back to the active provider's first model when props.model belongs to another provider (#1982)", async () => {
     const host = document.createElement("div");
     document.body.append(host);
-    const onProviderModelChange = vi.fn();
-    const modelOptionsByProvider = {
-      claudeAgent: [
-        { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
-        { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+    const onInstanceModelChange = vi.fn();
+    const modelOptionsByInstance = new Map<ProviderInstanceId, ReadonlyArray<ModelEsque>>([
+      [
+        "claudeAgent" as ProviderInstanceId,
+        [
+          { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
+          { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
+        ],
       ],
-      codex: [{ slug: "gpt-5-codex", name: "GPT-5 Codex" }],
-      cursor: [],
-      opencode: [],
-    } as const;
+      ["codex" as ProviderInstanceId, [{ slug: "gpt-5-codex", name: "GPT-5 Codex" }]],
+      ["cursor" as ProviderInstanceId, []],
+      ["opencode" as ProviderInstanceId, []],
+    ]);
+    const instanceEntries = sortProviderInstanceEntries(
+      deriveProviderInstanceEntries(TEST_PROVIDERS),
+    );
     const screen = await render(
       <ProviderModelPicker
-        provider="claudeAgent"
+        activeInstanceId={"claudeAgent" as ProviderInstanceId}
         model="gpt-5-codex"
         lockedProvider={null}
-        providers={TEST_PROVIDERS}
-        modelOptionsByProvider={modelOptionsByProvider}
-        onProviderModelChange={onProviderModelChange}
+        instanceEntries={instanceEntries}
+        modelOptionsByInstance={modelOptionsByInstance}
+        onInstanceModelChange={onInstanceModelChange}
       />,
       { container: host },
     );
@@ -464,20 +634,22 @@ describe("ProviderModelPicker", () => {
           subProvider: "GitHub Copilot",
           shortName: "Opus 4.5",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+            ],
+          }),
         },
       ]),
     ];
     const mounted = await mountPicker({
-      provider: "opencode",
+      activeInstanceId: OPENCODE_INSTANCE_ID,
       model: "github-copilot/claude-opus-4.5",
-      lockedProvider: "opencode",
+      lockedProvider: ProviderDriverKind.make("opencode"),
       providers,
     });
 
@@ -502,7 +674,7 @@ describe("ProviderModelPicker", () => {
 
   it("searches models by name in flat list", async () => {
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
       lockedProvider: null,
     });
@@ -532,9 +704,9 @@ describe("ProviderModelPicker", () => {
 
   it("supports arrow-key navigation in the model picker", async () => {
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
-      lockedProvider: "claudeAgent",
+      lockedProvider: ProviderDriverKind.make("claudeAgent"),
     });
 
     try {
@@ -571,7 +743,7 @@ describe("ProviderModelPicker", () => {
 
   it("hides the provider sidebar while searching", async () => {
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
       lockedProvider: null,
     });
@@ -595,7 +767,7 @@ describe("ProviderModelPicker", () => {
 
   it("closes the picker when escape is pressed in search", async () => {
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
       lockedProvider: null,
     });
@@ -623,7 +795,7 @@ describe("ProviderModelPicker", () => {
 
   it("searches models by provider name", async () => {
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
       lockedProvider: null,
     });
@@ -658,13 +830,16 @@ describe("ProviderModelPicker", () => {
           slug: "gpt-5-codex",
           name: "GPT-5 Codex",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: true,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+              booleanDescriptor("fastMode", "Fast Mode"),
+            ],
+          }),
         },
       ]),
       buildOpenCodeProvider([
@@ -673,18 +848,20 @@ describe("ProviderModelPicker", () => {
           name: "Claude Opus 4.7",
           subProvider: "GitHub Copilot",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+            ],
+          }),
         },
       ]),
     ];
     const mounted = await mountPicker({
-      provider: "opencode",
+      activeInstanceId: OPENCODE_INSTANCE_ID,
       model: "github-copilot/claude-opus-4.7",
       lockedProvider: null,
       providers,
@@ -712,13 +889,15 @@ describe("ProviderModelPicker", () => {
           name: "Claude Opus 4.7",
           subProvider: "GitHub Copilot",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: false,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+            ],
+          }),
         },
       ]),
       {
@@ -728,24 +907,23 @@ describe("ProviderModelPicker", () => {
             slug: "claude-opus-4-6",
             name: "Claude Opus 4.6",
             isCustom: false,
-            capabilities: {
-              reasoningEffortLevels: [
-                effort("low"),
-                effort("medium", true),
-                effort("high"),
-                effort("max"),
+            capabilities: createModelCapabilities({
+              optionDescriptors: [
+                selectDescriptor("effort", "Reasoning", [
+                  { id: "low", label: "low" },
+                  { id: "medium", label: "medium", isDefault: true },
+                  { id: "high", label: "high" },
+                  { id: "max", label: "max" },
+                ]),
+                booleanDescriptor("thinking", "Thinking"),
               ],
-              supportsFastMode: false,
-              supportsThinkingToggle: true,
-              contextWindowOptions: [],
-              promptInjectedEffortLevels: [],
-            },
+            }),
           },
         ],
       },
     ];
     const mounted = await mountPicker({
-      provider: "opencode",
+      activeInstanceId: OPENCODE_INSTANCE_ID,
       model: "github-copilot/claude-opus-4.7",
       lockedProvider: null,
       providers,
@@ -770,7 +948,7 @@ describe("ProviderModelPicker", () => {
     localStorage.removeItem("t3code:client-settings:v1");
 
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
       lockedProvider: null,
     });
@@ -815,7 +993,7 @@ describe("ProviderModelPicker", () => {
     localStorage.removeItem("t3code:client-settings:v1");
 
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
       lockedProvider: null,
     });
@@ -855,7 +1033,6 @@ describe("ProviderModelPicker", () => {
     );
 
     const mounted = await mountPicker({
-      provider: "codex",
       model: "gpt-5-codex",
       lockedProvider: null,
     });
@@ -875,9 +1052,9 @@ describe("ProviderModelPicker", () => {
 
   it("dispatches callback with correct provider and model when selected", async () => {
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      activeInstanceId: CLAUDE_INSTANCE_ID,
       model: "claude-opus-4-6",
-      lockedProvider: "claudeAgent",
+      lockedProvider: ProviderDriverKind.make("claudeAgent"),
     });
 
     try {
@@ -909,13 +1086,16 @@ describe("ProviderModelPicker", () => {
           slug: "gpt-5.3-codex",
           name: "GPT-5.3 Codex",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: true,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+              booleanDescriptor("fastMode", "Fast Mode"),
+            ],
+          }),
         },
       ]),
       TEST_PROVIDERS[1]!,
@@ -926,32 +1106,37 @@ describe("ProviderModelPicker", () => {
           slug: "gpt-5.3-codex",
           name: "GPT-5.3 Codex",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: true,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+              booleanDescriptor("fastMode", "Fast Mode"),
+            ],
+          }),
         },
         {
           slug: "gpt-5.3-codex-spark",
           name: "GPT-5.3 Codex Spark",
           isCustom: false,
-          capabilities: {
-            reasoningEffortLevels: [effort("low"), effort("medium", true), effort("high")],
-            supportsFastMode: true,
-            supportsThinkingToggle: false,
-            contextWindowOptions: [],
-            promptInjectedEffortLevels: [],
-          },
+          capabilities: createModelCapabilities({
+            optionDescriptors: [
+              selectDescriptor("reasoningEffort", "Reasoning", [
+                { id: "low", label: "low" },
+                { id: "medium", label: "medium", isDefault: true },
+                { id: "high", label: "high" },
+              ]),
+              booleanDescriptor("fastMode", "Fast Mode"),
+            ],
+          }),
         },
       ]),
       TEST_PROVIDERS[1]!,
     ];
 
     const hidden = await mountPicker({
-      provider: "codex",
       model: "gpt-5.3-codex",
       lockedProvider: null,
       providers: providersWithoutSpark,
@@ -970,7 +1155,6 @@ describe("ProviderModelPicker", () => {
     }
 
     const visible = await mountPicker({
-      provider: "codex",
       model: "gpt-5.3-codex",
       lockedProvider: null,
       providers: providersWithSpark,
@@ -990,7 +1174,7 @@ describe("ProviderModelPicker", () => {
   it("shows disabled providers grayed out in sidebar", async () => {
     const disabledProviders = TEST_PROVIDERS.slice();
     const claudeIndex = disabledProviders.findIndex(
-      (provider) => provider.provider === "claudeAgent",
+      (provider) => provider.instanceId === ProviderInstanceId.make("claudeAgent"),
     );
     if (claudeIndex >= 0) {
       const claudeProvider = disabledProviders[claudeIndex]!;
@@ -1002,7 +1186,6 @@ describe("ProviderModelPicker", () => {
     }
 
     const mounted = await mountPicker({
-      provider: "codex",
       model: "gpt-5-codex",
       lockedProvider: null,
       providers: disabledProviders,
@@ -1024,7 +1207,6 @@ describe("ProviderModelPicker", () => {
 
   it("accepts outline trigger styling", async () => {
     const mounted = await mountPicker({
-      provider: "codex",
       model: "gpt-5-codex",
       lockedProvider: null,
       triggerVariant: "outline",

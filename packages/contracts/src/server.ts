@@ -1,17 +1,24 @@
-import { Effect, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import { ServerAuthDescriptor } from "./auth.ts";
 import {
   IsoDateTime,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { KeybindingRule, ResolvedKeybindingsConfig } from "./keybindings.ts";
+import {
+  KeybindingCommand,
+  KeybindingValue,
+  KeybindingWhen,
+  ResolvedKeybindingsConfig,
+} from "./keybindings.ts";
 import { EditorId } from "./editor.ts";
 import { ModelCapabilities } from "./model.ts";
-import { ProviderKind } from "./orchestration.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerSettings } from "./settings.ts";
 
 const KeybindingsMalformedConfigIssue = Schema.Struct({
@@ -47,6 +54,7 @@ export const ServerProviderAuth = Schema.Struct({
   status: ServerProviderAuthStatus,
   type: Schema.optional(TrimmedNonEmptyString),
   label: Schema.optional(TrimmedNonEmptyString),
+  email: Schema.optional(TrimmedNonEmptyString),
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
@@ -83,8 +91,80 @@ export const ServerProviderSkill = Schema.Struct({
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
+/**
+ * Availability of a configured provider instance from the runtime's POV.
+ *
+ *  - `available` — the build ships this driver and an instance is wired
+ *    up. Default for legacy snapshots produced from the closed
+ *    `ServerSettings.providers` map.
+ *  - `unavailable` — the user's `ServerSettings.providerInstances` (or a
+ *    persisted thread / session binding) references a driver this build
+ *    doesn't ship. Common after rolling back from a fork or PR branch
+ *    that introduced a new driver. The snapshot is preserved so the UI
+ *    can render "missing driver" affordances and so the data round-trips
+ *    when the user moves back to the fork.
+ *
+ * Snapshots with `availability: "unavailable"` MUST set
+ * `installed: false` and `enabled: false`; the runtime refuses turn
+ * starts against them with a structured error.
+ */
+export const ServerProviderAvailability = Schema.Literals(["available", "unavailable"]);
+export type ServerProviderAvailability = typeof ServerProviderAvailability.Type;
+
+export const ServerProviderContinuation = Schema.Struct({
+  groupKey: TrimmedNonEmptyString,
+});
+export type ServerProviderContinuation = typeof ServerProviderContinuation.Type;
+
+export const ServerProviderVersionAdvisoryStatus = Schema.Literals([
+  "unknown",
+  "current",
+  "behind_latest",
+]);
+export type ServerProviderVersionAdvisoryStatus = typeof ServerProviderVersionAdvisoryStatus.Type;
+
+export const ServerProviderVersionAdvisory = Schema.Struct({
+  status: ServerProviderVersionAdvisoryStatus,
+  currentVersion: Schema.NullOr(TrimmedNonEmptyString),
+  latestVersion: Schema.NullOr(TrimmedNonEmptyString),
+  updateCommand: Schema.NullOr(TrimmedNonEmptyString),
+  canUpdate: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  checkedAt: Schema.NullOr(IsoDateTime),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+});
+export type ServerProviderVersionAdvisory = typeof ServerProviderVersionAdvisory.Type;
+
+export const ServerProviderUpdateStatus = Schema.Literals([
+  "idle",
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "unchanged",
+]);
+export type ServerProviderUpdateStatus = typeof ServerProviderUpdateStatus.Type;
+
+export const ServerProviderUpdateState = Schema.Struct({
+  status: ServerProviderUpdateStatus,
+  startedAt: Schema.NullOr(IsoDateTime),
+  finishedAt: Schema.NullOr(IsoDateTime),
+  message: Schema.NullOr(TrimmedNonEmptyString),
+  output: Schema.NullOr(Schema.String.check(Schema.isMaxLength(10_000))),
+});
+export type ServerProviderUpdateState = typeof ServerProviderUpdateState.Type;
+
 export const ServerProvider = Schema.Struct({
-  provider: ProviderKind,
+  // Routing key for the configured instance this snapshot represents. This
+  // is the only stable identity consumers may use for provider routing.
+  instanceId: ProviderInstanceId,
+  // Open driver kind slug that selects the implementation handling this
+  // instance. It is metadata/capability context, not a routing key.
+  driver: ProviderDriverKind,
+  displayName: Schema.optional(TrimmedNonEmptyString),
+  accentColor: Schema.optional(TrimmedNonEmptyString),
+  badgeLabel: Schema.optional(TrimmedNonEmptyString),
+  continuation: Schema.optional(ServerProviderContinuation),
+  showInteractionModeToggle: Schema.optional(Schema.Boolean),
   enabled: Schema.Boolean,
   installed: Schema.Boolean,
   version: Schema.NullOr(TrimmedNonEmptyString),
@@ -92,16 +172,36 @@ export const ServerProvider = Schema.Struct({
   auth: ServerProviderAuth,
   checkedAt: IsoDateTime,
   message: Schema.optional(TrimmedNonEmptyString),
+  // Optional for back-compat: every legacy producer omits this field and
+  // an absent value is interpreted as `"available"` by consumers (see
+  // `isProviderAvailable`). New `ProviderInstanceRegistry` outputs set it
+  // explicitly so the UI can render unavailable shadows from
+  // `ServerSettings.providerInstances`.
+  availability: Schema.optional(ServerProviderAvailability),
+  // Human-readable reason populated when `availability === "unavailable"`.
+  // Surfaces in the UI alongside the missing-driver affordance.
+  unavailableReason: Schema.optional(TrimmedNonEmptyString),
   models: Schema.Array(ServerProviderModel),
   slashCommands: Schema.Array(ServerProviderSlashCommand).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  versionAdvisory: Schema.optionalKey(ServerProviderVersionAdvisory),
+  updateState: Schema.optionalKey(ServerProviderUpdateState),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 
 export const ServerProviders = Schema.Array(ServerProvider);
 export type ServerProviders = typeof ServerProviders.Type;
+
+/**
+ * Treat the optional `availability` as "available" when absent. This is
+ * the rule legacy producers (which omit the field) and new producers
+ * (which set it explicitly) agree on so consumers never have to thread
+ * `?? "available"` defaults through their code paths.
+ */
+export const isProviderAvailable = (snapshot: ServerProvider): boolean =>
+  snapshot.availability !== "unavailable";
 
 export const ServerObservability = Schema.Struct({
   logsDirectoryPath: TrimmedNonEmptyString,
@@ -112,6 +212,135 @@ export const ServerObservability = Schema.Struct({
   otlpMetricsEnabled: Schema.Boolean,
 });
 export type ServerObservability = typeof ServerObservability.Type;
+
+export const ServerTraceDiagnosticsErrorKind = Schema.Literals([
+  "trace-file-not-found",
+  "trace-file-read-failed",
+]);
+export type ServerTraceDiagnosticsErrorKind = typeof ServerTraceDiagnosticsErrorKind.Type;
+
+export const ServerTraceDiagnosticsSpanSummary = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  count: NonNegativeInt,
+  failureCount: NonNegativeInt,
+  totalDurationMs: Schema.Number,
+  averageDurationMs: Schema.Number,
+  maxDurationMs: Schema.Number,
+});
+export type ServerTraceDiagnosticsSpanSummary = typeof ServerTraceDiagnosticsSpanSummary.Type;
+
+export const ServerTraceDiagnosticsFailureSummary = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  cause: TrimmedNonEmptyString,
+  count: NonNegativeInt,
+  lastSeenAt: Schema.DateTimeUtc,
+  traceId: TrimmedNonEmptyString,
+  spanId: TrimmedNonEmptyString,
+});
+export type ServerTraceDiagnosticsFailureSummary = typeof ServerTraceDiagnosticsFailureSummary.Type;
+
+export const ServerTraceDiagnosticsRecentFailure = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  cause: TrimmedNonEmptyString,
+  durationMs: Schema.Number,
+  endedAt: Schema.DateTimeUtc,
+  traceId: TrimmedNonEmptyString,
+  spanId: TrimmedNonEmptyString,
+});
+export type ServerTraceDiagnosticsRecentFailure = typeof ServerTraceDiagnosticsRecentFailure.Type;
+
+export const ServerTraceDiagnosticsSpanOccurrence = Schema.Struct({
+  name: TrimmedNonEmptyString,
+  durationMs: Schema.Number,
+  endedAt: Schema.DateTimeUtc,
+  traceId: TrimmedNonEmptyString,
+  spanId: TrimmedNonEmptyString,
+});
+export type ServerTraceDiagnosticsSpanOccurrence = typeof ServerTraceDiagnosticsSpanOccurrence.Type;
+
+export const ServerTraceDiagnosticsLogEvent = Schema.Struct({
+  spanName: TrimmedNonEmptyString,
+  level: TrimmedNonEmptyString,
+  message: TrimmedNonEmptyString,
+  seenAt: Schema.DateTimeUtc,
+  traceId: TrimmedNonEmptyString,
+  spanId: TrimmedNonEmptyString,
+});
+export type ServerTraceDiagnosticsLogEvent = typeof ServerTraceDiagnosticsLogEvent.Type;
+
+export const ServerTraceDiagnosticsResult = Schema.Struct({
+  traceFilePath: TrimmedNonEmptyString,
+  scannedFilePaths: Schema.Array(TrimmedNonEmptyString),
+  readAt: Schema.DateTimeUtc,
+  recordCount: NonNegativeInt,
+  parseErrorCount: NonNegativeInt,
+  firstSpanAt: Schema.Option(Schema.DateTimeUtc),
+  lastSpanAt: Schema.Option(Schema.DateTimeUtc),
+  failureCount: NonNegativeInt,
+  interruptionCount: NonNegativeInt,
+  slowSpanThresholdMs: NonNegativeInt,
+  slowSpanCount: NonNegativeInt,
+  logLevelCounts: Schema.Record(TrimmedNonEmptyString, NonNegativeInt),
+  topSpansByCount: Schema.Array(ServerTraceDiagnosticsSpanSummary),
+  slowestSpans: Schema.Array(ServerTraceDiagnosticsSpanOccurrence),
+  commonFailures: Schema.Array(ServerTraceDiagnosticsFailureSummary),
+  latestFailures: Schema.Array(ServerTraceDiagnosticsRecentFailure),
+  latestWarningAndErrorLogs: Schema.Array(ServerTraceDiagnosticsLogEvent),
+  partialFailure: Schema.Option(Schema.Boolean),
+  error: Schema.Option(
+    Schema.Struct({
+      kind: ServerTraceDiagnosticsErrorKind,
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type ServerTraceDiagnosticsResult = typeof ServerTraceDiagnosticsResult.Type;
+
+export const ServerProcessSignal = Schema.Literals(["SIGINT", "SIGKILL"]);
+export type ServerProcessSignal = typeof ServerProcessSignal.Type;
+
+export const ServerProcessDiagnosticsEntry = Schema.Struct({
+  pid: PositiveInt,
+  ppid: NonNegativeInt,
+  pgid: Schema.Option(Schema.Int),
+  status: TrimmedNonEmptyString,
+  cpuPercent: Schema.Number,
+  rssBytes: NonNegativeInt,
+  elapsed: TrimmedNonEmptyString,
+  command: TrimmedNonEmptyString,
+  depth: NonNegativeInt,
+  childPids: Schema.Array(PositiveInt),
+});
+export type ServerProcessDiagnosticsEntry = typeof ServerProcessDiagnosticsEntry.Type;
+
+export const ServerProcessDiagnosticsResult = Schema.Struct({
+  serverPid: PositiveInt,
+  readAt: Schema.DateTimeUtc,
+  processCount: NonNegativeInt,
+  totalRssBytes: NonNegativeInt,
+  totalCpuPercent: Schema.Number,
+  processes: Schema.Array(ServerProcessDiagnosticsEntry),
+  error: Schema.Option(
+    Schema.Struct({
+      message: TrimmedNonEmptyString,
+    }),
+  ),
+});
+export type ServerProcessDiagnosticsResult = typeof ServerProcessDiagnosticsResult.Type;
+
+export const ServerSignalProcessInput = Schema.Struct({
+  pid: PositiveInt,
+  signal: ServerProcessSignal,
+});
+export type ServerSignalProcessInput = typeof ServerSignalProcessInput.Type;
+
+export const ServerSignalProcessResult = Schema.Struct({
+  pid: PositiveInt,
+  signal: ServerProcessSignal,
+  signaled: Schema.Boolean,
+  message: Schema.Option(TrimmedNonEmptyString),
+});
+export type ServerSignalProcessResult = typeof ServerSignalProcessResult.Type;
 
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
@@ -127,14 +356,31 @@ export const ServerConfig = Schema.Struct({
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
-export const ServerUpsertKeybindingInput = KeybindingRule;
+const ServerUpsertKeybindingReplaceTarget = Schema.Struct({
+  key: KeybindingValue,
+  command: KeybindingCommand,
+  when: Schema.optional(KeybindingWhen),
+});
+
+export const ServerUpsertKeybindingInput = Schema.Struct({
+  key: KeybindingValue,
+  command: KeybindingCommand,
+  when: Schema.optional(KeybindingWhen),
+  replace: Schema.optional(ServerUpsertKeybindingReplaceTarget),
+});
 export type ServerUpsertKeybindingInput = typeof ServerUpsertKeybindingInput.Type;
+
+export const ServerRemoveKeybindingInput = ServerUpsertKeybindingReplaceTarget;
+export type ServerRemoveKeybindingInput = typeof ServerRemoveKeybindingInput.Type;
 
 export const ServerUpsertKeybindingResult = Schema.Struct({
   keybindings: ResolvedKeybindingsConfig,
   issues: ServerConfigIssues,
 });
 export type ServerUpsertKeybindingResult = typeof ServerUpsertKeybindingResult.Type;
+
+export const ServerRemoveKeybindingResult = ServerUpsertKeybindingResult;
+export type ServerRemoveKeybindingResult = typeof ServerRemoveKeybindingResult.Type;
 
 export const ServerConfigUpdatedPayload = Schema.Struct({
   issues: ServerConfigIssues,
@@ -144,6 +390,7 @@ export const ServerConfigUpdatedPayload = Schema.Struct({
 export type ServerConfigUpdatedPayload = typeof ServerConfigUpdatedPayload.Type;
 
 export const ServerConfigKeybindingsUpdatedPayload = Schema.Struct({
+  keybindings: ResolvedKeybindingsConfig,
   issues: ServerConfigIssues,
 });
 export type ServerConfigKeybindingsUpdatedPayload =
@@ -239,3 +486,22 @@ export const ServerProviderUpdatedPayload = Schema.Struct({
   providers: ServerProviders,
 });
 export type ServerProviderUpdatedPayload = typeof ServerProviderUpdatedPayload.Type;
+
+export const ServerProviderUpdateInput = Schema.Struct({
+  provider: ProviderDriverKind,
+  instanceId: Schema.optionalKey(ProviderInstanceId),
+});
+export type ServerProviderUpdateInput = typeof ServerProviderUpdateInput.Type;
+
+export class ServerProviderUpdateError extends Schema.TaggedErrorClass<ServerProviderUpdateError>()(
+  "ServerProviderUpdateError",
+  {
+    provider: ProviderDriverKind,
+    reason: TrimmedNonEmptyString,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Provider update failed for ${this.provider}: ${this.reason}`;
+  }
+}

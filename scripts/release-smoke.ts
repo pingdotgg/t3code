@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import { execFileSync } from "node:child_process";
 import {
   cpSync,
@@ -11,6 +12,8 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import * as Console from "effect/Console";
+import * as Effect from "effect/Effect";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -21,9 +24,12 @@ const workspaceFiles = [
   "apps/desktop/package.json",
   "apps/web/package.json",
   "apps/marketing/package.json",
+  "oxlint-plugin-t3code/package.json",
   "packages/client-runtime/package.json",
   "packages/contracts/package.json",
   "packages/shared/package.json",
+  "packages/ssh/package.json",
+  "packages/tailscale/package.json",
   "packages/effect-acp/package.json",
   "packages/effect-codex-app-server/package.json",
   "scripts/package.json",
@@ -31,6 +37,17 @@ const workspaceFiles = [
 
 function copyWorkspaceManifestFixture(targetRoot: string): void {
   for (const relativePath of workspaceFiles) {
+    const sourcePath = resolve(repoRoot, relativePath);
+    const destinationPath = resolve(targetRoot, relativePath);
+    mkdirSync(dirname(destinationPath), { recursive: true });
+    cpSync(sourcePath, destinationPath);
+  }
+
+  const packageJson = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")) as {
+    readonly patchedDependencies?: Record<string, string>;
+  };
+
+  for (const relativePath of Object.values(packageJson.patchedDependencies ?? {})) {
     const sourcePath = resolve(repoRoot, relativePath);
     const destinationPath = resolve(targetRoot, relativePath);
     mkdirSync(dirname(destinationPath), { recursive: true });
@@ -184,6 +201,8 @@ try {
     },
   );
 
+  rmSync(resolve(tempRoot, "bun.lock"), { force: true });
+
   execFileSync("bun", ["install", "--ignore-scripts"], {
     cwd: tempRoot,
     stdio: "inherit",
@@ -292,7 +311,7 @@ try {
           fi
 
           found_windows_manifest=true
-          node ${JSON.stringify(resolve(repoRoot, "scripts/merge-update-manifests.ts"))} --platform win \
+          ${JSON.stringify(process.execPath)} ${JSON.stringify(resolve(repoRoot, "scripts/merge-update-manifests.ts"))} --platform win \
             "$arm64_manifest" \
             "$x64_manifest" \
             "$output_manifest"
@@ -374,7 +393,7 @@ try {
     "Windows release smoke unexpectedly removed the x64 builder debug fixture.",
   );
 
-  console.log("Release smoke checks passed.");
+  Effect.runSync(Console.log("Release smoke checks passed."));
 } finally {
   rmSync(tempRoot, { recursive: true, force: true });
 }

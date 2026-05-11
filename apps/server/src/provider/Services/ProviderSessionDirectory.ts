@@ -1,11 +1,13 @@
 import type {
-  ProviderKind,
+  ProviderInstanceId,
+  ProviderDriverKind,
   ProviderSessionRuntimeStatus,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
-import { Option, Context } from "effect";
-import type { Effect } from "effect";
+import * as Option from "effect/Option";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
 
 import type {
   ProviderSessionDirectoryPersistenceError,
@@ -14,7 +16,13 @@ import type {
 
 export interface ProviderRuntimeBinding {
   readonly threadId: ThreadId;
-  readonly provider: ProviderKind;
+  readonly provider: ProviderDriverKind;
+  /**
+   * Routing key for the configured provider instance that owns this
+   * session. The persistence layer promotes legacy null rows before
+   * exposing bindings; runtime callers must not infer this from `provider`.
+   */
+  readonly providerInstanceId?: ProviderInstanceId;
   readonly adapterKey?: string;
   readonly status?: ProviderSessionRuntimeStatus;
   readonly resumeCursor?: unknown | null;
@@ -39,7 +47,7 @@ export interface ProviderSessionDirectoryShape {
 
   readonly getProvider: (
     threadId: ThreadId,
-  ) => Effect.Effect<ProviderKind, ProviderSessionDirectoryReadError>;
+  ) => Effect.Effect<ProviderDriverKind, ProviderSessionDirectoryReadError>;
 
   readonly getBinding: (
     threadId: ThreadId,

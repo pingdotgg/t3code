@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { describe, expect, it } from "vitest";
 
@@ -99,17 +99,15 @@ describe("applyCursorAcpModelSelection", () => {
       applyCursorAcpModelSelection({
         runtime,
         model: "gpt-5.4-medium-fast[reasoning=medium,context=272k]",
-        modelOptions: {
-          reasoning: "xhigh",
-          contextWindow: "1m",
-          fastMode: true,
-        },
+        selections: [
+          { id: "reasoning", value: "xhigh" },
+          { id: "contextWindow", value: "1m" },
+          { id: "fastMode", value: true },
+        ],
         mapError: ({ step, configId, cause }) =>
-          new Error(
-            step === "set-config-option"
-              ? `failed to set config option ${configId}: ${cause.message}`
-              : `failed to set model: ${cause.message}`,
-          ),
+          step === "set-config-option"
+            ? `failed to set config option ${configId}: ${cause.message}`
+            : `failed to set model: ${cause.message}`,
       }),
     );
 

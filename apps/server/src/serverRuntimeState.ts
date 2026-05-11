@@ -1,5 +1,10 @@
-import { Effect, FileSystem, Option, Path, Schema } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
+import { writeFileStringAtomically } from "./atomicWrite.ts";
 import { type ServerConfigShape } from "./config.ts";
 import { formatHostForUrl, isWildcardHost } from "./startupAccess.ts";
 
@@ -29,28 +34,23 @@ const runtimeOriginForConfig = (
 export const makePersistedServerRuntimeState = (input: {
   readonly config: Pick<ServerConfigShape, "host">;
   readonly port: number;
-}): PersistedServerRuntimeState => ({
-  version: 1,
-  pid: process.pid,
-  ...(input.config.host ? { host: input.config.host } : {}),
-  port: input.port,
-  origin: runtimeOriginForConfig(input.config, input.port),
-  startedAt: new Date().toISOString(),
-});
+}): Effect.Effect<PersistedServerRuntimeState> =>
+  Effect.map(DateTime.now, (now) => ({
+    version: 1,
+    pid: process.pid,
+    ...(input.config.host ? { host: input.config.host } : {}),
+    port: input.port,
+    origin: runtimeOriginForConfig(input.config, input.port),
+    startedAt: DateTime.formatIso(now),
+  }));
 
 export const persistServerRuntimeState = (input: {
   readonly path: string;
   readonly state: PersistedServerRuntimeState;
 }) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const pathService = yield* Path.Path;
-    const tempPath = `${input.path}.${process.pid}.${Date.now()}.tmp`;
-    return yield* fs.makeDirectory(pathService.dirname(input.path), { recursive: true }).pipe(
-      Effect.flatMap(() => fs.writeFileString(tempPath, `${JSON.stringify(input.state)}\n`)),
-      Effect.flatMap(() => fs.rename(tempPath, input.path)),
-      Effect.ensuring(fs.remove(tempPath, { force: true }).pipe(Effect.ignore({ log: true }))),
-    );
+  writeFileStringAtomically({
+    filePath: input.path,
+    contents: `${JSON.stringify(input.state)}\n`,
   });
 
 export const clearPersistedServerRuntimeState = (path: string) =>

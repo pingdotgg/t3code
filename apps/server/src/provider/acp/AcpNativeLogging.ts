@@ -1,5 +1,8 @@
-import type { ProviderKind, ThreadId } from "@t3tools/contracts";
-import { Cause, Effect } from "effect";
+import type { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Random from "effect/Random";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 
 import type { EventNdjsonLogger } from "../Layers/EventNdjsonLogger.ts";
@@ -7,19 +10,19 @@ import type { AcpSessionRequestLogEvent, AcpSessionRuntimeOptions } from "./AcpS
 
 function writeNativeAcpLog(input: {
   readonly nativeEventLogger: EventNdjsonLogger | undefined;
-  readonly provider: ProviderKind;
+  readonly provider: ProviderDriverKind;
   readonly threadId: ThreadId;
   readonly kind: "request" | "protocol";
   readonly payload: unknown;
 }): Effect.Effect<void, never> {
   return Effect.gen(function* () {
     if (!input.nativeEventLogger) return;
-    const observedAt = new Date().toISOString();
+    const observedAt = DateTime.formatIso(yield* DateTime.now);
     yield* input.nativeEventLogger.write(
       {
         observedAt,
         event: {
-          id: crypto.randomUUID(),
+          id: yield* Random.nextUUIDv4,
           kind: input.kind,
           provider: input.provider,
           createdAt: observedAt,
@@ -44,7 +47,7 @@ function formatRequestLogPayload(event: AcpSessionRequestLogEvent) {
 
 export function makeAcpNativeLoggers(input: {
   readonly nativeEventLogger: EventNdjsonLogger | undefined;
-  readonly provider: ProviderKind;
+  readonly provider: ProviderDriverKind;
   readonly threadId: ThreadId;
 }): Pick<AcpSessionRuntimeOptions, "requestLogger" | "protocolLogging"> {
   return {

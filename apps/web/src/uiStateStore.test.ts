@@ -4,11 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clearThreadUi,
   hydratePersistedProjectState,
+  markThreadVisited,
   markThreadUnread,
   PERSISTED_STATE_KEY,
   type PersistedUiState,
   persistState,
   reorderProjects,
+  setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
   syncProjects,
@@ -22,11 +24,34 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    defaultAdvertisedEndpointKey: null,
     ...overrides,
   };
 }
 
 describe("uiStateStore pure functions", () => {
+  it("markThreadVisited stores the provided server timestamp", () => {
+    const threadId = ThreadId.make("thread-1");
+    const initialState = makeUiState();
+
+    const next = markThreadVisited(initialState, threadId, "2026-02-25T12:30:00.700Z");
+
+    expect(next.threadLastVisitedAtById[threadId]).toBe("2026-02-25T12:30:00.700Z");
+  });
+
+  it("markThreadVisited does not move visit state backwards under clock skew", () => {
+    const threadId = ThreadId.make("thread-1");
+    const initialState = makeUiState({
+      threadLastVisitedAtById: {
+        [threadId]: "2026-02-25T12:30:00.700Z",
+      },
+    });
+
+    const next = markThreadVisited(initialState, threadId, "2026-02-25T12:30:00.000Z");
+
+    expect(next).toBe(initialState);
+  });
+
   it("markThreadUnread moves lastVisitedAt before completion for a completed thread", () => {
     const threadId = ThreadId.make("thread-1");
     const latestTurnCompletedAt = "2026-02-25T12:30:00.000Z";
@@ -77,6 +102,18 @@ describe("uiStateStore pure functions", () => {
     const next = reorderProjects(initialState, [ProjectId.make("missing")], [project2]);
 
     expect(next).toBe(initialState);
+  });
+
+  it("setDefaultAdvertisedEndpointKey stores endpoint preference by stable key", () => {
+    const initialState = makeUiState();
+
+    const next = setDefaultAdvertisedEndpointKey(initialState, "desktop-core:lan:http");
+
+    expect(next.defaultAdvertisedEndpointKey).toBe("desktop-core:lan:http");
+    expect(setDefaultAdvertisedEndpointKey(next, "desktop-core:lan:http")).toBe(next);
+    expect(setDefaultAdvertisedEndpointKey(next, "")).toMatchObject({
+      defaultAdvertisedEndpointKey: null,
+    });
   });
 
   it("reorderProjects moves all member keys of a multi-member group together", () => {
@@ -408,27 +445,27 @@ describe("uiStateStore pure functions", () => {
   });
 });
 
-describe("uiStateStore persistence round-trip", () => {
-  function createLocalStorageStub(): Storage {
-    const store = new Map<string, string>();
-    return {
-      clear: () => {
-        store.clear();
-      },
-      getItem: (key) => store.get(key) ?? null,
-      key: (index) => [...store.keys()][index] ?? null,
-      get length() {
-        return store.size;
-      },
-      removeItem: (key) => {
-        store.delete(key);
-      },
-      setItem: (key, value) => {
-        store.set(key, value);
-      },
-    };
-  }
+function createLocalStorageStub(): Storage {
+  const store = new Map<string, string>();
+  return {
+    clear: () => {
+      store.clear();
+    },
+    getItem: (key) => store.get(key) ?? null,
+    key: (index) => [...store.keys()][index] ?? null,
+    get length() {
+      return store.size;
+    },
+    removeItem: (key) => {
+      store.delete(key);
+    },
+    setItem: (key, value) => {
+      store.set(key, value);
+    },
+  };
+}
 
+describe("uiStateStore persistence round-trip", () => {
   let localStorageStub: Storage;
 
   beforeEach(() => {
@@ -529,6 +566,17 @@ describe("uiStateStore persistence round-trip", () => {
     const rehydrated = syncProjects(makeUiState(), [projectA, projectB, projectC]);
 
     expect(rehydrated.projectOrder).toEqual([projectC.key, projectA.key, projectB.key]);
+  });
+
+  it("persists the default advertised endpoint preference", () => {
+    const state = setDefaultAdvertisedEndpointKey(makeUiState(), "desktop-core:lan:http");
+
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.defaultAdvertisedEndpointKey).toBe("desktop-core:lan:http");
   });
 
   it("preserves expand state across restart when project's logical key changes", () => {

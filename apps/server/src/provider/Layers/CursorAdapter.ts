@@ -3,44 +3,44 @@
  *
  * @module CursorAdapterLive
  */
-import * as nodePath from "node:path";
 
 import {
   ApprovalRequestId,
-  type CursorModelOptions,
+  type CursorSettings,
+  type ProviderOptionSelection,
   EventId,
   type ProviderApprovalDecision,
   type ProviderInteractionMode,
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderUserInputAnswers,
+  ProviderDriverKind,
+  ProviderInstanceId,
   RuntimeRequestId,
   type RuntimeMode,
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import {
-  DateTime,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  FileSystem,
-  Layer,
-  Option,
-  PubSub,
-  Random,
-  Scope,
-  Semaphore,
-  Stream,
-  SynchronizedRef,
-} from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as PubSub from "effect/PubSub";
+import * as Random from "effect/Random";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import * as SynchronizedRef from "effect/SynchronizedRef";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
-import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -72,19 +72,43 @@ import {
   extractPlanMarkdown,
   extractTodosAsPlan,
 } from "../acp/CursorAcpExtension.ts";
-import { CursorAdapter, type CursorAdapterShape } from "../Services/CursorAdapter.ts";
+import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
 import { resolveCursorAcpBaseModelId } from "./CursorProvider.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
+const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJsonString);
 
-const PROVIDER = "cursor" as const;
+const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_RESUME_VERSION = 1 as const;
 const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
 const ACP_APPROVAL_MODE_ALIASES = ["ask"];
 
+function encodeJsonStringForDiagnostics(input: unknown): string | undefined {
+  const result = encodeUnknownJsonStringExit(input);
+  return Exit.isSuccess(result) ? result.value : undefined;
+}
+
 export interface CursorAdapterLiveOptions {
+  readonly environment?: NodeJS.ProcessEnv;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
+  /**
+   * Selections are honored when `modelSelection.instanceId` matches this value.
+   * Defaults to the legacy built-in instance id (`cursor`).
+   */
+  readonly instanceId?: typeof ProviderInstanceId.Type;
+  /**
+   * Optional per-session settings resolver. When provided the adapter yields
+   * this effect at the start of every session and uses the result instead of
+   * the `cursorSettings` captured at construction.
+   *
+   * Production instances bind settings to the instance scope (the hydration
+   * layer rebuilds the adapter on config change) and leave this undefined.
+   * Test suites that mutate `ServerSettingsService` mid-flight — e.g. to
+   * swap `binaryPath` to a mock ACP wrapper — pass a resolver that reads
+   * the latest snapshot so the closure isn't stale.
+   */
+  readonly resolveSettings?: Effect.Effect<CursorSettings>;
 }
 
 interface PendingApproval {
@@ -222,7 +246,7 @@ function applyRequestedSessionConfiguration<E>(input: {
   readonly modelSelection:
     | {
         readonly model: string;
-        readonly options?: CursorModelOptions | null | undefined;
+        readonly options?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
       }
     | undefined;
   readonly mapError: (context: {
@@ -235,7 +259,7 @@ function applyRequestedSessionConfiguration<E>(input: {
       yield* applyCursorAcpModelSelection({
         runtime: input.runtime,
         model: input.modelSelection.model,
-        modelOptions: input.modelSelection.options,
+        selections: input.modelSelection.options,
         mapError: ({ cause }) =>
           input.mapError({
             cause,
@@ -280,12 +304,16 @@ function selectAutoApprovedPermissionOption(
   return undefined;
 }
 
-function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
+export function makeCursorAdapter(
+  cursorSettings: CursorSettings,
+  options?: CursorAdapterLiveOptions,
+) {
   return Effect.gen(function* () {
+    const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("cursor");
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const serverConfig = yield* Effect.service(ServerConfig);
-    const serverSettingsService = yield* ServerSettingsService;
     const nativeEventLogger =
       options?.nativeEventLogger ??
       (options?.nativeEventLogPath !== undefined
@@ -336,12 +364,12 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
     ) =>
       Effect.gen(function* () {
         if (!nativeEventLogger) return;
-        const observedAt = new Date().toISOString();
+        const observedAt = yield* nowIso;
         yield* nativeEventLogger.write(
           {
             observedAt,
             event: {
-              id: crypto.randomUUID(),
+              id: yield* Random.nextUUIDv4,
               kind: "notification",
               provider: PROVIDER,
               createdAt: observedAt,
@@ -368,7 +396,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
       method: string,
     ) =>
       Effect.gen(function* () {
-        const fingerprint = `${ctx.activeTurnId ?? "no-turn"}:${JSON.stringify(payload)}`;
+        const fingerprint = `${ctx.activeTurnId ?? "no-turn"}:${encodeJsonStringForDiagnostics(payload) ?? "[unserializable payload]"}`;
         if (ctx.lastPlanFingerprint === fingerprint) {
           return;
         }
@@ -438,26 +466,13 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
             });
           }
 
-          const cwd = nodePath.resolve(input.cwd.trim());
+          const cwd = path.resolve(input.cwd.trim());
           const cursorModelSelection =
-            input.modelSelection?.provider === "cursor" ? input.modelSelection : undefined;
+            input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
           const existing = sessions.get(input.threadId);
           if (existing && !existing.stopped) {
             yield* stopSessionInternal(existing);
           }
-
-          const cursorSettings = yield* serverSettingsService.getSettings.pipe(
-            Effect.map((settings) => settings.providers.cursor),
-            Effect.mapError(
-              (error) =>
-                new ProviderAdapterProcessError({
-                  provider: PROVIDER,
-                  threadId: input.threadId,
-                  detail: error.message,
-                  cause: error,
-                }),
-            ),
-          );
 
           const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
           const pendingUserInputs = new Map<ApprovalRequestId, PendingUserInput>();
@@ -475,8 +490,21 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
             threadId: input.threadId,
           });
 
+          // Resolve the CursorSettings used to spawn the ACP child. Production
+          // leaves `options.resolveSettings` undefined so we use the value
+          // captured at adapter construction — per-instance isolation is
+          // enforced by the hydration layer rebuilding this adapter whenever
+          // its config changes. Tests set `resolveSettings` to pull the latest
+          // snapshot from `ServerSettingsService` so that mid-suite
+          // `updateSettings({ providers: { cursor: { binaryPath } } })` calls
+          // actually take effect when the next session spawns.
+          const effectiveCursorSettings = options?.resolveSettings
+            ? yield* options.resolveSettings
+            : cursorSettings;
+
           const acp = yield* makeCursorAcpRuntime({
-            cursorSettings,
+            cursorSettings: effectiveCursorSettings,
+            ...(options?.environment ? { environment: options.environment } : {}),
             childProcessSpawner,
             cwd,
             ...(resumeSessionId ? { resumeSessionId } : {}),
@@ -616,7 +644,10 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
                     turnId: ctx?.activeTurnId,
                     requestId: runtimeRequestId,
                     permissionRequest,
-                    detail: permissionRequest.detail ?? JSON.stringify(params).slice(0, 2000),
+                    detail:
+                      permissionRequest.detail ??
+                      encodeJsonStringForDiagnostics(params)?.slice(0, 2000) ??
+                      "[unserializable params]",
                     args: params,
                     source: "acp.jsonrpc",
                     method: "session/request_permission",
@@ -666,6 +697,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
           const now = yield* nowIso;
           const session: ProviderSession = {
             provider: PROVIDER,
+            providerInstanceId: boundInstanceId,
             status: "ready",
             runtimeMode: input.runtimeMode,
             cwd,
@@ -815,7 +847,7 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
         const ctx = yield* requireSession(input.threadId);
         const turnId = TurnId.make(crypto.randomUUID());
         const turnModelSelection =
-          input.modelSelection?.provider === "cursor" ? input.modelSelection : undefined;
+          input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
         const model = turnModelSelection?.model ?? ctx.session.model;
         const resolvedModel = resolveCursorAcpBaseModelId(model);
         yield* applyRequestedSessionConfiguration({
@@ -1048,10 +1080,4 @@ function makeCursorAdapter(options?: CursorAdapterLiveOptions) {
       streamEvents,
     } satisfies CursorAdapterShape;
   });
-}
-
-export const CursorAdapterLive = Layer.effect(CursorAdapter, makeCursorAdapter());
-
-export function makeCursorAdapterLive(opts?: CursorAdapterLiveOptions) {
-  return Layer.effect(CursorAdapter, makeCursorAdapter(opts));
 }

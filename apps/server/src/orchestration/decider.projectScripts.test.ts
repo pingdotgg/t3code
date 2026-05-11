@@ -5,9 +5,11 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
+import { createModelSelection } from "@t3tools/shared/model";
 import { describe, expect, it } from "vitest";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 
 import { decideOrchestrationCommand } from "./decider.ts";
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
@@ -18,7 +20,7 @@ const asMessageId = (value: string): MessageId => MessageId.make(value);
 
 describe("decider project scripts", () => {
   it("emits empty scripts on project.create", async () => {
-    const now = new Date().toISOString();
+    const now = "2026-01-01T00:00:00.000Z";
     const readModel = createEmptyReadModel(now);
 
     const result = await Effect.runPromise(
@@ -41,7 +43,7 @@ describe("decider project scripts", () => {
   });
 
   it("propagates scripts in project.meta.update payload", async () => {
-    const now = new Date().toISOString();
+    const now = "2026-01-01T00:00:00.000Z";
     const initial = createEmptyReadModel(now);
     const readModel = await Effect.runPromise(
       projectEvent(initial, {
@@ -95,7 +97,7 @@ describe("decider project scripts", () => {
   });
 
   it("emits user message and turn-start-requested events for thread.turn.start", async () => {
-    const now = new Date().toISOString();
+    const now = "2026-01-01T00:00:00.000Z";
     const initial = createEmptyReadModel(now);
     const withProject = await Effect.runPromise(
       projectEvent(initial, {
@@ -137,7 +139,7 @@ describe("decider project scripts", () => {
           projectId: asProjectId("project-1"),
           title: "Thread",
           modelSelection: {
-            provider: "codex",
+            instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -162,14 +164,10 @@ describe("decider project scripts", () => {
             text: "hello",
             attachments: [],
           },
-          modelSelection: {
-            provider: "codex",
-            model: "gpt-5.3-codex",
-            options: {
-              reasoningEffort: "high",
-              fastMode: true,
-            },
-          },
+          modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
+            { id: "reasoningEffort", value: "high" },
+            { id: "fastMode", value: true },
+          ]),
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
           runtimeMode: "approval-required",
           createdAt: now,
@@ -191,20 +189,16 @@ describe("decider project scripts", () => {
     expect(turnStartEvent.payload).toMatchObject({
       threadId: ThreadId.make("thread-1"),
       messageId: asMessageId("message-user-1"),
-      modelSelection: {
-        provider: "codex",
-        model: "gpt-5.3-codex",
-        options: {
-          reasoningEffort: "high",
-          fastMode: true,
-        },
-      },
+      modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
+        { id: "reasoningEffort", value: "high" },
+        { id: "fastMode", value: true },
+      ]),
       runtimeMode: "approval-required",
     });
   });
 
   it("emits thread.runtime-mode-set from thread.runtime-mode.set", async () => {
-    const now = new Date().toISOString();
+    const now = "2026-01-01T00:00:00.000Z";
     const initial = createEmptyReadModel(now);
     const withProject = await Effect.runPromise(
       projectEvent(initial, {
@@ -246,7 +240,7 @@ describe("decider project scripts", () => {
           projectId: asProjectId("project-1"),
           title: "Thread",
           modelSelection: {
-            provider: "codex",
+            instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -286,7 +280,7 @@ describe("decider project scripts", () => {
   });
 
   it("emits thread.interaction-mode-set from thread.interaction-mode.set", async () => {
-    const now = new Date().toISOString();
+    const now = "2026-01-01T00:00:00.000Z";
     const initial = createEmptyReadModel(now);
     const withProject = await Effect.runPromise(
       projectEvent(initial, {
@@ -328,7 +322,7 @@ describe("decider project scripts", () => {
           projectId: asProjectId("project-1"),
           title: "Thread",
           modelSelection: {
-            provider: "codex",
+            instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
