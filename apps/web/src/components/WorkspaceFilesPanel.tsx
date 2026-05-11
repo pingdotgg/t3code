@@ -60,6 +60,7 @@ import {
 } from "../lib/projectExplorerEntries";
 import {
   invalidateProjectFileForEditor,
+  loadProjectFileForEditor,
   prefetchProjectFileForEditor,
   storeProjectFileForEditor,
 } from "../lib/projectFileReadCache";
@@ -553,6 +554,34 @@ export function WorkspaceFilesPanel({
       });
     },
     [composerRef],
+  );
+
+  const addWorkspaceFileToChatContext = useCallback(
+    async (filePath: string) => {
+      if (!workspaceRoot) {
+        return;
+      }
+      try {
+        const result = await loadProjectFileForEditor({
+          environmentId,
+          cwd: workspaceRoot,
+          relativePath: filePath,
+        });
+        addEditorCodeContext({
+          filePath,
+          lineStart: 1,
+          lineEnd: 1,
+          text: result.contents,
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to attach file",
+          description: error instanceof Error ? error.message : "Unable to read file contents.",
+        });
+      }
+    },
+    [addEditorCodeContext, environmentId, workspaceRoot],
   );
 
   const openWorkspaceFileInEditor = useCallback(
@@ -1437,7 +1466,7 @@ export function WorkspaceFilesPanel({
                                     className="mt-0.5 size-3.5 shrink-0 text-muted-foreground/70"
                                   />
                                   <span className="min-w-0 flex-1">
-                                    <span className="text-code-compact block truncate font-mono text-muted-foreground/90 group-hover:text-foreground/90">
+                                    <span className="text-code-compact block truncate text-muted-foreground/90 group-hover:text-foreground/90">
                                       {resolveEditorFileLabel(entry.path)}
                                     </span>
                                     {parentDirectoryLabel ? (
@@ -1490,6 +1519,7 @@ export function WorkspaceFilesPanel({
                             requestedRootCreate={requestedRootCreate}
                             resolvedTheme={resolvedTheme}
                             selectedFilePath={activeEditorTarget?.filePath ?? null}
+                            onAddFileToChatContext={addWorkspaceFileToChatContext}
                             onCreateEntry={createWorkspaceEntry}
                             onRenameEntry={renameWorkspaceEntry}
                             onDeleteEntry={deleteWorkspaceEntry}

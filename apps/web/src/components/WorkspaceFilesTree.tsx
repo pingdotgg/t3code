@@ -67,6 +67,7 @@ interface WorkspaceFilesTreeProps {
   requestedRootCreate?: { nonce: number; kind: EditableProjectEntryKind } | null;
   requestedCollapseAllNonce?: number;
   onSelectFile: (filePath: string) => void;
+  onAddFileToChatContext?: (filePath: string) => void | Promise<void>;
   onCreateEntry: (input: {
     kind: EditableProjectEntryKind;
     relativePath: string;
@@ -369,6 +370,7 @@ export const WorkspaceFilesTree = memo(function WorkspaceFilesTree(props: Worksp
             ]
           : [
               { id: "open", label: "Open" },
+              { id: "add-to-chat", label: "Add to Chat" },
               { id: "open-external", label: "Open in External Editor" },
               { id: "rename", label: "Rename" },
               { id: "delete", label: "Delete", destructive: true },
@@ -384,6 +386,11 @@ export const WorkspaceFilesTree = memo(function WorkspaceFilesTree(props: Worksp
       switch (action) {
         case "open":
           props.onSelectFile(entry.path);
+          break;
+        case "add-to-chat":
+          if (entry.kind === "file") {
+            await props.onAddFileToChatContext?.(entry.path);
+          }
           break;
         case "new-file":
           openInlineCreate("file", entry.path);
@@ -630,7 +637,7 @@ const WorkspaceDirectoryNode = memo(function WorkspaceDirectoryNode(props: {
         <ChevronRightIcon
           aria-hidden="true"
           className={cn(
-            "size-2.5 shrink-0 fill-muted-foreground/70 transition-transform group-hover:fill-foreground/80",
+            "size-2 shrink-0 fill-muted-foreground/70 transition-transform group-hover:fill-foreground/80",
             props.expanded && "rotate-90",
           )}
         />
@@ -639,7 +646,7 @@ const WorkspaceDirectoryNode = memo(function WorkspaceDirectoryNode(props: {
         ) : (
           <FolderClosedIcon className="size-3.5 shrink-0 fill-muted-foreground/75" />
         )}
-        <span className="text-code-compact truncate font-mono text-muted-foreground/90 group-hover:text-foreground/90">
+        <span className="text-code-compact truncate text-muted-foreground/90 group-hover:text-foreground/90">
           {basename(props.entry.path)}
         </span>
       </button>
@@ -716,7 +723,7 @@ const WorkspaceFileNode = memo(function WorkspaceFileNode(props: {
         theme={props.resolvedTheme}
         className="size-3.5 text-muted-foreground/70"
       />
-      <span className="text-code-compact truncate font-mono text-muted-foreground/80 group-hover:text-foreground/90">
+      <span className="text-code-compact truncate text-muted-foreground/80 group-hover:text-foreground/90">
         {basename(props.entry.path)}
       </span>
     </button>
@@ -750,7 +757,7 @@ const WorkspaceInlineEditRow = memo(function WorkspaceInlineEditRow(props: {
         autoFocus
         value={props.value}
         disabled={props.submitting}
-        className="text-code-compact h-6 min-w-0 flex-1 rounded border border-border bg-background px-2 font-mono text-foreground outline-none ring-0 focus:border-ring"
+        className="text-code-compact h-6 min-w-0 flex-1 rounded border border-border bg-background px-2 text-foreground outline-none ring-0 focus:border-ring"
         onChange={(event) => {
           submitAttemptedRef.current = false;
           props.onChange(event.currentTarget.value);
