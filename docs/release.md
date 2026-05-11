@@ -51,7 +51,7 @@ Optional GitHub Actions variables:
 
 Required Vercel domains:
 
-- `app.t3.codes`: the stable router domain users open.
+- `app.t3.codes`: the router domain users open, updated by stable releases.
 - `latest.app.t3.codes`: channel alias updated by stable releases.
 - `nightly.app.t3.codes`: channel alias updated by nightly releases.
 
@@ -62,11 +62,13 @@ visiting `/__t3code/channel?channel=latest` or
 the matching channel alias.
 
 The release deploy job rewrites release package versions before upload so the
-hosted app's About panel renders the release version. It also passes
-`VITE_HOSTED_APP_CHANNEL=latest|nightly`, which renders the hosted update track
-selector in the About panel. Changing the selector navigates through
-`/__t3code/channel` on the router domain so the user's channel cookie is updated
-before redirecting to the hosted app root.
+hosted app's About panel renders the release version. Stable deploys alias the
+same deployment to both the `latest` channel and the router domain so the router
+rules stay current. Nightly deploys only alias the `nightly` channel. The job
+also passes `VITE_HOSTED_APP_CHANNEL=latest|nightly`, which renders the hosted
+update track selector in the About panel. Changing the selector navigates
+through `/__t3code/channel` on the router domain so the user's channel cookie is
+updated before redirecting to the hosted app root.
 
 One-time Vercel dashboard setup:
 
@@ -75,9 +77,9 @@ One-time Vercel dashboard setup:
 3. Disable automatic Git deployments in the dashboard if desired; the committed
    `vercel.ts` setting is the source-of-truth, but disconnecting Git in the
    dashboard is also safe.
-4. Promote or alias one deployment containing the router rules in `apps/web/vercel.ts` to
-   `app.t3.codes` once. Future release jobs should only update the channel
-   aliases.
+4. Run one stable release deployment, or manually alias the current stable
+   deployment, so `app.t3.codes` points at a deployment containing the router
+   rules in `apps/web/vercel.ts`. Future stable releases keep this alias current.
 
 ## Nightly builds
 
