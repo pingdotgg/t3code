@@ -1,9 +1,14 @@
 import * as OS from "node:os";
 
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { runProcess } from "../../processRunner.ts";
+import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 
 interface ResolveServerEnvironmentLabelInput {
   readonly cwdBaseName: string;
@@ -11,12 +16,82 @@ interface ResolveServerEnvironmentLabelInput {
   readonly hostname?: string | null;
 }
 
-function normalizeLabel(value: string | null | undefined): string | null {
-  const trimmed = value?.trim();
-  return trimmed && trimmed.length > 0 ? trimmed : null;
+interface ServerEnvironmentLabelCommandResult {
+  readonly stdout: string;
+  readonly exitCode: number;
 }
 
-function parseMachineInfoValue(raw: string, key: string): string | null {
+interface ServerEnvironmentLabelCommandRunnerShape {
+  readonly run: (
+    command: string,
+    args: readonly string[],
+  ) => Effect.Effect<ServerEnvironmentLabelCommandResult, ServerEnvironmentLabelCommandError>;
+}
+
+export class ServerEnvironmentLabelCommandError extends Schema.TaggedErrorClass<ServerEnvironmentLabelCommandError>()(
+  "ServerEnvironmentLabelCommandError",
+  {
+    command: Schema.String,
+    args: Schema.Array(Schema.String),
+    message: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {}
+
+export class ServerEnvironmentLabelCommandRunner extends Context.Service<
+  ServerEnvironmentLabelCommandRunner,
+  ServerEnvironmentLabelCommandRunnerShape
+>()("t3/environment/Layers/ServerEnvironmentLabel/CommandRunner") {}
+
+export const ServerEnvironmentLabelCommandRunnerLive = Layer.effect(
+  ServerEnvironmentLabelCommandRunner,
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+    return ServerEnvironmentLabelCommandRunner.of({
+      run: (command, args) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const child = yield* spawner.spawn(
+              ChildProcess.make(command, [...args], {
+                shell: process.platform === "win32",
+              }),
+            );
+            const [stdout, , exitCode] = yield* Effect.all(
+              [
+                collectUint8StreamText({ stream: child.stdout }),
+                collectUint8StreamText({ stream: child.stderr }),
+                child.exitCode,
+              ],
+              { concurrency: "unbounded" },
+            );
+
+            return {
+              stdout: stdout.text,
+              exitCode: Number(exitCode),
+            };
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerEnvironmentLabelCommandError({
+                  command,
+                  args: [...args],
+                  message: `Failed to run friendly host label command: ${command}.`,
+                  cause,
+                }),
+            ),
+          ),
+        ),
+    });
+  }),
+);
+
+function normalizeLabel(value: string | null | undefined): Option.Option<string> {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? Option.some(trimmed) : Option.none();
+}
+
+function parseMachineInfoValue(raw: string, key: string): Option.Option<string> {
   for (const line of raw.split(/\r?\n/g)) {
     const trimmed = line.trim();
     if (trimmed.length === 0 || trimmed.startsWith("#") || !trimmed.startsWith(`${key}=`)) {
@@ -31,7 +106,7 @@ function parseMachineInfoValue(raw: string, key: string): string | null {
     }
     return normalizeLabel(value);
   }
-  return null;
+  return Option.none();
 }
 
 const readLinuxMachineInfo = Effect.fn("readLinuxMachineInfo")(function* () {
@@ -40,31 +115,26 @@ const readLinuxMachineInfo = Effect.fn("readLinuxMachineInfo")(function* () {
     .exists("/etc/machine-info")
     .pipe(Effect.orElseSucceed(() => false));
   if (!exists) {
-    return null;
+    return Option.none();
   }
 
-  return yield* fileSystem
-    .readFileString("/etc/machine-info")
-    .pipe(Effect.orElseSucceed(() => null));
+  const raw = yield* fileSystem.readFileString("/etc/machine-info").pipe(Effect.option);
+
+  return Option.flatMap(raw, normalizeLabel);
 });
 
 const runFriendlyLabelCommand = Effect.fn("runFriendlyLabelCommand")(function* (
   command: string,
   args: readonly string[],
 ) {
-  const result = yield* Effect.tryPromise({
-    try: () =>
-      runProcess(command, args, {
-        allowNonZeroExit: true,
-      }),
-    catch: () => null,
-  }).pipe(Effect.orElseSucceed(() => null));
+  const commandRunner = yield* ServerEnvironmentLabelCommandRunner;
+  const result = yield* commandRunner.run(command, args).pipe(Effect.option);
 
-  if (!result || result.code !== 0) {
-    return null;
+  if (Option.isNone(result) || result.value.exitCode !== 0) {
+    return Option.none();
   }
 
-  return normalizeLabel(result.stdout);
+  return normalizeLabel(result.value.stdout);
 });
 
 const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function* (
@@ -75,10 +145,10 @@ const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function*
   }
 
   if (platform === "linux") {
-    const machineInfo = normalizeLabel(yield* readLinuxMachineInfo());
-    if (machineInfo) {
-      const prettyHostname = parseMachineInfoValue(machineInfo, "PRETTY_HOSTNAME");
-      if (prettyHostname) {
+    const machineInfo = yield* readLinuxMachineInfo();
+    if (Option.isSome(machineInfo)) {
+      const prettyHostname = parseMachineInfoValue(machineInfo.value, "PRETTY_HOSTNAME");
+      if (Option.isSome(prettyHostname)) {
         return prettyHostname;
       }
     }
@@ -86,7 +156,7 @@ const resolveFriendlyHostLabel = Effect.fn("resolveFriendlyHostLabel")(function*
     return yield* runFriendlyLabelCommand("hostnamectl", ["--pretty"]);
   }
 
-  return null;
+  return Option.none();
 });
 
 export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironmentLabel")(function* (
@@ -94,14 +164,14 @@ export const resolveServerEnvironmentLabel = Effect.fn("resolveServerEnvironment
 ) {
   const platform = input.platform ?? process.platform;
   const friendlyHostLabel = yield* resolveFriendlyHostLabel(platform);
-  if (friendlyHostLabel) {
-    return friendlyHostLabel;
+  if (Option.isSome(friendlyHostLabel)) {
+    return friendlyHostLabel.value;
   }
 
   const hostname = normalizeLabel(input.hostname ?? OS.hostname());
-  if (hostname) {
-    return hostname;
+  if (Option.isSome(hostname)) {
+    return hostname.value;
   }
 
-  return normalizeLabel(input.cwdBaseName) ?? "T3 environment";
+  return Option.getOrElse(normalizeLabel(input.cwdBaseName), () => "T3 environment");
 });

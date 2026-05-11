@@ -139,7 +139,7 @@ describe("ssh command", () => {
               username: "julius",
               port: 2222,
             },
-            { timeoutMs: 1 },
+            { timeout: Duration.millis(1) },
           ),
         ),
       );

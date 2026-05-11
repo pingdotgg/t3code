@@ -8,7 +8,10 @@ import * as Random from "effect/Random";
 import { ServerConfig } from "../../config.ts";
 import { ServerEnvironment, type ServerEnvironmentShape } from "../Services/ServerEnvironment.ts";
 import packageJson from "../../../package.json" with { type: "json" };
-import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
+import {
+  ServerEnvironmentLabelCommandRunnerLive,
+  resolveServerEnvironmentLabel,
+} from "./ServerEnvironmentLabel.ts";
 
 function platformOs(): ExecutionEnvironmentDescriptor["platform"]["os"] {
   switch (process.platform) {
@@ -93,4 +96,6 @@ export const makeServerEnvironment = Effect.fn("makeServerEnvironment")(function
   } satisfies ServerEnvironmentShape;
 });
 
-export const ServerEnvironmentLive = Layer.effect(ServerEnvironment, makeServerEnvironment());
+export const ServerEnvironmentLive = Layer.effect(ServerEnvironment, makeServerEnvironment()).pipe(
+  Layer.provide(ServerEnvironmentLabelCommandRunnerLive),
+);

@@ -1,21 +1,43 @@
-import { afterEach, describe, expect, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import { vi } from "vitest";
+import * as Layer from "effect/Layer";
 
-vi.mock("../../processRunner.ts", () => ({
-  runProcess: vi.fn(),
-}));
-
-import { runProcess } from "../../processRunner.ts";
-import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
-
-const mockedRunProcess = vi.mocked(runProcess);
+import {
+  ServerEnvironmentLabelCommandError,
+  ServerEnvironmentLabelCommandRunner,
+  resolveServerEnvironmentLabel,
+} from "./ServerEnvironmentLabel.ts";
 const NoopFileSystemLayer = FileSystem.layerNoop({});
+const NoopCommandRunnerLayer = Layer.mock(ServerEnvironmentLabelCommandRunner)({});
 
-afterEach(() => {
-  mockedRunProcess.mockReset();
-});
+interface CommandCall {
+  readonly command: string;
+  readonly args: readonly string[];
+}
+
+function commandRunnerLayer(input: {
+  readonly calls?: CommandCall[];
+  readonly run: (
+    command: string,
+    args: readonly string[],
+  ) => Effect.Effect<
+    { readonly stdout: string; readonly exitCode: number },
+    ServerEnvironmentLabelCommandError
+  >;
+}) {
+  return Layer.mock(ServerEnvironmentLabelCommandRunner)({
+    run: (command, args) =>
+      Effect.gen(function* () {
+        input.calls?.push({ command, args });
+        return yield* input.run(command, args);
+      }),
+  });
+}
+
+function testLayer(commandLayer = NoopCommandRunnerLayer) {
+  return Layer.merge(NoopFileSystemLayer, commandLayer);
+}
 
 describe("resolveServerEnvironmentLabel", () => {
   it.effect("uses hostname fallback regardless of launch mode", () =>
@@ -24,34 +46,33 @@ describe("resolveServerEnvironmentLabel", () => {
         cwdBaseName: "t3code",
         platform: "win32",
         hostname: "macbook-pro",
-      }).pipe(Effect.provide(NoopFileSystemLayer));
+      }).pipe(Effect.provide(testLayer()));
 
-      expect(result).toBe("macbook-pro");
+      assert.equal(result, "macbook-pro");
     }),
   );
 
   it.effect("prefers the macOS ComputerName", () =>
     Effect.gen(function* () {
-      mockedRunProcess.mockResolvedValueOnce({
-        stdout: " Julius's MacBook Pro \n",
-        stderr: "",
-        code: 0,
-        signal: null,
-        timedOut: false,
-      });
+      const calls: CommandCall[] = [];
 
       const result = yield* resolveServerEnvironmentLabel({
         cwdBaseName: "t3code",
         platform: "darwin",
         hostname: "macbook-pro",
-      }).pipe(Effect.provide(NoopFileSystemLayer));
-
-      expect(result).toBe("Julius's MacBook Pro");
-      expect(mockedRunProcess).toHaveBeenCalledWith(
-        "scutil",
-        ["--get", "ComputerName"],
-        expect.objectContaining({ allowNonZeroExit: true }),
+      }).pipe(
+        Effect.provide(
+          testLayer(
+            commandRunnerLayer({
+              calls,
+              run: () => Effect.succeed({ stdout: " Julius's MacBook Pro \n", exitCode: 0 }),
+            }),
+          ),
+        ),
       );
+
+      assert.equal(result, "Julius's MacBook Pro");
+      assert.deepEqual(calls, [{ command: "scutil", args: ["--get", "ComputerName"] }]);
     }),
   );
 
@@ -63,43 +84,44 @@ describe("resolveServerEnvironmentLabel", () => {
         hostname: "buildbox",
       }).pipe(
         Effect.provide(
-          FileSystem.layerNoop({
-            exists: (path) => Effect.succeed(path === "/etc/machine-info"),
-            readFileString: (path) =>
-              path === "/etc/machine-info"
-                ? Effect.succeed('PRETTY_HOSTNAME="Build Agent 01"\nICON_NAME="computer-vm"\n')
-                : Effect.succeed(""),
-          }),
+          Layer.merge(
+            FileSystem.layerNoop({
+              exists: (path) => Effect.succeed(path === "/etc/machine-info"),
+              readFileString: (path) =>
+                path === "/etc/machine-info"
+                  ? Effect.succeed('PRETTY_HOSTNAME="Build Agent 01"\nICON_NAME="computer-vm"\n')
+                  : Effect.succeed(""),
+            }),
+            NoopCommandRunnerLayer,
+          ),
         ),
       );
 
-      expect(result).toBe("Build Agent 01");
-      expect(mockedRunProcess).not.toHaveBeenCalled();
+      assert.equal(result, "Build Agent 01");
     }),
   );
 
   it.effect("falls back to hostnamectl pretty hostname on Linux", () =>
     Effect.gen(function* () {
-      mockedRunProcess.mockResolvedValueOnce({
-        stdout: "CI Runner\n",
-        stderr: "",
-        code: 0,
-        signal: null,
-        timedOut: false,
-      });
+      const calls: CommandCall[] = [];
 
       const result = yield* resolveServerEnvironmentLabel({
         cwdBaseName: "t3code",
         platform: "linux",
         hostname: "runner-01",
-      }).pipe(Effect.provide(NoopFileSystemLayer));
-
-      expect(result).toBe("CI Runner");
-      expect(mockedRunProcess).toHaveBeenCalledWith(
-        "hostnamectl",
-        ["--pretty"],
-        expect.objectContaining({ allowNonZeroExit: true }),
+      }).pipe(
+        Effect.provide(
+          testLayer(
+            commandRunnerLayer({
+              calls,
+              run: () => Effect.succeed({ stdout: "CI Runner\n", exitCode: 0 }),
+            }),
+          ),
+        ),
       );
+
+      assert.equal(result, "CI Runner");
+      assert.deepEqual(calls, [{ command: "hostnamectl", args: ["--pretty"] }]);
     }),
   );
 
@@ -109,43 +131,56 @@ describe("resolveServerEnvironmentLabel", () => {
         cwdBaseName: "t3code",
         platform: "win32",
         hostname: "JULIUS-LAPTOP",
-      }).pipe(Effect.provide(NoopFileSystemLayer));
+      }).pipe(Effect.provide(testLayer()));
 
-      expect(result).toBe("JULIUS-LAPTOP");
+      assert.equal(result, "JULIUS-LAPTOP");
     }),
   );
 
   it.effect("falls back to the hostname when the friendly-label command is missing", () =>
     Effect.gen(function* () {
-      mockedRunProcess.mockRejectedValueOnce(new Error("spawn scutil ENOENT"));
-
       const result = yield* resolveServerEnvironmentLabel({
         cwdBaseName: "t3code",
         platform: "darwin",
         hostname: "macbook-pro",
-      }).pipe(Effect.provide(NoopFileSystemLayer));
+      }).pipe(
+        Effect.provide(
+          testLayer(
+            commandRunnerLayer({
+              run: (command, args) =>
+                Effect.fail(
+                  new ServerEnvironmentLabelCommandError({
+                    command,
+                    args: [...args],
+                    message: "spawn scutil ENOENT",
+                  }),
+                ),
+            }),
+          ),
+        ),
+      );
 
-      expect(result).toBe("macbook-pro");
+      assert.equal(result, "macbook-pro");
     }),
   );
 
   it.effect("falls back to the cwd basename when the hostname is blank", () =>
     Effect.gen(function* () {
-      mockedRunProcess.mockResolvedValueOnce({
-        stdout: " ",
-        stderr: "",
-        code: 0,
-        signal: null,
-        timedOut: false,
-      });
-
       const result = yield* resolveServerEnvironmentLabel({
         cwdBaseName: "t3code",
         platform: "linux",
         hostname: "   ",
-      }).pipe(Effect.provide(NoopFileSystemLayer));
+      }).pipe(
+        Effect.provide(
+          testLayer(
+            commandRunnerLayer({
+              run: () => Effect.succeed({ stdout: " ", exitCode: 0 }),
+            }),
+          ),
+        ),
+      );
 
-      expect(result).toBe("t3code");
+      assert.equal(result, "t3code");
     }),
   );
 });
