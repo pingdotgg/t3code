@@ -1744,6 +1744,10 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           providerItemId: event.data.toolCallId,
           sdkTurnId: context.activeSdkTurnId,
         });
+        const summary = trimOrUndefined(event.data.progressMessage);
+        if (!turnId || !summary) {
+          return;
+        }
         const toolMeta = context.toolMetaById.get(event.data.toolCallId);
         await emitAsync({
           ...createBaseEvent({
@@ -1756,7 +1760,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
           payload: {
             toolUseId: event.data.toolCallId,
             ...(toolMeta ? { toolName: toolMeta.toolName } : {}),
-            summary: event.data.progressMessage.trim(),
+            summary,
           },
         });
         return;
