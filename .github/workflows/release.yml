@@ -625,6 +625,9 @@ jobs:
           router_url="${T3CODE_WEB_ROUTER_URL:-https://app.t3.codes}"
           latest_domain="${T3CODE_WEB_LATEST_DOMAIN:-latest.app.t3.codes}"
           nightly_domain="${T3CODE_WEB_NIGHTLY_DOMAIN:-nightly.app.t3.codes}"
+          router_domain="${router_url#http://}"
+          router_domain="${router_domain#https://}"
+          router_domain="${router_domain%%/*}"
 
           if [[ "${{ needs.preflight.outputs.release_channel }}" == "stable" ]]; then
             channel_domain="$latest_domain"
@@ -634,14 +637,12 @@ jobs:
             channel_name="nightly"
           fi
 
-          vercel_scope_args=()
-          if [[ -n "${VERCEL_TEAM_SLUG:-}" ]]; then
-            vercel_scope_args=(--scope "$VERCEL_TEAM_SLUG")
-          fi
+          vercel_scope="${VERCEL_TEAM_SLUG:-$VERCEL_ORG_ID}"
+          vercel_scope_args=(--scope "$vercel_scope")
 
           echo "Deploying hosted web app for $channel_name channel."
           deployment_url="$(
-            bunx vercel@53.1.1 deploy apps/web \
+            bunx vercel@53.1.1 deploy \
               --prod \
               --skip-domain \
               --yes \
@@ -656,6 +657,13 @@ jobs:
           bunx vercel@53.1.1 alias set "$deployment_url" "$channel_domain" \
             --token "$VERCEL_TOKEN" \
             "${vercel_scope_args[@]}"
+
+          if [[ "$channel_name" == "latest" && -n "$router_domain" && "$router_domain" != "$channel_domain" ]]; then
+            echo "Aliasing $deployment_url to router domain $router_domain."
+            bunx vercel@53.1.1 alias set "$deployment_url" "$router_domain" \
+              --token "$VERCEL_TOKEN" \
+              "${vercel_scope_args[@]}"
+          fi
 
   finalize:
     name: Finalize release
