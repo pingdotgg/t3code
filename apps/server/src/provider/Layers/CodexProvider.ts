@@ -22,13 +22,16 @@ import type {
 import { ServerSettingsError } from "@t3tools/contracts";
 
 import { createModelCapabilities } from "@t3tools/shared/model";
-import { buildServerProvider, type ServerProviderDraft } from "../providerSnapshot.ts";
+import {
+  AUTH_PROBE_TIMEOUT_MS,
+  buildServerProvider,
+  type ServerProviderDraft,
+} from "../providerSnapshot.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { scopedSafeTeardown } from "./scopedSafeTeardown.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 const isCodexAppServerSpawnError = Schema.is(CodexErrors.CodexAppServerSpawnError);
 
-const PROVIDER_PROBE_TIMEOUT_MS = 8_000;
 const CODEX_PRESENTATION = {
   displayName: "Codex",
   showInteractionModeToggle: true,
@@ -447,7 +450,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     cwd: process.cwd(),
     customModels: codexSettings.customModels,
     environment,
-  }).pipe(Effect.timeoutOption(Duration.millis(PROVIDER_PROBE_TIMEOUT_MS)), Effect.result);
+  }).pipe(Effect.timeoutOption(Duration.millis(AUTH_PROBE_TIMEOUT_MS)), Effect.result);
 
   if (Result.isFailure(probeResult)) {
     const error = probeResult.failure;
