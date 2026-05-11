@@ -1,5 +1,6 @@
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
 import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 import type { Project } from "./types";
 
@@ -9,6 +10,13 @@ export interface ProjectGroupingSettings {
 }
 
 export type ProjectGroupingMode = SidebarProjectGroupingMode;
+
+export function selectProjectGroupingSettings(settings: UnifiedSettings): ProjectGroupingSettings {
+  return {
+    sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
+    sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
+  };
+}
 
 function uniqueNonEmptyValues(values: ReadonlyArray<string | null | undefined>): string[] {
   const seen = new Set<string>();
