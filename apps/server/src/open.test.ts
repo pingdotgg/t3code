@@ -3,8 +3,12 @@ import { assert, it } from "@effect/vitest";
 import { assertSuccess } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Random from "effect/Random";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   isCommandAvailable,
@@ -12,6 +16,22 @@ import {
   resolveAvailableEditors,
   resolveEditorLaunch,
 } from "./open.ts";
+
+function makeOpenProcessHandle(onUnref: Effect.Effect<void> = Effect.void) {
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(123),
+    exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+    isRunning: Effect.succeed(false),
+    kill: () => Effect.void,
+    stdin: Sink.drain,
+    stdout: Stream.empty,
+    stderr: Stream.empty,
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+    unref: Effect.as(onUnref, Effect.void),
+  });
+}
 
 it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
   it.effect("returns commands for command-based editors", () =>
@@ -478,13 +498,36 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
 });
 
 it.layer(NodeServices.layer)("launchDetached", (it) => {
-  it.effect("resolves when command can be spawned", () =>
+  it.effect("resolves when command can be spawned through ChildProcessSpawner", () =>
     Effect.gen(function* () {
+      const commands: Array<ChildProcess.Command> = [];
+      let unrefCount = 0;
+      const spawnerLayer = Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({
+        spawn: (command) =>
+          Effect.sync(() => {
+            commands.push(command);
+            return makeOpenProcessHandle(
+              Effect.sync(() => {
+                unrefCount += 1;
+              }),
+            );
+          }),
+      });
+
       const result = yield* launchDetached({
         command: process.execPath,
         args: ["-e", "process.exit(0)"],
-      }).pipe(Effect.result);
+      }).pipe(Effect.provide(spawnerLayer), Effect.result);
+
       assertSuccess(result, undefined);
+      assert.equal(unrefCount, 1);
+      assert.lengthOf(commands, 1);
+      const command = commands[0] as unknown as {
+        readonly command: string;
+        readonly args: ReadonlyArray<string>;
+      };
+      assert.equal(command.command, process.execPath);
+      assert.deepEqual(command.args, ["-e", "process.exit(0)"]);
     }),
   );
 
@@ -493,7 +536,10 @@ it.layer(NodeServices.layer)("launchDetached", (it) => {
       const result = yield* launchDetached({
         command: `t3code-no-such-command-${yield* Random.nextUUIDv4}`,
         args: [],
-      }).pipe(Effect.result);
+      }).pipe(
+        Effect.provide(Layer.mock(ChildProcessSpawner.ChildProcessSpawner)({})),
+        Effect.result,
+      );
       assert.equal(result._tag, "Failure");
     }),
   );
