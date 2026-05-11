@@ -604,7 +604,8 @@ it.layer(
       Layer.provideMerge(
         makeProjectionPipelinePrefixedTestLayer("t3-projection-streaming-append-"),
       ),
-      Layer.provideMerge(RepositoryIdentityResolverLive.pipe(Layer.provide(NodeServices.layer))),
+      Layer.provideMerge(RepositoryIdentityResolverLive),
+      Layer.provideMerge(NodeServices.layer),
     ),
   ),
 )("OrchestrationProjectionPipeline", (it) => {
