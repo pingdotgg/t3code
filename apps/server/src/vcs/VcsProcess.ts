@@ -70,15 +70,15 @@ export const make = Effect.fn("makeVcsProcess")(function* () {
         ...(input.spawnCwd !== undefined ? { spawnCwd: input.spawnCwd } : {}),
         ...(input.stdin !== undefined ? { stdin: input.stdin } : {}),
         ...(input.env !== undefined ? { env: input.env } : {}),
-        timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         maxOutputBytes: input.maxOutputBytes ?? DEFAULT_MAX_OUTPUT_BYTES,
         outputMode: "truncate",
         truncatedMarker: input.appendTruncationMarker ? OUTPUT_TRUNCATED_MARKER : "",
         timeoutBehavior: "error",
       })
       .pipe(
-        Effect.mapError((cause) =>
-          Match.valueTags(cause, {
+        Effect.mapError(
+          Match.valueTags({
             ProcessSpawnError: (error) =>
               VcsProcessSpawnError.fromProcessSpawnError(baseError, error),
             ProcessOutputLimitError: (error) =>
@@ -97,20 +97,18 @@ export const make = Effect.fn("makeVcsProcess")(function* () {
       return yield* VcsOutputDecodeError.missingExitCode(baseError);
     }
 
-    const exitCode = result.code as ChildProcessSpawner.ExitCode;
-
-    if (!input.allowNonZeroExit && exitCode !== 0) {
+    if (!input.allowNonZeroExit && result.code !== 0) {
       return yield* new VcsProcessExitError({
         operation: input.operation,
         command: label,
         cwd: input.cwd,
-        exitCode,
-        detail: result.stderr.trim() || `${label} exited with code ${exitCode}.`,
+        exitCode: result.code,
+        detail: result.stderr.trim() || `${label} exited with code ${result.code}.`,
       });
     }
 
     return {
-      exitCode,
+      exitCode: result.code,
       stdout: result.stdout,
       stderr: result.stderr,
       stdoutTruncated: result.stdoutTruncated,

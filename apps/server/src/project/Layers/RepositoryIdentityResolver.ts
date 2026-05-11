@@ -9,7 +9,7 @@ import {
   normalizeGitRemoteUrl,
 } from "@t3tools/shared/git";
 
-import { ProcessRunner, layer as ProcessRunnerLive } from "../../processRunner.ts";
+import * as ProcessRunner from "../../processRunner.ts";
 import {
   RepositoryIdentityResolver,
   type RepositoryIdentityResolverShape,
@@ -86,7 +86,7 @@ interface RepositoryIdentityResolverOptions {
 const resolveRepositoryIdentityCacheKey = Effect.fn("resolveRepositoryIdentityCacheKey")(function* (
   cwd: string,
 ) {
-  const processRunner = yield* ProcessRunner;
+  const processRunner = yield* ProcessRunner.ProcessRunner;
   let cacheKey = cwd;
 
   const topLevelResult = yield* processRunner
@@ -110,8 +110,10 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("resolveRepositoryIdentityCa
 });
 
 const resolveRepositoryIdentityFromCacheKey = Effect.fn("resolveRepositoryIdentityFromCacheKey")(
-  function* (cacheKey: string): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner> {
-    const processRunner = yield* ProcessRunner;
+  function* (
+    cacheKey: string,
+  ): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
+    const processRunner = yield* ProcessRunner.ProcessRunner;
     const remoteResult = yield* processRunner
       .run({
         command: "git",
@@ -131,12 +133,12 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn("resolveRepositoryIdenti
 
 export const makeRepositoryIdentityResolver = Effect.fn("makeRepositoryIdentityResolver")(
   function* (options: RepositoryIdentityResolverOptions = {}) {
-    const processRunner = yield* ProcessRunner;
+    const processRunner = yield* ProcessRunner.ProcessRunner;
 
     const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
       (cacheKey) =>
         resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
-          Effect.provideService(ProcessRunner, processRunner),
+          Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
         ),
       {
         capacity: options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY,
@@ -154,7 +156,7 @@ export const makeRepositoryIdentityResolver = Effect.fn("makeRepositoryIdentityR
       "RepositoryIdentityResolver.resolve",
     )(function* (cwd) {
       const cacheKey = yield* resolveRepositoryIdentityCacheKey(cwd).pipe(
-        Effect.provideService(ProcessRunner, processRunner),
+        Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       );
       return yield* Cache.get(repositoryIdentityCache, cacheKey);
     });
@@ -168,4 +170,4 @@ export const makeRepositoryIdentityResolver = Effect.fn("makeRepositoryIdentityR
 export const RepositoryIdentityResolverLive = Layer.effect(
   RepositoryIdentityResolver,
   makeRepositoryIdentityResolver(),
-).pipe(Layer.provide(ProcessRunnerLive));
+).pipe(Layer.provide(ProcessRunner.layer));

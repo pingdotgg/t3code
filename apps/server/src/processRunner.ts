@@ -8,7 +8,6 @@ import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-
 import {
   collectUint8StreamText,
   type CollectedUint8StreamText,
@@ -19,7 +18,7 @@ export interface ProcessRunInput {
   readonly args: ReadonlyArray<string>;
   readonly cwd?: string | undefined;
   readonly spawnCwd?: string | undefined;
-  readonly timeoutMs?: number | undefined;
+  readonly timeout?: Duration.Input | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly stdin?: string | undefined;
   readonly maxOutputBytes?: number | undefined;
@@ -36,7 +35,7 @@ export interface ProcessRunInput {
 export interface ProcessRunOutput {
   readonly stdout: string;
   readonly stderr: string;
-  readonly code: number | null;
+  readonly code: ChildProcessSpawner.ExitCode | null;
   readonly timedOut: boolean;
   readonly stdoutTruncated: boolean;
   readonly stderrTruncated: boolean;
@@ -94,7 +93,7 @@ export class ProcessRunner extends Context.Service<ProcessRunner, ProcessRunnerS
   "t3/process/ProcessRunner",
 ) {}
 
-const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_TIMEOUT = "60 seconds";
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 const WINDOWS_COMMAND_NOT_FOUND_PATTERNS = [
@@ -148,18 +147,17 @@ const collectText = Effect.fn("processRunner.collectText")(function* (input: {
   }
 
   return yield* stream.pipe(
-    Stream.runFoldEffect(
-      (): { readonly chunks: Uint8Array[]; readonly bytes: number } => ({
-        chunks: [],
-        bytes: 0,
-      }),
-      (
-        state,
-        chunk,
-      ): Effect.Effect<
-        { readonly chunks: Uint8Array[]; readonly bytes: number },
-        ProcessOutputLimitError | ProcessReadError
-      > => {
+    Stream.runFoldEffect<
+      {
+        readonly chunks: Uint8Array<ArrayBufferLike>[];
+        readonly bytes: number;
+      },
+      Uint8Array<ArrayBufferLike>,
+      ProcessOutputLimitError | ProcessReadError,
+      never
+    >(
+      () => ({ chunks: [], bytes: 0 }),
+      (state, chunk) => {
         const remainingBytes = input.maxOutputBytes - state.bytes;
         if (remainingBytes <= 0 || chunk.byteLength > remainingBytes) {
           return Effect.fail(
@@ -194,12 +192,12 @@ function finalizeRunProcess<R>(
   effect: Effect.Effect<ProcessRunOutput, ProcessRunError, R | Scope.Scope>,
   input: ProcessRunInput,
 ): Effect.Effect<ProcessRunOutput, ProcessRunError, Exclude<R, Scope.Scope>> {
-  const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeout = Duration.fromInputUnsafe(input.timeout ?? DEFAULT_TIMEOUT);
   const timeoutBehavior = input.timeoutBehavior ?? "error";
 
   return effect.pipe(
     Effect.scoped,
-    Effect.timeoutOption(Duration.millis(timeoutMs)),
+    Effect.timeoutOption(timeout),
     Effect.flatMap((result) => {
       if (Option.isSome(result)) {
         return Effect.succeed(result.value);
@@ -219,7 +217,7 @@ function finalizeRunProcess<R>(
           command: input.command,
           args: input.args,
           cwd: input.cwd,
-          timeoutMs,
+          timeoutMs: Duration.toMillis(timeout),
         }),
       );
     }),
@@ -237,11 +235,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   const child = yield* spawner
     .spawn(
       ChildProcess.make(input.command, [...input.args], {
-        ...((input.spawnCwd ?? input.cwd)
-          ? {
-              cwd: input.spawnCwd ?? input.cwd,
-            }
-          : {}),
+        ...((input.spawnCwd ?? input.cwd) ? { cwd: input.spawnCwd ?? input.cwd } : {}),
         ...(input.env !== undefined
           ? {
               env: input.env,
@@ -268,7 +262,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
       ? Effect.void
       : Stream.run(Stream.encodeText(Stream.make(input.stdin)), child.stdin).pipe(
           Effect.mapError(
-            (cause: PlatformError.PlatformError) =>
+            (cause) =>
               new ProcessStdinError({
                 command: input.command,
                 args: input.args,
@@ -307,7 +301,7 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
 
   const exitCode = yield* child.exitCode.pipe(
     Effect.mapError(
-      (cause: PlatformError.PlatformError) =>
+      (cause) =>
         new ProcessReadError({
           command: input.command,
           args: input.args,
@@ -328,17 +322,14 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   } satisfies ProcessRunOutput;
 });
 
-function runProcess(
-  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
-  input: ProcessRunInput,
-): Effect.Effect<ProcessRunOutput, ProcessRunError> {
-  return finalizeRunProcess(runProcessCore(spawner, input), input);
-}
-
 export const make = Effect.fn("makeProcessRunner")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+
+  const run: ProcessRunnerShape["run"] = (input) =>
+    finalizeRunProcess(runProcessCore(spawner, input), input);
+
   return ProcessRunner.of({
-    run: (input) => runProcess(spawner, input),
+    run,
   });
 });
 

@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import { TestClock } from "effect/testing";
 
-import { ProcessRunner, layer as ProcessRunnerLive } from "../../processRunner.ts";
+import * as ProcessRunner from "../../processRunner.ts";
 import { RepositoryIdentityResolver } from "../Services/RepositoryIdentityResolver.ts";
 import {
   makeRepositoryIdentityResolver,
@@ -19,13 +19,13 @@ const normalizeResolvedPath = (value: string) => normalizePathSeparators(value);
 
 const git = (cwd: string, args: ReadonlyArray<string>) =>
   Effect.gen(function* () {
-    const processRunner = yield* ProcessRunner;
+    const processRunner = yield* ProcessRunner.ProcessRunner;
     return yield* processRunner.run({
       command: "git",
       args: ["-C", cwd, ...args],
       shell: process.platform === "win32",
     });
-  }).pipe(Effect.provide(ProcessRunnerLive));
+  }).pipe(Effect.provide(ProcessRunner.layer));
 
 const makeRepositoryIdentityResolverTestLayer = (options: {
   readonly positiveCacheTtl?: Duration.Input;
@@ -37,7 +37,7 @@ const makeRepositoryIdentityResolverTestLayer = (options: {
       cacheCapacity: 16,
       ...options,
     }),
-  ).pipe(Layer.provide(ProcessRunnerLive));
+  ).pipe(Layer.provide(ProcessRunner.layer));
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>

@@ -95,15 +95,15 @@ export class VcsProcessSpawnError extends Schema.TaggedErrorClass<VcsProcessSpaw
     cause: Schema.Defect,
   },
 ) {
+  override get message(): string {
+    return `VCS process failed to spawn in ${this.operation}: ${this.command} (${this.cwd})`;
+  }
+
   static fromProcessSpawnError(context: VcsProcessErrorContext, error: VcsProcessSpawnFailure) {
     return new VcsProcessSpawnError({
       ...context,
       cause: error.cause,
     });
-  }
-
-  override get message(): string {
-    return `VCS process failed to spawn in ${this.operation}: ${this.command} (${this.cwd})`;
   }
 }
 
@@ -131,15 +131,15 @@ export class VcsProcessTimeoutError extends Schema.TaggedErrorClass<VcsProcessTi
     timeoutMs: Schema.Number,
   },
 ) {
+  override get message(): string {
+    return `VCS process timed out in ${this.operation}: ${this.command} (${this.cwd}) after ${this.timeoutMs}ms`;
+  }
+
   static fromProcessTimeoutError(context: VcsProcessErrorContext, error: VcsProcessTimeoutFailure) {
     return new VcsProcessTimeoutError({
       ...context,
       timeoutMs: error.timeoutMs,
     });
-  }
-
-  override get message(): string {
-    return `VCS process timed out in ${this.operation}: ${this.command} (${this.cwd}) after ${this.timeoutMs}ms`;
   }
 }
 
@@ -153,6 +153,10 @@ export class VcsOutputDecodeError extends Schema.TaggedErrorClass<VcsOutputDecod
     cause: Schema.optional(Schema.Defect),
   },
 ) {
+  override get message(): string {
+    return `VCS output decode failed in ${this.operation}: ${this.command} (${this.cwd}) - ${this.detail}`;
+  }
+
   static fromProcessStdinError(context: VcsProcessErrorContext, error: VcsProcessStdinFailure) {
     return new VcsOutputDecodeError({
       ...context,
@@ -187,10 +191,6 @@ export class VcsOutputDecodeError extends Schema.TaggedErrorClass<VcsOutputDecod
       ...context,
       detail: "process completed without an exit code",
     });
-  }
-
-  override get message(): string {
-    return `VCS output decode failed in ${this.operation}: ${this.command} (${this.cwd}) - ${this.detail}`;
   }
 }
 

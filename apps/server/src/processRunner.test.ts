@@ -18,14 +18,12 @@ import {
   type ProcessRunInput,
 } from "./processRunner.ts";
 
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
 type ChildProcessCommand = {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
 };
 
+// Accesses private properties of ChildProcessCommand for testing purposes
 function asChildProcessCommand(command: unknown): ChildProcessCommand {
   return command as ChildProcessCommand;
 }
@@ -46,11 +44,11 @@ function makeHandle(input: {
     stdin: input.stdin ?? Sink.drain,
     stdout:
       typeof input.stdout === "string"
-        ? Stream.make(encoder.encode(input.stdout))
+        ? Stream.encodeText(Stream.make(input.stdout))
         : (input.stdout ?? Stream.empty),
     stderr:
       typeof input.stderr === "string"
-        ? Stream.make(encoder.encode(input.stderr))
+        ? Stream.encodeText(Stream.make(input.stderr))
         : (input.stderr ?? Stream.empty),
     all: Stream.empty,
     getInputFd: () => Sink.drain,
@@ -66,10 +64,13 @@ function makeSpawner(
 
 const runWith =
   (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) => (input: ProcessRunInput) =>
-    Effect.gen(function* () {
-      const runner = yield* ProcessRunner;
-      return yield* runner.run(input);
-    }).pipe(
+    Effect.service(ProcessRunner).pipe(
+      Effect.flatMap((runner) =>
+        runner.run({
+          ...input,
+          shell: input.shell ?? false,
+        }),
+      ),
       Effect.provide(
         ProcessRunnerLive.pipe(
           Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
@@ -138,11 +139,13 @@ describe("runProcess", () => {
 
   it.effect("fails fast on output limit before timeout for long-running output", () =>
     Effect.gen(function* () {
-      const chunk = encoder.encode("x".repeat(64));
+      const textChunk = "x".repeat(64);
       const spawner = makeSpawner(() =>
         Effect.succeed(
           makeHandle({
-            stdout: Stream.fromIterable(Array.from({ length: 10 }, () => chunk)),
+            stdout: Stream.fromIterable(Array.from({ length: 10 }, () => textChunk)).pipe(
+              Stream.encodeText,
+            ),
             exitCode: Effect.never,
           }),
         ),
@@ -152,7 +155,7 @@ describe("runProcess", () => {
         command: "fake",
         args: ["spam-stdout"],
         maxOutputBytes: 128,
-        timeoutMs: 2_000,
+        timeout: "2 seconds",
       }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(ProcessOutputLimitError);
@@ -180,6 +183,7 @@ describe("runProcess", () => {
   it.effect("writes stdin before waiting for exit", () =>
     Effect.gen(function* () {
       const stdinWritten = yield* Deferred.make<void>();
+      const decoder = new TextDecoder();
       const spawner = makeSpawner(() =>
         Effect.succeed(
           makeHandle({
@@ -232,7 +236,7 @@ describe("runProcess", () => {
       const errorFiber = yield* runWith(spawner)({
         command: "fake",
         args: ["sleep"],
-        timeoutMs: 50,
+        timeout: "50 millis",
       }).pipe(Effect.flip, Effect.forkScoped);
 
       yield* Effect.yieldNow;
@@ -255,7 +259,7 @@ describe("runProcess", () => {
       const resultFiber = yield* runWith(spawner)({
         command: "fake",
         args: ["sleep"],
-        timeoutMs: 50,
+        timeout: "50 millis",
         timeoutBehavior: "timedOutResult",
       }).pipe(Effect.forkScoped);
 
