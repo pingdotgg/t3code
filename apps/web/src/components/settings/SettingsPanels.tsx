@@ -99,6 +99,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+const CODEX_USAGE_INDICATOR_LABELS = {
+  "five-hour": "5h window",
+  both: "5h + weekly",
+  off: "Off",
+} as const;
+
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
 function withoutProviderInstanceKey<V>(
@@ -405,6 +411,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
+      ...(settings.codexUsageIndicatorMode !== DEFAULT_UNIFIED_SETTINGS.codexUsageIndicatorMode
+        ? ["Codex usage remaining"]
+        : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
@@ -429,6 +438,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     [
       isGitWritingModelDirty,
       settings.autoOpenPlanSidebar,
+      settings.codexUsageIndicatorMode,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
@@ -460,6 +470,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
+      codexUsageIndicatorMode: DEFAULT_UNIFIED_SETTINGS.codexUsageIndicatorMode,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
@@ -692,6 +703,51 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Open the task panel automatically"
             />
+          }
+        />
+
+        <SettingsRow
+          title="Codex usage remaining"
+          description="Show a composer status chip for the selected Codex provider's remaining limits."
+          resetAction={
+            settings.codexUsageIndicatorMode !==
+            DEFAULT_UNIFIED_SETTINGS.codexUsageIndicatorMode ? (
+              <SettingResetButton
+                label="codex usage indicator"
+                onClick={() =>
+                  updateSettings({
+                    codexUsageIndicatorMode: DEFAULT_UNIFIED_SETTINGS.codexUsageIndicatorMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.codexUsageIndicatorMode}
+              onValueChange={(value) => {
+                if (value === "five-hour" || value === "both" || value === "off") {
+                  updateSettings({ codexUsageIndicatorMode: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Codex usage remaining">
+                <SelectValue>
+                  {CODEX_USAGE_INDICATOR_LABELS[settings.codexUsageIndicatorMode]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="five-hour">
+                  5h window
+                </SelectItem>
+                <SelectItem hideIndicator value="both">
+                  5h + weekly
+                </SelectItem>
+                <SelectItem hideIndicator value="off">
+                  Off
+                </SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
 

@@ -119,6 +119,7 @@ function createProviderServiceHarness() {
         },
       });
     },
+    getCodexUsage: () => Effect.succeed(null),
     rollbackConversation: () => unsupported(),
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);

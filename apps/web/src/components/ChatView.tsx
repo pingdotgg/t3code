@@ -115,9 +115,15 @@ import {
   projectScriptIdFromCommand,
 } from "~/projectScripts";
 import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils";
-import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
+import { getProviderModelCapabilities } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
+import {
+  deriveProviderInstanceEntries,
+  resolveProviderDriverKindForInstanceSelection,
+  resolveSelectedProviderInstanceId,
+  sortProviderInstanceEntries,
+} from "../providerInstances";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import {
@@ -1257,11 +1263,69 @@ export default function ChatView(props: ChatViewProps) {
     versionMismatchServerLabel,
   ]);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
-  const unlockedSelectedProvider = resolveSelectableProvider(
-    providerStatuses,
-    selectedProviderByThreadId ?? threadProvider ?? ProviderDriverKind.make("codex"),
+  const providerInstanceEntries = useMemo(
+    () => sortProviderInstanceEntries(deriveProviderInstanceEntries(providerStatuses)),
+    [providerStatuses],
   );
+  const explicitSelectedInstanceId = selectedProviderByThreadId ?? threadProvider;
+  const unlockedSelectedProvider =
+    resolveProviderDriverKindForInstanceSelection(
+      providerInstanceEntries,
+      providerStatuses,
+      explicitSelectedInstanceId,
+    ) ?? ProviderDriverKind.make("codex");
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
+  const activeThreadSessionProviderInstanceId = activeThread?.session?.providerInstanceId;
+  const activeThreadModelInstanceId = activeThread?.modelSelection.instanceId;
+  const lockedContinuationGroupKey = useMemo((): string | null => {
+    if (!lockedProvider) return null;
+    const lockedInstanceId = activeThreadSessionProviderInstanceId ?? activeThreadModelInstanceId;
+    if (!lockedInstanceId) return null;
+    return (
+      providerInstanceEntries.find((entry) => entry.instanceId === lockedInstanceId)
+        ?.continuationGroupKey ?? null
+    );
+  }, [
+    activeThreadModelInstanceId,
+    activeThreadSessionProviderInstanceId,
+    lockedProvider,
+    providerInstanceEntries,
+  ]);
+  const codexUsageInstanceId = useMemo(() => {
+    if (settings.codexUsageIndicatorMode === "off") return null;
+    const selectedInstanceId = resolveSelectedProviderInstanceId({
+      entries: providerInstanceEntries,
+      candidates: [
+        composerActiveProvider,
+        activeThread?.session?.providerInstanceId,
+        activeThread?.modelSelection.instanceId,
+        activeProject?.defaultModelSelection?.instanceId,
+      ],
+      selectedProvider,
+      lockedProvider,
+      lockedContinuationGroupKey,
+      fallbackInstanceIds: [
+        activeThread?.modelSelection.instanceId,
+        activeProject?.defaultModelSelection?.instanceId,
+      ],
+    });
+    const selectedEntry = providerInstanceEntries.find(
+      (entry) => entry.instanceId === selectedInstanceId,
+    );
+    return selectedEntry?.driverKind === ProviderDriverKind.make("codex")
+      ? selectedEntry.instanceId
+      : null;
+  }, [
+    activeProject?.defaultModelSelection?.instanceId,
+    activeThread?.modelSelection.instanceId,
+    activeThread?.session?.providerInstanceId,
+    composerActiveProvider,
+    lockedContinuationGroupKey,
+    lockedProvider,
+    providerInstanceEntries,
+    selectedProvider,
+    settings.codexUsageIndicatorMode,
+  ]);
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
@@ -3642,6 +3706,7 @@ export default function ChatView(props: ChatViewProps) {
                   interactionMode={interactionMode}
                   lockedProvider={lockedProvider}
                   providerStatuses={providerStatuses as ServerProvider[]}
+                  providerInstanceEntries={providerInstanceEntries}
                   activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
                   activeThreadModelSelection={activeThread?.modelSelection}
                   activeThreadActivities={activeThread?.activities}
@@ -3685,6 +3750,8 @@ export default function ChatView(props: ChatViewProps) {
                 threadId={activeThread.id}
                 {...(routeKind === "draft" && draftId ? { draftId } : {})}
                 onEnvModeChange={onEnvModeChange}
+                codexUsageIndicatorMode={settings.codexUsageIndicatorMode}
+                codexUsageInstanceId={codexUsageInstanceId}
                 {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
                 {...(canOverrideServerThreadEnvMode
                   ? {

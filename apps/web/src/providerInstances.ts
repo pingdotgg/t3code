@@ -16,7 +16,7 @@ import {
   defaultInstanceIdForDriver,
   PROVIDER_DISPLAY_NAMES,
   type ProviderDriverKind,
-  type ProviderInstanceId,
+  ProviderInstanceId,
   type ServerProvider,
   type ServerProviderModel,
   type ServerProviderState,
@@ -182,6 +182,48 @@ export function sortProviderInstanceEntries(
     sorted.push(...defaults, ...customs);
   }
   return sorted;
+}
+
+export function resolveSelectedProviderInstanceId(input: {
+  entries: ReadonlyArray<ProviderInstanceEntry>;
+  candidates: ReadonlyArray<ProviderInstanceId | null | undefined>;
+  selectedProvider: ProviderDriverKind;
+  lockedProvider?: ProviderDriverKind | null | undefined;
+  lockedContinuationGroupKey?: string | null | undefined;
+  fallbackInstanceIds?: ReadonlyArray<ProviderInstanceId | null | undefined>;
+}): ProviderInstanceId {
+  const lockedProvider = input.lockedProvider ?? null;
+  const lockedContinuationGroupKey = input.lockedContinuationGroupKey ?? null;
+
+  for (const candidate of input.candidates) {
+    if (!candidate) continue;
+    const match = input.entries.find((entry) => entry.instanceId === candidate && entry.enabled);
+    if (!match) continue;
+    if (lockedProvider && match.driverKind !== lockedProvider) continue;
+    if (lockedContinuationGroupKey && match.continuationGroupKey !== lockedContinuationGroupKey) {
+      continue;
+    }
+    return match.instanceId;
+  }
+
+  const fallbackProvider = lockedProvider ?? input.selectedProvider;
+  const byKind = input.entries.find(
+    (entry) =>
+      entry.enabled &&
+      entry.driverKind === fallbackProvider &&
+      (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey),
+  );
+  if (byKind) return byKind.instanceId;
+
+  const anyEnabled = input.entries.find((entry) => entry.enabled);
+  const fallbackSelection = input.fallbackInstanceIds?.find((instanceId) => instanceId != null);
+  return (
+    anyEnabled?.instanceId ??
+    input.entries[0]?.instanceId ??
+    (fallbackSelection
+      ? ProviderInstanceId.make(fallbackSelection)
+      : ProviderInstanceId.make("codex"))
+  );
 }
 
 /**

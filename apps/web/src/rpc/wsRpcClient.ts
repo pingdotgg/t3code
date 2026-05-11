@@ -113,6 +113,7 @@ export interface WsRpcClient {
   };
   readonly server: {
     readonly getConfig: RpcUnaryNoArgMethod<typeof WS_METHODS.serverGetConfig>;
+    readonly getCodexUsage: RpcUnaryMethod<typeof WS_METHODS.serverGetCodexUsage>;
     /**
      * Refresh provider snapshots. Pass `{ instanceId }` to refresh a single
      * configured instance; pass no argument (or `{}`) to refresh all.
@@ -243,6 +244,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
     },
     server: {
       getConfig: () => transport.request((client) => client[WS_METHODS.serverGetConfig]({})),
+      getCodexUsage: (input) =>
+        transport.request((client) => client[WS_METHODS.serverGetCodexUsage](input)),
       refreshProviders: (input) =>
         transport.request((client) => client[WS_METHODS.serverRefreshProviders](input ?? {})),
       updateProvider: (input) =>

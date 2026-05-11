@@ -1,5 +1,6 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { type EnvironmentId, type ProviderInstanceId, type ThreadId } from "@t3tools/contracts";
+import type { CodexUsageIndicatorMode } from "@t3tools/contracts/settings";
 import {
   ChevronDownIcon,
   CloudIcon,
@@ -25,6 +26,7 @@ import {
 import { BranchToolbarBranchSelector } from "./BranchToolbarBranchSelector";
 import { BranchToolbarEnvironmentSelector } from "./BranchToolbarEnvironmentSelector";
 import { BranchToolbarEnvModeSelector } from "./BranchToolbarEnvModeSelector";
+import { CodexUsageIndicator } from "./chat/CodexUsageIndicator";
 import { Button } from "./ui/button";
 import {
   Menu,
@@ -51,6 +53,8 @@ interface BranchToolbarProps {
   onComposerFocusRequest?: () => void;
   availableEnvironments?: readonly EnvironmentOption[];
   onEnvironmentChange?: (environmentId: EnvironmentId) => void;
+  codexUsageIndicatorMode: CodexUsageIndicatorMode;
+  codexUsageInstanceId: ProviderInstanceId | null;
 }
 
 interface MobileRunContextSelectorProps {
@@ -202,6 +206,8 @@ export const BranchToolbar = memo(function BranchToolbar({
   onComposerFocusRequest,
   availableEnvironments,
   onEnvironmentChange,
+  codexUsageIndicatorMode,
+  codexUsageInstanceId,
 }: BranchToolbarProps) {
   const threadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -236,6 +242,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   const showEnvironmentPicker = Boolean(
     availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
   );
+  const showCodexUsage = codexUsageIndicatorMode !== "off" && codexUsageInstanceId !== null;
   const isMobile = useIsMobile();
 
   if (!hasActiveThread || !activeProject) return null;
@@ -273,6 +280,15 @@ export const BranchToolbar = memo(function BranchToolbar({
             activeWorktreePath={activeWorktreePath}
             onEnvModeChange={onEnvModeChange}
           />
+          {showCodexUsage ? (
+            <>
+              <Separator orientation="vertical" className="mx-0.5 h-3.5!" />
+              <CodexUsageIndicator
+                instanceId={codexUsageInstanceId}
+                mode={codexUsageIndicatorMode}
+              />
+            </>
+          ) : null}
         </div>
       )}
 
