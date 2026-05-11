@@ -3,6 +3,7 @@ import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import { useEffect, useMemo, type ReactNode } from "react";
 import { useTheme } from "../hooks/useTheme";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
+import { scheduleDiffWorkerPoolWarmup } from "../lib/diffWorkerWarmup";
 
 function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
   const workerPool = useWorkerPool();
@@ -24,6 +25,16 @@ function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
       })
       .catch(() => undefined);
   }, [themeName, workerPool]);
+
+  return null;
+}
+
+function DiffWorkerPoolWarmup() {
+  const workerPool = useWorkerPool();
+
+  useEffect(() => {
+    return scheduleDiffWorkerPoolWarmup(workerPool);
+  }, [workerPool]);
 
   return null;
 }
@@ -50,6 +61,7 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
       }}
     >
       <DiffWorkerThemeSync themeName={diffThemeName} />
+      <DiffWorkerPoolWarmup />
       {children}
     </WorkerPoolContextProvider>
   );

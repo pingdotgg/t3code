@@ -1,4 +1,4 @@
-import { parsePatchFiles, type FileDiffMetadata } from "@pierre/diffs";
+import type { FileDiffMetadata } from "@pierre/diffs";
 import { FileDiff, Virtualizer } from "@pierre/diffs/react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
@@ -26,7 +26,12 @@ import {
   parseDiffRouteSearch,
 } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
-import { buildPatchCacheKey, resolveDiffThemeName } from "../lib/diffRendering";
+import { getOrCreateRenderablePatch } from "../lib/diffPatchCache";
+import {
+  orderTurnDiffSummariesByCheckpoint,
+  resolveActiveCheckpointRange,
+} from "../lib/diffSelection";
+import { resolveDiffThemeName } from "../lib/diffRendering";
 import {
   buildDiffFileEditOverrideKey,
   buildDiffFileEditThreadKey,
@@ -119,49 +124,6 @@ const DIFF_PANEL_UNSAFE_CSS = `
 }
 `;
 
-type RenderablePatch =
-  | {
-      kind: "files";
-      files: FileDiffMetadata[];
-    }
-  | {
-      kind: "raw";
-      text: string;
-      reason: string;
-    };
-
-function getRenderablePatch(
-  patch: string | undefined,
-  cacheScope = "diff-panel",
-): RenderablePatch | null {
-  if (!patch) return null;
-  const normalizedPatch = patch.trim();
-  if (normalizedPatch.length === 0) return null;
-
-  try {
-    const parsedPatches = parsePatchFiles(
-      normalizedPatch,
-      buildPatchCacheKey(normalizedPatch, cacheScope),
-    );
-    const files = parsedPatches.flatMap((parsedPatch) => parsedPatch.files);
-    if (files.length > 0) {
-      return { kind: "files", files };
-    }
-
-    return {
-      kind: "raw",
-      text: normalizedPatch,
-      reason: "Unsupported diff format. Showing raw patch.",
-    };
-  } catch {
-    return {
-      kind: "raw",
-      text: normalizedPatch,
-      reason: "Failed to parse patch. Showing raw patch.",
-    };
-  }
-}
-
 function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
   const raw = fileDiff.name ?? fileDiff.prevName ?? "";
   if (raw.startsWith("a/") || raw.startsWith("b/")) {
@@ -237,78 +199,30 @@ export default function DiffPanel({
     useTurnDiffSummaries(activeThread);
   const orderedTurnDiffSummaries = useMemo(
     () =>
-      [...turnDiffSummaries].toSorted((left, right) => {
-        const leftTurnCount =
-          left.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[left.turnId] ?? 0;
-        const rightTurnCount =
-          right.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[right.turnId] ?? 0;
-        if (leftTurnCount !== rightTurnCount) {
-          return rightTurnCount - leftTurnCount;
-        }
-        return right.completedAt.localeCompare(left.completedAt);
-      }),
+      orderTurnDiffSummariesByCheckpoint(turnDiffSummaries, inferredCheckpointTurnCountByTurnId),
     [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
   );
 
   const selectedTurnId = diffSearch.diffTurnId ?? null;
   const selectedFilePath = selectedTurnId !== null ? (diffSearch.diffFilePath ?? null) : null;
-  const selectedTurn =
-    selectedTurnId === null
-      ? undefined
-      : (orderedTurnDiffSummaries.find((summary) => summary.turnId === selectedTurnId) ??
-        orderedTurnDiffSummaries[0]);
-  const selectedCheckpointTurnCount =
-    selectedTurn &&
-    (selectedTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[selectedTurn.turnId]);
-  const selectedCheckpointRange = useMemo(
+  const activeCheckpointTarget = useMemo(
     () =>
-      typeof selectedCheckpointTurnCount === "number"
-        ? {
-            fromTurnCount: Math.max(0, selectedCheckpointTurnCount - 1),
-            toTurnCount: selectedCheckpointTurnCount,
-          }
-        : null,
-    [selectedCheckpointTurnCount],
+      resolveActiveCheckpointRange({
+        orderedTurnDiffSummaries,
+        inferredCheckpointTurnCountByTurnId,
+        selectedTurnId,
+      }),
+    [inferredCheckpointTurnCountByTurnId, orderedTurnDiffSummaries, selectedTurnId],
   );
-  const conversationCheckpointTurnCount = useMemo(() => {
-    const turnCounts = orderedTurnDiffSummaries
-      .map(
-        (summary) =>
-          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId],
-      )
-      .filter((value): value is number => typeof value === "number");
-    if (turnCounts.length === 0) {
-      return undefined;
-    }
-    const latest = Math.max(...turnCounts);
-    return latest > 0 ? latest : undefined;
-  }, [inferredCheckpointTurnCountByTurnId, orderedTurnDiffSummaries]);
-  const conversationCheckpointRange = useMemo(
-    () =>
-      !selectedTurn && typeof conversationCheckpointTurnCount === "number"
-        ? {
-            fromTurnCount: 0,
-            toTurnCount: conversationCheckpointTurnCount,
-          }
-        : null,
-    [conversationCheckpointTurnCount, selectedTurn],
-  );
-  const activeCheckpointRange = selectedTurn
-    ? selectedCheckpointRange
-    : conversationCheckpointRange;
-  const conversationCacheScope = useMemo(() => {
-    if (selectedTurn || orderedTurnDiffSummaries.length === 0) {
-      return null;
-    }
-    return `conversation:${orderedTurnDiffSummaries.map((summary) => summary.turnId).join(",")}`;
-  }, [orderedTurnDiffSummaries, selectedTurn]);
+  const selectedTurn = activeCheckpointTarget.selectedTurn;
+  const activeCheckpointRange = activeCheckpointTarget.activeRange;
   const activeCheckpointDiffQuery = useQuery(
     checkpointDiffQueryOptions({
       environmentId: activeThread?.environmentId ?? null,
       threadId: activeThreadId,
       fromTurnCount: activeCheckpointRange?.fromTurnCount ?? null,
       toTurnCount: activeCheckpointRange?.toTurnCount ?? null,
-      cacheScope: selectedTurn ? `turn:${selectedTurn.turnId}` : conversationCacheScope,
+      cacheScope: activeCheckpointTarget.cacheScope,
       enabled: isGitRepo,
     }),
   );
@@ -330,8 +244,12 @@ export default function DiffPanel({
   const hasResolvedPatch = typeof selectedPatch === "string";
   const hasNoNetChanges = hasResolvedPatch && selectedPatch.trim().length === 0;
   const renderablePatch = useMemo(
-    () => getRenderablePatch(selectedPatch, `diff-panel:${resolvedTheme}`),
-    [resolvedTheme, selectedPatch],
+    () =>
+      getOrCreateRenderablePatch(
+        selectedPatch,
+        `diff-panel:${resolvedTheme}:${activeCheckpointTarget.cacheScope ?? "default"}`,
+      ),
+    [activeCheckpointTarget.cacheScope, resolvedTheme, selectedPatch],
   );
   const renderableFiles = useMemo(() => {
     if (!renderablePatch || renderablePatch.kind !== "files") {

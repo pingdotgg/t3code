@@ -67,6 +67,7 @@ import {
   projectQueryKeys,
   projectSearchEntriesQueryOptions,
 } from "../lib/projectReactQuery";
+import { checkpointDiffQueryOptions } from "../lib/providerReactQuery";
 import { cn } from "../lib/utils";
 import { readLocalApi } from "../localApi";
 import { classifyPreviewRelativePath, openPreviewTarget } from "../previewTargets";
@@ -105,7 +106,17 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useBottomDrawerUiStore } from "../bottomDrawerUiStore";
 import { usePreviewWorkspaceStore } from "../previewWorkspaceStore";
 import { shortcutLabelForCommand } from "../keybindings";
+import { primeRenderablePatchCache } from "../lib/diffPatchCache";
+import {
+  orderTurnDiffSummariesByCheckpoint,
+  resolveLikelyDiffPrefetchTarget,
+} from "../lib/diffSelection";
+import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
+import { useGitStatus } from "../lib/gitStatusState";
+import { scheduleIdleTask } from "../lib/idleTask";
 import { useServerKeybindings } from "~/rpc/serverState";
+import { useStore } from "../store";
+import { createThreadSelectorByRef } from "../storeSelectors";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 
 const WORKSPACE_PANEL_TREE_COLLAPSED_KEY = "forma:workspace-panel-tree-collapsed:v1";
@@ -260,6 +271,9 @@ export function WorkspaceFilesPanel({
           : null,
     [draftSession, routeTarget],
   );
+  const activeThread = useStore(
+    useMemo(() => createThreadSelectorByRef(activeThreadRef), [activeThreadRef]),
+  );
   const bottomDrawerMode = useBottomDrawerUiStore((state) => state.visibleMode);
   const showTerminalDrawer = useBottomDrawerUiStore((state) => state.showTerminal);
   const closeBottomDrawer = useBottomDrawerUiStore((state) => state.closeVisibleMode);
@@ -275,6 +289,34 @@ export function WorkspaceFilesPanel({
   );
   const panelOpen = diffSearch.diff === "1";
   const surfaceMode = resolveSurfaceMode(diffSearch);
+  const gitStatus = useGitStatus({
+    environmentId: activeThread?.environmentId ?? null,
+    cwd: workspaceRoot,
+  });
+  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
+    useTurnDiffSummaries(activeThread);
+  const orderedTurnDiffSummaries = useMemo(
+    () =>
+      orderTurnDiffSummariesByCheckpoint(turnDiffSummaries, inferredCheckpointTurnCountByTurnId),
+    [inferredCheckpointTurnCountByTurnId, turnDiffSummaries],
+  );
+  const likelyDiffPrefetchTarget = useMemo(
+    () =>
+      resolveLikelyDiffPrefetchTarget({
+        orderedTurnDiffSummaries,
+        inferredCheckpointTurnCountByTurnId,
+        diffSearch,
+        environmentId: activeThread?.environmentId ?? null,
+        threadId: activeThread?.id ?? null,
+      }),
+    [
+      activeThread?.environmentId,
+      activeThread?.id,
+      diffSearch,
+      inferredCheckpointTurnCountByTurnId,
+      orderedTurnDiffSummaries,
+    ],
+  );
   const routeEditorTarget = useMemo(
     () =>
       resolveRouteEditorTarget({
@@ -370,6 +412,13 @@ export function WorkspaceFilesPanel({
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("split");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
   const previousDiffVisibleRef = useRef(surfaceMode === "diff");
+  const diffRenderCacheScope = useMemo(
+    () =>
+      likelyDiffPrefetchTarget
+        ? `diff-panel:${resolvedTheme}:${likelyDiffPrefetchTarget.cacheScope}`
+        : null,
+    [likelyDiffPrefetchTarget, resolvedTheme],
+  );
   const { copyToClipboard: copyWorkspacePathToClipboard } = useCopyToClipboard<{
     description: string;
   }>({
@@ -448,6 +497,82 @@ export function WorkspaceFilesPanel({
     }
     usePreviewWorkspaceStore.getState().setActiveProjectRef(activeProjectRef);
   }, [activeProjectRef, bottomDrawerMode]);
+
+  const warmLikelyDiff = useCallback(() => {
+    if (
+      !supportsDiff ||
+      !workspaceRoot ||
+      !panelOpen ||
+      surfaceMode === "diff" ||
+      gitStatus.data?.isRepo !== true ||
+      orderedTurnDiffSummaries.length === 0 ||
+      !likelyDiffPrefetchTarget
+    ) {
+      return;
+    }
+
+    void queryClient
+      .fetchQuery(
+        checkpointDiffQueryOptions({
+          environmentId: likelyDiffPrefetchTarget.environmentId,
+          threadId: likelyDiffPrefetchTarget.threadId,
+          fromTurnCount: likelyDiffPrefetchTarget.fromTurnCount,
+          toTurnCount: likelyDiffPrefetchTarget.toTurnCount,
+          cacheScope: likelyDiffPrefetchTarget.cacheScope,
+          enabled: true,
+        }),
+      )
+      .then((result) => {
+        if (!diffRenderCacheScope) {
+          return;
+        }
+        const patch = result?.diff;
+        if (typeof patch !== "string") {
+          return;
+        }
+        scheduleIdleTask(() => {
+          primeRenderablePatchCache(patch, diffRenderCacheScope);
+        });
+      })
+      .catch(() => undefined);
+  }, [
+    diffRenderCacheScope,
+    gitStatus.data?.isRepo,
+    likelyDiffPrefetchTarget,
+    orderedTurnDiffSummaries.length,
+    panelOpen,
+    queryClient,
+    supportsDiff,
+    surfaceMode,
+    workspaceRoot,
+  ]);
+
+  useEffect(() => {
+    if (
+      !supportsDiff ||
+      !workspaceRoot ||
+      !panelOpen ||
+      surfaceMode === "diff" ||
+      gitStatus.data?.isRepo !== true ||
+      orderedTurnDiffSummaries.length === 0 ||
+      !likelyDiffPrefetchTarget
+    ) {
+      return;
+    }
+
+    return scheduleIdleTask(() => {
+      warmLikelyDiff();
+    });
+  }, [
+    gitStatus.data?.isRepo,
+    likelyDiffPrefetchTarget,
+    orderedTurnDiffSummaries.length,
+    panelOpen,
+    supportsDiff,
+    surfaceMode,
+    warmLikelyDiff,
+    workspaceRoot,
+  ]);
 
   const navigateToCurrentRoute = useCallback(
     (updateSearch: (previous: Record<string, unknown>) => Record<string, unknown>) => {
@@ -1186,6 +1311,9 @@ export function WorkspaceFilesPanel({
               <HeaderIconActionButton
                 className="shrink-0"
                 onClick={toggleDiffMode}
+                onPointerEnter={warmLikelyDiff}
+                onPointerDown={warmLikelyDiff}
+                onFocus={warmLikelyDiff}
                 aria-label="Toggle diff view"
                 title="Toggle diff view"
               >
