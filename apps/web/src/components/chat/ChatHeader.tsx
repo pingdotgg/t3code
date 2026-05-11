@@ -8,7 +8,14 @@ import {
 import type { RefObject } from "react";
 import { memo } from "react";
 import { type DraftId } from "~/composerDraftStore";
-import { IconChevronRight as ChevronRightIcon, IconCube as CubeIcon } from "symbols-react";
+import {
+  IconCheckmark as CheckIcon,
+  IconChevronDown as ChevronDownIcon,
+  IconChevronRight as ChevronRightIcon,
+  IconCube as CubeIcon,
+} from "symbols-react";
+import type { SidebarThreadSummary } from "~/types";
+import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { type NewProjectScriptInput } from "../ProjectScriptsControl";
@@ -24,6 +31,7 @@ import { HeaderIconActionButton } from "../HeaderIconActionButton";
 import { SidebarPanelIcon } from "../icons/custom";
 import { ChatHeaderActionsMenu } from "./ChatHeaderActionsMenu";
 import { type GitActionsControlHandle } from "../GitActionsControl";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 
 interface ChatHeaderProps {
   routeKind: "server" | "draft";
@@ -32,6 +40,7 @@ interface ChatHeaderProps {
   draftId?: DraftId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  projectThreads: readonly SidebarThreadSummary[];
   isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
@@ -48,6 +57,7 @@ interface ChatHeaderProps {
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
   onOpenProjectSwitcher: () => void;
+  onSelectThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => void;
   onToggleFiles: () => void;
   onCopyThreadAsMarkdown: () => void;
   onCopyWorkspacePath?: (() => void) | undefined;
@@ -64,6 +74,7 @@ export const ChatHeader = memo(function ChatHeader({
   draftId,
   activeThreadTitle,
   activeProjectName,
+  projectThreads,
   isGitRepo,
   openInCwd,
   activeProjectScripts,
@@ -80,6 +91,7 @@ export const ChatHeader = memo(function ChatHeader({
   onUpdateProjectScript,
   onDeleteProjectScript,
   onOpenProjectSwitcher,
+  onSelectThread,
   onToggleFiles,
   onCopyThreadAsMarkdown,
   onCopyWorkspacePath,
@@ -103,7 +115,7 @@ export const ChatHeader = memo(function ChatHeader({
               aria-label="Switch project"
               aria-haspopup="dialog"
               onClick={onOpenProjectSwitcher}
-              className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} ${THREAD_BREADCRUMB_PROJECT_CHIP_INTERACTIVE_CLASS_NAME} text-sm`}
+              className={`${THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME} ${THREAD_BREADCRUMB_PROJECT_CHIP_INTERACTIVE_CLASS_NAME} text-sm h-6`}
               title={activeProjectName}
             >
               <ThreadBreadcrumbProjectChipContent
@@ -112,20 +124,20 @@ export const ChatHeader = memo(function ChatHeader({
               />
             </button>
             <ChevronRightIcon className={THREAD_BREADCRUMB_SEPARATOR_ICON_CLASS_NAME} aria-hidden />
-            <h2
-              className="min-w-0 shrink truncate text-sm font-medium text-foreground"
-              title={activeThreadTitle}
-            >
-              {activeThreadTitle}
-            </h2>
+            <ThreadTitleMenu
+              activeThreadId={activeThreadId}
+              activeThreadTitle={activeThreadTitle}
+              projectThreads={projectThreads}
+              onSelectThread={onSelectThread}
+            />
           </nav>
         ) : (
-          <h2
-            className="min-w-0 shrink truncate text-sm font-medium text-foreground"
-            title={activeThreadTitle}
-          >
-            {activeThreadTitle}
-          </h2>
+          <ThreadTitleMenu
+            activeThreadId={activeThreadId}
+            activeThreadTitle={activeThreadTitle}
+            projectThreads={projectThreads}
+            onSelectThread={onSelectThread}
+          />
         )}
         {activeProjectName && !isGitRepo && (
           <Badge variant="outline" className="text-ui-2xs shrink-0 text-amber-700">
@@ -182,3 +194,62 @@ export const ChatHeader = memo(function ChatHeader({
     </div>
   );
 });
+
+function ThreadTitleMenu({
+  activeThreadId,
+  activeThreadTitle,
+  projectThreads,
+  onSelectThread,
+}: {
+  activeThreadId: ThreadId;
+  activeThreadTitle: string;
+  projectThreads: readonly SidebarThreadSummary[] | undefined;
+  onSelectThread: (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => void;
+}) {
+  const visibleThreads = (projectThreads ?? []).filter((thread) => thread.archivedAt === null);
+
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <button
+            type="button"
+            aria-label="Switch thread"
+            className="group flex min-w-0 shrink items-center gap-2 rounded-md px-2 py-0.5 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background"
+            title={activeThreadTitle}
+          />
+        }
+      >
+        <span className="min-w-0 truncate">{activeThreadTitle}</span>
+        <ChevronDownIcon className="size-2.5 shrink-0 fill-muted-foreground/60 transition-colors group-hover:fill-foreground/70" />
+      </MenuTrigger>
+      <MenuPopup align="start" className="w-80 max-w-[calc(100vw-1rem)]">
+        {visibleThreads.length > 0 ? (
+          visibleThreads.map((thread) => {
+            const isActive = thread.id === activeThreadId;
+            return (
+              <MenuItem
+                key={`${thread.environmentId}:${thread.id}`}
+                className={cn("grid grid-cols-[1rem_1fr] gap-2", isActive && "bg-accent/60")}
+                onClick={() => {
+                  if (!isActive) {
+                    onSelectThread(thread);
+                  }
+                }}
+              >
+                <span className="flex items-center justify-center">
+                  {isActive ? <CheckIcon className="size-3 fill-current" /> : null}
+                </span>
+                <span className="min-w-0 truncate">{thread.title}</span>
+              </MenuItem>
+            );
+          })
+        ) : (
+          <MenuItem disabled className="text-muted-foreground">
+            No active threads
+          </MenuItem>
+        )}
+      </MenuPopup>
+    </Menu>
+  );
+}

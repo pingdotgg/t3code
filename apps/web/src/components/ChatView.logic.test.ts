@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@forma/client-runtime";
-import { EnvironmentId, ProjectId, ThreadId, TurnId } from "@forma/contracts";
+import { EnvironmentId, MessageId, ProjectId, ThreadId, TurnId } from "@forma/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type EnvironmentState, useStore } from "../store";
 import { type Thread } from "../types";
@@ -9,8 +9,10 @@ import {
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveDisplayedTurnQueue,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
+  reconcileOptimisticQueuedTurns,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForServerThreadExists,
@@ -94,6 +96,139 @@ describe("resolveSendEnvMode", () => {
   it("forces local mode for non-git repositories", () => {
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: false })).toBe("local");
     expect(resolveSendEnvMode({ requestedEnvMode: "local", isGitRepo: false })).toBe("local");
+  });
+});
+
+const makeQueuedTurn = (
+  messageId: string,
+  overrides: Partial<Thread["turnQueue"]["items"][number]> = {},
+): Thread["turnQueue"]["items"][number] => ({
+  messageId: MessageId.make(messageId),
+  text: `queued:${messageId}`,
+  attachmentIds: [],
+  modelSelection: {
+    provider: "codex",
+    model: "gpt-5.4",
+  },
+  runtimeMode: "full-access",
+  interactionMode: "default",
+  titleSeed: null,
+  sourceProposedPlan: null,
+  queuedAt: "2026-03-29T00:00:00.000Z",
+  ...overrides,
+});
+
+describe("queued turn display reconciliation", () => {
+  it("keeps an optimistic queued turn when no server queue or message has the id", () => {
+    const optimistic = [makeQueuedTurn("queued-1")];
+
+    expect(
+      reconcileOptimisticQueuedTurns({
+        optimisticQueuedTurns: optimistic,
+        serverTurnQueue: {
+          items: [],
+          status: "idle",
+          pauseReason: null,
+        },
+        messages: [],
+      }),
+    ).toEqual(optimistic);
+  });
+
+  it("removes an optimistic queued turn when the server queue has the id", () => {
+    expect(
+      reconcileOptimisticQueuedTurns({
+        optimisticQueuedTurns: [makeQueuedTurn("queued-1")],
+        serverTurnQueue: {
+          items: [makeQueuedTurn("queued-1")],
+          status: "queued",
+          pauseReason: null,
+        },
+        messages: [],
+      }),
+    ).toEqual([]);
+  });
+
+  it("removes an optimistic queued turn when a real message has the id", () => {
+    expect(
+      reconcileOptimisticQueuedTurns({
+        optimisticQueuedTurns: [makeQueuedTurn("queued-1")],
+        serverTurnQueue: {
+          items: [],
+          status: "idle",
+          pauseReason: null,
+        },
+        messages: [
+          {
+            id: MessageId.make("queued-1"),
+            role: "user",
+            text: "queued:queued-1",
+            createdAt: "2026-03-29T00:00:01.000Z",
+            streaming: false,
+          },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it("retains an optimistic queued turn when unrelated messages arrive", () => {
+    const optimistic = [makeQueuedTurn("queued-1")];
+
+    expect(
+      reconcileOptimisticQueuedTurns({
+        optimisticQueuedTurns: optimistic,
+        serverTurnQueue: {
+          items: [],
+          status: "idle",
+          pauseReason: null,
+        },
+        messages: [
+          {
+            id: MessageId.make("message-other"),
+            role: "assistant",
+            text: "progress",
+            createdAt: "2026-03-29T00:00:01.000Z",
+            streaming: true,
+          },
+        ],
+      }),
+    ).toEqual(optimistic);
+  });
+
+  it("shows queued status when only optimistic queued turns exist", () => {
+    expect(
+      deriveDisplayedTurnQueue({
+        serverTurnQueue: {
+          items: [],
+          status: "idle",
+          pauseReason: null,
+        },
+        optimisticQueuedTurns: [makeQueuedTurn("queued-1")],
+        messages: [],
+      }),
+    ).toEqual({
+      items: [makeQueuedTurn("queued-1")],
+      status: "queued",
+      pauseReason: null,
+    });
+  });
+
+  it("preserves paused server status and reason when optimistic queued turns also exist", () => {
+    expect(
+      deriveDisplayedTurnQueue({
+        serverTurnQueue: {
+          items: [makeQueuedTurn("server-queued")],
+          status: "paused",
+          pauseReason: "error",
+        },
+        optimisticQueuedTurns: [makeQueuedTurn("optimistic-queued")],
+        messages: [],
+      }),
+    ).toEqual({
+      items: [makeQueuedTurn("server-queued"), makeQueuedTurn("optimistic-queued")],
+      status: "paused",
+      pauseReason: "error",
+    });
   });
 });
 

@@ -68,6 +68,25 @@ export function canPromoteQueuedTurn(
   );
 }
 
+export function canPromoteQueuedTurnAfterLifecycleBarrier(
+  thread: Pick<OrchestrationThread, "session" | "turnQueue" | "latestTurn" | "messages">,
+): boolean {
+  if (!canPromoteQueuedTurn(thread)) {
+    return false;
+  }
+
+  if (thread.latestTurn === null) {
+    return thread.messages.every((message) => message.role !== "user");
+  }
+
+  return (
+    thread.latestTurn.completedAt !== null &&
+    (thread.latestTurn.state === "completed" ||
+      thread.latestTurn.state === "error" ||
+      thread.latestTurn.state === "interrupted")
+  );
+}
+
 export function resolveQueuedTurnSnapshot(input: {
   readonly thread: Pick<OrchestrationThread, "modelSelection">;
   readonly command: {

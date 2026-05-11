@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  CheckpointRef,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
@@ -204,6 +205,23 @@ describe("TurnQueueReactor", () => {
       );
     };
 
+    const completeTurnDiff = async (turnId: TurnId = ACTIVE_TURN_ID) => {
+      await runtime!.runPromise(
+        engine.dispatch({
+          type: "thread.turn.diff.complete",
+          commandId: nextCommandId("thread-turn-diff-complete"),
+          threadId: THREAD_ID,
+          turnId,
+          completedAt: NOW,
+          checkpointRef: CheckpointRef.make(`checkpoint:${turnId}`),
+          status: "ready",
+          files: [],
+          checkpointTurnCount: 1,
+          createdAt: NOW,
+        }),
+      );
+    };
+
     const appendActivity = async (kind: string) => {
       await runtime!.runPromise(
         engine.dispatch({
@@ -252,6 +270,7 @@ describe("TurnQueueReactor", () => {
       setSession,
       enqueueTurn,
       settleTurn,
+      completeTurnDiff,
       appendActivity,
       removeQueuedTurn,
       readThread,
@@ -275,6 +294,7 @@ describe("TurnQueueReactor", () => {
     });
     await forma.enqueueTurn("queued-startup");
     await forma.setSession(null);
+    await forma.completeTurnDiff();
 
     await forma.startReactor();
 
@@ -334,6 +354,141 @@ describe("TurnQueueReactor", () => {
     });
   });
 
+  it("promotes after thread.session-set when the latest turn is already terminal", async () => {
+    const forma = await createHarness();
+    await forma.dispatchBaseEntities();
+    await forma.completeTurnDiff();
+    await forma.setSession({
+      threadId: THREAD_ID,
+      status: "starting",
+      providerName: "codex",
+      runtimeMode: "approval-required",
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: NOW,
+    });
+    await forma.enqueueTurn("queued-session-ready");
+    await forma.drain();
+
+    const beforeReadyEvents = await forma.readEvents();
+    expect(
+      beforeReadyEvents.some(
+        (event) =>
+          event.type === "thread.turn-start-requested" &&
+          event.payload.messageId === MessageId.make("queued-session-ready"),
+      ),
+    ).toBe(false);
+
+    await forma.setSession(null);
+
+    await waitFor(async () => {
+      const events = await forma.readEvents();
+      return (
+        events.find(
+          (event) =>
+            event.type === "thread.turn-start-requested" &&
+            event.payload.messageId === MessageId.make("queued-session-ready"),
+        ) ?? null
+      );
+    });
+  });
+
+  it("promotes after thread.turn-diff-completed when the latest turn becomes terminal", async () => {
+    const forma = await createHarness();
+    await forma.dispatchBaseEntities();
+    await forma.setSession({
+      threadId: THREAD_ID,
+      status: "running",
+      providerName: "codex",
+      runtimeMode: "approval-required",
+      activeTurnId: ACTIVE_TURN_ID,
+      lastError: null,
+      updatedAt: NOW,
+    });
+    await forma.enqueueTurn("queued-diff-complete");
+    await forma.drain();
+    await forma.setSession(null);
+    await forma.drain();
+
+    const beforeDiffEvents = await forma.readEvents();
+    expect(
+      beforeDiffEvents.some(
+        (event) =>
+          event.type === "thread.turn-start-requested" &&
+          event.payload.messageId === MessageId.make("queued-diff-complete"),
+      ),
+    ).toBe(false);
+
+    await forma.completeTurnDiff();
+
+    await waitFor(async () => {
+      const events = await forma.readEvents();
+      return (
+        events.find(
+          (event) =>
+            event.type === "thread.turn-start-requested" &&
+            event.payload.messageId === MessageId.make("queued-diff-complete"),
+        ) ?? null
+      );
+    });
+  });
+
+  it("does not promote on thread.session-set while the latest turn is still running", async () => {
+    const forma = await createHarness();
+    await forma.dispatchBaseEntities();
+    await forma.setSession({
+      threadId: THREAD_ID,
+      status: "running",
+      providerName: "codex",
+      runtimeMode: "approval-required",
+      activeTurnId: ACTIVE_TURN_ID,
+      lastError: null,
+      updatedAt: NOW,
+    });
+    await forma.enqueueTurn("queued-still-running");
+    await forma.drain();
+    await forma.setSession(null);
+    await forma.drain();
+
+    const events = await forma.readEvents();
+    expect(
+      events.some(
+        (event) =>
+          event.type === "thread.turn-start-requested" &&
+          event.payload.messageId === MessageId.make("queued-still-running"),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not promote when latest turn is absent but a user message was accepted", async () => {
+    const forma = await createHarness();
+    await forma.dispatchBaseEntities();
+    await forma.enqueueTurn("accepted-user-message");
+    await forma.drain();
+    await forma.setSession({
+      threadId: THREAD_ID,
+      status: "starting",
+      providerName: "codex",
+      runtimeMode: "approval-required",
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: NOW,
+    });
+    await forma.enqueueTurn("queued-after-accepted-message");
+    await forma.drain();
+    await forma.setSession(null);
+    await forma.drain();
+
+    const events = await forma.readEvents();
+    expect(
+      events.some(
+        (event) =>
+          event.type === "thread.turn-start-requested" &&
+          event.payload.messageId === MessageId.make("queued-after-accepted-message"),
+      ),
+    ).toBe(false);
+  });
+
   it("pauses queued turns after interrupted settlement", async () => {
     const forma = await createHarness();
     await forma.dispatchBaseEntities();
@@ -388,7 +543,7 @@ describe("TurnQueueReactor", () => {
     ]);
   });
 
-  it("promotes the new head when the previous head is removed while idle", async () => {
+  it("does not promote the new head when the previous head is removed before lifecycle completion", async () => {
     const forma = await createHarness();
     await forma.dispatchBaseEntities();
     await forma.setSession({
@@ -405,19 +560,12 @@ describe("TurnQueueReactor", () => {
     await forma.setSession(null);
     await forma.removeQueuedTurn("queued-head");
 
-    await waitFor(async () => {
-      const events = await forma.readEvents();
-      return (
-        events.find(
-          (event) =>
-            event.type === "thread.turn-start-requested" &&
-            event.payload.messageId === MessageId.make("queued-next"),
-        ) ?? null
-      );
-    });
+    await forma.drain();
 
     const thread = await forma.readThread();
-    expect(thread?.turnQueue.items).toEqual([]);
-    expect(thread?.turnQueue.status).toBe("idle");
+    expect(thread?.turnQueue.items.map((item) => item.messageId)).toEqual([
+      MessageId.make("queued-next"),
+    ]);
+    expect(thread?.turnQueue.status).toBe("queued");
   });
 });

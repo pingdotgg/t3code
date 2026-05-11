@@ -909,6 +909,136 @@ describe("incremental orchestration updates", () => {
     expect(nextSummary?.turnQueueStatus).toBe("idle");
   });
 
+  it("keeps queue state stable through promotion and lifecycle-only events", () => {
+    const thread = makeThread();
+    const baseState = makeState(thread);
+    const state = withActiveEnvironmentState(localEnvironmentStateOf(baseState), {
+      sidebarThreadSummaryById: {
+        [thread.id]: makeSidebarSummary(thread),
+      },
+    });
+
+    const queuedEvent = makeEvent(
+      "thread.turn-enqueued",
+      {
+        threadId: thread.id,
+        queuedTurn: {
+          messageId: MessageId.make("queued-promoted"),
+          text: "Queued prompt",
+          attachmentIds: [],
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          titleSeed: "Queued prompt",
+          sourceProposedPlan: null,
+          queuedAt: "2026-02-27T00:00:01.000Z",
+        },
+      },
+      { sequence: 2 },
+    );
+    const removePromotedEvent = makeEvent(
+      "thread.turn-queue-item-removed",
+      {
+        threadId: thread.id,
+        messageId: MessageId.make("queued-promoted"),
+        reason: "promoted",
+      },
+      { sequence: 3 },
+    );
+    const promotedMessageEvent = makeEvent(
+      "thread.message-sent",
+      {
+        threadId: thread.id,
+        messageId: MessageId.make("queued-promoted"),
+        role: "user",
+        text: "Queued prompt",
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-02-27T00:00:02.000Z",
+        updatedAt: "2026-02-27T00:00:02.000Z",
+      },
+      { sequence: 4 },
+    );
+
+    const queuedState = applyOrchestrationEvent(state, queuedEvent, localEnvironmentId);
+    const queuedThread = threadsOf(queuedState)[0];
+    expect(queuedThread?.turnQueue.items).toHaveLength(1);
+    expect(localEnvironmentStateOf(queuedState).threadShellById[thread.id]?.queuedTurnCount).toBe(
+      1,
+    );
+
+    const removedState = applyOrchestrationEvent(
+      queuedState,
+      removePromotedEvent,
+      localEnvironmentId,
+    );
+    const removedThread = threadsOf(removedState)[0];
+    expect(removedThread?.turnQueue).toEqual({
+      items: [],
+      status: "idle",
+      pauseReason: null,
+    });
+    expect(localEnvironmentStateOf(removedState).threadShellById[thread.id]?.queuedTurnCount).toBe(
+      0,
+    );
+
+    const promotedState = applyOrchestrationEvent(
+      removedState,
+      promotedMessageEvent,
+      localEnvironmentId,
+    );
+    const promotedThread = threadsOf(promotedState)[0];
+    expect(promotedThread?.messages.map((message) => message.id)).toEqual([
+      MessageId.make("queued-promoted"),
+    ]);
+    expect(promotedThread?.turnQueue.items).toEqual([]);
+
+    const sessionState = applyOrchestrationEvent(
+      promotedState,
+      makeEvent(
+        "thread.session-set",
+        {
+          threadId: thread.id,
+          session: {
+            threadId: thread.id,
+            status: "ready",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: "2026-02-27T00:00:03.000Z",
+          },
+        },
+        { sequence: 5 },
+      ),
+      localEnvironmentId,
+    );
+    expect(threadsOf(sessionState)[0]?.turnQueue.items).toEqual([]);
+
+    const diffState = applyOrchestrationEvent(
+      sessionState,
+      makeEvent(
+        "thread.turn-diff-completed",
+        {
+          threadId: thread.id,
+          turnId: TurnId.make("turn-promoted"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("checkpoint-promoted"),
+          status: "ready",
+          files: [],
+          assistantMessageId: null,
+          completedAt: "2026-02-27T00:00:04.000Z",
+        },
+        { sequence: 6 },
+      ),
+      localEnvironmentId,
+    );
+    expect(threadsOf(diffState)[0]?.turnQueue.items).toEqual([]);
+  });
+
   it("marks the latest turn terminal on thread.turn-settled and mirrors it into the sidebar", () => {
     const thread = makeThread({
       latestTurn: {

@@ -353,6 +353,7 @@ describe("decider queue commands", () => {
     }
     const queuedEvent = queuedResult as Exclude<typeof queuedResult, ReadonlyArray<unknown>>;
     expect(queuedEvent.type).toBe("thread.turn-enqueued");
+    expect(queuedEvent.type).not.toBe("thread.message-sent");
     expect(queuedEvent.payload).toMatchObject({
       threadId: asThreadId("thread-1"),
       queuedTurn: {
@@ -371,13 +372,28 @@ describe("decider queue commands", () => {
   });
 
   it("promotes only the queue head and preserves the queued turn snapshot", async () => {
+    const sourceThread = makeThread(asThreadId("thread-source"), asProjectId("project-1"), {
+      proposedPlans: [
+        {
+          id: "plan-source",
+          turnId: null,
+          planMarkdown: "# source plan",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+    });
     const readModel = makeReadModel({
       threads: [
+        sourceThread,
         makeThread(asThreadId("thread-1"), asProjectId("project-1"), {
           turnQueue: {
             items: [
               makeQueuedTurn("queued-1", {
                 text: "Promote first",
+                attachmentIds: ["attachment-1"],
                 modelSelection: {
                   provider: "codex",
                   model: "gpt-5.4-codex",
@@ -385,6 +401,10 @@ describe("decider queue commands", () => {
                 runtimeMode: "full-access",
                 interactionMode: "default",
                 titleSeed: "First queued title",
+                sourceProposedPlan: {
+                  threadId: sourceThread.id,
+                  planId: "plan-source",
+                },
               }),
               makeQueuedTurn("queued-2", {
                 text: "Promote second",
@@ -405,6 +425,15 @@ describe("decider queue commands", () => {
           commandId: CommandId.make("cmd-promote-head"),
           threadId: asThreadId("thread-1"),
           messageId: asMessageId("queued-1"),
+          attachments: [
+            {
+              type: "image",
+              id: "attachment-1",
+              name: "screenshot.png",
+              mimeType: "image/png",
+              sizeBytes: 123,
+            },
+          ],
           promotedAt: "2026-03-01T00:00:05.000Z",
           createdAt: "2026-03-01T00:00:05.000Z",
         },
@@ -422,6 +451,27 @@ describe("decider queue commands", () => {
       "thread.message-sent",
       "thread.turn-start-requested",
     ]);
+    expect(promoteResult[1]).toMatchObject({
+      payload: {
+        threadId: asThreadId("thread-1"),
+        messageId: asMessageId("queued-1"),
+        role: "user",
+        text: "Promote first",
+        attachments: [
+          {
+            type: "image",
+            id: "attachment-1",
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: 123,
+          },
+        ],
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-03-01T00:00:05.000Z",
+        updatedAt: "2026-03-01T00:00:05.000Z",
+      },
+    });
     expect(promoteResult[2]).toMatchObject({
       payload: {
         threadId: asThreadId("thread-1"),
@@ -433,6 +483,10 @@ describe("decider queue commands", () => {
         runtimeMode: "full-access",
         interactionMode: "default",
         titleSeed: "First queued title",
+        sourceProposedPlan: {
+          threadId: sourceThread.id,
+          planId: "plan-source",
+        },
         createdAt: "2026-03-01T00:00:05.000Z",
       },
     });

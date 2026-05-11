@@ -74,7 +74,11 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { selectProjectsAcrossEnvironments, useStore } from "../store";
+import {
+  selectProjectsAcrossEnvironments,
+  selectSidebarThreadsForProjectRef,
+  useStore,
+} from "../store";
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import {
@@ -89,6 +93,7 @@ import {
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ChatMessage,
+  type SidebarThreadSummary,
   type SessionPhase,
   type Thread,
   type TurnDiffSummary,
@@ -123,6 +128,7 @@ import { type MarkdownFileLinkMeta } from "../markdown-links";
 import { resolveWorkspaceEditorTarget } from "../workspaceEditorTarget";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
+import { sortThreads } from "../lib/threadSort";
 import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
@@ -681,6 +687,21 @@ export default function ChatView(props: ChatViewProps) {
     : null;
   const activeProject = useStore(
     useMemo(() => createProjectSelectorByRef(activeProjectRef), [activeProjectRef]),
+  );
+  const projectThreads = useStore(
+    useShallow(
+      useMemo(
+        () =>
+          (state: import("../store").AppState): SidebarThreadSummary[] =>
+            sortThreads(
+              selectSidebarThreadsForProjectRef(state, activeProjectRef).filter(
+                (thread) => thread.archivedAt === null,
+              ),
+              settings.sidebarThreadSortOrder,
+            ),
+        [activeProjectRef, settings.sidebarThreadSortOrder],
+      ),
+    ),
   );
 
   useEffect(() => {
@@ -1360,6 +1381,15 @@ export default function ChatView(props: ChatViewProps) {
     }
     void deleteWithConfirmation(activeThreadRef);
   }, [activeThreadRef, deleteWithConfirmation]);
+  const handleSelectHeaderThread = useCallback(
+    (thread: Pick<SidebarThreadSummary, "environmentId" | "id">) => {
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(thread.environmentId, thread.id)),
+      });
+    },
+    [navigate],
+  );
   const navigateCurrentThreadPanel = useCallback(
     (updateSearch: (previous: Record<string, unknown>) => Record<string, unknown>) => {
       if (routeKind === "draft") {
@@ -3388,6 +3418,7 @@ export default function ChatView(props: ChatViewProps) {
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          projectThreads={projectThreads}
           isGitRepo={isGitRepo}
           openInCwd={gitCwd}
           activeProjectScripts={activeProject?.scripts}
@@ -3406,6 +3437,7 @@ export default function ChatView(props: ChatViewProps) {
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
           onOpenProjectSwitcher={openProjectSwitcher}
+          onSelectThread={handleSelectHeaderThread}
           onToggleFiles={onToggleFiles}
           onCopyThreadAsMarkdown={handleCopyThreadAsMarkdown}
           onCopyWorkspacePath={handleCopyWorkspacePath}

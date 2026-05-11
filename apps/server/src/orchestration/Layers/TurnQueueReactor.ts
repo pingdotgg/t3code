@@ -16,7 +16,7 @@ import { ServerConfig } from "../../config.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { TurnQueueReactor, type TurnQueueReactorShape } from "../Services/TurnQueueReactor.ts";
 import {
-  canPromoteQueuedTurn,
+  canPromoteQueuedTurnAfterLifecycleBarrier,
   getHeadQueuedTurn,
   validateSourceProposedPlanReference,
 } from "../turnQueue.ts";
@@ -144,7 +144,7 @@ const make = Effect.gen(function* () {
   const maybePromoteHead = Effect.fn("maybePromoteHead")(function* (threadId: ThreadId) {
     const readModel = yield* orchestrationEngine.getReadModel();
     const thread = readModel.threads.find((entry) => entry.id === threadId);
-    if (!thread || !canPromoteQueuedTurn(thread)) {
+    if (!thread || !canPromoteQueuedTurnAfterLifecycleBarrier(thread)) {
       return;
     }
 
@@ -201,7 +201,7 @@ const make = Effect.gen(function* () {
     function* () {
       const readModel = yield* orchestrationEngine.getReadModel();
       yield* Effect.forEach(
-        readModel.threads.filter(canPromoteQueuedTurn),
+        readModel.threads.filter(canPromoteQueuedTurnAfterLifecycleBarrier),
         (thread) => maybePromoteHead(thread.id),
         { concurrency: 1 },
       );
@@ -212,6 +212,8 @@ const make = Effect.gen(function* () {
     switch (event.type) {
       case "thread.turn-enqueued":
       case "thread.turn-queue-resumed":
+      case "thread.session-set":
+      case "thread.turn-diff-completed":
         yield* maybePromoteHead(event.payload.threadId);
         return;
 
@@ -289,7 +291,9 @@ const make = Effect.gen(function* () {
           event.type !== "thread.turn-queue-item-removed" &&
           event.type !== "thread.turn-queue-resumed" &&
           event.type !== "thread.turn-settled" &&
-          event.type !== "thread.activity-appended"
+          event.type !== "thread.activity-appended" &&
+          event.type !== "thread.session-set" &&
+          event.type !== "thread.turn-diff-completed"
         ) {
           return Effect.void;
         }
