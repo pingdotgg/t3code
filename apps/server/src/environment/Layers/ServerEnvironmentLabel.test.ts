@@ -6,6 +6,7 @@ import { vi } from "vitest";
 
 import { ProcessRunner, ProcessSpawnError, type ProcessRunnerShape } from "../../processRunner.ts";
 import { resolveServerEnvironmentLabel } from "./ServerEnvironmentLabel.ts";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 const runMock = vi.fn<ProcessRunnerShape["run"]>();
 
@@ -51,7 +52,7 @@ describe("resolveServerEnvironmentLabel", () => {
         Effect.succeed({
           stdout: " Julius's MacBook Pro \n",
           stderr: "",
-          code: 0,
+          code: ChildProcessSpawner.ExitCode(0),
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
@@ -94,7 +95,7 @@ describe("resolveServerEnvironmentLabel", () => {
         Effect.succeed({
           stdout: "CI Runner\n",
           stderr: "",
-          code: 0,
+          code: ChildProcessSpawner.ExitCode(0),
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
@@ -158,7 +159,7 @@ describe("resolveServerEnvironmentLabel", () => {
         Effect.succeed({
           stdout: " ",
           stderr: "",
-          code: 0,
+          code: ChildProcessSpawner.ExitCode(0),
           timedOut: false,
           stdoutTruncated: false,
           stderrTruncated: false,
