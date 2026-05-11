@@ -1,7 +1,12 @@
 import { SidebarTrigger, useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { cn } from "~/lib/utils";
 
-export function DesktopSidebarReopenButton() {
+type DesktopSidebarReopenButtonProps = {
+  className?: string;
+};
+
+export function DesktopSidebarReopenButton({ className }: DesktopSidebarReopenButtonProps) {
   const { isMobile, open } = useSidebar();
 
   if (isMobile || open) {
@@ -13,7 +18,7 @@ export function DesktopSidebarReopenButton() {
       <TooltipTrigger
         render={
           <SidebarTrigger
-            className="hidden shrink-0 md:-ml-3 md:inline-flex md:size-6"
+            className={cn("hidden shrink-0 md:-ml-3 md:inline-flex md:size-6", className)}
             data-testid="desktop-sidebar-reopen-trigger"
           />
         }

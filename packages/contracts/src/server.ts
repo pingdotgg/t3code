@@ -83,6 +83,14 @@ export const ServerProviderSkill = Schema.Struct({
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 
+export const ServerProviderFreshness = Schema.Struct({
+  source: Schema.Literals(["live", "cache", "fallback"]),
+  stale: Schema.Boolean,
+  checkedAt: IsoDateTime,
+  detail: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderFreshness = typeof ServerProviderFreshness.Type;
+
 export const ServerProvider = Schema.Struct({
   provider: ProviderKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
@@ -100,6 +108,7 @@ export const ServerProvider = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   skills: Schema.Array(ServerProviderSkill).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  freshness: Schema.optional(ServerProviderFreshness),
 });
 export type ServerProvider = typeof ServerProvider.Type;
 

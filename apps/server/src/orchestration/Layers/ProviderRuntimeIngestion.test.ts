@@ -2359,6 +2359,56 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.status).toBe("running");
     expect(thread.session?.activeTurnId).toBe("turn-warning");
     expect(thread.session?.lastError).toBeNull();
+    const warningActivity = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-warning-runtime",
+    );
+    const warningPayload =
+      warningActivity?.payload && typeof warningActivity.payload === "object"
+        ? (warningActivity.payload as Record<string, unknown>)
+        : undefined;
+    expect(warningPayload?.classification).toBe("generic");
+  });
+
+  it("classifies retry runtime warnings without changing activity behavior", async () => {
+    const forma = await createHarness();
+    const now = new Date().toISOString();
+    const retryAt = new Date(Date.now() + 5000).toISOString();
+
+    forma.emit({
+      type: "runtime.warning",
+      eventId: asEventId("evt-warning-retry-runtime"),
+      provider: "opencode",
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-warning-retry"),
+      payload: {
+        message: "Retrying provider request",
+        classification: "retry",
+        retryAt,
+        retryDelayMs: 5000,
+      },
+    });
+
+    const thread = await waitForThread(forma.engine, (entry) =>
+      entry.activities.some(
+        (activity: ProviderRuntimeTestActivity) =>
+          activity.id === "evt-warning-retry-runtime" && activity.kind === "runtime.warning",
+      ),
+    );
+    const warning = thread.activities.find(
+      (activity: ProviderRuntimeTestActivity) => activity.id === "evt-warning-retry-runtime",
+    );
+    const warningPayload =
+      warning?.payload && typeof warning.payload === "object"
+        ? (warning.payload as Record<string, unknown>)
+        : undefined;
+
+    expect(warning?.kind).toBe("runtime.warning");
+    expect(warning?.summary).toBe("Runtime warning");
+    expect(warningPayload?.message).toBe("Retrying provider request");
+    expect(warningPayload?.classification).toBe("retry");
+    expect(warningPayload?.retryAt).toBe(retryAt);
+    expect(warningPayload?.retryDelayMs).toBe(5000);
   });
 
   it("maps session/thread lifecycle and item.started into session/activity projections", async () => {
@@ -2538,6 +2588,7 @@ describe("ProviderRuntimeIngestion", () => {
         : undefined;
     expect(warning?.kind).toBe("runtime.warning");
     expect(warningPayload?.message).toBe("Provider got slow");
+    expect(warningPayload?.classification).toBe("generic");
 
     const checkpoint = thread.checkpoints.find(
       (entry: ProviderRuntimeTestCheckpoint) => entry.turnId === "turn-p1",

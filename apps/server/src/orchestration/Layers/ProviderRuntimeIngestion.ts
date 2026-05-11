@@ -81,6 +81,34 @@ function truncateDetail(value: string, limit = 180): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
 }
 
+type RuntimeWarningClassification = "retry" | "rate-limit" | "overloaded" | "auth" | "generic";
+
+function classifyRuntimeWarning(message: string): RuntimeWarningClassification {
+  const normalized = message.toLowerCase();
+  if (
+    normalized.includes("rate limit") ||
+    normalized.includes("too many requests") ||
+    normalized.includes("usage limit")
+  ) {
+    return "rate-limit";
+  }
+  if (normalized.includes("overloaded") || normalized.includes("unavailable")) {
+    return "overloaded";
+  }
+  if (
+    normalized.includes("auth") ||
+    normalized.includes("login") ||
+    normalized.includes("credential") ||
+    normalized.includes("api key")
+  ) {
+    return "auth";
+  }
+  if (normalized.includes("retry") || normalized.includes("retrying")) {
+    return "retry";
+  }
+  return "generic";
+}
+
 function normalizeProposedPlanMarkdown(planMarkdown: string | undefined): string | undefined {
   const trimmed = planMarkdown?.trim();
   if (!trimmed) {
@@ -260,6 +288,8 @@ function runtimeEventToActivities(
     }
 
     case "runtime.warning": {
+      const classification =
+        event.payload.classification ?? classifyRuntimeWarning(event.payload.message);
       return [
         {
           id: event.eventId,
@@ -269,7 +299,12 @@ function runtimeEventToActivities(
           summary: "Runtime warning",
           payload: {
             message: truncateDetail(event.payload.message),
+            classification,
             ...(event.payload.detail !== undefined ? { detail: event.payload.detail } : {}),
+            ...(event.payload.retryAt !== undefined ? { retryAt: event.payload.retryAt } : {}),
+            ...(event.payload.retryDelayMs !== undefined
+              ? { retryDelayMs: event.payload.retryDelayMs }
+              : {}),
           },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,

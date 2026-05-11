@@ -63,6 +63,32 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }),
   );
 
+  it.effect("defaults missing safety settings to protected filesystem paths enabled", () =>
+    Effect.sync(() => {
+      const decoded = Schema.decodeUnknownSync(ServerSettings)({});
+
+      assert.deepEqual(decoded.safety, {
+        protectedFilesystemPathsEnabled: true,
+      });
+    }),
+  );
+
+  it.effect("decodes safety settings patches", () =>
+    Effect.sync(() => {
+      const decoded = Schema.decodeUnknownSync(ServerSettingsPatch)({
+        safety: {
+          protectedFilesystemPathsEnabled: false,
+        },
+      });
+
+      assert.deepEqual(decoded, {
+        safety: {
+          protectedFilesystemPathsEnabled: false,
+        },
+      });
+    }),
+  );
+
   it.effect("deep merges nested settings updates without dropping siblings", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsService;
@@ -295,6 +321,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             serverPassword: "secret-password",
           },
         },
+        safety: {
+          protectedFilesystemPathsEnabled:
+            DEFAULT_SERVER_SETTINGS.safety.protectedFilesystemPathsEnabled,
+        },
       });
 
       assert.equal(next.providers.codex.binaryPath, "/opt/homebrew/bin/codex");
@@ -314,6 +344,27 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             serverUrl: "http://127.0.0.1:4096",
             serverPassword: "secret-password",
           },
+        },
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("writes non-default safety settings to disk", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      yield* serverSettings.updateSettings({
+        safety: {
+          protectedFilesystemPathsEnabled: false,
+        },
+      });
+
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.deepEqual(JSON.parse(raw), {
+        safety: {
+          protectedFilesystemPathsEnabled: false,
         },
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),

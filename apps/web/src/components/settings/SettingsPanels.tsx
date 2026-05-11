@@ -49,6 +49,7 @@ import { isElectron } from "../../env";
 import { useTheme } from "../../hooks/useTheme";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import {
   setDesktopUpdateStateQueryData,
   useDesktopUpdateState,
@@ -315,6 +316,22 @@ function ProviderLastChecked({ lastCheckedAt }: { lastCheckedAt: string | null }
       ) : (
         <>Checked {lastCheckedRelative.value}</>
       )}
+    </span>
+  );
+}
+
+function ProviderFreshnessLabel({ provider }: { provider: ServerProvider | undefined }) {
+  const freshness = provider?.freshness;
+  if (!freshness) return null;
+  const label =
+    freshness.source === "live" ? "Live" : freshness.source === "cache" ? "Cached" : "Fallback";
+  return (
+    <span
+      className="text-ui-2xs rounded-sm border border-border/60 px-1.5 py-0.5 text-muted-foreground"
+      title={freshness.detail}
+    >
+      {label}
+      {freshness.stale ? " · stale" : ""}
     </span>
   );
 }
@@ -757,6 +774,13 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
           ...(isGitWritingModelDirty ? ["Text generation model"] : []),
           ...(areProviderSettingsDirty ? ["Providers"] : []),
         ];
+      case "safety":
+        return [
+          ...(settings.safety.protectedFilesystemPathsEnabled !==
+          DEFAULT_UNIFIED_SETTINGS.safety.protectedFilesystemPathsEnabled
+            ? ["Protected paths"]
+            : []),
+        ];
     }
   }, [
     areProviderSettingsDirty,
@@ -774,6 +798,7 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
     settings.diffWordWrap,
     settings.enableAssistantStreaming,
     settings.macOsFontSmoothing,
+    settings.safety.protectedFilesystemPathsEnabled,
     settings.threadCleanupInactiveDays,
     settings.timestampFormat,
     settings.uiFontScale,
@@ -833,6 +858,11 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
           providers: DEFAULT_UNIFIED_SETTINGS.providers,
         });
         break;
+      case "safety":
+        updateSettings({
+          safety: DEFAULT_UNIFIED_SETTINGS.safety,
+        });
+        break;
     }
 
     onRestored?.();
@@ -851,6 +881,107 @@ export function useSettingsRestore(scope: SettingsRestoreScope, onRestored?: () 
     changedSettingLabels,
     restoreDefaults,
   };
+}
+
+export function SafetySettingsPanel() {
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
+  const endpointPath = "/api/orchestration/events";
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    onCopy: () => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "success",
+          title: "Event stream URL copied",
+        }),
+      );
+    },
+    onError: (error) => {
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "Could not copy event stream URL",
+          description: error.message,
+        }),
+      );
+    },
+  });
+
+  const protectedPathsEnabled = settings.safety.protectedFilesystemPathsEnabled;
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection title="Filesystem">
+        <SettingsRow
+          title="Protected paths"
+          description="Skip OS-sensitive folders during browse and workspace scans."
+          resetAction={
+            protectedPathsEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.safety.protectedFilesystemPathsEnabled ? (
+              <SettingResetButton
+                label="protected paths"
+                onClick={() =>
+                  updateSettings({
+                    safety: {
+                      protectedFilesystemPathsEnabled:
+                        DEFAULT_UNIFIED_SETTINGS.safety.protectedFilesystemPathsEnabled,
+                    },
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={protectedPathsEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  safety: {
+                    protectedFilesystemPathsEnabled: Boolean(checked),
+                  },
+                })
+              }
+              aria-label="Protected paths"
+            />
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Diagnostics">
+        <SettingsRow
+          title="Event stream"
+          description="Authenticated read-only stream for debugging orchestration events."
+          status={
+            <span className="text-code-compact block break-all font-mono text-foreground">
+              {endpointPath}
+            </span>
+          }
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() => copyToClipboard(endpointPath, undefined)}
+            >
+              {isCopied ? "Copied" : "Copy URL"}
+            </Button>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Provider status">
+        <SettingsRow
+          title="Freshness"
+          description="Provider status may be reported from a live check, cached startup data, or fallback defaults while checks are still warming."
+          status={
+            <span className="text-ui-xs text-muted-foreground">
+              Live means current process verification succeeded. Cached and fallback states are
+              informational and do not block provider use by themselves.
+            </span>
+          }
+        />
+      </SettingsSection>
+    </SettingsPageContainer>
+  );
 }
 
 export function InterfaceSettingsPanel() {
@@ -1783,6 +1914,7 @@ export function ProvidersSettingsPanel() {
                           {providerCard.versionLabel}
                         </code>
                       ) : null}
+                      <ProviderFreshnessLabel provider={providerCard.liveProvider} />
                       <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
                         {providerCard.isDirty ? (
                           <SettingResetButton

@@ -144,4 +144,16 @@ describe("serverSettings helpers", () => {
       ],
     });
   });
+
+  it("deep merges safety settings patches", () => {
+    expect(
+      applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+        safety: {
+          protectedFilesystemPathsEnabled: false,
+        },
+      }).safety,
+    ).toEqual({
+      protectedFilesystemPathsEnabled: false,
+    });
+  });
 });

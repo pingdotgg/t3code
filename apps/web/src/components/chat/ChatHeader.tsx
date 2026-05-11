@@ -92,7 +92,7 @@ export const ChatHeader = memo(function ChatHeader({
     <div className="@container/header-actions flex flex-1 items-center gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden md:overflow-visible sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-        <DesktopSidebarReopenButton />
+        <DesktopSidebarReopenButton className="md:ml-0" />
         {activeProjectName ? (
           <nav
             aria-label="Thread breadcrumb"

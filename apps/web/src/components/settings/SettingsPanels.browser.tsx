@@ -30,6 +30,7 @@ import {
   InterfaceSettingsPanel,
   NotificationsSettingsPanel,
   ProvidersSettingsPanel,
+  SafetySettingsPanel,
   ThreadsSettingsPanel,
   useSettingsRestore,
 } from "./SettingsPanels";
@@ -858,6 +859,67 @@ describe("Settings panels", () => {
     });
   });
 
+  it("renders safety controls and updates protected path settings", async () => {
+    const updateSettings = vi.fn().mockResolvedValue(undefined);
+    window.nativeApi = {
+      dialogs: {
+        confirm: vi.fn().mockResolvedValue(true),
+      },
+      server: {
+        updateSettings,
+      },
+    } as unknown as LocalApi;
+
+    await renderSettingsPanel(<SafetySettingsPanel />);
+
+    await expect.element(page.getByText("Filesystem")).toBeInTheDocument();
+    await expect.element(page.getByText("Protected paths")).toBeInTheDocument();
+    await expect.element(page.getByText("/api/orchestration/events")).toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Copy URL" })).toBeInTheDocument();
+
+    await page.getByRole("switch", { name: "Protected paths" }).click();
+
+    expect(updateSettings).toHaveBeenCalledWith({
+      safety: {
+        protectedFilesystemPathsEnabled: false,
+      },
+    });
+  });
+
+  it("restores safety defaults through the safety restore flow", async () => {
+    const updateSettings = vi.fn().mockResolvedValue(undefined);
+    window.nativeApi = {
+      dialogs: {
+        confirm: vi.fn().mockResolvedValue(true),
+      },
+      server: {
+        updateSettings,
+      },
+    } as unknown as LocalApi;
+
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        safety: {
+          protectedFilesystemPathsEnabled: false,
+        },
+      },
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SettingsRestoreHarness buttonLabel="Restore safety defaults" scope="safety" />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByRole("button", { name: "Restore safety defaults" }).click();
+
+    expect(updateSettings).toHaveBeenCalledWith({
+      safety: DEFAULT_SERVER_SETTINGS.safety,
+    });
+  });
+
   it("creates and shows a pairing link when network access is enabled", async () => {
     window.desktopBridge = createDesktopBridgeStub({
       serverExposureState: {
@@ -1141,8 +1203,8 @@ describe("Settings panels", () => {
               capabilities: null,
             },
             {
-              slug: "5.5",
-              name: "5.5",
+              slug: "custom-5.5",
+              name: "custom-5.5",
               isCustom: true,
               capabilities: null,
             },
@@ -1157,7 +1219,7 @@ describe("Settings panels", () => {
           ...DEFAULT_SERVER_SETTINGS.providers,
           codex: {
             ...DEFAULT_SERVER_SETTINGS.providers.codex,
-            customModels: ["5.5"],
+            customModels: ["custom-5.5"],
           },
         },
       },
@@ -1169,12 +1231,15 @@ describe("Settings panels", () => {
       </AppAtomRegistryProvider>,
     );
 
-    await page.getByLabelText("Toggle Codex details").click();
-    await expect.element(page.getByRole("button", { name: "Remove 5.5" })).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Remove custom-5.5" }))
+      .toBeInTheDocument();
 
-    await page.getByRole("button", { name: "Remove 5.5" }).click();
+    await page.getByRole("button", { name: "Remove custom-5.5" }).click();
 
-    await expect.element(page.getByRole("button", { name: "Remove 5.5" })).not.toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Remove custom-5.5" }))
+      .not.toBeInTheDocument();
     expect(updateSettings).toHaveBeenCalledWith({
       providers: {
         ...DEFAULT_SERVER_SETTINGS.providers,

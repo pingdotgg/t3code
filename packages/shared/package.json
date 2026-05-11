@@ -76,6 +76,10 @@
       "types": "./src/path.ts",
       "import": "./src/path.ts"
     },
+    "./protectedPaths": {
+      "types": "./src/protectedPaths.ts",
+      "import": "./src/protectedPaths.ts"
+    },
     "./localAgents": {
       "types": "./src/localAgents.ts",
       "import": "./src/localAgents.ts"

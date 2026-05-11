@@ -17,7 +17,7 @@ function RestoreDefaultsButton({
   scope,
 }: {
   onRestored: () => void;
-  scope: "interface" | "threads" | "notifications" | "providers";
+  scope: "interface" | "threads" | "notifications" | "providers" | "safety";
 }) {
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(scope, onRestored);
 

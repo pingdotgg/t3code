@@ -530,10 +530,12 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       : null
     : extractToolDetail(payload, title ?? activity.summary);
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
+  const runtimeWarningLabel =
+    activity.kind === "runtime.warning" ? runtimeWarningDisplayLabel(payload) : null;
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
-    label: taskLabel || activity.summary,
+    label: runtimeWarningLabel || taskLabel || activity.summary,
     tone:
       activity.kind === "task.progress"
         ? "thinking"
@@ -544,8 +546,11 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
-  if (detail) {
-    entry.detail = detail;
+  const runtimeWarningDetail =
+    runtimeWarningLabel && typeof payload?.message === "string" ? payload.message : null;
+  const entryDetail = detail ?? runtimeWarningDetail;
+  if (entryDetail) {
+    entry.detail = entryDetail;
   }
   if (commandPreview.command) {
     entry.command = commandPreview.command;
@@ -573,6 +578,21 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     entry.collapseKey = collapseKey;
   }
   return entry;
+}
+
+function runtimeWarningDisplayLabel(payload: Record<string, unknown> | null): string | null {
+  switch (payload?.classification) {
+    case "retry":
+      return "Retrying";
+    case "rate-limit":
+      return "Rate limited";
+    case "overloaded":
+      return "Provider overloaded";
+    case "auth":
+      return "Authentication warning";
+    default:
+      return null;
+  }
 }
 
 function collapseDerivedWorkLogEntries(

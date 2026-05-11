@@ -28,12 +28,31 @@ import {
 import { createBuiltInProviderSources } from "../builtInProviderCatalog.ts";
 import type { ProviderSnapshotSource } from "../builtInProviderCatalog.ts";
 
+type ProviderFreshnessSource = NonNullable<ServerProvider["freshness"]>["source"];
+
 const loadProviders = (
   providerSources: ReadonlyArray<ProviderSnapshotSource>,
 ): Effect.Effect<ReadonlyArray<ServerProvider>> =>
   Effect.forEach(providerSources, (providerSource) => providerSource.getSnapshot, {
     concurrency: "unbounded",
   });
+
+function withProviderFreshness(
+  provider: ServerProvider,
+  source: ProviderFreshnessSource,
+  stale: boolean,
+  detail?: string,
+): ServerProvider {
+  return {
+    ...provider,
+    freshness: {
+      source,
+      stale,
+      checkedAt: provider.checkedAt,
+      ...(detail ? { detail } : {}),
+    },
+  };
+}
 
 const hasModelCapabilities = (model: ServerProvider["models"][number]): boolean =>
   (model.capabilities?.optionDescriptors?.length ?? 0) > 0;
@@ -100,7 +119,9 @@ const ProviderRegistryLiveBase = Layer.effect(
       PubSub.unbounded<ReadonlyArray<ServerProvider>>(),
       PubSub.shutdown,
     );
-    const fallbackProviders = yield* loadProviders(providerSources);
+    const fallbackProviders = (yield* loadProviders(providerSources)).map((provider) =>
+      withProviderFreshness(provider, "fallback", true, "Using provider fallback snapshot."),
+    );
     const cachePathByProvider = new Map(
       activeProviders.map(
         (provider) =>
@@ -126,11 +147,16 @@ const ProviderRegistryLiveBase = Layer.effect(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.map((cachedProvider) =>
             cachedProvider === undefined
-              ? undefined
-              : hydrateCachedProvider({
-                  cachedProvider,
-                  fallbackProvider,
-                }),
+              ? fallbackProvider
+              : withProviderFreshness(
+                  hydrateCachedProvider({
+                    cachedProvider,
+                    fallbackProvider,
+                  }),
+                  "cache",
+                  true,
+                  "Using cached provider status until a live refresh completes.",
+                ),
           ),
         );
       },
@@ -197,9 +223,14 @@ const ProviderRegistryLiveBase = Layer.effect(
       provider: ServerProvider,
       options?: {
         readonly publish?: boolean;
+        readonly freshness?: ProviderFreshnessSource;
       },
     ) {
-      return yield* upsertProviders([provider], options);
+      const freshness = options?.freshness ?? "live";
+      return yield* upsertProviders(
+        [withProviderFreshness(provider, freshness, freshness !== "live")],
+        options,
+      );
     });
 
     const refresh = Effect.fn("refresh")(function* (provider?: ProviderKind) {
@@ -235,6 +266,9 @@ const ProviderRegistryLiveBase = Layer.effect(
       },
     );
     yield* loadProviders(providerSources).pipe(
+      Effect.map((providers) =>
+        providers.map((provider) => withProviderFreshness(provider, "live", false)),
+      ),
       Effect.flatMap((providers) => upsertProviders(providers, { publish: false })),
     );
 

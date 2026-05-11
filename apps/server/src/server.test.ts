@@ -410,6 +410,7 @@ const buildAppUnderTest = (options?: {
     const workspaceEntriesLayer = WorkspaceEntriesLive.pipe(
       Layer.provide(WorkspacePathsLive),
       Layer.provideMerge(gitCoreLayer),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
     );
     const workspaceAndProjectServicesLayer = Layer.mergeAll(
       WorkspacePathsLive,

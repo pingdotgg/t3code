@@ -12,8 +12,10 @@ import {
   scoreQueryMatch,
   type RankedSearchResult,
 } from "@forma/shared/searchRanking";
+import { getProtectedDirectoryNames, isProtectedPath } from "@forma/shared/protectedPaths";
 
 import { GitCore } from "../../git/Services/GitCore.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import {
   WorkspaceEntries,
   WorkspaceEntriesBrowseError,
@@ -187,6 +189,48 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   const path = yield* Path.Path;
   const gitOption = yield* Effect.serviceOption(GitCore);
   const workspacePaths = yield* WorkspacePaths;
+  const homeDir = OS.homedir();
+
+  const areProtectedPathsEnabled = Effect.gen(function* () {
+    const serverSettingsOption = yield* Effect.serviceOption(ServerSettingsService);
+    if (Option.isNone(serverSettingsOption)) return true;
+    return yield* serverSettingsOption.value.getSettings.pipe(
+      Effect.map((settings) => settings.safety.protectedFilesystemPathsEnabled),
+      Effect.catch(() => Effect.succeed(true)),
+    );
+  });
+
+  const isPathProtected = Effect.fn("WorkspaceEntries.isPathProtected")(function* (
+    absolutePath: string,
+  ) {
+    if (!(yield* areProtectedPathsEnabled)) return false;
+    return isProtectedPath({ path: absolutePath, platform: process.platform, homeDir });
+  });
+
+  const failProtectedWorkspacePath = (
+    cwd: string,
+    operation: string,
+  ): Effect.Effect<never, WorkspaceEntriesError> =>
+    Effect.fail(
+      new WorkspaceEntriesError({
+        cwd,
+        operation,
+        detail: "Path is protected by Forma safety settings.",
+      }),
+    );
+
+  const failProtectedBrowsePath = (
+    input: FilesystemBrowseInput,
+    operation: string,
+  ): Effect.Effect<never, WorkspaceEntriesBrowseError> =>
+    Effect.fail(
+      new WorkspaceEntriesBrowseError({
+        cwd: input.cwd,
+        partialPath: input.partialPath,
+        operation,
+        detail: "Path is protected by Forma safety settings.",
+      }),
+    );
 
   const isInsideGitWorkTree = (cwd: string): Effect.Effect<boolean> =>
     Option.match(gitOption, {
@@ -217,6 +261,12 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
 
   const buildWorkspaceIndexFromGit = Effect.fn("WorkspaceEntries.buildWorkspaceIndexFromGit")(
     function* (cwd: string) {
+      if (yield* isPathProtected(cwd)) {
+        return yield* failProtectedWorkspacePath(
+          cwd,
+          "workspaceEntries.buildWorkspaceIndexFromGit",
+        );
+      }
       if (Option.isNone(gitOption)) {
         return null;
       }
@@ -235,7 +285,14 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       const listedPaths = [...listedFiles.paths]
         .map((entry) => toPosixPath(entry))
         .filter((entry) => entry.length > 0 && !isPathInIgnoredDirectory(entry));
-      const filePaths = yield* filterGitIgnoredPaths(cwd, listedPaths);
+      const safeListedPaths = [];
+      for (const entry of listedPaths) {
+        if (yield* isPathProtected(path.join(cwd, entry))) {
+          continue;
+        }
+        safeListedPaths.push(entry);
+      }
+      const filePaths = yield* filterGitIgnoredPaths(cwd, safeListedPaths);
 
       const directorySet = new Set<string>();
       for (const filePath of filePaths) {
@@ -307,6 +364,13 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   const buildWorkspaceIndexFromFilesystem = Effect.fn(
     "WorkspaceEntries.buildWorkspaceIndexFromFilesystem",
   )(function* (cwd: string): Effect.fn.Return<WorkspaceIndex, WorkspaceEntriesError> {
+    if (yield* isPathProtected(cwd)) {
+      return yield* failProtectedWorkspacePath(
+        cwd,
+        "workspaceEntries.buildWorkspaceIndexFromFilesystem",
+      );
+    }
+    const protectedPathsEnabled = yield* areProtectedPathsEnabled;
     const shouldFilterWithGitIgnore = yield* readCachedInsideGitWorkTree(cwd);
 
     let pendingDirectories: string[] = [""];
@@ -361,6 +425,16 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       for (const candidateEntries of candidateEntriesByDirectory) {
         for (const candidate of candidateEntries) {
           if (allowedPathSet && !allowedPathSet.has(candidate.relativePath)) {
+            continue;
+          }
+          if (
+            protectedPathsEnabled &&
+            isProtectedPath({
+              path: path.join(cwd, candidate.relativePath),
+              platform: process.platform,
+              homeDir,
+            })
+          ) {
             continue;
           }
 
@@ -433,6 +507,9 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
     "WorkspaceEntries.listEntries",
   )(function* (input) {
     const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+    if (yield* isPathProtected(normalizedCwd)) {
+      return yield* failProtectedWorkspacePath(input.cwd, "workspaceEntries.listEntries.cwd");
+    }
     const target =
       input.relativePath == null
         ? { absolutePath: normalizedCwd, relativePath: "" }
@@ -452,6 +529,10 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
                   }),
               ),
             );
+
+    if (yield* isPathProtected(target.absolutePath)) {
+      return yield* failProtectedWorkspacePath(input.cwd, "workspaceEntries.listEntries.target");
+    }
 
     const stat = yield* Effect.tryPromise({
       try: () => fsPromises.stat(target.absolutePath),
@@ -510,6 +591,9 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       if (isPathInIgnoredDirectory(relativePath)) {
         continue;
       }
+      if (yield* isPathProtected(path.join(normalizedCwd, relativePath))) {
+        continue;
+      }
       candidates.push({ dirent, relativePath });
     }
 
@@ -557,6 +641,9 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
       const endsWithSeparator = /[\\/]$/.test(input.partialPath) || input.partialPath === "~";
       const parentPath = endsWithSeparator ? resolvedInputPath : path.dirname(resolvedInputPath);
       const prefix = endsWithSeparator ? "" : path.basename(resolvedInputPath);
+      if (yield* isPathProtected(parentPath)) {
+        return yield* failProtectedBrowsePath(input, "workspaceEntries.browse.parentPath");
+      }
 
       const dirents = yield* Effect.tryPromise({
         try: () => fsPromises.readdir(parentPath, { withFileTypes: true }),
@@ -572,6 +659,11 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
 
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
+      const protectedPathsEnabled = yield* areProtectedPathsEnabled;
+      const protectedDirectoryNames =
+        protectedPathsEnabled && path.resolve(parentPath) === path.resolve(homeDir)
+          ? getProtectedDirectoryNames(process.platform, homeDir)
+          : new Set<string>();
 
       return {
         parentPath,
@@ -580,7 +672,17 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
             (dirent) =>
               dirent.isDirectory() &&
               dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-              (showHidden || !dirent.name.startsWith(".")),
+              (showHidden || !dirent.name.startsWith(".")) &&
+              !protectedDirectoryNames.has(dirent.name),
+          )
+          .filter(
+            (dirent) =>
+              !protectedPathsEnabled ||
+              !isProtectedPath({
+                path: path.join(parentPath, dirent.name),
+                platform: process.platform,
+                homeDir,
+              }),
           )
           .map((dirent) => ({
             name: dirent.name,
@@ -594,6 +696,9 @@ export const makeWorkspaceEntries = Effect.gen(function* () {
   const search: WorkspaceEntriesShape["search"] = Effect.fn("WorkspaceEntries.search")(
     function* (input) {
       const normalizedCwd = yield* normalizeWorkspaceRoot(input.cwd);
+      if (yield* isPathProtected(normalizedCwd)) {
+        return yield* failProtectedWorkspacePath(input.cwd, "workspaceEntries.search.cwd");
+      }
       return yield* Cache.get(workspaceIndexCache, normalizedCwd).pipe(
         Effect.map((index) => {
           const normalizedQuery = normalizeSearchQuery(input.query, {

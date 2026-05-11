@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { GitPullRequestIcon as SourceControlIcon } from "lucide-react";
+import { GitPullRequestIcon as SourceControlIcon, ShieldIcon } from "lucide-react";
 import {
   IconWifi as ConnectionsIcon,
   IconSwatchpalette as InterfaceIcon,
@@ -11,13 +11,19 @@ import {
   ProvidersSettingsIcon as ProvidersIcon,
 } from "../icons/custom";
 
-export type SettingsRestoreScope = "interface" | "threads" | "notifications" | "providers";
+export type SettingsRestoreScope =
+  | "interface"
+  | "threads"
+  | "notifications"
+  | "providers"
+  | "safety";
 
 export type SettingsSectionPath =
   | "/settings/interface"
   | "/settings/threads"
   | "/settings/notifications"
   | "/settings/providers"
+  | "/settings/safety"
   | "/settings/source-control"
   | "/settings/connections"
   | "/settings/advanced";
@@ -63,6 +69,13 @@ export const SETTINGS_NAV_ITEMS: ReadonlyArray<{
     icon: ProvidersIcon,
     iconUsesFill: true,
     restoreScope: "providers",
+  },
+  {
+    label: "Safety",
+    to: "/settings/safety",
+    icon: ShieldIcon,
+    iconUsesFill: false,
+    restoreScope: "safety",
   },
   {
     label: "Source Control",

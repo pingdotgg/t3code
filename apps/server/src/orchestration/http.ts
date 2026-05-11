@@ -5,9 +5,11 @@ import {
   type OrchestrationReadModel,
 } from "@forma/contracts";
 import { Effect } from "effect";
+import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 
-import { ServerAuth } from "../auth/Services/ServerAuth.ts";
+import { AuthError, ServerAuth } from "../auth/Services/ServerAuth.ts";
+import { respondToAuthError } from "../auth/http.ts";
 import { normalizeDispatchCommand } from "./Normalizer.ts";
 import { OrchestrationEngineService } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
@@ -90,4 +92,65 @@ export const orchestrationDispatchRouteLayer = HttpRouter.add(
     );
     return HttpServerResponse.jsonUnsafe(result, { status: 200 });
   }).pipe(Effect.catchTag("OrchestrationDispatchCommandError", respondToOrchestrationHttpError)),
+);
+
+function parseNonNegativeInteger(value: string | null): number | undefined {
+  if (value === null || value.trim() === "") return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function sseData(data: unknown): string {
+  return `data: ${JSON.stringify(data)}\n\n`;
+}
+
+export const orchestrationEventsRouteLayer = HttpRouter.add(
+  "GET",
+  "/api/orchestration/events",
+  Effect.gen(function* () {
+    yield* authenticateOwnerSession;
+
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const requestUrl = new URL(request.url, "http://localhost");
+    const fromSequence = parseNonNegativeInteger(requestUrl.searchParams.get("fromSequence"));
+    const heartbeatMs = Math.max(
+      1_000,
+      parseNonNegativeInteger(requestUrl.searchParams.get("heartbeatMs")) ?? 10_000,
+    );
+    const orchestrationEngine = yield* OrchestrationEngineService;
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const liveEvents = orchestrationEngine.streamDomainEvents.pipe(
+      Stream.map((event) => ({ type: "event" as const, event })),
+    );
+    const replayEvents =
+      fromSequence === undefined
+        ? Stream.empty
+        : orchestrationEngine
+            .readEvents(fromSequence)
+            .pipe(Stream.map((event) => ({ type: "event" as const, event })));
+    const heartbeatEvents = Stream.tick(`${heartbeatMs} millis`).pipe(
+      Stream.drop(1),
+      Stream.map(() => ({ type: "heartbeat" as const, at: new Date().toISOString() })),
+    );
+
+    return HttpServerResponse.stream(
+      Stream.make({ type: "connected" as const, sequence: readModel.snapshotSequence }).pipe(
+        Stream.concat(replayEvents),
+        Stream.concat(Stream.merge(liveEvents, heartbeatEvents, { haltStrategy: "left" })),
+        Stream.map(sseData),
+        Stream.encodeText,
+      ),
+      {
+        contentType: "text/event-stream",
+        headers: {
+          "Cache-Control": "no-cache, no-transform",
+          "X-Accel-Buffering": "no",
+          "X-Content-Type-Options": "nosniff",
+        },
+      },
+    );
+  }).pipe(
+    Effect.catchTag("AuthError", (error: AuthError) => respondToAuthError(error)),
+    Effect.catchTag("OrchestrationDispatchCommandError", respondToOrchestrationHttpError),
+  ),
 );

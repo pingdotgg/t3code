@@ -1,4 +1,5 @@
 import fsPromises from "node:fs/promises";
+import * as OS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, afterEach, describe, expect, vi } from "@effect/vitest";
@@ -7,12 +8,19 @@ import { Effect, FileSystem, Layer, Path, PlatformError } from "effect";
 import { ServerConfig } from "../../config.ts";
 import { GitCoreLive } from "../../git/Layers/GitCore.ts";
 import { GitCore } from "../../git/Services/GitCore.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { WorkspaceEntries } from "../Services/WorkspaceEntries.ts";
 import { WorkspaceEntriesLive } from "./WorkspaceEntries.ts";
 import { WorkspacePathsLive } from "./WorkspacePaths.ts";
+import { getProtectedDirectoryNames } from "@forma/shared/protectedPaths";
 
 const TestLayer = Layer.empty.pipe(
-  Layer.provideMerge(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
+  Layer.provideMerge(
+    WorkspaceEntriesLive.pipe(
+      Layer.provide(WorkspacePathsLive),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+    ),
+  ),
   Layer.provideMerge(WorkspacePathsLive),
   Layer.provideMerge(GitCoreLive),
   Layer.provide(
@@ -78,6 +86,17 @@ const appendSeparator = (input: string) =>
   input.endsWith("/") || input.endsWith("\\")
     ? input
     : `${input}${process.platform === "win32" ? "\\" : "/"}`;
+
+async function findExistingProtectedHomeDirectory(): Promise<string | null> {
+  if (process.platform !== "darwin" && process.platform !== "win32") return null;
+  const home = OS.homedir();
+  const protectedNames = getProtectedDirectoryNames(process.platform, home);
+  const dirents = await fsPromises.readdir(home, { withFileTypes: true });
+  const existing = dirents.find(
+    (dirent) => dirent.isDirectory() && protectedNames.has(dirent.name),
+  );
+  return existing ? `${home}/${existing.name}` : null;
+}
 
 it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
   afterEach(() => {
@@ -285,6 +304,23 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
         expect(peakReads).toBeLessThanOrEqual(32);
       }),
     );
+
+    it.effect("does not traverse protected home paths when enabled", () =>
+      Effect.gen(function* () {
+        const protectedPath = yield* Effect.promise(findExistingProtectedHomeDirectory);
+        if (!protectedPath) return;
+
+        const error = yield* searchWorkspaceEntries({
+          cwd: protectedPath,
+          query: "",
+          limit: 100,
+        }).pipe(Effect.flip);
+
+        expect((error as { detail?: string }).detail).toBe(
+          "Path is protected by Forma safety settings.",
+        );
+      }),
+    );
   });
 
   describe("browse", () => {
@@ -366,6 +402,24 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
         expect(error.detail).toBe("Relative filesystem browse paths require a current project.");
       }),
     );
+
+    it.effect("hides protected home directory names when enabled", () =>
+      Effect.gen(function* () {
+        if (process.platform !== "darwin" && process.platform !== "win32") return;
+
+        const path = yield* Path.Path;
+        const home = OS.homedir();
+        const protectedNames = getProtectedDirectoryNames(process.platform, home);
+
+        const result = yield* Effect.gen(function* () {
+          const workspaceEntries = yield* WorkspaceEntries;
+          return yield* workspaceEntries.browse({ partialPath: appendSeparator(home) });
+        });
+
+        expect(result.parentPath).toBe(path.resolve(home));
+        expect(result.entries.some((entry) => protectedNames.has(entry.name))).toBe(false);
+      }),
+    );
   });
 
   describe("listEntries", () => {
@@ -426,6 +480,19 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
           { path: "src", kind: "directory", parentPath: undefined },
           { path: ".gitignore", kind: "file", parentPath: undefined },
         ]);
+      }),
+    );
+
+    it.effect("does not list protected home paths when enabled", () =>
+      Effect.gen(function* () {
+        const protectedPath = yield* Effect.promise(findExistingProtectedHomeDirectory);
+        if (!protectedPath) return;
+
+        const error = yield* listWorkspaceEntries({ cwd: protectedPath }).pipe(Effect.flip);
+
+        expect((error as { detail?: string }).detail).toBe(
+          "Path is protected by Forma safety settings.",
+        );
       }),
     );
 

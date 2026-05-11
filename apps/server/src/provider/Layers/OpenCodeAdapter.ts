@@ -850,11 +850,15 @@ export function makeOpenCodeAdapterLive(options?: OpenCodeAdapterLiveOptions) {
             }
 
             if (event.properties.status.type === "retry") {
+              const retryDelayMs = Math.max(0, event.properties.status.next - Date.now());
               yield* emit({
                 ...buildEventBase({ threadId: context.session.threadId, turnId, raw: event }),
                 type: "runtime.warning",
                 payload: {
                   message: event.properties.status.message,
+                  classification: "retry",
+                  retryAt: new Date(event.properties.status.next).toISOString(),
+                  retryDelayMs,
                   detail: event.properties.status,
                 },
               });
