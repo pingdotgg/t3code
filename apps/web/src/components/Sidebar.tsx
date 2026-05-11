@@ -183,6 +183,7 @@ import {
   derivePhysicalProjectKey,
   deriveProjectGroupingOverrideKey,
   getProjectOrderKey,
+  selectProjectGroupingSettings,
 } from "../logicalProject";
 import {
   useSavedEnvironmentRegistryStore,
@@ -281,7 +282,8 @@ function buildThreadJumpLabelMap(input: {
     if (!command) continue;
 
     const shortcutLabel = shortcutLabelForCommand(input.keybindings, command, shortcutLabelOptions);
-    const label = shortcutLabel ? `${shortcutLabel}${secondDigit}` : null;
+    const separator = shortcutLabel?.endsWith(String(firstDigit)) ? "" : ",";
+    const label = shortcutLabel ? `${shortcutLabel}${separator}${secondDigit}` : null;
     if (label) {
       mapping.set(threadKey, label);
     }
@@ -954,10 +956,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const defaultThreadEnvMode = useSettings<ThreadEnvMode>(
     (settings) => settings.defaultThreadEnvMode,
   );
-  const projectGroupingSettings = useSettings((settings) => ({
-    sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
-    sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
-  }));
+  const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
   const { updateSettings } = useUpdateSettings();
   const sidebarThreadPreviewCount = useSettings<SidebarThreadPreviewCount>(
     (settings) => settings.sidebarThreadPreviewCount,
@@ -2814,10 +2813,7 @@ export default function Sidebar() {
   const sidebarThreadSortOrder = useSettings((s) => s.sidebarThreadSortOrder);
   const sidebarProjectSortOrder = useSettings((s) => s.sidebarProjectSortOrder);
   const sidebarProjectGroupingMode = useSettings((s) => s.sidebarProjectGroupingMode);
-  const projectGroupingSettings = useSettings((settings) => ({
-    sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
-    sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
-  }));
+  const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
   const sidebarThreadPreviewCount = useSettings((s) => s.sidebarThreadPreviewCount);
   const { updateSettings } = useUpdateSettings();
   const { handleNewThread } = useNewThreadHandler();
@@ -3246,6 +3242,8 @@ export default function Sidebar() {
     clearPendingThreadJump();
   }, [clearPendingThreadJump, routeThreadKey]);
 
+  useEffect(() => () => clearPendingThreadJump(), [clearPendingThreadJump]);
+
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
       const shortcutContext = getCurrentSidebarShortcutContext();
@@ -3267,9 +3265,8 @@ export default function Sidebar() {
           clearPendingThreadJump();
           event.preventDefault();
           event.stopPropagation();
-          if (targetIndex < orderedSidebarThreadKeys.length) {
-            navigateToThreadKey(orderedSidebarThreadKeys[targetIndex]);
-          }
+          if (targetIndex >= orderedSidebarThreadKeys.length) return;
+          navigateToThreadKey(orderedSidebarThreadKeys[targetIndex]);
           return;
         }
 
@@ -3329,7 +3326,6 @@ export default function Sidebar() {
 
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
-      clearPendingThreadJump();
     };
   }, [
     clearPendingThreadJump,

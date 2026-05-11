@@ -73,7 +73,6 @@ import {
 import { deriveServerPaths, ServerConfig } from "../src/config.ts";
 import { WorkspaceEntriesLive } from "../src/workspace/Layers/WorkspaceEntries.ts";
 import { WorkspacePathsLive } from "../src/workspace/Layers/WorkspacePaths.ts";
-import * as GitVcsDriver from "../src/vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../src/vcs/VcsDriverRegistry.ts";
 import { VcsStatusBroadcaster } from "../src/vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService } from "../src/git/GitWorkflowService.ts";
@@ -311,8 +310,11 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(serverSettingsLayer),
     );
     const gitWorkflowLayer = Layer.mock(GitWorkflowService)({
-      renameBranch: (input: Parameters<GitVcsDriver.GitVcsDriverShape["renameBranch"]>[0]) =>
-        Effect.succeed({ branch: input.newBranch }),
+      renameBranch: (input: {
+        readonly cwd: string;
+        readonly oldBranch: string;
+        readonly newBranch: string;
+      }) => Effect.succeed({ branch: input.newBranch }),
     });
     const textGenerationLayer = Layer.succeed(TextGeneration, {
       generateBranchName: () => Effect.succeed({ branch: "update" }),
