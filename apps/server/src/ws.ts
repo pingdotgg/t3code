@@ -751,6 +751,13 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   snapshot,
                 }),
                 liveStream,
+              ).pipe(
+                Stream.throttle({
+                  cost: () => 1,
+                  units: 50,
+                  duration: "100 millis",
+                  strategy: "shape",
+                }),
               );
             }),
             { "rpc.aggregate": "orchestration" },
@@ -1037,6 +1044,13 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                       ),
                   }),
                 ),
+            ).pipe(
+              Stream.throttle({
+                cost: () => 1,
+                units: 10,
+                duration: "100 millis",
+                strategy: "shape",
+              }),
             ),
             { "rpc.aggregate": "vcs" },
           ),
@@ -1124,6 +1138,13 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 terminalManager.subscribe((event) => Queue.offer(queue, event)),
                 (unsubscribe) => Effect.sync(unsubscribe),
               ),
+            ).pipe(
+              Stream.throttle({
+                cost: () => 1,
+                units: 20,
+                duration: "50 millis",
+                strategy: "shape",
+              }),
             ),
             { "rpc.aggregate": "terminal" },
           ),

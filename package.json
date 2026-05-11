@@ -91,7 +91,8 @@
     ]
   },
   "patchedDependencies": {
-    "effect@4.0.0-beta.59": "patches/effect@4.0.0-beta.59.patch"
+    "effect@4.0.0-beta.59": "patches/effect@4.0.0-beta.59.patch",
+    "@effect/platform-bun@4.0.0-beta.59": "patches/@effect+platform-bun@4.0.0-beta.59.patch"
   },
   "trustedDependencies": [
     "node-pty",

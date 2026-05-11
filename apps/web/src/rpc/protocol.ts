@@ -18,7 +18,6 @@ import {
   recordWsConnectionErrored,
   recordWsConnectionOpened,
   type WsConnectionMetadata,
-  WS_RECONNECT_MAX_RETRIES,
 } from "./wsConnectionState";
 
 export interface WsProtocolCloseContext {
@@ -216,7 +215,7 @@ export function createWsRpcProtocolLayer(
   const socketLayer = Socket.layerWebSocket(resolvedUrl).pipe(
     Layer.provide(trackingWebSocketConstructorLayer),
   );
-  const retryPolicy = Schedule.addDelay(Schedule.recurs(WS_RECONNECT_MAX_RETRIES), (retryCount) =>
+  const retryPolicy = Schedule.addDelay(Schedule.forever, (retryCount) =>
     Effect.succeed(Duration.millis(getWsReconnectDelayMsForRetry(retryCount) ?? 0)),
   );
   const protocolLayer = Layer.effect(
@@ -307,6 +306,9 @@ export function createWsRpcProtocolLayer(
       }),
       onPingTimeout: Effect.sync(() => {
         if (lifecycle.isActive()) {
+          if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+            return;
+          }
           clearAllTrackedRpcRequests();
           recordWsConnectionErrored(
             "WebSocket heartbeat timed out.",

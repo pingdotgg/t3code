@@ -64,6 +64,8 @@ export class WsTransport {
   private session: TransportSession;
   private lastHeartbeatPongAt = 0;
   private readonly streamRequestStartListeners = new Set<(info: StreamRequestStartInfo) => void>();
+  private readonly _wakeReconnect = new Set<() => void>();
+  private _visibilityHandler: (() => void) | null = null;
 
   constructor(
     url: WsRpcProtocolSocketUrlProvider,
@@ -72,6 +74,14 @@ export class WsTransport {
     this.url = url;
     this.lifecycleHandlers = lifecycleHandlers;
     this.session = this.createSession();
+    if (typeof document !== "undefined") {
+      this._visibilityHandler = () => {
+        if (document.visibilityState === "visible") {
+          for (const wake of this._wakeReconnect) wake();
+        }
+      };
+      document.addEventListener("visibilitychange", this._visibilityHandler);
+    }
   }
 
   async request<TSuccess>(
@@ -185,7 +195,17 @@ export class WsTransport {
             });
           }
           this.hasReportedTransportDisconnect = true;
-          await sleep(retryDelayMs);
+          const isLikelyCongestion =
+            formattedError.includes("heartbeat timed out") ||
+            formattedError.includes("ping timeout");
+          const effectiveDelay = isLikelyCongestion ? Math.max(retryDelayMs, 8_000) : retryDelayMs;
+          await Promise.race([
+            sleep(effectiveDelay),
+            new Promise<void>((resolve) => {
+              this._wakeReconnect.add(resolve);
+              void sleep(effectiveDelay).then(() => this._wakeReconnect.delete(resolve));
+            }),
+          ]);
         }
       }
     })();
@@ -225,6 +245,12 @@ export class WsTransport {
     if (this.disposed) {
       return;
     }
+    if (this._visibilityHandler) {
+      document.removeEventListener("visibilitychange", this._visibilityHandler);
+      this._visibilityHandler = null;
+    }
+    for (const wake of this._wakeReconnect) wake();
+    this._wakeReconnect.clear();
     this.disposed = true;
     await this.closeSession(this.session);
   }

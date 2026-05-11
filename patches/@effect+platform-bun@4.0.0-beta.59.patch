@@ -1,0 +1,11 @@
+diff --git a/dist/BunHttpServer.js b/dist/BunHttpServer.js
+--- a/dist/BunHttpServer.js
++++ b/dist/BunHttpServer.js
+@@ -43,6 +43,7 @@
+     ...options,
+     fetch: handlerStack[0],
+     websocket: {
++      perMessageDeflate: true,
+       open(ws) {
+         Deferred.doneUnsafe(ws.data.deferred, Exit.succeed(ws));
+       },

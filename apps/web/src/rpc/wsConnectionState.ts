@@ -4,13 +4,11 @@ import { Atom } from "effect/unstable/reactivity";
 import { appAtomRegistry } from "./atomRegistry";
 
 export type WsConnectionUiState = "connected" | "connecting" | "error" | "offline" | "reconnecting";
-export type WsReconnectPhase = "attempting" | "exhausted" | "idle" | "waiting";
+export type WsReconnectPhase = "attempting" | "idle" | "waiting";
 
 export const WS_RECONNECT_INITIAL_DELAY_MS = 1_000;
 export const WS_RECONNECT_BACKOFF_FACTOR = 2;
 export const WS_RECONNECT_MAX_DELAY_MS = 64_000;
-export const WS_RECONNECT_MAX_RETRIES = 7;
-export const WS_RECONNECT_MAX_ATTEMPTS = WS_RECONNECT_MAX_RETRIES + 1;
 
 export interface WsConnectionStatus {
   readonly attemptCount: number;
@@ -26,7 +24,7 @@ export interface WsConnectionStatus {
   readonly online: boolean;
   readonly phase: "idle" | "connecting" | "connected" | "disconnected";
   readonly reconnectAttemptCount: number;
-  readonly reconnectMaxAttempts: number;
+  readonly reconnectMaxAttempts: null;
   readonly reconnectPhase: WsReconnectPhase;
   readonly socketUrl: string | null;
 }
@@ -45,7 +43,7 @@ const INITIAL_WS_CONNECTION_STATUS = Object.freeze<WsConnectionStatus>({
   online: typeof navigator === "undefined" ? true : navigator.onLine !== false,
   phase: "idle",
   reconnectAttemptCount: 0,
-  reconnectMaxAttempts: WS_RECONNECT_MAX_ATTEMPTS,
+  reconnectMaxAttempts: null,
   reconnectPhase: "idle",
   socketUrl: null,
 });
@@ -201,7 +199,7 @@ export function useWsConnectionStatus(): WsConnectionStatus {
 }
 
 export function getWsReconnectDelayMsForRetry(retryIndex: number): number | null {
-  if (!Number.isInteger(retryIndex) || retryIndex < 0 || retryIndex >= WS_RECONNECT_MAX_RETRIES) {
+  if (!Number.isInteger(retryIndex) || retryIndex < 0) {
     return null;
   }
 
@@ -220,7 +218,7 @@ function applyDisconnectState(
 ): WsConnectionStatus {
   const disconnectedAt = current.disconnectedAt ?? isoNow();
   const nextRetryDelayMs =
-    current.nextRetryAt !== null || current.reconnectPhase === "exhausted"
+    current.nextRetryAt !== null
       ? null
       : getWsReconnectDelayMsForRetry(Math.max(0, current.reconnectAttemptCount - 1));
 
@@ -234,11 +232,6 @@ function applyDisconnectState(
         ? current.nextRetryAt
         : new Date(Date.now() + nextRetryDelayMs).toISOString(),
     phase: "disconnected",
-    reconnectPhase:
-      current.reconnectPhase === "waiting" || current.reconnectPhase === "exhausted"
-        ? current.reconnectPhase
-        : nextRetryDelayMs === null
-          ? "exhausted"
-          : "waiting",
+    reconnectPhase: current.reconnectPhase === "waiting" ? current.reconnectPhase : "waiting",
   };
 }

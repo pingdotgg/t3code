@@ -8,7 +8,6 @@ import {
   type WsConnectionStatus,
   type WsConnectionUiState,
   useWsConnectionStatus,
-  WS_RECONNECT_MAX_ATTEMPTS,
 } from "../rpc/wsConnectionState";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { getPrimaryEnvironmentConnection } from "../environments/runtime";
@@ -42,15 +41,8 @@ function describeOfflineToast(): string {
 }
 
 function formatReconnectAttemptLabel(status: WsConnectionStatus): string {
-  const reconnectAttempt = Math.max(
-    1,
-    Math.min(status.reconnectAttemptCount, WS_RECONNECT_MAX_ATTEMPTS),
-  );
-  return `Attempt ${reconnectAttempt}/${status.reconnectMaxAttempts}`;
-}
-
-function describeExhaustedToast(): string {
-  return "Retries exhausted trying to reconnect";
+  const reconnectAttempt = Math.max(1, status.reconnectAttemptCount);
+  return `Attempt ${reconnectAttempt}`;
 }
 
 function getConnectionDisplayName(status: WsConnectionStatus): string {
@@ -118,19 +110,10 @@ export function shouldAutoReconnect(
   const uiState = getWsConnectionUiState(status);
 
   if (trigger === "online") {
-    return (
-      uiState === "offline" ||
-      uiState === "reconnecting" ||
-      uiState === "error" ||
-      status.reconnectPhase === "exhausted"
-    );
+    return uiState === "offline" || uiState === "reconnecting" || uiState === "error";
   }
 
-  return (
-    status.online &&
-    status.hasConnected &&
-    (uiState === "reconnecting" || status.reconnectPhase === "exhausted")
-  );
+  return status.online && status.hasConnected && uiState === "reconnecting";
 }
 
 export function shouldRestartStalledReconnect(
@@ -273,17 +256,16 @@ export function WebSocketConnectionCoordinator() {
     const previousDisconnectedAt = previousDisconnectedAtRef.current;
     const shouldShowReconnectToast = status.hasConnected && uiState === "reconnecting";
     const shouldShowOfflineToast = uiState === "offline" && status.disconnectedAt !== null;
-    const shouldShowExhaustedToast = status.hasConnected && status.reconnectPhase === "exhausted";
 
     if (
       toastResetTimerRef.current !== null &&
-      (shouldShowReconnectToast || shouldShowOfflineToast || shouldShowExhaustedToast)
+      (shouldShowReconnectToast || shouldShowOfflineToast)
     ) {
       window.clearTimeout(toastResetTimerRef.current);
       toastResetTimerRef.current = null;
     }
 
-    if (shouldShowReconnectToast || shouldShowOfflineToast || shouldShowExhaustedToast) {
+    if (shouldShowReconnectToast || shouldShowOfflineToast) {
       const toastPayload = shouldShowOfflineToast
         ? stackedThreadToast({
             data: {
@@ -294,36 +276,22 @@ export function WebSocketConnectionCoordinator() {
             title: "Offline",
             type: "warning",
           })
-        : shouldShowExhaustedToast
-          ? stackedThreadToast({
-              actionProps: {
-                children: "Retry",
-                onClick: triggerManualReconnect,
-              },
-              data: {
-                hideCopyButton: true,
-              },
-              description: describeExhaustedToast(),
-              timeout: 0,
-              title: buildReconnectTitle(status),
-              type: "error",
-            })
-          : stackedThreadToast({
-              actionProps: {
-                children: "Retry now",
-                onClick: triggerManualReconnect,
-              },
-              data: {
-                hideCopyButton: true,
-              },
-              description:
-                status.nextRetryAt === null
-                  ? `Reconnecting... ${formatReconnectAttemptLabel(status)}`
-                  : `Reconnecting in ${formatRetryCountdown(status.nextRetryAt, nowMs)}... ${formatReconnectAttemptLabel(status)}`,
-              timeout: 0,
-              title: buildReconnectTitle(status),
-              type: "loading",
-            });
+        : stackedThreadToast({
+            actionProps: {
+              children: "Retry now",
+              onClick: triggerManualReconnect,
+            },
+            data: {
+              hideCopyButton: true,
+            },
+            description:
+              status.nextRetryAt === null
+                ? `Reconnecting... ${formatReconnectAttemptLabel(status)}`
+                : `Reconnecting in ${formatRetryCountdown(status.nextRetryAt, nowMs)}... ${formatReconnectAttemptLabel(status)}`,
+            timeout: 0,
+            title: buildReconnectTitle(status),
+            type: "loading",
+          });
 
       if (toastIdRef.current) {
         toastManager.update(toastIdRef.current, toastPayload);
