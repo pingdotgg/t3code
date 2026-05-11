@@ -53,6 +53,7 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db missing rollout path for thread",
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
+const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "not found",
   "missing thread",
@@ -721,6 +722,7 @@ export const makeCodexSessionRuntime = (
         ChildProcess.make(options.binaryPath, ["app-server"], {
           cwd: options.cwd,
           env,
+          forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
           shell: process.platform === "win32",
         }),
       )
