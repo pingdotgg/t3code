@@ -147,6 +147,14 @@ const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-slot="autocomplete-popup"]',
 ].join(",");
 
+function useStableCallback<Args extends unknown[], Return>(
+  callback: (...args: Args) => Return,
+): (...args: Args) => Return {
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+  return useCallback((...args: Args) => callbackRef.current(...args), []);
+}
+
 const extendReplacementRangeForTrailingSpace = (
   text: string,
   rangeEnd: number,
@@ -598,6 +606,15 @@ export const ChatComposer = memo(
       () => sortProviderInstanceEntries(deriveProviderInstanceEntries(providerStatuses)),
       [providerStatuses],
     );
+    const providerInstanceEntryById = useMemo<
+      ReadonlyMap<ProviderInstanceId, ProviderInstanceEntry>
+    >(() => {
+      const entriesById = new Map<ProviderInstanceId, ProviderInstanceEntry>();
+      for (const entry of providerInstanceEntries) {
+        entriesById.set(entry.instanceId, entry);
+      }
+      return entriesById;
+    }, [providerInstanceEntries]);
     const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
     const threadProvider =
       activeThread?.session?.providerInstanceId ??
@@ -618,15 +635,12 @@ export const ChatComposer = memo(
       const lockedInstanceId =
         activeThread.session?.providerInstanceId ?? activeThreadModelSelection?.instanceId;
       if (!lockedInstanceId) return null;
-      return (
-        providerInstanceEntries.find((entry) => entry.instanceId === lockedInstanceId)
-          ?.continuationGroupKey ?? null
-      );
+      return providerInstanceEntryById.get(lockedInstanceId)?.continuationGroupKey ?? null;
     }, [
       activeThread,
       activeThreadModelSelection?.instanceId,
       lockedProvider,
-      providerInstanceEntries,
+      providerInstanceEntryById,
     ]);
 
     // Resolve which configured instance the composer is currently targeting.
@@ -648,10 +662,9 @@ export const ChatComposer = memo(
       ];
       for (const candidate of candidates) {
         if (!candidate) continue;
-        const match = providerInstanceEntries.find(
-          (entry) => entry.instanceId === candidate && entry.enabled,
-        );
+        const match = providerInstanceEntryById.get(ProviderInstanceId.make(candidate));
         if (match) {
+          if (!match.enabled) continue;
           // When locked to a specific driver kind, ignore persisted instance
           // ids from a different kind or continuation group.
           if (lockedProvider && match.driverKind !== lockedProvider) continue;
@@ -691,6 +704,7 @@ export const ChatComposer = memo(
       explicitSelectedInstanceId,
       lockedContinuationGroupKey,
       lockedProvider,
+      providerInstanceEntryById,
       providerInstanceEntries,
       selectedProvider,
     ]);
@@ -709,8 +723,8 @@ export const ChatComposer = memo(
     // instance gets its own slash commands, skills, and model list — not
     // the first snapshot for the same driver kind.
     const selectedProviderEntry = useMemo(
-      () => providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId),
-      [providerInstanceEntries, selectedInstanceId],
+      () => providerInstanceEntryById.get(selectedInstanceId),
+      [providerInstanceEntryById, selectedInstanceId],
     );
     const selectedProviderStatus = useMemo(
       () => selectedProviderEntry?.snapshot ?? null,
@@ -928,20 +942,24 @@ export const ChatComposer = memo(
     const composerMenuSearchKey = composerTrigger
       ? `${composerTrigger.kind}:${composerTrigger.query.trim().toLowerCase()}`
       : null;
+    const activeComposerMenuItemId = useMemo(
+      () =>
+        resolveComposerMenuActiveItemId({
+          items: composerMenuItems,
+          highlightedItemId: composerHighlightedItemId,
+          currentSearchKey: composerMenuSearchKey,
+          highlightedSearchKey: composerHighlightedSearchKey,
+        }),
+      [
+        composerHighlightedItemId,
+        composerHighlightedSearchKey,
+        composerMenuItems,
+        composerMenuSearchKey,
+      ],
+    );
     const activeComposerMenuItem = useMemo(() => {
-      const activeItemId = resolveComposerMenuActiveItemId({
-        items: composerMenuItems,
-        highlightedItemId: composerHighlightedItemId,
-        currentSearchKey: composerMenuSearchKey,
-        highlightedSearchKey: composerHighlightedSearchKey,
-      });
-      return composerMenuItems.find((item) => item.id === activeItemId) ?? null;
-    }, [
-      composerHighlightedItemId,
-      composerHighlightedSearchKey,
-      composerMenuItems,
-      composerMenuSearchKey,
-    ]);
+      return composerMenuItems.find((item) => item.id === activeComposerMenuItemId) ?? null;
+    }, [activeComposerMenuItemId, composerMenuItems]);
 
     composerMenuOpenRef.current = composerMenuOpen;
     composerMenuItemsRef.current = composerMenuItems;
@@ -1127,35 +1145,6 @@ export const ChatComposer = memo(
     useEffect(() => {
       composerTerminalContextsRef.current = composerTerminalContexts;
     }, [composerTerminalContexts, composerTerminalContextsRef]);
-
-    // ------------------------------------------------------------------
-    // Composer menu highlight sync
-    // ------------------------------------------------------------------
-    useEffect(() => {
-      if (!composerMenuOpen) {
-        setComposerHighlightedItemId(null);
-        setComposerHighlightedSearchKey(null);
-        return;
-      }
-      const nextActiveItemId = resolveComposerMenuActiveItemId({
-        items: composerMenuItems,
-        highlightedItemId: composerHighlightedItemId,
-        currentSearchKey: composerMenuSearchKey,
-        highlightedSearchKey: composerHighlightedSearchKey,
-      });
-      setComposerHighlightedItemId((existing) =>
-        existing === nextActiveItemId ? existing : nextActiveItemId,
-      );
-      setComposerHighlightedSearchKey((existing) =>
-        existing === composerMenuSearchKey ? existing : composerMenuSearchKey,
-      );
-    }, [
-      composerHighlightedItemId,
-      composerHighlightedSearchKey,
-      composerMenuItems,
-      composerMenuOpen,
-      composerMenuSearchKey,
-    ]);
 
     const lastSyncedPendingInputRef = useRef<{
       requestId: string | null;
@@ -1573,7 +1562,7 @@ export const ChatComposer = memo(
       (key: "ArrowDown" | "ArrowUp") => {
         if (composerMenuItems.length === 0) return;
         const highlightedIndex = composerMenuItems.findIndex(
-          (item) => item.id === composerHighlightedItemId,
+          (item) => item.id === activeComposerMenuItemId,
         );
         const normalizedIndex =
           highlightedIndex >= 0 ? highlightedIndex : key === "ArrowDown" ? -1 : 0;
@@ -1582,8 +1571,9 @@ export const ChatComposer = memo(
           (normalizedIndex + offset + composerMenuItems.length) % composerMenuItems.length;
         const nextItem = composerMenuItems[nextIndex];
         setComposerHighlightedItemId(nextItem?.id ?? null);
+        setComposerHighlightedSearchKey(composerMenuSearchKey);
       },
-      [composerHighlightedItemId, composerMenuItems],
+      [activeComposerMenuItemId, composerMenuItems, composerMenuSearchKey],
     );
 
     const blurMobileComposerAfterSend = useCallback(() => {
@@ -1652,86 +1642,95 @@ export const ChatComposer = memo(
     // ------------------------------------------------------------------
     // Callbacks: command key
     // ------------------------------------------------------------------
-    const onComposerCommandKey = (
-      key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
-      event: KeyboardEvent,
-    ) => {
-      if (key === "Tab" && event.shiftKey) {
-        toggleInteractionMode();
-        return true;
-      }
-      const { trigger } = resolveActiveComposerTrigger();
-      const menuIsActive = composerMenuOpenRef.current || trigger !== null;
-      if (menuIsActive) {
-        const currentItems = composerMenuItemsRef.current;
-        const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
-        if (key === "ArrowDown" && currentItems.length > 0) {
-          nudgeComposerMenuHighlight("ArrowDown");
+    const onComposerCommandKey = useStableCallback(
+      (key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab", event: KeyboardEvent) => {
+        if (key === "Tab" && event.shiftKey) {
+          toggleInteractionMode();
           return true;
         }
-        if (key === "ArrowUp" && currentItems.length > 0) {
-          nudgeComposerMenuHighlight("ArrowUp");
+        const { trigger } = resolveActiveComposerTrigger();
+        const menuIsActive = composerMenuOpenRef.current || trigger !== null;
+        if (menuIsActive) {
+          const currentItems = composerMenuItemsRef.current;
+          const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
+          if (key === "ArrowDown" && currentItems.length > 0) {
+            nudgeComposerMenuHighlight("ArrowDown");
+            return true;
+          }
+          if (key === "ArrowUp" && currentItems.length > 0) {
+            nudgeComposerMenuHighlight("ArrowUp");
+            return true;
+          }
+          if ((key === "Enter" || key === "Tab") && selectedItem) {
+            onSelectComposerItem(selectedItem);
+            return true;
+          }
+        }
+        if (key === "Enter" && !event.shiftKey) {
+          submitComposer();
           return true;
         }
-        if ((key === "Enter" || key === "Tab") && selectedItem) {
-          onSelectComposerItem(selectedItem);
-          return true;
-        }
-      }
-      if (key === "Enter" && !event.shiftKey) {
-        submitComposer();
-        return true;
-      }
-      return false;
-    };
+        return false;
+      },
+    );
 
     // ------------------------------------------------------------------
     // Callbacks: images
     // ------------------------------------------------------------------
-    const addComposerImages = (files: File[]) => {
-      if (!activeThreadId || files.length === 0) return;
-      if (pendingUserInputs.length > 0) {
-        toastManager.add({
-          type: "error",
-          title: "Attach images after answering plan questions.",
-        });
-        return;
-      }
-      const nextImages: ComposerImageAttachment[] = [];
-      let nextImageCount = composerImagesRef.current.length;
-      let error: string | null = null;
-      for (const file of files) {
-        if (!file.type.startsWith("image/")) {
-          error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
-          continue;
+    const addComposerImages = useCallback(
+      (files: File[]) => {
+        if (!activeThreadId || files.length === 0) return;
+        if (pendingUserInputs.length > 0) {
+          toastManager.add({
+            type: "error",
+            title: "Attach images after answering plan questions.",
+          });
+          return;
         }
-        if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
-          error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
-          continue;
+        const nextImages: ComposerImageAttachment[] = [];
+        let nextImageCount = composerImagesRef.current.length;
+        let error: string | null = null;
+        for (const file of files) {
+          if (!file.type.startsWith("image/")) {
+            error = `Unsupported file type for '${file.name}'. Please attach image files only.`;
+            continue;
+          }
+          if (file.size > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+            error = `'${file.name}' exceeds the ${IMAGE_SIZE_LIMIT_LABEL} attachment limit.`;
+            continue;
+          }
+          if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+            error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
+            break;
+          }
+          const previewUrl = URL.createObjectURL(file);
+          nextImages.push({
+            type: "image",
+            id: randomUUID(),
+            name: file.name || "image",
+            mimeType: file.type,
+            sizeBytes: file.size,
+            previewUrl,
+            file,
+          });
+          nextImageCount += 1;
         }
-        if (nextImageCount >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
-          error = `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} images per message.`;
-          break;
+        if (nextImages.length === 1 && nextImages[0]) {
+          addComposerImage(nextImages[0]);
+        } else if (nextImages.length > 1) {
+          addComposerImagesToDraft(nextImages);
         }
-        const previewUrl = URL.createObjectURL(file);
-        nextImages.push({
-          type: "image",
-          id: randomUUID(),
-          name: file.name || "image",
-          mimeType: file.type,
-          sizeBytes: file.size,
-          previewUrl,
-          file,
-        });
-        nextImageCount += 1;
-      }
-      if (nextImages.length === 1 && nextImages[0]) {
-        addComposerImage(nextImages[0]);
-      } else if (nextImages.length > 1) {
-        addComposerImagesToDraft(nextImages);
-      }
-      setThreadError(activeThreadId, error);
-    };
+        setThreadError(activeThreadId, error);
+      },
+      [
+        activeThreadId,
+        addComposerImage,
+        addComposerImagesToDraft,
+        composerImagesRef,
+        pendingUserInputs.length,
+        setThreadError,
+      ],
+    );
 
     const removeComposerImage = (imageId: string) => {
       removeComposerImageFromDraft(imageId);
@@ -1740,14 +1739,14 @@ export const ChatComposer = memo(
     // ------------------------------------------------------------------
     // Callbacks: paste / drag
     // ------------------------------------------------------------------
-    const onComposerPaste = (event: React.ClipboardEvent<HTMLElement>) => {
+    const onComposerPaste = useStableCallback((event: React.ClipboardEvent<HTMLElement>) => {
       const files = Array.from(event.clipboardData.files);
       if (files.length === 0) return;
       const imageFiles = files.filter((file) => file.type.startsWith("image/"));
       if (imageFiles.length === 0) return;
       event.preventDefault();
       addComposerImages(imageFiles);
-    };
+    });
 
     const onComposerDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
       if (!event.dataTransfer.types.includes("Files")) return;
