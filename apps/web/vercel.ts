@@ -1,9 +1,16 @@
-import { matchers, routes, type VercelConfig } from "@vercel/config/v1";
+import { matchers, routes, type Transform, type VercelConfig } from "@vercel/config/v1";
 
 const ROUTER_HOST = "app.t3.codes";
 const HOSTED_WEB_CHANNEL_COOKIE = "t3code_web_channel";
 const LATEST_ORIGIN = "https://latest.app.t3.codes";
 const NIGHTLY_ORIGIN = "https://nightly.app.t3.codes";
+const CLEAN_CHANNEL_QUERY_TRANSFORMS = [
+  {
+    type: "request.query",
+    op: "delete",
+    target: { key: "channel" },
+  },
+] satisfies Transform[];
 
 function channelCookie(channel: "latest" | "nightly"): string {
   return [
@@ -28,6 +35,7 @@ export const config: VercelConfig = {
     {
       src: "/__t3code/channel",
       has: [matchers.query("channel", "nightly")],
+      transforms: CLEAN_CHANNEL_QUERY_TRANSFORMS,
       headers: {
         Location: "/",
         "Set-Cookie": channelCookie("nightly"),
@@ -36,6 +44,7 @@ export const config: VercelConfig = {
     },
     {
       src: "/__t3code/channel",
+      transforms: CLEAN_CHANNEL_QUERY_TRANSFORMS,
       headers: {
         Location: "/",
         "Set-Cookie": channelCookie("latest"),
