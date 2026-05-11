@@ -53,8 +53,16 @@ function describeExhaustedToast(): string {
   return "Retries exhausted trying to reconnect";
 }
 
-function buildReconnectTitle(_status: WsConnectionStatus): string {
-  return "Disconnected from T3 Server";
+function getConnectionDisplayName(status: WsConnectionStatus): string {
+  return status.connectionLabel?.trim() || "T3 Server";
+}
+
+function buildReconnectTitle(status: WsConnectionStatus): string {
+  return `Disconnected from ${getConnectionDisplayName(status)}`;
+}
+
+function buildRecoveredTitle(status: WsConnectionStatus): string {
+  return `Reconnected to ${getConnectionDisplayName(status)}`;
 }
 
 function describeRecoveredToast(
@@ -297,7 +305,7 @@ export function WebSocketConnectionCoordinator() {
               },
               description: describeExhaustedToast(),
               timeout: 0,
-              title: "Disconnected from T3 Server",
+              title: buildReconnectTitle(status),
               type: "error",
             })
           : stackedThreadToast({
@@ -334,7 +342,7 @@ export function WebSocketConnectionCoordinator() {
     ) {
       const successToast = {
         description: describeRecoveredToast(previousDisconnectedAt, status.connectedAt),
-        title: "Reconnected to T3 Server",
+        title: buildRecoveredTitle(status),
         type: "success" as const,
         timeout: 0,
         data: {

@@ -1,5 +1,15 @@
-import { Cause, Duration, Effect, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
+import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import {
+  DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL,
   type AuthAccessStreamEvent,
   AuthSessionId,
   CommandId,
@@ -29,9 +39,6 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { ServerConfig } from "./config.ts";
-import { GitCore } from "./git/Services/GitCore.ts";
-import { GitManager } from "./git/Services/GitManager.ts";
-import { GitStatusBroadcaster } from "./git/Services/GitStatusBroadcaster.ts";
 import { Keybindings } from "./keybindings.ts";
 import { Open, resolveAvailableEditors } from "./open.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
@@ -43,6 +50,7 @@ import {
   observeRpcStreamEffect,
 } from "./observability/RpcInstrumentation.ts";
 import { ProviderRegistry } from "./provider/Services/ProviderRegistry.ts";
+import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "./serverSettings.ts";
@@ -50,10 +58,26 @@ import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths.ts";
+import { VcsStatusBroadcaster } from "./vcs/VcsStatusBroadcaster.ts";
+import { VcsProvisioningService } from "./vcs/VcsProvisioningService.ts";
+import { GitWorkflowService } from "./git/GitWorkflowService.ts";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner.ts";
 import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentityResolver.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
+import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
+import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
+import * as SourceControlDiscoveryLayer from "./sourceControl/SourceControlDiscovery.ts";
+import { SourceControlRepositoryService } from "./sourceControl/SourceControlRepositoryService.ts";
+import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
+import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
+import * as GitHubCli from "./sourceControl/GitHubCli.ts";
+import * as GitLabCli from "./sourceControl/GitLabCli.ts";
+import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
+import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
+import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
+import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
+import * as VcsProcess from "./vcs/VcsProcess.ts";
 import {
   BootstrapCredentialService,
   type BootstrapCredentialChange,
@@ -63,6 +87,10 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
 import { respondToAuthError } from "./auth/http.ts";
+const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
+
+const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
@@ -136,11 +164,12 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const keybindings = yield* Keybindings;
       const open = yield* Open;
-      const gitManager = yield* GitManager;
-      const git = yield* GitCore;
-      const gitStatusBroadcaster = yield* GitStatusBroadcaster;
+      const gitWorkflow = yield* GitWorkflowService;
+      const vcsProvisioning = yield* VcsProvisioningService;
+      const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
       const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
+      const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const config = yield* ServerConfig;
       const lifecycleEvents = yield* ServerLifecycleEvents;
       const serverSettings = yield* ServerSettingsService;
@@ -151,8 +180,19 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const repositoryIdentityResolver = yield* RepositoryIdentityResolver;
       const serverEnvironment = yield* ServerEnvironment;
       const serverAuth = yield* ServerAuth;
+      const sourceControlDiscovery = yield* SourceControlDiscoveryLayer.SourceControlDiscovery;
+      const automaticGitFetchInterval = serverSettings.getSettings.pipe(
+        Effect.map((settings) => settings.automaticGitFetchInterval),
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to read automatic Git fetch interval setting", {
+            detail: cause.message,
+          }).pipe(Effect.as(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL)),
+        ),
+      );
+      const sourceControlRepositories = yield* SourceControlRepositoryService;
       const bootstrapCredentials = yield* BootstrapCredentialService;
       const sessions = yield* SessionCredentialService;
+      const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const serverCommandId = (tag: string) =>
         CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -187,7 +227,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         });
 
       const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
-        Schema.is(OrchestrationDispatchCommandError)(cause)
+        isOrchestrationDispatchCommandError(cause)
           ? cause
           : new OrchestrationDispatchCommandError({
               message: cause instanceof Error ? cause.message : fallbackMessage,
@@ -196,7 +236,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
       const toBootstrapDispatchCommandCauseError = (cause: Cause.Cause<unknown>) => {
         const error = Cause.squash(cause);
-        return Schema.is(OrchestrationDispatchCommandError)(error)
+        return isOrchestrationDispatchCommandError(error)
           ? error
           : new OrchestrationDispatchCommandError({
               message:
@@ -223,9 +263,13 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             return Effect.gen(function* () {
               const workspaceRoot =
                 event.payload.workspaceRoot ??
-                (yield* orchestrationEngine.getReadModel()).projects.find(
-                  (project) => project.id === event.payload.projectId,
-                )?.workspaceRoot ??
+                Option.match(
+                  yield* projectionSnapshotQuery.getProjectShellById(event.payload.projectId),
+                  {
+                    onNone: () => null,
+                    onSome: (project) => project.workspaceRoot,
+                  },
+                ) ??
                 null;
               if (workspaceRoot === null) {
                 return event;
@@ -239,7 +283,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   repositoryIdentity,
                 },
               } satisfies OrchestrationEvent;
-            });
+            }).pipe(Effect.catch(() => Effect.succeed(event)));
           default:
             return Effect.succeed(event);
         }
@@ -273,12 +317,24 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               }),
             );
           case "thread.deleted":
+          case "thread.archived":
             return Effect.succeed(
               Option.some({
                 kind: "thread-removed" as const,
                 sequence: event.sequence,
                 threadId: event.payload.threadId,
               }),
+            );
+          case "thread.unarchived":
+            return projectionSnapshotQuery.getThreadShellById(event.payload.threadId).pipe(
+              Effect.map((thread) =>
+                Option.map(thread, (nextThread) => ({
+                  kind: "thread-upserted" as const,
+                  sequence: event.sequence,
+                  thread: nextThread,
+                })),
+              ),
+              Effect.catch(() => Effect.succeed(Option.none())),
             );
           default:
             if (event.aggregateKind !== "thread") {
@@ -356,83 +412,86 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             readonly scriptId: string;
             readonly scriptName: string;
             readonly terminalId: string;
-          }) => {
-            const payload = {
-              scriptId: input.scriptId,
-              scriptName: input.scriptName,
-              terminalId: input.terminalId,
-              worktreePath: input.worktreePath,
-            };
-            return Effect.all([
-              appendSetupScriptActivity({
-                threadId: command.threadId,
-                kind: "setup-script.requested",
-                summary: "Starting setup script",
-                createdAt: input.requestedAt,
-                payload,
-                tone: "info",
-              }),
-              appendSetupScriptActivity({
-                threadId: command.threadId,
-                kind: "setup-script.started",
-                summary: "Setup script started",
-                createdAt: new Date().toISOString(),
-                payload,
-                tone: "info",
-              }),
-            ]).pipe(
-              Effect.asVoid,
-              Effect.catch((error) =>
-                Effect.logWarning(
-                  "bootstrap turn start launched setup script but failed to record setup activity",
-                  {
-                    threadId: command.threadId,
-                    worktreePath: input.worktreePath,
-                    scriptId: input.scriptId,
-                    terminalId: input.terminalId,
-                    detail: error.message,
-                  },
+          }) =>
+            Effect.gen(function* () {
+              const startedAt = yield* nowIso;
+              const payload = {
+                scriptId: input.scriptId,
+                scriptName: input.scriptName,
+                terminalId: input.terminalId,
+                worktreePath: input.worktreePath,
+              };
+              yield* Effect.all([
+                appendSetupScriptActivity({
+                  threadId: command.threadId,
+                  kind: "setup-script.requested",
+                  summary: "Starting setup script",
+                  createdAt: input.requestedAt,
+                  payload,
+                  tone: "info",
+                }),
+                appendSetupScriptActivity({
+                  threadId: command.threadId,
+                  kind: "setup-script.started",
+                  summary: "Setup script started",
+                  createdAt: startedAt,
+                  payload,
+                  tone: "info",
+                }),
+              ]).pipe(
+                Effect.asVoid,
+                Effect.catch((error) =>
+                  Effect.logWarning(
+                    "bootstrap turn start launched setup script but failed to record setup activity",
+                    {
+                      threadId: command.threadId,
+                      worktreePath: input.worktreePath,
+                      scriptId: input.scriptId,
+                      terminalId: input.terminalId,
+                      detail: error.message,
+                    },
+                  ),
                 ),
-              ),
-            );
-          };
+              );
+            });
 
           const runSetupProgram = () =>
-            bootstrap?.runSetupScript && targetWorktreePath
-              ? (() => {
-                  const worktreePath = targetWorktreePath;
-                  const requestedAt = new Date().toISOString();
-                  return projectSetupScriptRunner
-                    .runForThread({
-                      threadId: command.threadId,
-                      ...(targetProjectId ? { projectId: targetProjectId } : {}),
-                      ...(targetProjectCwd ? { projectCwd: targetProjectCwd } : {}),
-                      worktreePath,
-                    })
-                    .pipe(
-                      Effect.matchEffect({
-                        onFailure: (error) =>
-                          recordSetupScriptLaunchFailure({
-                            error,
-                            requestedAt,
-                            worktreePath,
-                          }),
-                        onSuccess: (setupResult) => {
-                          if (setupResult.status !== "started") {
-                            return Effect.void;
-                          }
-                          return recordSetupScriptStarted({
-                            requestedAt,
-                            worktreePath,
-                            scriptId: setupResult.scriptId,
-                            scriptName: setupResult.scriptName,
-                            terminalId: setupResult.terminalId,
-                          });
-                        },
+            Effect.gen(function* () {
+              if (!bootstrap?.runSetupScript || !targetWorktreePath) {
+                return;
+              }
+              const worktreePath = targetWorktreePath;
+              const requestedAt = yield* nowIso;
+              yield* projectSetupScriptRunner
+                .runForThread({
+                  threadId: command.threadId,
+                  ...(targetProjectId ? { projectId: targetProjectId } : {}),
+                  ...(targetProjectCwd ? { projectCwd: targetProjectCwd } : {}),
+                  worktreePath,
+                })
+                .pipe(
+                  Effect.matchEffect({
+                    onFailure: (error) =>
+                      recordSetupScriptLaunchFailure({
+                        error,
+                        requestedAt,
+                        worktreePath,
                       }),
-                    );
-                })()
-              : Effect.void;
+                    onSuccess: (setupResult) => {
+                      if (setupResult.status !== "started") {
+                        return Effect.void;
+                      }
+                      return recordSetupScriptStarted({
+                        requestedAt,
+                        worktreePath,
+                        scriptId: setupResult.scriptId,
+                        scriptName: setupResult.scriptName,
+                        terminalId: setupResult.terminalId,
+                      });
+                    },
+                  }),
+                );
+            });
 
           const bootstrapProgram = Effect.gen(function* () {
             if (bootstrap?.createThread) {
@@ -453,10 +512,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             }
 
             if (bootstrap?.prepareWorktree) {
-              const worktree = yield* git.createWorktree({
+              const worktree = yield* gitWorkflow.createWorktree({
                 cwd: bootstrap.prepareWorktree.projectCwd,
-                branch: bootstrap.prepareWorktree.baseBranch,
-                newBranch: bootstrap.prepareWorktree.branch,
+                refName: bootstrap.prepareWorktree.baseBranch,
+                newRefName: bootstrap.prepareWorktree.branch,
                 path: null,
               });
               targetWorktreePath = worktree.worktree.path;
@@ -464,7 +523,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 type: "thread.meta.update",
                 commandId: serverCommandId("bootstrap-thread-meta-update"),
                 threadId: command.threadId,
-                branch: worktree.worktree.branch,
+                branch: worktree.worktree.refName,
                 worktreePath: targetWorktreePath,
               });
               yield* refreshGitStatus(targetWorktreePath);
@@ -540,7 +599,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       });
 
       const refreshGitStatus = (cwd: string) =>
-        gitStatusBroadcaster
+        vcsStatusBroadcaster
           .refreshStatus(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
@@ -575,7 +634,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                         `session-stop-for-archive:${normalizedCommand.commandId}`,
                       ),
                       threadId: normalizedCommand.threadId,
-                      createdAt: new Date().toISOString(),
+                      createdAt: yield* nowIso,
                     });
 
                     yield* dispatchNormalizedCommand(stopCommand);
@@ -601,7 +660,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               return result;
             }).pipe(
               Effect.mapError((cause) =>
-                Schema.is(OrchestrationDispatchCommandError)(cause)
+                isOrchestrationDispatchCommandError(cause)
                   ? cause
                   : new OrchestrationDispatchCommandError({
                       message: "Failed to dispatch orchestration command",
@@ -667,6 +726,9 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ORCHESTRATION_WS_METHODS.subscribeShell,
             Effect.gen(function* () {
               const snapshot = yield* projectionSnapshotQuery.getShellSnapshot().pipe(
+                Effect.tapError((cause) =>
+                  Effect.logError("orchestration shell snapshot load failed", { cause }),
+                ),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationGetSnapshotError({
@@ -693,6 +755,23 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             }),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
+            projectionSnapshotQuery.getArchivedShellSnapshot().pipe(
+              Effect.tapError((cause) =>
+                Effect.logError("orchestration archived shell snapshot load failed", { cause }),
+              ),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: "Failed to load archived orchestration shell snapshot",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.subscribeThread]: (input) =>
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeThread,
@@ -707,9 +786,16 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                       }),
                   ),
                 ),
-                orchestrationEngine
-                  .getReadModel()
-                  .pipe(Effect.map((readModel) => readModel.snapshotSequence)),
+                projectionSnapshotQuery.getSnapshotSequence().pipe(
+                  Effect.map(({ snapshotSequence }) => snapshotSequence),
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: "Failed to load orchestration snapshot sequence",
+                        cause,
+                      }),
+                  ),
+                ),
               ]);
 
               if (Option.isNone(threadDetail)) {
@@ -758,11 +844,28 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ).pipe(Effect.map((providers) => ({ providers }))),
             { "rpc.aggregate": "server" },
           ),
+        [WS_METHODS.serverUpdateProvider]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverUpdateProvider,
+            providerMaintenanceRunner.updateProvider(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.serverUpsertKeybinding]: (rule) =>
           observeRpcEffect(
             WS_METHODS.serverUpsertKeybinding,
             Effect.gen(function* () {
               const keybindingsConfig = yield* keybindings.upsertKeybindingRule(rule);
+              return { keybindings: keybindingsConfig, issues: [] };
+            }),
+            { "rpc.aggregate": "server" },
+          ),
+        [WS_METHODS.serverRemoveKeybinding]: (rule) =>
+          observeRpcEffect(
+            WS_METHODS.serverRemoveKeybinding,
+            Effect.gen(function* () {
+              const keybindingsConfig = yield* keybindings.removeKeybindingRule(rule);
               return { keybindings: keybindingsConfig, issues: [] };
             }),
             { "rpc.aggregate": "server" },
@@ -781,6 +884,59 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             serverSettings.updateSettings(patch).pipe(Effect.map(redactServerSettingsForClient)),
             {
               "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverDiscoverSourceControl]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverDiscoverSourceControl,
+            sourceControlDiscovery.discover,
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetTraceDiagnostics,
+            TraceDiagnostics.readTraceDiagnostics({
+              traceFilePath: config.serverTracePath,
+              maxFiles: config.traceMaxFiles,
+            }),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
+        [WS_METHODS.serverGetProcessDiagnostics]: (_input) =>
+          observeRpcEffect(WS_METHODS.serverGetProcessDiagnostics, processDiagnostics.read, {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.serverSignalProcess]: (input) =>
+          observeRpcEffect(WS_METHODS.serverSignalProcess, processDiagnostics.signal(input), {
+            "rpc.aggregate": "server",
+          }),
+        [WS_METHODS.sourceControlLookupRepository]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlLookupRepository,
+            sourceControlRepositories.lookupRepository(input),
+            {
+              "rpc.aggregate": "source-control",
+            },
+          ),
+        [WS_METHODS.sourceControlCloneRepository]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlCloneRepository,
+            sourceControlRepositories.cloneRepository(input),
+            {
+              "rpc.aggregate": "source-control",
+            },
+          ),
+        [WS_METHODS.sourceControlPublishRepository]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlPublishRepository,
+            sourceControlRepositories
+              .publishRepository(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            {
+              "rpc.aggregate": "source-control",
             },
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
@@ -802,7 +958,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             WS_METHODS.projectsWriteFile,
             workspaceFileSystem.writeFile(input).pipe(
               Effect.mapError((cause) => {
-                const message = Schema.is(WorkspacePathOutsideRootError)(cause)
+                const message = isWorkspacePathOutsideRootError(cause)
                   ? "Workspace file path must stay within the project root."
                   : "Failed to write workspace file";
                 return new ProjectWriteFileError({
@@ -831,26 +987,28 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "workspace" },
           ),
-        [WS_METHODS.subscribeGitStatus]: (input) =>
+        [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(
-            WS_METHODS.subscribeGitStatus,
-            gitStatusBroadcaster.streamStatus(input),
+            WS_METHODS.subscribeVcsStatus,
+            vcsStatusBroadcaster.streamStatus(input, {
+              automaticRemoteRefreshInterval: automaticGitFetchInterval,
+            }),
             {
-              "rpc.aggregate": "git",
+              "rpc.aggregate": "vcs",
             },
           ),
-        [WS_METHODS.gitRefreshStatus]: (input) =>
+        [WS_METHODS.vcsRefreshStatus]: (input) =>
           observeRpcEffect(
-            WS_METHODS.gitRefreshStatus,
-            gitStatusBroadcaster.refreshStatus(input.cwd),
+            WS_METHODS.vcsRefreshStatus,
+            vcsStatusBroadcaster.refreshStatus(input.cwd),
             {
-              "rpc.aggregate": "git",
+              "rpc.aggregate": "vcs",
             },
           ),
-        [WS_METHODS.gitPull]: (input) =>
+        [WS_METHODS.vcsPull]: (input) =>
           observeRpcEffect(
-            WS_METHODS.gitPull,
-            git.pullCurrentBranch(input.cwd).pipe(
+            WS_METHODS.vcsPull,
+            gitWorkflow.pullCurrentBranch(input.cwd).pipe(
               Effect.matchCauseEffect({
                 onFailure: (cause) => Effect.failCause(cause),
                 onSuccess: (result) =>
@@ -863,7 +1021,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcStream(
             WS_METHODS.gitRunStackedAction,
             Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-              gitManager
+              gitWorkflow
                 .runStackedAction(input, {
                   actionId: input.actionId,
                   progressReporter: {
@@ -880,55 +1038,59 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   }),
                 ),
             ),
-            { "rpc.aggregate": "git" },
+            { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.gitResolvePullRequest]: (input) =>
-          observeRpcEffect(WS_METHODS.gitResolvePullRequest, gitManager.resolvePullRequest(input), {
-            "rpc.aggregate": "git",
-          }),
+          observeRpcEffect(
+            WS_METHODS.gitResolvePullRequest,
+            gitWorkflow.resolvePullRequest(input),
+            {
+              "rpc.aggregate": "git",
+            },
+          ),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.gitPreparePullRequestThread,
-            gitManager
+            gitWorkflow
               .preparePullRequestThread(input)
               .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "git" },
           ),
-        [WS_METHODS.gitListBranches]: (input) =>
-          observeRpcEffect(WS_METHODS.gitListBranches, git.listBranches(input), {
-            "rpc.aggregate": "git",
+        [WS_METHODS.vcsListRefs]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsListRefs, gitWorkflow.listRefs(input), {
+            "rpc.aggregate": "vcs",
           }),
-        [WS_METHODS.gitCreateWorktree]: (input) =>
+        [WS_METHODS.vcsCreateWorktree]: (input) =>
           observeRpcEffect(
-            WS_METHODS.gitCreateWorktree,
-            git.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-            { "rpc.aggregate": "git" },
+            WS_METHODS.vcsCreateWorktree,
+            gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
           ),
-        [WS_METHODS.gitRemoveWorktree]: (input) =>
+        [WS_METHODS.vcsRemoveWorktree]: (input) =>
           observeRpcEffect(
-            WS_METHODS.gitRemoveWorktree,
-            git.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-            { "rpc.aggregate": "git" },
+            WS_METHODS.vcsRemoveWorktree,
+            gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
           ),
-        [WS_METHODS.gitCreateBranch]: (input) =>
+        [WS_METHODS.vcsCreateRef]: (input) =>
           observeRpcEffect(
-            WS_METHODS.gitCreateBranch,
-            git.createBranch(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-            { "rpc.aggregate": "git" },
+            WS_METHODS.vcsCreateRef,
+            gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
           ),
-        [WS_METHODS.gitCheckout]: (input) =>
+        [WS_METHODS.vcsSwitchRef]: (input) =>
           observeRpcEffect(
-            WS_METHODS.gitCheckout,
-            Effect.scoped(git.checkoutBranch(input)).pipe(
-              Effect.tap(() => refreshGitStatus(input.cwd)),
-            ),
-            { "rpc.aggregate": "git" },
+            WS_METHODS.vcsSwitchRef,
+            gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
           ),
-        [WS_METHODS.gitInit]: (input) =>
+        [WS_METHODS.vcsInit]: (input) =>
           observeRpcEffect(
-            WS_METHODS.gitInit,
-            git.initRepo(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
-            { "rpc.aggregate": "git" },
+            WS_METHODS.vcsInit,
+            vcsProvisioning
+              .initRepository(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>
           observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
@@ -974,6 +1136,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   version: 1 as const,
                   type: "keybindingsUpdated" as const,
                   payload: {
+                    keybindings: event.keybindings,
                     issues: event.issues,
                   },
                 })),
@@ -1077,14 +1240,34 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         const sessions = yield* SessionCredentialService;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request);
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
-          spanPrefix: "ws.rpc",
-          spanAttributes: {
-            "rpc.transport": "websocket",
-            "rpc.system": "effect-rpc",
-          },
+          disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session.sessionId).pipe(Layer.provideMerge(RpcSerialization.layerJson)),
+            makeWsRpcLayer(session.sessionId).pipe(
+              Layer.provideMerge(RpcSerialization.layerJson),
+              Layer.provide(ProviderMaintenanceRunner.layer),
+              Layer.provide(
+                SourceControlDiscoveryLayer.layer.pipe(
+                  Layer.provide(
+                    SourceControlProviderRegistry.layer.pipe(
+                      Layer.provide(
+                        Layer.mergeAll(
+                          AzureDevOpsCli.layer,
+                          BitbucketApi.layer,
+                          GitHubCli.layer,
+                          GitLabCli.layer,
+                        ),
+                      ),
+                      Layer.provideMerge(GitVcsDriver.layer),
+                      Layer.provide(
+                        VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer)),
+                      ),
+                    ),
+                  ),
+                  Layer.provide(VcsProcess.layer),
+                ),
+              ),
+            ),
           ),
         );
         return yield* Effect.acquireUseRelease(

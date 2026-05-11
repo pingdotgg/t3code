@@ -6,7 +6,13 @@
  *
  * @module ServerConfig
  */
-import { Effect, FileSystem, Layer, LogLevel, Path, Schema, Context } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as LogLevel from "effect/LogLevel";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as Context from "effect/Context";
 
 export const DEFAULT_PORT = 3773;
 
@@ -65,6 +71,8 @@ export interface ServerConfigShape extends ServerDerivedPaths {
   readonly desktopBootstrapToken: string | undefined;
   readonly autoBootstrapProjectFromCwd: boolean;
   readonly logWebSocketEvents: boolean;
+  readonly tailscaleServeEnabled: boolean;
+  readonly tailscaleServePort: number;
 }
 
 export const deriveServerPaths = Effect.fn(function* (
@@ -158,6 +166,8 @@ export class ServerConfig extends Context.Service<ServerConfig, ServerConfigShap
           mode: "web",
           autoBootstrapProjectFromCwd: false,
           logWebSocketEvents: false,
+          tailscaleServeEnabled: false,
+          tailscaleServePort: 443,
           port: 0,
           host: undefined,
           desktopBootstrapToken: undefined,

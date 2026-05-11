@@ -2,7 +2,13 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Config, Data, Effect, Layer, Logger, Schema } from "effect";
+import * as Config from "effect/Config";
+import * as Data from "effect/Data";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import {
   FetchHttpClient,
@@ -173,7 +179,7 @@ export const notifyDiscordReleaseCommand = Command.make(
       Flag.withSchema(Schema.NonEmptyString),
       Flag.withDescription("Human-readable release name."),
     ),
-    version: Flag.string("version").pipe(
+    releaseVersion: Flag.string("release-version").pipe(
       Flag.withSchema(Schema.NonEmptyString),
       Flag.withDescription("Release version."),
     ),
@@ -186,7 +192,7 @@ export const notifyDiscordReleaseCommand = Command.make(
       Flag.withDescription("Public GitHub release URL."),
     ),
   },
-  ({ target, roleId, releaseName, version, tag, releaseUrl }) =>
+  ({ target, roleId, releaseName, releaseVersion, tag, releaseUrl }) =>
     Effect.gen(function* () {
       yield* Effect.logInfo("discord release announcement starting").pipe(
         Effect.annotateLogs({
@@ -194,21 +200,22 @@ export const notifyDiscordReleaseCommand = Command.make(
           roleIdProvided: roleId.length > 0,
           roleIdLength: roleId.length,
           releaseName,
-          version,
+          version: releaseVersion,
           tag,
           releaseUrl,
         }),
       );
 
       const webhookUrl = yield* DiscordWebhookUrl;
+      const timestamp = DateTime.formatIso(yield* DateTime.now);
       const payload = buildDiscordReleaseAnnouncement({
         target,
         roleId,
         releaseName,
-        version,
+        version: releaseVersion,
         tag,
         releaseUrl,
-        timestamp: new Date().toISOString(),
+        timestamp,
       });
 
       yield* Effect.logInfo("discord release announcement payload built").pipe(

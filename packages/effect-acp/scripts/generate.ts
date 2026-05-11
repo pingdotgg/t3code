@@ -3,7 +3,12 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { make as makeJsonSchemaGenerator } from "@effect/openapi-generator/JsonSchemaGenerator";
-import { Effect, FileSystem, Layer, Logger, Path, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/unstable/cli";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -23,15 +28,24 @@ interface GeneratedPaths {
   readonly metaOutputPath: string;
 }
 
+const UpstreamJsonSchemaSchema = Schema.Struct({
+  $defs: Schema.Record(Schema.String, Schema.Json),
+});
 const MetaJsonSchema = Schema.Struct({
   agentMethods: Schema.Record(Schema.String, Schema.String),
   clientMethods: Schema.Record(Schema.String, Schema.String),
   version: Schema.Union([Schema.Number, Schema.String]),
 });
+const encodeAgentMethods = Schema.encodeEffect(
+  Schema.fromJsonString(MetaJsonSchema.fields.agentMethods),
+);
+const encodeClientMethods = Schema.encodeEffect(
+  Schema.fromJsonString(MetaJsonSchema.fields.clientMethods),
+);
+const encodeVersion = Schema.encodeEffect(Schema.fromJsonString(MetaJsonSchema.fields.version));
 
-const UpstreamJsonSchemaSchema = Schema.Struct({
-  $defs: Schema.Record(Schema.String, Schema.Json),
-});
+const decodeUpstreamSchema = Schema.decodeEffect(Schema.fromJsonString(UpstreamJsonSchemaSchema));
+const decodeMetaJson = Schema.decodeEffect(Schema.fromJsonString(MetaJsonSchema));
 
 const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
   const path = yield* Path.Path;
@@ -81,12 +95,9 @@ const downloadSchemas = Effect.fn("downloadSchemas")(function* (tag: string) {
   );
 });
 
-const readJsonFile = Effect.fn("readJsonFile")(function* <
-  S extends Schema.Top & { readonly DecodingServices: never },
->(schema: S, filePath: string) {
+const readFileString = Effect.fn("readJsonFile")(function* (filePath: string) {
   const fs = yield* FileSystem.FileSystem;
-  const raw = yield* fs.readFileString(filePath);
-  return yield* Schema.decodeEffect(Schema.fromJsonString(schema))(raw);
+  return yield* fs.readFileString(filePath);
 });
 
 const writeGeneratedFiles = Effect.fn("writeGeneratedFiles")(function* (
@@ -196,8 +207,10 @@ const generateSchemas = Effect.fn("generateSchemas")(function* (skipDownload: bo
     yield* downloadSchemas(CURRENT_SCHEMA_RELEASE);
   }
 
-  const upstreamSchema = yield* readJsonFile(UpstreamJsonSchemaSchema, upstreamSchemaPath);
-  const upstreamMeta = yield* readJsonFile(MetaJsonSchema, upstreamMetaPath);
+  const upstreamSchema = yield* readFileString(upstreamSchemaPath).pipe(
+    Effect.flatMap(decodeUpstreamSchema),
+  );
+  const upstreamMeta = yield* readFileString(upstreamMetaPath).pipe(Effect.flatMap(decodeMetaJson));
   const normalizedDefinitions = Object.fromEntries(
     Object.entries(upstreamSchema.$defs).map(([name, schema]) => [
       name,
@@ -240,11 +253,11 @@ const generateSchemas = Effect.fn("generateSchemas")(function* (skipDownload: bo
 
   const metaOutput = [
     ...prelude,
-    `export const AGENT_METHODS = ${yield* Schema.encodeEffect(Schema.fromJsonString(MetaJsonSchema.fields.agentMethods))(upstreamMeta.agentMethods)} as const;`,
+    `export const AGENT_METHODS = ${yield* encodeAgentMethods(upstreamMeta.agentMethods)} as const;`,
     "",
-    `export const CLIENT_METHODS = ${yield* Schema.encodeEffect(Schema.fromJsonString(MetaJsonSchema.fields.clientMethods))(upstreamMeta.clientMethods)} as const;`,
+    `export const CLIENT_METHODS = ${yield* encodeClientMethods(upstreamMeta.clientMethods)} as const;`,
     "",
-    `export const PROTOCOL_VERSION = ${yield* Schema.encodeEffect(Schema.fromJsonString(MetaJsonSchema.fields.version))(upstreamMeta.version)} as const;`,
+    `export const PROTOCOL_VERSION = ${yield* encodeVersion(upstreamMeta.version)} as const;`,
     "",
   ].join("\n");
 

@@ -2,8 +2,15 @@
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Config, Console, Effect, FileSystem, Option, Path, Schema, SchemaGetter } from "effect";
+import * as Config from "effect/Config";
+import * as Console from "effect/Console";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 import { Argument, Command, Flag } from "effect/unstable/cli";
+import { fromJsonStringPretty } from "@t3tools/shared/schemaJson";
 
 export const releasePackageFiles = [
   "apps/server/package.json",
@@ -17,17 +24,9 @@ interface UpdateReleasePackageVersionsOptions {
 }
 
 const PackageJsonSchema = Schema.Record(Schema.String, Schema.Unknown);
-const PrettyJsonString = SchemaGetter.parseJson<string>().compose(
-  SchemaGetter.stringifyJson({ space: 2 }),
-);
-const PackageJsonPrettyJson = Schema.fromJsonString(PackageJsonSchema).pipe(
-  Schema.encode({
-    decode: PrettyJsonString,
-    encode: PrettyJsonString,
-  }),
-);
+const PackageJsonPrettyJson = fromJsonStringPretty(PackageJsonSchema);
 const decodePackageJson = Schema.decodeUnknownEffect(PackageJsonPrettyJson);
-const encodePackageJson = Schema.encodeSync(PackageJsonPrettyJson);
+const encodePackageJson = Schema.encodeEffect(PackageJsonPrettyJson);
 
 export const updateReleasePackageVersions = Effect.fn("updateReleasePackageVersions")(function* (
   version: string,
@@ -45,7 +44,8 @@ export const updateReleasePackageVersions = Effect.fn("updateReleasePackageVersi
       continue;
     }
 
-    yield* fs.writeFileString(filePath, `${encodePackageJson({ ...packageJson, version })}\n`);
+    const packageJsonString = yield* encodePackageJson({ ...packageJson, version });
+    yield* fs.writeFileString(filePath, `${packageJsonString}\n`);
     changed = true;
   }
 

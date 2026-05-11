@@ -1,275 +1,79 @@
 /**
  * CheckpointStoreLive - Filesystem checkpoint store adapter layer.
  *
- * Implements hidden Git-ref checkpoint capture/restore directly with
- * Effect-native child process execution (`effect/unstable/process`).
- *
- * This layer owns filesystem/Git interactions only; it does not persist
- * checkpoint metadata and does not coordinate provider rollback semantics.
+ * Resolves the active VCS driver once per checkpoint operation and delegates
+ * checkpoint-specific behavior to the driver's optional checkpoint capability.
  *
  * @module CheckpointStoreLive
  */
-import { randomUUID } from "node:crypto";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
-import { Effect, Layer, FileSystem, Path } from "effect";
-
-import { CheckpointInvariantError } from "../Errors.ts";
-import { GitCommandError } from "@t3tools/contracts";
-import { GitCore } from "../../git/Services/GitCore.ts";
 import { CheckpointStore, type CheckpointStoreShape } from "../Services/CheckpointStore.ts";
-import { CheckpointRef } from "@t3tools/contracts";
-
-const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+import { VcsUnsupportedOperationError } from "@t3tools/contracts";
+import { VcsDriverRegistry } from "../../vcs/VcsDriverRegistry.ts";
+import type { VcsCheckpointOps } from "../../vcs/VcsDriver.ts";
 
 const makeCheckpointStore = Effect.gen(function* () {
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const git = yield* GitCore;
+  const vcsRegistry = yield* VcsDriverRegistry;
 
-  const resolveHeadCommit = (cwd: string): Effect.Effect<string | null, GitCommandError> =>
-    git
-      .execute({
-        operation: "CheckpointStore.resolveHeadCommit",
-        cwd,
-        args: ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"],
-        allowNonZeroExit: true,
-      })
-      .pipe(
-        Effect.map((result) => {
-          if (result.code !== 0) {
-            return null;
-          }
-          const commit = result.stdout.trim();
-          return commit.length > 0 ? commit : null;
-        }),
-      );
-
-  const hasHeadCommit = (cwd: string): Effect.Effect<boolean, GitCommandError> =>
-    git
-      .execute({
-        operation: "CheckpointStore.hasHeadCommit",
-        cwd,
-        args: ["rev-parse", "--verify", "HEAD"],
-        allowNonZeroExit: true,
-      })
-      .pipe(Effect.map((result) => result.code === 0));
-
-  const resolveCheckpointCommit = (
+  const resolveCheckpoints = Effect.fn("CheckpointStore.resolveCheckpoints")(function* (
+    operation: string,
     cwd: string,
-    checkpointRef: CheckpointRef,
-  ): Effect.Effect<string | null, GitCommandError> =>
-    git
-      .execute({
-        operation: "CheckpointStore.resolveCheckpointCommit",
-        cwd,
-        args: ["rev-parse", "--verify", "--quiet", `${checkpointRef}^{commit}`],
-        allowNonZeroExit: true,
-      })
-      .pipe(
-        Effect.map((result) => {
-          if (result.code !== 0) {
-            return null;
-          }
-          const commit = result.stdout.trim();
-          return commit.length > 0 ? commit : null;
-        }),
-      );
+  ) {
+    const handle = yield* vcsRegistry.resolve({ cwd });
+    if (!handle.driver.checkpoints) {
+      return yield* new VcsUnsupportedOperationError({
+        operation,
+        kind: handle.kind,
+        detail: `${handle.kind} driver does not implement checkpoint operations.`,
+      });
+    }
+    return handle.driver.checkpoints satisfies VcsCheckpointOps;
+  });
 
   const isGitRepository: CheckpointStoreShape["isGitRepository"] = (cwd) =>
-    git
-      .execute({
-        operation: "CheckpointStore.isGitRepository",
-        cwd,
-        args: ["rev-parse", "--is-inside-work-tree"],
-        allowNonZeroExit: true,
-      })
-      .pipe(
-        Effect.map((result) => result.code === 0 && result.stdout.trim() === "true"),
-        Effect.catch(() => Effect.succeed(false)),
-      );
+    vcsRegistry.resolve({ cwd, requestedKind: "git" }).pipe(
+      Effect.map(() => true),
+      Effect.catch(() => Effect.succeed(false)),
+    );
 
   const captureCheckpoint: CheckpointStoreShape["captureCheckpoint"] = Effect.fn(
     "captureCheckpoint",
   )(function* (input) {
-    const operation = "CheckpointStore.captureCheckpoint";
-
-    yield* Effect.acquireUseRelease(
-      fs.makeTempDirectory({ prefix: "t3-fs-checkpoint-" }),
-      Effect.fn("captureCheckpoint.withTempDirectory")(function* (tempDir) {
-        const tempIndexPath = path.join(tempDir, `index-${randomUUID()}`);
-        const commitEnv: NodeJS.ProcessEnv = {
-          ...process.env,
-          GIT_INDEX_FILE: tempIndexPath,
-          GIT_AUTHOR_NAME: "T3 Code",
-          GIT_AUTHOR_EMAIL: "t3code@users.noreply.github.com",
-          GIT_COMMITTER_NAME: "T3 Code",
-          GIT_COMMITTER_EMAIL: "t3code@users.noreply.github.com",
-        };
-
-        const headExists = yield* hasHeadCommit(input.cwd);
-        if (headExists) {
-          yield* git.execute({
-            operation,
-            cwd: input.cwd,
-            args: ["read-tree", "HEAD"],
-            env: commitEnv,
-          });
-        }
-
-        yield* git.execute({
-          operation,
-          cwd: input.cwd,
-          args: ["add", "-A", "--", "."],
-          env: commitEnv,
-        });
-
-        const writeTreeResult = yield* git.execute({
-          operation,
-          cwd: input.cwd,
-          args: ["write-tree"],
-          env: commitEnv,
-        });
-        const treeOid = writeTreeResult.stdout.trim();
-        if (treeOid.length === 0) {
-          return yield* new GitCommandError({
-            operation,
-            command: "git write-tree",
-            cwd: input.cwd,
-            detail: "git write-tree returned an empty tree oid.",
-          });
-        }
-
-        const message = `t3 checkpoint ref=${input.checkpointRef}`;
-        const commitTreeResult = yield* git.execute({
-          operation,
-          cwd: input.cwd,
-          args: ["commit-tree", treeOid, "-m", message],
-          env: commitEnv,
-        });
-        const commitOid = commitTreeResult.stdout.trim();
-        if (commitOid.length === 0) {
-          return yield* new GitCommandError({
-            operation,
-            command: "git commit-tree",
-            cwd: input.cwd,
-            detail: "git commit-tree returned an empty commit oid.",
-          });
-        }
-
-        yield* git.execute({
-          operation,
-          cwd: input.cwd,
-          args: ["update-ref", input.checkpointRef, commitOid],
-        });
-      }),
-      (tempDir) => fs.remove(tempDir, { recursive: true }),
-    ).pipe(
-      Effect.catchTags({
-        PlatformError: (error) =>
-          Effect.fail(
-            new CheckpointInvariantError({
-              operation: "CheckpointStore.captureCheckpoint",
-              detail: "Failed to capture checkpoint.",
-              cause: error,
-            }),
-          ),
-      }),
-    );
+    const checkpoints = yield* resolveCheckpoints("CheckpointStore.captureCheckpoint", input.cwd);
+    return yield* checkpoints.captureCheckpoint(input);
   });
 
-  const hasCheckpointRef: CheckpointStoreShape["hasCheckpointRef"] = (input) =>
-    resolveCheckpointCommit(input.cwd, input.checkpointRef).pipe(
-      Effect.map((commit) => commit !== null),
-    );
+  const hasCheckpointRef: CheckpointStoreShape["hasCheckpointRef"] = Effect.fn("hasCheckpointRef")(
+    function* (input) {
+      const checkpoints = yield* resolveCheckpoints("CheckpointStore.hasCheckpointRef", input.cwd);
+      return yield* checkpoints.hasCheckpointRef(input);
+    },
+  );
 
   const restoreCheckpoint: CheckpointStoreShape["restoreCheckpoint"] = Effect.fn(
     "restoreCheckpoint",
   )(function* (input) {
-    const operation = "CheckpointStore.restoreCheckpoint";
-
-    let commitOid = yield* resolveCheckpointCommit(input.cwd, input.checkpointRef);
-
-    if (!commitOid && input.fallbackToHead === true) {
-      commitOid = yield* resolveHeadCommit(input.cwd);
-    }
-
-    if (!commitOid) {
-      return false;
-    }
-
-    yield* git.execute({
-      operation,
-      cwd: input.cwd,
-      args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
-    });
-    yield* git.execute({
-      operation,
-      cwd: input.cwd,
-      args: ["clean", "-fd", "--", "."],
-    });
-
-    const headExists = yield* hasHeadCommit(input.cwd);
-    if (headExists) {
-      yield* git.execute({
-        operation,
-        cwd: input.cwd,
-        args: ["reset", "--quiet", "--", "."],
-      });
-    }
-
-    return true;
+    const checkpoints = yield* resolveCheckpoints("CheckpointStore.restoreCheckpoint", input.cwd);
+    return yield* checkpoints.restoreCheckpoint(input);
   });
 
   const diffCheckpoints: CheckpointStoreShape["diffCheckpoints"] = Effect.fn("diffCheckpoints")(
     function* (input) {
-      const operation = "CheckpointStore.diffCheckpoints";
-
-      let fromCommitOid = yield* resolveCheckpointCommit(input.cwd, input.fromCheckpointRef);
-      const toCommitOid = yield* resolveCheckpointCommit(input.cwd, input.toCheckpointRef);
-
-      if (!fromCommitOid && input.fallbackFromToHead === true) {
-        const headCommit = yield* resolveHeadCommit(input.cwd);
-        if (headCommit) {
-          fromCommitOid = headCommit;
-        }
-      }
-
-      if (!fromCommitOid || !toCommitOid) {
-        return yield* new GitCommandError({
-          operation,
-          command: "git diff",
-          cwd: input.cwd,
-          detail: "Checkpoint ref is unavailable for diff operation.",
-        });
-      }
-
-      const result = yield* git.execute({
-        operation,
-        cwd: input.cwd,
-        args: ["diff", "--patch", "--minimal", "--no-color", fromCommitOid, toCommitOid],
-        maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
-      });
-
-      return result.stdout;
+      const checkpoints = yield* resolveCheckpoints("CheckpointStore.diffCheckpoints", input.cwd);
+      return yield* checkpoints.diffCheckpoints(input);
     },
   );
 
   const deleteCheckpointRefs: CheckpointStoreShape["deleteCheckpointRefs"] = Effect.fn(
     "deleteCheckpointRefs",
   )(function* (input) {
-    const operation = "CheckpointStore.deleteCheckpointRefs";
-
-    yield* Effect.forEach(
-      input.checkpointRefs,
-      (checkpointRef) =>
-        git.execute({
-          operation,
-          cwd: input.cwd,
-          args: ["update-ref", "-d", checkpointRef],
-          allowNonZeroExit: true,
-        }),
-      { discard: true },
+    const checkpoints = yield* resolveCheckpoints(
+      "CheckpointStore.deleteCheckpointRefs",
+      input.cwd,
     );
+    return yield* checkpoints.deleteCheckpointRefs(input);
   });
 
   return {

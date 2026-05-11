@@ -1,6 +1,6 @@
 # T3 Code
 
-T3 Code is a minimal web GUI for coding agents (currently Codex and Claude, more coming soon).
+T3 Code is a minimal web GUI for coding agents (currently Codex, Claude, and OpenCode, more coming soon).
 
 ## Installation
 

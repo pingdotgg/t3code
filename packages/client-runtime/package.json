@@ -10,12 +10,12 @@
     }
   },
   "scripts": {
-    "prepare": "effect-language-service patch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
-    "@t3tools/contracts": "workspace:*"
+    "@t3tools/contracts": "workspace:*",
+    "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",

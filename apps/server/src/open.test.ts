@@ -1,7 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { assertSuccess } from "@effect/vitest/utils";
-import { FileSystem, Path, Effect } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Random from "effect/Random";
 
 import {
   isCommandAvailable,
@@ -96,6 +99,105 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       );
       assert.deepEqual(ideaLaunch, {
         command: "idea",
+        args: ["/tmp/workspace"],
+      });
+
+      const aquaLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "aqua" },
+        "darwin",
+      );
+      assert.deepEqual(aquaLaunch, {
+        command: "aqua",
+        args: ["/tmp/workspace"],
+      });
+
+      const clionLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "clion" },
+        "darwin",
+      );
+      assert.deepEqual(clionLaunch, {
+        command: "clion",
+        args: ["/tmp/workspace"],
+      });
+
+      const datagripLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "datagrip" },
+        "darwin",
+      );
+      assert.deepEqual(datagripLaunch, {
+        command: "datagrip",
+        args: ["/tmp/workspace"],
+      });
+
+      const dataspellLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "dataspell" },
+        "darwin",
+      );
+      assert.deepEqual(dataspellLaunch, {
+        command: "dataspell",
+        args: ["/tmp/workspace"],
+      });
+
+      const golandLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "goland" },
+        "darwin",
+      );
+      assert.deepEqual(golandLaunch, {
+        command: "goland",
+        args: ["/tmp/workspace"],
+      });
+
+      const phpstormLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "phpstorm" },
+        "darwin",
+      );
+      assert.deepEqual(phpstormLaunch, {
+        command: "phpstorm",
+        args: ["/tmp/workspace"],
+      });
+
+      const pycharmLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "pycharm" },
+        "darwin",
+      );
+      assert.deepEqual(pycharmLaunch, {
+        command: "pycharm",
+        args: ["/tmp/workspace"],
+      });
+
+      const riderLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "rider" },
+        "darwin",
+      );
+      assert.deepEqual(riderLaunch, {
+        command: "rider",
+        args: ["/tmp/workspace"],
+      });
+
+      const rubymineLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "rubymine" },
+        "darwin",
+      );
+      assert.deepEqual(rubymineLaunch, {
+        command: "rubymine",
+        args: ["/tmp/workspace"],
+      });
+
+      const rustroverLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "rustrover" },
+        "darwin",
+      );
+      assert.deepEqual(rustroverLaunch, {
+        command: "rustrover",
+        args: ["/tmp/workspace"],
+      });
+
+      const webstormLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "webstorm" },
+        "darwin",
+      );
+      assert.deepEqual(webstormLaunch, {
+        command: "webstorm",
         args: ["/tmp/workspace"],
       });
     }),
@@ -207,6 +309,105 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
         command: "idea",
         args: ["--line", "71", "--column", "5", "/tmp/workspace/src/open.ts"],
       });
+
+      const aquaLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "aqua" },
+        "darwin",
+      );
+      assert.deepEqual(aquaLineAndColumn, {
+        command: "aqua",
+        args: ["--line", "71", "--column", "5", "/tmp/workspace/src/open.ts"],
+      });
+
+      const clionLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "clion" },
+        "darwin",
+      );
+      assert.deepEqual(clionLineAndColumn, {
+        command: "clion",
+        args: ["--line", "71", "--column", "5", "/tmp/workspace/src/open.ts"],
+      });
+
+      const datagripLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "datagrip" },
+        "darwin",
+      );
+      assert.deepEqual(datagripLineAndColumn, {
+        command: "datagrip",
+        args: ["--line", "71", "--column", "5", "/tmp/workspace/src/open.ts"],
+      });
+
+      const dataspellLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "dataspell" },
+        "darwin",
+      );
+      assert.deepEqual(dataspellLineAndColumn, {
+        command: "dataspell",
+        args: ["--line", "71", "--column", "5", "/tmp/workspace/src/open.ts"],
+      });
+
+      const golandLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "goland" },
+        "darwin",
+      );
+      assert.deepEqual(golandLineAndColumn, {
+        command: "goland",
+        args: ["--line", "71", "--column", "5", "/tmp/workspace/src/open.ts"],
+      });
+
+      const phpstormLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "phpstorm" },
+        "darwin",
+      );
+      assert.deepEqual(phpstormLineAndColumn, {
+        command: "phpstorm",
+        args: ["--line", "71", "--column", "5", "/tmp/workspace/src/open.ts"],
+      });
+
+      const pycharmLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "pycharm" },
+        "darwin",
+      );
+      assert.deepEqual(pycharmLineAndColumn, {
+        command: "pycharm",
+        args: ["--line", "71", "--column", "5", "/tmp/workspace/src/open.ts"],
+      });
+
+      const riderLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "rider" },
+        "darwin",
+      );
+      assert.deepEqual(riderLineAndColumn, {
+        command: "rider",
+        args: ["--line", "71", "--column", "5", "/tmp/workspace/src/open.ts"],
+      });
+
+      const rubymineLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "rubymine" },
+        "darwin",
+      );
+      assert.deepEqual(rubymineLineAndColumn, {
+        command: "rubymine",
+        args: ["--line", "71", "--column", "5", "/tmp/workspace/src/open.ts"],
+      });
+
+      const rustroverLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "rustrover" },
+        "darwin",
+      );
+      assert.deepEqual(rustroverLineAndColumn, {
+        command: "rustrover",
+        args: ["--line", "71", "--column", "5", "/tmp/workspace/src/open.ts"],
+      });
+
+      const webstormLineOnly = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/AGENTS.md:48", editor: "webstorm" },
+        "darwin",
+      );
+      assert.deepEqual(webstormLineOnly, {
+        command: "webstorm",
+        args: ["--line", "48", "/tmp/workspace/AGENTS.md"],
+      });
     }),
   );
 
@@ -290,7 +491,7 @@ it.layer(NodeServices.layer)("launchDetached", (it) => {
   it.effect("rejects when command does not exist", () =>
     Effect.gen(function* () {
       const result = yield* launchDetached({
-        command: `t3code-no-such-command-${Date.now()}`,
+        command: `t3code-no-such-command-${yield* Random.nextUUIDv4}`,
         args: [],
       }).pipe(Effect.result);
       assert.equal(result._tag, "Failure");
@@ -377,12 +578,40 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
       yield* fs.writeFileString(path.join(dir, "kiro.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "code-insiders.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "codium.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "aqua.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "clion.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "datagrip.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "dataspell.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "goland.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "phpstorm.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "pycharm.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "rider.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "rubymine.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "rustrover.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "webstorm.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "explorer.CMD"), "MZ");
       const editors = resolveAvailableEditors("win32", {
         PATH: dir,
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       });
-      assert.deepEqual(editors, ["trae", "kiro", "vscode-insiders", "vscodium", "file-manager"]);
+      assert.deepEqual(editors, [
+        "trae",
+        "kiro",
+        "vscode-insiders",
+        "vscodium",
+        "aqua",
+        "clion",
+        "datagrip",
+        "dataspell",
+        "goland",
+        "phpstorm",
+        "pycharm",
+        "rider",
+        "rubymine",
+        "rustrover",
+        "webstorm",
+        "file-manager",
+      ]);
     }),
   );
 

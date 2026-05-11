@@ -100,12 +100,14 @@ vi.mock("~/editorPreferences", () => ({
 vi.mock("~/lib/gitReactQuery", () => ({
   gitInitMutationOptions: vi.fn(() => ({ __kind: "init" })),
   gitMutationKeys: {
+    publishRepository: vi.fn(() => ["publish-repository"]),
     pull: vi.fn(() => ["pull"]),
     runStackedAction: vi.fn(() => ["run-stacked-action"]),
   },
   gitPullMutationOptions: vi.fn(() => ({ __kind: "pull" })),
   gitRunStackedActionMutationOptions: vi.fn(() => ({ __kind: "run-stacked-action" })),
   invalidateGitQueries: invalidateGitQueriesSpy,
+  sourceControlPublishRepositoryMutationOptions: vi.fn(() => ({ __kind: "publish-repository" })),
 }));
 
 vi.mock("~/lib/gitStatusState", () => ({
@@ -113,7 +115,15 @@ vi.mock("~/lib/gitStatusState", () => ({
   resetGitStatusStateForTests: () => undefined,
   useGitStatus: vi.fn(() => ({
     data: {
-      branch: BRANCH_NAME,
+      isRepo: true,
+      sourceControlProvider: {
+        kind: "github",
+        name: "GitHub",
+        baseUrl: "https://github.com",
+      },
+      hasPrimaryRemote: true,
+      isDefaultRef: false,
+      refName: BRANCH_NAME,
       hasWorkingTreeChanges: false,
       workingTree: { files: [], insertions: 0, deletions: 0 },
       hasUpstream: true,

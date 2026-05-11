@@ -18,10 +18,13 @@ import {
   WS_METHODS,
   OrchestrationSessionStatus,
   DEFAULT_SERVER_SETTINGS,
+  ServerConfig as ServerConfigSchema,
 } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import { createModelCapabilities, createModelSelection } from "@t3tools/shared/model";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { HttpResponse, http, ws } from "msw";
 import { setupWorker } from "msw/browser";
 import { page } from "vitest/browser";
@@ -105,6 +108,7 @@ const rpcHarness = new BrowserWsRpcHarness();
 const wsRequests = rpcHarness.requests;
 let customWsRpcResolver: ((body: NormalizedWsRpcRequestBody) => unknown | undefined) | null = null;
 const wsLink = ws.link(/ws(s)?:\/\/.*/);
+const encodeServerConfig = Schema.encodeSync(ServerConfigSchema);
 
 interface ViewportSpec {
   name: string;
@@ -206,6 +210,8 @@ function createMockEnvironmentApi(input: {
     filesystem: {
       browse: input.browse,
     },
+    sourceControl: {} as EnvironmentApi["sourceControl"],
+    vcs: {} as EnvironmentApi["vcs"],
     git: {} as EnvironmentApi["git"],
     orchestration: {
       dispatchCommand: input.dispatchCommand,
@@ -215,6 +221,9 @@ function createMockEnvironmentApi(input: {
       getFullThreadDiff: (() => {
         throw new Error("Not implemented in browser test.");
       }) as EnvironmentApi["orchestration"]["getFullThreadDiff"],
+      getArchivedShellSnapshot: (() => {
+        throw new Error("Not implemented in browser test.");
+      }) as EnvironmentApi["orchestration"]["getArchivedShellSnapshot"],
       subscribeShell: (() => () => undefined) as EnvironmentApi["orchestration"]["subscribeShell"],
       subscribeThread: (() => () =>
         undefined) as EnvironmentApi["orchestration"]["subscribeThread"],
@@ -949,15 +958,82 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
   }
   const tag = body._tag;
   if (tag === WS_METHODS.serverGetConfig) {
-    return fixture.serverConfig;
+    return encodeServerConfig(fixture.serverConfig);
   }
-  if (tag === WS_METHODS.gitListBranches) {
+  if (tag === WS_METHODS.serverDiscoverSourceControl) {
+    return {
+      versionControlSystems: [],
+      sourceControlProviders: [
+        {
+          kind: "github",
+          label: "GitHub",
+          executable: "gh",
+          status: "available",
+          version: Option.some("gh version 2.0.0"),
+          installHint: "Install GitHub CLI.",
+          detail: Option.none(),
+          auth: {
+            status: "authenticated",
+            account: Option.some("t3-oss"),
+            host: Option.some("github.com"),
+            detail: Option.none(),
+          },
+        },
+        {
+          kind: "gitlab",
+          label: "GitLab",
+          executable: "glab",
+          status: "available",
+          version: Option.some("glab version 1.0.0"),
+          installHint: "Install GitLab CLI.",
+          detail: Option.none(),
+          auth: {
+            status: "authenticated",
+            account: Option.some("t3-oss"),
+            host: Option.some("gitlab.com"),
+            detail: Option.none(),
+          },
+        },
+        {
+          kind: "bitbucket",
+          label: "Bitbucket",
+          executable: "Bitbucket REST API",
+          status: "available",
+          version: Option.none(),
+          installHint: "Set Bitbucket API token environment variables.",
+          detail: Option.none(),
+          auth: {
+            status: "authenticated",
+            account: Option.some("t3-oss"),
+            host: Option.some("bitbucket.org"),
+            detail: Option.none(),
+          },
+        },
+        {
+          kind: "azure-devops",
+          label: "Azure DevOps",
+          executable: "az",
+          status: "available",
+          version: Option.some("azure-cli 2.0.0"),
+          installHint: "Install Azure CLI.",
+          detail: Option.none(),
+          auth: {
+            status: "authenticated",
+            account: Option.some("t3-oss"),
+            host: Option.some("dev.azure.com"),
+            detail: Option.none(),
+          },
+        },
+      ],
+    };
+  }
+  if (tag === WS_METHODS.vcsListRefs) {
     return {
       isRepo: true,
-      hasOriginRemote: true,
+      hasPrimaryRemote: true,
       nextCursor: null,
       totalCount: 1,
-      branches: [
+      refs: [
         {
           name: "main",
           current: true,
@@ -1589,7 +1665,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
             {
               version: 1,
               type: "snapshot",
-              config: fixture.serverConfig,
+              config: encodeServerConfig(fixture.serverConfig),
             },
           ];
         }
@@ -1661,6 +1737,74 @@ describe("ChatView timeline estimator parity (full app)", () => {
     customWsRpcResolver = null;
     document.body.innerHTML = "";
   });
+
+  it("renders locked single-environment mobile run context as a static workspace label", async () => {
+    const mounted = await mountChatView({
+      viewport: COMPACT_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-mobile-locked-workspace" as MessageId,
+        targetText: "locked mobile workspace",
+      }),
+    });
+
+    try {
+      await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>("span")).find(
+            (element) => element.textContent?.trim() === "Local checkout",
+          ) ?? null,
+        "Unable to find static mobile workspace label.",
+      );
+
+      expect(findButtonByText("Local checkout")).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps dismiss-only composer banners aligned on mobile", async () => {
+    const mounted = await mountChatView({
+      viewport: COMPACT_FOOTER_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-mobile-version-banner" as MessageId,
+        targetText: "mobile version banner",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          environment: {
+            ...nextFixture.serverConfig.environment,
+            serverVersion: "9.9.9",
+          },
+        };
+      },
+    });
+
+    try {
+      const banner = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="alert"]')).find(
+            (element) => element.textContent?.includes("Client and server versions differ"),
+          ) ?? null,
+        "Unable to find version mismatch banner.",
+      );
+      const title = banner.querySelector<HTMLElement>('[data-slot="alert-title"]');
+      const description = banner.querySelector<HTMLElement>('[data-slot="alert-description"]');
+      const dismissButton = banner.querySelector<HTMLButtonElement>(
+        'button[aria-label="Dismiss version mismatch warning"]',
+      );
+
+      expect(title).toBeTruthy();
+      expect(description).toBeTruthy();
+      expect(dismissButton).toBeTruthy();
+      expect(dismissButton!.getBoundingClientRect().top).toBeLessThan(
+        description!.getBoundingClientRect().top,
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("re-expands the bootstrap project using its logical key", async () => {
     useUiStateStore.setState({
       projectExpandedById: {
@@ -2287,16 +2431,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
       branchButton.click();
 
       const branchInput = await waitForElement(
-        () => document.querySelector<HTMLInputElement>('input[placeholder="Search branches..."]'),
-        "Unable to find branch search input.",
+        () => document.querySelector<HTMLInputElement>('input[placeholder="Search refs..."]'),
+        "Unable to find ref search input.",
       );
       branchInput.focus();
-      await page.getByPlaceholder("Search branches...").fill("1359");
+      await page.getByPlaceholder("Search refs...").fill("1359");
 
       const checkoutItem = await waitForElement(
         () =>
           Array.from(document.querySelectorAll("span")).find(
-            (element) => element.textContent?.trim() === "Checkout Pull Request",
+            (element) => element.textContent?.trim() === "Checkout pull request",
           ) as HTMLSpanElement | null,
         "Unable to find checkout pull request option.",
       );
@@ -2425,7 +2569,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         { timeout: 8_000, interval: 16 },
       );
 
-      expect(wsRequests.some((request) => request._tag === WS_METHODS.gitCreateWorktree)).toBe(
+      expect(wsRequests.some((request) => request._tag === WS_METHODS.vcsCreateWorktree)).toBe(
         false,
       );
       expect(
@@ -2572,13 +2716,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
         ),
       },
       resolveRpc: (body) => {
-        if (body._tag === WS_METHODS.gitListBranches) {
+        if (body._tag === WS_METHODS.vcsListRefs) {
           return {
             isRepo: true,
-            hasOriginRemote: true,
+            hasPrimaryRemote: true,
             nextCursor: null,
             totalCount: 1,
-            branches: [
+            refs: [
               {
                 name: "main",
                 current: true,
@@ -2665,13 +2809,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
         ),
       },
       resolveRpc: (body) => {
-        if (body._tag === WS_METHODS.gitListBranches) {
+        if (body._tag === WS_METHODS.vcsListRefs) {
           return {
             isRepo: true,
-            hasOriginRemote: true,
+            hasPrimaryRemote: true,
             nextCursor: null,
             totalCount: 2,
-            branches: [
+            refs: [
               {
                 name: "main",
                 current: true,
@@ -2761,13 +2905,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
       viewport: DEFAULT_VIEWPORT,
       snapshot: snapshotWithTwoThreads,
       resolveRpc: (body) => {
-        if (body._tag === WS_METHODS.gitListBranches) {
+        if (body._tag === WS_METHODS.vcsListRefs) {
           return {
             isRepo: true,
-            hasOriginRemote: true,
+            hasPrimaryRemote: true,
             nextCursor: null,
             totalCount: 2,
-            branches: [
+            refs: [
               {
                 name: "main",
                 current: true,
@@ -3021,13 +3165,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
       snapshot: createDraftOnlySnapshot(),
       initialPath: `/draft/${activeDraftId}`,
       resolveRpc: (body) => {
-        if (body._tag === WS_METHODS.gitListBranches) {
+        if (body._tag === WS_METHODS.vcsListRefs) {
           return {
             isRepo: true,
-            hasOriginRemote: true,
+            hasPrimaryRemote: true,
             nextCursor: null,
             totalCount: 2,
-            branches: [
+            refs: [
               {
                 name: "main",
                 current: true,
@@ -3146,13 +3290,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
       snapshot: createDraftOnlySnapshot(),
       initialPath: `/draft/${draftId}`,
       resolveRpc: (body) => {
-        if (body._tag === WS_METHODS.gitListBranches) {
+        if (body._tag === WS_METHODS.vcsListRefs) {
           return {
             isRepo: true,
-            hasOriginRemote: true,
+            hasPrimaryRemote: true,
             nextCursor: null,
             totalCount: branches.length,
-            branches,
+            refs: branches,
           };
         }
         return undefined;
@@ -3170,8 +3314,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
       branchButton.click();
 
       await waitForElement(
-        () => document.querySelector<HTMLInputElement>('input[placeholder="Search branches..."]'),
-        "Unable to find branch search input.",
+        () => document.querySelector<HTMLInputElement>('input[placeholder="Search refs..."]'),
+        "Unable to find ref search input.",
       );
 
       const popup = await waitForElement(
@@ -4256,8 +4400,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      await waitForServerConfigToApply();
-      await waitForCommandPaletteShortcutLabel();
+      await Promise.all([waitForServerConfigToApply(), waitForCommandPaletteShortcutLabel()]);
       const palette = page.getByTestId("command-palette");
       await openCommandPaletteFromTrigger();
 
@@ -4309,8 +4452,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      await waitForServerConfigToApply();
-      await waitForCommandPaletteShortcutLabel();
+      await Promise.all([waitForServerConfigToApply(), waitForCommandPaletteShortcutLabel()]);
       const palette = page.getByTestId("command-palette");
       await openCommandPaletteFromTrigger();
 
@@ -4383,13 +4525,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      await waitForServerConfigToApply();
-      await waitForCommandPaletteShortcutLabel();
+      await Promise.all([waitForServerConfigToApply(), waitForCommandPaletteShortcutLabel()]);
       const palette = page.getByTestId("command-palette");
       await openCommandPaletteFromTrigger();
 
       await expect.element(palette).toBeInTheDocument();
       await palette.getByText("Add project", { exact: true }).click();
+      await palette.getByText("Local folder", { exact: true }).click();
 
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await page.getByPlaceholder(ADD_PROJECT_SUBMENU_PLACEHOLDER).fill("~/Development/");
@@ -4436,6 +4578,126 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("shows clone destination controls after resolving an add project repository", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-command-palette-add-project-remote" as MessageId,
+        targetText: "command palette add project remote",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.filesystemBrowse) {
+          return {
+            parentPath: "~/",
+            entries: [{ name: "Development", fullPath: "~/Development" }],
+          };
+        }
+
+        if (body._tag === WS_METHODS.sourceControlLookupRepository) {
+          return {
+            provider: "github",
+            nameWithOwner: "t3-oss/t3-env",
+            url: "https://github.com/t3-oss/t3-env",
+            sshUrl: "git@github.com:t3-oss/t3-env.git",
+          };
+        }
+
+        if (body._tag === WS_METHODS.sourceControlCloneRepository) {
+          return {
+            cwd: body.destinationPath,
+            remoteUrl: body.remoteUrl,
+            repository: null,
+          };
+        }
+
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+
+        return undefined;
+      },
+    });
+
+    try {
+      await Promise.all([waitForServerConfigToApply(), waitForCommandPaletteShortcutLabel()]);
+      const palette = page.getByTestId("command-palette");
+      await openCommandPaletteFromTrigger();
+
+      await expect.element(palette).toBeInTheDocument();
+      await palette.getByText("Add project", { exact: true }).click();
+      await palette.getByText("GitHub repository", { exact: true }).click();
+
+      const repositoryInput = await waitForCommandPaletteInput(
+        "Enter GitHub repository (owner/repo)",
+      );
+      await page.getByPlaceholder("Enter GitHub repository (owner/repo)").fill("t3-oss/t3-env");
+      await dispatchInputKey(repositoryInput, { key: "Enter" });
+
+      await vi.waitFor(
+        () => {
+          const clonePathInput = document.querySelector<HTMLInputElement>(
+            'input[placeholder="Enter path (e.g. ~/projects/my-app)"]',
+          );
+          expect(clonePathInput?.value).toBe("~/");
+          expect(document.body.textContent).toContain("Repository");
+          expect(document.body.textContent).toContain("t3-oss/t3-env");
+          expect(document.body.textContent).toContain("https://github.com/t3-oss/t3-env");
+          expect(document.body.textContent).toContain("Select where to clone");
+          expect(document.body.textContent).toContain("Development");
+          expect(document.body.textContent).toContain("Clone");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page
+        .getByPlaceholder("Enter path (e.g. ~/projects/my-app)")
+        .fill("~/Development/t3env");
+      const clonePathInput = await waitForCommandPaletteInput(
+        "Enter path (e.g. ~/projects/my-app)",
+      );
+      await dispatchInputKey(clonePathInput, { key: "Enter" });
+
+      await vi.waitFor(
+        () => {
+          const cloneRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.sourceControlCloneRepository,
+          ) as { destinationPath?: string; remoteUrl?: string } | undefined;
+          expect(cloneRequest).toMatchObject({
+            remoteUrl: "git@github.com:t3-oss/t3-env.git",
+            destinationPath: "~/Development/t3env",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("opens add project browse mode from the sidebar add button", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -4462,6 +4724,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       const palette = page.getByTestId("command-palette");
       await expect.element(palette).toBeInTheDocument();
+      await palette.getByText("Local folder", { exact: true }).click();
 
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await expect.element(browseInput).toHaveValue("~/");
@@ -4524,6 +4787,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       const palette = page.getByTestId("command-palette");
       await expect.element(palette).toBeInTheDocument();
+      await palette.getByText("Local folder", { exact: true }).click();
 
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await expect.element(browseInput).toHaveValue("~/Development/");
@@ -4583,6 +4847,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await page.getByTestId("sidebar-add-project-trigger").click();
 
       await expect.element(palette).toBeInTheDocument();
+      await palette.getByText("Local folder", { exact: true }).click();
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await page.getByPlaceholder(ADD_PROJECT_SUBMENU_PLACEHOLDER).fill("~/Desktop/fresh-project");
 
@@ -4662,6 +4927,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await page.getByTestId("sidebar-add-project-trigger").click();
 
       await expect.element(palette).toBeInTheDocument();
+      await palette.getByText("Local folder", { exact: true }).click();
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await page.getByPlaceholder(ADD_PROJECT_SUBMENU_PLACEHOLDER).fill("~/Development/codex/");
 
@@ -4793,6 +5059,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
         .element(palette.getByText("This device", { exact: true }).first())
         .toBeInTheDocument();
       await palette.getByText("Staging", { exact: true }).click();
+      await palette.getByText("Local folder", { exact: true }).click();
 
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await expect.element(browseInput).toHaveValue("~/workspaces/");
@@ -4886,6 +5153,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       const palette = page.getByTestId("command-palette");
       await expect.element(palette).toBeInTheDocument();
+      await palette.getByText("Local folder", { exact: true }).click();
       const browseInput = palette.getByPlaceholder(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await browseInput.fill("~/Applications/access");
 
@@ -5003,6 +5271,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await expect.element(palette).toBeInTheDocument();
       await palette.getByText("Add project", { exact: true }).click();
+      await palette.getByText("Local folder", { exact: true }).click();
 
       const browseInput = await waitForCommandPaletteInput(ADD_PROJECT_SUBMENU_PLACEHOLDER);
       await page.getByPlaceholder(ADD_PROJECT_SUBMENU_PLACEHOLDER).fill("~/Development/");

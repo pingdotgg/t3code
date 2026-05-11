@@ -1,31 +1,39 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import path from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, PlatformError, Scope } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as PlatformError from "effect/PlatformError";
+import * as Scope from "effect/Scope";
 import { describe, expect } from "vitest";
 
 import { checkpointRefForThreadTurn } from "../Utils.ts";
 import { CheckpointStoreLive } from "./CheckpointStore.ts";
 import { CheckpointStore } from "../Services/CheckpointStore.ts";
-import { GitCoreLive } from "../../git/Layers/GitCore.ts";
-import { GitCore } from "../../git/Services/GitCore.ts";
-import { GitCommandError } from "@t3tools/contracts";
+import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../../vcs/VcsProcess.ts";
+import type { VcsError } from "@t3tools/contracts";
 import { ServerConfig } from "../../config.ts";
 import { ThreadId } from "@t3tools/contracts";
 
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-checkpoint-store-test-",
 });
-const GitCoreTestLayer = GitCoreLive.pipe(
-  Layer.provide(ServerConfigLayer),
-  Layer.provide(NodeServices.layer),
-);
+const VcsProcessTestLayer = VcsProcess.layer.pipe(Layer.provide(NodeServices.layer));
+const VcsDriverTestLayer = VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcessTestLayer));
 const CheckpointStoreTestLayer = CheckpointStoreLive.pipe(
-  Layer.provide(GitCoreTestLayer),
-  Layer.provide(NodeServices.layer),
+  Layer.provideMerge(VcsDriverTestLayer),
+  Layer.provideMerge(NodeServices.layer),
 );
-const TestLayer = Layer.mergeAll(NodeServices.layer, GitCoreTestLayer, CheckpointStoreTestLayer);
+const TestLayer = CheckpointStoreTestLayer.pipe(
+  Layer.provideMerge(VcsProcessTestLayer),
+  Layer.provideMerge(VcsDriverTestLayer),
+  Layer.provideMerge(ServerConfigLayer),
+  Layer.provideMerge(NodeServices.layer),
+);
 
 function makeTmpDir(
   prefix = "checkpoint-store-test-",
@@ -49,11 +57,12 @@ function writeTextFile(
 function git(
   cwd: string,
   args: ReadonlyArray<string>,
-): Effect.Effect<string, GitCommandError, GitCore> {
+): Effect.Effect<string, VcsError, VcsProcess.VcsProcess> {
   return Effect.gen(function* () {
-    const gitCore = yield* GitCore;
-    const result = yield* gitCore.execute({
+    const process = yield* VcsProcess.VcsProcess;
+    const result = yield* process.run({
       operation: "CheckpointStore.test.git",
+      command: "git",
       cwd,
       args,
       timeoutMs: 10_000,
@@ -66,12 +75,11 @@ function initRepoWithCommit(
   cwd: string,
 ): Effect.Effect<
   void,
-  GitCommandError | PlatformError.PlatformError,
-  GitCore | FileSystem.FileSystem
+  VcsError | PlatformError.PlatformError,
+  VcsProcess.VcsProcess | FileSystem.FileSystem
 > {
   return Effect.gen(function* () {
-    const core = yield* GitCore;
-    yield* core.initRepo({ cwd });
+    yield* git(cwd, ["init"]);
     yield* git(cwd, ["config", "user.email", "test@test.com"]);
     yield* git(cwd, ["config", "user.name", "Test"]);
     yield* writeTextFile(path.join(cwd, "README.md"), "# test\n");
@@ -111,11 +119,87 @@ it.layer(TestLayer)("CheckpointStoreLive", (it) => {
           cwd: tmp,
           fromCheckpointRef,
           toCheckpointRef,
+          ignoreWhitespace: true,
         });
 
         expect(diff).toContain("diff --git");
         expect(diff).not.toContain("[truncated]");
         expect(diff).toContain("+line 04999");
+      }),
+    );
+
+    it.effect("can hide indentation churn when changes wrap existing lines", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore;
+        const threadId = ThreadId.make("thread-checkpoint-store-whitespace");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+
+        const componentPath = path.join(tmp, "Component.tsx");
+        yield* writeTextFile(
+          componentPath,
+          [
+            "export function View() {",
+            "  return (",
+            "    <section>",
+            "      <h1>Title</h1>",
+            "      <p>Body</p>",
+            "    </section>",
+            "  );",
+            "}",
+            "",
+          ].join("\n"),
+        );
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: fromCheckpointRef,
+        });
+        yield* writeTextFile(
+          componentPath,
+          [
+            "export function View() {",
+            "  return (",
+            "    <section>",
+            "      {isReady ? (",
+            "        <div>",
+            "          <h1>Title</h1>",
+            "          <p>Body</p>",
+            "        </div>",
+            "      ) : null}",
+            "    </section>",
+            "  );",
+            "}",
+            "",
+          ].join("\n"),
+        );
+        yield* checkpointStore.captureCheckpoint({
+          cwd: tmp,
+          checkpointRef: toCheckpointRef,
+        });
+
+        const normalDiff = yield* checkpointStore.diffCheckpoints({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+          ignoreWhitespace: false,
+        });
+        const whitespaceIgnoredDiff = yield* checkpointStore.diffCheckpoints({
+          cwd: tmp,
+          fromCheckpointRef,
+          toCheckpointRef,
+          ignoreWhitespace: true,
+        });
+
+        expect(normalDiff).toContain("diff --git");
+        expect(normalDiff).toContain("-      <h1>Title</h1>");
+        expect(normalDiff).toContain("+          <h1>Title</h1>");
+        expect(whitespaceIgnoredDiff).toContain("diff --git");
+        expect(whitespaceIgnoredDiff).toContain("+      {isReady ? (");
+        expect(whitespaceIgnoredDiff).toContain("+        <div>");
+        expect(whitespaceIgnoredDiff).not.toContain("-      <h1>Title</h1>");
+        expect(whitespaceIgnoredDiff).not.toContain("+          <h1>Title</h1>");
       }),
     );
   });

@@ -16,6 +16,7 @@ export interface WsConnectionStatus {
   readonly attemptCount: number;
   readonly closeCode: number | null;
   readonly closeReason: string | null;
+  readonly connectionLabel: string | null;
   readonly connectedAt: string | null;
   readonly disconnectedAt: string | null;
   readonly hasConnected: boolean;
@@ -34,6 +35,7 @@ const INITIAL_WS_CONNECTION_STATUS = Object.freeze<WsConnectionStatus>({
   attemptCount: 0,
   closeCode: null,
   closeReason: null,
+  connectionLabel: null,
   connectedAt: null,
   disconnectedAt: null,
   hasConnected: false,
@@ -65,6 +67,16 @@ function updateWsConnectionStatus(
   return nextStatus;
 }
 
+export interface WsConnectionMetadata {
+  readonly connectionLabel?: string | null;
+  readonly versionMismatchHint?: string | null;
+}
+
+function normalizeConnectionLabel(label: string | null | undefined): string | null {
+  const normalized = label?.trim();
+  return normalized ? normalized : null;
+}
+
 export function getWsConnectionStatus(): WsConnectionStatus {
   return appAtomRegistry.get(wsConnectionStatusAtom);
 }
@@ -85,10 +97,15 @@ export function getWsConnectionUiState(status: WsConnectionStatus): WsConnection
   return "reconnecting";
 }
 
-export function recordWsConnectionAttempt(socketUrl: string): WsConnectionStatus {
+export function recordWsConnectionAttempt(
+  socketUrl: string,
+  metadata?: WsConnectionMetadata,
+): WsConnectionStatus {
+  const connectionLabel = normalizeConnectionLabel(metadata?.connectionLabel);
   return updateWsConnectionStatus((current) => ({
     ...current,
     attemptCount: current.attemptCount + 1,
+    connectionLabel: connectionLabel ?? current.connectionLabel,
     nextRetryAt: null,
     phase: "connecting",
     reconnectAttemptCount: current.phase === "connected" ? 1 : current.reconnectAttemptCount + 1,
@@ -97,11 +114,13 @@ export function recordWsConnectionAttempt(socketUrl: string): WsConnectionStatus
   }));
 }
 
-export function recordWsConnectionOpened(): WsConnectionStatus {
+export function recordWsConnectionOpened(metadata?: WsConnectionMetadata): WsConnectionStatus {
+  const connectionLabel = normalizeConnectionLabel(metadata?.connectionLabel);
   return updateWsConnectionStatus((current) => ({
     ...current,
     closeCode: null,
     closeReason: null,
+    connectionLabel: connectionLabel ?? current.connectionLabel,
     connectedAt: isoNow(),
     disconnectedAt: null,
     hasConnected: true,
@@ -112,24 +131,48 @@ export function recordWsConnectionOpened(): WsConnectionStatus {
   }));
 }
 
-export function recordWsConnectionErrored(message?: string | null): WsConnectionStatus {
+function appendHint(message: string | null | undefined, hint: string | null | undefined) {
+  const normalizedMessage = message?.trim();
+  const normalizedHint = hint?.trim();
+  if (!normalizedMessage) {
+    return normalizedHint ? `Hint: ${normalizedHint}` : null;
+  }
+  return normalizedHint ? `${normalizedMessage} Hint: ${normalizedHint}` : normalizedMessage;
+}
+
+export function recordWsConnectionErrored(
+  message?: string | null,
+  metadata?: WsConnectionMetadata,
+): WsConnectionStatus {
   return updateWsConnectionStatus((current) =>
     applyDisconnectState(current, {
-      lastError: message?.trim() ? message : current.lastError,
+      lastError:
+        appendHint(message, metadata?.versionMismatchHint) ??
+        appendHint(current.lastError, metadata?.versionMismatchHint),
       lastErrorAt: isoNow(),
     }),
   );
 }
 
-export function recordWsConnectionClosed(details?: {
-  readonly code?: number;
-  readonly reason?: string;
-}): WsConnectionStatus {
+export function recordWsConnectionClosed(
+  details?: {
+    readonly code?: number;
+    readonly reason?: string;
+  },
+  metadata?: WsConnectionMetadata,
+): WsConnectionStatus {
+  const connectionLabel = normalizeConnectionLabel(metadata?.connectionLabel);
   return updateWsConnectionStatus((current) =>
-    applyDisconnectState(current, {
-      closeCode: details?.code ?? current.closeCode,
-      closeReason: details?.reason?.trim() ? details.reason : current.closeReason,
-    }),
+    applyDisconnectState(
+      current,
+      {
+        closeCode: details?.code ?? current.closeCode,
+        closeReason:
+          appendHint(details?.reason, metadata?.versionMismatchHint) ??
+          appendHint(current.closeReason, metadata?.versionMismatchHint),
+      },
+      connectionLabel === null ? undefined : { connectionLabel },
+    ),
   );
 }
 
@@ -173,6 +216,7 @@ function applyDisconnectState(
   updates: Partial<
     Pick<WsConnectionStatus, "closeCode" | "closeReason" | "lastError" | "lastErrorAt">
   >,
+  metadata?: WsConnectionMetadata,
 ): WsConnectionStatus {
   const disconnectedAt = current.disconnectedAt ?? isoNow();
   const nextRetryDelayMs =
@@ -183,6 +227,7 @@ function applyDisconnectState(
   return {
     ...current,
     ...updates,
+    connectionLabel: normalizeConnectionLabel(metadata?.connectionLabel) ?? current.connectionLabel,
     disconnectedAt,
     nextRetryAt:
       nextRetryDelayMs === null

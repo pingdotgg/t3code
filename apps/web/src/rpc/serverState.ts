@@ -10,6 +10,7 @@ import {
   type ServerProviderUpdatedPayload,
   type ServerSettings,
 } from "@t3tools/contracts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { Atom } from "effect/unstable/reactivity";
 import { useCallback, useRef } from "react";
 
@@ -42,12 +43,12 @@ function toServerConfigUpdatedPayload(config: ServerConfig): ServerConfigUpdated
 }
 
 const EMPTY_AVAILABLE_EDITORS: ReadonlyArray<EditorId> = [];
-const EMPTY_KEYBINDINGS: ServerConfig["keybindings"] = [];
 const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 
 const selectAvailableEditors = (config: ServerConfig | null): ReadonlyArray<EditorId> =>
   config?.availableEditors ?? EMPTY_AVAILABLE_EDITORS;
-const selectKeybindings = (config: ServerConfig | null) => config?.keybindings ?? EMPTY_KEYBINDINGS;
+const selectKeybindings = (config: ServerConfig | null) =>
+  config?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
 const selectKeybindingsConfigPath = (config: ServerConfig | null) =>
   config?.keybindingsConfigPath ?? null;
 const selectObservability = (config: ServerConfig | null) => config?.observability ?? null;
@@ -74,6 +75,10 @@ export function getServerConfig(): ServerConfig | null {
   return appAtomRegistry.get(serverConfigAtom);
 }
 
+export function getServerKeybindings(): ServerConfig["keybindings"] {
+  return selectKeybindings(getServerConfig());
+}
+
 export function getServerConfigUpdatedNotification(): ServerConfigUpdatedNotification | null {
   return appAtomRegistry.get(serverConfigUpdatedAtom);
 }
@@ -97,6 +102,7 @@ export function applyServerConfigEvent(event: ServerConfigStreamEvent): void {
       }
       const nextConfig = {
         ...latestServerConfig,
+        keybindings: event.payload.keybindings,
         issues: event.payload.issues,
       } satisfies ServerConfig;
       resolveServerConfig(nextConfig);

@@ -24,7 +24,6 @@ const InitializeRequest = jsonRpcRequest("initialize", AcpSchema.InitializeReque
 const InitializeResponse = jsonRpcResponse(AcpSchema.InitializeResponse);
 const ExtRequest = jsonRpcRequest("x/test", Schema.Struct({ hello: Schema.String }));
 const ExtResponse = jsonRpcResponse(Schema.Struct({ ok: Schema.Boolean }));
-
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/acp-mock-peer.ts"),
 );
