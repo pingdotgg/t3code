@@ -1,5 +1,5 @@
 import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
-import type { Stream } from "effect";
+import type * as Stream from "effect/Stream";
 import type { ServerProviderShape } from "./Services/ServerProvider.ts";
 
 export type ProviderSnapshotSource = {

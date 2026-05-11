@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type {
@@ -9,7 +10,11 @@ import type {
   SessionEvent,
 } from "@github/copilot-sdk";
 import { it } from "@effect/vitest";
-import { Effect, Fiber, Layer, Stream } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import { beforeEach, vi } from "vitest";
 
 import { type ProviderRuntimeEvent, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
@@ -21,8 +26,8 @@ import { makeCopilotAdapterLive } from "./CopilotAdapter.ts";
 
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const COPILOT_DRIVER = ProviderDriverKind.make("copilot");
-const waitForSdkEventQueue = () =>
-  Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 10)));
+const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+const waitForSdkEventQueue = () => Effect.promise(() => sleep(10).then(() => undefined));
 
 const runtimeMock = vi.hoisted(() => {
   const makeSession = () => ({
@@ -222,10 +227,11 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         const emit = (event: SessionEvent) => config.onEvent?.(event);
         const resultText =
           "Task completed: **Architecture diagram prepared**\n\n```mermaid\nflowchart TD\n  Client --> Server\n```";
+        const timestamp = yield* nowIso;
 
         emit({
           id: "evt-copilot-turn-start",
-          timestamp: new Date().toISOString(),
+          timestamp,
           parentId: null,
           type: "assistant.turn_start",
           data: {
@@ -234,7 +240,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         } as SessionEvent);
         emit({
           id: "evt-copilot-task-start",
-          timestamp: new Date().toISOString(),
+          timestamp,
           parentId: null,
           type: "tool.execution_start",
           data: {
@@ -245,7 +251,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         } as SessionEvent);
         emit({
           id: "evt-copilot-task-complete",
-          timestamp: new Date().toISOString(),
+          timestamp,
           parentId: null,
           type: "tool.execution_complete",
           data: {
@@ -258,7 +264,7 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
         } as SessionEvent);
         emit({
           id: "evt-copilot-idle",
-          timestamp: new Date().toISOString(),
+          timestamp,
           parentId: null,
           type: "session.idle",
           data: {
@@ -302,6 +308,84 @@ it.layer(CopilotAdapterTestLayer)("CopilotAdapterLive", (it) => {
 
         yield* adapter.stopSession(threadId);
       }),
+  );
+
+  it.effect("continues processing SDK events after one event handler fails", () =>
+    Effect.gen(function* () {
+      const adapter = yield* CopilotAdapter;
+      const threadId = asThreadId("copilot-sdk-event-queue-recovers-after-handler-failure");
+
+      yield* adapter.startSession({
+        provider: COPILOT_DRIVER,
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "finish even after a bad tool progress event",
+        attachments: [],
+      });
+
+      const runtimeEvents: ProviderRuntimeEvent[] = [];
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => runtimeEvents.push(event))),
+        Effect.forkChild,
+      );
+      yield* waitForSdkEventQueue();
+
+      const config = runtimeMock.state.createSessionConfigs.at(-1);
+      assert.ok(config?.onEvent);
+      const emit = (event: SessionEvent) => config.onEvent?.(event);
+      const timestamp = yield* nowIso;
+
+      emit({
+        id: "evt-copilot-turn-start-after-bad-event",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_start",
+        data: {
+          turnId: "sdk-turn-bad-event",
+        },
+      } as SessionEvent);
+      emit({
+        id: "evt-copilot-bad-progress",
+        timestamp,
+        parentId: null,
+        type: "tool.execution_progress",
+        data: {
+          toolCallId: "tool-progress-bad",
+          progressMessage: null,
+        },
+      } as unknown as SessionEvent);
+      emit({
+        id: "evt-copilot-turn-end-after-bad-event",
+        timestamp,
+        parentId: null,
+        type: "assistant.turn_end",
+        data: {
+          turnId: "sdk-turn-bad-event",
+        },
+      } as SessionEvent);
+
+      let completed: ProviderRuntimeEvent | undefined;
+      for (let attempt = 0; attempt < 20 && completed === undefined; attempt += 1) {
+        yield* waitForSdkEventQueue();
+        completed = runtimeEvents.find((event) => event.type === "turn.completed");
+      }
+      yield* Fiber.interrupt(runtimeEventsFiber).pipe(Effect.ignore);
+
+      const runtimeError = runtimeEvents.find((event) => event.type === "runtime.error");
+      assert.equal(runtimeError?.type, "runtime.error");
+      assert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        assert.equal(String(completed.turnId), String(turn.turnId));
+        assert.equal(completed.payload.state, "completed");
+      }
+
+      yield* adapter.stopSession(threadId);
+    }),
   );
 
   it.effect("completes the turn as failed when Copilot send rejects", () =>

@@ -3,7 +3,7 @@ import type {
   DesktopSshEnvironmentBootstrap,
   DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
-import { type NetError, NetService } from "@t3tools/shared/Net";
+import * as NetService from "@t3tools/shared/Net";
 import {
   SshPasswordPrompt,
   type SshPasswordPromptShape,
@@ -35,7 +35,7 @@ export type DesktopSshEnvironmentRuntimeServices =
   | FileSystem.FileSystem
   | Path.Path
   | HttpClient.HttpClient
-  | NetService;
+  | NetService.NetService;
 
 export type DesktopSshEnvironmentOperationError =
   | SshCommandError
@@ -44,7 +44,7 @@ export type DesktopSshEnvironmentOperationError =
   | SshPairingError
   | SshReadinessError
   | SshPasswordPromptError
-  | NetError;
+  | NetService.NetError;
 
 export type DesktopSshEnvironmentDiscoverError = SshHostDiscoveryError;
 

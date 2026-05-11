@@ -3,7 +3,8 @@ import type {
   SourceControlProviderDiscoveryItem,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
-import { Effect, Option } from "effect";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import type * as VcsProcess from "../vcs/VcsProcess.ts";
 
@@ -138,7 +139,7 @@ function probeCli(input: {
       cwd: input.cwd,
       timeoutMs: 5_000,
       maxOutputBytes: 8_000,
-      truncateOutputAtMaxBytes: true,
+      appendTruncationMarker: true,
     })
     .pipe(
       Effect.map(
@@ -215,7 +216,7 @@ export function probeSourceControlProvider(input: {
           allowNonZeroExit: true,
           timeoutMs: 5_000,
           maxOutputBytes: 8_000,
-          truncateOutputAtMaxBytes: true,
+          appendTruncationMarker: true,
         })
         .pipe(
           Effect.map(

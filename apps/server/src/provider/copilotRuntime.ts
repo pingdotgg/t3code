@@ -113,11 +113,7 @@ export function buildCopilotClientOptions(input: {
 }): CopilotClientOptions {
   const cliPath = trimOrUndefined(input.settings.binaryPath);
   const cliUrl = trimOrUndefined(input.settings.serverUrl);
-  const env = { ...process.env };
-
-  if (input.env) {
-    Object.assign(env, input.env);
-  }
+  const env = input.env === undefined ? { ...process.env } : { ...input.env };
 
   delete env[COPILOT_CLI_PATH_ENV];
 

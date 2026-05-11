@@ -1,4 +1,9 @@
-import { Duration, Effect, Layer, Option, Schedule } from "effect";
+import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -30,7 +35,7 @@ const makeProviderSessionReaper = (options?: ProviderSessionReaperLiveOptions) =
 
     const sweep = Effect.gen(function* () {
       const bindings = yield* directory.listBindings();
-      const now = Date.now();
+      const now = yield* Clock.currentTimeMillis;
       let reapedCount = 0;
 
       for (const binding of bindings) {

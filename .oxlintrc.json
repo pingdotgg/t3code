@@ -9,6 +9,7 @@
     "**/routeTree.gen.ts"
   ],
   "plugins": ["eslint", "oxc", "react", "unicorn", "typescript"],
+  "jsPlugins": ["./oxlint-plugin-t3code/index.ts"],
   "categories": {
     "correctness": "warn",
     "suspicious": "warn",
@@ -17,6 +18,8 @@
   "rules": {
     "react-in-jsx-scope": "off",
     "eslint/no-shadow": "off",
-    "eslint/no-await-in-loop": "off"
+    "eslint/no-await-in-loop": "off",
+    "eslint/no-underscore-dangle": "off",
+    "t3code/no-inline-schema-compile": "warn"
   }
 }

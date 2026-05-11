@@ -16,7 +16,8 @@ import {
   type ServerProvider,
   type SourceControlDiscoveryResult,
 } from "@t3tools/contracts";
-import { DateTime, Option } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 import { page } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -261,7 +262,7 @@ function createOutdatedProvider(driver: string): ServerProvider {
 }
 
 function makeUtc(value: string) {
-  return DateTime.makeUnsafe(Date.parse(value));
+  return DateTime.makeUnsafe(value);
 }
 
 function makePairingLink(input: {
@@ -1255,8 +1256,45 @@ describe("SourceControlSettingsPanel discovery states", () => {
       </AppAtomRegistryProvider>,
     );
 
-    await expect.element(page.getByRole("heading", { name: "Git" })).toBeInTheDocument();
+    await expect.element(page.getByRole("switch", { name: "Git availability" })).toBeDisabled();
     await expect.element(page.getByText("Nothing detected yet")).not.toBeInTheDocument();
+  });
+
+  it("shows Git fetch interval settings inside the Git details dropdown", async () => {
+    setSourceControlDiscoveryStub(async () => ({
+      versionControlSystems: [
+        {
+          kind: "git",
+          label: "Git",
+          executable: "git",
+          implemented: true,
+          status: "available",
+          version: Option.some("git version 2.50.0"),
+          installHint: "Install Git.",
+          detail: Option.none(),
+        },
+      ],
+      sourceControlProviders: [],
+    }));
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    const toggle = page.getByRole("button", { name: "Toggle Git details" });
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+
+    await toggle.click();
+
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect
+      .element(page.getByLabelText("Automatic Git fetch interval in seconds"))
+      .toBeVisible();
+    await expect
+      .element(page.getByText("Automatic Git fetches run every 30 seconds"))
+      .not.toBeInTheDocument();
   });
 
   it("does not rescan on remount while the discovery atom is fresh", async () => {
@@ -1286,7 +1324,7 @@ describe("SourceControlSettingsPanel discovery states", () => {
       </AppAtomRegistryProvider>,
     );
 
-    await expect.element(page.getByRole("heading", { name: "Git" })).toBeInTheDocument();
+    await expect.element(page.getByRole("switch", { name: "Git availability" })).toBeDisabled();
     expect(calls).toBe(1);
 
     const teardown = mounted.cleanup ?? mounted.unmount;
@@ -1300,7 +1338,7 @@ describe("SourceControlSettingsPanel discovery states", () => {
       </AppAtomRegistryProvider>,
     );
 
-    await expect.element(page.getByRole("heading", { name: "Git" })).toBeInTheDocument();
+    await expect.element(page.getByRole("switch", { name: "Git availability" })).toBeDisabled();
     expect(calls).toBe(1);
   });
 });

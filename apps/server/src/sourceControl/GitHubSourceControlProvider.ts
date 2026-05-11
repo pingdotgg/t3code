@@ -1,4 +1,8 @@
-import { Effect, Layer, Option, Result, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 import {
   SourceControlProviderError,
   type ChangeRequest,
@@ -9,6 +13,7 @@ import * as GitHubCli from "./GitHubCli.ts";
 import * as GitHubPullRequests from "./gitHubPullRequests.ts";
 import * as SourceControlProvider from "./SourceControlProvider.ts";
 import * as SourceControlProviderDiscovery from "./SourceControlProviderDiscovery.ts";
+const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 
 function providerError(
   operation: string,
@@ -149,7 +154,7 @@ export const make = Effect.fn("makeGitHubSourceControlProvider")(function* () {
             );
           }),
           Effect.mapError((error) =>
-            Schema.is(SourceControlProviderError)(error)
+            isSourceControlProviderError(error)
               ? error
               : providerError("listChangeRequests", error),
           ),

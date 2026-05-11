@@ -1,5 +1,9 @@
 import { CopilotSettings, ProviderDriverKind, type ServerProvider } from "@t3tools/contracts";
-import { Duration, Effect, Path, Schema, Stream } from "effect";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
 import { makeCopilotTextGeneration } from "../../textGeneration/CopilotTextGeneration.ts";
 import { ServerConfig } from "../../config.ts";
@@ -22,6 +26,7 @@ import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMainte
 
 const DRIVER_KIND = ProviderDriverKind.make("copilot");
 const SNAPSHOT_REFRESH_INTERVAL = Duration.hours(1);
+const decodeCopilotSettings = Schema.decodeSync(CopilotSettings);
 
 export type CopilotDriverEnv = Path.Path | ProviderEventLoggers | ServerConfig;
 
@@ -48,7 +53,7 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
     supportsMultipleInstances: true,
   },
   configSchema: CopilotSettings,
-  defaultConfig: (): CopilotSettings => Schema.decodeSync(CopilotSettings)({}),
+  defaultConfig: (): CopilotSettings => decodeCopilotSettings({}),
   create: ({ instanceId, displayName, accentColor, environment, enabled, config }) =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig;
@@ -82,7 +87,8 @@ export const CopilotDriver: ProviderDriver<CopilotSettings, CopilotDriverEnv> = 
         getSettings: Effect.succeed(effectiveConfig),
         streamSettings: Stream.never,
         haveSettingsChanged: () => false,
-        initialSnapshot: (settings) => stampIdentity(makePendingCopilotProvider(settings)),
+        initialSnapshot: (settings) =>
+          Effect.succeed(stampIdentity(makePendingCopilotProvider(settings))),
         checkProvider: checkCopilotProviderStatus({
           settings: effectiveConfig,
           cwd: serverConfig.cwd,

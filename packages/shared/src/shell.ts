@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as NodeOS from "node:os";
 import { execFileSync } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";

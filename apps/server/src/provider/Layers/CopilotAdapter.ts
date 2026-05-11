@@ -25,7 +25,15 @@ import {
   type UserInputQuestion,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
-import { Deferred, Effect, Layer, Path, Predicate, PubSub, Random, Stream } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
+import * as PubSub from "effect/PubSub";
+import * as Random from "effect/Random";
+import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -150,7 +158,14 @@ const EMPTY_USER_INPUT_RESPONSE = {
 } satisfies CopilotUserInputResponse;
 
 function nowIso(): string {
-  return new Date().toISOString();
+  return DateTime.formatIso(DateTime.nowUnsafe());
+}
+
+function parentToolCallIdFromData(data: unknown): string | undefined {
+  return Predicate.hasProperty(data, "parentToolCallId") &&
+    Predicate.isString(data.parentToolCallId)
+    ? data.parentToolCallId
+    : undefined;
 }
 
 function parseCopilotResumeCursor(raw: unknown): { sessionId: string } | undefined {
@@ -789,33 +804,39 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
 
   const enqueueSdkEvent = (context: CopilotSessionContext, event: SessionEvent) => {
     context.eventChain = context.eventChain
+      .catch(() => undefined)
       .then(async () => {
-        await writeNativeAsync(context.threadId, event);
-        await handleSdkEvent(context, event);
-      })
-      .catch(async (error) => {
-        const message =
-          error instanceof Error && error.message.trim().length > 0
-            ? error.message.trim()
-            : "Copilot event handling failed.";
-        updateProviderSession(context, {
-          status: "error",
-          lastError: message,
-        });
-        await emitAsync({
-          ...createBaseEvent({
-            threadId: context.threadId,
-          }),
-          type: "runtime.error",
-          payload: {
-            message,
-            class: "provider_error",
-            detail: {
-              error,
-              sourceEventType: event.type,
-            },
-          },
-        });
+        try {
+          await writeNativeAsync(context.threadId, event);
+          await handleSdkEvent(context, event);
+        } catch (error) {
+          const message =
+            error instanceof Error && error.message.trim().length > 0
+              ? error.message.trim()
+              : "Copilot event handling failed.";
+          updateProviderSession(context, {
+            status: "error",
+            lastError: message,
+          });
+          try {
+            await emitAsync({
+              ...createBaseEvent({
+                threadId: context.threadId,
+              }),
+              type: "runtime.error",
+              payload: {
+                message,
+                class: "provider_error",
+                detail: {
+                  error,
+                  sourceEventType: event.type,
+                },
+              },
+            });
+          } catch {
+            // Keep the serialized SDK event queue alive even if error reporting tears down.
+          }
+        }
       });
   };
 
@@ -1717,6 +1738,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       case "tool.execution_partial_result": {
         const turnId = resolveTurnIdForEvent(context, {
           providerItemId: event.data.toolCallId,
+          parentProviderItemId: parentToolCallIdFromData(event.data),
           sdkTurnId: context.activeSdkTurnId,
         });
         if (!turnId) {
@@ -1742,6 +1764,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       case "tool.execution_progress": {
         const turnId = resolveTurnIdForEvent(context, {
           providerItemId: event.data.toolCallId,
+          parentProviderItemId: parentToolCallIdFromData(event.data),
           sdkTurnId: context.activeSdkTurnId,
         });
         const toolMeta = context.toolMetaById.get(event.data.toolCallId);
@@ -2062,15 +2085,7 @@ export const makeCopilotAdapter = Effect.fn("makeCopilotAdapter")(function* (
       for (const event of earlyEvents) {
         enqueueSdkEvent(context, event);
       }
-      yield* Effect.promise(() => context.eventChain).pipe(
-        Effect.mapError((cause) =>
-          processError(
-            input.threadId,
-            detailFromCause(cause, "Failed to process Copilot startup events."),
-            cause,
-          ),
-        ),
-      );
+      yield* Effect.promise(() => context.eventChain);
       updateProviderSession(context, {
         status: context.session.status === "connecting" ? "ready" : context.session.status,
       });

@@ -1,5 +1,6 @@
 import { ProviderDriverKind, type CopilotSettings } from "@t3tools/contracts";
-import { Effect } from "effect";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
 
 import { buildServerProvider, type ServerProviderDraft } from "../providerSnapshot.ts";
 import {
@@ -18,7 +19,7 @@ const COPILOT_PRESENTATION = {
 } as const;
 
 export function makePendingCopilotProvider(settings: CopilotSettings): ServerProviderDraft {
-  const checkedAt = new Date().toISOString();
+  const checkedAt = DateTime.formatIso(DateTime.nowUnsafe());
   const models = modelsFromCopilotSdk({
     models: [],
     customModels: settings.customModels,
@@ -66,7 +67,7 @@ export function checkCopilotProviderStatus(input: {
     return Effect.succeed(makePendingCopilotProvider(input.settings));
   }
 
-  const checkedAt = new Date().toISOString();
+  const checkedAt = DateTime.formatIso(DateTime.nowUnsafe());
   const fallback = (cause: unknown, version: string | null = null) => {
     const failure = formatCopilotProbeError({
       cause,

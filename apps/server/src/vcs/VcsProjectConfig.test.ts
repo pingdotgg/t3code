@@ -1,6 +1,9 @@
 import { assert, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import * as VcsProjectConfig from "./VcsProjectConfig.ts";
 
@@ -38,6 +41,7 @@ describe("VcsProjectConfig", () => {
         yield* fileSystem.makeDirectory(nested, { recursive: true });
         yield* fileSystem.writeFileString(
           path.join(configDir, "vcs.json"),
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
           JSON.stringify({ vcs: { kind: "jj" } }),
         );
 

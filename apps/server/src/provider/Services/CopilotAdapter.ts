@@ -1,4 +1,4 @@
-import { Context } from "effect";
+import * as Context from "effect/Context";
 
 import type { ProviderAdapterError } from "../Errors.ts";
 import type { ProviderAdapterShape } from "./ProviderAdapter.ts";

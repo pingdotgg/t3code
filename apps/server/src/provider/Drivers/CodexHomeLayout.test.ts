@@ -1,6 +1,9 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Path, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import { CodexSettings } from "@t3tools/contracts";
 import {
@@ -8,6 +11,7 @@ import {
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
+const decodeCodexSettingsValue = Schema.decodeSync(CodexSettings);
 
 const decodeCodexSettings = (input: {
   readonly enabled?: boolean;
@@ -15,7 +19,7 @@ const decodeCodexSettings = (input: {
   readonly shadowHomePath?: string;
   readonly customModels?: readonly string[];
   readonly binaryPath?: string;
-}): CodexSettings => Schema.decodeSync(CodexSettings)(input);
+}): CodexSettings => decodeCodexSettingsValue(input);
 
 const makeTempDir = Effect.fn("CodexHomeLayout.test.makeTempDir")(function* (prefix: string) {
   const fileSystem = yield* FileSystem.FileSystem;

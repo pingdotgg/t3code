@@ -12,7 +12,7 @@ import type {
 } from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { Option } from "effect";
+import * as Option from "effect/Option";
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
@@ -1434,7 +1434,6 @@ export default function GitActionsControl({
               description: result.toast.description,
               timeout: 0,
               actionProps: toastActionProps,
-              actionVariant: "outline",
               data: successToastData,
             }),
           );
