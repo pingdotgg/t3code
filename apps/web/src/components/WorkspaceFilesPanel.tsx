@@ -15,9 +15,6 @@ import {
   IconMagnifyingglass as SearchIcon,
   IconPlusminus as DiffIcon,
   IconProgressIndicator as LoaderIcon,
-  IconRectangleSplit2x1 as Columns2Icon,
-  IconRectangleSplit3x1 as Rows3Icon,
-  IconTextWordSpacing as TextWrapIcon,
   IconXmarkCircleFill as XIconCircle,
 } from "symbols-react";
 import {
@@ -104,8 +101,6 @@ import {
 } from "./ui/menu";
 import { ScrollArea } from "./ui/scroll-area";
 import { toastManager } from "./ui/toast";
-import { Toggle } from "./ui/toggle";
-import { ToggleGroup, Toggle as ToggleGroupItem } from "./ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { useBottomDrawerUiStore } from "../bottomDrawerUiStore";
 import { usePreviewWorkspaceStore } from "../previewWorkspaceStore";
@@ -1164,7 +1159,7 @@ export function WorkspaceFilesPanel({
         </div>
       ) : (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="flex shrink-0 items-center gap-2 px-2.5 py-2 h-[38px]">
+          <div className="flex h-[38px] shrink-0 items-center gap-2 px-2.5 py-2">
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1191,7 +1186,6 @@ export function WorkspaceFilesPanel({
               <HeaderIconActionButton
                 className="shrink-0"
                 onClick={toggleDiffMode}
-                pressed={surfaceMode === "diff"}
                 aria-label="Toggle diff view"
                 title="Toggle diff view"
               >
@@ -1214,178 +1208,143 @@ export function WorkspaceFilesPanel({
             </HeaderIconActionButton>
           </div>
           <div className="border-b border-border/70" />
-          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/70 px-3 py-2">
-            <div className="flex min-w-0 items-center gap-1">
-              <HeaderIconActionButton
-                onClick={toggleTreeCollapsed}
-                disabled={surfaceMode === "diff"}
-                pressed={!treeCollapsed}
-                aria-label={treeCollapsed ? "Show editor sidebar" : "Hide editor sidebar"}
-                title={treeCollapsed ? "Show editor sidebar" : "Hide editor sidebar"}
-              >
-                <SidebarToggleIcon className="size-3.5" />
-              </HeaderIconActionButton>
-              <HeaderIconActionButton
-                onClick={toggleSidebarSearchVisible}
-                disabled={surfaceMode === "diff"}
-                pressed={sidebarSearchVisible}
-                aria-label={sidebarSearchVisible ? "Hide file search" : "Search files"}
-                title={sidebarSearchVisible ? "Hide file search" : "Search files"}
-              >
-                <SearchIcon className="size-3 fill-current" />
-              </HeaderIconActionButton>
-            </div>
-            <div className="min-w-0 flex-1">
-              {editorVisible && editorFilePath ? (
-                <div className="flex min-w-0 items-center gap-1 overflow-x-auto py-0.5">
-                  <div
-                    className="group inline-flex min-w-0 shrink-0 items-center gap-1 rounded-full border border-border bg-accent px-2 py-1 font-medium leading-none text-accent-foreground"
-                    title={editorFilePath}
+          {surfaceMode === "diff" ? null : (
+            <>
+              <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/70 px-3 py-2">
+                <div className="flex min-w-0 items-center gap-1">
+                  <HeaderIconActionButton
+                    onClick={toggleTreeCollapsed}
+                    pressed={!treeCollapsed}
+                    aria-label={treeCollapsed ? "Show editor sidebar" : "Hide editor sidebar"}
+                    title={treeCollapsed ? "Show editor sidebar" : "Hide editor sidebar"}
                   >
-                    <span className="text-ui-xs block max-w-60 truncate">
-                      {resolveEditorFileLabel(editorFilePath)}
-                    </span>
-                    <button
-                      type="button"
-                      className="text-accent-foreground/70 opacity-0 transition-opacity hover:text-accent-foreground group-hover:opacity-100 group-focus-within:opacity-100"
-                      aria-label="Close file"
-                      title="Close file"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        issueNavigationRequest("back");
-                      }}
-                    >
-                      <XIconCircle className="size-3 fill-current/50" />
-                    </button>
-                  </div>
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    className="shrink-0 rounded-full gap-1.5 px-2 cursor-pointer"
-                    onClick={() => openPreviewForFile(editorFilePath)}
-                    disabled={activeFilePreviewDisabledReason !== null}
-                    title={
-                      activeFilePreviewDisabledReason ??
-                      (activeFilePreviewOpen ? "Close preview" : "Open preview")
-                    }
+                    <SidebarToggleIcon className="size-3.5" />
+                  </HeaderIconActionButton>
+                  <HeaderIconActionButton
+                    onClick={toggleSidebarSearchVisible}
+                    pressed={sidebarSearchVisible}
+                    aria-label={sidebarSearchVisible ? "Hide file search" : "Search files"}
+                    title={sidebarSearchVisible ? "Hide file search" : "Search files"}
                   >
-                    {activeFilePreviewOpen ? "Previewing" : "Preview"}
-                  </Button>
+                    <SearchIcon className="size-3 fill-current" />
+                  </HeaderIconActionButton>
                 </div>
-              ) : null}
-            </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              {surfaceMode === "diff" ? (
-                <>
-                  <ToggleGroup
-                    className="shrink-0"
-                    variant="outline"
-                    size="xs"
-                    value={[diffRenderMode]}
-                    onValueChange={(value) => {
-                      const next = value[0];
-                      if (next === "stacked" || next === "split") {
-                        setDiffRenderMode(next);
+                <div className="min-w-0 flex-1">
+                  {editorVisible && editorFilePath ? (
+                    <div className="flex min-w-0 items-center gap-1 overflow-x-auto py-0.5">
+                      <div
+                        className="group inline-flex min-w-0 shrink-0 items-center gap-1 rounded-full border border-border bg-accent px-2 py-1 font-medium leading-none text-accent-foreground"
+                        title={editorFilePath}
+                      >
+                        <span className="text-ui-xs block max-w-60 truncate">
+                          {resolveEditorFileLabel(editorFilePath)}
+                        </span>
+                        <button
+                          type="button"
+                          className="text-accent-foreground/70 opacity-0 transition-opacity hover:text-accent-foreground group-hover:opacity-100 group-focus-within:opacity-100"
+                          aria-label="Close file"
+                          title="Close file"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            issueNavigationRequest("back");
+                          }}
+                        >
+                          <XIconCircle className="size-3 fill-current/50" />
+                        </button>
+                      </div>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        className="shrink-0 cursor-pointer gap-1.5 rounded-full px-2"
+                        onClick={() => openPreviewForFile(editorFilePath)}
+                        disabled={activeFilePreviewDisabledReason !== null}
+                        title={
+                          activeFilePreviewDisabledReason ??
+                          (activeFilePreviewOpen ? "Close preview" : "Open preview")
+                        }
+                      >
+                        {activeFilePreviewOpen ? "Previewing" : "Preview"}
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <HeaderIconActionButton aria-label="Editor options" title="Editor options">
+                          <EllipsisIcon className="size-3 fill-current rotate-90" />
+                        </HeaderIconActionButton>
                       }
-                    }}
-                  >
-                    <ToggleGroupItem aria-label="Stacked diff view" value="stacked">
-                      <Rows3Icon className="size-3 fill-current" />
-                    </ToggleGroupItem>
-                    <ToggleGroupItem aria-label="Split diff view" value="split">
-                      <Columns2Icon className="size-3 fill-current" />
-                    </ToggleGroupItem>
-                  </ToggleGroup>
-                  <Toggle
-                    aria-label={
-                      diffWordWrap ? "Disable diff line wrapping" : "Enable diff line wrapping"
-                    }
-                    title={diffWordWrap ? "Disable line wrapping" : "Enable line wrapping"}
-                    variant="outline"
-                    size="xs"
-                    pressed={diffWordWrap}
-                    onPressedChange={(pressed) => {
-                      setDiffWordWrap(Boolean(pressed));
-                    }}
-                  >
-                    <TextWrapIcon className="size-3 fill-current" />
-                  </Toggle>
-                </>
-              ) : null}
-              <Menu>
-                <MenuTrigger
-                  render={
-                    <HeaderIconActionButton aria-label="Editor options" title="Editor options">
-                      <EllipsisIcon className="size-3 fill-current rotate-90" />
-                    </HeaderIconActionButton>
-                  }
-                />
-                <MenuPopup align="end" className="w-64">
-                  <MenuItem
-                    disabled={!canTriggerSave}
-                    onClick={() => {
-                      setRequestedSaveNonce((current) => current + 1);
-                    }}
-                  >
-                    Save File
-                    <MenuShortcut>⌘S</MenuShortcut>
-                  </MenuItem>
-                  <MenuItem
-                    disabled={!canDiscardEditorChanges}
-                    onClick={() => {
-                      setRequestedDiscardNonce((current) => current + 1);
-                    }}
-                  >
-                    Discard Changes
-                  </MenuItem>
-                  <MenuSeparator />
-                  <MenuItem
-                    disabled={!editorFilePath}
-                    onClick={() => {
-                      if (!editorFilePath) {
-                        return;
-                      }
-                      copyRelativeWorkspacePath({
-                        path: editorFilePath,
-                        kind: "file",
-                        parentPath: resolveParentDirectoryLabel(editorFilePath) ?? undefined,
-                      });
-                    }}
-                  >
-                    Copy Relative Path
-                  </MenuItem>
-                  <MenuSeparator />
-                  <MenuCheckboxItem
-                    checked={editorLineNumbersVisible}
-                    onCheckedChange={(checked) => {
-                      setEditorLineNumbersVisible(Boolean(checked));
-                    }}
-                    variant="switch"
-                  >
-                    Line Numbers
-                  </MenuCheckboxItem>
-                  <MenuCheckboxItem
-                    checked={editorWordWrapEnabled}
-                    onCheckedChange={(checked) => {
-                      setEditorWordWrapEnabled(Boolean(checked));
-                    }}
-                    variant="switch"
-                  >
-                    Word Wrap
-                  </MenuCheckboxItem>
-                  <MenuCheckboxItem
-                    checked={editorAutoSaveEnabled}
-                    onCheckedChange={(checked) => {
-                      setEditorAutoSaveEnabled(Boolean(checked));
-                    }}
-                    variant="switch"
-                  >
-                    Auto Save
-                  </MenuCheckboxItem>
-                </MenuPopup>
-              </Menu>
-            </div>
-          </div>
+                    />
+                    <MenuPopup align="end" className="w-64">
+                      <MenuItem
+                        disabled={!canTriggerSave}
+                        onClick={() => {
+                          setRequestedSaveNonce((current) => current + 1);
+                        }}
+                      >
+                        Save File
+                        <MenuShortcut>⌘S</MenuShortcut>
+                      </MenuItem>
+                      <MenuItem
+                        disabled={!canDiscardEditorChanges}
+                        onClick={() => {
+                          setRequestedDiscardNonce((current) => current + 1);
+                        }}
+                      >
+                        Discard Changes
+                      </MenuItem>
+                      <MenuSeparator />
+                      <MenuItem
+                        disabled={!editorFilePath}
+                        onClick={() => {
+                          if (!editorFilePath) {
+                            return;
+                          }
+                          copyRelativeWorkspacePath({
+                            path: editorFilePath,
+                            kind: "file",
+                            parentPath: resolveParentDirectoryLabel(editorFilePath) ?? undefined,
+                          });
+                        }}
+                      >
+                        Copy Relative Path
+                      </MenuItem>
+                      <MenuSeparator />
+                      <MenuCheckboxItem
+                        checked={editorLineNumbersVisible}
+                        onCheckedChange={(checked) => {
+                          setEditorLineNumbersVisible(Boolean(checked));
+                        }}
+                        variant="switch"
+                      >
+                        Line Numbers
+                      </MenuCheckboxItem>
+                      <MenuCheckboxItem
+                        checked={editorWordWrapEnabled}
+                        onCheckedChange={(checked) => {
+                          setEditorWordWrapEnabled(Boolean(checked));
+                        }}
+                        variant="switch"
+                      >
+                        Word Wrap
+                      </MenuCheckboxItem>
+                      <MenuCheckboxItem
+                        checked={editorAutoSaveEnabled}
+                        onCheckedChange={(checked) => {
+                          setEditorAutoSaveEnabled(Boolean(checked));
+                        }}
+                        variant="switch"
+                      >
+                        Auto Save
+                      </MenuCheckboxItem>
+                    </MenuPopup>
+                  </Menu>
+                </div>
+              </div>
+            </>
+          )}
           {surfaceMode === "diff" ? (
             <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
               <DiffBrowserComponent

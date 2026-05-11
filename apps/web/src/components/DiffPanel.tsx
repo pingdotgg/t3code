@@ -7,6 +7,10 @@ import type { TurnId } from "@forma/contracts";
 import {
   IconChevronLeft as ChevronLeftIcon,
   IconChevronRight as ChevronRightIcon,
+  IconEllipsis as EllipsisIcon,
+  IconRectangleSplit2x1 as Columns2Icon,
+  IconRectangleSplit3x1 as Rows3Icon,
+  IconTextWordSpacing as TextWrapIcon,
 } from "symbols-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { openInPreferredEditor } from "../editorPreferences";
@@ -37,7 +41,12 @@ import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState } from "./DiffPanelShell";
+import GitActionsControl from "./GitActionsControl";
+import { HeaderIconActionButton } from "./HeaderIconActionButton";
+import { DiffStatLabel, hasNonZeroStat } from "./chat/DiffStatLabel";
 import { Button } from "./ui/button";
+import { Menu, MenuCheckboxItem, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "./ui/menu";
+import { summarizeTurnDiffStats } from "~/lib/turnDiffTree";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -193,7 +202,7 @@ export default function DiffPanel({
     routeThreadRef?.environmentId ?? null,
     routeThreadRef?.threadId ?? null,
   );
-  const [internalDiffRenderMode] = useState<DiffRenderMode>("split");
+  const [internalDiffRenderMode, setInternalDiffRenderMode] = useState<DiffRenderMode>("split");
   const [internalDiffWordWrap, setInternalDiffWordWrap] = useState(settings.diffWordWrap);
   const [savedOverridesByKey, setSavedOverridesByKey] = useState<
     Record<string, PersistedDiffFileEditOverride | undefined>
@@ -351,9 +360,46 @@ export default function DiffPanel({
     () => new Set(selectedTurnFilePaths),
     [selectedTurnFilePaths],
   );
+  const activeThreadRef = useMemo(
+    () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
+    [activeThread],
+  );
+  const headerChangedFiles = useMemo(
+    () =>
+      selectedTurn
+        ? selectedTurn.files
+        : orderedTurnDiffSummaries.flatMap((summary) => summary.files),
+    [orderedTurnDiffSummaries, selectedTurn],
+  );
+  const headerChangedFileCount = useMemo(
+    () => new Set(headerChangedFiles.map((file) => file.path)).size,
+    [headerChangedFiles],
+  );
+  const headerDiffStat = useMemo(
+    () => summarizeTurnDiffStats(headerChangedFiles),
+    [headerChangedFiles],
+  );
   const canEditFiles = Boolean(activeThread && activeCwd);
   const diffRenderMode = controlledDiffRenderMode ?? internalDiffRenderMode;
   const diffWordWrap = controlledDiffWordWrap ?? internalDiffWordWrap;
+  const setDiffRenderMode = useCallback(
+    (mode: DiffRenderMode) => {
+      if (controlledDiffRenderMode === undefined) {
+        setInternalDiffRenderMode(mode);
+      }
+      _onDiffRenderModeChange?.(mode);
+    },
+    [_onDiffRenderModeChange, controlledDiffRenderMode],
+  );
+  const setDiffWordWrap = useCallback(
+    (wordWrap: boolean) => {
+      if (controlledDiffWordWrap === undefined) {
+        setInternalDiffWordWrap(wordWrap);
+      }
+      _onDiffWordWrapChange?.(wordWrap);
+    },
+    [_onDiffWordWrapChange, controlledDiffWordWrap],
+  );
 
   useEffect(() => {
     setSavedOverridesByKey(readPersistedDiffFileEditOverrides(activeThreadStorageKey));
@@ -426,7 +472,6 @@ export default function DiffPanel({
       search: (previous) => buildDiffOpenSearch(previous),
     });
   };
-
   const updateTurnStripScrollState = useCallback(() => {
     const element = turnStripRef.current;
     if (!element) {
@@ -490,7 +535,7 @@ export default function DiffPanel({
   }, [selectedTurn?.turnId, selectedTurnId]);
 
   const diffHeaderRow = (
-    <>
+    <div className="flex items-center justify-between gap-3 h-[22px]">
       <div className="relative min-w-0 flex-1 [-webkit-app-region:no-drag]">
         <button
           type="button"
@@ -582,7 +627,75 @@ export default function DiffPanel({
           ))}
         </div>
       </div>
-    </>
+      <div className="flex shrink-0 items-center gap-2">
+        <div className="hidden items-center gap-1.5 rounded-md border border-border/70 bg-background/70 px-2.5 py-1 text-ui-2xs text-muted-foreground/80 md:flex">
+          <span>
+            {headerChangedFileCount} file{headerChangedFileCount === 1 ? "" : "s"}
+          </span>
+          {hasNonZeroStat(headerDiffStat) ? (
+            <>
+              <span className="text-muted-foreground/50">•</span>
+              <DiffStatLabel
+                additions={headerDiffStat.additions}
+                deletions={headerDiffStat.deletions}
+              />
+            </>
+          ) : null}
+        </div>
+        <GitActionsControl
+          gitCwd={activeCwd ?? null}
+          activeThreadRef={activeThreadRef}
+          compact
+          renderMode="split-button"
+        />
+        <Menu>
+          <MenuTrigger
+            render={
+              <HeaderIconActionButton aria-label="Diff view options" title="Diff view options">
+                <EllipsisIcon className="size-3 fill-current rotate-90" />
+              </HeaderIconActionButton>
+            }
+          />
+          <MenuPopup align="end" className="w-56">
+            <MenuItem
+              onClick={() => {
+                setDiffRenderMode("stacked");
+              }}
+            >
+              <Rows3Icon className="size-3 fill-current" />
+              Unified view
+              {diffRenderMode === "stacked" ? (
+                <span className="ml-auto text-xs">Selected</span>
+              ) : null}
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                setDiffRenderMode("split");
+              }}
+            >
+              <Columns2Icon className="size-3 fill-current" />
+              Split view
+              {diffRenderMode === "split" ? (
+                <span className="ml-auto text-xs">Selected</span>
+              ) : null}
+            </MenuItem>
+            <MenuSeparator />
+            <MenuCheckboxItem
+              checked={diffWordWrap}
+              onCheckedChange={(checked) => {
+                setDiffWordWrap(Boolean(checked));
+              }}
+              variant="switch"
+            >
+              <span className="inline-flex items-center gap-2">
+                <TextWrapIcon className="size-3 fill-current" />
+                Line wrap
+              </span>
+            </MenuCheckboxItem>
+          </MenuPopup>
+        </Menu>
+      </div>
+    </div>
   );
 
   return (
