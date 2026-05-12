@@ -41,6 +41,7 @@ import {
   use,
   useCallback,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -1143,68 +1144,65 @@ function ComposerSurroundSelectionPlugin(props: {
     skillMetadataRef.current = skillMetadataByName(props.skills);
   }, [props.skills]);
 
-  const applySurroundInsertion = useCallback(
-    (inputData: string): boolean => {
-      const surroundCloseSymbol = SURROUND_SYMBOLS_MAP.get(inputData);
-      const pendingSurroundSelection = pendingSurroundSelectionRef.current;
-      if (!surroundCloseSymbol) {
-        pendingSurroundSelectionRef.current = null;
-        return false;
+  const applySurroundInsertion = useEffectEvent((inputData: string): boolean => {
+    const surroundCloseSymbol = SURROUND_SYMBOLS_MAP.get(inputData);
+    const pendingSurroundSelection = pendingSurroundSelectionRef.current;
+    if (!surroundCloseSymbol) {
+      pendingSurroundSelectionRef.current = null;
+      return false;
+    }
+
+    let handled = false;
+    editor.update(() => {
+      const selectionSnapshot =
+        pendingSurroundSelection ??
+        (() => {
+          const selection = $getSelection();
+          if (!$isRangeSelection(selection) || selection.isCollapsed()) {
+            return null;
+          }
+          if ($selectionTouchesInlineToken(selection)) {
+            return null;
+          }
+          const range = getSelectionRangeForExpandedComposerOffsets(selection);
+          if (!range || range.start === range.end) {
+            return null;
+          }
+          const value = $getRoot().getTextContent();
+          if (selectionTouchesMentionBoundary(value, range.start, range.end)) {
+            return null;
+          }
+          return {
+            value,
+            expandedStart: range.start,
+            expandedEnd: range.end,
+          };
+        })();
+
+      if (!selectionSnapshot || !surroundCloseSymbol) {
+        return;
       }
 
-      let handled = false;
-      editor.update(() => {
-        const selectionSnapshot =
-          pendingSurroundSelection ??
-          (() => {
-            const selection = $getSelection();
-            if (!$isRangeSelection(selection) || selection.isCollapsed()) {
-              return null;
-            }
-            if ($selectionTouchesInlineToken(selection)) {
-              return null;
-            }
-            const range = getSelectionRangeForExpandedComposerOffsets(selection);
-            if (!range || range.start === range.end) {
-              return null;
-            }
-            const value = $getRoot().getTextContent();
-            if (selectionTouchesMentionBoundary(value, range.start, range.end)) {
-              return null;
-            }
-            return {
-              value,
-              expandedStart: range.start,
-              expandedEnd: range.end,
-            };
-          })();
+      const selectedText = selectionSnapshot.value.slice(
+        selectionSnapshot.expandedStart,
+        selectionSnapshot.expandedEnd,
+      );
+      const nextValue = `${selectionSnapshot.value.slice(0, selectionSnapshot.expandedStart)}${inputData}${selectedText}${surroundCloseSymbol}${selectionSnapshot.value.slice(selectionSnapshot.expandedEnd)}`;
+      $setComposerEditorPrompt(nextValue, terminalContextsRef.current, skillMetadataRef.current);
+      const selectionStart = collapseExpandedComposerCursor(
+        nextValue,
+        selectionSnapshot.expandedStart,
+      );
+      $setSelectionRangeAtComposerOffsets(
+        selectionStart + inputData.length,
+        selectionStart + inputData.length + selectedText.length,
+      );
+      handled = true;
+      pendingSurroundSelectionRef.current = null;
+    });
 
-        if (!selectionSnapshot || !surroundCloseSymbol) {
-          return;
-        }
-
-        const selectedText = selectionSnapshot.value.slice(
-          selectionSnapshot.expandedStart,
-          selectionSnapshot.expandedEnd,
-        );
-        const nextValue = `${selectionSnapshot.value.slice(0, selectionSnapshot.expandedStart)}${inputData}${selectedText}${surroundCloseSymbol}${selectionSnapshot.value.slice(selectionSnapshot.expandedEnd)}`;
-        $setComposerEditorPrompt(nextValue, terminalContextsRef.current, skillMetadataRef.current);
-        const selectionStart = collapseExpandedComposerCursor(
-          nextValue,
-          selectionSnapshot.expandedStart,
-        );
-        $setSelectionRangeAtComposerOffsets(
-          selectionStart + inputData.length,
-          selectionStart + inputData.length + selectedText.length,
-        );
-        handled = true;
-        pendingSurroundSelectionRef.current = null;
-      });
-
-      return handled;
-    },
-    [editor],
-  );
+    return handled;
+  });
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1381,7 +1379,7 @@ function ComposerSurroundSelectionPlugin(props: {
       }
       unregisterRootListener();
     };
-  }, [applySurroundInsertion, editor]);
+  }, [editor]);
 
   return null;
 }
