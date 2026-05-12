@@ -1,4 +1,4 @@
-import { Chat, type Message, type Thread } from "chat";
+import { Chat, type Attachment, type Message, type Thread } from "chat";
 import type { LinearRawMessage } from "@chat-adapter/linear";
 import type { SlackEvent } from "@chat-adapter/slack";
 import { createMemoryState } from "@chat-adapter/state-memory";
@@ -26,12 +26,29 @@ function messageReceivedAt(message: Message) {
   return message.metadata.dateSent.toISOString();
 }
 
+function taskIntakeAttachments(attachments: readonly Attachment[]) {
+  return attachments
+    .map((attachment) => {
+      const url = attachment.url?.trim();
+      if (!url) return null;
+
+      return {
+        ...(attachment.name?.trim() ? { name: attachment.name.trim() } : {}),
+        url,
+      };
+    })
+    .filter((attachment): attachment is { readonly name?: string; readonly url: string } => {
+      return attachment !== null;
+    });
+}
+
 export function linearChatMessageToTaskIntakeMessage(input: {
   readonly thread: Thread;
   readonly message: Message<LinearRawMessage>;
 }): TaskIntakeMessage {
   const comment = input.message.raw.comment;
   const commentId = comment.parentId ?? comment.id;
+  const attachments = taskIntakeAttachments(input.message.attachments);
 
   return {
     eventId: `linear:${input.message.id}`,
@@ -46,6 +63,7 @@ export function linearChatMessageToTaskIntakeMessage(input: {
     },
     messageId: input.message.id,
     text: input.message.text,
+    ...(attachments.length > 0 ? { attachments } : {}),
     receivedAt: messageReceivedAt(input.message),
     ...(comment.url !== undefined ? { url: comment.url } : {}),
     actor: {
@@ -60,6 +78,7 @@ export function slackChatMessageToTaskIntakeMessage(input: {
   readonly message: Message<SlackEvent>;
 }): TaskIntakeMessage {
   const raw = input.message.raw;
+  const attachments = taskIntakeAttachments(input.message.attachments);
   const [, channelFromThread, tsFromThread] = input.thread.id.split(":");
   const channelId = raw.channel ?? channelFromThread ?? input.thread.channelId;
   const threadTs = raw.thread_ts ?? tsFromThread ?? raw.ts ?? input.message.id;
@@ -79,6 +98,7 @@ export function slackChatMessageToTaskIntakeMessage(input: {
     },
     messageId: input.message.id,
     text: input.message.text,
+    ...(attachments.length > 0 ? { attachments } : {}),
     receivedAt: messageReceivedAt(input.message),
     actor: {
       externalId: input.message.author.userId,

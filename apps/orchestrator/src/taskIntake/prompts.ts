@@ -22,65 +22,27 @@ export function buildTaskIntakeTitle(message: TaskIntakeMessage): string {
   return `${sourceLabel(message.source)} task request`;
 }
 
-export function buildTaskIntakeInitialPrompt(message: TaskIntakeMessage): string {
-  const actorLabel =
-    message.actor?.displayName?.trim() ||
-    message.actor?.email?.trim() ||
-    message.actor?.externalId?.trim() ||
-    "Unknown actor";
-  const conversationUrl = message.url ?? message.conversation.url;
+function buildTaskIntakeRelayPrompt(message: TaskIntakeMessage): string {
   const text = message.text.trim();
+  const attachmentLines =
+    message.attachments
+      ?.map((attachment, index) => {
+        const label = attachment.name?.trim() || `Attachment ${index + 1}`;
+        return `${label}: ${attachment.url}`;
+      })
+      .filter((line) => line.length > 0) ?? [];
 
-  return [
-    `A ${sourceLabel(message.source)} conversation triggered this T3 task.`,
-    "",
-    `Source: ${message.source}`,
-    `Conversation external id: ${message.conversation.externalId}`,
-    `Message id: ${message.messageId}`,
-    `Actor: ${actorLabel}`,
-    ...(conversationUrl !== undefined ? [`Conversation URL: ${conversationUrl}`] : []),
-    ...(message.conversation.teamId !== undefined
-      ? [`Team id: ${message.conversation.teamId}`]
-      : []),
-    ...(message.conversation.channelId !== undefined
-      ? [`Channel id: ${message.conversation.channelId}`]
-      : []),
-    ...(message.conversation.issueId !== undefined
-      ? [`Issue id: ${message.conversation.issueId}`]
-      : []),
-    ...(message.conversation.commentId !== undefined
-      ? [`Thread/comment id: ${message.conversation.commentId}`]
-      : []),
-    "",
-    "User request:",
-    text.length > 0 ? text : "(empty message body)",
-    "",
-    "MVP operating notes:",
-    "- Work only from the normalized message text and URLs above.",
-    "- Do not assume hidden attachments or platform context are available unless linked in the message.",
-    "- Leave a concise final summary in the T3 thread; Slack and Linear will receive that final summary as the completion reply.",
-  ].join("\n");
+  if (attachmentLines.length === 0) {
+    return text.length > 0 ? text : "(empty message body)";
+  }
+
+  return [text.length > 0 ? text : "(empty message body)", "", ...attachmentLines].join("\n");
+}
+
+export function buildTaskIntakeInitialPrompt(message: TaskIntakeMessage): string {
+  return buildTaskIntakeRelayPrompt(message);
 }
 
 export function buildTaskIntakeFollowUpPrompt(message: TaskIntakeMessage): string {
-  const actorLabel =
-    message.actor?.displayName?.trim() ||
-    message.actor?.email?.trim() ||
-    message.actor?.externalId?.trim() ||
-    "Unknown actor";
-  const conversationUrl = message.url ?? message.conversation.url;
-  const text = message.text.trim();
-
-  return [
-    `A ${sourceLabel(message.source)} follow-up was added to this Task's intake conversation.`,
-    "",
-    `Source: ${message.source}`,
-    `Conversation external id: ${message.conversation.externalId}`,
-    `Message id: ${message.messageId}`,
-    `Actor: ${actorLabel}`,
-    ...(conversationUrl !== undefined ? [`Message URL: ${conversationUrl}`] : []),
-    "",
-    "Follow-up message:",
-    text.length > 0 ? text : "(empty message body)",
-  ].join("\n");
+  return buildTaskIntakeRelayPrompt(message);
 }

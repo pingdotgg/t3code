@@ -12,6 +12,7 @@ export const decodeTaskIntakeResolution = Schema.decodeUnknownSync(TaskIntakeRes
 export const decodeTaskIntakeDeliveryResult = Schema.decodeUnknownSync(TaskIntakeDeliveryResult);
 
 export type {
+  TaskIntakeAttachment,
   TaskIntakeConversationRef,
   TaskIntakeDeliveryResult,
   TaskIntakeExternalLinkKind,

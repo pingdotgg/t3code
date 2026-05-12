@@ -20,6 +20,12 @@ export const TaskIntakeActor = Schema.Struct({
 });
 export type TaskIntakeActor = typeof TaskIntakeActor.Type;
 
+export const TaskIntakeAttachment = Schema.Struct({
+  name: Schema.optional(TrimmedNonEmptyString),
+  url: TrimmedNonEmptyString,
+});
+export type TaskIntakeAttachment = typeof TaskIntakeAttachment.Type;
+
 export const TaskIntakeConversationRef = Schema.Struct({
   source: TaskIntakeSource,
   externalLinkKind: TaskIntakeExternalLinkKind,
@@ -40,6 +46,7 @@ export const TaskIntakeMessage = Schema.Struct({
   messageId: TrimmedNonEmptyString,
   actor: Schema.optional(TaskIntakeActor),
   text: Schema.String,
+  attachments: Schema.optional(Schema.Array(TaskIntakeAttachment)),
   receivedAt: IsoDateTime,
   url: Schema.optional(TrimmedNonEmptyString),
 });

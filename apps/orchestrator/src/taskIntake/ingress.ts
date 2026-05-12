@@ -8,7 +8,6 @@ import {
   buildTaskIntakeTitle,
 } from "./prompts.ts";
 import {
-  buildTaskIntakeAcceptedReply,
   buildTaskIntakeFollowUpReply,
   buildTaskIntakeNeedsInputReply,
   buildTaskIntakeStartFailedReply,
@@ -66,6 +65,19 @@ async function postReplyBestEffort(
     await dependencies.replies.postReply(reply);
   } catch {
     // Source replies are useful but should not change Task/runtime state.
+  }
+}
+
+async function acknowledgeAcceptedBestEffort(
+  dependencies: TaskIntakeIngressDependencies,
+  message: TaskIntakeMessage,
+) {
+  if (dependencies.replies.acknowledgeAccepted === undefined) return;
+
+  try {
+    await dependencies.replies.acknowledgeAccepted({ message });
+  } catch {
+    // Source acknowledgement is useful but should not change Task/runtime state.
   }
 }
 
@@ -139,20 +151,13 @@ export async function handleTaskIntakeMessage(
   }
 
   try {
+    const initialPrompt = buildTaskIntakeInitialPrompt(message);
     const materialized = await dependencies.runtime.materializeTaskRuntime({
       taskId: stored.taskId,
-      initialPrompt: buildTaskIntakeInitialPrompt(message),
+      initialPrompt,
       startCodingAgent: true,
     });
-    await postReplyBestEffort(
-      dependencies,
-      buildTaskIntakeAcceptedReply({
-        message,
-        taskId: stored.taskId,
-        t3ThreadId: materialized.t3ThreadId,
-        branch: materialized.branch,
-      }),
-    );
+    await acknowledgeAcceptedBestEffort(dependencies, message);
     return {
       accepted: true,
       ignored: false,
@@ -160,7 +165,7 @@ export async function handleTaskIntakeMessage(
       t3ThreadId: materialized.t3ThreadId,
       resolution: {
         type: "create_task",
-        initialPrompt: buildTaskIntakeInitialPrompt(message),
+        initialPrompt,
         title: buildTaskIntakeTitle(message),
       },
     };

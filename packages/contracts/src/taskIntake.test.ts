@@ -39,6 +39,12 @@ describe("Task Intake contracts", () => {
         displayName: "Vivek",
       },
       text: "@AI Engineer please debug the checkout webhook failure",
+      attachments: [
+        {
+          name: "checkout.log",
+          url: "https://files.slack.com/files-pri/T123-F123/checkout.log",
+        },
+      ],
       receivedAt: "2026-05-02T16:00:00.000Z",
     });
 
@@ -46,6 +52,9 @@ describe("Task Intake contracts", () => {
     expect(message.conversation.externalLinkKind).toBe("slack_thread");
     expect(message.conversation.externalId).toBe("T123:C123:1712345678.000100");
     expect(message.actor?.displayName).toBe("Vivek");
+    expect(message.attachments?.[0]?.url).toBe(
+      "https://files.slack.com/files-pri/T123-F123/checkout.log",
+    );
   });
 
   it("decodes a Linear issue comment into the shared intake shape", () => {

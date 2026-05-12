@@ -79,5 +79,9 @@ export interface TaskIntakeRuntime {
 }
 
 export interface TaskIntakeReplyTransport {
+  readonly acknowledgeAccepted?: (input: {
+    readonly message: TaskIntakeMessage;
+  }) => Promise<TaskIntakeDeliveryResult>;
+
   readonly postReply: (reply: TaskIntakeReply) => Promise<TaskIntakeDeliveryResult>;
 }

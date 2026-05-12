@@ -29,7 +29,7 @@ export const handleChatSdkWebhook = internalAction({
   handler: async (ctx, args) => {
     const bot = createTaskIntakeChatSdkBot({
       sources: new Set([args.source]),
-      async onMessage({ thread, intakeMessage }) {
+      async onMessage({ thread, message, intakeMessage }) {
         await handleTaskIntakeMessage(intakeMessage, {
           store: {
             async resolveMessage(input) {
@@ -88,6 +88,13 @@ export const handleChatSdkWebhook = internalAction({
             },
           },
           replies: {
+            async acknowledgeAccepted() {
+              await thread.createSentMessageFromMessage(message).addReaction("eyes");
+              return {
+                status: "posted",
+                externalMessageId: `${message.id}:reaction:eyes`,
+              };
+            },
             async postReply(reply) {
               const posted = await thread.post(reply.body);
               return {

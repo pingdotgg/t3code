@@ -31,8 +31,10 @@ function dependencies(options?: {
   readonly store?: Partial<TaskIntakeStore>;
   readonly runtime?: Partial<TaskIntakeRuntime>;
   readonly replies?: TaskIntakeReply[];
+  readonly acknowledgements?: TaskIntakeMessage[];
 }) {
   const replies = options?.replies ?? [];
+  const acknowledgements = options?.acknowledgements ?? [];
 
   return {
     store: {
@@ -75,6 +77,13 @@ function dependencies(options?: {
       ...options?.runtime,
     },
     replies: {
+      async acknowledgeAccepted({ message }: { readonly message: TaskIntakeMessage }) {
+        acknowledgements.push(message);
+        return {
+          status: "posted" as const,
+          externalMessageId: `${message.messageId}:reaction:eyes`,
+        };
+      },
       async postReply(reply: TaskIntakeReply) {
         replies.push(reply);
         return {
@@ -87,9 +96,10 @@ function dependencies(options?: {
 }
 
 describe("handleTaskIntakeMessage", () => {
-  it("creates a task, materializes T3 runtime, and posts an acknowledgement", async () => {
+  it("creates a task, materializes T3 runtime, and reacts with eyes", async () => {
     const postedReplies: TaskIntakeReply[] = [];
-    const deps = dependencies({ replies: postedReplies });
+    const acknowledgements: TaskIntakeMessage[] = [];
+    const deps = dependencies({ replies: postedReplies, acknowledgements });
 
     const result = await handleTaskIntakeMessage(baseMessage(), deps);
 
@@ -97,9 +107,9 @@ describe("handleTaskIntakeMessage", () => {
     expect(result.taskId).toBe("task-123");
     expect(result.t3ThreadId).toBe("thread-456");
     expect(result.resolution.type).toBe("create_task");
-    expect(postedReplies).toHaveLength(1);
-    expect(postedReplies[0]?.body).toContain("Task task-123 is underway.");
-    expect(postedReplies[0]?.body).toContain("`thread-456`");
+    expect(postedReplies).toHaveLength(0);
+    expect(acknowledgements).toHaveLength(1);
+    expect(acknowledgements[0]?.messageId).toBe("comment-1");
   });
 
   it("continues the existing T3 thread for materialized follow-up messages", async () => {
@@ -160,8 +170,7 @@ describe("handleTaskIntakeMessage", () => {
       workSessionId: "work-session-existing",
       t3ThreadId: "thread-existing",
     });
-    expect(continued?.prompt).toContain("Follow-up message:");
-    expect(continued?.prompt).toContain("Actually also update the failing cart test.");
+    expect(continued?.prompt).toBe("Actually also update the failing cart test.");
     expect(result.resolution.type).toBe("route_existing_task");
     expect(result.taskId).toBe("task-existing");
     expect(postedReplies[0]?.body).toContain("queued this follow-up");
