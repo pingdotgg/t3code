@@ -4,6 +4,7 @@ import { Cause, Effect, Layer, Stream } from "effect";
 
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { TerminalManager } from "../../terminal/Services/Manager.ts";
+import { CheckpointDiffBlobRepository } from "../../persistence/Services/CheckpointDiffBlobs.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   ThreadDeletionReactor,
@@ -37,6 +38,7 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const terminalManager = yield* TerminalManager;
+  const checkpointDiffBlobRepository = yield* CheckpointDiffBlobRepository;
 
   const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
     logCleanupCauseUnlessInterrupted({
@@ -52,12 +54,20 @@ const make = Effect.gen(function* () {
       threadId,
     });
 
+  const deleteCheckpointDiffBlobs = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
+    logCleanupCauseUnlessInterrupted({
+      effect: checkpointDiffBlobRepository.deleteByThreadId({ threadId }),
+      message: "thread deletion cleanup skipped checkpoint diff blob delete",
+      threadId,
+    });
+
   const processThreadDeleted = Effect.fn("processThreadDeleted")(function* (
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
     yield* stopProviderSession(threadId);
     yield* closeThreadTerminals(threadId);
+    yield* deleteCheckpointDiffBlobs(threadId);
   });
 
   const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>

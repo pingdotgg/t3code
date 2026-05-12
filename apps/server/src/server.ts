@@ -21,6 +21,7 @@ import { AnalyticsServiceLayerLive } from "./telemetry/Layers/AnalyticsService.t
 import { makeEventNdjsonLogger } from "./provider/Layers/EventNdjsonLogger.ts";
 import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime.ts";
+import { CheckpointDiffBlobRepositoryLive } from "./persistence/Layers/CheckpointDiffBlobs.ts";
 import { makeCodexAdapterLive } from "./provider/Layers/CodexAdapter.ts";
 import { makeClaudeAdapterLive } from "./provider/Layers/ClaudeAdapter.ts";
 import { makeCursorAdapterLive } from "./provider/Layers/CursorAdapter.ts";
@@ -149,6 +150,7 @@ const ReactorLayerLive = Layer.empty.pipe(
 const CheckpointingLayerLive = Layer.empty.pipe(
   Layer.provideMerge(CheckpointDiffQueryLive),
   Layer.provideMerge(CheckpointStoreLive),
+  Layer.provideMerge(CheckpointDiffBlobRepositoryLive),
 );
 
 const ProviderSessionDirectoryLayerLive = ProviderSessionDirectoryLive.pipe(

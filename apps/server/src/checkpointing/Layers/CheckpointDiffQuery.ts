@@ -14,12 +14,14 @@ import {
   CheckpointDiffQuery,
   type CheckpointDiffQueryShape,
 } from "../Services/CheckpointDiffQuery.ts";
+import { CheckpointDiffBlobRepository } from "../../persistence/Services/CheckpointDiffBlobs.ts";
 
 const isTurnDiffResult = Schema.is(OrchestrationGetTurnDiffResult);
 
 const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const checkpointStore = yield* CheckpointStore;
+  const checkpointDiffBlobRepository = yield* CheckpointDiffBlobRepository;
 
   const getTurnDiff: CheckpointDiffQueryShape["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -126,12 +128,20 @@ const make = Effect.gen(function* () {
         });
       }
 
-      const diff = yield* checkpointStore.diffCheckpoints({
-        cwd: workspaceCwd,
-        fromCheckpointRef,
-        toCheckpointRef,
-        fallbackFromToHead: false,
+      const persistedDiff = yield* checkpointDiffBlobRepository.get({
+        threadId: input.threadId,
+        fromTurnCount: input.fromTurnCount,
+        toTurnCount: input.toTurnCount,
       });
+
+      const diff =
+        Option.getOrUndefined(persistedDiff)?.diff ??
+        (yield* checkpointStore.diffCheckpoints({
+          cwd: workspaceCwd,
+          fromCheckpointRef,
+          toCheckpointRef,
+          fallbackFromToHead: false,
+        }));
 
       const turnDiff: OrchestrationGetTurnDiffResultType = {
         threadId: input.threadId,

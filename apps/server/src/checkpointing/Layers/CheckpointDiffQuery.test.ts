@@ -10,6 +10,10 @@ import { checkpointRefForThreadTurn } from "../Utils.ts";
 import { CheckpointDiffQueryLive } from "./CheckpointDiffQuery.ts";
 import { CheckpointStore, type CheckpointStoreShape } from "../Services/CheckpointStore.ts";
 import { CheckpointDiffQuery } from "../Services/CheckpointDiffQuery.ts";
+import {
+  CheckpointDiffBlobRepository,
+  type CheckpointDiffBlobRepositoryShape,
+} from "../../persistence/Services/CheckpointDiffBlobs.ts";
 
 function makeThreadCheckpointContext(input: {
   readonly projectId: ProjectId;
@@ -75,8 +79,14 @@ describe("CheckpointDiffQueryLive", () => {
         }),
       deleteCheckpointRefs: () => Effect.void,
     };
+    const checkpointDiffBlobRepository: CheckpointDiffBlobRepositoryShape = {
+      upsert: () => Effect.void,
+      get: () => Effect.succeed(Option.none()),
+      deleteByThreadId: () => Effect.void,
+    };
 
     const layer = CheckpointDiffQueryLive.pipe(
+      Layer.provideMerge(Layer.succeed(CheckpointDiffBlobRepository, checkpointDiffBlobRepository)),
       Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
       Layer.provideMerge(
         Layer.succeed(ProjectionSnapshotQuery, {
@@ -134,8 +144,14 @@ describe("CheckpointDiffQueryLive", () => {
       diffCheckpoints: () => Effect.succeed(""),
       deleteCheckpointRefs: () => Effect.void,
     };
+    const checkpointDiffBlobRepository: CheckpointDiffBlobRepositoryShape = {
+      upsert: () => Effect.void,
+      get: () => Effect.succeed(Option.none()),
+      deleteByThreadId: () => Effect.void,
+    };
 
     const layer = CheckpointDiffQueryLive.pipe(
+      Layer.provideMerge(Layer.succeed(CheckpointDiffBlobRepository, checkpointDiffBlobRepository)),
       Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
       Layer.provideMerge(
         Layer.succeed(ProjectionSnapshotQuery, {
@@ -166,5 +182,82 @@ describe("CheckpointDiffQueryLive", () => {
         }).pipe(Effect.provide(layer)),
       ),
     ).rejects.toThrow("Thread 'thread-missing' not found.");
+  });
+
+  it("returns a persisted diff blob without recomputing git diff", async () => {
+    const projectId = ProjectId.make("project-2");
+    const threadId = ThreadId.make("thread-2");
+    const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+    const diffCheckpointsCalls: Array<unknown> = [];
+
+    const threadCheckpointContext = makeThreadCheckpointContext({
+      projectId,
+      threadId,
+      workspaceRoot: "/tmp/workspace",
+      worktreePath: null,
+      checkpointTurnCount: 1,
+      checkpointRef: toCheckpointRef,
+    });
+
+    const checkpointStore: CheckpointStoreShape = {
+      isGitRepository: () => Effect.succeed(true),
+      captureCheckpoint: () => Effect.void,
+      hasCheckpointRef: () => Effect.succeed(true),
+      restoreCheckpoint: () => Effect.succeed(true),
+      diffCheckpoints: (input) =>
+        Effect.sync(() => {
+          diffCheckpointsCalls.push(input);
+          return "live diff";
+        }),
+      deleteCheckpointRefs: () => Effect.void,
+    };
+    const checkpointDiffBlobRepository: CheckpointDiffBlobRepositoryShape = {
+      upsert: () => Effect.void,
+      get: () =>
+        Effect.succeed(
+          Option.some({
+            threadId,
+            fromTurnCount: 0,
+            toTurnCount: 1,
+            diff: "persisted diff",
+            createdAt: "2026-01-01T00:00:00.000Z",
+          }),
+        ),
+      deleteByThreadId: () => Effect.void,
+    };
+
+    const layer = CheckpointDiffQueryLive.pipe(
+      Layer.provideMerge(Layer.succeed(CheckpointDiffBlobRepository, checkpointDiffBlobRepository)),
+      Layer.provideMerge(Layer.succeed(CheckpointStore, checkpointStore)),
+      Layer.provideMerge(
+        Layer.succeed(ProjectionSnapshotQuery, {
+          getSnapshot: () =>
+            Effect.die("CheckpointDiffQuery should not request the full orchestration snapshot"),
+          getShellSnapshot: () =>
+            Effect.die("CheckpointDiffQuery should not request the orchestration shell snapshot"),
+          getCounts: () => Effect.succeed({ projectCount: 0, threadCount: 0 }),
+          getActiveProjectByWorkspaceRoot: () => Effect.succeed(Option.none()),
+          getProjectShellById: () => Effect.succeed(Option.none()),
+          getFirstActiveThreadIdByProjectId: () => Effect.succeed(Option.none()),
+          getThreadCheckpointContext: () => Effect.succeed(Option.some(threadCheckpointContext)),
+          getThreadShellById: () => Effect.succeed(Option.none()),
+          getThreadDetailById: () => Effect.succeed(Option.none()),
+        }),
+      ),
+    );
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const query = yield* CheckpointDiffQuery;
+        return yield* query.getTurnDiff({
+          threadId,
+          fromTurnCount: 0,
+          toTurnCount: 1,
+        });
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(diffCheckpointsCalls).toEqual([]);
+    expect(result.diff).toBe("persisted diff");
   });
 });

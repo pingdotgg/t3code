@@ -29,6 +29,7 @@ import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQu
 import { RuntimeReceiptBusLive } from "./RuntimeReceiptBus.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
+import { CheckpointDiffBlobRepositoryLive } from "../../persistence/Layers/CheckpointDiffBlobs.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
   OrchestrationEngineService,
@@ -292,6 +293,9 @@ describe("CheckpointReactor", () => {
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(gitStatusBroadcasterLayer),
       Layer.provideMerge(CheckpointStoreLive),
+      Layer.provideMerge(
+        CheckpointDiffBlobRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
+      ),
       Layer.provideMerge(
         WorkspaceEntriesLive.pipe(
           Layer.provide(WorkspacePathsLive),

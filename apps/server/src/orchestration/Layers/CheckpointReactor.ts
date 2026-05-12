@@ -26,6 +26,7 @@ import type { OrchestrationDispatchError } from "../Errors.ts";
 import { isGitRepository } from "../../git/Utils.ts";
 import { GitStatusBroadcaster } from "../../git/Services/GitStatusBroadcaster.ts";
 import { WorkspaceEntries } from "../../workspace/Services/WorkspaceEntries.ts";
+import { CheckpointDiffBlobRepository } from "../../persistence/Services/CheckpointDiffBlobs.ts";
 
 type ReactorInput =
   | {
@@ -83,17 +84,17 @@ function settledOutcomeFromRuntime(status: string | undefined): PendingTurnSettl
 
 const serverCommandId = (tag: string): CommandId =>
   CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
+const turnSettlementKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
   const checkpointStore = yield* CheckpointStore;
+  const checkpointDiffBlobRepository = yield* CheckpointDiffBlobRepository;
   const receiptBus = yield* RuntimeReceiptBus;
   const workspaceEntries = yield* WorkspaceEntries;
   const gitStatusBroadcaster = yield* GitStatusBroadcaster;
   const pendingTurnSettlements = new Map<string, PendingTurnSettlement>();
-
-  const turnSettlementKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 
   const appendRevertFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -315,39 +316,27 @@ const make = Effect.gen(function* () {
     // reflects files created or deleted during this turn.
     yield* workspaceEntries.invalidate(input.cwd);
 
-    const files = yield* checkpointStore
-      .diffCheckpoints({
-        cwd: input.cwd,
-        fromCheckpointRef,
-        toCheckpointRef: targetCheckpointRef,
-        fallbackFromToHead: false,
-      })
-      .pipe(
-        Effect.map((diff) =>
-          parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
-            path: file.path,
-            kind: "modified" as const,
-            additions: file.additions,
-            deletions: file.deletions,
-          })),
-        ),
-        Effect.tapError((error) =>
-          appendCaptureFailureActivity({
-            threadId: input.threadId,
-            turnId: input.turnId,
-            detail: `Checkpoint captured, but turn diff summary is unavailable: ${error.message}`,
-            createdAt: input.createdAt,
-          }),
-        ),
-        Effect.catch((error) =>
-          Effect.logWarning("failed to derive checkpoint file summary", {
-            threadId: input.threadId,
-            turnId: input.turnId,
-            turnCount: input.turnCount,
-            detail: error.message,
-          }).pipe(Effect.as([])),
-        ),
-      );
+    const diff = yield* checkpointStore.diffCheckpoints({
+      cwd: input.cwd,
+      fromCheckpointRef,
+      toCheckpointRef: targetCheckpointRef,
+      fallbackFromToHead: false,
+    });
+
+    yield* checkpointDiffBlobRepository.upsert({
+      threadId: input.threadId,
+      fromTurnCount,
+      toTurnCount: input.turnCount,
+      diff,
+      createdAt: input.createdAt,
+    });
+
+    const files = parseTurnDiffFilesFromUnifiedDiff(diff).map((file) => ({
+      path: file.path,
+      kind: "modified" as const,
+      additions: file.additions,
+      deletions: file.deletions,
+    }));
 
     const assistantMessageId =
       input.assistantMessageId ??
