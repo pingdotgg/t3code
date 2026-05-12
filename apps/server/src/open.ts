@@ -10,6 +10,7 @@ import { EDITORS, OpenError, type EditorId } from "@t3tools/contracts";
 import { isCommandAvailable, type CommandAvailabilityOptions } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -31,6 +32,12 @@ interface EditorLaunch {
   readonly args: ReadonlyArray<string>;
 }
 
+interface ProcessLaunch {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+  readonly options: ChildProcess.CommandOptions;
+}
+
 interface TargetPathAndPosition {
   readonly path: string;
   readonly line: string;
@@ -38,6 +45,20 @@ interface TargetPathAndPosition {
 }
 
 const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
+const POWERSHELL_ARGUMENTS_PREFIX = [
+  "-NoProfile",
+  "-NonInteractive",
+  "-ExecutionPolicy",
+  "Bypass",
+  "-EncodedCommand",
+] as const;
+
+const DETACHED_IGNORE_STDIO_OPTIONS = {
+  detached: true,
+  stdin: "ignore",
+  stdout: "ignore",
+  stderr: "ignore",
+} as const satisfies ChildProcess.CommandOptions;
 
 function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAndPosition> {
   const match = TARGET_WITH_POSITION_PATTERN.exec(target);
@@ -99,6 +120,57 @@ function resolveAvailableCommand(
   return Option.none();
 }
 
+function encodeUtf16LeBase64(input: string): string {
+  const bytes = new Uint8Array(input.length * 2);
+  for (let index = 0; index < input.length; index += 1) {
+    const code = input.charCodeAt(index);
+    bytes[index * 2] = code & 0xff;
+    bytes[index * 2 + 1] = code >>> 8;
+  }
+  return Encoding.encodeBase64(bytes);
+}
+
+function escapePowerShellStringLiteral(input: string): string {
+  return `'${input.replaceAll("'", "''")}'`;
+}
+
+function resolvePowerShellPath(env: NodeJS.ProcessEnv = process.env): string {
+  return `${env.SYSTEMROOT || env.windir || String.raw`C:\Windows`}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
+}
+
+function resolveWslPowerShellPath(): string {
+  return "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe";
+}
+
+function shouldUseWindowsBrowserFromWsl(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    platform === "linux" &&
+    (env.WSL_DISTRO_NAME !== undefined || env.WSL_INTEROP !== undefined) &&
+    env.SSH_CONNECTION === undefined &&
+    env.SSH_TTY === undefined &&
+    env.container === undefined
+  );
+}
+
+function resolveWindowsBrowserLaunch(target: string, command: string): ProcessLaunch {
+  const encodedCommand = encodeUtf16LeBase64(
+    `$ProgressPreference = 'SilentlyContinue'; Start ${escapePowerShellStringLiteral(target)}`,
+  );
+  return {
+    command,
+    args: [...POWERSHELL_ARGUMENTS_PREFIX, encodedCommand],
+    options: {
+      shell: false,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    },
+  };
+}
+
 function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
   switch (platform) {
     case "darwin":
@@ -108,6 +180,34 @@ function fileManagerCommandForPlatform(platform: NodeJS.Platform): string {
     default:
       return "xdg-open";
   }
+}
+
+export function resolveBrowserLaunch(
+  target: string,
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): ProcessLaunch {
+  if (platform === "darwin") {
+    return {
+      command: "open",
+      args: [target],
+      options: DETACHED_IGNORE_STDIO_OPTIONS,
+    };
+  }
+
+  if (platform === "win32") {
+    return resolveWindowsBrowserLaunch(target, resolvePowerShellPath(env));
+  }
+
+  if (shouldUseWindowsBrowserFromWsl(platform, env)) {
+    return resolveWindowsBrowserLaunch(target, resolveWslPowerShellPath());
+  }
+
+  return {
+    command: "xdg-open",
+    args: [target],
+    options: DETACHED_IGNORE_STDIO_OPTIONS,
+  };
 }
 
 export function resolveAvailableEditors(
@@ -193,6 +293,27 @@ export const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   return { command: fileManagerCommandForPlatform(platform), args: [input.cwd] };
 });
 
+const launchAndUnref = Effect.fn("open.launchAndUnref")(function* (
+  launch: ProcessLaunch,
+  errorMessage: string,
+): Effect.fn.Return<void, OpenError, ChildProcessSpawner.ChildProcessSpawner> {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const command = ChildProcess.make(launch.command, launch.args, launch.options);
+
+  yield* spawner.spawn(command).pipe(
+    Effect.flatMap((handle) => handle.unref),
+    Effect.asVoid,
+    Effect.scoped,
+    Effect.mapError((cause) => new OpenError({ message: errorMessage, cause })),
+  );
+});
+
+export const launchBrowser = Effect.fn("open.launchBrowser")(function* (
+  target: string,
+): Effect.fn.Return<void, OpenError, ChildProcessSpawner.ChildProcessSpawner> {
+  return yield* launchAndUnref(resolveBrowserLaunch(target), "Browser auto-open failed");
+});
+
 export const launchDetached = Effect.fn("open.launchDetached")(function* (
   launch: EditorLaunch,
 ): Effect.fn.Return<void, OpenError, ChildProcessSpawner.ChildProcessSpawner> {
@@ -200,43 +321,31 @@ export const launchDetached = Effect.fn("open.launchDetached")(function* (
     return yield* new OpenError({ message: `Editor command not found: ${launch.command}` });
   }
 
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const isWin32 = process.platform === "win32";
-  const command = ChildProcess.make(
-    launch.command,
-    isWin32 ? launch.args.map((arg) => `"${arg}"`) : [...launch.args],
+  yield* launchAndUnref(
     {
-      detached: true,
-      shell: isWin32,
-      stdin: "ignore",
-      stdout: "ignore",
-      stderr: "ignore",
+      command: launch.command,
+      args: isWin32 ? launch.args.map((arg) => `"${arg}"`) : [...launch.args],
+      options: {
+        detached: true,
+        shell: isWin32,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+      },
     },
-  );
-
-  yield* spawner.spawn(command).pipe(
-    Effect.flatMap((handle) => handle.unref),
-    Effect.asVoid,
-    Effect.scoped,
-    Effect.mapError(
-      (cause) => new OpenError({ message: "failed to spawn detached process", cause }),
-    ),
+    "failed to spawn detached process",
   );
 });
 
 const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const open = yield* Effect.tryPromise({
-    try: () => import("open"),
-    catch: (cause) => new OpenError({ message: "failed to load browser opener", cause }),
-  });
 
   return {
     openBrowser: (target) =>
-      Effect.tryPromise({
-        try: () => open.default(target),
-        catch: (cause) => new OpenError({ message: "Browser auto-open failed", cause }),
-      }),
+      launchBrowser(target).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      ),
     openInEditor: (input) =>
       Effect.flatMap(resolveEditorLaunch(input), (launch) =>
         launchDetached(launch).pipe(

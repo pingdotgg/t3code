@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { assertSuccess } from "@effect/vitest/utils";
 import * as Effect from "effect/Effect";
+import * as Encoding from "effect/Encoding";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -11,11 +12,23 @@ import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  launchBrowser,
   isCommandAvailable,
   launchDetached,
   resolveAvailableEditors,
+  resolveBrowserLaunch,
   resolveEditorLaunch,
 } from "./open.ts";
+
+function encodeUtf16LeBase64(input: string): string {
+  const bytes = new Uint8Array(input.length * 2);
+  for (let index = 0; index < input.length; index += 1) {
+    const code = input.charCodeAt(index);
+    bytes[index * 2] = code & 0xff;
+    bytes[index * 2 + 1] = code >>> 8;
+  }
+  return Encoding.encodeBase64(bytes);
+}
 
 function makeMockDetachedHandle(onUnref: () => void = () => undefined) {
   return ChildProcessSpawner.makeHandle({
@@ -496,6 +509,94 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
         command: "xdg-open",
         args: ["/tmp/workspace"],
       });
+    }),
+  );
+});
+
+it("resolveBrowserLaunch maps default browser launchers by platform", () => {
+  const target = "https://example.com/some path?name=o'hara";
+
+  assert.deepEqual(resolveBrowserLaunch(target, "darwin").command, "open");
+  assert.deepEqual(resolveBrowserLaunch(target, "darwin").args, [target]);
+  assert.deepEqual(resolveBrowserLaunch(target, "darwin").options, {
+    detached: true,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+
+  assert.deepEqual(resolveBrowserLaunch(target, "linux", {}).command, "xdg-open");
+  assert.deepEqual(resolveBrowserLaunch(target, "linux", {}).args, [target]);
+
+  const windows = resolveBrowserLaunch(target, "win32", {
+    SYSTEMROOT: "C:\\Windows",
+  });
+  assert.equal(windows.command, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  assert.deepEqual(windows.args, [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-EncodedCommand",
+    encodeUtf16LeBase64(
+      "$ProgressPreference = 'SilentlyContinue'; Start 'https://example.com/some path?name=o''hara'",
+    ),
+  ]);
+  assert.deepEqual(windows.options, {
+    shell: false,
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+});
+
+it("resolveBrowserLaunch opens through Windows from WSL when not remote", () => {
+  const launch = resolveBrowserLaunch("https://example.com", "linux", {
+    WSL_DISTRO_NAME: "Ubuntu",
+  });
+  assert.equal(launch.command, "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe");
+});
+
+it("resolveBrowserLaunch keeps xdg-open for WSL over SSH", () => {
+  const launch = resolveBrowserLaunch("https://example.com", "linux", {
+    WSL_DISTRO_NAME: "Ubuntu",
+    SSH_CONNECTION: "client server",
+  });
+  assert.equal(launch.command, "xdg-open");
+});
+
+it.layer(NodeServices.layer)("launchBrowser", (it) => {
+  it.effect("spawns through the ChildProcessSpawner service and unrefs the handle", () =>
+    Effect.gen(function* () {
+      let spawnedCommand: ChildProcess.StandardCommand | undefined;
+      let didUnref = false;
+
+      const spawnerLayer = Layer.mock(ChildProcessSpawner.ChildProcessSpawner, {
+        spawn: (command) =>
+          Effect.sync(() => {
+            assert.equal(ChildProcess.isStandardCommand(command), true);
+            if (!ChildProcess.isStandardCommand(command)) {
+              throw new Error("Expected a standard command");
+            }
+            spawnedCommand = command;
+            return makeMockDetachedHandle(() => {
+              didUnref = true;
+            });
+          }),
+      });
+
+      const result = yield* launchBrowser("https://example.com").pipe(
+        Effect.provide(spawnerLayer),
+        Effect.result,
+      );
+
+      assertSuccess(result, undefined);
+      assert.ok(spawnedCommand);
+      const expectedLaunch = resolveBrowserLaunch("https://example.com");
+      assert.equal(spawnedCommand.command, expectedLaunch.command);
+      assert.deepEqual(spawnedCommand.args, expectedLaunch.args);
+      assert.deepEqual(spawnedCommand.options, expectedLaunch.options);
+      assert.equal(didUnref, true);
     }),
   );
 });
