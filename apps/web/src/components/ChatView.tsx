@@ -194,6 +194,7 @@ import {
   isVersionMismatchDismissed,
   resolveServerConfigVersionMismatch,
 } from "../versionSkew";
+import { equals } from "effect/Equal";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
@@ -438,8 +439,8 @@ function terminalIdListsEqual(left: readonly string[], right: readonly string[])
   if (left.length === 0) {
     return true;
   }
-  const sortedLeft = [...left].sort((a, b) => a.localeCompare(b));
-  const sortedRight = [...right].sort((a, b) => a.localeCompare(b));
+  const sortedLeft = left.toSorted((a, b) => a.localeCompare(b));
+  const sortedRight = right.toSorted((a, b) => a.localeCompare(b));
   for (let index = 0; index < sortedLeft.length; index += 1) {
     if (sortedLeft[index] !== sortedRight[index]) {
       return false;

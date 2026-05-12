@@ -1,5 +1,7 @@
 import { resolveDefaultBranchActionDialogCopy } from "@t3tools/client-runtime";
 import { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
+import * as Arr from "effect/Array";
+import * as Result from "effect/Result";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useMemo } from "react";
 import { View } from "react-native";
@@ -74,7 +76,9 @@ export function GitConfirmSheet() {
         ? gitState.selectedThreadBranches
         : await gitActions.refreshSelectedThreadBranches();
     const newBranchName = resolveAutoFeatureBranchName(
-      branches.filter((branch) => !branch.isRemote).map((branch) => branch.name),
+      Arr.filterMap(branches, (branch) =>
+        branch.isRemote ? Result.failVoid : Result.succeed(branch.name),
+      ),
     );
     await gitActions.onCreateSelectedThreadBranch(newBranchName);
     await gitActions.onRunSelectedThreadGitAction({ action: confirmAction });

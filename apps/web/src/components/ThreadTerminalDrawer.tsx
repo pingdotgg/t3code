@@ -870,7 +870,15 @@ export default function ThreadTerminalDrawer({
   const didResizeDuringDragRef = useRef(false);
 
   const normalizedTerminalIds = useMemo(() => {
-    return [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
+    const normalizedIds: string[] = [];
+    const seen = new Set<string>();
+    for (const id of terminalIds) {
+      const trimmedId = id.trim();
+      if (trimmedId.length === 0 || seen.has(trimmedId)) continue;
+      seen.add(trimmedId);
+      normalizedIds.push(trimmedId);
+    }
+    return normalizedIds;
   }, [terminalIds]);
 
   const resolvedActiveTerminalId =
@@ -904,13 +912,17 @@ export default function ThreadTerminalDrawer({
     };
 
     for (const terminalGroup of terminalGroups) {
-      const nextTerminalIds = [
-        ...new Set(terminalGroup.terminalIds.map((id) => id.trim()).filter((id) => id.length > 0)),
-      ].filter((terminalId) => {
-        if (!validTerminalIdSet.has(terminalId)) return false;
-        if (assignedTerminalIds.has(terminalId)) return false;
-        return true;
-      });
+      const nextTerminalIds: string[] = [];
+      const seenGroupTerminalIds = new Set<string>();
+      for (const id of terminalGroup.terminalIds) {
+        const terminalId = id.trim();
+        if (terminalId.length === 0) continue;
+        if (seenGroupTerminalIds.has(terminalId)) continue;
+        seenGroupTerminalIds.add(terminalId);
+        if (!validTerminalIdSet.has(terminalId)) continue;
+        if (assignedTerminalIds.has(terminalId)) continue;
+        nextTerminalIds.push(terminalId);
+      }
       if (nextTerminalIds.length === 0) continue;
 
       for (const terminalId of nextTerminalIds) {

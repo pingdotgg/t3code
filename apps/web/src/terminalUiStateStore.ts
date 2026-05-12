@@ -58,7 +58,15 @@ function createTerminalUiStateStorage() {
 }
 
 function normalizeTerminalIds(terminalIds: string[]): string[] {
-  return [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
+  const normalizedIds: string[] = [];
+  const seen = new Set<string>();
+  for (const id of terminalIds) {
+    const trimmedId = id.trim();
+    if (trimmedId.length === 0 || seen.has(trimmedId)) continue;
+    seen.add(trimmedId);
+    normalizedIds.push(trimmedId);
+  }
+  return normalizedIds;
 }
 
 function fallbackGroupId(terminalId: string): string {
@@ -84,7 +92,7 @@ function findGroupIndexByTerminalId(
 }
 
 function normalizeTerminalGroupIds(terminalIds: string[]): string[] {
-  return [...new Set(terminalIds.map((id) => id.trim()).filter((id) => id.length > 0))];
+  return normalizeTerminalIds(terminalIds);
 }
 
 function normalizeTerminalGroups(

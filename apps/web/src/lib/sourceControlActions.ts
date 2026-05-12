@@ -204,7 +204,7 @@ export function useSourceControlActionRunning(
   scope: SourceControlActionScope,
   kinds: ReadonlyArray<SourceControlActionKind>,
 ): boolean {
-  const stableKinds = useMemo(() => [...kinds].sort(), [kinds]);
+  const stableKinds = useMemo(() => kinds.toSorted(), [kinds]);
   const appActionRunning = useSyncExternalStore(
     subscribeActionState,
     () => isAnyActionRunning(stableKinds, scope),
