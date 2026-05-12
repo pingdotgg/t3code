@@ -8,12 +8,12 @@ import type {
 } from "@forma/contracts";
 import { scopeThreadRef } from "@forma/client-runtime";
 import * as Schema from "effect/Schema";
+import { Diff as DiffIcon } from "lucide-react";
 import {
   IconArrowClockwise as RefreshIcon,
   IconEllipsis as EllipsisIcon,
   IconListBulletIndent as SidebarToggleIcon,
   IconMagnifyingglass as SearchIcon,
-  IconPlusminus as DiffIcon,
   IconProgressIndicator as LoaderIcon,
   IconXmarkCircleFill as XIconCircle,
 } from "symbols-react";
@@ -88,8 +88,9 @@ import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import {
   AddDocumentIcon,
   AddProjectFolderIcon,
+  EditorSurfaceIcon,
   SidebarPanelIcon,
-  TerminalToggleIcon,
+  TerminalSurfaceIcon,
 } from "./icons/custom";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -1324,7 +1325,7 @@ export function WorkspaceFilesPanel({
                     aria-label="Show editor panel"
                     title="Show editor panel"
                   >
-                    <SidebarPanelIcon className="size-4" />
+                    <EditorSurfaceIcon className="size-3.5 fill-current" />
                   </HeaderIconActionButton>
                 }
               />
@@ -1340,7 +1341,7 @@ export function WorkspaceFilesPanel({
                     title="Toggle terminal panel"
                     disabled={!terminalAvailable}
                   >
-                    <TerminalToggleIcon className="size-3" />
+                    <TerminalSurfaceIcon className="size-3.5 fill-current" />
                   </HeaderIconActionButton>
                 }
               />
@@ -1363,7 +1364,7 @@ export function WorkspaceFilesPanel({
                 aria-label="Toggle diff view"
                 title="Toggle diff view"
               >
-                <DiffIcon className="size-3 fill-current" />
+                <DiffIcon className="size-3.5" />
               </HeaderIconActionButton>
             ) : null}
             <div className="min-w-0 flex-1" />

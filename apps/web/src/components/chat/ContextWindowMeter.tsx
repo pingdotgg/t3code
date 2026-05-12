@@ -28,9 +28,11 @@ export function ContextWindowMeter(props: {
   const isLabeledVariant = variant === "labeled";
   const meterSizeClassName = isLabeledVariant ? "h-5 w-5" : "h-6 w-6";
   const trackStroke = isLabeledVariant
-    ? "color-mix(in oklab, var(--color-accent) 24%, transparent)"
+    ? "color-mix(in oklab, var(--color-primary) 24%, transparent)"
     : "color-mix(in oklab, var(--color-muted) 70%, transparent)";
-  const progressStroke = isLabeledVariant ? "var(--color-accent)" : "var(--color-muted-foreground)";
+  const progressStroke = isLabeledVariant
+    ? "var(--color-primary)"
+    : "var(--color-muted-foreground)";
 
   return (
     <Popover>
