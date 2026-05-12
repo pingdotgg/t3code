@@ -175,7 +175,7 @@ export default function DiffPanel({
   const [canScrollTurnStripLeft, setCanScrollTurnStripLeft] = useState(false);
   const [canScrollTurnStripRight, setCanScrollTurnStripRight] = useState(false);
   const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
-  const diffOpen = diffSearch.diff === "1";
+  const diffOpen = diffSearch.panel === "1";
   const activeThreadId = routeThreadRef?.threadId ?? null;
   const activeThread = useStore(
     useMemo(() => createThreadSelectorByRef(routeThreadRef), [routeThreadRef]),

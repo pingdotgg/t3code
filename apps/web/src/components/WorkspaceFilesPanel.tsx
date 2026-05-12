@@ -31,15 +31,16 @@ import {
 import { useComposerHandleContext } from "../composerHandleContext";
 import { useComposerDraftStore } from "../composerDraftStore";
 import {
-  type DiffRouteSearch,
-  buildDiffClosedSearch,
-  buildDiffEditorSearch,
-  buildDiffFilesSearch,
-  buildDiffOpenSearch,
-  buildDiffSearchFromSnapshot,
-  buildDiffTurnSearch,
-  parseDiffRouteSearch,
-} from "../diffRouteSearch";
+  buildWorkspacePanelClosedSearch,
+  buildWorkspacePanelDiffSearch,
+  buildWorkspacePanelEditorSearch,
+  buildWorkspacePanelFilesSearch,
+  buildWorkspacePanelSearchFromSnapshot,
+  buildWorkspacePanelTerminalSearch,
+  buildWorkspacePanelTurnSearch,
+  parseWorkspacePanelRouteSearch,
+  type WorkspacePanelRouteSearch,
+} from "../workspacePanelRouteSearch";
 import { openInPreferredEditor } from "../editorPreferences";
 import { readEnvironmentApi } from "../environmentApi";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -81,6 +82,7 @@ import { DiffFileEditorPane, type DiffFileEditorRequestedNavigation } from "./Di
 import type { DiffPanelProps } from "./DiffPanel";
 import { DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { HeaderIconActionButton } from "./HeaderIconActionButton";
+import { PersistentThreadTerminalPanel } from "./PersistentThreadTerminalPanel";
 import { WorkspaceFilesTree } from "./WorkspaceFilesTree";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import {
@@ -122,7 +124,7 @@ import { selectThreadTerminalState, useTerminalStateStore } from "../terminalSta
 const WORKSPACE_PANEL_TREE_COLLAPSED_KEY = "forma:workspace-panel-tree-collapsed:v1";
 const WorkspacePanelTreeCollapsedSchema = Schema.Record(Schema.String, Schema.Boolean);
 
-type WorkspaceSurfaceMode = "closed" | "files" | "editor" | "diff";
+type WorkspaceSurfaceMode = "closed" | "files" | "editor" | "diff" | "terminal";
 type DiffRenderMode = "stacked" | "split";
 
 interface EditorTarget {
@@ -205,35 +207,41 @@ function resolveRouteEditorTarget(input: {
   };
 }
 
-function resolveSurfaceMode(search: DiffRouteSearch): WorkspaceSurfaceMode {
-  if (search.diff !== "1") {
+function resolveSurfaceMode(search: WorkspacePanelRouteSearch): WorkspaceSurfaceMode {
+  if (search.panel !== "1") {
     return "closed";
   }
-  if (search.diffView === "files") {
+  if (search.panelView === "files") {
     return "files";
   }
-  if (search.diffView === "editor") {
+  if (search.panelView === "editor") {
     return "editor";
+  }
+  if (search.panelView === "terminal") {
+    return "terminal";
   }
   return "diff";
 }
 
-function buildFilesSnapshot(search: DiffRouteSearch): DiffRouteSearch {
+function buildFilesSnapshot(search: WorkspacePanelRouteSearch): WorkspacePanelRouteSearch {
   return {
-    diff: "1",
+    panel: "1",
     ...(search.diffTurnId ? { diffTurnId: search.diffTurnId } : {}),
     ...(search.diffFilePath ? { diffFilePath: search.diffFilePath } : {}),
-    diffView: "files",
+    panelView: "files",
   };
 }
 
-function buildEditorSnapshot(search: DiffRouteSearch, target: EditorTarget): DiffRouteSearch {
+function buildEditorSnapshot(
+  search: WorkspacePanelRouteSearch,
+  target: EditorTarget,
+): WorkspacePanelRouteSearch {
   const backToView = search.editorBackToView;
   return {
-    diff: "1",
+    panel: "1",
     ...(backToView === "diff" && search.diffTurnId ? { diffTurnId: search.diffTurnId } : {}),
     ...(backToView === "diff" && search.diffFilePath ? { diffFilePath: search.diffFilePath } : {}),
-    diffView: "editor",
+    panelView: "editor",
     editorFilePath: target.filePath,
     ...(typeof target.line === "number" ? { editorLine: target.line } : {}),
     ...(typeof target.column === "number" ? { editorColumn: target.column } : {}),
@@ -258,7 +266,10 @@ export function WorkspaceFilesPanel({
   const settings = useSettings();
   const { resolvedTheme } = useTheme();
   const keybindings = useServerKeybindings();
-  const diffSearch = useSearch({ strict: false, select: (search) => parseDiffRouteSearch(search) });
+  const panelSearch = useSearch({
+    strict: false,
+    select: (search) => parseWorkspacePanelRouteSearch(search),
+  });
   const draftSession = useComposerDraftStore((store) =>
     routeTarget.kind === "draft" ? store.getDraftSession(routeTarget.draftId) : null,
   );
@@ -275,7 +286,6 @@ export function WorkspaceFilesPanel({
     useMemo(() => createThreadSelectorByRef(activeThreadRef), [activeThreadRef]),
   );
   const bottomDrawerMode = useBottomDrawerUiStore((state) => state.visibleMode);
-  const showTerminalDrawer = useBottomDrawerUiStore((state) => state.showTerminal);
   const closeBottomDrawer = useBottomDrawerUiStore((state) => state.closeVisibleMode);
   const terminalState = useTerminalStateStore((state) =>
     selectThreadTerminalState(state.terminalStateByThreadKey, activeThreadRef),
@@ -287,8 +297,8 @@ export function WorkspaceFilesPanel({
           ?.currentRelativePath ?? null)
       : null,
   );
-  const panelOpen = diffSearch.diff === "1";
-  const surfaceMode = resolveSurfaceMode(diffSearch);
+  const panelOpen = panelSearch.panel === "1";
+  const surfaceMode = resolveSurfaceMode(panelSearch);
   const gitStatus = useGitStatus({
     environmentId: activeThread?.environmentId ?? null,
     cwd: workspaceRoot,
@@ -305,14 +315,14 @@ export function WorkspaceFilesPanel({
       resolveLikelyDiffPrefetchTarget({
         orderedTurnDiffSummaries,
         inferredCheckpointTurnCountByTurnId,
-        diffSearch,
+        diffSearch: panelSearch,
         environmentId: activeThread?.environmentId ?? null,
         threadId: activeThread?.id ?? null,
       }),
     [
       activeThread?.environmentId,
       activeThread?.id,
-      diffSearch,
+      panelSearch,
       inferredCheckpointTurnCountByTurnId,
       orderedTurnDiffSummaries,
     ],
@@ -320,11 +330,11 @@ export function WorkspaceFilesPanel({
   const routeEditorTarget = useMemo(
     () =>
       resolveRouteEditorTarget({
-        editorFilePath: diffSearch.editorFilePath,
-        editorLine: diffSearch.editorLine,
-        editorColumn: diffSearch.editorColumn,
+        editorFilePath: panelSearch.editorFilePath,
+        editorLine: panelSearch.editorLine,
+        editorColumn: panelSearch.editorColumn,
       }),
-    [diffSearch.editorColumn, diffSearch.editorFilePath, diffSearch.editorLine],
+    [panelSearch.editorColumn, panelSearch.editorFilePath, panelSearch.editorLine],
   );
   const routeEditorTargetKey = useMemo(
     () => buildEditorTargetKey(routeEditorTarget),
@@ -369,11 +379,11 @@ export function WorkspaceFilesPanel({
   );
   const sidebarSearchActive = deferredSidebarSearchQuery.length > 0;
   const lastAppliedRouteTargetRef = useRef<string | null>(routeEditorTargetKey);
-  const lastNonDiffSnapshotRef = useRef<DiffRouteSearch | null>(
-    diffSearch.diffView === "editor" && routeEditorTarget
-      ? buildEditorSnapshot(diffSearch, routeEditorTarget)
-      : diffSearch.diffView === "files"
-        ? buildFilesSnapshot(diffSearch)
+  const lastNonDiffSnapshotRef = useRef<WorkspacePanelRouteSearch | null>(
+    panelSearch.panelView === "editor" && routeEditorTarget
+      ? buildEditorSnapshot(panelSearch, routeEditorTarget)
+      : panelSearch.panelView === "files"
+        ? buildFilesSnapshot(panelSearch)
         : null,
   );
   const wasPanelOpenRef = useRef(panelOpen);
@@ -385,7 +395,7 @@ export function WorkspaceFilesPanel({
   const editorColumn = activeEditorTarget?.column;
   const previewOpen = bottomDrawerMode === "preview";
   const terminalAvailable = activeProjectRef !== null && activeThreadRef !== null;
-  const terminalOpen = bottomDrawerMode === "terminal";
+  const terminalOpen = surfaceMode === "terminal";
   const terminalToggleShortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "terminal.toggle"),
     [keybindings],
@@ -440,7 +450,7 @@ export function WorkspaceFilesPanel({
 
   useLayoutEffect(() => {
     const openedIntoFilesView =
-      panelOpen && !wasPanelOpenRef.current && diffSearch.diffView === "files";
+      panelOpen && !wasPanelOpenRef.current && panelSearch.panelView === "files";
     wasPanelOpenRef.current = panelOpen;
 
     if (openedIntoFilesView) {
@@ -459,20 +469,20 @@ export function WorkspaceFilesPanel({
 
     lastAppliedRouteTargetRef.current = routeEditorTargetKey;
     setActiveEditorTarget(routeEditorTarget);
-  }, [diffSearch.diffView, panelOpen, routeEditorTarget, routeEditorTargetKey]);
+  }, [panelSearch.panelView, panelOpen, routeEditorTarget, routeEditorTargetKey]);
 
   useEffect(() => {
-    if (diffSearch.diff !== "1") {
+    if (panelSearch.panel !== "1") {
       return;
     }
     if (surfaceMode === "files") {
-      lastNonDiffSnapshotRef.current = buildFilesSnapshot(diffSearch);
+      lastNonDiffSnapshotRef.current = buildFilesSnapshot(panelSearch);
       return;
     }
     if (surfaceMode === "editor" && activeEditorTarget) {
-      lastNonDiffSnapshotRef.current = buildEditorSnapshot(diffSearch, activeEditorTarget);
+      lastNonDiffSnapshotRef.current = buildEditorSnapshot(panelSearch, activeEditorTarget);
     }
-  }, [activeEditorTarget, diffSearch, surfaceMode]);
+  }, [activeEditorTarget, panelSearch, surfaceMode]);
 
   useLayoutEffect(() => {
     if (!editorVisible || !editorFilePath) {
@@ -759,20 +769,20 @@ export function WorkspaceFilesPanel({
     activePreviewRelativePath === editorFilePath;
 
   const closeWorkspacePanel = useCallback(() => {
-    navigateToCurrentRoute((previous) => buildDiffClosedSearch(previous));
+    navigateToCurrentRoute((previous) => buildWorkspacePanelClosedSearch(previous));
   }, [navigateToCurrentRoute]);
 
   const restoreDiffRoute = useCallback(() => {
     navigateToCurrentRoute((previous) => {
-      if (diffSearch.diffTurnId) {
-        return buildDiffTurnSearch(previous, {
-          turnId: diffSearch.diffTurnId,
-          ...(diffSearch.diffFilePath ? { filePath: diffSearch.diffFilePath } : {}),
+      if (panelSearch.diffTurnId) {
+        return buildWorkspacePanelTurnSearch(previous, {
+          turnId: panelSearch.diffTurnId,
+          ...(panelSearch.diffFilePath ? { filePath: panelSearch.diffFilePath } : {}),
         });
       }
-      return buildDiffOpenSearch(previous);
+      return buildWorkspacePanelDiffSearch(previous);
     });
-  }, [diffSearch.diffFilePath, diffSearch.diffTurnId, navigateToCurrentRoute]);
+  }, [navigateToCurrentRoute, panelSearch.diffFilePath, panelSearch.diffTurnId]);
 
   const persistSavedWorkspaceFile = useCallback(async () => {
     if (!workspaceRoot) {
@@ -827,33 +837,35 @@ export function WorkspaceFilesPanel({
       );
 
       if (
-        !diffSearch.editorFilePath ||
-        !pathEqualsOrContainsParent(fromPath, diffSearch.editorFilePath)
+        !panelSearch.editorFilePath ||
+        !pathEqualsOrContainsParent(fromPath, panelSearch.editorFilePath)
       ) {
         return;
       }
 
-      const nextEditorFilePath = `${toPath}${diffSearch.editorFilePath.slice(fromPath.length)}`;
+      const nextEditorFilePath = `${toPath}${panelSearch.editorFilePath.slice(fromPath.length)}`;
       navigateToCurrentRoute((previous) => ({
         ...previous,
-        diff: "1",
-        diffView: "editor",
+        panel: "1",
+        panelView: "editor",
         editorFilePath: nextEditorFilePath,
-        ...(typeof diffSearch.editorLine === "number" ? { editorLine: diffSearch.editorLine } : {}),
-        ...(typeof diffSearch.editorColumn === "number"
-          ? { editorColumn: diffSearch.editorColumn }
+        ...(typeof panelSearch.editorLine === "number"
+          ? { editorLine: panelSearch.editorLine }
           : {}),
-        ...(diffSearch.editorBackToView ? { editorBackToView: diffSearch.editorBackToView } : {}),
+        ...(typeof panelSearch.editorColumn === "number"
+          ? { editorColumn: panelSearch.editorColumn }
+          : {}),
+        ...(panelSearch.editorBackToView ? { editorBackToView: panelSearch.editorBackToView } : {}),
       }));
       if (surfaceMode === "editor") {
         issueNavigationRequest("switch-file", { filePath: nextEditorFilePath });
       }
     },
     [
-      diffSearch.editorBackToView,
-      diffSearch.editorColumn,
-      diffSearch.editorFilePath,
-      diffSearch.editorLine,
+      panelSearch.editorBackToView,
+      panelSearch.editorColumn,
+      panelSearch.editorFilePath,
+      panelSearch.editorLine,
       issueNavigationRequest,
       navigateToCurrentRoute,
       surfaceMode,
@@ -919,43 +931,61 @@ export function WorkspaceFilesPanel({
     if (!activeThreadRef) {
       return;
     }
-    if (bottomDrawerMode === "terminal") {
-      closeBottomDrawer();
+    if (surfaceMode === "terminal") {
+      navigateToCurrentRoute((previous) => buildWorkspacePanelFilesSearch(previous));
       return;
     }
     if (!terminalState.terminalOpen) {
       setTerminalOpen(activeThreadRef, true);
     }
-    showTerminalDrawer();
+    navigateToCurrentRoute((previous) => buildWorkspacePanelTerminalSearch(previous));
   }, [
     activeThreadRef,
-    bottomDrawerMode,
-    closeBottomDrawer,
+    navigateToCurrentRoute,
     setTerminalOpen,
-    showTerminalDrawer,
+    surfaceMode,
     terminalState.terminalOpen,
   ]);
+
+  const showEditorSurface = useCallback(() => {
+    navigateToCurrentRoute((previous) => {
+      if (!activeEditorTarget?.filePath) {
+        return buildWorkspacePanelFilesSearch(previous);
+      }
+      return buildWorkspacePanelEditorSearch(previous, {
+        filePath: activeEditorTarget.filePath,
+        ...(typeof activeEditorTarget.line === "number" ? { line: activeEditorTarget.line } : {}),
+        ...(typeof activeEditorTarget.column === "number"
+          ? { column: activeEditorTarget.column }
+          : {}),
+      });
+    });
+  }, [activeEditorTarget, navigateToCurrentRoute]);
+
+  const closeTerminalPanel = useCallback(() => {
+    navigateToCurrentRoute((previous) => buildWorkspacePanelFilesSearch(previous));
+  }, [navigateToCurrentRoute]);
 
   const openDiffRoute = useCallback(() => {
     if (!supportsDiff) {
       return;
     }
     navigateToCurrentRoute((previous) => {
-      if (diffSearch.diffTurnId) {
-        return buildDiffTurnSearch(previous, {
-          turnId: diffSearch.diffTurnId,
-          ...(diffSearch.diffFilePath ? { filePath: diffSearch.diffFilePath } : {}),
+      if (panelSearch.diffTurnId) {
+        return buildWorkspacePanelTurnSearch(previous, {
+          turnId: panelSearch.diffTurnId,
+          ...(panelSearch.diffFilePath ? { filePath: panelSearch.diffFilePath } : {}),
         });
       }
-      return buildDiffOpenSearch(previous);
+      return buildWorkspacePanelDiffSearch(previous);
     });
-  }, [diffSearch.diffFilePath, diffSearch.diffTurnId, navigateToCurrentRoute, supportsDiff]);
+  }, [navigateToCurrentRoute, panelSearch.diffFilePath, panelSearch.diffTurnId, supportsDiff]);
 
   const restoreLastNonDiffView = useCallback(() => {
     navigateToCurrentRoute((previous) =>
-      buildDiffSearchFromSnapshot(
+      buildWorkspacePanelSearchFromSnapshot(
         previous,
-        lastNonDiffSnapshotRef.current ?? { diff: "1", diffView: "files" },
+        lastNonDiffSnapshotRef.current ?? { panel: "1", panelView: "files" },
       ),
     );
   }, [navigateToCurrentRoute]);
@@ -964,9 +994,9 @@ export function WorkspaceFilesPanel({
     if (!supportsDiff || !activeEditorTarget) {
       return;
     }
-    lastNonDiffSnapshotRef.current = buildEditorSnapshot(diffSearch, activeEditorTarget);
+    lastNonDiffSnapshotRef.current = buildEditorSnapshot(panelSearch, activeEditorTarget);
     openDiffRoute();
-  }, [activeEditorTarget, diffSearch, openDiffRoute, supportsDiff]);
+  }, [activeEditorTarget, openDiffRoute, panelSearch, supportsDiff]);
 
   const toggleDiffMode = useCallback(() => {
     if (!supportsDiff || !panelOpen) {
@@ -980,12 +1010,12 @@ export function WorkspaceFilesPanel({
       issueNavigationRequest("show-diff");
       return;
     }
-    lastNonDiffSnapshotRef.current = buildFilesSnapshot(diffSearch);
+    lastNonDiffSnapshotRef.current = buildFilesSnapshot(panelSearch);
     openDiffRoute();
   }, [
-    diffSearch,
     issueNavigationRequest,
     openDiffRoute,
+    panelSearch,
     panelOpen,
     restoreLastNonDiffView,
     supportsDiff,
@@ -1019,7 +1049,7 @@ export function WorkspaceFilesPanel({
       }
       setActiveEditorTarget({ filePath });
       navigateToCurrentRoute((previous) =>
-        buildDiffEditorSearch(previous, {
+        buildWorkspacePanelEditorSearch(previous, {
           filePath,
           backToView: "files",
         }),
@@ -1238,7 +1268,7 @@ export function WorkspaceFilesPanel({
         });
         if (openEditorPath && pathEqualsOrContainsParent(entry.path, openEditorPath)) {
           setActiveEditorTarget(null);
-          navigateToCurrentRoute((previous) => buildDiffFilesSearch(previous));
+          navigateToCurrentRoute((previous) => buildWorkspacePanelFilesSearch(previous));
         }
         void invalidateProjectEntryQueries(queryClient, {
           environmentId,
@@ -1289,10 +1319,25 @@ export function WorkspaceFilesPanel({
               <TooltipTrigger
                 render={
                   <HeaderIconActionButton
+                    pressed={surfaceMode === "files" || surfaceMode === "editor"}
+                    onClick={showEditorSurface}
+                    aria-label="Show editor panel"
+                    title="Show editor panel"
+                  >
+                    <SidebarPanelIcon className="size-4" />
+                  </HeaderIconActionButton>
+                }
+              />
+              <TooltipPopup side="bottom">Show editor panel</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <HeaderIconActionButton
                     pressed={terminalOpen}
                     onClick={toggleTerminalVisibility}
-                    aria-label="Toggle terminal drawer"
-                    title="Toggle terminal drawer"
+                    aria-label="Toggle terminal panel"
+                    title="Toggle terminal panel"
                     disabled={!terminalAvailable}
                   >
                     <TerminalToggleIcon className="size-3" />
@@ -1303,13 +1348,14 @@ export function WorkspaceFilesPanel({
                 {!terminalAvailable
                   ? "Terminal is unavailable until this thread has an active project."
                   : terminalToggleShortcutLabel
-                    ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
-                    : "Toggle terminal drawer"}
+                    ? `Toggle terminal panel (${terminalToggleShortcutLabel})`
+                    : "Toggle terminal panel"}
               </TooltipPopup>
             </Tooltip>
             {supportsDiff ? (
               <HeaderIconActionButton
                 className="shrink-0"
+                pressed={surfaceMode === "diff"}
                 onClick={toggleDiffMode}
                 onPointerEnter={warmLikelyDiff}
                 onPointerDown={warmLikelyDiff}
@@ -1336,7 +1382,7 @@ export function WorkspaceFilesPanel({
             </HeaderIconActionButton>
           </div>
           <div className="border-b border-border/70" />
-          {surfaceMode === "diff" ? null : (
+          {surfaceMode === "diff" || surfaceMode === "terminal" ? null : (
             <>
               <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/70 px-3 py-2">
                 <div className="flex min-w-0 items-center gap-1">
@@ -1481,6 +1527,14 @@ export function WorkspaceFilesPanel({
                 onDiffRenderModeChange={setDiffRenderMode}
                 diffWordWrap={diffWordWrap}
                 onDiffWordWrapChange={setDiffWordWrap}
+              />
+            </div>
+          ) : surfaceMode === "terminal" && activeThreadRef ? (
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+              <PersistentThreadTerminalPanel
+                threadRef={activeThreadRef}
+                threadId={activeThreadRef.threadId}
+                onClosePanel={closeTerminalPanel}
               />
             </div>
           ) : (
@@ -1647,15 +1701,19 @@ export function WorkspaceFilesPanel({
                     onRequestClosePanel={closeWorkspacePanel}
                     onRequestShowDiff={showDiffFromEditor}
                     onRequestBack={() => {
-                      if (diffSearch.editorBackToView === "files") {
-                        navigateToCurrentRoute((previous) => buildDiffFilesSearch(previous));
+                      if (panelSearch.editorBackToView === "files") {
+                        navigateToCurrentRoute((previous) =>
+                          buildWorkspacePanelFilesSearch(previous),
+                        );
                         return;
                       }
-                      if (diffSearch.editorBackToView === "diff") {
+                      if (panelSearch.editorBackToView === "diff") {
                         restoreDiffRoute();
                         return;
                       }
-                      navigateToCurrentRoute((previous) => buildDiffClosedSearch(previous));
+                      navigateToCurrentRoute((previous) =>
+                        buildWorkspacePanelClosedSearch(previous),
+                      );
                     }}
                     onRequestFilePathChange={(filePath) => {
                       commitEditorTarget({ filePath });

@@ -50,6 +50,7 @@ import { useSettings } from "../hooks/useSettings";
 import { getCodeTerminalFontSize } from "../interfaceAppearance";
 import { useBottomDrawerSizing } from "../bottomDrawerSizing";
 import {
+  DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ThreadTerminalGroup,
@@ -58,6 +59,7 @@ import { readEnvironmentApi } from "~/environmentApi";
 import { readLocalApi } from "~/localApi";
 import { generateTheme, readThemeSettingsFromDocument } from "../theme";
 import { selectTerminalEventEntries, useTerminalStateStore } from "../terminalStateStore";
+import { HeaderIconActionButton } from "./HeaderIconActionButton";
 
 const MULTI_CLICK_SELECTION_ACTION_DELAY_MS = 260;
 
@@ -773,9 +775,10 @@ interface ThreadTerminalDrawerProps {
   cwd: string;
   worktreePath?: string | null;
   runtimeEnv?: Record<string, string>;
+  layout?: "drawer" | "panel";
   visible?: boolean;
-  height: number;
-  fullHeight: boolean;
+  height?: number;
+  fullHeight?: boolean;
   terminalIds: string[];
   activeTerminalId: string;
   terminalGroups: ThreadTerminalGroup[];
@@ -788,8 +791,8 @@ interface ThreadTerminalDrawerProps {
   closeShortcutLabel?: string | undefined;
   onActiveTerminalChange: (terminalId: string) => void;
   onCloseTerminal: (terminalId: string) => void;
-  onHeightChange: (height: number) => void;
-  onFullHeightChange: (fullHeight: boolean) => void;
+  onHeightChange?: ((height: number) => void) | undefined;
+  onFullHeightChange?: ((fullHeight: boolean) => void) | undefined;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
   keybindings: ResolvedKeybindingsConfig;
 }
@@ -829,9 +832,10 @@ export default function ThreadTerminalDrawer({
   cwd,
   worktreePath,
   runtimeEnv,
+  layout = "drawer",
   visible = true,
-  height,
-  fullHeight,
+  height = DEFAULT_THREAD_TERMINAL_HEIGHT,
+  fullHeight = false,
   terminalIds,
   activeTerminalId,
   terminalGroups,
@@ -849,6 +853,8 @@ export default function ThreadTerminalDrawer({
   onAddTerminalContext,
   keybindings,
 }: ThreadTerminalDrawerProps) {
+  const panelLayout = layout === "panel";
+  const effectiveFullHeight = panelLayout ? true : fullHeight;
   const [resizeEpoch, setResizeEpoch] = useState(0);
   const {
     drawerRef,
@@ -859,9 +865,9 @@ export default function ThreadTerminalDrawer({
   } = useBottomDrawerSizing<HTMLElement>({
     visible,
     height,
-    fullHeight,
-    onHeightChange,
-    onFullHeightChange,
+    fullHeight: effectiveFullHeight,
+    onHeightChange: onHeightChange ?? (() => undefined),
+    onFullHeightChange: onFullHeightChange ?? (() => undefined),
     onHeightSettled: () => {
       setResizeEpoch((value) => value + 1);
     },
@@ -979,7 +985,9 @@ export default function ThreadTerminalDrawer({
   const closeTerminalActionLabel = closeShortcutLabel
     ? `Close Terminal (${closeShortcutLabel})`
     : "Close Terminal";
-  const fullHeightActionLabel = fullHeight ? "Restore drawer height" : "Expand to full height";
+  const fullHeightActionLabel = effectiveFullHeight
+    ? "Restore drawer height"
+    : "Expand to full height";
   const onSplitTerminalAction = useCallback(() => {
     if (hasReachedSplitLimit) return;
     onSplitTerminal();
@@ -988,8 +996,8 @@ export default function ThreadTerminalDrawer({
     onNewTerminal();
   }, [onNewTerminal]);
   const onToggleFullHeightAction = useCallback(() => {
-    onFullHeightChange(!fullHeight);
-  }, [fullHeight, onFullHeightChange]);
+    onFullHeightChange?.(!effectiveFullHeight);
+  }, [effectiveFullHeight, onFullHeightChange]);
 
   useEffect(() => {
     if (!visible) {
@@ -1001,18 +1009,59 @@ export default function ThreadTerminalDrawer({
   return (
     <aside
       ref={drawerRef}
-      className="thread-terminal-drawer relative flex min-w-0 shrink-0 flex-col overflow-hidden border-t border-border/80 bg-background"
-      style={{ height: fullHeight ? "100%" : `${drawerHeight}px` }}
+      className={`thread-terminal-drawer relative flex min-w-0 flex-col overflow-hidden bg-background ${
+        panelLayout ? "min-h-0 flex-1" : "shrink-0 border-t border-border/80"
+      }`}
+      style={
+        panelLayout ? undefined : { height: effectiveFullHeight ? "100%" : `${drawerHeight}px` }
+      }
     >
-      <div
-        className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
-        onPointerDown={handleResizePointerDown}
-        onPointerMove={handleResizePointerMove}
-        onPointerUp={handleResizePointerEnd}
-        onPointerCancel={handleResizePointerEnd}
-      />
+      {!panelLayout ? (
+        <div
+          className="absolute inset-x-0 top-0 z-20 h-1.5 cursor-row-resize"
+          onPointerDown={handleResizePointerDown}
+          onPointerMove={handleResizePointerMove}
+          onPointerUp={handleResizePointerEnd}
+          onPointerCancel={handleResizePointerEnd}
+        />
+      ) : null}
 
-      {!hasTerminalSidebar && (
+      {panelLayout ? (
+        <div className="flex h-[38px] shrink-0 items-center gap-2 border-b border-border/70 px-2.5 py-2">
+          <div className="flex shrink-0 items-center gap-1.5">
+            <HeaderIconActionButton
+              className={`text-foreground/90 transition-colors ${
+                hasReachedSplitLimit
+                  ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+                  : "hover:bg-accent"
+              }`}
+              onClick={onSplitTerminalAction}
+              aria-label={splitTerminalActionLabel}
+              title={splitTerminalActionLabel}
+            >
+              <SquareSplitHorizontal className="size-3.25 fill-current" />
+            </HeaderIconActionButton>
+            <HeaderIconActionButton
+              className="text-foreground/90 transition-colors hover:bg-accent"
+              onClick={onNewTerminalAction}
+              aria-label={newTerminalActionLabel}
+              title={newTerminalActionLabel}
+            >
+              <Plus className="size-3.25 fill-current" />
+            </HeaderIconActionButton>
+            <HeaderIconActionButton
+              className="text-foreground/90 transition-colors hover:bg-accent"
+              onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
+              aria-label={closeTerminalActionLabel}
+              title={closeTerminalActionLabel}
+            >
+              <Trash2 className="size-3.25 fill-current" />
+            </HeaderIconActionButton>
+          </div>
+        </div>
+      ) : null}
+
+      {!panelLayout && !hasTerminalSidebar && (
         <div className="pointer-events-none absolute right-2 top-2 z-20">
           <div className="pointer-events-auto inline-flex items-center overflow-hidden rounded-md border border-border/80 bg-background/70">
             <TerminalActionButton
@@ -1020,7 +1069,7 @@ export default function ThreadTerminalDrawer({
               onClick={onToggleFullHeightAction}
               label={fullHeightActionLabel}
             >
-              {fullHeight ? (
+              {effectiveFullHeight ? (
                 <ChevronDownIcon className="size-3.25 fill-current" />
               ) : (
                 <ChevronUpIcon className="size-3.25 fill-current" />
@@ -1060,7 +1109,7 @@ export default function ThreadTerminalDrawer({
 
       <div className="min-h-0 w-full flex-1">
         <div className={`flex h-full min-h-0 ${hasTerminalSidebar ? "gap-1.5" : ""}`}>
-          <div className="min-w-0 flex-1">
+          <div className={`min-w-0 flex-1 ${hasTerminalSidebar ? "order-2" : ""}`}>
             {isSplitView ? (
               <div
                 className="grid h-full w-full min-w-0 gap-0 overflow-hidden"
@@ -1125,47 +1174,49 @@ export default function ThreadTerminalDrawer({
           </div>
 
           {hasTerminalSidebar && (
-            <aside className="flex w-36 min-w-36 flex-col border border-border/70 bg-muted/10">
-              <div className="flex h-[22px] items-stretch justify-end border-b border-border/70">
-                <div className="inline-flex h-full items-stretch">
-                  <TerminalActionButton
-                    className="inline-flex h-full items-center px-1 text-foreground/90 transition-colors hover:bg-accent/70"
-                    onClick={onToggleFullHeightAction}
-                    label={fullHeightActionLabel}
-                  >
-                    {fullHeight ? (
-                      <ChevronDownIcon className="size-3.25 fill-current" />
-                    ) : (
-                      <ChevronUpIcon className="size-3.25 fill-current" />
-                    )}
-                  </TerminalActionButton>
-                  <TerminalActionButton
-                    className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${
-                      hasReachedSplitLimit
-                        ? "cursor-not-allowed opacity-45 hover:bg-transparent"
-                        : "hover:bg-accent/70"
-                    }`}
-                    onClick={onSplitTerminalAction}
-                    label={splitTerminalActionLabel}
-                  >
-                    <SquareSplitHorizontal className="size-3.25 fill-current" />
-                  </TerminalActionButton>
-                  <TerminalActionButton
-                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
-                    onClick={onNewTerminalAction}
-                    label={newTerminalActionLabel}
-                  >
-                    <Plus className="size-3.25 fill-current" />
-                  </TerminalActionButton>
-                  <TerminalActionButton
-                    className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
-                    onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
-                    label={closeTerminalActionLabel}
-                  >
-                    <Trash2 className="size-3.25 fill-current" />
-                  </TerminalActionButton>
+            <aside className="order-1 flex w-36 min-w-36 flex-col border border-border/70 bg-muted/10">
+              {!panelLayout ? (
+                <div className="flex h-[22px] items-stretch justify-end border-b border-border/70">
+                  <div className="inline-flex h-full items-stretch">
+                    <TerminalActionButton
+                      className="inline-flex h-full items-center px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                      onClick={onToggleFullHeightAction}
+                      label={fullHeightActionLabel}
+                    >
+                      {effectiveFullHeight ? (
+                        <ChevronDownIcon className="size-3.25 fill-current" />
+                      ) : (
+                        <ChevronUpIcon className="size-3.25 fill-current" />
+                      )}
+                    </TerminalActionButton>
+                    <TerminalActionButton
+                      className={`inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors ${
+                        hasReachedSplitLimit
+                          ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+                          : "hover:bg-accent/70"
+                      }`}
+                      onClick={onSplitTerminalAction}
+                      label={splitTerminalActionLabel}
+                    >
+                      <SquareSplitHorizontal className="size-3.25 fill-current" />
+                    </TerminalActionButton>
+                    <TerminalActionButton
+                      className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                      onClick={onNewTerminalAction}
+                      label={newTerminalActionLabel}
+                    >
+                      <Plus className="size-3.25 fill-current" />
+                    </TerminalActionButton>
+                    <TerminalActionButton
+                      className="inline-flex h-full items-center border-l border-border/70 px-1 text-foreground/90 transition-colors hover:bg-accent/70"
+                      onClick={() => onCloseTerminal(resolvedActiveTerminalId)}
+                      label={closeTerminalActionLabel}
+                    >
+                      <Trash2 className="size-3.25 fill-current" />
+                    </TerminalActionButton>
+                  </div>
                 </div>
-              </div>
+              ) : null}
 
               <div className="min-h-0 flex-1 overflow-y-auto px-1 py-1">
                 {resolvedTerminalGroups.map((terminalGroup, groupIndex) => {

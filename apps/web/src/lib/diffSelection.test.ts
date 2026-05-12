@@ -120,7 +120,7 @@ describe("diffSelection", () => {
   });
 
   it("returns no prefetch target when there are no completed diffs", () => {
-    const diffSearch: DiffRouteSearch = { diff: "1" };
+    const diffSearch: DiffRouteSearch = { panel: "1", panelView: "diff" };
 
     expect(
       resolveLikelyDiffPrefetchTarget({

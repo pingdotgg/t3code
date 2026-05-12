@@ -8,11 +8,11 @@ import { LazyWorkspacePanel, preloadWorkspacePanel } from "../components/LazyWor
 import { WorkspacePanelHost } from "../components/WorkspacePanelHost";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import {
-  buildDiffClosedSearch,
-  buildDiffFilesSearch,
-  type DiffRouteSearch,
-  parseDiffRouteSearch,
-} from "../diffRouteSearch";
+  buildWorkspacePanelClosedSearch,
+  buildWorkspacePanelFilesSearch,
+  parseWorkspacePanelRouteSearch,
+  type WorkspacePanelRouteSearch,
+} from "../workspacePanelRouteSearch";
 import {
   selectEnvironmentState,
   selectProjectByRef,
@@ -64,7 +64,7 @@ function ChatThreadRouteView() {
   const routeThreadExists = threadExists || draftThreadExists;
   const serverThreadStarted = threadHasStarted(serverThread);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
-  const panelOpen = search.diff === "1";
+  const panelOpen = search.panel === "1";
   const currentThreadKey = threadRef ? `${threadRef.environmentId}:${threadRef.threadId}` : null;
   const [workspaceDiffToggleRequestNonce, setWorkspaceDiffToggleRequestNonce] = useState(0);
   const [workspacePanelMountState, setWorkspacePanelMountState] = useState(() => ({
@@ -93,7 +93,7 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
-      search: (previous) => buildDiffClosedSearch(previous),
+      search: (previous) => buildWorkspacePanelClosedSearch(previous),
     });
   }, [navigate, threadRef]);
   const openPanel = useCallback(() => {
@@ -105,7 +105,7 @@ function ChatThreadRouteView() {
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
-      search: (previous) => buildDiffFilesSearch(previous),
+      search: (previous) => buildWorkspacePanelFilesSearch(previous),
     });
   }, [markWorkspacePanelOpened, navigate, threadRef]);
   const requestWorkspaceDiffToggle = useCallback(() => {
@@ -185,9 +185,9 @@ function ChatThreadRouteView() {
 }
 
 export const Route = createFileRoute("/_chat/$environmentId/$threadId")({
-  validateSearch: (search) => parseDiffRouteSearch(search),
+  validateSearch: (search) => parseWorkspacePanelRouteSearch(search),
   search: {
-    middlewares: [retainSearchParams<DiffRouteSearch>(["diff"])],
+    middlewares: [retainSearchParams<WorkspacePanelRouteSearch>(["panel", "diff"])],
   },
   component: ChatThreadRouteView,
 });

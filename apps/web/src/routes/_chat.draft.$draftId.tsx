@@ -8,11 +8,11 @@ import { LazyWorkspacePanel, preloadWorkspacePanel } from "../components/LazyWor
 import { WorkspacePanelHost } from "../components/WorkspacePanelHost";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import {
-  buildDiffClosedSearch,
-  buildDiffFilesSearch,
-  type DiffRouteSearch,
-  parseDiffRouteSearch,
-} from "../diffRouteSearch";
+  buildWorkspacePanelClosedSearch,
+  buildWorkspacePanelFilesSearch,
+  parseWorkspacePanelRouteSearch,
+  type WorkspacePanelRouteSearch,
+} from "../workspacePanelRouteSearch";
 import { SidebarInset } from "../components/ui/sidebar";
 import { createThreadSelectorAcrossEnvironments } from "../storeSelectors";
 import { selectProjectByRef, useStore } from "../store";
@@ -56,7 +56,7 @@ function DraftChatThreadRouteView() {
         })
       : undefined,
   );
-  const panelOpen = search.diff === "1";
+  const panelOpen = search.panel === "1";
   const panelKey = `draft:${draftId}`;
   const [workspacePanelMountState, setWorkspacePanelMountState] = useState(() => ({
     panelKey,
@@ -81,7 +81,7 @@ function DraftChatThreadRouteView() {
     void navigate({
       to: "/draft/$draftId",
       params: buildDraftThreadRouteParams(draftId),
-      search: (previous) => buildDiffClosedSearch(previous),
+      search: (previous) => buildWorkspacePanelClosedSearch(previous),
     });
   }, [draftId, navigate]);
   const openPanel = useCallback(() => {
@@ -90,7 +90,7 @@ function DraftChatThreadRouteView() {
     void navigate({
       to: "/draft/$draftId",
       params: buildDraftThreadRouteParams(draftId),
-      search: (previous) => buildDiffFilesSearch(previous),
+      search: (previous) => buildWorkspacePanelFilesSearch(previous),
     });
   }, [draftId, markWorkspacePanelOpened, navigate]);
 
@@ -182,9 +182,9 @@ function DraftChatThreadRouteView() {
 }
 
 export const Route = createFileRoute("/_chat/draft/$draftId")({
-  validateSearch: (search) => parseDiffRouteSearch(search),
+  validateSearch: (search) => parseWorkspacePanelRouteSearch(search),
   search: {
-    middlewares: [retainSearchParams<DiffRouteSearch>(["diff"])],
+    middlewares: [retainSearchParams<WorkspacePanelRouteSearch>(["panel", "diff"])],
   },
   component: DraftChatThreadRouteView,
 });

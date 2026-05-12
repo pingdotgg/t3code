@@ -20,7 +20,8 @@ describe("parseDiffRouteSearch", () => {
     });
 
     expect(parsed).toEqual({
-      diff: "1",
+      panel: "1",
+      panelView: "diff",
       diffTurnId: "turn-1",
       diffFilePath: "src/app.ts",
     });
@@ -33,7 +34,8 @@ describe("parseDiffRouteSearch", () => {
         diffTurnId: "turn-1",
       }),
     ).toEqual({
-      diff: "1",
+      panel: "1",
+      panelView: "diff",
       diffTurnId: "turn-1",
     });
 
@@ -43,7 +45,8 @@ describe("parseDiffRouteSearch", () => {
         diffTurnId: "turn-1",
       }),
     ).toEqual({
-      diff: "1",
+      panel: "1",
+      panelView: "diff",
       diffTurnId: "turn-1",
     });
   });
@@ -65,7 +68,8 @@ describe("parseDiffRouteSearch", () => {
     });
 
     expect(parsed).toEqual({
-      diff: "1",
+      panel: "1",
+      panelView: "diff",
     });
   });
 
@@ -77,7 +81,8 @@ describe("parseDiffRouteSearch", () => {
     });
 
     expect(parsed).toEqual({
-      diff: "1",
+      panel: "1",
+      panelView: "diff",
     });
   });
 
@@ -94,10 +99,10 @@ describe("parseDiffRouteSearch", () => {
         editorBackToView: "diff",
       }),
     ).toEqual({
-      diff: "1",
+      panel: "1",
+      panelView: "editor",
       diffTurnId: "turn-1",
       diffFilePath: "src/app.ts",
-      diffView: "editor",
       editorFilePath: "src/app.ts",
       editorLine: 12,
       editorColumn: 4,
@@ -113,8 +118,8 @@ describe("parseDiffRouteSearch", () => {
         editorFilePath: "ignored.ts",
       }),
     ).toEqual({
-      diff: "1",
-      diffView: "files",
+      panel: "1",
+      panelView: "files",
     });
 
     expect(
@@ -125,8 +130,8 @@ describe("parseDiffRouteSearch", () => {
         editorBackToDiff: true,
       }),
     ).toEqual({
-      diff: "1",
-      diffView: "editor",
+      panel: "1",
+      panelView: "editor",
       editorFilePath: "src/app.ts",
       editorBackToView: "diff",
     });
@@ -139,7 +144,8 @@ describe("parseDiffRouteSearch", () => {
         diffView: "editor",
       }),
     ).toEqual({
-      diff: "1",
+      panel: "1",
+      panelView: "diff",
     });
 
     expect(
@@ -150,8 +156,8 @@ describe("parseDiffRouteSearch", () => {
         editorLine: "0",
       }),
     ).toEqual({
-      diff: "1",
-      diffView: "editor",
+      panel: "1",
+      panelView: "editor",
       editorFilePath: "src/app.ts",
     });
   });
@@ -164,7 +170,8 @@ describe("parseDiffRouteSearch", () => {
         editorColumn: "3",
       }),
     ).toEqual({
-      diff: "1",
+      panel: "1",
+      panelView: "diff",
     });
   });
 });
@@ -184,14 +191,15 @@ describe("diff route builders", () => {
 
     expect(buildDiffOpenSearch(previous)).toEqual({
       tab: "activity",
-      diff: "1",
+      panel: "1",
+      panelView: "diff",
     });
     expect(buildDiffFilesSearch(previous)).toEqual({
       tab: "activity",
-      diff: "1",
+      panel: "1",
       diffTurnId: "turn-old",
       diffFilePath: "old.ts",
-      diffView: "files",
+      panelView: "files",
     });
     expect(
       buildDiffTurnSearch(previous, {
@@ -200,7 +208,8 @@ describe("diff route builders", () => {
       }),
     ).toEqual({
       tab: "activity",
-      diff: "1",
+      panel: "1",
+      panelView: "diff",
       diffTurnId: "turn-1",
       diffFilePath: "src/app.ts",
     });
@@ -215,10 +224,10 @@ describe("diff route builders", () => {
       }),
     ).toEqual({
       tab: "activity",
-      diff: "1",
+      panel: "1",
+      panelView: "editor",
       diffTurnId: "turn-1",
       diffFilePath: "src/app.ts",
-      diffView: "editor",
       editorFilePath: "src/app.ts",
       editorLine: 4,
       editorColumn: 8,
@@ -226,6 +235,8 @@ describe("diff route builders", () => {
     });
     expect(buildDiffClosedSearch(previous)).toEqual({
       tab: "activity",
+      panel: undefined,
+      panelView: undefined,
       diff: undefined,
       diffTurnId: undefined,
       diffFilePath: undefined,
@@ -254,8 +265,8 @@ describe("diff route builders", () => {
       }),
     ).toEqual({
       tab: "activity",
-      diff: "1",
-      diffView: "files",
+      panel: "1",
+      panelView: "files",
     });
 
     expect(
@@ -271,10 +282,10 @@ describe("diff route builders", () => {
       }),
     ).toEqual({
       tab: "activity",
-      diff: "1",
+      panel: "1",
+      panelView: "editor",
       diffTurnId: "turn-1",
       diffFilePath: "src/app.ts",
-      diffView: "editor",
       editorFilePath: "src/app.ts",
       editorLine: 4,
       editorColumn: 8,
@@ -283,6 +294,8 @@ describe("diff route builders", () => {
 
     expect(buildDiffSearchFromSnapshot(previous, {})).toEqual({
       tab: "activity",
+      panel: undefined,
+      panelView: undefined,
       diff: undefined,
       diffTurnId: undefined,
       diffFilePath: undefined,

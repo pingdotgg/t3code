@@ -39,13 +39,14 @@ import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import {
-  buildDiffClosedSearch,
-  buildDiffEditorSearch,
-  buildDiffFilesSearch,
-  buildDiffTurnSearch,
-  parseDiffRouteSearch,
+  buildWorkspacePanelClosedSearch,
+  buildWorkspacePanelEditorSearch,
+  buildWorkspacePanelFilesSearch,
+  buildWorkspacePanelTerminalSearch,
+  buildWorkspacePanelTurnSearch,
+  parseWorkspacePanelRouteSearch,
   resolveWorkspacePanelDisplayMode,
-} from "../diffRouteSearch";
+} from "../workspacePanelRouteSearch";
 import {
   collapseExpandedComposerCursor,
   parseStandaloneComposerSlashCommand,
@@ -466,7 +467,7 @@ export default function ChatView(props: ChatViewProps) {
   const navigate = useNavigate();
   const rawSearch = useSearch({
     strict: false,
-    select: (params) => parseDiffRouteSearch(params),
+    select: (params) => parseWorkspacePanelRouteSearch(params),
   });
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
@@ -566,7 +567,6 @@ export default function ChatView(props: ChatViewProps) {
     selectThreadTerminalState(state.terminalStateByThreadKey, routeThreadRef),
   );
   const bottomDrawerMode = useBottomDrawerUiStore((state) => state.visibleMode);
-  const showTerminalDrawer = useBottomDrawerUiStore((state) => state.showTerminal);
   const closeBottomDrawer = useBottomDrawerUiStore((state) => state.closeVisibleMode);
   const storeSetTerminalOpen = useTerminalStateStore((s) => s.setTerminalOpen);
   const storeSplitTerminal = useTerminalStateStore((s) => s.splitTerminal);
@@ -1419,10 +1419,10 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     if (workspacePanelDisplayMode === "closed") {
-      navigateCurrentThreadPanel((previous) => buildDiffFilesSearch(previous));
+      navigateCurrentThreadPanel((previous) => buildWorkspacePanelFilesSearch(previous));
       return;
     }
-    navigateCurrentThreadPanel((previous) => buildDiffClosedSearch(previous));
+    navigateCurrentThreadPanel((previous) => buildWorkspacePanelClosedSearch(previous));
   }, [activeWorkspaceRoot, navigateCurrentThreadPanel, workspacePanelDisplayMode]);
 
   const envLocked = Boolean(
@@ -1502,21 +1502,20 @@ export default function ChatView(props: ChatViewProps) {
   );
   const toggleTerminalVisibility = useCallback(() => {
     if (!activeThreadRef) return;
-    if (bottomDrawerMode === "terminal") {
-      closeBottomDrawer();
+    if (workspacePanelDisplayMode === "terminal") {
+      navigateCurrentThreadPanel((previous) => buildWorkspacePanelFilesSearch(previous));
       return;
     }
     if (!terminalState.terminalOpen) {
       setTerminalOpen(true);
     }
-    showTerminalDrawer();
+    navigateCurrentThreadPanel((previous) => buildWorkspacePanelTerminalSearch(previous));
   }, [
     activeThreadRef,
-    bottomDrawerMode,
-    closeBottomDrawer,
+    navigateCurrentThreadPanel,
     setTerminalOpen,
-    showTerminalDrawer,
     terminalState.terminalOpen,
+    workspacePanelDisplayMode,
   ]);
   useEffect(() => {
     if (bottomDrawerMode !== "preview") {
@@ -3323,13 +3322,13 @@ export default function ChatView(props: ChatViewProps) {
 
       const effectiveTurnId = turnId ?? rawSearch.diffTurnId ?? undefined;
       const backToView =
-        rawSearch.diffView === "editor"
+        rawSearch.panelView === "editor"
           ? rawSearch.editorBackToView
           : effectiveTurnId
             ? ("diff" as const)
             : undefined;
       navigateCurrentThreadPanel((previous) =>
-        buildDiffEditorSearch(previous, {
+        buildWorkspacePanelEditorSearch(previous, {
           filePath: editorTarget.relativePath,
           line: editorTarget.line,
           column: editorTarget.column,
@@ -3343,7 +3342,7 @@ export default function ChatView(props: ChatViewProps) {
     [
       activeWorkspaceRoot,
       navigateCurrentThreadPanel,
-      rawSearch.diffView,
+      rawSearch.panelView,
       rawSearch.diffTurnId,
       rawSearch.editorBackToView,
     ],
@@ -3373,7 +3372,9 @@ export default function ChatView(props: ChatViewProps) {
       if (!isServerThread) {
         return;
       }
-      navigateCurrentThreadPanel((previous) => buildDiffTurnSearch(previous, { turnId, filePath }));
+      navigateCurrentThreadPanel((previous) =>
+        buildWorkspacePanelTurnSearch(previous, { turnId, filePath }),
+      );
     },
     [isServerThread, navigateCurrentThreadPanel],
   );
