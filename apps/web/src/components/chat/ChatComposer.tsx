@@ -115,6 +115,23 @@ import { useMediaQuery } from "../../hooks/useMediaQuery";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
+function toSkillComposerCommandItem(
+  provider: ProviderDriverKind,
+  skill: ServerProvider["skills"][number],
+): Extract<ComposerCommandItem, { type: "skill" }> {
+  return {
+    id: `skill:${provider}:${skill.name}`,
+    type: "skill",
+    provider,
+    skill,
+    label: formatProviderSkillDisplayName(skill),
+    description:
+      skill.shortDescription ??
+      skill.description ??
+      (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
+  };
+}
+
 const runtimeModeConfig: Record<
   RuntimeMode,
   { label: string; description: string; icon: LucideIcon }
@@ -899,27 +916,20 @@ export const ChatComposer = memo(
           }),
         );
         const query = composerTrigger.query.trim().toLowerCase();
+        const skillItems = searchProviderSkills(selectedProviderStatus?.skills ?? [], query).map(
+          (skill) => toSkillComposerCommandItem(selectedProvider, skill),
+        );
         const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
         if (!query) {
-          return slashCommandItems;
+          return [...slashCommandItems, ...skillItems];
         }
-        return searchSlashCommandItems(slashCommandItems, query);
+        return [...searchSlashCommandItems(slashCommandItems, query), ...skillItems];
       }
       if (composerTrigger.kind === "skill") {
         return searchProviderSkills(
           selectedProviderStatus?.skills ?? [],
           composerTrigger.query,
-        ).map((skill) => ({
-          id: `skill:${selectedProvider}:${skill.name}`,
-          type: "skill" as const,
-          provider: selectedProvider,
-          skill,
-          label: formatProviderSkillDisplayName(skill),
-          description:
-            skill.shortDescription ??
-            skill.description ??
-            (skill.scope ? `${skill.scope} skill` : "Run provider skill"),
-        }));
+        ).map((skill) => toSkillComposerCommandItem(selectedProvider, skill));
       }
       return [];
     }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries]);

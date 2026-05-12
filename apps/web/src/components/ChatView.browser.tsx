@@ -5952,6 +5952,48 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("shows provider skills in the slash-command menu", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-slash-skill-target" as MessageId,
+        targetText: "slash skill menu thread",
+      }),
+      configureFixture: (nextFixture) => {
+        const provider = nextFixture.serverConfig.providers[0];
+        if (!provider) {
+          throw new Error("Expected default provider in test fixture.");
+        }
+        (
+          provider as {
+            skills: ServerConfig["providers"][number]["skills"];
+          }
+        ).skills = [
+          {
+            name: "agent-browser",
+            displayName: "Agent Browser",
+            shortDescription: "Open pages, click around, and inspect web apps.",
+            path: "/Users/test/.agents/skills/agent-browser/SKILL.md",
+            enabled: true,
+          },
+        ];
+      },
+    });
+
+    try {
+      await waitForComposerEditor();
+      await page.getByTestId("composer-editor").fill("/");
+
+      const skillItem = await waitForComposerMenuItem("skill:codex:agent-browser");
+      expect(skillItem.textContent).toContain("Agent Browser");
+
+      await skillItem.click();
+      await waitForComposerText("$agent-browser ");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("opens the model picker when selecting /model", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
