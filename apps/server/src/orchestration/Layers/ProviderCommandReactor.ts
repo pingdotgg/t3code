@@ -994,27 +994,28 @@ const make = Effect.gen(function* () {
     if (thread.session && thread.session.status !== "stopped") {
       const stopExit = yield* Effect.exit(providerService.stopSession({ threadId: thread.id }));
       if (Exit.isFailure(stopExit)) {
+        const sessionAlreadyGone = isSessionAlreadyGoneFailure(stopExit.cause);
         stopFailureDetail = formatFailureDetail(stopExit.cause);
-        yield* appendProviderFailureActivity({
-          threadId: thread.id,
-          kind: "provider.session.stop.failed",
-          summary: "Provider session stop failed",
-          detail: stopFailureDetail,
-          turnId: thread.session.activeTurnId,
-          createdAt: now,
-        }).pipe(
-          Effect.catchCause((activityCause) =>
-            Effect.logWarning(
-              "provider command reactor failed to record provider session stop failure",
-              {
-                threadId: thread.id,
-                cause: Cause.pretty(activityCause),
-                originalCause: Cause.pretty(stopExit.cause),
-              },
+        if (!sessionAlreadyGone) {
+          yield* appendProviderFailureActivity({
+            threadId: thread.id,
+            kind: "provider.session.stop.failed",
+            summary: "Provider session stop failed",
+            detail: stopFailureDetail,
+            turnId: thread.session.activeTurnId,
+            createdAt: now,
+          }).pipe(
+            Effect.catchCause((activityCause) =>
+              Effect.logWarning(
+                "provider command reactor failed to record provider session stop failure",
+                {
+                  threadId: thread.id,
+                  cause: Cause.pretty(activityCause),
+                  originalCause: Cause.pretty(stopExit.cause),
+                },
+              ),
             ),
-          ),
-        );
-        if (!isSessionAlreadyGoneFailure(stopExit.cause)) {
+          );
           yield* setThreadSession({
             threadId: thread.id,
             session: {
@@ -1026,6 +1027,7 @@ const make = Effect.gen(function* () {
           });
           return;
         }
+        stopFailureDetail = null;
       }
     }
 

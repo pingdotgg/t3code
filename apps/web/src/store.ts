@@ -879,14 +879,32 @@ function buildLatestTurn(params: {
   };
 }
 
+function latestTurnStateFromInactiveSessionStatus(
+  status: OrchestrationSessionStatus,
+): NonNullable<Thread["latestTurn"]>["state"] | null {
+  switch (status) {
+    case "error":
+      return "error";
+    case "ready":
+    case "interrupted":
+    case "stopped":
+      return "interrupted";
+    default:
+      return null;
+  }
+}
+
 function settleLatestTurnForInactiveSession(input: {
   latestTurn: Thread["latestTurn"];
   previousSession: Thread["session"];
+  nextSessionStatus: OrchestrationSessionStatus;
   completedAt: string;
 }): Thread["latestTurn"] {
   const latestTurn = input.latestTurn;
   const previousActiveTurnId = input.previousSession?.activeTurnId;
+  const nextState = latestTurnStateFromInactiveSessionStatus(input.nextSessionStatus);
   if (
+    nextState === null ||
     latestTurn === null ||
     latestTurn.state !== "running" ||
     previousActiveTurnId === undefined ||
@@ -897,7 +915,7 @@ function settleLatestTurnForInactiveSession(input: {
   return buildLatestTurn({
     previous: latestTurn,
     turnId: latestTurn.turnId,
-    state: "interrupted",
+    state: nextState,
     requestedAt: latestTurn.requestedAt,
     startedAt: latestTurn.startedAt ?? input.completedAt,
     completedAt: latestTurn.completedAt ?? input.completedAt,
@@ -1502,6 +1520,7 @@ function applyEnvironmentOrchestrationEvent(
             : settleLatestTurnForInactiveSession({
                 latestTurn: thread.latestTurn,
                 previousSession: thread.session,
+                nextSessionStatus: event.payload.session.status,
                 completedAt: event.payload.session.updatedAt,
               }),
         updatedAt: event.occurredAt,

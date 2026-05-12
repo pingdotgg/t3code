@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type ChatAttachment,
   type OrchestrationEvent,
+  type OrchestrationSessionStatus,
   ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
@@ -176,6 +177,21 @@ function deriveHasActionableProposedPlan(input: {
 
   const latestPlan = sorted.at(-1) ?? null;
   return latestPlan !== null && latestPlan.implementedAt === null;
+}
+
+function settleTurnStateFromSessionStatus(
+  status: OrchestrationSessionStatus,
+): ProjectionTurn["state"] | null {
+  switch (status) {
+    case "error":
+      return "error";
+    case "ready":
+    case "interrupted":
+    case "stopped":
+      return "interrupted";
+    default:
+      return null;
+  }
 }
 
 function retainProjectionMessagesAfterRevert(
@@ -1002,6 +1018,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         case "thread.session-set": {
           const turnId = event.payload.session.activeTurnId;
           if (turnId === null || event.payload.session.status !== "running") {
+            const settledState = settleTurnStateFromSessionStatus(event.payload.session.status);
+            if (settledState === null) {
+              return;
+            }
             const turns = yield* projectionTurnRepository.listByThreadId({
               threadId: event.payload.threadId,
             });
@@ -1021,7 +1041,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
             yield* projectionTurnRepository.upsertByTurnId({
               ...latestRunningTurn,
-              state: "interrupted",
+              state: settledState,
               startedAt: latestRunningTurn.startedAt ?? event.payload.session.updatedAt,
               requestedAt: latestRunningTurn.requestedAt ?? event.payload.session.updatedAt,
               completedAt: latestRunningTurn.completedAt ?? event.payload.session.updatedAt,

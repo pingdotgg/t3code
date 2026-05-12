@@ -2329,6 +2329,163 @@ it.effect(
     ),
 );
 
+it.effect(
+  "preserves failed turn state during a clean projection rebuild without thread latest-turn state",
+  () =>
+    Effect.gen(function* () {
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = ProjectId.make("project-rebuild-error");
+      const threadId = ThreadId.make("thread-rebuild-error");
+      const turnId = TurnId.make("turn-rebuild-error");
+      const messageId = MessageId.make("message-rebuild-error");
+      const createdAt = "2026-02-26T16:00:00.000Z";
+      const runningAt = "2026-02-26T16:00:05.000Z";
+      const failedAt = "2026-02-26T16:00:10.000Z";
+
+      yield* eventStore.append({
+        type: "project.created",
+        eventId: EventId.make("evt-rebuild-error-project"),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        occurredAt: createdAt,
+        commandId: CommandId.make("cmd-rebuild-error-project"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-rebuild-error-project"),
+        metadata: {},
+        payload: {
+          projectId,
+          title: "Project Rebuild Error",
+          workspaceRoot: "/tmp/project-rebuild-error",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-rebuild-error-thread"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: createdAt,
+        commandId: CommandId.make("cmd-rebuild-error-thread"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-rebuild-error-thread"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId,
+          title: "Thread Rebuild Error",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+      yield* eventStore.append({
+        type: "thread.turn-start-requested",
+        eventId: EventId.make("evt-rebuild-error-turn-start"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: createdAt,
+        commandId: CommandId.make("cmd-rebuild-error-turn-start"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-rebuild-error-turn-start"),
+        metadata: {},
+        payload: {
+          threadId,
+          messageId,
+          runtimeMode: "approval-required",
+          createdAt,
+        },
+      });
+      yield* eventStore.append({
+        type: "thread.session-set",
+        eventId: EventId.make("evt-rebuild-error-running"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: runningAt,
+        commandId: CommandId.make("cmd-rebuild-error-running"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-rebuild-error-running"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "approval-required",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: runningAt,
+          },
+        },
+      });
+      yield* eventStore.append({
+        type: "thread.session-set",
+        eventId: EventId.make("evt-rebuild-error-failed"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: failedAt,
+        commandId: CommandId.make("cmd-rebuild-error-failed"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("cmd-rebuild-error-failed"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "error",
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: "Prompt failed.",
+            updatedAt: failedAt,
+          },
+        },
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      const turnRows = yield* sql<{
+        readonly turnId: string;
+        readonly state: string;
+        readonly completedAt: string | null;
+      }>`
+      SELECT
+        turn_id AS "turnId",
+        state,
+        completed_at AS "completedAt"
+      FROM projection_turns
+      WHERE thread_id = ${threadId}
+        AND turn_id = ${turnId}
+    `;
+
+      assert.deepEqual(turnRows, [
+        {
+          turnId,
+          state: "error",
+          completedAt: failedAt,
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        makeProjectionPipelinePrefixedTestLayer("t3-projection-pipeline-rebuild-error-"),
+      ),
+    ),
+);
+
 const engineLayer = it.layer(
   OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionSnapshotQueryLive),

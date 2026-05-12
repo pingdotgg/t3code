@@ -827,6 +827,51 @@ describe("incremental orchestration updates", () => {
     });
   });
 
+  it("preserves a failed latest turn when the session enters error", () => {
+    const thread = makeThread({
+      session: {
+        provider: ProviderDriverKind.make("codex"),
+        status: "running",
+        orchestrationStatus: "running",
+        activeTurnId: TurnId.make("turn-1"),
+        createdAt: "2026-02-27T00:00:00.000Z",
+        updatedAt: "2026-02-27T00:00:01.000Z",
+      },
+      latestTurn: {
+        turnId: TurnId.make("turn-1"),
+        state: "running",
+        requestedAt: "2026-02-27T00:00:00.000Z",
+        startedAt: "2026-02-27T00:00:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      },
+    });
+
+    const next = applyOrchestrationEvent(
+      makeState(thread),
+      makeEvent("thread.session-set", {
+        threadId: thread.id,
+        session: {
+          threadId: thread.id,
+          status: "error",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: "Prompt failed.",
+          updatedAt: "2026-02-27T00:00:05.000Z",
+        },
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(next)[0]?.session?.status).toBe("error");
+    expect(threadsOf(next)[0]?.latestTurn).toMatchObject({
+      turnId: TurnId.make("turn-1"),
+      state: "error",
+      completedAt: "2026-02-27T00:00:05.000Z",
+    });
+  });
+
   it("does not regress latestTurn when an older turn diff completes late", () => {
     const state = makeState(
       makeThread({

@@ -32,7 +32,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { deriveServerPaths, ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "@t3tools/contracts";
-import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
+import {
+  ProviderAdapterRequestError,
+  ProviderAdapterSessionNotFoundError,
+} from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -2265,5 +2268,64 @@ describe("ProviderCommandReactor", () => {
     expect(failureActivity?.payload).toMatchObject({
       detail: "No live provider session was found for this thread.",
     });
+  });
+
+  it("treats already-gone provider sessions as a benign stop", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const harness = await createHarness({
+      stopSessionOverride: () =>
+        Effect.fail(
+          new ProviderAdapterSessionNotFoundError({
+            provider: "codex",
+            threadId: "thread-1",
+          }),
+        ),
+    });
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-for-benign-stop"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex_work"),
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-running"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make("cmd-session-stop-benign"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return thread?.session?.status === "stopped" && thread.session.lastError === null;
+    });
+
+    expect(harness.stopSession.mock.calls.length).toBe(1);
+    const readModel = await harness.readModel();
+    const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+    expect(thread?.session).not.toBeNull();
+    expect(thread?.session?.status).toBe("stopped");
+    expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
+    expect(thread?.session?.activeTurnId).toBeNull();
+    expect(thread?.session?.lastError).toBeNull();
+    expect(
+      thread?.activities.find((activity) => activity.kind === "provider.session.stop.failed"),
+    ).toBeUndefined();
   });
 });

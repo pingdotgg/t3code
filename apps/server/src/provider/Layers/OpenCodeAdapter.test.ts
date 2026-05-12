@@ -366,6 +366,11 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         runtimeMode: "full-access",
       });
 
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.runHead,
+        Effect.timeout("100 millis"),
+        Effect.forkChild,
+      );
       runtimeMock.state.promptAsyncError = new Error("prompt failed");
       const error = yield* adapter
         .sendTurn({
@@ -378,6 +383,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         })
         .pipe(Effect.flip);
       const sessions = yield* adapter.listSessions();
+      const emittedEvent = yield* Fiber.join(eventsFiber);
 
       assert.equal(error._tag, "ProviderAdapterRequestError");
       if (error._tag !== "ProviderAdapterRequestError") {
@@ -392,6 +398,22 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       assert.equal(sessions[0]?.status, "ready");
       assert.equal(sessions[0]?.activeTurnId, undefined);
       assert.equal(sessions[0]?.lastError, "prompt failed");
+      const outerValue =
+        typeof emittedEvent === "object" && emittedEvent !== null && "value" in emittedEvent
+          ? (emittedEvent as { value?: unknown }).value
+          : undefined;
+      const innerValue =
+        typeof outerValue === "object" && outerValue !== null && "value" in outerValue
+          ? (outerValue as { value?: unknown }).value
+          : outerValue;
+      const emittedEventType =
+        typeof innerValue === "object" &&
+        innerValue !== null &&
+        "type" in innerValue &&
+        typeof (innerValue as { type?: unknown }).type === "string"
+          ? (innerValue as { type: string }).type
+          : null;
+      assert.notEqual(emittedEventType, "turn.aborted");
     }),
   );
 
