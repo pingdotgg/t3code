@@ -87,7 +87,7 @@ export const createOxlintRuleHarness = (ruleName: string): RuleHarness => {
     const sourcePath = path.join(fixtureDir, "fixture.ts");
     const repoRoot = path.join(import.meta.dirname, "..", "..");
     const oxlintBin = path.join(repoRoot, "node_modules", ".bin", "oxlint");
-    const pluginPath = path.join(repoRoot, "oxlint-plugin-t3code", "index.ts");
+    const pluginPath = path.join(repoRoot, "oxlint-plugin-t3code", "index.js");
 
     yield* fs.writeFileString(
       configPath,

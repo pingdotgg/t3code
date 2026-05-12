@@ -216,12 +216,15 @@ export interface OrchestrationIntegrationHarness {
       timeoutMs?: number,
     ): Effect.Effect<Receipt, never>;
   };
+  readonly startReactor: Effect.Effect<void, never>;
   readonly dispose: Effect.Effect<void, never>;
 }
 
 interface MakeOrchestrationIntegrationHarnessOptions {
   readonly provider?: ProviderDriverKind;
   readonly realCodex?: boolean;
+  readonly rootDir?: string;
+  readonly autoStartReactor?: boolean;
 }
 
 export const makeOrchestrationIntegrationHarness = (
@@ -244,9 +247,11 @@ export const makeOrchestrationIntegrationHarness = (
           makeAdapterRegistryMock({ [adapterHarness.provider]: adapterHarness.adapter }),
         )
       : null;
-    const rootDir = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: "t3-orchestration-integration-",
-    });
+    const rootDir =
+      options?.rootDir ??
+      (yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-orchestration-integration-",
+      }));
     const workspaceDir = path.join(rootDir, "workspace");
     const { stateDir, dbPath } = yield* deriveServerPaths(rootDir, undefined).pipe(
       Effect.provideService(Path.Path, path),
@@ -404,9 +409,12 @@ export const makeOrchestrationIntegrationHarness = (
     ).pipe(Effect.orDie);
 
     const scope = yield* Scope.make("sequential");
-    yield* tryRuntimePromise("start OrchestrationReactor", () =>
+    const startReactor = tryRuntimePromise("start OrchestrationReactor", () =>
       runtime.runPromise(reactor.start().pipe(Scope.provide(scope))),
     ).pipe(Effect.orDie);
+    if (options?.autoStartReactor !== false) {
+      yield* startReactor;
+    }
     const receiptHistory = yield* Ref.make<ReadonlyArray<OrchestrationRuntimeReceipt>>([]);
     yield* Stream.runForEach(runtimeReceiptBus.streamEventsForTest, (receipt) =>
       Ref.update(receiptHistory, (history) => [...history, receipt]).pipe(Effect.asVoid),
@@ -546,6 +554,7 @@ export const makeOrchestrationIntegrationHarness = (
       waitForDomainEvent,
       waitForPendingApproval,
       waitForReceipt,
+      startReactor,
       dispose,
     } satisfies OrchestrationIntegrationHarness;
   });

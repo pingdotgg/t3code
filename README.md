@@ -40,6 +40,16 @@ brew install --cask t3-code
 yay -S t3code-bin
 ```
 
+## Fork Releases
+
+If you want desktop releases and auto-updates from a fork or branch such as `main-xavier`, use the `Release Desktop` GitHub Actions workflow with:
+
+- `target_branch`: the branch you want to release from, for example `main-xavier`
+- `publish_cli`: `false` for fork/private desktop-only releases
+- `finalize_version_bump`: `false` unless you want the workflow to push the version bump commit back to that branch
+
+The packaged desktop app will target the current GitHub repository for updater assets during CI builds, so fork releases will update from that fork's GitHub Releases.
+
 ## Some notes
 
 We are very very early in this project. Expect bugs.

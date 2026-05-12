@@ -9,7 +9,7 @@
     "**/routeTree.gen.ts"
   ],
   "plugins": ["eslint", "oxc", "react", "unicorn", "typescript"],
-  "jsPlugins": ["./oxlint-plugin-t3code/index.ts"],
+  "jsPlugins": ["./oxlint-plugin-t3code/index.js"],
   "categories": {
     "correctness": "warn",
     "suspicious": "warn",

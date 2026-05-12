@@ -471,7 +471,7 @@ function AssistantCopyButton({ row }: { row: Extract<TimelineRow, { kind: "messa
     row.message.turnId === activity.activeTurnId;
   const assistantCopyState = resolveAssistantMessageCopyState({
     text: row.message.text ?? null,
-    showCopyButton: row.showAssistantCopyButton,
+    showCopyButton: row.showAssistantCopyButton ?? false,
     streaming: row.message.streaming || assistantTurnStillInProgress,
   });
 

@@ -307,9 +307,13 @@ const makeOrchestrationEngine = Effect.gen(function* () {
       return yield* Deferred.await(result);
     });
 
+  const getReadModel: OrchestrationEngineShape["getReadModel"] = () =>
+    Effect.sync(() => commandReadModel);
+
   return {
     readEvents,
     dispatch,
+    getReadModel,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (wsServer, ProviderRuntimeIngestion, CheckpointReactor, etc.)
     // each independently receive all domain events.

@@ -272,7 +272,7 @@ describe("composerDraftStore clearComposerContent", () => {
     URL.revokeObjectURL = originalRevokeObjectUrl;
   });
 
-  it("does not revoke blob preview URLs when clearing composer content", () => {
+  it("does not revoke blob preview URLs when clearing composer content by default", () => {
     const first = makeImage({
       id: "img-optimistic",
       previewUrl: "blob:optimistic",
@@ -283,7 +283,21 @@ describe("composerDraftStore clearComposerContent", () => {
 
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
     expect(draft).toBeUndefined();
-    expect(revokeSpy).not.toHaveBeenCalledWith("blob:optimistic");
+    expect(revokeSpy).not.toHaveBeenCalled();
+  });
+
+  it("revokes blob preview URLs when explicitly requested while clearing composer content", () => {
+    const first = makeImage({
+      id: "img-optimistic",
+      previewUrl: "blob:optimistic",
+    });
+    useComposerDraftStore.getState().addImage(threadRef, first);
+
+    useComposerDraftStore.getState().clearComposerContent(threadRef);
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft).toBeUndefined();
+    expect(revokeSpy).toHaveBeenCalledWith("blob:optimistic");
   });
 });
 
@@ -925,6 +939,65 @@ describe("composerDraftStore project draft thread mapping", () => {
       branch: null,
       worktreePath: null,
       envMode: "local",
+    });
+  });
+});
+
+describe("composerDraftStore queued follow-up edit state", () => {
+  const threadId = ThreadId.make("thread-queued-follow-up-edit-state");
+  const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+
+  beforeEach(() => {
+    resetComposerDraftStore();
+  });
+
+  it("persists queued follow-up edit metadata inside the composer draft", () => {
+    useComposerDraftStore.getState().setPrompt(threadRef, "edit queued follow-up");
+    useComposerDraftStore.setState((state) => ({
+      draftsByThreadKey: {
+        ...state.draftsByThreadKey,
+        [threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]: {
+          ...(state.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)] ?? {
+            prompt: "",
+            images: [],
+            nonPersistedImageIds: [],
+            persistedAttachments: [],
+            terminalContexts: [],
+            modelSelectionByProvider: {},
+            activeProvider: null,
+            runtimeMode: null,
+            interactionMode: null,
+            queuedFollowUpEdit: null,
+          }),
+          prompt: "edit queued follow-up",
+          queuedFollowUpEdit: {
+            followUpId: "queued-follow-up-1",
+            queueIndex: 2,
+            previousFollowUpId: "queued-follow-up-0",
+            nextFollowUpId: "queued-follow-up-2",
+          },
+        },
+      },
+    }));
+
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        partialize: (state: ReturnType<typeof useComposerDraftStore.getState>) => unknown;
+      };
+    };
+    const persistedState = persistApi.getOptions().partialize(useComposerDraftStore.getState()) as {
+      draftsByThreadKey?: Record<
+        string,
+        { queuedFollowUpEdit?: { followUpId?: string; queueIndex?: number } }
+      >;
+    };
+
+    expect(
+      persistedState.draftsByThreadKey?.[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]
+        ?.queuedFollowUpEdit,
+    ).toMatchObject({
+      followUpId: "queued-follow-up-1",
+      queueIndex: 2,
     });
   });
 });

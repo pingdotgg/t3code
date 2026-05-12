@@ -1266,6 +1266,7 @@ function applyEnvironmentOrchestrationEvent(
           deletedAt: null,
           messages: [],
           proposedPlans: [],
+          queuedFollowUps: [],
           activities: [],
           checkpoints: [],
           session: null,

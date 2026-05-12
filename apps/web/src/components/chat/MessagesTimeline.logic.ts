@@ -26,7 +26,7 @@ export type MessagesTimelineRow =
       message: ChatMessage;
       durationStart: string;
       showCompletionDivider: boolean;
-      showAssistantCopyButton: boolean;
+      showAssistantCopyButton?: boolean | undefined;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
       revertTurnCount?: number | undefined;
     }
@@ -37,6 +37,8 @@ export type MessagesTimelineRow =
       proposedPlan: ProposedPlan;
     }
   | { kind: "working"; id: string; createdAt: string | null };
+
+export type TimelineRow = MessagesTimelineRow;
 
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
@@ -64,6 +66,47 @@ export function computeMessageDurationStart(
 
 export function normalizeCompactToolLabel(value: string): string {
   return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
+}
+
+function capitalizePhrase(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return value;
+  }
+  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`;
+}
+
+export function renderableWorkEntryHeading(workEntry: WorkLogEntry): string {
+  if (!workEntry.toolTitle) {
+    return capitalizePhrase(normalizeCompactToolLabel(workEntry.label));
+  }
+  return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
+}
+
+export function renderableWorkEntryPreview(
+  workEntry: Pick<WorkLogEntry, "detail" | "command" | "changedFiles">,
+): string | null {
+  if (workEntry.command) return workEntry.command;
+  if (workEntry.detail) return workEntry.detail;
+  if ((workEntry.changedFiles?.length ?? 0) === 0) return null;
+  const [firstPath] = workEntry.changedFiles ?? [];
+  if (!firstPath) return null;
+  return workEntry.changedFiles!.length === 1
+    ? firstPath
+    : `${firstPath} +${workEntry.changedFiles!.length - 1} more`;
+}
+
+export function renderableWorkEntryChangedFiles(
+  workEntry: Pick<WorkLogEntry, "detail" | "command" | "changedFiles">,
+): string[] {
+  const changedFiles = workEntry.changedFiles ?? [];
+  if (changedFiles.length === 0) {
+    return [];
+  }
+  if (!workEntry.command && !workEntry.detail) {
+    return [];
+  }
+  return changedFiles.slice(0, 4);
 }
 
 export function resolveAssistantMessageCopyState({

@@ -8,7 +8,13 @@ import {
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
-import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
+import {
+  type ChatMessage,
+  type QueuedFollowUp,
+  type SessionPhase,
+  type Thread,
+  type ThreadSession,
+} from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { selectThreadByRef, useStore } from "../store";
@@ -50,7 +56,13 @@ export function buildLocalDraftThread(
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
+    queuedFollowUps: [],
   };
+}
+
+export function describeQueuedFollowUp(followUp: Pick<QueuedFollowUp, "prompt">): string {
+  const trimmed = followUp.prompt.trim().replace(/\s+/g, " ");
+  return trimmed.length > 0 ? trimmed : "Empty follow-up";
 }
 
 export function shouldWriteThreadErrorToCurrentServerThread(input: {

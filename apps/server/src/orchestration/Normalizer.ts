@@ -73,6 +73,22 @@ export const normalizeDispatchCommand = (command: ClientOrchestrationCommand) =>
       command.message.attachments,
       (attachment) =>
         Effect.gen(function* () {
+          if (!("dataUrl" in attachment)) {
+            const persistedAttachment = attachment as {
+              type: "image";
+              id: string;
+              name: string;
+              mimeType: string;
+              sizeBytes: number;
+            };
+            return {
+              type: "image" as const,
+              id: persistedAttachment.id,
+              name: persistedAttachment.name,
+              mimeType: persistedAttachment.mimeType,
+              sizeBytes: persistedAttachment.sizeBytes,
+            };
+          }
           const parsed = parseBase64DataUrl(attachment.dataUrl);
           if (!parsed || !parsed.mimeType.startsWith("image/")) {
             return yield* new OrchestrationDispatchCommandError({
