@@ -990,18 +990,16 @@ const make = Effect.gen(function* () {
     }
 
     const now = event.payload.createdAt;
-    let stopFailureDetail: string | null = null;
     if (thread.session && thread.session.status !== "stopped") {
       const stopExit = yield* Effect.exit(providerService.stopSession({ threadId: thread.id }));
       if (Exit.isFailure(stopExit)) {
-        const sessionAlreadyGone = isSessionAlreadyGoneFailure(stopExit.cause);
-        stopFailureDetail = formatFailureDetail(stopExit.cause);
-        if (!sessionAlreadyGone) {
+        if (!isSessionAlreadyGoneFailure(stopExit.cause)) {
+          const detail = formatFailureDetail(stopExit.cause);
           yield* appendProviderFailureActivity({
             threadId: thread.id,
             kind: "provider.session.stop.failed",
             summary: "Provider session stop failed",
-            detail: stopFailureDetail,
+            detail,
             turnId: thread.session.activeTurnId,
             createdAt: now,
           }).pipe(
@@ -1020,14 +1018,13 @@ const make = Effect.gen(function* () {
             threadId: thread.id,
             session: {
               ...thread.session,
-              lastError: stopFailureDetail,
+              lastError: detail,
               updatedAt: now,
             },
             createdAt: now,
           });
           return;
         }
-        stopFailureDetail = null;
       }
     }
 
@@ -1042,7 +1039,7 @@ const make = Effect.gen(function* () {
           : {}),
         runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
         activeTurnId: null,
-        lastError: stopFailureDetail ?? thread.session?.lastError ?? null,
+        lastError: thread.session?.lastError ?? null,
         updatedAt: now,
       },
       createdAt: now,
