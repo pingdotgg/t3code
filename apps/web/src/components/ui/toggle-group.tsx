@@ -43,7 +43,7 @@ function ToggleGroup({
       orientation={orientation}
       {...props}
     >
-      <ToggleGroupContext.Provider value={value}>{children}</ToggleGroupContext.Provider>
+      <ToggleGroupContext value={value}>{children}</ToggleGroupContext>
     </ToggleGroupPrimitive>
   );
 }
@@ -55,7 +55,7 @@ function Toggle({
   size,
   ...props
 }: TogglePrimitive.Props & VariantProps<typeof toggleVariants>) {
-  const context = React.useContext(ToggleGroupContext);
+  const context = React.use(ToggleGroupContext);
 
   const resolvedVariant = variant ?? context.variant;
   const resolvedSize = size ?? context.size;

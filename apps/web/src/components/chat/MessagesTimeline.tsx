@@ -69,7 +69,7 @@ import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 
 // ---------------------------------------------------------------------------
-// Context — shared state consumed by every row component via useContext.
+// Context — shared state consumed by every row component via Context.
 // Propagates through LegendList's memo boundaries for shared callbacks and
 // non-row-scoped state. `nowIso` is intentionally excluded — self-ticking
 // components (WorkingTimer, LiveElapsed) handle it.
@@ -264,8 +264,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   }
 
   return (
-    <TimelineRowCtx.Provider value={sharedState}>
-      <TimelineRowActivityCtx.Provider value={activityState}>
+    <TimelineRowCtx value={sharedState}>
+      <TimelineRowActivityCtx value={activityState}>
         <LegendList<MessagesTimelineRow>
           ref={listRef}
           data={rows}
@@ -281,8 +281,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           ListHeaderComponent={TIMELINE_LIST_HEADER}
           ListFooterComponent={TIMELINE_LIST_FOOTER}
         />
-      </TimelineRowActivityCtx.Provider>
-    </TimelineRowCtx.Provider>
+      </TimelineRowActivityCtx>
+    </TimelineRowCtx>
   );
 });
 

@@ -364,12 +364,12 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   }, [keybindings, terminalOpen, toggleOpen]);
 
   return (
-    <ComposerHandleContext.Provider value={composerHandleRef}>
+    <ComposerHandleContext value={composerHandleRef}>
       <CommandDialog open={open} onOpenChange={setOpen}>
         {children}
         <CommandPaletteDialog />
       </CommandDialog>
-    </ComposerHandleContext.Provider>
+    </ComposerHandleContext>
   );
 }
 

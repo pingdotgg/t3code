@@ -25,7 +25,7 @@ export function NumberField({
   const contextValue = React.useMemo(() => ({ fieldId }), [fieldId]);
 
   return (
-    <NumberFieldContext.Provider value={contextValue}>
+    <NumberFieldContext value={contextValue}>
       <NumberFieldPrimitive.Root
         className={cn("flex w-full flex-col items-start gap-2", className)}
         data-size={size}
@@ -33,7 +33,7 @@ export function NumberField({
         id={fieldId}
         {...props}
       />
-    </NumberFieldContext.Provider>
+    </NumberFieldContext>
   );
 }
 
@@ -112,7 +112,7 @@ export function NumberFieldScrubArea({
 }: NumberFieldPrimitive.ScrubArea.Props & {
   label: string;
 }): React.ReactElement {
-  const context = React.useContext(NumberFieldContext);
+  const context = React.use(NumberFieldContext);
 
   if (!context) {
     throw new Error(
