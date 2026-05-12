@@ -97,7 +97,7 @@ const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
 const STALE_RUNNING_SESSION_DETAIL =
-  "Provider runtime is no longer active. Start a new turn to reconnect this thread.";
+  "This thread was restored, but its running provider session was no longer available.\nStart a new turn to continue.";
 
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();

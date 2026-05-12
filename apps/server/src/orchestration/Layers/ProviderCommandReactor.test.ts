@@ -1646,7 +1646,8 @@ describe("ProviderCommandReactor", () => {
       providerInstanceId: ProviderInstanceId.make("codex"),
       runtimeMode: "approval-required",
       activeTurnId: null,
-      lastError: "Provider runtime is no longer active. Start a new turn to reconnect this thread.",
+      lastError:
+        "This thread was restored, but its running provider session was no longer available.\nStart a new turn to continue.",
     });
     expect(thread?.latestTurn).toMatchObject({
       turnId: asTurnId("turn-stale"),
