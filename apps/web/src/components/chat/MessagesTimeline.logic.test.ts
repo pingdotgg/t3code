@@ -268,6 +268,59 @@ describe("deriveMessagesTimelineRows", () => {
     expect(assistantRows[1]?.showCompletionDivider).toBe(true);
   });
 
+  it("marks only the active assistant turn as streaming for copy controls", () => {
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "assistant-one-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:10Z",
+          message: {
+            id: "assistant-one" as never,
+            role: "assistant",
+            text: "Earlier response.",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:10Z",
+            completedAt: "2026-01-01T00:00:11Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-two-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:20Z",
+          message: {
+            id: "assistant-two" as never,
+            role: "assistant",
+            text: "Active response.",
+            turnId: "turn-2" as never,
+            createdAt: "2026-01-01T00:00:20Z",
+            completedAt: "2026-01-01T00:00:30Z",
+            streaming: false,
+          },
+        },
+      ],
+      completionDividerBeforeEntryId: "assistant-two-entry",
+      completionSummary: "done",
+      isWorking: false,
+      activeTurnInProgress: true,
+      activeTurnId: "turn-2" as never,
+      activeTurnStartedAt: null,
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map(),
+    });
+
+    const assistantRows = rows.filter(
+      (row): row is Extract<(typeof rows)[number], { kind: "message" }> =>
+        row.kind === "message" && row.message.role === "assistant",
+    );
+
+    expect(assistantRows[0]?.assistantCopyStreaming).toBe(false);
+    expect(assistantRows[0]?.completionSummary).toBeNull();
+    expect(assistantRows[1]?.assistantCopyStreaming).toBe(true);
+    expect(assistantRows[1]?.completionSummary).toBe("done");
+  });
+
   it("projects assistant diff summaries and user revert counts onto the affected rows", () => {
     const assistantTurnDiffSummary = {
       turnId: "turn-1" as never,
