@@ -15,6 +15,7 @@ import {
   VisualStudioCode,
   VisualStudioCodeInsiders,
   VSCodium,
+  WindsurfIcon,
   Zed,
 } from "../Icons";
 import {
@@ -40,6 +41,11 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
       label: "Cursor",
       Icon: CursorIcon,
       value: "cursor",
+    },
+    {
+      label: "Windsurf",
+      Icon: WindsurfIcon,
+      value: "windsurf",
     },
     {
       label: "Trae",

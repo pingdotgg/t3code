@@ -36,6 +36,16 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
         args: ["/tmp/workspace"],
       });
 
+      const windsurfLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "windsurf" },
+        "darwin",
+        { PATH: "" },
+      );
+      assert.deepEqual(windsurfLaunch, {
+        command: "windsurf",
+        args: ["/tmp/workspace"],
+      });
+
       const traeLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "trae" },
         "darwin",
@@ -225,6 +235,16 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
         args: ["--goto", "/tmp/workspace/src/open.ts:71:5"],
       });
 
+      const windsurfLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "windsurf" },
+        "darwin",
+        { PATH: "" },
+      );
+      assert.deepEqual(windsurfLineAndColumn, {
+        command: "windsurf",
+        args: ["--goto", "/tmp/workspace/src/open.ts:71:5"],
+      });
+
       const traeLineAndColumn = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace/src/open.ts:71:5", editor: "trae" },
         "darwin",
@@ -411,6 +431,29 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
     }),
   );
 
+  it.effect("falls back to surf when windsurf is not installed", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-open-test-" });
+      yield* fs.writeFileString(path.join(dir, "surf"), "#!/bin/sh\nexit 0\n");
+      yield* fs.chmod(path.join(dir, "surf"), 0o755);
+
+      const result = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "windsurf" },
+        "linux",
+        {
+          PATH: dir,
+        },
+      );
+
+      assert.deepEqual(result, {
+        command: "surf",
+        args: ["/tmp/workspace"],
+      });
+    }),
+  );
+
   it.effect("falls back to zeditor when zed is not installed", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -576,6 +619,7 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
 
       yield* fs.writeFileString(path.join(dir, "trae.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "kiro.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "windsurf.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "code-insiders.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "codium.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "aqua.CMD"), "@echo off\r\n");
@@ -595,6 +639,7 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
         PATHEXT: ".COM;.EXE;.BAT;.CMD",
       });
       assert.deepEqual(editors, [
+        "windsurf",
         "trae",
         "kiro",
         "vscode-insiders",
