@@ -1,12 +1,17 @@
 /**
- * Open - Browser/editor launch service interface.
+ * ExternalLauncher - external application launch service interface.
  *
- * Owns process launch helpers for opening URLs in a browser and workspace
- * paths in a configured editor.
+ * Owns process launch helpers for browser URLs and workspace paths
+ * in configured editor integrations.
  *
- * @module Open
+ * @module ExternalLauncher
  */
-import { EDITORS, OpenError, type EditorId } from "@t3tools/contracts";
+import {
+  EDITORS,
+  ExternalLauncherError,
+  type EditorId,
+  type LaunchEditorInput,
+} from "@t3tools/contracts";
 import { isCommandAvailable, type CommandAvailabilityOptions } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -19,13 +24,9 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 // Definitions
 // ==============================
 
-export { OpenError };
+export { ExternalLauncherError };
+export type { LaunchEditorInput };
 export { isCommandAvailable } from "@t3tools/shared/shell";
-
-export interface OpenInEditorInput {
-  readonly cwd: string;
-  readonly editor: EditorId;
-}
 
 interface EditorLaunch {
   readonly command: string;
@@ -236,44 +237,46 @@ export function resolveAvailableEditors(
 }
 
 /**
- * OpenShape - Service API for browser and editor launch actions.
+ * ExternalLauncherShape - Service API for browser and editor launch actions.
  */
-export interface OpenShape {
+export interface ExternalLauncherShape {
   /**
-   * Open a URL target in the default browser.
+   * Launch a URL target in the default browser.
    */
-  readonly openBrowser: (target: string) => Effect.Effect<void, OpenError>;
+  readonly launchBrowser: (target: string) => Effect.Effect<void, ExternalLauncherError>;
 
   /**
-   * Open a workspace path in a selected editor integration.
+   * Launch a workspace path in a selected editor integration.
    *
    * Launches the editor as a detached process so server startup is not blocked.
    */
-  readonly openInEditor: (input: OpenInEditorInput) => Effect.Effect<void, OpenError>;
+  readonly launchEditor: (input: LaunchEditorInput) => Effect.Effect<void, ExternalLauncherError>;
 }
 
 /**
- * Open - Service tag for browser/editor launch operations.
+ * ExternalLauncher - Service tag for browser/editor launch operations.
  */
-export class Open extends Context.Service<Open, OpenShape>()("t3/open") {}
+export class ExternalLauncher extends Context.Service<ExternalLauncher, ExternalLauncherShape>()(
+  "t3/process/ExternalLauncher",
+) {}
 
 // ==============================
 // Implementations
 // ==============================
 
 export const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
-  input: OpenInEditorInput,
+  input: LaunchEditorInput,
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
-): Effect.fn.Return<EditorLaunch, OpenError> {
+): Effect.fn.Return<EditorLaunch, ExternalLauncherError> {
   yield* Effect.annotateCurrentSpan({
-    "open.editor": input.editor,
-    "open.cwd": input.cwd,
-    "open.platform": platform,
+    "externalLauncher.editor": input.editor,
+    "externalLauncher.cwd": input.cwd,
+    "externalLauncher.platform": platform,
   });
   const editorDef = EDITORS.find((editor) => editor.id === input.editor);
   if (!editorDef) {
-    return yield* new OpenError({ message: `Unknown editor: ${input.editor}` });
+    return yield* new ExternalLauncherError({ message: `Unknown editor: ${input.editor}` });
   }
 
   if (editorDef.commands) {
@@ -288,16 +291,16 @@ export const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.id !== "file-manager") {
-    return yield* new OpenError({ message: `Unsupported editor: ${input.editor}` });
+    return yield* new ExternalLauncherError({ message: `Unsupported editor: ${input.editor}` });
   }
 
   return { command: fileManagerCommandForPlatform(platform), args: [input.cwd] };
 });
 
-const launchAndUnref = Effect.fn("open.launchAndUnref")(function* (
+const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
   launch: ProcessLaunch,
   errorMessage: string,
-): Effect.fn.Return<void, OpenError, ChildProcessSpawner.ChildProcessSpawner> {
+): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const command = ChildProcess.make(launch.command, launch.args, launch.options);
 
@@ -305,21 +308,23 @@ const launchAndUnref = Effect.fn("open.launchAndUnref")(function* (
     Effect.flatMap((handle) => handle.unref),
     Effect.asVoid,
     Effect.scoped,
-    Effect.mapError((cause) => new OpenError({ message: errorMessage, cause })),
+    Effect.mapError((cause) => new ExternalLauncherError({ message: errorMessage, cause })),
   );
 });
 
-export const launchBrowser = Effect.fn("open.launchBrowser")(function* (
+export const launchBrowser = Effect.fn("externalLauncher.launchBrowser")(function* (
   target: string,
-): Effect.fn.Return<void, OpenError, ChildProcessSpawner.ChildProcessSpawner> {
+): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
   return yield* launchAndUnref(resolveBrowserLaunch(target), "Browser auto-open failed");
 });
 
-export const launchDetached = Effect.fn("open.launchDetached")(function* (
+export const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(function* (
   launch: EditorLaunch,
-): Effect.fn.Return<void, OpenError, ChildProcessSpawner.ChildProcessSpawner> {
+): Effect.fn.Return<void, ExternalLauncherError, ChildProcessSpawner.ChildProcessSpawner> {
   if (!isCommandAvailable(launch.command)) {
-    return yield* new OpenError({ message: `Editor command not found: ${launch.command}` });
+    return yield* new ExternalLauncherError({
+      message: `Editor command not found: ${launch.command}`,
+    });
   }
 
   const isWin32 = process.platform === "win32";
@@ -343,17 +348,17 @@ const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   return {
-    openBrowser: (target) =>
+    launchBrowser: (target) =>
       launchBrowser(target).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       ),
-    openInEditor: (input) =>
+    launchEditor: (input) =>
       Effect.flatMap(resolveEditorLaunch(input), (launch) =>
-        launchDetached(launch).pipe(
+        launchEditorProcess(launch).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         ),
       ),
-  } satisfies OpenShape;
+  } satisfies ExternalLauncherShape;
 });
 
-export const OpenLive = Layer.effect(Open, make);
+export const ExternalLauncherLive = Layer.effect(ExternalLauncher, make);
