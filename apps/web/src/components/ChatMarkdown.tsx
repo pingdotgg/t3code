@@ -1,6 +1,6 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import type { EnvironmentId, ServerProviderSkill } from "@t3tools/contracts";
 import React, {
   Children,
   Suspense,
@@ -23,7 +23,6 @@ import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { openInPreferredEditor } from "../editorPreferences";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
@@ -35,6 +34,7 @@ import {
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
+import { openPathInPreferredEditorOrFilePreview } from "../workspaceFilePreview";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -60,6 +60,7 @@ class CodeHighlightErrorBoundary extends React.Component<
 interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
+  environmentId?: EnvironmentId | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
 }
@@ -283,6 +284,8 @@ interface MarkdownFileLinkProps {
   filePath: string;
   label: string;
   theme: "light" | "dark";
+  cwd?: string | undefined;
+  environmentId?: EnvironmentId | undefined;
   className?: string | undefined;
 }
 
@@ -374,19 +377,17 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
   filePath,
   label,
   theme,
+  cwd,
+  environmentId,
   className,
 }: MarkdownFileLinkProps) {
   const handleOpen = useCallback(() => {
-    const api = readLocalApi();
-    if (!api) {
-      toastManager.add({
-        type: "error",
-        title: "Open in editor is unavailable",
-      });
-      return;
-    }
-
-    void openInPreferredEditor(api, targetPath).catch((error) => {
+    void openPathInPreferredEditorOrFilePreview({
+      targetPath,
+      cwd,
+      environmentId,
+      displayPath,
+    }).catch((error) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",
@@ -395,7 +396,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         }),
       );
     });
-  }, [targetPath]);
+  }, [cwd, displayPath, environmentId, targetPath]);
 
   const handleCopy = useCallback((value: string, title: string) => {
     if (typeof window === "undefined" || !navigator.clipboard?.writeText) {
@@ -439,7 +440,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
 
       const clicked = await api.contextMenu.show(
         [
-          { id: "open", label: "Open in editor" },
+          { id: "open", label: "Open file" },
           { id: "copy-relative", label: "Copy relative path" },
           { id: "copy-full", label: "Copy full path" },
         ] as const,
@@ -508,6 +509,8 @@ function areMarkdownFileLinkPropsEqual(
     previous.filePath === next.filePath &&
     previous.label === next.label &&
     previous.theme === next.theme &&
+    previous.cwd === next.cwd &&
+    previous.environmentId === next.environmentId &&
     previous.className === next.className
   );
 }
@@ -515,6 +518,7 @@ function areMarkdownFileLinkPropsEqual(
 function ChatMarkdown({
   text,
   cwd,
+  environmentId,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
 }: ChatMarkdownProps) {
@@ -576,6 +580,8 @@ function ChatMarkdown({
             filePath={fileLinkMeta.filePath}
             label={labelParts.join(" · ")}
             theme={resolvedTheme}
+            cwd={cwd}
+            environmentId={environmentId}
             className={props.className}
           />
         );
@@ -605,8 +611,10 @@ function ChatMarkdown({
     [
       diffThemeName,
       fileLinkParentSuffixByPath,
+      environmentId,
       isStreaming,
       markdownFileLinkMetaByHref,
+      cwd,
       resolvedTheme,
       skills,
     ],

@@ -20,7 +20,6 @@ import {
 } from "react";
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { type TerminalContextSelection } from "~/lib/terminalContext";
-import { openInPreferredEditor } from "../editorPreferences";
 import {
   collectWrappedTerminalLinkLine,
   extractTerminalLinks,
@@ -48,6 +47,7 @@ import {
 import { readEnvironmentApi } from "~/environmentApi";
 import { readLocalApi } from "~/localApi";
 import { selectTerminalEventEntries, useTerminalStateStore } from "../terminalStateStore";
+import { openPathInPreferredEditorOrFilePreview } from "../workspaceFilePreview";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -501,7 +501,12 @@ export function TerminalViewport({
               }
 
               const target = resolvePathLinkTarget(match.text, cwd);
-              void openInPreferredEditor(localApi, target).catch((error) => {
+              void openPathInPreferredEditorOrFilePreview({
+                targetPath: target,
+                environmentId,
+                cwd,
+                displayPath: match.text,
+              }).catch((error) => {
                 writeSystemMessage(
                   latestTerminal,
                   error instanceof Error ? error.message : "Unable to open path",

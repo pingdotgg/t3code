@@ -4,6 +4,7 @@ import {
   BRAND_ASSET_PATHS,
   DEVELOPMENT_ICON_OVERRIDES,
   PUBLISH_ICON_OVERRIDES,
+  resolveWebAssetBrandForConfiguredChannel,
   resolveWebAssetBrandForChannel,
   resolveWebIconOverrides,
 } from "./brand-assets.ts";
@@ -66,5 +67,12 @@ describe("brand-assets", () => {
   it("maps hosted release channels to web asset brands", () => {
     expect(resolveWebAssetBrandForChannel("latest")).toBe("production");
     expect(resolveWebAssetBrandForChannel("nightly")).toBe("nightly");
+  });
+
+  it("defaults configured web asset channels to production", () => {
+    expect(resolveWebAssetBrandForConfiguredChannel(undefined)).toBe("production");
+    expect(resolveWebAssetBrandForConfiguredChannel("latest")).toBe("production");
+    expect(resolveWebAssetBrandForConfiguredChannel("preview")).toBe("production");
+    expect(resolveWebAssetBrandForConfiguredChannel(" nightly ")).toBe("nightly");
   });
 });

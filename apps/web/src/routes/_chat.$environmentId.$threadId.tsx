@@ -29,6 +29,12 @@ import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
 import { RightPanelSheet } from "../components/RightPanelSheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
+import { WorkspaceFilePreviewPanel } from "../components/WorkspaceFilePreviewPanel";
+import {
+  closeWorkspaceFilePreview,
+  reopenWorkspaceFilePreview,
+  useWorkspaceFilePreviewState,
+} from "../workspaceFilePreview";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
 const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
@@ -144,6 +150,44 @@ const DiffPanelInlineSidebar = (props: {
   );
 };
 
+const FilePreviewInlineSidebar = (props: { open: boolean; renderContent: boolean }) => {
+  const { open, renderContent } = props;
+  const filePreview = useWorkspaceFilePreviewState();
+  const onOpenChange = useCallback((nextOpen: boolean) => {
+    if (nextOpen) {
+      reopenWorkspaceFilePreview();
+      return;
+    }
+    closeWorkspaceFilePreview();
+  }, []);
+
+  return (
+    <SidebarProvider
+      defaultOpen={false}
+      open={open}
+      onOpenChange={onOpenChange}
+      className="w-auto min-h-0 flex-none bg-transparent"
+      style={{ "--sidebar-width": DIFF_INLINE_DEFAULT_WIDTH } as React.CSSProperties}
+    >
+      <Sidebar
+        side="right"
+        collapsible="offcanvas"
+        className="border-l border-border bg-card text-foreground"
+        resizable={{
+          maxWidth: DIFF_INLINE_SIDEBAR_MAX_WIDTH,
+          minWidth: DIFF_INLINE_SIDEBAR_MIN_WIDTH,
+          storageKey: "chat_file_preview_sidebar_width",
+        }}
+      >
+        {renderContent ? (
+          <WorkspaceFilePreviewPanel mode="sidebar" target={filePreview.target} />
+        ) : null}
+        <SidebarRail />
+      </Sidebar>
+    </SidebarProvider>
+  );
+};
+
 function ChatThreadRouteView() {
   const navigate = useNavigate();
   const threadRef = Route.useParams({
@@ -174,6 +218,8 @@ function ChatThreadRouteView() {
   const serverThreadStarted = threadHasStarted(serverThread);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
   const diffOpen = search.diff === "1";
+  const filePreview = useWorkspaceFilePreviewState();
+  const filePreviewOpen = filePreview.open && filePreview.target !== null;
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const currentThreadKey = threadRef ? `${threadRef.environmentId}:${threadRef.threadId}` : null;
   const [diffPanelMountState, setDiffPanelMountState] = useState(() => ({
@@ -221,6 +267,9 @@ function ChatThreadRouteView() {
       },
     });
   }, [markDiffOpened, navigate, threadRef]);
+  const openFilePreview = useCallback(() => {
+    reopenWorkspaceFilePreview();
+  }, []);
 
   useEffect(() => {
     if (diffOpen) {
@@ -228,11 +277,23 @@ function ChatThreadRouteView() {
     }
   }, [diffOpen]);
 
+  useEffect(() => {
+    if (filePreviewOpen) {
+      markRightPanelUsed("file");
+    }
+  }, [filePreviewOpen]);
+
   useRegisterRightPanel({
     close: closeDiff,
     enabled: threadRef !== null,
     kind: "diff",
     open: openDiff,
+  });
+  useRegisterRightPanel({
+    close: closeWorkspaceFilePreview,
+    enabled: threadRef !== null,
+    kind: "file",
+    open: openFilePreview,
   });
 
   useMobileEdgeSwipe({
@@ -274,6 +335,7 @@ function ChatThreadRouteView() {
   }
 
   const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
+  const shouldRenderFilePreviewContent = filePreviewOpen || filePreview.target !== null;
 
   if (!shouldUseDiffSheet) {
     return (
@@ -293,6 +355,10 @@ function ChatThreadRouteView() {
           onOpenDiff={openDiff}
           renderDiffContent={shouldRenderDiffContent}
         />
+        <FilePreviewInlineSidebar
+          open={filePreviewOpen}
+          renderContent={shouldRenderFilePreviewContent}
+        />
       </>
     );
   }
@@ -309,6 +375,11 @@ function ChatThreadRouteView() {
       </SidebarInset>
       <RightPanelSheet open={diffOpen} onClose={closeDiff}>
         {shouldRenderDiffContent ? <LazyDiffPanel mode="sheet" /> : null}
+      </RightPanelSheet>
+      <RightPanelSheet open={filePreviewOpen} onClose={closeWorkspaceFilePreview}>
+        {shouldRenderFilePreviewContent ? (
+          <WorkspaceFilePreviewPanel mode="sheet" target={filePreview.target} />
+        ) : null}
       </RightPanelSheet>
     </>
   );

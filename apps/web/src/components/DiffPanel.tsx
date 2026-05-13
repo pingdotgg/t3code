@@ -21,11 +21,9 @@ import {
   useRef,
   useState,
 } from "react";
-import { openInPreferredEditor } from "../editorPreferences";
 import { useGitStatus } from "~/lib/gitStatusState";
 import { checkpointDiffQueryOptions } from "~/lib/providerReactQuery";
 import { cn } from "~/lib/utils";
-import { readLocalApi } from "../localApi";
 import { resolvePathLinkTarget } from "../terminal-links";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import { useTheme } from "../hooks/useTheme";
@@ -39,6 +37,7 @@ import { useSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
+import { openPathInPreferredEditorOrFilePreview } from "../workspaceFilePreview";
 
 type DiffRenderMode = "stacked" | "split";
 type DiffThemeType = "light" | "dark";
@@ -369,14 +368,16 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
 
   const openDiffFileInEditor = useCallback(
     (filePath: string) => {
-      const api = readLocalApi();
-      if (!api) return;
       const targetPath = activeCwd ? resolvePathLinkTarget(filePath, activeCwd) : filePath;
-      void openInPreferredEditor(api, targetPath).catch((error) => {
+      void openPathInPreferredEditorOrFilePreview({
+        targetPath,
+        ...(activeThread?.environmentId ? { environmentId: activeThread.environmentId } : {}),
+        ...(activeCwd ? { cwd: activeCwd, displayPath: filePath } : {}),
+      }).catch((error) => {
         console.warn("Failed to open diff file in editor.", error);
       });
     },
-    [activeCwd],
+    [activeCwd, activeThread?.environmentId],
   );
   const toggleDiffFileCollapsed = useCallback((fileKey: string) => {
     setCollapsedDiffFileKeys((current) => {

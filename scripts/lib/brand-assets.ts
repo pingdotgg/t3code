@@ -39,6 +39,13 @@ export function resolveWebAssetBrandForChannel(channel: WebAssetChannel): WebAss
   return channel === "nightly" ? "nightly" : "production";
 }
 
+export function resolveWebAssetBrandForConfiguredChannel(
+  channel: string | null | undefined,
+): WebAssetBrand {
+  const normalizedChannel = channel?.trim().toLowerCase();
+  return normalizedChannel === "nightly" ? "nightly" : "production";
+}
+
 export interface IconOverride {
   readonly sourceRelativePath: string;
   readonly targetRelativePath: string;

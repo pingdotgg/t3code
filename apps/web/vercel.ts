@@ -24,8 +24,7 @@ function channelCookie(channel: "latest" | "nightly"): string {
 }
 
 export const config: VercelConfig = {
-  buildCommand:
-    'turbo build --filter @t3tools/web && bun ../../scripts/apply-web-brand-assets.ts --channel "${VITE_HOSTED_APP_CHANNEL:-latest}"',
+  buildCommand: "turbo build --filter @t3tools/web",
   git: {
     deploymentEnabled: false,
   },

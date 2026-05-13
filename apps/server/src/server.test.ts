@@ -2452,6 +2452,33 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc projects.readFile", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-read-" });
+      yield* fs.makeDirectory(path.join(workspaceDir, "src"), { recursive: true });
+      yield* fs.writeFileString(path.join(workspaceDir, "src", "index.ts"), "export {};\n");
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsReadFile]({
+            cwd: workspaceDir,
+            relativePath: "src/index.ts",
+          }),
+        ),
+      );
+
+      assert.equal(response.relativePath, "src/index.ts");
+      assert.equal(response.contents, "export {};\n");
+      assert.equal(response.truncated, false);
+      assert.equal(response.sizeBytes, "export {};\n".length);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("creates a missing workspace root during websocket project.create dispatch", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -2506,6 +2533,32 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assertTrue(result._tag === "Failure");
       assertTrue(result.failure._tag === "ProjectWriteFileError");
+      assert.equal(
+        result.failure.message,
+        "Workspace file path must stay within the project root.",
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes websocket rpc projects.readFile errors", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-read-" });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsReadFile]({
+            cwd: workspaceDir,
+            relativePath: "../escape.txt",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ProjectReadFileError");
       assert.equal(
         result.failure.message,
         "Workspace file path must stay within the project root.",

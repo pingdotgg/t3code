@@ -1,8 +1,15 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
+import {
+  resolveWebAssetBrandForConfiguredChannel,
+  resolveWebIconOverrides,
+} from "../../scripts/lib/brand-assets.ts";
 import pkg from "./package.json" with { type: "json" };
 
 const port = Number(process.env.PORT ?? 5733);
@@ -10,6 +17,7 @@ const host = process.env.HOST?.trim() || "localhost";
 const configuredWsUrl = process.env.VITE_WS_URL?.trim();
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
 const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
+const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
   if (explicitHostedAppUrl) {
@@ -54,6 +62,24 @@ function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
 }
 
 const devProxyTarget = resolveDevProxyTarget(configuredWsUrl);
+const webAssetBrand = resolveWebAssetBrandForConfiguredChannel(configuredHostedAppChannel);
+
+function webBrandAssetsPlugin(): Plugin {
+  return {
+    name: "t3code-web-brand-assets",
+    apply: "build",
+    async closeBundle() {
+      await Promise.all(
+        resolveWebIconOverrides(webAssetBrand, "apps/web/dist").map((override) =>
+          fs.copyFile(
+            path.join(repoRoot, override.sourceRelativePath),
+            path.join(repoRoot, override.targetRelativePath),
+          ),
+        ),
+      );
+    },
+  };
+}
 
 export default defineConfig({
   plugins: [
@@ -68,6 +94,7 @@ export default defineConfig({
       presets: [reactCompilerPreset()],
     }),
     tailwindcss(),
+    webBrandAssetsPlugin(),
   ],
   optimizeDeps: {
     include: [

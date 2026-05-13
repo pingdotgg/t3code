@@ -54,6 +54,68 @@ const writeTextFile = Effect.fn("writeTextFile")(function* (
 });
 
 it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
+  describe("readFile", () => {
+    it.effect("reads text files relative to the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "src/index.ts", "export const value = 1;\n");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "src/index.ts",
+        });
+
+        expect(result).toEqual({
+          relativePath: "src/index.ts",
+          contents: "export const value = 1;\n",
+          truncated: false,
+          sizeBytes: "export const value = 1;\n".length,
+        });
+      }),
+    );
+
+    it.effect("rejects reads outside the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+
+        const error = yield* workspaceFileSystem
+          .readFile({
+            cwd,
+            relativePath: "../escape.md",
+          })
+          .pipe(Effect.flip);
+
+        expect(error.message).toContain(
+          "Workspace file path must be relative to the project root: ../escape.md",
+        );
+      }),
+    );
+
+    it.effect("rejects binary files", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fileSystem.writeFile(path.join(cwd, "image.bin"), Uint8Array.from([1, 0, 2]));
+
+        const error = yield* workspaceFileSystem
+          .readFile({
+            cwd,
+            relativePath: "image.bin",
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("WorkspaceFileSystemError");
+        if (error._tag === "WorkspaceFileSystemError") {
+          expect(error.detail).toContain("Workspace file appears to be binary.");
+        }
+      }),
+    );
+  });
+
   describe("writeFile", () => {
     it.effect("writes files relative to the workspace root", () =>
       Effect.gen(function* () {
