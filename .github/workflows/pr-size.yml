@@ -124,6 +124,9 @@ jobs:
       group: pr-size-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
+      # This pull_request_target job may fetch untrusted PR commits only as passive
+      # git data. Do not add dependency installs, build/test scripts, or cache
+      # actions here; use pull_request plus workflow_run for that pattern instead.
       - name: Checkout base repository
         uses: actions/checkout@v4
         with:
