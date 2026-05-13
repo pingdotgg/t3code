@@ -80,6 +80,8 @@ const runtimeMock = {
   },
 };
 
+const waitForSubscribedEventPoll = () => Effect.runPromise(Effect.sleep("5 millis"));
+
 const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
   startOpenCodeServerProcess: ({ binaryPath }) =>
     Effect.gen(function* () {
@@ -162,8 +164,29 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       event: {
         subscribe: async () => ({
           stream: (async function* () {
-            for (const event of runtimeMock.state.subscribedEvents) {
-              yield event;
+            let index = 0;
+            for (let idleCycles = 0; idleCycles < 100; idleCycles++) {
+              if (index >= runtimeMock.state.subscribedEvents.length) {
+                await waitForSubscribedEventPoll();
+                continue;
+              }
+              idleCycles = 0;
+              yield runtimeMock.state.subscribedEvents[index++];
+            }
+          })(),
+        }),
+      },
+      global: {
+        event: async () => ({
+          stream: (async function* () {
+            let index = 0;
+            for (let idleCycles = 0; idleCycles < 100; idleCycles++) {
+              if (index >= runtimeMock.state.subscribedEvents.length) {
+                await waitForSubscribedEventPoll();
+                continue;
+              }
+              idleCycles = 0;
+              yield runtimeMock.state.subscribedEvents[index++];
             }
           })(),
         }),
@@ -741,6 +764,101 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       if (completed?.type === "item.completed") {
         assert.equal(completed.payload.detail, "A BBonus");
       }
+    }),
+  );
+
+  it.effect("ingests assistant text and idle completion from global OpenCode events", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-global-events");
+      const sessionId = "http://127.0.0.1:9999/session";
+      const assistantMessageId = "msg-global-assistant";
+      const textPartId = "part-global-text";
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(6),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      const started = yield* adapter.sendTurn({
+        threadId,
+        input: "Say pong",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("opencode"),
+          model: "openai/gpt-5",
+        },
+      });
+
+      runtimeMock.state.subscribedEvents.push(
+        {
+          directory: "C:\\Users\\mike\\dev-stuff\\t3code",
+          payload: {
+            type: "message.updated",
+            properties: {
+              sessionID: sessionId,
+              info: {
+                id: assistantMessageId,
+                role: "assistant",
+              },
+            },
+          },
+        },
+        {
+          directory: "C:\\Users\\mike\\dev-stuff\\t3code",
+          payload: {
+            type: "message.part.updated",
+            properties: {
+              sessionID: sessionId,
+              part: {
+                id: textPartId,
+                sessionID: sessionId,
+                messageID: assistantMessageId,
+                type: "text",
+                text: "pong",
+                time: { start: 1, end: 2 },
+              },
+              time: 2,
+            },
+          },
+        },
+        {
+          directory: "C:\\Users\\mike\\dev-stuff\\t3code",
+          payload: {
+            type: "session.idle",
+            properties: {
+              sessionID: sessionId,
+            },
+          },
+        },
+      );
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const sessions = yield* adapter.listSessions();
+      const session = sessions.find((entry) => entry.threadId === threadId);
+
+      assert.deepEqual(
+        events.map((event) => event.type),
+        [
+          "session.started",
+          "thread.started",
+          "turn.started",
+          "content.delta",
+          "item.completed",
+          "turn.completed",
+        ],
+      );
+      const delta = events.find((event) => event.type === "content.delta");
+      assert.equal(delta?.type === "content.delta" ? delta.payload.delta : undefined, "pong");
+      assert.equal(events.at(-1)?.turnId, started.turnId);
+      assert.equal(session?.status, "ready");
+      assert.equal(session?.activeTurnId, undefined);
     }),
   );
 
