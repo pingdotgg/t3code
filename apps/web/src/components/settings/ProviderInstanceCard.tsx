@@ -29,6 +29,7 @@ import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { DraftInput } from "../ui/draft-input";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { ScrollArea } from "../ui/scroll-area";
 import { Switch } from "../ui/switch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -697,8 +698,12 @@ export function ProviderInstanceCard({
                       </Button>
                     }
                   />
-                  <PopoverPopup side="bottom" align="start" className="w-84">
-                    <div className="grid gap-3">
+                  <PopoverPopup
+                    side="bottom"
+                    align="start"
+                    className="w-[min(21rem,calc(100vw-1.5rem))] [--popup-width:min(21rem,calc(100vw-1.5rem))]"
+                  >
+                    <div className="grid min-w-0 gap-3">
                       <div className="grid gap-0.5">
                         <p className="text-[13px] font-semibold leading-tight text-foreground">
                           Update available
@@ -735,10 +740,12 @@ export function ProviderInstanceCard({
                         </div>
                       ) : null}
                       {updateCommand ? (
-                        <div className="flex items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
-                          <code className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap font-mono text-[11px] text-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                            {updateCommand}
-                          </code>
+                        <div className="flex min-w-0 items-center gap-1 rounded-md border border-border/70 bg-muted/40 py-0.5 pr-0.5 pl-2">
+                          <ScrollArea scrollFade className="h-8 min-w-0 flex-1 rounded-none">
+                            <code className="flex h-full w-max items-center whitespace-nowrap pr-3 font-mono text-[11px] text-foreground">
+                              {updateCommand}
+                            </code>
+                          </ScrollArea>
                           <Tooltip>
                             <TooltipTrigger
                               render={
