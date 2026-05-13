@@ -29,7 +29,6 @@ import { useTheme } from "../hooks/useTheme";
 import { resolveMarkdownFileLinkMeta, rewriteMarkdownFileUriHref } from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
-import { highlightReactText } from "./chat/chatHighlight";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -56,7 +55,6 @@ interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
   isStreaming?: boolean;
-  highlightQuery?: string | undefined;
 }
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
@@ -491,7 +489,7 @@ function areMarkdownFileLinkPropsEqual(
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false, highlightQuery }: ChatMarkdownProps) {
+function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const markdownFileLinkMetaByHref = useMemo(() => {
@@ -570,46 +568,45 @@ function ChatMarkdown({ text, cwd, isStreaming = false, highlightQuery }: ChatMa
         );
       },
       p({ node: _node, children, ...props }) {
-        return <p {...props}>{highlightReactText(children, highlightQuery)}</p>;
+        return <p {...props}>{children}</p>;
       },
       li({ node: _node, children, ...props }) {
-        return <li {...props}>{highlightReactText(children, highlightQuery)}</li>;
+        return <li {...props}>{children}</li>;
       },
       blockquote({ node: _node, children, ...props }) {
-        return <blockquote {...props}>{highlightReactText(children, highlightQuery)}</blockquote>;
+        return <blockquote {...props}>{children}</blockquote>;
       },
       h1({ node: _node, children, ...props }) {
-        return <h1 {...props}>{highlightReactText(children, highlightQuery)}</h1>;
+        return <h1 {...props}>{children}</h1>;
       },
       h2({ node: _node, children, ...props }) {
-        return <h2 {...props}>{highlightReactText(children, highlightQuery)}</h2>;
+        return <h2 {...props}>{children}</h2>;
       },
       h3({ node: _node, children, ...props }) {
-        return <h3 {...props}>{highlightReactText(children, highlightQuery)}</h3>;
+        return <h3 {...props}>{children}</h3>;
       },
       h4({ node: _node, children, ...props }) {
-        return <h4 {...props}>{highlightReactText(children, highlightQuery)}</h4>;
+        return <h4 {...props}>{children}</h4>;
       },
       h5({ node: _node, children, ...props }) {
-        return <h5 {...props}>{highlightReactText(children, highlightQuery)}</h5>;
+        return <h5 {...props}>{children}</h5>;
       },
       h6({ node: _node, children, ...props }) {
-        return <h6 {...props}>{highlightReactText(children, highlightQuery)}</h6>;
+        return <h6 {...props}>{children}</h6>;
       },
       td({ node: _node, children, ...props }) {
-        return <td {...props}>{highlightReactText(children, highlightQuery)}</td>;
+        return <td {...props}>{children}</td>;
       },
       th({ node: _node, children, ...props }) {
-        return <th {...props}>{highlightReactText(children, highlightQuery)}</th>;
+        return <th {...props}>{children}</th>;
       },
       code({ node: _node, children, ...props }) {
-        return <code {...props}>{highlightReactText(children, highlightQuery)}</code>;
+        return <code {...props}>{children}</code>;
       },
     }),
     [
       diffThemeName,
       fileLinkParentSuffixByPath,
-      highlightQuery,
       isStreaming,
       markdownFileLinkMetaByHref,
       resolvedTheme,
@@ -617,7 +614,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false, highlightQuery }: ChatMa
   );
 
   return (
-    <div className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80">
+    <div className="chat-markdown w-full min-w-0 leading-relaxed text-foreground/80">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={markdownComponents}

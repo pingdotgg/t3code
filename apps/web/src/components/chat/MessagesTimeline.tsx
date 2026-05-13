@@ -28,6 +28,7 @@ import {
   ChevronRightIcon,
   CircleAlertIcon,
   EyeIcon,
+  GitForkIcon,
   GlobeIcon,
   HammerIcon,
   type LucideIcon,
@@ -70,7 +71,6 @@ import {
   textContainsInlineTerminalContextLabels,
 } from "./userMessageTerminalContexts";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
-import { highlightPlainText, normalizeChatHighlightQuery } from "./chatHighlight";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via useContext.
@@ -94,11 +94,13 @@ interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   onRevertUserMessage: (messageId: MessageId) => void;
+  onForkAssistantMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onOpenTurnDiff: (turnId: TurnId, filePath?: string, scope?: TurnDiffScope) => void;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
+const NOOP_FORK_ASSISTANT_MESSAGE = () => undefined;
 
 // ---------------------------------------------------------------------------
 // Props (public API)
@@ -120,6 +122,7 @@ interface MessagesTimelineProps {
   onOpenTurnDiff: (turnId: TurnId, filePath?: string, scope?: TurnDiffScope) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
+  onForkAssistantMessage?: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   activeThreadEnvironmentId: EnvironmentId;
@@ -129,9 +132,6 @@ interface MessagesTimelineProps {
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   onIsAtEndChange: (isAtEnd: boolean) => void;
-  chatFindQuery?: string;
-  matchedRowIds?: ReadonlySet<string>;
-  activeMatchRowId?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +154,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
+  onForkAssistantMessage,
   isRevertingCheckpoint,
   onImageExpand,
   activeThreadEnvironmentId,
@@ -163,10 +164,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
   onIsAtEndChange,
-  chatFindQuery,
-  matchedRowIds,
-  activeMatchRowId,
 }: MessagesTimelineProps) {
+  const handleForkAssistantMessage = onForkAssistantMessage ?? NOOP_FORK_ASSISTANT_MESSAGE;
   const rawRows = useMemo(
     () =>
       providedRows ??
@@ -233,6 +232,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       activeThreadId,
       onRevertUserMessage,
+      onForkAssistantMessage: handleForkAssistantMessage,
       onImageExpand,
       onOpenTurnDiff,
     }),
@@ -251,6 +251,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       activeThreadId,
       onRevertUserMessage,
+      handleForkAssistantMessage,
       onImageExpand,
       onOpenTurnDiff,
     ],
@@ -261,15 +262,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const renderItem = useCallback(
     ({ item }: { item: MessagesTimelineRow }) => (
       <div className="mx-auto w-full min-w-0 max-w-3xl overflow-x-hidden" data-timeline-root="true">
-        <TimelineRowContent
-          row={item}
-          isChatFindMatch={matchedRowIds?.has(item.id) ?? false}
-          isActiveChatFindMatch={activeMatchRowId === item.id}
-          chatFindQuery={chatFindQuery}
-        />
+        <TimelineRowContent row={item} />
       </div>
     ),
-    [activeMatchRowId, chatFindQuery, matchedRowIds],
+    [],
   );
 
   if (rows.length === 0 && !isWorking) {
@@ -316,36 +312,24 @@ type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
 
-function TimelineRowContent(props: {
-  row: TimelineRow;
-  isChatFindMatch: boolean;
-  isActiveChatFindMatch: boolean;
-  chatFindQuery: string | undefined;
-}) {
+function TimelineRowContent(props: { row: TimelineRow }) {
   const ctx = use(TimelineRowCtx);
-  const { row, isChatFindMatch, isActiveChatFindMatch } = props;
-  const highlightQuery = isChatFindMatch
-    ? normalizeChatHighlightQuery(props.chatFindQuery)
-    : undefined;
+  const { row } = props;
 
   return (
     <div
       className={cn(
         "pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
-        isChatFindMatch ? "rounded-lg bg-yellow-400/6 px-2" : null,
-        isActiveChatFindMatch ? "rounded-lg ring-1 ring-inset ring-yellow-500/50" : null,
       )}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
-      data-chat-find-match={isChatFindMatch ? "true" : undefined}
-      data-chat-find-active={isActiveChatFindMatch ? "true" : undefined}
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
     >
-      {row.kind === "work" && (
-        <WorkGroupSection groupedEntries={row.groupedEntries} highlightQuery={highlightQuery} />
-      )}
+      {row.kind === "work" && <WorkGroupSection groupedEntries={row.groupedEntries} />}
+
+      {row.kind === "reasoning" && <ReasoningSection row={row} />}
 
       {row.kind === "message" &&
         row.message.role === "user" &&
@@ -397,7 +381,6 @@ function TimelineRowContent(props: {
                   <UserMessageBody
                     text={displayedUserMessage.visibleText}
                     terminalContexts={terminalContexts}
-                    highlightQuery={highlightQuery}
                   />
                 )}
                 <div className="mt-1.5 flex items-center justify-end gap-2">
@@ -442,24 +425,17 @@ function TimelineRowContent(props: {
             streaming: row.message.streaming || assistantTurnStillInProgress,
           });
           const showCopilotResumeCommand =
-            row.showAssistantTerminalMetadata && ctx.copilotResumeCommand;
+            row.showAssistantTerminalMetadata &&
+            !row.message.streaming &&
+            !assistantTurnStillInProgress &&
+            ctx.copilotResumeCommand;
           return (
             <>
-              {row.showCompletionDivider && (
-                <div className="my-3 flex items-center gap-3">
-                  <span className="h-px flex-1 bg-border" />
-                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">
-                    {ctx.completionSummary ? `Response • ${ctx.completionSummary}` : "Response"}
-                  </span>
-                  <span className="h-px flex-1 bg-border" />
-                </div>
-              )}
               <div className="min-w-0 px-1 py-0.5">
                 <ChatMarkdown
                   text={messageText}
                   cwd={ctx.markdownCwd}
                   isStreaming={Boolean(row.message.streaming)}
-                  highlightQuery={highlightQuery}
                 />
                 <AssistantChangedFilesSection
                   turnSummary={row.assistantTurnDiffSummary}
@@ -500,6 +476,23 @@ function TimelineRowContent(props: {
                       />
                     </div>
                   ) : null}
+                  {row.showAssistantTerminalMetadata &&
+                  !row.message.streaming &&
+                  !assistantTurnStillInProgress ? (
+                    <div className="flex items-center opacity-0 transition-opacity duration-200 group-hover/assistant:opacity-100">
+                      <Button
+                        type="button"
+                        size="icon-xs"
+                        variant="outline"
+                        className="border-border/50 bg-background/35 text-muted-foreground/45 shadow-none hover:border-border/70 hover:bg-background/55 hover:text-muted-foreground/70"
+                        title="Fork chat"
+                        aria-label="Fork chat from this response"
+                        onClick={() => ctx.onForkAssistantMessage(row.message.id)}
+                      >
+                        <GitForkIcon className="size-3" />
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </>
@@ -513,7 +506,6 @@ function TimelineRowContent(props: {
             environmentId={ctx.activeThreadEnvironmentId}
             cwd={ctx.markdownCwd}
             workspaceRoot={ctx.workspaceRoot}
-            highlightQuery={highlightQuery}
           />
         </div>
       )}
@@ -588,37 +580,34 @@ function LiveMessageMeta({
  *  State resets on unmount which is fine — work groups start collapsed. */
 const WorkGroupSection = memo(function WorkGroupSection({
   groupedEntries,
-  highlightQuery,
 }: {
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
-  highlightQuery: string | undefined;
 }) {
   const { activeTurnInProgress, workspaceRoot } = use(TimelineRowCtx);
   const onlyToolEntries =
     groupedEntries.length > 0 && groupedEntries.every((entry) => entry.tone === "tool");
-  const isToolCallGroup = onlyToolEntries && groupedEntries.length > 1;
-  const isCompletedToolGroup =
-    isToolCallGroup &&
-    (!activeTurnInProgress || groupedEntries.every((entry) => entry.isComplete === true));
-  const [isExpanded, setIsExpanded] = useState(() => !isCompletedToolGroup);
+  const isCompletedCollapsibleGroup =
+    groupedEntries.length > 1 &&
+    (groupedEntries.every((entry) => entry.isComplete === true) || !activeTurnInProgress);
+  const [isExpanded, setIsExpanded] = useState(() => !isCompletedCollapsibleGroup);
   useEffect(() => {
-    if (isCompletedToolGroup) {
+    if (isCompletedCollapsibleGroup) {
       setIsExpanded(false);
     }
-  }, [isCompletedToolGroup]);
+  }, [isCompletedCollapsibleGroup]);
   const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
   const visibleEntries =
-    isCompletedToolGroup && !isExpanded
+    isCompletedCollapsibleGroup && !isExpanded
       ? []
       : hasOverflow && !isExpanded
         ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
         : groupedEntries;
   const hiddenCount = groupedEntries.length - visibleEntries.length;
-  const showHeader = isCompletedToolGroup || hasOverflow || !onlyToolEntries;
+  const showHeader = isCompletedCollapsibleGroup || hasOverflow || !onlyToolEntries;
   const groupLabel = onlyToolEntries ? "Tool calls" : "Work log";
-  const showCollapseToggle = isCompletedToolGroup || hasOverflow;
+  const showCollapseToggle = isCompletedCollapsibleGroup || hasOverflow;
   const CollapseIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
-  const toggleLabel = isCompletedToolGroup
+  const toggleLabel = isCompletedCollapsibleGroup
     ? isExpanded
       ? "Collapse"
       : "Expand"
@@ -627,7 +616,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
       : `Show ${hiddenCount} more`;
 
   return (
-    <div className="rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
+    <div className="work-group-section rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
       {showHeader && (
         <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
           <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
@@ -652,10 +641,43 @@ const WorkGroupSection = memo(function WorkGroupSection({
             key={`work-row:${workEntry.id}`}
             workEntry={workEntry}
             workspaceRoot={workspaceRoot}
-            highlightQuery={highlightQuery}
           />
         ))}
       </div>
+    </div>
+  );
+});
+
+const ReasoningSection = memo(function ReasoningSection({
+  row,
+}: {
+  row: Extract<MessagesTimelineRow, { kind: "reasoning" }>;
+}) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const CollapseIcon = isExpanded ? ChevronDownIcon : ChevronRightIcon;
+  const label = row.workedFor ? `Worked for ${row.workedFor}` : "Worked";
+
+  return (
+    <div className="my-2 px-1">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className="inline-flex shrink-0 items-center gap-1 text-sm text-muted-foreground/70 transition-colors hover:text-foreground/80"
+          onClick={() => setIsExpanded((value) => !value)}
+          aria-expanded={isExpanded}
+        >
+          <span>{label}</span>
+          <CollapseIcon className="size-4" />
+        </button>
+        <span className="h-px flex-1 bg-border" />
+      </div>
+      {isExpanded && (
+        <div className="mt-3">
+          {row.rows.map((nestedRow) => (
+            <TimelineRowContent key={`reasoning-row:${nestedRow.id}`} row={nestedRow} />
+          ))}
+        </div>
+      )}
     </div>
   );
 });
@@ -775,7 +797,6 @@ const UserMessageTerminalContextInlineLabel = memo(
 const UserMessageBody = memo(function UserMessageBody(props: {
   text: string;
   terminalContexts: ParsedTerminalContextEntry[];
-  highlightQuery?: string | undefined;
 }) {
   if (props.terminalContexts.length > 0) {
     const hasEmbeddedInlineLabels = textContainsInlineTerminalContextLabels(
@@ -798,7 +819,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         if (matchIndex > cursor) {
           inlineNodes.push(
             <span key={`user-terminal-context-inline-before:${context.header}:${cursor}`}>
-              {highlightPlainText(props.text.slice(cursor, matchIndex), props.highlightQuery)}
+              {props.text.slice(cursor, matchIndex)}
             </span>,
           );
         }
@@ -815,13 +836,13 @@ const UserMessageBody = memo(function UserMessageBody(props: {
         if (cursor < props.text.length) {
           inlineNodes.push(
             <span key={`user-message-terminal-context-inline-rest:${cursor}`}>
-              {highlightPlainText(props.text.slice(cursor), props.highlightQuery)}
+              {props.text.slice(cursor)}
             </span>,
           );
         }
 
         return (
-          <div className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground">
+          <div className="chat-message-content whitespace-pre-wrap wrap-break-word text-foreground">
             {inlineNodes}
           </div>
         );
@@ -843,17 +864,13 @@ const UserMessageBody = memo(function UserMessageBody(props: {
     }
 
     if (props.text.length > 0) {
-      inlineNodes.push(
-        <span key="user-message-terminal-context-inline-text">
-          {highlightPlainText(props.text, props.highlightQuery)}
-        </span>,
-      );
+      inlineNodes.push(<span key="user-message-terminal-context-inline-text">{props.text}</span>);
     } else if (inlinePrefix.length === 0) {
       return null;
     }
 
     return (
-      <div className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground">
+      <div className="chat-message-content whitespace-pre-wrap wrap-break-word text-foreground">
         {inlineNodes}
       </div>
     );
@@ -864,8 +881,8 @@ const UserMessageBody = memo(function UserMessageBody(props: {
   }
 
   return (
-    <div className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-foreground">
-      {highlightPlainText(props.text, props.highlightQuery)}
+    <div className="chat-message-content whitespace-pre-wrap wrap-break-word text-foreground">
+      {props.text}
     </div>
   );
 });
@@ -1029,9 +1046,8 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
-  highlightQuery: string | undefined;
 }) {
-  const { workEntry, workspaceRoot, highlightQuery } = props;
+  const { workEntry, workspaceRoot } = props;
   const iconConfig = workToneIcon(workEntry.tone);
   const EntryIcon = workEntryIcon(workEntry);
   const heading = toolWorkEntryHeading(workEntry);
@@ -1067,7 +1083,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                 title={displayText}
               >
                 <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-                  {highlightPlainText(heading, highlightQuery)}
+                  {heading}
                 </span>
                 {preview && (
                   <Tooltip>
@@ -1077,7 +1093,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                       render={
                         <span className="max-w-full cursor-default text-muted-foreground/55 transition-colors hover:text-muted-foreground/75 focus-visible:text-muted-foreground/75">
                           {" "}
-                          - {highlightPlainText(preview, highlightQuery)}
+                          - {preview}
                         </span>
                       }
                     />
@@ -1109,14 +1125,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                   )}
                 >
                   <span className={cn("text-foreground/80", workToneClass(workEntry.tone))}>
-                    {highlightPlainText(heading, highlightQuery)}
+                    {heading}
                   </span>
-                  {preview && (
-                    <span className="text-muted-foreground/55">
-                      {" "}
-                      - {highlightPlainText(preview, highlightQuery)}
-                    </span>
-                  )}
+                  {preview && <span className="text-muted-foreground/55"> - {preview}</span>}
                 </p>
               </TooltipTrigger>
               <TooltipPopup className="max-w-[min(720px,calc(100vw-2rem))]">
@@ -1138,7 +1149,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                 className="rounded-md border border-border/55 bg-background/75 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground/75"
                 title={displayPath}
               >
-                {highlightPlainText(displayPath, highlightQuery)}
+                {displayPath}
               </span>
             );
           })}

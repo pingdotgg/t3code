@@ -296,6 +296,7 @@ export function TerminalViewport({
   const lastAppliedTerminalEventIdRef = useRef(0);
   const terminalHydratedRef = useRef(false);
   const codeFont = useSettings((settings) => settings.codeFont);
+  const codeFontSize = useSettings((settings) => settings.codeFontSize);
   const handleSessionExited = useEffectEvent(() => {
     onSessionExited();
   });
@@ -304,6 +305,7 @@ export function TerminalViewport({
   });
   const readTerminalLabel = useEffectEvent(() => terminalLabel);
   const readCodeFontStack = useEffectEvent(() => CODE_FONT_STACKS[codeFont]);
+  const readCodeFontSize = useEffectEvent(() => codeFontSize);
 
   useEffect(() => {
     keybindingsRef.current = keybindings;
@@ -315,6 +317,13 @@ export function TerminalViewport({
     terminal.options.fontFamily = CODE_FONT_STACKS[codeFont];
     fitAddonRef.current?.fit();
   }, [codeFont]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    terminal.options.fontSize = codeFontSize;
+    fitAddonRef.current?.fit();
+  }, [codeFontSize]);
 
   useEffect(() => {
     const mount = containerRef.current;
@@ -329,7 +338,7 @@ export function TerminalViewport({
     const terminal = new Terminal({
       cursorBlink: true,
       lineHeight: 1.2,
-      fontSize: 12,
+      fontSize: readCodeFontSize(),
       scrollback: 5_000,
       fontFamily: readCodeFontStack(),
       theme: terminalThemeFromApp(mount),

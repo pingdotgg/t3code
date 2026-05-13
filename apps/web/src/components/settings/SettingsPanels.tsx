@@ -11,10 +11,14 @@ import {
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
+  DEFAULT_CHAT_FONT_SIZE,
   DEFAULT_CODE_FONT,
+  DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_TOOL_FONT_SIZE,
   DEFAULT_UI_FONT,
   DEFAULT_UNIFIED_SETTINGS,
   type CodeFont,
+  type FontSize,
   type UiFont,
 } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -151,6 +155,24 @@ const CODE_FONT_OPTIONS: ReadonlyArray<{ value: CodeFont; label: string }> = [
 
 function isCodeFont(value: unknown): value is CodeFont {
   return CODE_FONT_OPTIONS.some((option) => option.value === value);
+}
+
+const FONT_SIZE_OPTIONS: ReadonlyArray<{ value: FontSize; label: string }> = [
+  { value: 10, label: "10px" },
+  { value: 11, label: "11px" },
+  { value: 12, label: "12px" },
+  { value: 13, label: "13px" },
+  { value: 14, label: "14px" },
+  { value: 15, label: "15px" },
+  { value: 16, label: "16px" },
+  { value: 18, label: "18px" },
+  { value: 20, label: "20px" },
+  { value: 22, label: "22px" },
+  { value: 24, label: "24px" },
+];
+
+function isFontSize(value: unknown): value is FontSize {
+  return FONT_SIZE_OPTIONS.some((option) => String(option.value) === String(value));
 }
 
 type InstallProviderSettings = {
@@ -478,6 +500,15 @@ export function useSettingsRestore(onRestored?: () => void) {
         : []),
       ...(settings.uiFont !== DEFAULT_UNIFIED_SETTINGS.uiFont ? ["Interface font"] : []),
       ...(settings.codeFont !== DEFAULT_UNIFIED_SETTINGS.codeFont ? ["Code font"] : []),
+      ...(settings.codeFontSize !== DEFAULT_UNIFIED_SETTINGS.codeFontSize
+        ? ["Code font size"]
+        : []),
+      ...(settings.chatFontSize !== DEFAULT_UNIFIED_SETTINGS.chatFontSize
+        ? ["Chat font size"]
+        : []),
+      ...(settings.toolFontSize !== DEFAULT_UNIFIED_SETTINGS.toolFontSize
+        ? ["Tool font size"]
+        : []),
       ...(settings.diffWordWrap !== DEFAULT_UNIFIED_SETTINGS.diffWordWrap
         ? ["Diff line wrapping"]
         : []),
@@ -506,6 +537,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       areProviderSettingsDirty,
       isGitWritingModelDirty,
       settings.autoOpenPlanSidebar,
+      settings.chatFontSize,
+      settings.codeFontSize,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
@@ -514,6 +547,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
       settings.timestampFormat,
+      settings.toolFontSize,
       settings.uiFont,
       theme,
     ],
@@ -1037,6 +1071,129 @@ export function GeneralSettingsPanel() {
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {CODE_FONT_OPTIONS.map((option) => (
                   <SelectItem hideIndicator key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Code font size"
+          description="Font size for code blocks, diffs, and terminals."
+          resetAction={
+            settings.codeFontSize !== DEFAULT_CODE_FONT_SIZE ? (
+              <SettingResetButton
+                label="code font size"
+                onClick={() =>
+                  updateSettings({
+                    codeFontSize: DEFAULT_CODE_FONT_SIZE,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.codeFontSize)}
+              onValueChange={(value) => {
+                const num = Number(value);
+                if (isFontSize(num)) {
+                  updateSettings({ codeFontSize: num });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Code font size">
+                <SelectValue>
+                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.codeFontSize)
+                    ?.label ?? `${DEFAULT_CODE_FONT_SIZE}px`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Chat font size"
+          description="Font size for assistant and user messages in the chat."
+          resetAction={
+            settings.chatFontSize !== DEFAULT_CHAT_FONT_SIZE ? (
+              <SettingResetButton
+                label="chat font size"
+                onClick={() =>
+                  updateSettings({
+                    chatFontSize: DEFAULT_CHAT_FONT_SIZE,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.chatFontSize)}
+              onValueChange={(value) => {
+                const num = Number(value);
+                if (isFontSize(num)) {
+                  updateSettings({ chatFontSize: num });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Chat font size">
+                <SelectValue>
+                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.chatFontSize)
+                    ?.label ?? `${DEFAULT_CHAT_FONT_SIZE}px`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          title="Tool output font size"
+          description="Font size for work log entries and tool call output."
+          resetAction={
+            settings.toolFontSize !== DEFAULT_TOOL_FONT_SIZE ? (
+              <SettingResetButton
+                label="tool output font size"
+                onClick={() =>
+                  updateSettings({
+                    toolFontSize: DEFAULT_TOOL_FONT_SIZE,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={String(settings.toolFontSize)}
+              onValueChange={(value) => {
+                const num = Number(value);
+                if (isFontSize(num)) {
+                  updateSettings({ toolFontSize: num });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Tool output font size">
+                <SelectValue>
+                  {FONT_SIZE_OPTIONS.find((option) => option.value === settings.toolFontSize)
+                    ?.label ?? `${DEFAULT_TOOL_FONT_SIZE}px`}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {FONT_SIZE_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={String(option.value)}>
                     {option.label}
                   </SelectItem>
                 ))}

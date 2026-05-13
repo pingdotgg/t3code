@@ -20,6 +20,14 @@ export const CodeFont = Schema.Literals(["system-mono", "sf-mono", "menlo", "jet
 export type CodeFont = typeof CodeFont.Type;
 export const DEFAULT_CODE_FONT: CodeFont = "system-mono";
 
+export const FontSize = Schema.Int.check(Schema.isGreaterThanOrEqualTo(10)).check(
+  Schema.isLessThanOrEqualTo(24),
+);
+export type FontSize = typeof FontSize.Type;
+export const DEFAULT_CODE_FONT_SIZE: FontSize = 12 as FontSize;
+export const DEFAULT_CHAT_FONT_SIZE: FontSize = 14 as FontSize;
+export const DEFAULT_TOOL_FONT_SIZE: FontSize = 12 as FontSize;
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -38,6 +46,9 @@ export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode =
 
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  chatFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_CHAT_FONT_SIZE))),
+  codeFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODE_FONT_SIZE))),
+  toolFontSize: FontSize.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_TOOL_FONT_SIZE))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   codeFont: CodeFont.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODE_FONT))),
@@ -293,6 +304,9 @@ export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 
 export const ClientSettingsPatch = Schema.Struct({
   autoOpenPlanSidebar: Schema.optionalKey(Schema.Boolean),
+  chatFontSize: Schema.optionalKey(FontSize),
+  codeFontSize: Schema.optionalKey(FontSize),
+  toolFontSize: Schema.optionalKey(FontSize),
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   codeFont: Schema.optionalKey(CodeFont),

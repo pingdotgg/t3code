@@ -579,6 +579,9 @@ describe("wsApi", () => {
   it("reads and writes persistence through the desktop bridge when available", async () => {
     const clientSettings = {
       autoOpenPlanSidebar: false,
+      chatFontSize: 14,
+      codeFontSize: 12,
+      toolFontSize: 12,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       codeFont: "jetbrains-mono" as const,
@@ -641,6 +644,9 @@ describe("wsApi", () => {
     const api = createLocalApi(rpcClientMock as never);
     const clientSettings = {
       autoOpenPlanSidebar: false,
+      chatFontSize: 14,
+      codeFontSize: 12,
+      toolFontSize: 12,
       confirmThreadArchive: true,
       confirmThreadDelete: false,
       codeFont: "jetbrains-mono" as const,

@@ -75,6 +75,9 @@
     "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   --app-font-mono-stack:
     "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace, monospace;
+  --app-code-font-size: 12px;
+  --app-chat-font-size: 14px;
+  --app-tool-font-size: 12px;
   --radius: 0.625rem;
   --background: var(--color-white);
   --app-chrome-background: var(--background);
@@ -271,6 +274,7 @@ label:has(> select#reasoning-effort) select {
   min-width: 0;
   overflow-wrap: anywhere;
   word-break: break-word;
+  font-size: var(--app-chat-font-size);
 }
 
 .chat-markdown > :first-child {
@@ -342,7 +346,7 @@ label:has(> select#reasoning-effort) select {
   background: var(--muted);
   padding: 0.1rem 0.35rem;
   color: var(--foreground);
-  font-size: 0.75rem;
+  font-size: var(--app-code-font-size);
 }
 
 .chat-markdown-file-link {
@@ -355,7 +359,7 @@ label:has(> select#reasoning-effort) select {
   padding: 0.08rem 0.34rem;
   color: var(--foreground);
   font-family: var(--app-font-mono-stack);
-  font-size: 0.75rem;
+  font-size: var(--app-code-font-size);
   line-height: 1.15;
   vertical-align: text-bottom;
   transition:
@@ -399,7 +403,7 @@ label:has(> select#reasoning-effort) select {
   border: none;
   background: transparent;
   padding: 0;
-  font-size: 0.75rem;
+  font-size: var(--app-code-font-size);
 }
 
 .markdown-file-link-tooltip-scroll {
@@ -479,6 +483,17 @@ label:has(> select#reasoning-effort) select {
   border: 1px solid var(--border);
   padding: 0.35rem 0.45rem;
   text-align: left;
+}
+
+/* Work group / tool output font size */
+.work-group-section {
+  font-size: var(--app-tool-font-size);
+}
+
+/* Chat message content font size (applies to user & assistant messages) */
+.chat-message-content {
+  font-size: var(--app-chat-font-size);
+  line-height: 1.625;
 }
 
 /* Diffs theme bridge (match diff surfaces to app palette) */
@@ -576,4 +591,14 @@ label:has(> select#reasoning-effort) select {
 
 .dark .model-picker-list::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.15);
+}
+
+/* Chat find — CSS Custom Highlight API */
+::highlight(chat-find) {
+  background-color: rgba(250, 204, 21, 0.45);
+  color: inherit;
+}
+::highlight(chat-find-active) {
+  background-color: rgba(249, 115, 22, 0.6);
+  color: inherit;
 }
