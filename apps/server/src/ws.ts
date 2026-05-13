@@ -47,7 +47,7 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { ServerConfig } from "./config.ts";
 import { Keybindings } from "./keybindings.ts";
-import { Open, resolveAvailableEditors } from "./open.ts";
+import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -228,8 +228,8 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const orchestrationEngine = yield* OrchestrationEngineService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const keybindings = yield* Keybindings;
-      const open = yield* Open;
       const gitCore = yield* GitVcsDriver.GitVcsDriver;
+      const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const gitWorkflow = yield* GitWorkflowService;
       const vcsProvisioning = yield* VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
@@ -692,7 +692,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
           providers,
-          availableEditors: resolveAvailableEditors(),
+          availableEditors: ExternalLauncher.resolveAvailableEditors(),
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,
@@ -1265,7 +1265,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.shellOpenInEditor]: (input) =>
-          observeRpcEffect(WS_METHODS.shellOpenInEditor, open.openInEditor(input), {
+          observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {
             "rpc.aggregate": "workspace",
           }),
         [WS_METHODS.filesystemBrowse]: (input) =>

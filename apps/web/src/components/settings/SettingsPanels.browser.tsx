@@ -236,7 +236,10 @@ function createBaseServerConfig(): ServerConfig {
   };
 }
 
-function createOutdatedProvider(driver: string): ServerProvider {
+function createOutdatedProvider(
+  driver: string,
+  updateCommand = "npm install -g openai/codex@latest",
+): ServerProvider {
   return {
     instanceId: ProviderInstanceId.make(driver),
     driver: ProviderDriverKind.make(driver),
@@ -255,7 +258,7 @@ function createOutdatedProvider(driver: string): ServerProvider {
       latestVersion: "1.1.0",
       message: "Update available.",
       checkedAt: "2026-05-04T10:00:00.000Z",
-      updateCommand: "npm install -g openai/codex@latest",
+      updateCommand,
       canUpdate: true,
     },
   };
@@ -1153,6 +1156,47 @@ describe("GeneralSettingsPanel observability", () => {
     expect(updateProvider).toHaveBeenCalledWith({
       provider: ProviderDriverKind.make("codex"),
       instanceId: ProviderInstanceId.make("codex"),
+    });
+  });
+
+  it("keeps long provider update commands inside the fixed-width popover", async () => {
+    const longUpdateCommand =
+      "npm install -g @anthropic-ai/claude-code@latest --registry=https://registry.npmjs.org --cache=/tmp/t3code-provider-update-cache";
+
+    setServerConfigSnapshot({
+      ...createBaseServerConfig(),
+      providers: [createOutdatedProvider("codex", longUpdateCommand)],
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <ProviderSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await page.getByRole("button", { name: "Update available — view details" }).click();
+    await expect.element(page.getByText(longUpdateCommand)).toBeInTheDocument();
+
+    await vi.waitFor(() => {
+      const popup = document.querySelector<HTMLElement>('[data-slot="popover-popup"]');
+      const commandCode = Array.from(document.querySelectorAll<HTMLElement>("code")).find(
+        (element) => element.textContent === longUpdateCommand,
+      );
+      const scrollViewport = commandCode?.closest<HTMLElement>(
+        '[data-slot="scroll-area-viewport"]',
+      );
+
+      expect(popup).toBeTruthy();
+      expect(commandCode).toBeTruthy();
+      expect(scrollViewport).toBeTruthy();
+
+      const popupRect = popup!.getBoundingClientRect();
+      const viewportRect = scrollViewport!.getBoundingClientRect();
+
+      expect(popupRect.width).toBeGreaterThan(300);
+      expect(popupRect.width).toBeLessThanOrEqual(337);
+      expect(viewportRect.right).toBeLessThanOrEqual(popupRect.right + 0.5);
+      expect(scrollViewport!.scrollWidth).toBeGreaterThan(scrollViewport!.clientWidth);
     });
   });
 });
