@@ -3642,7 +3642,6 @@ export default function ChatView(props: ChatViewProps) {
             workspaceRoot={activeWorkspaceRoot}
             timestampFormat={timestampFormat}
             mode="sidebar"
-            onClose={closePlanSidebar}
             onOpenFileInApp={(meta) => onOpenFileInPanel(meta, sidebarProposedPlan?.turnId ?? null)}
             onOpenFilePreview={(meta) => onOpenFilePreview(meta)}
           />
@@ -3661,7 +3660,6 @@ export default function ChatView(props: ChatViewProps) {
               workspaceRoot={activeWorkspaceRoot}
               timestampFormat={timestampFormat}
               mode="sheet"
-              onClose={closePlanSidebar}
               onOpenFileInApp={(meta) =>
                 onOpenFileInPanel(meta, sidebarProposedPlan?.turnId ?? null)
               }

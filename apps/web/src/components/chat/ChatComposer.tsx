@@ -94,11 +94,8 @@ import { Button } from "../ui/button";
 import { MenuCreateHandle } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import {
-  IconChecklist as ListTodoIcon,
-  IconQuestionmarkBubble as AskIcon,
-  IconXmark as XIcon,
-} from "symbols-react";
+import { IconQuestionmarkBubble as AskIcon, IconXmark as XIcon } from "symbols-react";
+import { SidebarPlanReadyIcon } from "../icons/custom";
 import { proposedPlanTitle } from "../../proposedPlan";
 import {
   getProviderInteractionModeToggle,
@@ -2073,10 +2070,8 @@ export const ChatComposer = memo(
                             <Button
                               variant="ghost"
                               className={cn(
-                                "shrink-0 whitespace-nowrap px-2 sm:px-3",
-                                planSidebarOpen
-                                  ? "text-blue-400 hover:text-blue-300"
-                                  : "text-muted-foreground/70 hover:text-foreground/80",
+                                "shrink-0 rounded-full whitespace-nowrap px-2 text-violet-600 hover:text-violet-700 dark:text-violet-300/90 dark:hover:text-violet-200 sm:px-3",
+                                planSidebarOpen && "bg-violet-500/10 hover:bg-violet-500/15",
                               )}
                               size="sm"
                               type="button"
@@ -2087,7 +2082,7 @@ export const ChatComposer = memo(
                                   : `Show ${planSidebarLabel.toLowerCase()} sidebar`
                               }
                             >
-                              <ListTodoIcon />
+                              <SidebarPlanReadyIcon className="size-3.5 shrink-0 fill-current" />
                               <span className="sr-only sm:not-sr-only">{planSidebarLabel}</span>
                             </Button>
                           </>

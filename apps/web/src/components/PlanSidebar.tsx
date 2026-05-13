@@ -1,7 +1,6 @@
 import { memo, useState, useCallback } from "react";
 import type { EnvironmentId } from "@forma/contracts";
 import { type TimestampFormat } from "@forma/contracts/settings";
-import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { ScrollArea } from "./ui/scroll-area";
 import ChatMarkdown, {
@@ -9,12 +8,15 @@ import ChatMarkdown, {
   type OpenChatMarkdownFilePreview,
 } from "./ChatMarkdown";
 import {
+  ThreadBreadcrumbProjectChipContent,
+  THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME,
+} from "./ThreadBreadcrumb";
+import {
   IconCheckmark as CheckIcon,
   IconChevronDown as ChevronDownIcon,
   IconChevronRight as ChevronRightIcon,
   IconEllipsis as EllipsisIcon,
   IconProgressIndicator as LoaderIcon,
-  IconSidebarTrailing as PanelRightCloseIcon,
 } from "symbols-react";
 import { cn } from "~/lib/utils";
 import type { ActivePlanState } from "../session-logic";
@@ -28,6 +30,7 @@ import {
   stripDisplayedPlanMarkdown,
 } from "../proposedPlan";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
+import { SidebarPlanReadyIcon } from "./icons/custom";
 import { readEnvironmentApi } from "~/environmentApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -63,7 +66,6 @@ interface PlanSidebarProps {
   workspaceRoot: string | undefined;
   timestampFormat: TimestampFormat;
   mode?: "sheet" | "sidebar";
-  onClose: () => void;
   onOpenFileInApp?: OpenChatMarkdownFileInApp | undefined;
   onOpenFilePreview?: OpenChatMarkdownFilePreview | undefined;
 }
@@ -77,7 +79,6 @@ const PlanSidebar = memo(function PlanSidebar({
   workspaceRoot,
   timestampFormat,
   mode = "sidebar",
-  onClose,
   onOpenFileInApp,
   onOpenFilePreview,
 }: PlanSidebarProps) {
@@ -88,6 +89,7 @@ const PlanSidebar = memo(function PlanSidebar({
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
   const displayedPlanMarkdown = planMarkdown ? stripDisplayedPlanMarkdown(planMarkdown) : null;
   const planTitle = planMarkdown ? proposedPlanTitle(planMarkdown) : null;
+  const planHeaderLabel = planTitle ?? label;
 
   const handleCopyPlan = useCallback(() => {
     if (!planMarkdown) return;
@@ -136,29 +138,40 @@ const PlanSidebar = memo(function PlanSidebar({
   return (
     <div
       className={cn(
-        "flex min-h-0 flex-col bg-card/50",
+        "flex min-h-0 flex-col",
         mode === "sidebar"
-          ? "h-full w-[340px] shrink-0 border-l border-border/70"
-          : "h-full w-full",
+          ? "m-3 w-[420px] shrink-0 self-stretch overflow-hidden rounded-3xl border border-border/70 bg-card shadow-lg shadow-black/5 dark:shadow-black/25"
+          : "h-full w-full bg-card/50",
       )}
     >
       {/* Header */}
       <div className="flex h-12 shrink-0 items-center justify-between border-b border-border/60 px-3">
         <div className="flex items-center gap-2">
-          <Badge
-            variant="secondary"
-            className="text-ui-2xs rounded-md bg-blue-500/10 px-1.5 py-0 font-semibold tracking-wide text-blue-400 uppercase"
+          <span
+            className={cn(
+              THREAD_BREADCRUMB_PROJECT_CHIP_CLASS_NAME,
+              "h-6 max-w-[15.5rem] text-sm text-violet-600 dark:text-violet-300/90",
+            )}
+            title={planHeaderLabel}
           >
-            {label}
-          </Badge>
+            <ThreadBreadcrumbProjectChipContent
+              icon={
+                <SidebarPlanReadyIcon
+                  className="size-3 shrink-0 fill-current opacity-70"
+                  aria-hidden
+                />
+              }
+              label={planHeaderLabel}
+            />
+          </span>
           {activePlan ? (
             <span className="text-ui-xs text-muted-foreground/60">
               {formatTimestamp(activePlan.createdAt, timestampFormat)}
             </span>
           ) : null}
         </div>
-        <div className="flex items-center gap-1">
-          {planMarkdown ? (
+        {planMarkdown ? (
+          <div className="flex items-center gap-1">
             <Menu>
               <MenuTrigger
                 render={
@@ -170,7 +183,7 @@ const PlanSidebar = memo(function PlanSidebar({
                   />
                 }
               >
-                <EllipsisIcon className="size-3.5" />
+                <EllipsisIcon className="size-3.5 rotate-90" />
               </MenuTrigger>
               <MenuPopup align="end">
                 <MenuItem onClick={handleCopyPlan}>
@@ -185,17 +198,8 @@ const PlanSidebar = memo(function PlanSidebar({
                 </MenuItem>
               </MenuPopup>
             </Menu>
-          ) : null}
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            onClick={onClose}
-            aria-label={`Close ${label.toLowerCase()} sidebar`}
-            className="text-muted-foreground/50 hover:text-foreground/70"
-          >
-            <PanelRightCloseIcon className="size-3.5" />
-          </Button>
-        </div>
+          </div>
+        ) : null}
       </div>
 
       {/* Content */}

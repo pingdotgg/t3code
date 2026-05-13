@@ -1,7 +1,8 @@
 import { ProviderInteractionMode } from "@forma/contracts";
 import { memo, type ReactNode } from "react";
-import { IconEllipsis as EllipsisIcon, IconChecklist as ListTodoIcon } from "symbols-react";
+import { IconEllipsis as EllipsisIcon } from "symbols-react";
 import { Button } from "../ui/button";
+import { SidebarPlanReadyIcon } from "../icons/custom";
 import {
   Menu,
   MenuItem,
@@ -77,7 +78,7 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
           <>
             {showDividerBeforePlanSidebar ? <MenuDivider /> : null}
             <MenuItem onClick={props.onTogglePlanSidebar}>
-              <ListTodoIcon className="size-4 shrink-0" />
+              <SidebarPlanReadyIcon className="size-4 shrink-0 fill-current text-violet-600 dark:text-violet-300/90" />
               {props.planSidebarOpen
                 ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
                 : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`}
