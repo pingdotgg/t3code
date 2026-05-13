@@ -23,8 +23,8 @@ on:
         type: string
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
+  id-token: none
 
 jobs:
   check_changes:
@@ -420,6 +420,9 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@v6
