@@ -1,6 +1,7 @@
 export type Tweet = {
   handle: string;
   content: string;
+  excerpt?: string;
   link: string;
 };
 
@@ -15,6 +16,7 @@ export const tweets = [
     handle: "teja2495",
     content:
       "I’ve completely switched to T3 Code for all my workflows. I just switch between different subscriptions and harnesses depending on what I need.",
+    excerpt: "I’ve completely switched to T3 Code for all my workflows.",
     link: "https://x.com/teja2495/status/2052420254991581623",
   },
   {
@@ -32,12 +34,15 @@ export const tweets = [
     handle: "aronprins",
     content:
       "I already loved T3 Code by @theo and @jullerino, but their Connections implementation is next level epic and for this they should both earn maximum repect 🔥🫡",
+    excerpt: "I already loved T3 Code, but their Connections implementation is next level epic.",
     link: "https://x.com/aronprins/status/2045102518196183109",
   },
   {
     handle: "BennettBuhner",
     content:
       "T3 Code is literally Codex but better; all your favorite models and harnesses, accessible anywhere! The app is great but the website is even greater, so instead of needing to SSH into a machine, T3 IS my SSH!",
+    excerpt:
+      "T3 Code is literally Codex but better; all your favorite models and harnesses, accessible anywhere.",
     link: "https://x.com/BennettBuhner/status/2054667115697754387",
   },
   {
@@ -70,6 +75,8 @@ export const tweets = [
     handle: "kostyniuk00",
     content:
       "I was not expecting a year ago, that my anti-AI colleagues would thank me a year later, for persuading them to try T3 Code Beta, that really helped them with organizing their workflows. \n\nFantastic product by @jullerino and @theo. Go try it out if you haven’t yet!",
+    excerpt:
+      "My anti-AI colleagues thanked me for persuading them to try T3 Code Beta. Fantastic product.",
     link: "https://x.com/kostyniuk00/status/2052041388179468521",
   },
   {
@@ -93,6 +100,18 @@ export const tweets = [
     handle: "pocarles",
     content:
       "Only using Codex and T3 now.\n\nI thought all AI coding harnesses had roughly the same impact. Using T3 Code taught me how wrong I was. The interface between you and the model changes everything.",
+    excerpt:
+      "Using T3 Code taught me how wrong I was. The interface between you and the model changes everything.",
     link: "https://x.com/pocarles/status/2054673964274758046",
+  },
+  {
+    handle: "DavidKPiano",
+    content: "It's like Claude Code if they didn't vibe-code the entire thing",
+    link: "https://x.com/DavidKPiano/status/2054682983504719930",
+  },
+  {
+    handle: "iamkaffe",
+    content: "T3Code was the first one to truly care about Linux users.",
+    link: "https://x.com/iamkaffe/status/2054675539311411280",
   },
 ] satisfies Tweet[];

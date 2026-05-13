@@ -14,3 +14,5 @@ https://x.com/gnukeith/status/2054670073579630730
 https://x.com/peculiarnewbie/status/2054671685027233827
 https://x.com/leodev/status/2054679746353537042
 https://x.com/pocarles/status/2054673964274758046
+https://x.com/DavidKPiano/status/2054682983504719930
+https://x.com/iamkaffe/status/2054675539311411280

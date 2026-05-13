@@ -1,6 +1,17 @@
 ---
 import Layout from "../layouts/Layout.astro";
 import { tweets } from "../lib/tweets";
+
+const desktopEndorsementRows = [
+  tweets.filter((_, index) => index % 2 === 0),
+  tweets.filter((_, index) => index % 2 === 1),
+];
+
+const mobileEndorsementRows = [
+  tweets.filter((_, index) => index % 3 === 0),
+  tweets.filter((_, index) => index % 3 === 1),
+  tweets.filter((_, index) => index % 3 === 2),
+];
 ---
 
 <Layout>
@@ -158,49 +169,83 @@ import { tweets } from "../lib/tweets";
   <!-- ── Endorsements ─────────────────────────────────────────── -->
   <section id="endorsements" class="sec-endorsements" aria-labelledby="endorsements-title">
     <div class="endorsements-head container">
-      <div>
-        <div class="eyebrow">Endorsements</div>
-        <h2 id="endorsements-title">People are already making T3 Code their daily driver.</h2>
-      </div>
-      <p>
-        Pulled from real posts by developers trying the alpha in public.
-      </p>
+      <h2 id="endorsements-title">Developers love T3 Code</h2>
     </div>
 
-    <div class="endorsement-rail-shell" aria-label="Developer endorsements">
-      <div class="endorsement-rail">
+    <div class="endorsement-carousel endorsement-carousel--desktop" aria-label="Developer endorsements">
         {
-          tweets.map((tweet) => (
-            <a
-              class="endorsement-card"
-              href={tweet.link}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label={`Read ${tweet.handle}'s post on X`}
-            >
-              <div class="endorsement-author">
-                <img
-                  src={`/pfps/${tweet.handle}.jpeg`}
-                  alt=""
-                  width="48"
-                  height="48"
-                  loading="lazy"
-                  decoding="async"
-                />
-                <div>
-                  <div class="endorsement-handle">@{tweet.handle}</div>
-                  <div class="endorsement-source">x.com</div>
-                </div>
+          desktopEndorsementRows.map((row, rowIndex) => (
+            <div class:list={["endorsement-row", rowIndex === 1 && "is-reverse"]}>
+              <div class="endorsement-track">
+                {[0, 1].map((groupIndex) => (
+                  <div class="endorsement-track-group" aria-hidden={groupIndex === 1 ? "true" : undefined}>
+                    {row.map((tweet) => (
+                      <a
+                        class="endorsement-card"
+                        href={tweet.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Read ${tweet.handle}'s post on X`}
+                        tabindex={groupIndex === 1 ? "-1" : undefined}
+                      >
+                        <div class="endorsement-author">
+                          <img
+                            src={`/pfps/${tweet.handle}.jpeg`}
+                            alt=""
+                            width="40"
+                            height="40"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          <div class="endorsement-handle">@{tweet.handle}</div>
+                        </div>
+                        <p>{tweet.excerpt ?? tweet.content}</p>
+                      </a>
+                    ))}
+                  </div>
+                ))}
               </div>
-              <p>{tweet.content}</p>
-              <span class="endorsement-link">
-                Read post
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7M8 7h9v9"/></svg>
-              </span>
-            </a>
+            </div>
           ))
         }
-      </div>
+    </div>
+
+    <div class="endorsement-carousel endorsement-carousel--mobile" aria-label="Developer endorsements">
+        {
+          mobileEndorsementRows.map((row, rowIndex) => (
+            <div class:list={["endorsement-row", rowIndex === 1 && "is-reverse"]}>
+              <div class="endorsement-track">
+                {[0, 1].map((groupIndex) => (
+                  <div class="endorsement-track-group" aria-hidden={groupIndex === 1 ? "true" : undefined}>
+                    {row.map((tweet) => (
+                      <a
+                        class="endorsement-card"
+                        href={tweet.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Read ${tweet.handle}'s post on X`}
+                        tabindex={groupIndex === 1 ? "-1" : undefined}
+                      >
+                        <div class="endorsement-author">
+                          <img
+                            src={`/pfps/${tweet.handle}.jpeg`}
+                            alt=""
+                            width="40"
+                            height="40"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          <div class="endorsement-handle">@{tweet.handle}</div>
+                        </div>
+                        <p>{tweet.excerpt ?? tweet.content}</p>
+                      </a>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))
+        }
     </div>
   </section>
 
@@ -208,8 +253,7 @@ import { tweets } from "../lib/tweets";
   <section id="harnesses" class="sec-harness">
     <div class="container">
       <div class="section-head">
-        <div class="eyebrow">Harnesses</div>
-        <h2>Bring the subscription you already pay for.</h2>
+        <h2>Bring your own sub</h2>
         <p>
           T3 Code doesn't resell tokens. Plug in Claude Code, Codex, OpenCode,
           or Cursor with the credentials you already have — we orchestrate
@@ -256,138 +300,7 @@ import { tweets } from "../lib/tweets";
     </div>
   </section>
 
-  <!-- ── Orchestration ─────────────────────────────────────────── -->
-  <section id="orchestrate" class="sec-orch">
-    <div class="container">
-      <div class="section-head">
-        <div class="eyebrow">Orchestration</div>
-        <h2>The best surface for managing many agents at once.</h2>
-        <p>
-          Every thread is its own agent, its own workspace, its own diff. Watch
-          them all from one place — intervene, steer, or let them run.
-        </p>
-      </div>
-
-      <div class="orch-board tile">
-        <div class="orch-head">
-          <div class="orch-head-left">
-            <span class="orch-dot live"></span> 5 agents active
-          </div>
-        </div>
-        <div class="orch-rows">
-          <div class="orch-row state-running">
-            <div class="orch-row-state"><span class="spinner"></span> <span>Working</span></div>
-            <div class="orch-row-name">Add marketing hero</div>
-            <div class="orch-row-harness">Claude · sonnet-4.5</div>
-            <div class="orch-row-tools">14 tool calls</div>
-            <div class="orch-row-time">1m 12s</div>
-            <button class="orch-row-open">Open <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M8 7h9v9"/></svg></button>
-          </div>
-          <div class="orch-row state-running">
-            <div class="orch-row-state"><span class="spinner"></span> <span>Working</span></div>
-            <div class="orch-row-name">Refactor ws transport</div>
-            <div class="orch-row-harness">Codex · gpt-5</div>
-            <div class="orch-row-tools">31 tool calls</div>
-            <div class="orch-row-time">3m 04s</div>
-            <button class="orch-row-open">Open <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M8 7h9v9"/></svg></button>
-          </div>
-          <div class="orch-row state-done">
-            <div class="orch-row-state"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> <span>Done</span></div>
-            <div class="orch-row-name">Fix hotkey conflict</div>
-            <div class="orch-row-harness">Claude · sonnet-4.5</div>
-            <div class="orch-row-tools">9 tool calls</div>
-            <div class="orch-row-time">47s</div>
-            <button class="orch-row-open">Open <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M8 7h9v9"/></svg></button>
-          </div>
-          <div class="orch-row state-review">
-            <div class="orch-row-state"><span class="dot warn"></span> <span>Review</span></div>
-            <div class="orch-row-name">Modernize onboarding</div>
-            <div class="orch-row-harness">Cursor · agent</div>
-            <div class="orch-row-tools">22 tool calls</div>
-            <div class="orch-row-time">8m 09s</div>
-            <button class="orch-row-open">Open <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M8 7h9v9"/></svg></button>
-          </div>
-          <div class="orch-row state-running">
-            <div class="orch-row-state"><span class="spinner"></span> <span>Working</span></div>
-            <div class="orch-row-name">Add audit log for auth</div>
-            <div class="orch-row-harness">OpenCode</div>
-            <div class="orch-row-tools">6 tool calls</div>
-            <div class="orch-row-time">18s</div>
-            <button class="orch-row-open">Open <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M8 7h9v9"/></svg></button>
-          </div>
-        </div>
-      </div>
-
-      <div class="orch-pills">
-        <span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 14h6l-1 7 8-11h-6l1-7z"/></svg> Native keystrokes · no input lag</span>
-        <span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L3 8l9 5 9-5-9-5zM3 13l9 5 9-5M3 18l9 5 9-5"/></svg> Per-thread worktrees</span>
-        <span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="19" height="15" rx="2"/><path d="M7 10l3 2-3 2M12 16h5"/></svg> Full terminal per agent</span>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Parallel ──────────────────────────────────────────────── -->
-  <section id="parallel" class="sec-parallel">
-    <div class="container parallel-inner">
-      <div class="parallel-copy">
-        <div class="section-head" style="margin-bottom:32px">
-          <div class="eyebrow">Parallel</div>
-          <h2>Five projects. Twelve threads. One quiet window.</h2>
-          <p>
-            T3 Code was built for the way you actually work — not one repo at a
-            time, but a constellation of them. Each project gets its own branch,
-            its own worktree, its own context. Nothing steps on anything.
-          </p>
-        </div>
-        <ul class="checklist">
-          <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> Per-project shells and env vars</li>
-          <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> Isolated worktrees, no branch juggling</li>
-          <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> Command palette spans every project</li>
-          <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> Pick up any thread, from any machine</li>
-        </ul>
-      </div>
-
-      <div class="parallel-visual">
-        <div class="pcol tile">
-          <div class="pcol-head">
-            <span class="pcol-dot" style="background:var(--accent)"></span>
-            <span class="pcol-name">t3code-1</span>
-            <span class="pcol-branch">feat/marketing</span>
-          </div>
-          <div class="pcol-body">
-            <div class="pcol-thread s-run"><span class="dot working"></span><span>Hero animation</span></div>
-            <div class="pcol-thread s-run"><span class="dot working"></span><span>Refactor transport</span></div>
-            <div class="pcol-thread s-done"><span class="dot done"></span><span>Linux hotkey fix</span></div>
-          </div>
-        </div>
-        <div class="pcol tile">
-          <div class="pcol-head">
-            <span class="pcol-dot" style="background:var(--ok)"></span>
-            <span class="pcol-name">round</span>
-            <span class="pcol-branch">main</span>
-          </div>
-          <div class="pcol-body">
-            <div class="pcol-thread s-run"><span class="dot working"></span><span>Onboarding flow</span></div>
-            <div class="pcol-thread s-done"><span class="dot done"></span><span>Audit log</span></div>
-          </div>
-        </div>
-        <div class="pcol tile">
-          <div class="pcol-head">
-            <span class="pcol-dot" style="background:var(--warn)"></span>
-            <span class="pcol-name">lawn</span>
-            <span class="pcol-branch">exp/agents</span>
-          </div>
-          <div class="pcol-body">
-            <div class="pcol-thread s-run"><span class="dot working"></span><span>Scheduler rewrite</span></div>
-            <div class="pcol-thread s-idle"><span class="dot idle"></span><span>Security review</span></div>
-            <div class="pcol-thread s-done"><span class="dot done"></span><span>Billing analytics</span></div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Git & GitHub ──────────────────────────────────────────── -->
+  <!-- ── Git ──────────────────────────────────────────────────── -->
   <section id="git" class="sec-git">
     <div class="container git-inner">
       <div class="git-visual">
@@ -431,7 +344,6 @@ import { tweets } from "../lib/tweets";
 
       <div class="git-copy">
         <div class="section-head" style="margin-bottom:0">
-          <div class="eyebrow">Git &amp; GitHub</div>
           <h2>Commit, push, PR — in a single keystroke.</h2>
           <p>
             Every agent thread writes to its own branch. When it's good, one
@@ -1083,22 +995,15 @@ import { tweets } from "../lib/tweets";
   /* ── Endorsements ─────────────────────────────────────── */
   .sec-endorsements {
     overflow: hidden;
-    padding: 72px 0 80px;
+    padding: 44px 0 56px;
     background:
       linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 42%),
       #09090b;
   }
 
   .endorsements-head {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 360px;
-    gap: 40px;
-    align-items: end;
-    margin-bottom: 34px;
-  }
-
-  .endorsements-head .eyebrow {
-    margin-bottom: 14px;
+    display: block;
+    margin-bottom: 30px;
   }
 
   .endorsements-head h2 {
@@ -1109,55 +1014,70 @@ import { tweets } from "../lib/tweets";
     line-height: 1.05;
   }
 
-  .endorsements-head p {
-    color: var(--fg-muted);
-    font-size: 15px;
-    line-height: 1.55;
-  }
-
-  .endorsement-rail-shell {
+  .endorsement-carousel {
     position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 
-  .endorsement-rail-shell::before,
-  .endorsement-rail-shell::after {
+  .endorsement-carousel--mobile {
+    display: none;
+  }
+
+  .endorsement-carousel::before,
+  .endorsement-carousel::after {
     content: "";
     position: absolute;
     top: 0;
-    bottom: 10px;
+    bottom: 0;
     z-index: 2;
     width: max(28px, calc((100vw - 1240px) / 2 + 48px));
     pointer-events: none;
   }
 
-  .endorsement-rail-shell::before {
+  .endorsement-carousel::before {
     left: 0;
     background: linear-gradient(90deg, var(--bg) 8%, transparent);
   }
 
-  .endorsement-rail-shell::after {
+  .endorsement-carousel::after {
     right: 0;
     background: linear-gradient(270deg, var(--bg) 8%, transparent);
   }
 
-  .endorsement-rail {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: minmax(310px, 374px);
-    gap: 14px;
-    overflow-x: auto;
-    overscroll-behavior-x: contain;
-    scroll-snap-type: x proximity;
-    scrollbar-color: rgba(255, 255, 255, 0.24) transparent;
-    scrollbar-width: thin;
-    padding: 0 max(20px, calc((100vw - 1240px) / 2 + 32px)) 18px;
+  .endorsement-row {
+    overflow: hidden;
+  }
+
+  .endorsement-track {
+    width: max-content;
+    display: flex;
+    animation: endorsementMarquee 76s linear infinite;
+    will-change: transform;
+  }
+
+  .endorsement-track-group {
+    display: flex;
+    gap: 12px;
+    padding-right: 12px;
+  }
+
+  .endorsement-row.is-reverse .endorsement-track {
+    animation-direction: reverse;
+    animation-duration: 84s;
+  }
+
+  .endorsement-carousel:hover .endorsement-track,
+  .endorsement-carousel:focus-within .endorsement-track {
+    animation-play-state: paused;
   }
 
   .endorsement-card {
     position: relative;
-    scroll-snap-align: start;
-    min-height: 260px;
-    padding: 20px;
+    width: clamp(278px, 28vw, 356px);
+    height: 156px;
+    padding: 16px;
     display: flex;
     flex-direction: column;
     border: 1px solid var(--border);
@@ -1183,13 +1103,13 @@ import { tweets } from "../lib/tweets";
   .endorsement-author {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 18px;
+    gap: 10px;
+    margin-bottom: 12px;
   }
 
   .endorsement-author img {
-    width: 48px;
-    height: 48px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
     object-fit: cover;
     border: 1px solid rgba(255, 255, 255, 0.16);
@@ -1200,130 +1120,21 @@ import { tweets } from "../lib/tweets";
     font-size: 14px;
     font-weight: 600;
     letter-spacing: -0.005em;
-  }
-
-  .endorsement-source {
-    margin-top: 1px;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    color: var(--fg-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .endorsement-card p {
     color: color-mix(in oklab, var(--fg) 88%, var(--fg-muted));
-    font-size: 15px;
-    line-height: 1.58;
+    font-size: 14px;
+    line-height: 1.4;
     letter-spacing: -0.004em;
-    white-space: pre-line;
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 4;
   }
-
-  .endorsement-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    margin-top: auto;
-    padding-top: 22px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--fg-dim);
-  }
-
-  .endorsement-card:hover .endorsement-link {
-    color: var(--fg-muted);
-  }
-
-  /* ── Orchestration ─────────────────────────────────────── */
-  .orch-board { padding: 0; }
-  .orch-head {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 14px 20px; border-bottom: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.02);
-  }
-  .orch-head-left {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 13px; color: var(--fg);
-  }
-  .orch-dot.live {
-    width: 7px; height: 7px; border-radius: 999px;
-    background: var(--ok); box-shadow: 0 0 8px var(--ok);
-  }
-
-  .orch-row {
-    display: grid;
-    grid-template-columns: 120px 1fr 180px 100px 80px 90px;
-    align-items: center; gap: 16px;
-    padding: 16px 20px; border-top: 1px solid var(--border);
-    transition: background 0.15s ease;
-  }
-  .orch-row:first-child { border-top: 0; }
-  .orch-row:hover { background: rgba(255, 255, 255, 0.02); }
-  .orch-row-state {
-    display: flex; align-items: center; gap: 8px;
-    font-family: var(--font-mono); font-size: 11px;
-    text-transform: uppercase; letter-spacing: 0.08em;
-    color: var(--fg-muted);
-  }
-  .orch-row.state-running .orch-row-state { color: var(--accent); }
-  .orch-row.state-done .orch-row-state { color: var(--ok); }
-  .orch-row.state-review .orch-row-state { color: var(--warn); }
-  .orch-row-name { font-size: 14px; color: var(--fg); font-weight: 500; }
-  .orch-row-harness { font-family: var(--font-mono); font-size: 11px; color: var(--fg-muted); }
-  .orch-row-tools { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
-  .orch-row-time { font-family: var(--font-mono); font-size: 11px; color: var(--fg-dim); }
-  .orch-row-open {
-    font-family: var(--font-mono); font-size: 11px;
-    color: var(--fg-muted); display: inline-flex;
-    align-items: center; gap: 4px; padding: 4px 8px;
-    border: 1px solid var(--border); border-radius: 5px;
-    justify-self: end;
-  }
-  .orch-row-open:hover { color: var(--fg); border-color: var(--border-strong); }
-
-  .spinner {
-    width: 10px; height: 10px; border-radius: 999px;
-    border: 1.5px solid var(--accent); border-top-color: transparent;
-    animation: spin 0.9s linear infinite;
-  }
-
-  .orch-pills {
-    margin-top: 20px;
-    display: flex; flex-wrap: wrap; gap: 10px;
-  }
-  .orch-pills span {
-    display: inline-flex; align-items: center; gap: 6px;
-    font-family: var(--font-mono); font-size: 11px; color: var(--fg-muted);
-    padding: 6px 10px; border: 1px solid var(--border); border-radius: 999px;
-    background: rgba(255, 255, 255, 0.02);
-  }
-
-  /* ── Parallel ──────────────────────────────────────────── */
-  .parallel-inner {
-    display: grid;
-    grid-template-columns: 1fr 1.15fr;
-    gap: 64px; align-items: center;
-  }
-
-  .parallel-visual {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-  }
-
-  .pcol { padding: 0; }
-  .pcol-head {
-    display: flex; align-items: center; gap: 8px;
-    padding: 14px 16px; border-bottom: 1px solid var(--border);
-  }
-  .pcol-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-  .pcol-name { font-weight: 500; font-size: 13px; flex: 1; }
-  .pcol-branch { font-family: var(--font-mono); font-size: 10px; color: var(--fg-dim); }
-  .pcol-body { padding: 8px; display: flex; flex-direction: column; gap: 2px; }
-  .pcol-thread {
-    display: flex; align-items: center; gap: 8px;
-    padding: 10px; font-size: 12.5px;
-    color: var(--fg-muted); border-radius: 6px;
-  }
-  .pcol-thread.s-run { color: var(--fg); background: rgba(255, 255, 255, 0.025); }
 
   /* ── Git ──────────────────────────────────────────────── */
   .git-inner {
@@ -1508,6 +1319,15 @@ import { tweets } from "../lib/tweets";
     margin-bottom: 24px;
   }
 
+  @keyframes endorsementMarquee {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+
   /* ── Responsive ────────────────────────────────────────── */
   @media (max-width: 960px) {
     .hero-preview {
@@ -1521,22 +1341,8 @@ import { tweets } from "../lib/tweets";
     .harness-grid { grid-template-columns: 1fr 1fr; }
     .harness { border-right: 0; border-bottom: 1px solid var(--border); }
     .harness:nth-child(odd) { border-right: 1px solid var(--border); }
-    .endorsements-head {
-      grid-template-columns: 1fr;
-      gap: 14px;
-      align-items: start;
-    }
-    .endorsements-head p {
-      max-width: 560px;
-    }
-    .parallel-inner,
     .git-inner { grid-template-columns: 1fr; gap: 40px; }
-    .parallel-visual { grid-template-columns: 1fr; }
     .open-grid { grid-template-columns: 1fr; }
-    .orch-row { grid-template-columns: 100px 1fr 100px; gap: 10px; }
-    .orch-row-harness,
-    .orch-row-tools,
-    .orch-row-open { display: none; }
   }
 
   @media (max-width: 820px) {
@@ -1544,22 +1350,35 @@ import { tweets } from "../lib/tweets";
     .container { padding-left: 20px; padding-right: 20px; }
     .hero-preview { display: none; }
     .sec-endorsements {
-      padding: 56px 0 64px;
+      padding: 36px 0 46px;
     }
     .endorsements-head {
       margin-bottom: 26px;
     }
-    .endorsement-rail {
-      grid-auto-columns: minmax(280px, 82vw);
-      padding-left: 20px;
-      padding-right: 20px;
+    .endorsement-carousel--desktop {
+      display: none;
     }
-    .endorsement-rail-shell::before,
-    .endorsement-rail-shell::after {
+    .endorsement-carousel--mobile {
+      display: flex;
+    }
+    .endorsement-carousel::before,
+    .endorsement-carousel::after {
       width: 20px;
     }
+    .endorsement-track {
+      animation-duration: 68s;
+    }
+    .endorsement-row.is-reverse .endorsement-track {
+      animation-duration: 76s;
+    }
     .endorsement-card {
-      min-height: 250px;
+      width: 286px;
+      height: 152px;
+      padding: 14px;
+    }
+    .endorsement-card p {
+      font-size: 13.5px;
+      -webkit-line-clamp: 4;
     }
   }
 </style>
