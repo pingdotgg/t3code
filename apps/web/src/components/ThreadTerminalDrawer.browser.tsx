@@ -2,6 +2,7 @@ import "../index.css";
 
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { ThreadId } from "@t3tools/contracts";
+import type { ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
@@ -10,6 +11,8 @@ const {
   terminalDisposeSpy,
   fitAddonFitSpy,
   fitAddonLoadSpy,
+  attachedCustomKeyEventHandlerSpy,
+  latestCustomKeyEventHandler,
   environmentApiById,
   readEnvironmentApiMock,
   readLocalApiMock,
@@ -18,6 +21,10 @@ const {
   terminalDisposeSpy: vi.fn(),
   fitAddonFitSpy: vi.fn(),
   fitAddonLoadSpy: vi.fn(),
+  attachedCustomKeyEventHandlerSpy: vi.fn(),
+  latestCustomKeyEventHandler: {
+    current: undefined as ((event: KeyboardEvent) => boolean) | undefined,
+  },
   environmentApiById: new Map<string, { terminal: { open: ReturnType<typeof vi.fn> } }>(),
   readEnvironmentApiMock: vi.fn((environmentId: string) => environmentApiById.get(environmentId)),
   readLocalApiMock: vi.fn<
@@ -86,8 +93,9 @@ vi.mock("@xterm/xterm", () => ({
       return null;
     }
 
-    attachCustomKeyEventHandler() {
-      return true;
+    attachCustomKeyEventHandler(handler?: (event: KeyboardEvent) => boolean) {
+      latestCustomKeyEventHandler.current = handler;
+      attachedCustomKeyEventHandlerSpy(handler);
     }
 
     registerLinkProvider() {
@@ -148,6 +156,7 @@ async function mountTerminalViewport(props: {
   threadRef: ReturnType<typeof scopeThreadRef>;
   drawerBackgroundColor?: string;
   drawerTextColor?: string;
+  keybindings?: ComponentProps<typeof TerminalViewport>["keybindings"];
 }) {
   const drawer = document.createElement("div");
   drawer.className = "thread-terminal-drawer";
@@ -177,7 +186,7 @@ async function mountTerminalViewport(props: {
       autoFocus={false}
       resizeEpoch={0}
       drawerHeight={320}
-      keybindings={[]}
+      keybindings={props.keybindings ?? []}
     />,
     { container: host },
   );
@@ -197,7 +206,7 @@ async function mountTerminalViewport(props: {
           autoFocus={false}
           resizeEpoch={0}
           drawerHeight={320}
-          keybindings={[]}
+          keybindings={props.keybindings ?? []}
         />,
       );
     },
@@ -217,6 +226,8 @@ describe("TerminalViewport", () => {
     terminalDisposeSpy.mockClear();
     fitAddonFitSpy.mockClear();
     fitAddonLoadSpy.mockClear();
+    attachedCustomKeyEventHandlerSpy.mockClear();
+    latestCustomKeyEventHandler.current = undefined;
   });
 
   it("does not create a terminal when APIs are unavailable", async () => {
@@ -315,6 +326,97 @@ describe("TerminalViewport", () => {
       );
     } finally {
       await mounted.cleanup();
+    }
+  });
+
+  it.each([
+    {
+      name: "macOS",
+      platform: "MacIntel",
+      keyboardEvent: {
+        type: "keydown",
+        key: "j",
+        code: "KeyJ",
+        ctrlKey: false,
+        metaKey: true,
+        shiftKey: false,
+        altKey: false,
+      },
+    },
+    {
+      name: "Linux",
+      platform: "Linux x86_64",
+      keyboardEvent: {
+        type: "keydown",
+        key: "j",
+        code: "KeyJ",
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: false,
+        altKey: false,
+      },
+    },
+    {
+      name: "Windows control-character",
+      platform: "Win32",
+      keyboardEvent: {
+        type: "keydown",
+        key: "\n",
+        code: "KeyJ",
+        ctrlKey: true,
+        metaKey: false,
+        shiftKey: false,
+        altKey: false,
+      },
+    },
+  ])("yields $name terminal.toggle events back to the app", async ({ platform, keyboardEvent }) => {
+    const environment = createEnvironmentApi();
+    environmentApiById.set("environment-a", environment);
+    const platformDescriptor = Object.getOwnPropertyDescriptor(window.navigator, "platform");
+    Object.defineProperty(window.navigator, "platform", {
+      configurable: true,
+      value: platform,
+    });
+
+    try {
+      const mounted = await mountTerminalViewport({
+        threadRef: scopeThreadRef("environment-a" as never, THREAD_ID),
+        keybindings: [
+          {
+            command: "terminal.toggle",
+            shortcut: {
+              key: "j",
+              metaKey: false,
+              ctrlKey: false,
+              shiftKey: false,
+              altKey: false,
+              modKey: true,
+            },
+          },
+        ],
+      });
+
+      try {
+        await vi.waitFor(() => {
+          expect(attachedCustomKeyEventHandlerSpy).toHaveBeenCalledTimes(1);
+        });
+
+        const handledByTerminal = latestCustomKeyEventHandler.current?.({
+          ...keyboardEvent,
+          preventDefault() {},
+          stopPropagation() {},
+        } as unknown as KeyboardEvent);
+
+        expect(handledByTerminal).toBe(false);
+      } finally {
+        await mounted.cleanup();
+      }
+    } finally {
+      if (platformDescriptor) {
+        Object.defineProperty(window.navigator, "platform", platformDescriptor);
+      } else {
+        delete (window.navigator as { platform?: string }).platform;
+      }
     }
   });
 });
