@@ -4,9 +4,11 @@ import {
   DEFAULT_CODE_FONT,
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_TOOL_FONT_SIZE,
+  DEFAULT_UI_DENSITY,
   DEFAULT_UI_FONT,
   type CodeFont,
   type FontSize,
+  type UiDensity,
   type UiFont,
 } from "@t3tools/contracts/settings";
 
@@ -78,6 +80,20 @@ export function applyFontSizes(
   style.setProperty("--app-tool-font-size", `${toolFontSize}px`);
 }
 
+export function applyUiDensity(density: UiDensity): void {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  document.documentElement.setAttribute("data-ui-density", density);
+}
+
+function normalizeUiDensity(value: unknown): UiDensity {
+  return value === "compact" || value === "default" || value === "spacious"
+    ? value
+    : DEFAULT_UI_DENSITY;
+}
+
 function getStoredUiFont(): UiFont {
   return normalizeUiFont(readBrowserClientSettings()?.uiFont);
 }
@@ -102,6 +118,7 @@ function getStoredFontSizes(): {
 if (typeof document !== "undefined") {
   applyAppFont(getStoredUiFont());
   applyCodeFont(getStoredCodeFont());
+  applyUiDensity(normalizeUiDensity(readBrowserClientSettings()?.uiDensity));
   const sizes = getStoredFontSizes();
   applyFontSizes(sizes.codeFontSize, sizes.chatFontSize, sizes.toolFontSize);
 }
@@ -112,6 +129,7 @@ export function useAppFont() {
   const codeFontSize = useSettings((settings) => settings.codeFontSize);
   const chatFontSize = useSettings((settings) => settings.chatFontSize);
   const toolFontSize = useSettings((settings) => settings.toolFontSize);
+  const uiDensity = useSettings((settings) => settings.uiDensity);
 
   useEffect(() => {
     applyAppFont(uiFont);
@@ -125,5 +143,9 @@ export function useAppFont() {
     applyFontSizes(codeFontSize, chatFontSize, toolFontSize);
   }, [codeFontSize, chatFontSize, toolFontSize]);
 
-  return { uiFont, codeFont, codeFontSize, chatFontSize, toolFontSize };
+  useEffect(() => {
+    applyUiDensity(uiDensity);
+  }, [uiDensity]);
+
+  return { uiFont, codeFont, codeFontSize, chatFontSize, toolFontSize, uiDensity };
 }

@@ -28,6 +28,10 @@ export const DEFAULT_CODE_FONT_SIZE: FontSize = 12 as FontSize;
 export const DEFAULT_CHAT_FONT_SIZE: FontSize = 14 as FontSize;
 export const DEFAULT_TOOL_FONT_SIZE: FontSize = 12 as FontSize;
 
+export const UiDensity = Schema.Literals(["compact", "default", "spacious"]);
+export type UiDensity = typeof UiDensity.Type;
+export const DEFAULT_UI_DENSITY: UiDensity = "default";
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -94,6 +98,7 @@ export const ClientSettingsSchema = Schema.Struct({
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
   ),
+  uiDensity: UiDensity.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_UI_DENSITY))),
   uiFont: UiFont.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_UI_FONT))),
 });
 export type ClientSettings = typeof ClientSettingsSchema.Type;
@@ -339,6 +344,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   timestampFormat: Schema.optionalKey(TimestampFormat),
+  uiDensity: Schema.optionalKey(UiDensity),
   uiFont: Schema.optionalKey(UiFont),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

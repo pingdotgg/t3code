@@ -71,8 +71,14 @@ export const ChatHeader = memo(function ChatHeader({
   paneActions,
 }: ChatHeaderProps) {
   return (
-    <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
+    <div
+      className="@container/header-actions flex min-w-0 flex-1 items-center"
+      style={{ gap: "var(--density-header-gap)" }}
+    >
+      <div
+        className="flex min-w-0 flex-1 items-center overflow-hidden"
+        style={{ gap: "var(--density-header-gap)" }}
+      >
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
         <h2
           className="min-w-0 shrink truncate text-sm font-medium text-foreground"

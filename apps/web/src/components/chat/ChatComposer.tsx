@@ -1852,10 +1852,15 @@ export const ChatComposer = memo(
             ) : null}
 
             <div
-              className={cn(
-                "relative px-3 pb-2 sm:px-4",
-                hasComposerHeader ? "pt-2.5 sm:pt-3" : "pt-3.5 sm:pt-4",
-              )}
+              className="relative"
+              style={{
+                paddingLeft: "var(--density-composer-px)",
+                paddingRight: "var(--density-composer-px)",
+                paddingBottom: "var(--density-composer-py)",
+                paddingTop: hasComposerHeader
+                  ? "var(--density-composer-py)"
+                  : "var(--density-composer-px)",
+              }}
             >
               {composerMenuOpen && !isComposerApprovalState && (
                 <div className="absolute inset-x-0 bottom-full z-20 mb-2 px-1">
@@ -1992,9 +1997,14 @@ export const ChatComposer = memo(
                 data-chat-composer-footer="true"
                 data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
                 className={cn(
-                  "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 sm:px-3 sm:pb-3",
+                  "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible",
                   isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                 )}
+                style={{
+                  paddingLeft: "var(--density-composer-footer-px)",
+                  paddingRight: "var(--density-composer-footer-px)",
+                  paddingBottom: "var(--density-composer-footer-pb)",
+                }}
               >
                 <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   <ProviderModelPicker

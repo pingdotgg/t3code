@@ -173,6 +173,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         timelineEntries,
         completionDividerBeforeEntryId,
         isWorking,
+        activeTurnId: activeTurnId ?? null,
         activeTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
@@ -182,6 +183,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       timelineEntries,
       completionDividerBeforeEntryId,
       isWorking,
+      activeTurnId,
       activeTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
@@ -291,9 +293,13 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         maintainScrollAtEndThreshold={0.1}
         maintainVisibleContentPosition
         onScroll={handleScroll}
-        className="h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
-        ListHeaderComponent={<div className="h-3 sm:h-4" />}
-        ListFooterComponent={<div className="h-3 sm:h-4" />}
+        className="h-full overflow-x-hidden overscroll-y-contain"
+        style={{
+          paddingLeft: "var(--density-timeline-px)",
+          paddingRight: "var(--density-timeline-px)",
+        }}
+        ListHeaderComponent={<div style={{ height: "var(--density-timeline-py)" }} />}
+        ListFooterComponent={<div style={{ height: "var(--density-timeline-py)" }} />}
       />
     </TimelineRowCtx.Provider>
   );
@@ -319,9 +325,9 @@ function TimelineRowContent(props: { row: TimelineRow }) {
   return (
     <div
       className={cn(
-        "pb-4",
         row.kind === "message" && row.message.role === "assistant" ? "group/assistant" : null,
       )}
+      style={{ paddingBottom: "var(--density-message-gap)" }}
       data-timeline-row-id={row.id}
       data-timeline-row-kind={row.kind}
       data-message-id={row.kind === "message" ? row.message.id : undefined}
@@ -616,7 +622,15 @@ const WorkGroupSection = memo(function WorkGroupSection({
       : `Show ${hiddenCount} more`;
 
   return (
-    <div className="work-group-section rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
+    <div
+      className="work-group-section rounded-xl border border-border/45 bg-card/25"
+      style={{
+        paddingLeft: "var(--density-work-group-px)",
+        paddingRight: "var(--density-work-group-px)",
+        paddingTop: "var(--density-work-group-py)",
+        paddingBottom: "var(--density-work-group-py)",
+      }}
+    >
       {showHeader && (
         <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
           <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
@@ -1064,7 +1078,13 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
 
   return (
-    <div className="rounded-lg px-1 py-1">
+    <div
+      className="rounded-lg px-1"
+      style={{
+        paddingTop: "var(--density-work-entry-py)",
+        paddingBottom: "var(--density-work-entry-py)",
+      }}
+    >
       <div className="flex items-center gap-2 transition-[opacity,translate] duration-200">
         <span
           className={cn("flex size-5 shrink-0 items-center justify-center", iconConfig.className)}

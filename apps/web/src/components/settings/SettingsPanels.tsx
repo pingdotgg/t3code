@@ -15,10 +15,12 @@ import {
   DEFAULT_CODE_FONT,
   DEFAULT_CODE_FONT_SIZE,
   DEFAULT_TOOL_FONT_SIZE,
+  DEFAULT_UI_DENSITY,
   DEFAULT_UI_FONT,
   DEFAULT_UNIFIED_SETTINGS,
   type CodeFont,
   type FontSize,
+  type UiDensity,
   type UiFont,
 } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -104,6 +106,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const UI_DENSITY_OPTIONS: ReadonlyArray<{ value: UiDensity; label: string; hint: string }> = [
+  { value: "compact", label: "Compact", hint: "— tighter spacing" },
+  { value: "default", label: "Default", hint: "— balanced" },
+  { value: "spacious", label: "Spacious", hint: "— more breathing room" },
+];
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
@@ -502,6 +510,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.timestampFormat !== DEFAULT_UNIFIED_SETTINGS.timestampFormat
         ? ["Time format"]
         : []),
+      ...(settings.uiDensity !== DEFAULT_UNIFIED_SETTINGS.uiDensity ? ["UI density"] : []),
       ...(settings.uiFont !== DEFAULT_UNIFIED_SETTINGS.uiFont ? ["Interface font"] : []),
       ...(settings.codeFont !== DEFAULT_UNIFIED_SETTINGS.codeFont ? ["Code font"] : []),
       ...(settings.codeFontSize !== DEFAULT_UNIFIED_SETTINGS.codeFontSize
@@ -552,6 +561,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.enableAssistantStreaming,
       settings.timestampFormat,
       settings.toolFontSize,
+      settings.uiDensity,
       settings.uiFont,
       theme,
     ],
@@ -995,6 +1005,46 @@ export function GeneralSettingsPanel() {
                 <SelectItem hideIndicator value="24-hour">
                   {TIMESTAMP_FORMAT_LABELS["24-hour"]}
                 </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="UI density"
+          description="Control spacing across the entire interface — sidebar, chat, composer, and toolbars."
+          resetAction={
+            settings.uiDensity !== DEFAULT_UI_DENSITY ? (
+              <SettingResetButton
+                label="UI density"
+                onClick={() => updateSettings({ uiDensity: DEFAULT_UI_DENSITY })}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.uiDensity}
+              onValueChange={(value) => {
+                if (value === "compact" || value === "default" || value === "spacious") {
+                  updateSettings({ uiDensity: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="UI density">
+                <SelectValue>
+                  {UI_DENSITY_OPTIONS.find((option) => option.value === settings.uiDensity)
+                    ?.label ?? "Default"}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {UI_DENSITY_OPTIONS.map((option) => (
+                  <SelectItem hideIndicator key={option.value} value={option.value}>
+                    <div>
+                      <span className="font-medium">{option.label}</span>
+                      <span className="ml-2 text-muted-foreground/70">{option.hint}</span>
+                    </div>
+                  </SelectItem>
+                ))}
               </SelectPopup>
             </Select>
           }

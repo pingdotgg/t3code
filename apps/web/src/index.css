@@ -78,6 +78,24 @@
   --app-code-font-size: 12px;
   --app-chat-font-size: 14px;
   --app-tool-font-size: 12px;
+
+  /* Density tokens (default) */
+  --density-sidebar-row-h: 1.75rem;
+  --density-sidebar-row-px: 0.5rem;
+  --density-message-gap: 1rem;
+  --density-timeline-px: 1.25rem;
+  --density-timeline-py: 1rem;
+  --density-composer-px: 1rem;
+  --density-composer-py: 0.75rem;
+  --density-composer-footer-px: 0.75rem;
+  --density-composer-footer-pb: 0.75rem;
+  --density-header-gap: 0.5rem;
+  --density-toolbar-px: 0.75rem;
+  --density-toolbar-pb: 0.75rem;
+  --density-work-group-px: 0.5rem;
+  --density-work-group-py: 0.375rem;
+  --density-work-entry-py: 0.25rem;
+
   --radius: 0.625rem;
   --background: var(--color-white);
   --app-chrome-background: var(--background);
@@ -156,6 +174,43 @@ html[data-code-font="jetbrains-mono"] {
   --app-font-mono-stack:
     "JetBrains Mono", "SF Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, ui-monospace,
     monospace;
+}
+
+/* ── UI Density presets ──────────────────────────────────────── */
+html[data-ui-density="compact"] {
+  --density-sidebar-row-h: 1.5rem;
+  --density-sidebar-row-px: 0.375rem;
+  --density-message-gap: 0.625rem;
+  --density-timeline-px: 0.75rem;
+  --density-timeline-py: 0.5rem;
+  --density-composer-px: 0.75rem;
+  --density-composer-py: 0.5rem;
+  --density-composer-footer-px: 0.625rem;
+  --density-composer-footer-pb: 0.5rem;
+  --density-header-gap: 0.375rem;
+  --density-toolbar-px: 0.5rem;
+  --density-toolbar-pb: 0.5rem;
+  --density-work-group-px: 0.375rem;
+  --density-work-group-py: 0.25rem;
+  --density-work-entry-py: 0.125rem;
+}
+
+html[data-ui-density="spacious"] {
+  --density-sidebar-row-h: 2.25rem;
+  --density-sidebar-row-px: 0.625rem;
+  --density-message-gap: 1.5rem;
+  --density-timeline-px: 1.5rem;
+  --density-timeline-py: 1.25rem;
+  --density-composer-px: 1.25rem;
+  --density-composer-py: 1rem;
+  --density-composer-footer-px: 1rem;
+  --density-composer-footer-pb: 1rem;
+  --density-header-gap: 0.75rem;
+  --density-toolbar-px: 1rem;
+  --density-toolbar-pb: 1rem;
+  --density-work-group-px: 0.625rem;
+  --density-work-group-py: 0.5rem;
+  --density-work-entry-py: 0.375rem;
 }
 
 body {
