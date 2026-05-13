@@ -245,6 +245,32 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain(">Warning<");
   });
 
+  it("renders whitespace-only runtime warning messages as a plain runtime warning row", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Runtime Warning",
+              tone: "info",
+              runtimeWarningMessage: "   ",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Runtime Warning");
+    expect(markup).not.toContain('aria-label="Show runtime warning details"');
+  });
+
   it("formats changed file paths from the workspace root", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

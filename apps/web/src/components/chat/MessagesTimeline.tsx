@@ -1036,6 +1036,38 @@ function workToneClass(tone: "thinking" | "tool" | "info" | "error"): string {
   return "text-muted-foreground/40";
 }
 
+function normalizeRuntimeWarningMessage(message: string | undefined): string | null {
+  const trimmed = message?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+function formatRuntimeWarningDetail(detail: unknown): string | null {
+  if (typeof detail === "string") {
+    const trimmed = detail.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (detail === null || detail === undefined) {
+    return null;
+  }
+
+  try {
+    const serialized = JSON.stringify(detail, null, 2);
+    return typeof serialized === "string" && serialized.length > 0 ? serialized : String(detail);
+  } catch {
+    return String(detail);
+  }
+}
+
+function hasRenderableRuntimeWarningMeta(
+  workEntry: Pick<TimelineWorkEntry, "runtimeWarningMessage" | "runtimeWarningDetail">,
+): boolean {
+  return (
+    normalizeRuntimeWarningMessage(workEntry.runtimeWarningMessage) !== null ||
+    formatRuntimeWarningDetail(workEntry.runtimeWarningDetail) !== null
+  );
+}
+
 function workEntryPreview(
   workEntry: Pick<
     TimelineWorkEntry,
@@ -1043,10 +1075,7 @@ function workEntryPreview(
   >,
   workspaceRoot: string | undefined,
 ) {
-  if (
-    workEntry.runtimeWarningMessage !== undefined ||
-    workEntry.runtimeWarningDetail !== undefined
-  ) {
+  if (hasRenderableRuntimeWarningMeta(workEntry)) {
     return null;
   }
   if (workEntry.command) return workEntry.command;
@@ -1110,24 +1139,6 @@ function toolWorkEntryHeading(workEntry: TimelineWorkEntry): string {
   return capitalizePhrase(normalizeCompactToolLabel(workEntry.toolTitle));
 }
 
-function formatRuntimeWarningDetail(detail: unknown): string | null {
-  if (typeof detail === "string") {
-    const trimmed = detail.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-
-  if (detail === null || detail === undefined) {
-    return null;
-  }
-
-  try {
-    const serialized = JSON.stringify(detail, null, 2);
-    return typeof serialized === "string" && serialized.length > 0 ? serialized : String(detail);
-  } catch {
-    return String(detail);
-  }
-}
-
 const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
@@ -1148,9 +1159,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
   const displayText = preview ? `${heading} - ${preview}` : heading;
   const hasChangedFiles = (workEntry.changedFiles?.length ?? 0) > 0;
   const previewIsChangedFiles = hasChangedFiles && !workEntry.command && !workEntry.detail;
-  const runtimeWarningMessage = workEntry.runtimeWarningMessage?.trim() || null;
+  const runtimeWarningMessage = normalizeRuntimeWarningMessage(workEntry.runtimeWarningMessage);
   const runtimeWarningDetail = formatRuntimeWarningDetail(workEntry.runtimeWarningDetail);
-  const hasRuntimeWarningMeta = runtimeWarningMessage !== null || runtimeWarningDetail !== null;
+  const hasRuntimeWarningMeta = hasRenderableRuntimeWarningMeta(workEntry);
 
   if (hasRuntimeWarningMeta) {
     return (
