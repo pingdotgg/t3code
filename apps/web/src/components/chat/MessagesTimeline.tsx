@@ -1149,13 +1149,8 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
                 className="max-w-[min(56rem,calc(100vw-2rem))] px-0 py-0"
                 side="top"
               >
-                <div className="max-w-[min(56rem,calc(100vw-2rem))]">
-                  <p className="border-b border-border/60 px-1.5 py-1 text-xs leading-5 whitespace-pre-wrap wrap-break-word">
-                    {displayText}
-                  </p>
-                  <div className="overflow-x-auto px-1.5 py-1 font-mono text-[11px] leading-4 whitespace-nowrap">
-                    {rawCommand}
-                  </div>
+                <div className="max-w-[min(56rem,calc(100vw-2rem))] overflow-x-auto px-1.5 py-1 font-mono text-[11px] leading-4 whitespace-nowrap">
+                  {rawCommand}
                 </div>
               </TooltipPopup>
             </Tooltip>
