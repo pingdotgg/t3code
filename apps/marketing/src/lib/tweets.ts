@@ -114,4 +114,10 @@ export const tweets = [
     content: "T3Code was the first one to truly care about Linux users.",
     link: "https://x.com/iamkaffe/status/2054675539311411280",
   },
+  {
+    handle: "uwunetes",
+    content:
+      "claude code make me go *whine whine whine* and t3 code make me go woof woof awooooo!!!",
+    link: "https://x.com/uwunetes/status/2054683356022120640",
+  },
 ] satisfies Tweet[];
