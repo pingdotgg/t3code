@@ -704,22 +704,78 @@ import Layout from "../layouts/Layout.astro";
     object-fit: contain;
   }
 
-  .hero-float-mark.hf-claude   { background: radial-gradient(circle at 30% 25%, rgba(217, 119, 87, 0.22), rgba(20, 20, 24, 0.92) 65%); top: 12%; left: 6%;  animation-delay: 0s;    transform: rotate(-8deg); }
-  .hero-float-mark.hf-codex    { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.08), rgba(20, 20, 24, 0.92) 65%); top: 7%;  right: 7%; animation-delay: -2.5s; transform: rotate(6deg); }
-  .hero-float-mark.hf-opencode { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.06), rgba(20, 20, 24, 0.92) 65%); top: 46%; left: 3%;  animation-delay: -5s;   transform: rotate(4deg); }
-  .hero-float-mark.hf-cursor   { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.08), rgba(20, 20, 24, 0.92) 65%); top: 40%; right: 4%; animation-delay: -7s;   transform: rotate(-5deg); }
+  .hero-float-mark.hf-claude   { background: radial-gradient(circle at 30% 25%, rgba(217, 119, 87, 0.22), rgba(20, 20, 24, 0.92) 65%); top: 8%;  left: 7%;  animation-delay: 0s;    transform: rotate(-8deg); }
+  .hero-float-mark.hf-codex    { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.08), rgba(20, 20, 24, 0.92) 65%); top: 6%;  right: 7%; animation-delay: -2.5s; transform: rotate(6deg); }
+  .hero-float-mark.hf-opencode { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.06), rgba(20, 20, 24, 0.92) 65%); top: 32%; left: 5%;  animation-delay: -5s;   transform: rotate(4deg); }
+  .hero-float-mark.hf-cursor   { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.08), rgba(20, 20, 24, 0.92) 65%); top: 30%; right: 5%; animation-delay: -7s;   transform: rotate(-5deg); }
 
   @media (max-width: 1180px) {
     .hero-float-mark { width: 76px; height: 76px; border-radius: 20px; }
     .hero-float-mark img { width: 42px; height: 42px; }
-    .hero-float-mark.hf-claude   { top: 6%;  left: 3%; }
-    .hero-float-mark.hf-codex    { top: 3%;  right: 3%; }
-    .hero-float-mark.hf-opencode { top: 32%; left: 1%; }
-    .hero-float-mark.hf-cursor   { top: 28%; right: 1%; }
+    .hero-float-mark.hf-claude   { top: 4%;  left: 3%; }
+    .hero-float-mark.hf-codex    { top: 2%;  right: 3%; }
+    .hero-float-mark.hf-opencode { top: 26%; left: 2%; }
+    .hero-float-mark.hf-cursor   { top: 24%; right: 2%; }
   }
 
   @media (max-width: 820px) {
-    .hero-float { display: none; }
+    .hero {
+      padding-top: 132px;
+    }
+
+    .hero-title {
+      font-size: clamp(40px, 11vw, 56px);
+      margin-top: 14px;
+    }
+
+    .hero-actions {
+      margin-bottom: 96px;
+    }
+
+    .hero-float {
+      position: absolute;
+      inset: 0;
+      display: block;
+    }
+
+    .hero-float-mark {
+      position: absolute;
+      width: 78px;
+      height: 78px;
+      border-radius: 20px;
+    }
+
+    .hero-float-mark img {
+      width: 44px;
+      height: 44px;
+    }
+
+    /* Two above the title, two flanking the call-to-action area. */
+    .hero-float-mark.hf-claude {
+      top: 44px;
+      left: 10px;
+      transform: rotate(-10deg);
+    }
+
+    .hero-float-mark.hf-codex {
+      top: 44px;
+      right: 10px;
+      transform: rotate(8deg);
+    }
+
+    .hero-float-mark.hf-opencode {
+      top: 474px;
+      left: 4px;
+      right: auto;
+      transform: rotate(-6deg);
+    }
+
+    .hero-float-mark.hf-cursor {
+      top: 474px;
+      right: 4px;
+      left: auto;
+      transform: rotate(7deg);
+    }
   }
 
   .hero-preview {
@@ -1276,5 +1332,6 @@ import Layout from "../layouts/Layout.astro";
   @media (max-width: 820px) {
     section { padding: 64px 0; }
     .container { padding-left: 20px; padding-right: 20px; }
+    .hero-preview { display: none; }
   }
 </style>
