@@ -158,6 +158,10 @@ function isCodeFont(value: unknown): value is CodeFont {
 }
 
 const FONT_SIZE_OPTIONS: ReadonlyArray<{ value: FontSize; label: string }> = [
+  { value: 6, label: "6px" },
+  { value: 7, label: "7px" },
+  { value: 8, label: "8px" },
+  { value: 9, label: "9px" },
   { value: 10, label: "10px" },
   { value: 11, label: "11px" },
   { value: 12, label: "12px" },

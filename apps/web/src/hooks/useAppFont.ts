@@ -41,7 +41,7 @@ function normalizeCodeFont(value: unknown): CodeFont {
 }
 
 function normalizeFontSize(value: unknown, fallback: FontSize): FontSize {
-  if (typeof value === "number" && Number.isInteger(value) && value >= 10 && value <= 24) {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 6 && value <= 24) {
     return value as FontSize;
   }
   return fallback;

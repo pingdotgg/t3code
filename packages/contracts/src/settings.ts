@@ -20,7 +20,7 @@ export const CodeFont = Schema.Literals(["system-mono", "sf-mono", "menlo", "jet
 export type CodeFont = typeof CodeFont.Type;
 export const DEFAULT_CODE_FONT: CodeFont = "system-mono";
 
-export const FontSize = Schema.Int.check(Schema.isGreaterThanOrEqualTo(10)).check(
+export const FontSize = Schema.Int.check(Schema.isGreaterThanOrEqualTo(6)).check(
   Schema.isLessThanOrEqualTo(24),
 );
 export type FontSize = typeof FontSize.Type;

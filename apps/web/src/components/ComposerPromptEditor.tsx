@@ -1621,9 +1621,10 @@ function ComposerPromptEditorInner({
           contentEditable={
             <ContentEditable
               className={cn(
-                "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent text-base sm:text-[14px] leading-relaxed text-foreground focus:outline-none",
+                "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",
                 className,
               )}
+              style={{ fontSize: "var(--app-chat-font-size)" }}
               data-testid="composer-editor"
               aria-placeholder={placeholder}
               placeholder={<span />}
@@ -1632,7 +1633,10 @@ function ComposerPromptEditorInner({
           }
           placeholder={
             terminalContexts.length > 0 ? null : (
-              <div className="pointer-events-none absolute inset-0 text-base sm:text-[14px] leading-relaxed text-muted-foreground/35">
+              <div
+                className="pointer-events-none absolute inset-0 leading-relaxed text-muted-foreground/35"
+                style={{ fontSize: "var(--app-chat-font-size)" }}
+              >
                 {placeholder}
               </div>
             )

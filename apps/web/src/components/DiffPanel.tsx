@@ -48,11 +48,9 @@ const DIFF_ZOOM_MIN = 50;
 const DIFF_ZOOM_MAX = 200;
 const DIFF_ZOOM_STEP = 10;
 const DIFF_ZOOM_DEFAULT = 100;
-// Base font size that 100% maps to, in px
-const DIFF_ZOOM_BASE_PX = 11;
 
-function diffZoomFontSizePx(zoom: number): number {
-  return Math.round((DIFF_ZOOM_BASE_PX * zoom) / 100);
+function diffZoomFontSizePx(zoom: number, basePx: number): number {
+  return Math.round((basePx * zoom) / 100);
 }
 
 function diffZoomLineHeight(zoom: number): number {
@@ -124,8 +122,8 @@ const DIFF_PANEL_UNSAFE_CSS = `
 }
 `;
 
-function buildDiffPanelUnsafeCss(zoom: number): string {
-  const fontSizePx = diffZoomFontSizePx(zoom);
+function buildDiffPanelUnsafeCss(zoom: number, basePx: number): string {
+  const fontSizePx = diffZoomFontSizePx(zoom, basePx);
   const lineHeight = diffZoomLineHeight(zoom);
   return `${DIFF_PANEL_UNSAFE_CSS}
 
@@ -368,13 +366,16 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       }),
     );
   }, [renderablePatch]);
-  const diffUnsafeCss = useMemo(() => buildDiffPanelUnsafeCss(diffZoom), [diffZoom]);
+  const diffUnsafeCss = useMemo(
+    () => buildDiffPanelUnsafeCss(diffZoom, settings.codeFontSize),
+    [diffZoom, settings.codeFontSize],
+  );
   const diffRawTextStyle = useMemo(
     () => ({
-      fontSize: `${diffZoomFontSizePx(diffZoom)}px`,
+      fontSize: `${diffZoomFontSizePx(diffZoom, settings.codeFontSize)}px`,
       lineHeight: diffZoomLineHeight(diffZoom),
     }),
-    [diffZoom],
+    [diffZoom, settings.codeFontSize],
   );
 
   useEffect(() => {
