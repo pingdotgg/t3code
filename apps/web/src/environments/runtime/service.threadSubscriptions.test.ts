@@ -176,6 +176,7 @@ describe("retainThreadDetailSubscription", () => {
           },
         })),
       },
+      isHeartbeatFresh: vi.fn(() => true),
       orchestration: {
         subscribeThread: mockSubscribeThread,
       },
@@ -382,7 +383,7 @@ describe("retainThreadDetailSubscription", () => {
     await resetEnvironmentServiceForTests();
   });
 
-  it("reconnects environment streams when the browser resumes from the background", async () => {
+  it("keeps healthy environment streams connected when the browser resumes from the background", async () => {
     let visibilityState: DocumentVisibilityState = "visible";
     const documentTarget = new EventTarget();
     const windowTarget = new EventTarget();
@@ -396,6 +397,57 @@ describe("retainThreadDetailSubscription", () => {
     vi.stubGlobal("window", {
       addEventListener: windowTarget.addEventListener.bind(windowTarget),
       removeEventListener: windowTarget.removeEventListener.bind(windowTarget),
+    });
+
+    const { resetEnvironmentServiceForTests, startEnvironmentConnectionService } =
+      await import("./service");
+
+    const stop = startEnvironmentConnectionService(new QueryClient());
+    expect(mockConnectionReconnects).toHaveLength(1);
+
+    visibilityState = "hidden";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+
+    visibilityState = "visible";
+    documentTarget.dispatchEvent(new Event("visibilitychange"));
+    expect(mockConnectionReconnects[0]).not.toHaveBeenCalled();
+
+    stop();
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("reconnects stale environment streams when the browser resumes from the background", async () => {
+    let visibilityState: DocumentVisibilityState = "visible";
+    const documentTarget = new EventTarget();
+    const windowTarget = new EventTarget();
+    vi.stubGlobal("document", {
+      addEventListener: documentTarget.addEventListener.bind(documentTarget),
+      removeEventListener: documentTarget.removeEventListener.bind(documentTarget),
+      get visibilityState() {
+        return visibilityState;
+      },
+    });
+    vi.stubGlobal("window", {
+      addEventListener: windowTarget.addEventListener.bind(windowTarget),
+      removeEventListener: windowTarget.removeEventListener.bind(windowTarget),
+    });
+    mockCreateWsRpcClient.mockReturnValue({
+      server: {
+        getConfig: vi.fn(async () => ({
+          environment: {
+            environmentId: EnvironmentId.make("env-remote"),
+            label: "Remote env",
+            platform: { os: "darwin", arch: "arm64" },
+            serverVersion: "0.0.0-test",
+            capabilities: { repositoryIdentity: true },
+          },
+        })),
+      },
+      isHeartbeatFresh: vi.fn(() => false),
+      orchestration: {
+        subscribeThread: mockSubscribeThread,
+      },
     });
 
     const { resetEnvironmentServiceForTests, startEnvironmentConnectionService } =

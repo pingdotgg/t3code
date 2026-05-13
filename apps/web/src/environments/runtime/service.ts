@@ -1482,9 +1482,12 @@ function reconnectEnvironmentConnectionsAfterBrowserResume(reason: string): void
   if (now - lastBrowserResumeReconnectAt < BROWSER_RESUME_RECONNECT_COOLDOWN_MS) {
     return;
   }
-  lastBrowserResumeReconnectAt = now;
 
   for (const connection of environmentConnections.values()) {
+    if (connection.client.isHeartbeatFresh()) {
+      continue;
+    }
+    lastBrowserResumeReconnectAt = now;
     void connection.reconnect().catch((error) => {
       console.warn("Environment reconnect after browser resume failed", {
         environmentId: connection.environmentId,
