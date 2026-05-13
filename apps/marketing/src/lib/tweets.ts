@@ -14,7 +14,7 @@ export const tweets = [
   {
     handle: "teja2495",
     content:
-      "I’ve completely switched to T3 Code for all my workflows. I just switch between different subscriptions and harnesses depending on what I need.\n\nI’m also trying other tools like T3 Code, but I’m convinced that having one UI for all harnesses is the ideal setup, especially when you have multiple subscriptions.\n\nI only use Cursor for design updates. Their design tool makes UI changes really easy.",
+      "I’ve completely switched to T3 Code for all my workflows. I just switch between different subscriptions and harnesses depending on what I need.",
     link: "https://x.com/teja2495/status/2052420254991581623",
   },
   {
@@ -92,7 +92,7 @@ export const tweets = [
   {
     handle: "pocarles",
     content:
-      "I don’t even have to lie. Only using Codex and T3 now.\n\n“I thought all AI coding harnesses had roughly the same impact. Using T3 Code taught me how wrong I was. The interface between you and the model changes everything.”",
+      "Only using Codex and T3 now.\n\nI thought all AI coding harnesses had roughly the same impact. Using T3 Code taught me how wrong I was. The interface between you and the model changes everything.",
     link: "https://x.com/pocarles/status/2054673964274758046",
   },
 ] satisfies Tweet[];

@@ -1,5 +1,6 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import { tweets } from "../lib/tweets";
 ---
 
 <Layout>
@@ -150,6 +151,55 @@ import Layout from "../layouts/Layout.astro";
             </main>
           </div>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Endorsements ─────────────────────────────────────────── -->
+  <section id="endorsements" class="sec-endorsements" aria-labelledby="endorsements-title">
+    <div class="endorsements-head container">
+      <div>
+        <div class="eyebrow">Endorsements</div>
+        <h2 id="endorsements-title">People are already making T3 Code their daily driver.</h2>
+      </div>
+      <p>
+        Pulled from real posts by developers trying the alpha in public.
+      </p>
+    </div>
+
+    <div class="endorsement-rail-shell" aria-label="Developer endorsements">
+      <div class="endorsement-rail">
+        {
+          tweets.map((tweet) => (
+            <a
+              class="endorsement-card"
+              href={tweet.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label={`Read ${tweet.handle}'s post on X`}
+            >
+              <div class="endorsement-author">
+                <img
+                  src={`/pfps/${tweet.handle}.jpeg`}
+                  alt=""
+                  width="48"
+                  height="48"
+                  loading="lazy"
+                  decoding="async"
+                />
+                <div>
+                  <div class="endorsement-handle">@{tweet.handle}</div>
+                  <div class="endorsement-source">x.com</div>
+                </div>
+              </div>
+              <p>{tweet.content}</p>
+              <span class="endorsement-link">
+                Read post
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17L17 7M8 7h9v9"/></svg>
+              </span>
+            </a>
+          ))
+        }
       </div>
     </div>
   </section>
@@ -1030,6 +1080,158 @@ import Layout from "../layouts/Layout.astro";
   }
   .harness-footer-item svg { color: var(--ok); }
 
+  /* ── Endorsements ─────────────────────────────────────── */
+  .sec-endorsements {
+    overflow: hidden;
+    padding: 72px 0 80px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 42%),
+      #09090b;
+  }
+
+  .endorsements-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    gap: 40px;
+    align-items: end;
+    margin-bottom: 34px;
+  }
+
+  .endorsements-head .eyebrow {
+    margin-bottom: 14px;
+  }
+
+  .endorsements-head h2 {
+    max-width: 760px;
+    font-size: clamp(30px, 3.8vw, 46px);
+    font-weight: 500;
+    letter-spacing: -0.035em;
+    line-height: 1.05;
+  }
+
+  .endorsements-head p {
+    color: var(--fg-muted);
+    font-size: 15px;
+    line-height: 1.55;
+  }
+
+  .endorsement-rail-shell {
+    position: relative;
+  }
+
+  .endorsement-rail-shell::before,
+  .endorsement-rail-shell::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 10px;
+    z-index: 2;
+    width: max(28px, calc((100vw - 1240px) / 2 + 48px));
+    pointer-events: none;
+  }
+
+  .endorsement-rail-shell::before {
+    left: 0;
+    background: linear-gradient(90deg, var(--bg) 8%, transparent);
+  }
+
+  .endorsement-rail-shell::after {
+    right: 0;
+    background: linear-gradient(270deg, var(--bg) 8%, transparent);
+  }
+
+  .endorsement-rail {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(310px, 374px);
+    gap: 14px;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x proximity;
+    scrollbar-color: rgba(255, 255, 255, 0.24) transparent;
+    scrollbar-width: thin;
+    padding: 0 max(20px, calc((100vw - 1240px) / 2 + 32px)) 18px;
+  }
+
+  .endorsement-card {
+    position: relative;
+    scroll-snap-align: start;
+    min-height: 260px;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.015)),
+      #0d0d10;
+    box-shadow: 0 22px 44px -28px rgba(0, 0, 0, 0.75);
+    transition:
+      transform 0.18s ease,
+      border-color 0.18s ease,
+      background 0.18s ease;
+  }
+
+  .endorsement-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--border-strong);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02)),
+      #101014;
+  }
+
+  .endorsement-author {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+
+  .endorsement-author img {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+  }
+
+  .endorsement-handle {
+    color: var(--fg);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+  }
+
+  .endorsement-source {
+    margin-top: 1px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg-dim);
+  }
+
+  .endorsement-card p {
+    color: color-mix(in oklab, var(--fg) 88%, var(--fg-muted));
+    font-size: 15px;
+    line-height: 1.58;
+    letter-spacing: -0.004em;
+    white-space: pre-line;
+  }
+
+  .endorsement-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: auto;
+    padding-top: 22px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--fg-dim);
+  }
+
+  .endorsement-card:hover .endorsement-link {
+    color: var(--fg-muted);
+  }
+
   /* ── Orchestration ─────────────────────────────────────── */
   .orch-board { padding: 0; }
   .orch-head {
@@ -1319,6 +1521,14 @@ import Layout from "../layouts/Layout.astro";
     .harness-grid { grid-template-columns: 1fr 1fr; }
     .harness { border-right: 0; border-bottom: 1px solid var(--border); }
     .harness:nth-child(odd) { border-right: 1px solid var(--border); }
+    .endorsements-head {
+      grid-template-columns: 1fr;
+      gap: 14px;
+      align-items: start;
+    }
+    .endorsements-head p {
+      max-width: 560px;
+    }
     .parallel-inner,
     .git-inner { grid-template-columns: 1fr; gap: 40px; }
     .parallel-visual { grid-template-columns: 1fr; }
@@ -1333,5 +1543,23 @@ import Layout from "../layouts/Layout.astro";
     section { padding: 64px 0; }
     .container { padding-left: 20px; padding-right: 20px; }
     .hero-preview { display: none; }
+    .sec-endorsements {
+      padding: 56px 0 64px;
+    }
+    .endorsements-head {
+      margin-bottom: 26px;
+    }
+    .endorsement-rail {
+      grid-auto-columns: minmax(280px, 82vw);
+      padding-left: 20px;
+      padding-right: 20px;
+    }
+    .endorsement-rail-shell::before,
+    .endorsement-rail-shell::after {
+      width: 20px;
+    }
+    .endorsement-card {
+      min-height: 250px;
+    }
   }
 </style>
