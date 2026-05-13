@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,7 +7,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 import { it, assert } from "@effect/vitest";
 import { assertSome } from "@effect/vitest/utils";
-import { Effect, Layer, Option } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
@@ -209,7 +212,7 @@ it.layer(makeDirectoryLayer(SqlitePersistenceMemory))("ProviderSessionDirectoryL
         adapterKey: "claudeAgent",
         runtimeMode: "full-access",
         status: "running",
-        lastSeenAt: new Date().toISOString(),
+        lastSeenAt: "2026-01-01T00:00:00.000Z",
         resumeCursor: null,
         runtimePayload: null,
       });

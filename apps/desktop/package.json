@@ -1,6 +1,6 @@
 {
   "name": "@t3tools/desktop",
-  "version": "0.0.21",
+  "version": "0.0.23",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.cjs",
@@ -16,18 +16,18 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
-    "effect": "catalog:",
-    "electron": "40.9.3",
-    "electron-updater": "^6.6.2"
-  },
-  "devDependencies": {
-    "@t3tools/client-runtime": "workspace:*",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@t3tools/ssh": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
+    "effect": "catalog:",
+    "electron": "41.5.0",
+    "electron-updater": "^6.6.2"
+  },
+  "devDependencies": {
+    "@effect/language-service": "catalog:",
+    "@effect/vitest": "catalog:",
     "@types/node": "catalog:",
-    "effect-acp": "workspace:*",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

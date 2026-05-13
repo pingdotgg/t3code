@@ -1,4 +1,11 @@
-import { Effect, FileSystem, Option, Path, Random, Schema, Scope, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Random from "effect/Random";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { type CodexSettings, type ModelSelection } from "@t3tools/contracts";
@@ -33,6 +40,7 @@ import {
 
 const CODEX_GIT_TEXT_GENERATION_REASONING_EFFORT = "low";
 const CODEX_TIMEOUT_MS = 180_000;
+const encodeJsonString = Schema.encodeEffect(Schema.UnknownFromJsonString);
 /**
  * Build a Codex text-generation closure bound to a specific `CodexSettings`
  * payload. See `makeCodexAdapter` for the overall per-instance rationale.
@@ -92,6 +100,25 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
   const safeUnlink = (filePath: string): Effect.Effect<void, never> =>
     fileSystem.remove(filePath).pipe(Effect.catch(() => Effect.void));
 
+  const encodeJsonForOperation = (
+    operation:
+      | "generateCommitMessage"
+      | "generatePrContent"
+      | "generateBranchName"
+      | "generateThreadTitle",
+    value: unknown,
+  ): Effect.Effect<string, TextGenerationError> =>
+    encodeJsonString(value).pipe(
+      Effect.mapError(
+        (cause) =>
+          new TextGenerationError({
+            operation,
+            detail: "Failed to encode structured output schema.",
+            cause,
+          }),
+      ),
+    );
+
   const materializeImageAttachments = Effect.fn("materializeImageAttachments")(function* (
     _operation:
       | "generateCommitMessage"
@@ -149,11 +176,11 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
     cleanupPaths?: ReadonlyArray<string>;
     modelSelection: ModelSelection;
   }): Effect.fn.Return<S["Type"], TextGenerationError, S["DecodingServices"]> {
-    const schemaPath = yield* writeTempFile(
+    const schemaJson = yield* encodeJsonForOperation(
       operation,
-      "codex-schema",
-      JSON.stringify(toJsonSchemaObject(outputSchemaJson)),
+      toJsonSchemaObject(outputSchemaJson),
     );
+    const schemaPath = yield* writeTempFile(operation, "codex-schema", schemaJson);
     const outputPath = yield* writeTempFile(operation, "codex-output", "");
 
     const runCodexCommand = Effect.fn("runCodexJson.runCodexCommand")(function* () {
@@ -252,6 +279,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         ),
       );
 
+      const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson));
+
       return yield* fileSystem.readFileString(outputPath).pipe(
         Effect.mapError(
           (cause) =>
@@ -261,7 +290,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
               cause,
             }),
         ),
-        Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(outputSchemaJson))),
+        Effect.flatMap(decodeOutput),
         Effect.catchTag("SchemaError", (cause) =>
           Effect.fail(
             new TextGenerationError({

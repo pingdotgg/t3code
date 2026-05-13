@@ -1,4 +1,5 @@
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
+import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
@@ -27,11 +28,24 @@ export const SidebarProjectGroupingMode = Schema.Literals([
 ]);
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
+export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = 1;
+export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = 15;
+export const SidebarThreadPreviewCount = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_SIDEBAR_THREAD_PREVIEW_COUNT,
+    maximum: MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
+  }),
+);
+export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
+export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
 
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Model favorites. Historically keyed by provider kind, now
@@ -71,6 +85,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadSortOrder: SidebarThreadSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
+  ),
+  sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
@@ -263,6 +280,7 @@ export const CursorSettings = makeProviderSettingsSchema(
   },
 );
 export type CursorSettings = typeof CursorSettings.Type;
+
 export const OpenCodeSettings = makeProviderSettingsSchema(
   {
     enabled: Schema.Boolean.pipe(
@@ -319,8 +337,15 @@ export const ObservabilitySettings = Schema.Struct({
 });
 export type ObservabilitySettings = typeof ObservabilitySettings.Type;
 
+export const DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL = Duration.seconds(30);
+
 export const ServerSettings = Schema.Struct({
   enableAssistantStreaming: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  automaticGitFetchInterval: Schema.DurationFromMillis.pipe(
+    Schema.withDecodingDefault(
+      Effect.succeed(Duration.toMillis(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL)),
+    ),
+  ),
   defaultThreadEnvMode: ThreadEnvMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("local" as const satisfies ThreadEnvMode)),
   ),
@@ -391,45 +416,46 @@ const ModelSelectionPatch = Schema.Struct({
 
 const CodexSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(Schema.String),
-  homePath: Schema.optionalKey(Schema.String),
-  shadowHomePath: Schema.optionalKey(Schema.String),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  homePath: Schema.optionalKey(TrimmedString),
+  shadowHomePath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 const ClaudeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(Schema.String),
-  homePath: Schema.optionalKey(Schema.String),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  homePath: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
-  launchArgs: Schema.optionalKey(Schema.String),
+  launchArgs: Schema.optionalKey(TrimmedString),
 });
 
 const CursorSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(Schema.String),
-  apiEndpoint: Schema.optionalKey(Schema.String),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  apiEndpoint: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 const OpenCodeSettingsPatch = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
-  binaryPath: Schema.optionalKey(Schema.String),
-  serverUrl: Schema.optionalKey(Schema.String),
-  serverPassword: Schema.optionalKey(Schema.String),
+  binaryPath: Schema.optionalKey(TrimmedString),
+  serverUrl: Schema.optionalKey(TrimmedString),
+  serverPassword: Schema.optionalKey(TrimmedString),
   customModels: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 export const ServerSettingsPatch = Schema.Struct({
   // Server settings
   enableAssistantStreaming: Schema.optionalKey(Schema.Boolean),
+  automaticGitFetchInterval: Schema.optionalKey(Schema.DurationFromMillis),
   defaultThreadEnvMode: Schema.optionalKey(ThreadEnvMode),
-  addProjectBaseDirectory: Schema.optionalKey(Schema.String),
+  addProjectBaseDirectory: Schema.optionalKey(TrimmedString),
   textGenerationModelSelection: Schema.optionalKey(ModelSelectionPatch),
   observability: Schema.optionalKey(
     Schema.Struct({
-      otlpTracesUrl: Schema.optionalKey(Schema.String),
-      otlpMetricsUrl: Schema.optionalKey(Schema.String),
+      otlpTracesUrl: Schema.optionalKey(TrimmedString),
+      otlpMetricsUrl: Schema.optionalKey(TrimmedString),
     }),
   ),
   providers: Schema.optionalKey(
@@ -481,6 +507,7 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
+  sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
   timestampFormat: Schema.optionalKey(TimestampFormat),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

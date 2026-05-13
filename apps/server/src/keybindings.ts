@@ -15,35 +15,34 @@ import {
   MAX_KEYBINDINGS_COUNT,
   ResolvedKeybindingRule,
   ResolvedKeybindingsConfig,
+  type ServerRemoveKeybindingInput,
+  type ServerUpsertKeybindingInput,
   type ServerConfigIssue,
 } from "@t3tools/contracts";
-import {
-  Array,
-  Cache,
-  Cause,
-  Deferred,
-  Duration,
-  Effect,
-  Exit,
-  FileSystem,
-  Path,
-  Layer,
-  Option,
-  Predicate,
-  PubSub,
-  Schema,
-  SchemaGetter,
-  SchemaIssue,
-  SchemaTransformation,
-  Ref,
-  Context,
-  Scope,
-  Stream,
-} from "effect";
+import * as Array from "effect/Array";
+import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
+import * as PubSub from "effect/PubSub";
+import * as Schema from "effect/Schema";
+import * as SchemaIssue from "effect/SchemaIssue";
+import * as SchemaTransformation from "effect/SchemaTransformation";
+import * as Ref from "effect/Ref";
+import * as Context from "effect/Context";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 import { ServerConfig } from "./config.ts";
 import { writeFileStringAtomically } from "./atomicWrite.ts";
-import { fromLenientJson } from "@t3tools/shared/schemaJson";
+import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
 import {
   DEFAULT_KEYBINDINGS,
   DEFAULT_RESOLVED_KEYBINDINGS,
@@ -124,6 +123,25 @@ function hasSameShortcutContext(left: KeybindingRule, right: KeybindingRule): bo
   return leftContext === rightContext;
 }
 
+function keybindingRuleFromUpsertInput(input: ServerUpsertKeybindingInput): KeybindingRule {
+  return input.when === undefined
+    ? { key: input.key, command: input.command }
+    : { key: input.key, command: input.command, when: input.when };
+}
+
+function replaceTargetFromUpsertInput(input: ServerUpsertKeybindingInput): KeybindingRule | null {
+  if (!input.replace) return null;
+  return input.replace.when === undefined
+    ? { key: input.replace.key, command: input.replace.command }
+    : { key: input.replace.key, command: input.replace.command, when: input.replace.when };
+}
+
+function keybindingRuleFromRemoveInput(input: ServerRemoveKeybindingInput): KeybindingRule {
+  return input.when === undefined
+    ? { key: input.key, command: input.command }
+    : { key: input.key, command: input.command, when: input.when };
+}
+
 function encodeShortcut(shortcut: KeybindingShortcut): string | null {
   const modifiers: string[] = [];
   if (shortcut.modKey) modifiers.push("mod");
@@ -151,16 +169,11 @@ function encodeWhenAst(node: KeybindingWhenNode): string {
 }
 
 const RawKeybindingsEntries = fromLenientJson(Schema.Array(Schema.Unknown));
-const KeybindingsConfigJson = Schema.fromJsonString(KeybindingsConfig);
-const PrettyJsonString = SchemaGetter.parseJson<string>().compose(
-  SchemaGetter.stringifyJson({ space: 2 }),
-);
-const KeybindingsConfigPrettyJson = KeybindingsConfigJson.pipe(
-  Schema.encode({
-    decode: PrettyJsonString,
-    encode: PrettyJsonString,
-  }),
-);
+const KeybindingsConfigPrettyJson = fromJsonStringPretty(KeybindingsConfig);
+const decodeKeybindingRuleExit = Schema.decodeUnknownExit(KeybindingRule);
+const decodeResolvedKeybindingFromConfigExit = Schema.decodeExit(ResolvedKeybindingFromConfig);
+const decodeRawKeybindingsEntriesExit = Schema.decodeUnknownExit(RawKeybindingsEntries);
+const encodeKeybindingsConfigPrettyJson = Schema.encodeEffect(KeybindingsConfigPrettyJson);
 
 export interface KeybindingsConfigState {
   readonly keybindings: ResolvedKeybindingsConfig;
@@ -259,7 +272,14 @@ export interface KeybindingsShape {
    * oldest entries when needed.
    */
   readonly upsertKeybindingRule: (
-    rule: KeybindingRule,
+    input: ServerUpsertKeybindingInput,
+  ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
+
+  /**
+   * Remove a single persisted keybinding rule by exact key/command/when match.
+   */
+  readonly removeKeybindingRule: (
+    input: ServerRemoveKeybindingInput,
   ) => Effect.Effect<ResolvedKeybindingsConfig, KeybindingsConfigError>;
 }
 
@@ -328,7 +348,7 @@ const makeKeybindings = Effect.gen(function* () {
 
     return yield* Effect.forEach(rawConfig, (entry) =>
       Effect.gen(function* () {
-        const decodedRule = Schema.decodeUnknownExit(KeybindingRule)(entry);
+        const decodedRule = decodeKeybindingRuleExit(entry);
         if (decodedRule._tag === "Failure") {
           yield* Effect.logWarning("ignoring invalid keybinding entry", {
             path: keybindingsConfigPath,
@@ -337,7 +357,7 @@ const makeKeybindings = Effect.gen(function* () {
           });
           return null;
         }
-        const resolved = Schema.decodeExit(ResolvedKeybindingFromConfig)(decodedRule.value);
+        const resolved = decodeResolvedKeybindingFromConfigExit(decodedRule.value);
         if (resolved._tag === "Failure") {
           yield* Effect.logWarning("ignoring invalid keybinding entry", {
             path: keybindingsConfigPath,
@@ -363,7 +383,7 @@ const makeKeybindings = Effect.gen(function* () {
     }
 
     const rawConfig = yield* readRawConfig;
-    const decodedEntries = Schema.decodeUnknownExit(RawKeybindingsEntries)(rawConfig);
+    const decodedEntries = decodeRawKeybindingsEntriesExit(rawConfig);
     if (decodedEntries._tag === "Failure") {
       const detail = `expected JSON array (${Cause.pretty(decodedEntries.cause)})`;
       return {
@@ -375,7 +395,7 @@ const makeKeybindings = Effect.gen(function* () {
     const keybindings: KeybindingRule[] = [];
     const issues: ServerConfigIssue[] = [];
     for (const [index, entry] of decodedEntries.value.entries()) {
-      const decodedRule = Schema.decodeUnknownExit(KeybindingRule)(entry);
+      const decodedRule = decodeKeybindingRuleExit(entry);
       if (decodedRule._tag === "Failure") {
         const detail = Cause.pretty(decodedRule.cause);
         issues.push(invalidEntryIssue(index, detail));
@@ -388,7 +408,7 @@ const makeKeybindings = Effect.gen(function* () {
         continue;
       }
 
-      const resolvedRule = Schema.decodeExit(ResolvedKeybindingFromConfig)(decodedRule.value);
+      const resolvedRule = decodeResolvedKeybindingFromConfigExit(decodedRule.value);
       if (resolvedRule._tag === "Failure") {
         const detail = Cause.pretty(resolvedRule.cause);
         issues.push(invalidEntryIssue(index, detail));
@@ -407,7 +427,7 @@ const makeKeybindings = Effect.gen(function* () {
   });
 
   const writeConfigAtomically = (rules: readonly KeybindingRule[]) => {
-    return Schema.encodeEffect(KeybindingsConfigPrettyJson)(rules).pipe(
+    return encodeKeybindingsConfigPrettyJson(rules).pipe(
       Effect.map((encoded) => `${encoded}\n`),
       Effect.flatMap((encoded) =>
         writeFileStringAtomically({
@@ -616,12 +636,19 @@ const makeKeybindings = Effect.gen(function* () {
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
-    upsertKeybindingRule: (rule) =>
+    upsertKeybindingRule: (input) =>
       upsertSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const customConfig = yield* loadWritableCustomKeybindingsConfig();
+          const rule = keybindingRuleFromUpsertInput(input);
+          const replaceTarget = replaceTargetFromUpsertInput(input);
           const nextConfig = [
-            ...customConfig.filter((entry) => entry.command !== rule.command),
+            ...customConfig.filter((entry) => {
+              if (replaceTarget) {
+                return !isSameKeybindingRule(entry, replaceTarget);
+              }
+              return !isSameKeybindingRule(entry, rule);
+            }),
             rule,
           ];
           const cappedConfig =
@@ -637,6 +664,27 @@ const makeKeybindings = Effect.gen(function* () {
           yield* writeConfigAtomically(cappedConfig);
           const nextResolved = mergeWithDefaultKeybindings(
             compileResolvedKeybindingsConfig(cappedConfig),
+          );
+          yield* Cache.set(resolvedConfigCache, resolvedConfigCacheKey, {
+            keybindings: nextResolved,
+            issues: [],
+          });
+          yield* emitChange({
+            keybindings: nextResolved,
+            issues: [],
+          });
+          return nextResolved;
+        }),
+      ),
+    removeKeybindingRule: (input) =>
+      upsertSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const customConfig = yield* loadWritableCustomKeybindingsConfig();
+          const target = keybindingRuleFromRemoveInput(input);
+          const nextConfig = customConfig.filter((entry) => !isSameKeybindingRule(entry, target));
+          yield* writeConfigAtomically(nextConfig);
+          const nextResolved = mergeWithDefaultKeybindings(
+            compileResolvedKeybindingsConfig(nextConfig),
           );
           yield* Cache.set(resolvedConfigCache, resolvedConfigCacheKey, {
             keybindings: nextResolved,

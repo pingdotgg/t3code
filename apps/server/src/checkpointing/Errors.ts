@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 import type { ProjectionRepositoryError } from "../persistence/Errors.ts";
 import type { VcsError } from "@t3tools/contracts";
 
