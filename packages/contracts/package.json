@@ -6,24 +6,17 @@
     "dist"
   ],
   "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.mjs",
-  "types": "./src/index.ts",
   "exports": {
-    "./settings": {
-      "types": "./src/settings.ts",
-      "import": "./src/settings.ts",
-      "require": "./src/settings.ts"
-    },
     ".": {
       "types": "./src/index.ts",
-      "import": "./src/index.ts",
-      "require": "./dist/index.cjs"
+      "import": "./src/index.ts"
+    },
+    "./settings": {
+      "types": "./src/settings.ts",
+      "import": "./src/settings.ts"
     }
   },
   "scripts": {
-    "dev": "tsdown src/index.ts --format esm,cjs --dts --watch --clean",
-    "build": "tsdown src/index.ts --format esm,cjs --dts --clean",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
@@ -33,7 +26,6 @@
   "devDependencies": {
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
-    "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }
