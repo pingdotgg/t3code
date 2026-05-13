@@ -3,7 +3,7 @@ import * as NodeOS from "node:os";
 import {
   createAdvertisedEndpoint,
   type CreateAdvertisedEndpointInput,
-} from "@t3tools/client-runtime";
+} from "@t3tools/shared/advertisedEndpoint";
 import type {
   AdvertisedEndpoint,
   AdvertisedEndpointProvider,

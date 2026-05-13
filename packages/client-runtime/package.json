@@ -1,6 +1,5 @@
 {
   "name": "@t3tools/client-runtime",
-  "version": "0.0.0-alpha.1",
   "private": true,
   "type": "module",
   "exports": {
@@ -15,6 +14,7 @@
   },
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/shared": "workspace:*",
     "effect": "catalog:"
   },
   "devDependencies": {
