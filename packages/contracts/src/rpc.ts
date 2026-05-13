@@ -9,6 +9,11 @@ import {
   EnvironmentAuthorizationError,
 } from "./auth.ts";
 import {
+  BackgroundPolicySnapshot,
+  ClientActivityReportInput,
+  HostPowerSnapshot,
+} from "./background.ts";
+import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
@@ -216,6 +221,9 @@ export const WS_METHODS = {
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverSignalProcess: "server.signalProcess",
+  serverReportClientActivity: "server.reportClientActivity",
+  serverReportHostPowerState: "server.reportHostPowerState",
+  serverGetBackgroundPolicy: "server.getBackgroundPolicy",
 
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
@@ -235,6 +243,7 @@ export const WS_METHODS = {
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
+  subscribeBackgroundPolicy: "subscribeBackgroundPolicy",
 } as const;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -343,6 +352,22 @@ export const WsCloudInstallRelayClientRpc = Rpc.make(WS_METHODS.cloudInstallRela
   success: RelayClientInstallProgressEventSchema,
   error: Schema.Union([RelayClientInstallFailedError, EnvironmentAuthorizationError]),
   stream: true,
+});
+
+export const WsServerReportClientActivityRpc = Rpc.make(WS_METHODS.serverReportClientActivity, {
+  payload: ClientActivityReportInput,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsServerReportHostPowerStateRpc = Rpc.make(WS_METHODS.serverReportHostPowerState, {
+  payload: HostPowerSnapshot,
+  error: EnvironmentAuthorizationError,
+});
+
+export const WsServerGetBackgroundPolicyRpc = Rpc.make(WS_METHODS.serverGetBackgroundPolicy, {
+  payload: Schema.Struct({}),
+  success: BackgroundPolicySnapshot,
+  error: EnvironmentAuthorizationError,
 });
 
 export const WsSourceControlLookupRepositoryRpc = Rpc.make(
@@ -690,6 +715,13 @@ export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess,
   stream: true,
 });
 
+export const WsSubscribeBackgroundPolicyRpc = Rpc.make(WS_METHODS.subscribeBackgroundPolicy, {
+  payload: Schema.Struct({}),
+  success: BackgroundPolicySnapshot,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
   WsServerGetConfigRpc,
@@ -705,6 +737,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetProcessResourceHistoryRpc,
   WsServerSignalProcessRpc,
+  WsServerReportClientActivityRpc,
+  WsServerReportHostPowerStateRpc,
+  WsServerGetBackgroundPolicyRpc,
   WsCloudGetRelayClientStatusRpc,
   WsCloudInstallRelayClientRpc,
   WsSourceControlLookupRepositoryRpc,
@@ -754,6 +789,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
+  WsSubscribeBackgroundPolicyRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,

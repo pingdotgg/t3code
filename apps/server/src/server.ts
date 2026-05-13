@@ -4,6 +4,8 @@ import * as Layer from "effect/Layer";
 import { FetchHttpClient, HttpRouter, HttpServer } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
+import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
+import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import * as HttpResponseCompression from "./httpCompression/HttpResponseCompression.ts";
 import {
@@ -117,6 +119,15 @@ const PtyAdapterLive = Layer.unwrap(
       return NodePtyAdapter.layer;
     }
   }),
+);
+
+const ServerSettingsLayerLive = ServerSettings.layer.pipe(
+  Layer.provide(ServerSecretStore.layer),
+);
+
+const BackgroundLayerLive = BackgroundPolicy.layer.pipe(
+  Layer.provide(HostPowerMonitor.layer),
+  Layer.provideMerge(ServerSettingsLayerLive),
 );
 
 const RelayClientLive = Layer.unwrap(
@@ -298,6 +309,7 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
+  Layer.provideMerge(ServerSettingsLayerLive),
   Layer.provideMerge(CheckpointingLayerLive),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
@@ -325,7 +337,6 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // no longer transitively provides it. Exposing it at the runtime level
   // keeps a single Live for all opencode consumers.
   Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
-  Layer.provideMerge(ServerSettings.layer.pipe(Layer.provide(ServerSecretStore.layer))),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLayerLive),
   Layer.provideMerge(RepositoryIdentityResolver.layer),
@@ -345,6 +356,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
   // Misc.
+  Layer.provideMerge(BackgroundLayerLive),
   Layer.provideMerge(ProcessDiagnostics.layer),
   Layer.provideMerge(ProcessResourceMonitor.layer),
   Layer.provideMerge(TraceDiagnostics.layer),

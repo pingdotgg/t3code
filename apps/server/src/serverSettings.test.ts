@@ -590,6 +590,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
             serverPassword: "secret-password",
           },
         },
+        backgroundActivity: {
+          schemaVersion: 1,
+          profile: "custom",
+          baseProfile: "balanced",
+          overrides: {
+            automaticGitFetchInterval: 10_000,
+          },
+        },
         automaticGitFetchInterval: 10_000,
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
