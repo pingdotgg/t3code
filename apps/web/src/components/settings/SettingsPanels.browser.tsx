@@ -13,6 +13,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerConfig,
+  type ServerProcessResourceHistoryResult,
   type ServerProvider,
   type SourceControlDiscoveryResult,
 } from "@t3tools/contracts";
@@ -266,6 +267,20 @@ function createOutdatedProvider(
 
 function makeUtc(value: string) {
   return DateTime.makeUnsafe(value);
+}
+
+function createEmptyProcessResourceHistoryResult(): ServerProcessResourceHistoryResult {
+  return {
+    readAt: makeUtc("2036-04-07T00:00:00.000Z"),
+    windowMs: 15 * 60_000,
+    bucketMs: 60_000,
+    sampleIntervalMs: 5_000,
+    retainedSampleCount: 0,
+    totalCpuSecondsApprox: 0,
+    buckets: [],
+    topProcesses: [],
+    error: Option.none(),
+  };
 }
 
 function makePairingLink(input: {
@@ -1065,6 +1080,9 @@ describe("GeneralSettingsPanel observability", () => {
           processes: [],
           error: Option.none(),
         }),
+        getProcessResourceHistory: vi
+          .fn()
+          .mockResolvedValue(createEmptyProcessResourceHistoryResult()),
         getTraceDiagnostics: vi.fn().mockResolvedValue({
           traceFilePath: "/repo/project/.t3/traces.jsonl",
           scannedFilePaths: ["/repo/project/.t3/traces.jsonl"],
