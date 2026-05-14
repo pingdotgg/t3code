@@ -2,11 +2,46 @@ import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { DEFAULT_SERVER_SETTINGS, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import {
+  ClientSettingsPatch,
+  ClientSettingsSchema,
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "./settings.ts";
 
+const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
+const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+
+describe("ClientSettings sticky user messages", () => {
+  it("defaults sticky user messages off with a two-line clamp", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.stickyUserMessageCount).toBe(0);
+    expect(DEFAULT_CLIENT_SETTINGS.stickyUserMessageMaxLines).toBe(2);
+
+    const decoded = decodeClientSettings({});
+    expect(decoded.stickyUserMessageCount).toBe(0);
+    expect(decoded.stickyUserMessageMaxLines).toBe(2);
+  });
+
+  it("accepts bounded sticky user message patches", () => {
+    expect(
+      decodeClientSettingsPatch({
+        stickyUserMessageCount: 2,
+        stickyUserMessageMaxLines: 3,
+      }),
+    ).toEqual({
+      stickyUserMessageCount: 2,
+      stickyUserMessageMaxLines: 3,
+    });
+
+    expect(() => decodeClientSettingsPatch({ stickyUserMessageCount: 3 })).toThrow();
+    expect(() => decodeClientSettingsPatch({ stickyUserMessageMaxLines: 4 })).toThrow();
+  });
+});
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {

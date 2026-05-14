@@ -39,6 +39,28 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
 
+export const MIN_STICKY_USER_MESSAGE_COUNT = 0;
+export const MAX_STICKY_USER_MESSAGE_COUNT = 2;
+export const DEFAULT_STICKY_USER_MESSAGE_COUNT = 0;
+export const StickyUserMessageCount = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_STICKY_USER_MESSAGE_COUNT,
+    maximum: MAX_STICKY_USER_MESSAGE_COUNT,
+  }),
+);
+export type StickyUserMessageCount = typeof StickyUserMessageCount.Type;
+
+export const MIN_STICKY_USER_MESSAGE_LINES = 1;
+export const MAX_STICKY_USER_MESSAGE_LINES = 3;
+export const DEFAULT_STICKY_USER_MESSAGE_MAX_LINES = 2;
+export const StickyUserMessageMaxLines = Schema.Int.check(
+  Schema.isBetween({
+    minimum: MIN_STICKY_USER_MESSAGE_LINES,
+    maximum: MAX_STICKY_USER_MESSAGE_LINES,
+  }),
+);
+export type StickyUserMessageMaxLines = typeof StickyUserMessageMaxLines.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -88,6 +110,12 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarThreadPreviewCount: SidebarThreadPreviewCount.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT)),
+  ),
+  stickyUserMessageCount: StickyUserMessageCount.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_STICKY_USER_MESSAGE_COUNT)),
+  ),
+  stickyUserMessageMaxLines: StickyUserMessageMaxLines.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_STICKY_USER_MESSAGE_MAX_LINES)),
   ),
   timestampFormat: TimestampFormat.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_TIMESTAMP_FORMAT)),
@@ -508,6 +536,8 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
   sidebarThreadPreviewCount: Schema.optionalKey(SidebarThreadPreviewCount),
+  stickyUserMessageCount: Schema.optionalKey(StickyUserMessageCount),
+  stickyUserMessageMaxLines: Schema.optionalKey(StickyUserMessageMaxLines),
   timestampFormat: Schema.optionalKey(TimestampFormat),
 });
 export type ClientSettingsPatch = typeof ClientSettingsPatch.Type;

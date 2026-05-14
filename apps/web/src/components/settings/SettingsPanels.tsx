@@ -12,7 +12,11 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
+import {
+  DEFAULT_UNIFIED_SETTINGS,
+  type StickyUserMessageCount,
+  type StickyUserMessageMaxLines,
+} from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
@@ -98,6 +102,18 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+
+const STICKY_USER_MESSAGE_COUNT_OPTIONS = [
+  { value: "0", setting: 0 as StickyUserMessageCount, label: "Off" },
+  { value: "1", setting: 1 as StickyUserMessageCount, label: "1 message" },
+  { value: "2", setting: 2 as StickyUserMessageCount, label: "2 messages" },
+] as const;
+
+const STICKY_USER_MESSAGE_LINE_OPTIONS = [
+  { value: "1", setting: 1 as StickyUserMessageMaxLines, label: "1 line" },
+  { value: "2", setting: 2 as StickyUserMessageMaxLines, label: "2 lines" },
+  { value: "3", setting: 3 as StickyUserMessageMaxLines, label: "3 lines" },
+] as const;
 
 const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 
@@ -386,6 +402,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
+  const isStickyUserMessagesDirty =
+    settings.stickyUserMessageCount !== DEFAULT_UNIFIED_SETTINGS.stickyUserMessageCount ||
+    settings.stickyUserMessageMaxLines !== DEFAULT_UNIFIED_SETTINGS.stickyUserMessageMaxLines;
 
   const changedSettingLabels = useMemo(
     () => [
@@ -405,6 +424,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.autoOpenPlanSidebar !== DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar
         ? ["Auto-open task panel"]
         : []),
+      ...(isStickyUserMessagesDirty ? ["Sticky user messages"] : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
@@ -428,6 +448,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     ],
     [
       isGitWritingModelDirty,
+      isStickyUserMessagesDirty,
       settings.autoOpenPlanSidebar,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
@@ -459,6 +480,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffWordWrap: DEFAULT_UNIFIED_SETTINGS.diffWordWrap,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
+      stickyUserMessageCount: DEFAULT_UNIFIED_SETTINGS.stickyUserMessageCount,
+      stickyUserMessageMaxLines: DEFAULT_UNIFIED_SETTINGS.stickyUserMessageMaxLines,
       autoOpenPlanSidebar: DEFAULT_UNIFIED_SETTINGS.autoOpenPlanSidebar,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -513,6 +536,9 @@ export function GeneralSettingsPanel() {
     settings.textGenerationModelSelection ?? null,
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
+  const isStickyUserMessagesDirty =
+    settings.stickyUserMessageCount !== DEFAULT_UNIFIED_SETTINGS.stickyUserMessageCount ||
+    settings.stickyUserMessageMaxLines !== DEFAULT_UNIFIED_SETTINGS.stickyUserMessageMaxLines;
 
   return (
     <SettingsPageContainer>
@@ -666,6 +692,81 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Stream assistant messages"
             />
+          }
+        />
+
+        <SettingsRow
+          title="Sticky user messages"
+          description="Keep recent user prompts visible while long responses scroll past them."
+          resetAction={
+            isStickyUserMessagesDirty ? (
+              <SettingResetButton
+                label="sticky user messages"
+                onClick={() =>
+                  updateSettings({
+                    stickyUserMessageCount: DEFAULT_UNIFIED_SETTINGS.stickyUserMessageCount,
+                    stickyUserMessageMaxLines: DEFAULT_UNIFIED_SETTINGS.stickyUserMessageMaxLines,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
+              <Select
+                value={String(settings.stickyUserMessageCount)}
+                onValueChange={(value) => {
+                  const option = STICKY_USER_MESSAGE_COUNT_OPTIONS.find(
+                    (entry) => entry.value === value,
+                  );
+                  if (option) {
+                    updateSettings({ stickyUserMessageCount: option.setting });
+                  }
+                }}
+              >
+                <SelectTrigger className="w-full sm:w-36" aria-label="Sticky user messages">
+                  <SelectValue>
+                    {STICKY_USER_MESSAGE_COUNT_OPTIONS.find(
+                      (option) => option.setting === settings.stickyUserMessageCount,
+                    )?.label ?? "Off"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {STICKY_USER_MESSAGE_COUNT_OPTIONS.map((option) => (
+                    <SelectItem hideIndicator key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+              <Select
+                value={String(settings.stickyUserMessageMaxLines)}
+                onValueChange={(value) => {
+                  const option = STICKY_USER_MESSAGE_LINE_OPTIONS.find(
+                    (entry) => entry.value === value,
+                  );
+                  if (option) {
+                    updateSettings({ stickyUserMessageMaxLines: option.setting });
+                  }
+                }}
+                disabled={settings.stickyUserMessageCount === 0}
+              >
+                <SelectTrigger className="w-full sm:w-32" aria-label="Max sticky lines">
+                  <SelectValue>
+                    {STICKY_USER_MESSAGE_LINE_OPTIONS.find(
+                      (option) => option.setting === settings.stickyUserMessageMaxLines,
+                    )?.label ?? "2 lines"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {STICKY_USER_MESSAGE_LINE_OPTIONS.map((option) => (
+                    <SelectItem hideIndicator key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            </div>
           }
         />
 

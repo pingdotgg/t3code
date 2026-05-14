@@ -58,7 +58,16 @@ import {
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
+import type {
+  StickyUserMessageCount,
+  StickyUserMessageMaxLines,
+} from "@t3tools/contracts/settings";
 import { formatTimestamp } from "../../timestampFormat";
+import {
+  deriveStickyUserMessageEntries,
+  StickyUserMessagesOverlay,
+  useHiddenStickyUserMessageIds,
+} from "./StickyUserMessagesOverlay";
 
 import {
   buildInlineTerminalContextText,
@@ -123,6 +132,8 @@ interface MessagesTimelineProps {
   markdownCwd: string | undefined;
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
+  stickyUserMessageCount: StickyUserMessageCount;
+  stickyUserMessageMaxLines: StickyUserMessageMaxLines;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   onIsAtEndChange: (isAtEnd: boolean) => void;
@@ -152,6 +163,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   markdownCwd,
   resolvedTheme,
   timestampFormat,
+  stickyUserMessageCount,
+  stickyUserMessageMaxLines,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
   onIsAtEndChange,
@@ -182,6 +195,17 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     ],
   );
   const rows = useStableRows(rawRows);
+  const timelineViewportRef = useRef<HTMLDivElement>(null);
+  const stickyUserMessageEntries = useMemo(
+    () => deriveStickyUserMessageEntries(rows, stickyUserMessageCount),
+    [rows, stickyUserMessageCount],
+  );
+  const hiddenStickyUserMessageIds = useHiddenStickyUserMessageIds({
+    entries: stickyUserMessageEntries,
+    listRef,
+    timelineViewportRef,
+    enabled: stickyUserMessageCount > 0,
+  });
 
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
@@ -266,21 +290,32 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   return (
     <TimelineRowCtx value={sharedState}>
       <TimelineRowActivityCtx value={activityState}>
-        <LegendList<MessagesTimelineRow>
-          ref={listRef}
-          data={rows}
-          keyExtractor={keyExtractor}
-          renderItem={renderItem}
-          estimatedItemSize={90}
-          initialScrollAtEnd
-          maintainScrollAtEnd
-          maintainScrollAtEndThreshold={0.1}
-          maintainVisibleContentPosition
-          onScroll={handleScroll}
-          className="h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
-          ListHeaderComponent={TIMELINE_LIST_HEADER}
-          ListFooterComponent={TIMELINE_LIST_FOOTER}
-        />
+        <div ref={timelineViewportRef} className="relative h-full min-h-0">
+          <LegendList<MessagesTimelineRow>
+            ref={listRef}
+            data={rows}
+            keyExtractor={keyExtractor}
+            renderItem={renderItem}
+            estimatedItemSize={90}
+            initialScrollAtEnd
+            maintainScrollAtEnd
+            maintainScrollAtEndThreshold={0.1}
+            maintainVisibleContentPosition
+            onScroll={handleScroll}
+            className="h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
+            ListHeaderComponent={TIMELINE_LIST_HEADER}
+            ListFooterComponent={TIMELINE_LIST_FOOTER}
+          />
+          <StickyUserMessagesOverlay
+            entries={stickyUserMessageEntries}
+            hiddenMessageIds={hiddenStickyUserMessageIds}
+            listRef={listRef}
+            maxLines={stickyUserMessageMaxLines}
+            skills={skills}
+            timestampFormat={timestampFormat}
+            timelineViewportRef={timelineViewportRef}
+          />
+        </div>
       </TimelineRowActivityCtx>
     </TimelineRowCtx>
   );
@@ -290,14 +325,14 @@ function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
 }
 
-// ---------------------------------------------------------------------------
-// TimelineRowContent — the actual row component
-// ---------------------------------------------------------------------------
-
 type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
 type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
+
+// ---------------------------------------------------------------------------
+// TimelineRowContent — the actual row component
+// ---------------------------------------------------------------------------
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   return (
@@ -310,6 +345,9 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       data-timeline-row-kind={row.kind}
       data-message-id={row.kind === "message" ? row.message.id : undefined}
       data-message-role={row.kind === "message" ? row.message.role : undefined}
+      data-sticky-user-message-source={
+        row.kind === "message" && row.message.role === "user" ? "true" : undefined
+      }
     >
       {row.kind === "work" ? <WorkGroupSection groupedEntries={row.groupedEntries} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}

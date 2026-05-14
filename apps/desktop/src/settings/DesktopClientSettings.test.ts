@@ -27,6 +27,8 @@ const clientSettings: ClientSettings = {
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
   sidebarThreadPreviewCount: 6,
+  stickyUserMessageCount: 2,
+  stickyUserMessageMaxLines: 3,
   timestampFormat: "24-hour",
 };
 

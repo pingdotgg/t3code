@@ -68,6 +68,8 @@ function buildProps() {
     markdownCwd: undefined,
     resolvedTheme: "dark" as const,
     timestampFormat: "24-hour" as const,
+    stickyUserMessageCount: 0,
+    stickyUserMessageMaxLines: 2,
     workspaceRoot: undefined,
     onIsAtEndChange: vi.fn(),
   };
@@ -79,16 +81,27 @@ function buildLongUserMessageText(tail = "deep hidden detail only after expand")
   ).join("\n");
 }
 
-function buildUserTimelineEntry(text: string) {
+function buildUserTimelineEntry(
+  text: string,
+  {
+    entryId = "entry-1",
+    messageId = "message-1",
+    createdAt = MESSAGE_CREATED_AT,
+  }: {
+    entryId?: string;
+    messageId?: string;
+    createdAt?: string;
+  } = {},
+) {
   return {
-    id: "entry-1",
+    id: entryId,
     kind: "message" as const,
-    createdAt: MESSAGE_CREATED_AT,
+    createdAt,
     message: {
-      id: "message-1" as never,
+      id: messageId as never,
       role: "user" as const,
       text,
-      createdAt: MESSAGE_CREATED_AT,
+      createdAt,
       streaming: false,
     },
   };
@@ -200,6 +213,134 @@ describe("MessagesTimeline", () => {
       expect(messageBody?.className).toContain("overflow-hidden");
       expect(messageBody?.getAttribute("data-user-message-fade")).toBe("true");
       expect(messageBody?.style.maskImage).toContain("linear-gradient");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("shows a sticky user message only after its source row is above the transcript viewport", async () => {
+    let sourceAboveViewport = true;
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        if (this.dataset.testid === "legend-list") {
+          return DOMRect.fromRect({ x: 0, y: 0, width: 640, height: 240 });
+        }
+        if (this.dataset.messageId === "message-1") {
+          return sourceAboveViewport
+            ? DOMRect.fromRect({ x: 0, y: -80, width: 480, height: 60 })
+            : DOMRect.fromRect({ x: 0, y: 80, width: 480, height: 60 });
+        }
+        return originalGetBoundingClientRect.call(this);
+      },
+    );
+
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        stickyUserMessageCount={1}
+        stickyUserMessageMaxLines={2}
+        timelineEntries={[buildUserTimelineEntry("Keep this request visible.")]}
+      />,
+    );
+
+    try {
+      await expect
+        .element(page.getByRole("button", { name: "Scroll to original user message" }))
+        .toBeVisible();
+
+      sourceAboveViewport = false;
+      document.querySelector("[data-testid='legend-list']")?.dispatchEvent(new Event("scroll"));
+
+      await expect
+        .element(page.getByRole("button", { name: "Scroll to original user message" }))
+        .not.toBeInTheDocument();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("scrolls back to the original user message when the sticky copy is clicked", async () => {
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        if (this.dataset.testid === "legend-list") {
+          return DOMRect.fromRect({ x: 0, y: 0, width: 640, height: 240 });
+        }
+        if (this.dataset.messageId === "message-1") {
+          return DOMRect.fromRect({ x: 0, y: -80, width: 480, height: 60 });
+        }
+        return originalGetBoundingClientRect.call(this);
+      },
+    );
+    const scrollIntoViewSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollIntoView")
+      .mockImplementation(() => undefined);
+
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        stickyUserMessageCount={1}
+        timelineEntries={[buildUserTimelineEntry("Jump back to this prompt.")]}
+      />,
+    );
+
+    try {
+      const stickyButton = page.getByRole("button", { name: "Scroll to original user message" });
+      await expect.element(stickyButton).toBeVisible();
+      await stickyButton.click();
+
+      expect(scrollIntoViewSpy).toHaveBeenCalledWith({ block: "start", behavior: "smooth" });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("shows sticky metadata only on the newest visible sticky user message", async () => {
+    const originalGetBoundingClientRect = HTMLElement.prototype.getBoundingClientRect;
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        if (this.dataset.testid === "legend-list") {
+          return DOMRect.fromRect({ x: 0, y: 0, width: 640, height: 240 });
+        }
+        if (this.dataset.messageId === "message-1" || this.dataset.messageId === "message-2") {
+          return DOMRect.fromRect({ x: 0, y: -80, width: 480, height: 60 });
+        }
+        return originalGetBoundingClientRect.call(this);
+      },
+    );
+
+    const screen = await render(
+      <MessagesTimeline
+        {...buildProps()}
+        stickyUserMessageCount={2}
+        stickyUserMessageMaxLines={2}
+        timelineEntries={[
+          buildUserTimelineEntry("First sticky prompt.", {
+            entryId: "entry-1",
+            messageId: "message-1",
+          }),
+          buildUserTimelineEntry("Second sticky prompt.", {
+            entryId: "entry-2",
+            messageId: "message-2",
+          }),
+        ]}
+      />,
+    );
+
+    try {
+      await vi.waitFor(() => {
+        expect(document.querySelector("[data-sticky-user-message-id='message-1']")).not.toBeNull();
+        expect(document.querySelector("[data-sticky-user-message-id='message-2']")).not.toBeNull();
+
+        const metaRows = document.querySelectorAll("[data-sticky-user-message-meta='true']");
+        expect(metaRows).toHaveLength(1);
+        expect(
+          metaRows[0]
+            ?.closest("[data-sticky-user-message-id]")
+            ?.getAttribute("data-sticky-user-message-id"),
+        ).toBe("message-2");
+      });
     } finally {
       await screen.unmount();
     }
