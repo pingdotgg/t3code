@@ -53,7 +53,6 @@ export function ThemePreferenceSelector({
           <div className="w-full sm:w-[28rem]">
             <Slider
               aria-label="Theme hue"
-              fill="color-mix(in srgb, var(--foreground) 16%, var(--primary))"
               max={359}
               min={0}
               onChange={(value) => onHueChange(clampHue(value))}
@@ -76,12 +75,10 @@ export function ThemePreferenceSelector({
           <div className="w-full sm:w-[28rem]">
             <Slider
               aria-label="Theme saturation"
-              fill={`hsl(${theme.hue} ${Math.max(theme.saturation, 16)}% ${
-                resolvedTheme === "dark" ? "64%" : "54%"
-              }%)`}
               max={100}
               min={0}
               onChange={(value) => onSaturationChange(clampSaturation(value))}
+              thumb={saturationPreview}
               value={theme.saturation}
               valueLabel={`${theme.saturation}%`}
             />
