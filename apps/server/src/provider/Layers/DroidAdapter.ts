@@ -1,16 +1,23 @@
 import { randomUUID } from "node:crypto";
 import {
   AutonomyLevel,
+  type AskUserRequestParams,
+  type AskUserResult,
+  type Base64ImageSource,
   createSession,
+  type CreateSessionOptions,
   DroidInteractionMode,
   DroidMessageType,
+  type MessageOptions,
   ReasoningEffort,
   resumeSession,
+  type ResumeSessionOptions,
   ToolConfirmationOutcome,
   ToolConfirmationType,
   type DroidMessage,
   type DroidSession,
   type RequestPermissionRequestParams,
+  type TokenUsageUpdate,
 } from "@factory/droid-sdk";
 import {
   ApprovalRequestId,
@@ -27,14 +34,20 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderSessionStartInput,
+  type ProviderUserInputAnswers,
   type RuntimeContentStreamKind,
+  type ToolLifecycleItemType,
+  type UserInputQuestion,
 } from "@t3tools/contracts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
+import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { ServerConfig } from "../../config.ts";
 import {
   type ProviderAdapterError,
   ProviderAdapterRequestError,
@@ -49,22 +62,46 @@ interface PendingPermission {
   readonly resolve: (decision: ToolConfirmationOutcome) => void;
 }
 
+interface PendingUserInput {
+  readonly questions: ReadonlyArray<UserInputQuestion>;
+  readonly droidQuestions: AskUserRequestParams["questions"];
+  readonly resolve: (result: AskUserResult) => void;
+}
+
 interface DroidContext {
   session: ProviderSession;
   readonly droid: DroidSession;
   readonly pendingPermissions: Map<ApprovalRequestId, PendingPermission>;
+  readonly pendingUserInputs: Map<ApprovalRequestId, PendingUserInput>;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   activeAbort: AbortController | undefined;
-  activeAssistantItems: Set<string>;
+  activeAssistantItems: Map<string, string>;
+  activeTokenUsage: TokenUsageUpdate | undefined;
 }
 
 export interface DroidAdapterOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly sdk?: {
+    readonly createSession: (options?: CreateSessionOptions) => Promise<DroidSession>;
+    readonly resumeSession: (
+      sessionId: string,
+      options?: ResumeSessionOptions,
+    ) => Promise<DroidSession>;
+  };
 }
 
 const nowIso = () => DateTime.formatIso(DateTime.nowUnsafe());
 const eventId = () => EventId.make(randomUUID());
+const SUPPORTED_DROID_IMAGE_MIME_TYPES = [
+  "image/gif",
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const;
+type SupportedDroidImageMimeType = (typeof SUPPORTED_DROID_IMAGE_MIME_TYPES)[number];
+const isSupportedDroidImageMimeType = (value: string): value is SupportedDroidImageMimeType =>
+  (SUPPORTED_DROID_IMAGE_MIME_TYPES as ReadonlyArray<string>).includes(value);
 
 function updateContextSession(context: DroidContext, patch: Partial<ProviderSession>) {
   context.session = {
@@ -122,6 +159,24 @@ function toRequestType(params: RequestPermissionRequestParams): CanonicalRequest
   }
 }
 
+function toToolItemType(toolName: string): ToolLifecycleItemType {
+  const normalized = toolName.toLowerCase();
+  if (
+    normalized.includes("exec") ||
+    normalized.includes("bash") ||
+    normalized.includes("command")
+  ) {
+    return "command_execution";
+  }
+  if (normalized.includes("edit") || normalized.includes("write") || normalized.includes("patch")) {
+    return "file_change";
+  }
+  if (normalized.includes("mcp")) return "mcp_tool_call";
+  if (normalized.includes("web")) return "web_search";
+  if (normalized.includes("image")) return "image_view";
+  return "dynamic_tool_call";
+}
+
 function permissionDetail(params: RequestPermissionRequestParams): string {
   const first = params.toolUses[0];
   if (!first) return "Droid requested permission.";
@@ -140,6 +195,38 @@ function permissionDetail(params: RequestPermissionRequestParams): string {
   }
 }
 
+function normalizeAskUserQuestions(params: AskUserRequestParams): ReadonlyArray<UserInputQuestion> {
+  return params.questions.map((question, index) => ({
+    id: `question-${question.index ?? index}`,
+    header: question.topic || `Question ${index + 1}`,
+    question: question.question,
+    options: question.options.map((option) => ({
+      label: option,
+      description: option,
+    })),
+  }));
+}
+
+function answerString(value: unknown): string {
+  if (Array.isArray(value)) return value.map(answerString).join(", ");
+  return typeof value === "string" ? value : value == null ? "" : JSON.stringify(value);
+}
+
+function toAskUserResult(
+  questions: AskUserRequestParams["questions"],
+  answers: ProviderUserInputAnswers,
+): AskUserResult {
+  return {
+    answers: questions.map((question, index) => ({
+      index: question.index,
+      question: question.question,
+      answer: answerString(
+        answers[`question-${question.index ?? index}`] ?? answers[question.question],
+      ),
+    })),
+  };
+}
+
 function toOutcome(decision: ProviderApprovalDecision): ToolConfirmationOutcome {
   switch (decision) {
     case "accept":
@@ -152,8 +239,27 @@ function toOutcome(decision: ProviderApprovalDecision): ToolConfirmationOutcome 
   }
 }
 
+function toTokenUsageSnapshot(usage: TokenUsageUpdate) {
+  const inputTokens = usage.inputTokens + usage.cacheCreationTokens + usage.cacheReadTokens;
+  const outputTokens = usage.outputTokens + usage.thinkingTokens;
+  return {
+    usedTokens: inputTokens + outputTokens,
+    inputTokens,
+    cachedInputTokens: usage.cacheReadTokens,
+    outputTokens,
+    reasoningOutputTokens: usage.thinkingTokens,
+    lastInputTokens: inputTokens,
+    lastCachedInputTokens: usage.cacheReadTokens,
+    lastOutputTokens: outputTokens,
+    lastReasoningOutputTokens: usage.thinkingTokens,
+  };
+}
+
 export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapterOptions) {
   return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const serverConfig = yield* ServerConfig;
+    const sdk = options?.sdk ?? { createSession, resumeSession };
     const instanceId = options?.instanceId ?? ProviderInstanceId.make("droid");
     const runtimeEvents = yield* Queue.unbounded<ProviderRuntimeEvent>();
     const sessions = new Map<ThreadId, DroidContext>();
@@ -162,6 +268,8 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
         (entry): entry is [string, string] => typeof entry[1] === "string",
       ),
     );
+    const runtimeContext = yield* Effect.context<never>();
+    const runPromise = Effect.runPromiseWith(runtimeContext);
 
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
@@ -182,7 +290,7 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
 
     const emit = (event: ProviderRuntimeEvent) =>
       Queue.offer(runtimeEvents, event).pipe(Effect.asVoid);
-    const emitNow = (event: ProviderRuntimeEvent) => Effect.runPromise(emit(event));
+    const emitNow = (event: ProviderRuntimeEvent) => runPromise(emit(event));
     const eventBase = (
       context: DroidContext,
       input?: {
@@ -206,6 +314,52 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
     });
 
     type DroidAdapterShape = ProviderAdapterShape<ProviderAdapterError>;
+    const resolveImages = Effect.fn("resolveDroidImages")(function* (
+      input: NonNullable<Parameters<DroidAdapterShape["sendTurn"]>[0]["attachments"]>,
+    ) {
+      return yield* Effect.forEach(
+        input,
+        (attachment) =>
+          Effect.gen(function* () {
+            if (!isSupportedDroidImageMimeType(attachment.mimeType)) {
+              return yield* new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "turn/start",
+                detail: `Unsupported Droid image attachment type '${attachment.mimeType}'.`,
+              });
+            }
+            const attachmentPath = resolveAttachmentPath({
+              attachmentsDir: serverConfig.attachmentsDir,
+              attachment,
+            });
+            if (!attachmentPath) {
+              return yield* new ProviderAdapterRequestError({
+                provider: PROVIDER,
+                method: "turn/start",
+                detail: `Invalid attachment id '${attachment.id}'.`,
+              });
+            }
+            const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterRequestError({
+                    provider: PROVIDER,
+                    method: "turn/start",
+                    detail: `Failed to read attachment file: ${cause.message}.`,
+                    cause,
+                  }),
+              ),
+            );
+            return {
+              type: "base64",
+              data: Buffer.from(bytes).toString("base64"),
+              mediaType: attachment.mimeType,
+            } satisfies Base64ImageSource;
+          }),
+        { concurrency: 1 },
+      );
+    });
+
     const startSession: DroidAdapterShape["startSession"] = Effect.fn("startDroidSession")(
       function* (input) {
         let contextRef: DroidContext | undefined;
@@ -230,6 +384,27 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
               },
             });
           });
+        const askUserHandler = (params: AskUserRequestParams) =>
+          new Promise<AskUserResult>((resolve) => {
+            const context = contextRef;
+            if (!context) {
+              resolve({ cancelled: true, answers: [] });
+              return;
+            }
+            const requestId = ApprovalRequestId.make(`droid-question-${randomUUID()}`);
+            const questions = normalizeAskUserQuestions(params);
+            context.pendingUserInputs.set(requestId, {
+              questions,
+              droidQuestions: params.questions,
+              resolve,
+            });
+            void emitNow({
+              ...eventBase(context, { requestId, raw: params }),
+              raw: { source: "droid.sdk.permission", payload: params },
+              type: "user-input.requested",
+              payload: { questions },
+            });
+          });
         const modelSelection = input.modelSelection;
         const modelId = toModelId(modelSelection?.model);
         const sdkOptions = {
@@ -237,6 +412,7 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
           execPath: settings.binaryPath,
           env,
           permissionHandler,
+          askUserHandler,
         };
         const reasoningEffort = toReasoningEffort(
           getModelSelectionStringOptionValue(modelSelection, "reasoningEffort"),
@@ -244,8 +420,8 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
         const droid = yield* Effect.tryPromise({
           try: () =>
             typeof input.resumeCursor === "string"
-              ? resumeSession(input.resumeCursor, sdkOptions)
-              : createSession({
+              ? sdk.resumeSession(input.resumeCursor, sdkOptions)
+              : sdk.createSession({
                   ...sdkOptions,
                   ...(modelId ? { modelId } : {}),
                   autonomyLevel: toAutonomyLevel(input),
@@ -276,9 +452,11 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
           session,
           droid,
           pendingPermissions: new Map(),
+          pendingUserInputs: new Map(),
           turns: [],
           activeAbort: undefined,
-          activeAssistantItems: new Set(),
+          activeAssistantItems: new Map(),
+          activeTokenUsage: undefined,
         };
         contextRef = context;
         sessions.set(input.threadId, context);
@@ -308,7 +486,12 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
             message.type === DroidMessageType.AssistantTextDelta
               ? "assistant_text"
               : "reasoning_text";
-          if (streamKind === "assistant_text") context.activeAssistantItems.add(itemId);
+          if (streamKind === "assistant_text") {
+            context.activeAssistantItems.set(
+              itemId,
+              `${context.activeAssistantItems.get(itemId) ?? ""}${message.text}`,
+            );
+          }
           return emitNow({
             ...base(itemId),
             type: "content.delta",
@@ -320,9 +503,22 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
             ...base(message.toolUseId),
             type: "item.started",
             payload: {
-              itemType: "dynamic_tool_call",
+              itemType: toToolItemType(message.toolName),
+              status: "inProgress",
               title: message.toolName,
               data: message.toolInput,
+            },
+          });
+        case DroidMessageType.ToolProgress:
+          return emitNow({
+            ...base(message.toolUseId),
+            type: "item.updated",
+            payload: {
+              itemType: toToolItemType(message.toolName),
+              status: "inProgress",
+              title: message.toolName,
+              detail: message.content,
+              data: message.update,
             },
           });
         case DroidMessageType.ToolResult:
@@ -330,9 +526,68 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
             ...base(message.toolUseId),
             type: "item.completed",
             payload: {
-              itemType: "dynamic_tool_call",
+              itemType: toToolItemType(message.toolName),
+              status: message.isError ? "failed" : "completed",
               title: message.toolName,
-              detail: typeof message.content === "string" ? message.content : undefined,
+              detail:
+                typeof message.content === "string"
+                  ? message.content
+                  : JSON.stringify(message.content),
+            },
+          });
+        case DroidMessageType.WorkingStateChanged:
+          return emitNow({
+            ...base(),
+            type: "session.state.changed",
+            payload: {
+              state:
+                message.state === "idle"
+                  ? "ready"
+                  : message.state.includes("waiting")
+                    ? "waiting"
+                    : "running",
+              detail: message,
+            },
+          });
+        case DroidMessageType.TokenUsageUpdate:
+          context.activeTokenUsage = message;
+          return emitNow({
+            ...base(),
+            type: "thread.token-usage.updated",
+            payload: { usage: toTokenUsageSnapshot(message) },
+          });
+        case DroidMessageType.SessionTitleUpdated:
+          return emitNow({
+            ...base(),
+            type: "thread.metadata.updated",
+            payload: { name: message.title },
+          });
+        case DroidMessageType.SettingsUpdated:
+          return emitNow({
+            ...base(),
+            type: "session.configured",
+            payload: { config: message.settings },
+          });
+        case DroidMessageType.McpStatusChanged:
+          return emitNow({
+            ...base(),
+            type: "mcp.status.updated",
+            payload: { status: message },
+          });
+        case DroidMessageType.McpAuthRequired:
+          return emitNow({
+            ...base(),
+            type: "auth.status",
+            payload: { isAuthenticating: true, output: [message.message] },
+          });
+        case DroidMessageType.McpAuthCompleted:
+          return emitNow({
+            ...base(),
+            type: "mcp.oauth.completed",
+            payload: {
+              success: message.outcome === "success",
+              name: message.serverName,
+              ...(message.outcome === "success" ? {} : { error: message.message }),
             },
           });
         case DroidMessageType.Error:
@@ -341,6 +596,9 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
             type: "runtime.error",
             payload: { message: message.message, class: "provider_error" },
           });
+        case DroidMessageType.TurnComplete:
+          if (message.tokenUsage) context.activeTokenUsage = message.tokenUsage;
+          return Promise.resolve();
         default:
           return Promise.resolve();
       }
@@ -355,26 +613,21 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
           issue: `Unknown Droid thread: ${input.threadId}`,
         });
       }
-      if ((input.attachments?.length ?? 0) > 0) {
-        return yield* new ProviderAdapterValidationError({
-          provider: PROVIDER,
-          operation: "sendTurn",
-          issue: "Droid SDK attachment bridging is not enabled in this WIP.",
-        });
-      }
       const text = input.input?.trim();
-      if (!text) {
+      const images = yield* resolveImages(input.attachments ?? []);
+      if (!text && images.length === 0) {
         return yield* new ProviderAdapterValidationError({
           provider: PROVIDER,
           operation: "sendTurn",
-          issue: "Droid turns require text input.",
+          issue: "Droid turns require text input or at least one attachment.",
         });
       }
 
       const turnId = TurnId.make(`droid-turn-${randomUUID()}`);
       const abort = new AbortController();
       context.activeAbort = abort;
-      context.activeAssistantItems = new Set();
+      context.activeAssistantItems = new Map();
+      context.activeTokenUsage = undefined;
       context.turns.push({ id: turnId, items: [] });
       updateContextSession(context, {
         status: "running",
@@ -403,21 +656,31 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
               ...(reasoningEffort ? { reasoningEffort } : {}),
             });
           }
-          for await (const message of context.droid.stream(text, { abortSignal: abort.signal })) {
+          const messageOptions: MessageOptions = {
+            abortSignal: abort.signal,
+            ...(images.length > 0 ? { images } : {}),
+          };
+          for await (const message of context.droid.stream(
+            text || "Please respond to the attached image.",
+            messageOptions,
+          )) {
             await handleMessage(context, turnId, message);
           }
-          for (const itemId of context.activeAssistantItems) {
+          for (const [itemId, detail] of context.activeAssistantItems) {
             await emitNow({
               ...eventBase(context, { turnId, itemId }),
               type: "item.completed",
-              payload: { itemType: "assistant_message" },
+              payload: { itemType: "assistant_message", status: "completed", detail },
             });
           }
           updateContextSession(context, { status: "ready", activeTurnId: undefined });
           await emitNow({
             ...eventBase(context, { turnId }),
             type: "turn.completed",
-            payload: { state: "completed" },
+            payload: {
+              state: "completed",
+              ...(context.activeTokenUsage ? { usage: context.activeTokenUsage } : {}),
+            },
           });
         } catch (cause) {
           const message = cause instanceof Error ? cause.message : "Droid turn failed.";
@@ -486,7 +749,25 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
             payload: { requestType: pending.requestType, decision },
           });
         }),
-      respondToUserInput: () => Effect.void,
+      respondToUserInput: (threadId, requestId, answers) =>
+        Effect.gen(function* () {
+          const context = sessions.get(threadId);
+          const pending = context?.pendingUserInputs.get(requestId);
+          if (!context || !pending) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "respondToUserInput",
+              detail: `Unknown pending Droid user-input request: ${requestId}`,
+            });
+          }
+          context.pendingUserInputs.delete(requestId);
+          pending.resolve(toAskUserResult(pending.droidQuestions, answers));
+          yield* emit({
+            ...eventBase(context, { requestId }),
+            type: "user-input.resolved",
+            payload: { answers },
+          });
+        }),
       stopSession,
       listSessions: () => Effect.succeed([...sessions.values()].map((context) => context.session)),
       hasSession: (threadId) => Effect.succeed(sessions.has(threadId)),

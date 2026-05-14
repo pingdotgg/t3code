@@ -12,6 +12,7 @@ import * as Stream from "effect/Stream";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { ServerConfig } from "../../config.ts";
 import type { TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeDroidAdapter } from "../Layers/DroidAdapter.ts";
@@ -43,7 +44,8 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
 export type DroidDriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | FileSystem.FileSystem
-  | HttpClient.HttpClient;
+  | HttpClient.HttpClient
+  | ServerConfig;
 
 const withInstanceIdentity =
   (input: {
