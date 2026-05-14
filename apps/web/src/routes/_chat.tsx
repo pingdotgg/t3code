@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useThreadActions } from "../hooks/useThreadActions";
 import {
   startNewLocalThreadFromContext,
   startNewThreadFromContext,
@@ -25,6 +26,7 @@ function ChatRouteGlobalShortcuts() {
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
+  const { archiveThread } = useThreadActions();
   const keybindings = useServerKeybindings();
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
@@ -134,6 +136,22 @@ function ChatRouteGlobalShortcuts() {
                   ? "zoom-out"
                   : "reset-zoom";
         dispatchPreviewAction(action);
+        return;
+      }
+
+      if (command === "thread.archiveCurrent") {
+        if (!routeThreadRef) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void archiveThread(routeThreadRef).catch((error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to archive thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        });
       }
     };
 
@@ -144,6 +162,7 @@ function ChatRouteGlobalShortcuts() {
   }, [
     activeDraftThread,
     activeThread,
+    archiveThread,
     clearSelection,
     handleNewThread,
     keybindings,
