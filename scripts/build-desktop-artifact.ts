@@ -216,6 +216,7 @@ interface StagePackageJson {
   readonly private: true;
   readonly description: string;
   readonly author: string;
+  readonly homepage: string;
   readonly main: string;
   readonly build: Record<string, unknown>;
   readonly dependencies: Record<string, unknown>;
@@ -601,6 +602,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       executableName: "t3code",
       icon: "icon.png",
       category: "Development",
+      maintainer: "T3 Tools <support@t3.gg>",
       desktop: {
         entry: {
           StartupWMClass: "t3code",
@@ -785,6 +787,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     private: true,
     description: "T3 Code desktop build",
     author: "T3 Tools",
+    homepage: "https://t3.chat",
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
       options.platform,
@@ -871,10 +874,16 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   for (const entry of stageEntries) {
     const from = path.join(stageDistDir, entry);
     const stat = yield* fs.stat(from).pipe(Effect.catch(() => Effect.succeed(null)));
-    if (!stat || stat.type !== "File") continue;
+    if (!stat) continue;
 
     const to = path.join(options.outputDir, entry);
-    yield* fs.copyFile(from, to);
+    if (stat.type === "Directory") {
+      yield* fs.copy(from, to);
+    } else if (stat.type === "File") {
+      yield* fs.copyFile(from, to);
+    } else {
+      continue;
+    }
     copiedArtifacts.push(to);
   }
 
