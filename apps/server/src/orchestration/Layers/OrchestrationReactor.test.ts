@@ -9,6 +9,7 @@ import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
+import { QueuedTurnDrainReactor } from "../Services/QueuedTurnDrainReactor.ts";
 import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
 import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
 
@@ -22,7 +23,7 @@ describe("OrchestrationReactor", () => {
     runtime = null;
   });
 
-  it("starts provider ingestion, provider command, checkpoint, and thread deletion reactors", async () => {
+  it("starts provider ingestion, provider command, queue drain, checkpoint, and thread deletion reactors", async () => {
     const started: string[] = [];
 
     runtime = ManagedRuntime.make(
@@ -40,6 +41,15 @@ describe("OrchestrationReactor", () => {
           Layer.succeed(ProviderCommandReactor, {
             start: () => {
               started.push("provider-command-reactor");
+              return Effect.void;
+            },
+            drain: Effect.void,
+          }),
+        ),
+        Layer.provideMerge(
+          Layer.succeed(QueuedTurnDrainReactor, {
+            start: () => {
+              started.push("queued-turn-drain-reactor");
               return Effect.void;
             },
             drain: Effect.void,
@@ -73,6 +83,7 @@ describe("OrchestrationReactor", () => {
     expect(started).toEqual([
       "provider-runtime-ingestion",
       "provider-command-reactor",
+      "queued-turn-drain-reactor",
       "checkpoint-reactor",
       "thread-deletion-reactor",
     ]);

@@ -18,6 +18,61 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 
+async function seedThreadReadModel(now: string) {
+  const withProject = await Effect.runPromise(
+    projectEvent(createEmptyReadModel(now), {
+      sequence: 1,
+      eventId: asEventId("evt-project-create"),
+      aggregateKind: "project",
+      aggregateId: asProjectId("project-1"),
+      type: "project.created",
+      occurredAt: now,
+      commandId: CommandId.make("cmd-project-create"),
+      causationEventId: null,
+      correlationId: CommandId.make("cmd-project-create"),
+      metadata: {},
+      payload: {
+        projectId: asProjectId("project-1"),
+        title: "Project",
+        workspaceRoot: "/tmp/project",
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: now,
+        updatedAt: now,
+      },
+    }),
+  );
+  return Effect.runPromise(
+    projectEvent(withProject, {
+      sequence: 2,
+      eventId: asEventId("evt-thread-create"),
+      aggregateKind: "thread",
+      aggregateId: ThreadId.make("thread-1"),
+      type: "thread.created",
+      occurredAt: now,
+      commandId: CommandId.make("cmd-thread-create"),
+      causationEventId: null,
+      correlationId: CommandId.make("cmd-thread-create"),
+      metadata: {},
+      payload: {
+        threadId: ThreadId.make("thread-1"),
+        projectId: asProjectId("project-1"),
+        title: "Thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    }),
+  );
+}
+
 describe("decider project scripts", () => {
   it("emits empty scripts on project.create", async () => {
     const now = "2026-01-01T00:00:00.000Z";
@@ -195,6 +250,49 @@ describe("decider project scripts", () => {
         { id: "fastMode", value: true },
       ]),
       runtimeMode: "approval-required",
+    });
+  });
+
+  it("queues thread.turn.start without requesting provider send when delivery is queue", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const readModel = await seedThreadReadModel(now);
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.turn.start",
+          delivery: "queue",
+          commandId: CommandId.make("cmd-turn-queue"),
+          threadId: ThreadId.make("thread-1"),
+          message: {
+            messageId: asMessageId("message-user-queued"),
+            role: "user",
+            text: "queued hello",
+            attachments: [],
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    const events = Array.isArray(result) ? result : [result];
+    expect(events.map((event) => event.type)).toEqual([
+      "thread.message-sent",
+      "thread.turn-queued",
+    ]);
+    const queuedEvent = events[1];
+    expect(queuedEvent?.causationEventId).toBe(events[0]?.eventId ?? null);
+    if (queuedEvent?.type !== "thread.turn-queued") {
+      return;
+    }
+    expect(queuedEvent.payload).toMatchObject({
+      threadId: ThreadId.make("thread-1"),
+      messageId: asMessageId("message-user-queued"),
+      runtimeMode: "approval-required",
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
     });
   });
 
