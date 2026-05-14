@@ -13,7 +13,7 @@ import {
 } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { Option } from "effect";
+import * as Option from "effect/Option";
 import {
   ArrowDownIcon,
   ArrowLeftIcon,
@@ -364,12 +364,12 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   }, [keybindings, terminalOpen, toggleOpen]);
 
   return (
-    <ComposerHandleContext.Provider value={composerHandleRef}>
+    <ComposerHandleContext value={composerHandleRef}>
       <CommandDialog open={open} onOpenChange={setOpen}>
         {children}
         <CommandPaletteDialog />
       </CommandDialog>
-    </ComposerHandleContext.Provider>
+    </ComposerHandleContext>
   );
 }
 

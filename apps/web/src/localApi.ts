@@ -125,9 +125,17 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
         rpcClient
           ? rpcClient.server.refreshProviders()
           : Promise.reject(unavailableLocalBackendError()),
+      updateProvider: (input) =>
+        rpcClient
+          ? rpcClient.server.updateProvider(input)
+          : Promise.reject(unavailableLocalBackendError()),
       upsertKeybinding: (input) =>
         rpcClient
           ? rpcClient.server.upsertKeybinding(input)
+          : Promise.reject(unavailableLocalBackendError()),
+      removeKeybinding: (input) =>
+        rpcClient
+          ? rpcClient.server.removeKeybinding(input)
           : Promise.reject(unavailableLocalBackendError()),
       getSettings: () =>
         rpcClient ? rpcClient.server.getSettings() : Promise.reject(unavailableLocalBackendError()),
@@ -138,6 +146,18 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
       discoverSourceControl: () =>
         rpcClient
           ? rpcClient.server.discoverSourceControl()
+          : Promise.reject(unavailableLocalBackendError()),
+      getTraceDiagnostics: () =>
+        rpcClient
+          ? rpcClient.server.getTraceDiagnostics()
+          : Promise.reject(unavailableLocalBackendError()),
+      getProcessDiagnostics: () =>
+        rpcClient
+          ? rpcClient.server.getProcessDiagnostics()
+          : Promise.reject(unavailableLocalBackendError()),
+      signalProcess: (input) =>
+        rpcClient
+          ? rpcClient.server.signalProcess(input)
           : Promise.reject(unavailableLocalBackendError()),
     },
   };

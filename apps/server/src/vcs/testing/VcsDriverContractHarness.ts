@@ -1,17 +1,19 @@
 import { assert, it, describe } from "@effect/vitest";
-import {
-  Effect,
-  FileSystem,
-  Layer,
-  Path,
-  type PlatformError,
-  type Scope,
-  DateTime,
-  Option,
-} from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import type * as PlatformError from "effect/PlatformError";
+import type * as Scope from "effect/Scope";
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 
 import type { VcsDriverKind } from "@t3tools/contracts";
 import * as VcsDriver from "../VcsDriver.ts";
+
+function normalizePathForComparison(value: string): string {
+  return value.replaceAll("\\", "/");
+}
 
 export interface VcsDriverFixture<R, E> {
   readonly createRepo: (cwd: string) => Effect.Effect<void, E, R>;
@@ -69,7 +71,11 @@ export function runVcsDriverContractSuite<R, E>(input: VcsDriverContractSuiteInp
           yield* input.fixture.writeFile(cwd, "src/index.ts", "export const value = 1;\n");
           const identity = yield* driver.detectRepository(cwd);
           assert.equal(identity?.kind, input.kind);
-          assert.isTrue(identity?.rootPath.endsWith(cwd));
+          assert.isTrue(
+            normalizePathForComparison(identity?.rootPath ?? "").endsWith(
+              normalizePathForComparison(cwd),
+            ),
+          );
           assert.equal(identity?.freshness.source, "live-local");
           assert.isTrue(DateTime.isDateTime(identity?.freshness.observedAt));
           assert.isTrue(Option.isNone(identity?.freshness.expiresAt ?? Option.none()));

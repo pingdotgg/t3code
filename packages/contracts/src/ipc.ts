@@ -28,7 +28,13 @@ import type {
 import type { ProviderInstanceId } from "./providerInstance.ts";
 import type {
   ServerConfig,
+  ServerProcessDiagnosticsResult,
+  ServerProviderUpdateInput,
   ServerProviderUpdatedPayload,
+  ServerRemoveKeybindingResult,
+  ServerSignalProcessInput,
+  ServerSignalProcessResult,
+  ServerTraceDiagnosticsResult,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
 import type {
@@ -41,26 +47,24 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal.ts";
-import type { ServerUpsertKeybindingInput } from "./server.ts";
+import type { ServerRemoveKeybindingInput, ServerUpsertKeybindingInput } from "./server.ts";
+import * as Schema from "effect/Schema";
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
   OrchestrationGetFullThreadDiffResult,
   OrchestrationGetTurnDiffInput,
   OrchestrationGetTurnDiffResult,
+  OrchestrationShellSnapshot,
   OrchestrationShellStreamItem,
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
-import type { EnvironmentId } from "./baseSchemas.ts";
-import type {
-  AuthBearerBootstrapResult,
-  AuthSessionState,
-  AuthWebSocketTokenResult,
-} from "./auth.ts";
-import type { AdvertisedEndpoint } from "./remoteAccess.ts";
+import { EnvironmentId } from "./baseSchemas.ts";
+import { AuthBearerBootstrapResult, AuthSessionState, AuthWebSocketTokenResult } from "./auth.ts";
+import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { EditorId } from "./editor.ts";
-import type { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import type { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
 import type {
   SourceControlCloneRepositoryInput,
@@ -80,6 +84,26 @@ export interface ContextMenuItem<T extends string = string> {
   children?: readonly ContextMenuItem<T>[];
 }
 
+export interface ContextMenuItemSchemaType {
+  readonly id: string;
+  readonly label: string;
+  readonly destructive?: boolean;
+  readonly disabled?: boolean;
+  readonly children?: readonly ContextMenuItemSchemaType[];
+}
+
+export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  destructive: Schema.optionalKey(Schema.Boolean),
+  disabled: Schema.optionalKey(Schema.Boolean),
+  children: Schema.optionalKey(
+    Schema.Array(
+      Schema.suspend((): Schema.Codec<ContextMenuItemSchemaType> => ContextMenuItemSchema),
+    ),
+  ),
+});
+
 export type DesktopUpdateStatus =
   | "disabled"
   | "idle"
@@ -95,17 +119,44 @@ export type DesktopTheme = "light" | "dark" | "system";
 export type DesktopUpdateChannel = "latest" | "nightly";
 export type DesktopAppStageLabel = "Alpha" | "Dev" | "Nightly";
 
+export const DesktopUpdateStatusSchema = Schema.Literals([
+  "disabled",
+  "idle",
+  "checking",
+  "up-to-date",
+  "available",
+  "downloading",
+  "downloaded",
+  "error",
+]);
+export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
+export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
+export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
+export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Nightly"]);
+
 export interface DesktopAppBranding {
   baseName: string;
   stageLabel: DesktopAppStageLabel;
   displayName: string;
 }
 
+export const DesktopAppBrandingSchema = Schema.Struct({
+  baseName: Schema.String,
+  stageLabel: DesktopAppStageLabelSchema,
+  displayName: Schema.String,
+});
+
 export interface DesktopRuntimeInfo {
   hostArch: DesktopRuntimeArch;
   appArch: DesktopRuntimeArch;
   runningUnderArm64Translation: boolean;
 }
+
+export const DesktopRuntimeInfoSchema = Schema.Struct({
+  hostArch: DesktopRuntimeArchSchema,
+  appArch: DesktopRuntimeArchSchema,
+  runningUnderArm64Translation: Schema.Boolean,
+});
 
 export interface DesktopUpdateState {
   enabled: boolean;
@@ -124,16 +175,44 @@ export interface DesktopUpdateState {
   canRetry: boolean;
 }
 
+export const DesktopUpdateStateSchema = Schema.Struct({
+  enabled: Schema.Boolean,
+  status: DesktopUpdateStatusSchema,
+  channel: DesktopUpdateChannelSchema,
+  currentVersion: Schema.String,
+  hostArch: DesktopRuntimeArchSchema,
+  appArch: DesktopRuntimeArchSchema,
+  runningUnderArm64Translation: Schema.Boolean,
+  availableVersion: Schema.NullOr(Schema.String),
+  downloadedVersion: Schema.NullOr(Schema.String),
+  downloadPercent: Schema.NullOr(Schema.Number),
+  checkedAt: Schema.NullOr(Schema.String),
+  message: Schema.NullOr(Schema.String),
+  errorContext: Schema.NullOr(Schema.Literals(["check", "download", "install"])),
+  canRetry: Schema.Boolean,
+});
+
 export interface DesktopUpdateActionResult {
   accepted: boolean;
   completed: boolean;
   state: DesktopUpdateState;
 }
 
+export const DesktopUpdateActionResultSchema = Schema.Struct({
+  accepted: Schema.Boolean,
+  completed: Schema.Boolean,
+  state: DesktopUpdateStateSchema,
+});
+
 export interface DesktopUpdateCheckResult {
   checked: boolean;
   state: DesktopUpdateState;
 }
+
+export const DesktopUpdateCheckResultSchema = Schema.Struct({
+  checked: Schema.Boolean,
+  state: DesktopUpdateStateSchema,
+});
 
 export interface DesktopEnvironmentBootstrap {
   label: string;
@@ -142,18 +221,35 @@ export interface DesktopEnvironmentBootstrap {
   bootstrapToken?: string;
 }
 
-export interface DesktopSshEnvironmentTarget {
-  alias: string;
-  hostname: string;
-  username: string | null;
-  port: number | null;
-}
+export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
+  label: Schema.String,
+  httpBaseUrl: Schema.NullOr(Schema.String),
+  wsBaseUrl: Schema.NullOr(Schema.String),
+  bootstrapToken: Schema.optionalKey(Schema.String),
+});
+
+export const DesktopSshEnvironmentTargetSchema = Schema.Struct({
+  alias: Schema.String,
+  hostname: Schema.String,
+  username: Schema.NullOr(Schema.String),
+  port: Schema.NullOr(Schema.Number),
+});
+export type DesktopSshEnvironmentTarget = typeof DesktopSshEnvironmentTargetSchema.Type;
 
 export type DesktopSshHostSource = "ssh-config" | "known-hosts";
+export const DesktopSshHostSourceSchema = Schema.Literals(["ssh-config", "known-hosts"]);
 
 export interface DesktopDiscoveredSshHost extends DesktopSshEnvironmentTarget {
   source: DesktopSshHostSource;
 }
+
+export const DesktopDiscoveredSshHostSchema = Schema.Struct({
+  alias: Schema.String,
+  hostname: Schema.String,
+  username: Schema.NullOr(Schema.String),
+  port: Schema.NullOr(Schema.Number),
+  source: DesktopSshHostSourceSchema,
+});
 
 export interface DesktopSshEnvironmentBootstrap {
   target: DesktopSshEnvironmentTarget;
@@ -164,6 +260,15 @@ export interface DesktopSshEnvironmentBootstrap {
   remoteServerKind?: "external" | "managed";
 }
 
+export const DesktopSshEnvironmentBootstrapSchema = Schema.Struct({
+  target: DesktopSshEnvironmentTargetSchema,
+  httpBaseUrl: Schema.String,
+  wsBaseUrl: Schema.String,
+  pairingToken: Schema.NullOr(Schema.String),
+  remotePort: Schema.optionalKey(Schema.Number),
+  remoteServerKind: Schema.optionalKey(Schema.Literals(["external", "managed"])),
+});
+
 export interface DesktopSshPasswordPromptRequest {
   requestId: string;
   destination: string;
@@ -172,17 +277,71 @@ export interface DesktopSshPasswordPromptRequest {
   expiresAt: string;
 }
 
-export interface PersistedSavedEnvironmentRecord {
-  environmentId: EnvironmentId;
-  label: string;
-  wsBaseUrl: string;
-  httpBaseUrl: string;
-  createdAt: string;
-  lastConnectedAt: string | null;
-  desktopSsh?: DesktopSshEnvironmentTarget;
-}
+export const DesktopSshPasswordPromptRequestSchema = Schema.Struct({
+  requestId: Schema.String,
+  destination: Schema.String,
+  username: Schema.NullOr(Schema.String),
+  prompt: Schema.String,
+  expiresAt: Schema.String,
+});
+
+export const DesktopSshPasswordPromptCancelledType = "ssh-password-prompt-cancelled" as const;
+
+export const DesktopSshPasswordPromptCancelledResultSchema = Schema.Struct({
+  type: Schema.Literal(DesktopSshPasswordPromptCancelledType),
+  message: Schema.String,
+});
+
+export const DesktopSshEnvironmentEnsureOptionsSchema = Schema.Struct({
+  issuePairingToken: Schema.optionalKey(Schema.Boolean),
+});
+
+export const DesktopSshEnvironmentEnsureInputSchema = Schema.Struct({
+  target: DesktopSshEnvironmentTargetSchema,
+  options: Schema.optionalKey(DesktopSshEnvironmentEnsureOptionsSchema),
+});
+
+export const DesktopSshEnvironmentEnsureResultSchema = Schema.Union([
+  DesktopSshEnvironmentBootstrapSchema,
+  DesktopSshPasswordPromptCancelledResultSchema,
+]);
+
+export const DesktopSshHttpBaseUrlInputSchema = Schema.Struct({
+  httpBaseUrl: Schema.String,
+});
+
+export const DesktopSshBearerRequestInputSchema = Schema.Struct({
+  httpBaseUrl: Schema.String,
+  bearerToken: Schema.String,
+});
+
+export const DesktopSshBearerBootstrapInputSchema = Schema.Struct({
+  httpBaseUrl: Schema.String,
+  credential: Schema.String,
+});
+
+export const DesktopSshPasswordPromptResolutionInputSchema = Schema.Struct({
+  requestId: Schema.String,
+  password: Schema.NullOr(Schema.String),
+});
+
+export const PersistedSavedEnvironmentRecordSchema = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: Schema.String,
+  wsBaseUrl: Schema.String,
+  httpBaseUrl: Schema.String,
+  createdAt: Schema.String,
+  lastConnectedAt: Schema.NullOr(Schema.String),
+  desktopSsh: Schema.optionalKey(DesktopSshEnvironmentTargetSchema),
+});
+export type PersistedSavedEnvironmentRecord = typeof PersistedSavedEnvironmentRecordSchema.Type;
 
 export type DesktopServerExposureMode = "local-only" | "network-accessible";
+
+export const DesktopServerExposureModeSchema = Schema.Literals([
+  "local-only",
+  "network-accessible",
+]);
 
 export interface DesktopServerExposureState {
   mode: DesktopServerExposureMode;
@@ -192,9 +351,21 @@ export interface DesktopServerExposureState {
   tailscaleServePort: number;
 }
 
+export const DesktopServerExposureStateSchema = Schema.Struct({
+  mode: DesktopServerExposureModeSchema,
+  endpointUrl: Schema.NullOr(Schema.String),
+  advertisedHost: Schema.NullOr(Schema.String),
+  tailscaleServeEnabled: Schema.Boolean,
+  tailscaleServePort: Schema.Number,
+});
+
 export interface PickFolderOptions {
   initialPath?: string | null;
 }
+
+export const PickFolderOptionsSchema = Schema.Struct({
+  initialPath: Schema.optionalKey(Schema.NullOr(Schema.String)),
+});
 
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
@@ -296,10 +467,15 @@ export interface LocalApi {
     refreshProviders: (input?: {
       readonly instanceId?: ProviderInstanceId;
     }) => Promise<ServerProviderUpdatedPayload>;
+    updateProvider: (input: ServerProviderUpdateInput) => Promise<ServerProviderUpdatedPayload>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    removeKeybinding: (input: ServerRemoveKeybindingInput) => Promise<ServerRemoveKeybindingResult>;
     getSettings: () => Promise<ServerSettings>;
     updateSettings: (patch: ServerSettingsPatch) => Promise<ServerSettings>;
     discoverSourceControl: () => Promise<SourceControlDiscoveryResult>;
+    getTraceDiagnostics: () => Promise<ServerTraceDiagnosticsResult>;
+    getProcessDiagnostics: () => Promise<ServerProcessDiagnosticsResult>;
+    signalProcess: (input: ServerSignalProcessInput) => Promise<ServerSignalProcessResult>;
   };
 }
 
@@ -369,6 +545,7 @@ export interface EnvironmentApi {
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
+    getArchivedShellSnapshot: () => Promise<OrchestrationShellSnapshot>;
     subscribeShell: (
       callback: (event: OrchestrationShellStreamItem) => void,
       options?: {

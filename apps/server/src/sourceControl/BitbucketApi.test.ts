@@ -1,6 +1,11 @@
 import { assert, it, vi } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ConfigProvider, DateTime, Effect, FileSystem, Layer, Option } from "effect";
+import * as ConfigProvider from "effect/ConfigProvider";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
 import * as BitbucketApi from "./BitbucketApi.ts";
@@ -423,6 +428,7 @@ it.effect("creates repositories through the Bitbucket REST API", () => {
     assert.ok(request);
     const rawBody = (request.body as { readonly body?: Uint8Array }).body;
     assert.ok(rawBody);
+    // @effect-diagnostics-next-line preferSchemaOverJson:off
     assert.deepStrictEqual(JSON.parse(new TextDecoder().decode(rawBody)), {
       scm: "git",
       is_private: true,
@@ -458,6 +464,7 @@ it.effect("creates pull requests using the official REST payload shape", () => {
     assert.ok(request);
     const rawBody = (request.body as { readonly body?: Uint8Array }).body;
     assert.ok(rawBody);
+    // @effect-diagnostics-next-line preferSchemaOverJson:off
     assert.deepStrictEqual(JSON.parse(new TextDecoder().decode(rawBody)), {
       title: "Provider PR",
       description: "PR body",
