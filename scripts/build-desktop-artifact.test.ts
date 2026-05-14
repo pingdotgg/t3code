@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import {
+  createBuildConfig,
+  MAC_HELPER_BUNDLE_IDS,
   resolveBuildOptions,
   resolveDesktopBuildIconAssets,
   resolveDesktopProductName,
@@ -38,6 +40,19 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       windowsIconIco: BRAND_ASSET_PATHS.nightlyWindowsIconIco,
     });
   });
+
+  it.effect("pins macOS Electron helper bundle IDs to the T3 Code app identity", () =>
+    Effect.gen(function* () {
+      const buildConfig = yield* createBuildConfig("mac", "dmg", "0.0.21", false, false, undefined);
+
+      assert.deepStrictEqual(buildConfig.mac, {
+        target: ["dmg", "zip"],
+        icon: "icon.icns",
+        category: "public.app-category.developer-tools",
+        ...MAC_HELPER_BUNDLE_IDS,
+      });
+    }),
+  );
 
   it("falls back to the default mock update port when the configured port is blank", () => {
     assert.equal(resolveMockUpdateServerUrl(undefined), "http://localhost:3000");
