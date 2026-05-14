@@ -3,6 +3,7 @@ import { useEffect } from "react";
 
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useThreadActions } from "../hooks/useThreadActions";
 import {
   startNewLocalThreadFromContext,
   startNewThreadFromContext,
@@ -11,6 +12,7 @@ import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
+import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "~/rpc/serverState";
@@ -20,6 +22,7 @@ function ChatRouteGlobalShortcuts() {
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
+  const { archiveThread } = useThreadActions();
   const keybindings = useServerKeybindings();
   const terminalOpen = useTerminalStateStore((state) =>
     routeThreadRef
@@ -75,6 +78,22 @@ function ChatRouteGlobalShortcuts() {
           }),
           handleNewThread,
         });
+        return;
+      }
+
+      if (command === "thread.archiveCurrent") {
+        if (!routeThreadRef) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void archiveThread(routeThreadRef).catch((error: unknown) => {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Failed to archive thread",
+              description: error instanceof Error ? error.message : "An error occurred.",
+            }),
+          );
+        });
       }
     };
 
@@ -85,10 +104,12 @@ function ChatRouteGlobalShortcuts() {
   }, [
     activeDraftThread,
     activeThread,
+    archiveThread,
     clearSelection,
     handleNewThread,
     keybindings,
     defaultProjectRef,
+    routeThreadRef,
     selectedThreadKeysSize,
     terminalOpen,
     appSettings.defaultThreadEnvMode,
