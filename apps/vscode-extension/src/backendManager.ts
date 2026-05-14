@@ -25,6 +25,7 @@ export interface BackendConnection {
   readonly bootstrapToken: string;
   readonly bearerToken: string;
   readonly cwd: string;
+  readonly t3Home: string;
 }
 
 interface ResolvedServerCommand {
@@ -197,6 +198,7 @@ export class BackendManager {
       bootstrapToken,
       bearerToken,
       cwd,
+      t3Home,
     };
     return this.#connection;
   }

@@ -1,6 +1,11 @@
 import * as vscode from "vscode";
 
 import { BackendManager } from "./backendManager.ts";
+import {
+  createClientSettingsPersistence,
+  registerClientSettingsHostBridge,
+  resolveClientSettingsPath,
+} from "./clientSettingsPersistence.ts";
 import { renderT3Webview } from "./webview.ts";
 
 export function activate(context: vscode.ExtensionContext) {
@@ -11,14 +16,14 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.window.registerWebviewViewProvider(
       "t3code.sidebarView",
-      new T3SidebarProvider(context, backendManager),
+      new T3SidebarProvider(context, backendManager, outputChannel),
       { webviewOptions: { retainContextWhenHidden: true } },
     ),
   );
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(
       "t3code.conversationEditor",
-      new T3ConversationEditorProvider(context, backendManager),
+      new T3ConversationEditorProvider(context, backendManager, outputChannel),
       { supportsMultipleEditorsPerDocument: true },
     ),
   );
@@ -58,18 +63,31 @@ export function deactivate() {}
 class T3SidebarProvider implements vscode.WebviewViewProvider {
   readonly #context: vscode.ExtensionContext;
   readonly #backendManager: BackendManager;
+  readonly #outputChannel: vscode.OutputChannel;
 
-  constructor(context: vscode.ExtensionContext, backendManager: BackendManager) {
+  constructor(
+    context: vscode.ExtensionContext,
+    backendManager: BackendManager,
+    outputChannel: vscode.OutputChannel,
+  ) {
     this.#context = context;
     this.#backendManager = backendManager;
+    this.#outputChannel = outputChannel;
   }
 
   async resolveWebviewView(webviewView: vscode.WebviewView): Promise<void> {
     configureWebview(webviewView.webview, this.#context.extensionUri);
+    const connection = await this.#backendManager.ensureStarted();
+    const bridgeDisposable = registerClientSettingsHostBridge({
+      webview: webviewView.webview,
+      persistence: createClientSettingsPersistence(resolveClientSettingsPath(connection.t3Home)),
+      outputChannel: this.#outputChannel,
+    });
+    webviewView.onDidDispose(() => bridgeDisposable.dispose());
     webviewView.webview.html = await renderT3Webview({
       webview: webviewView.webview,
       extensionUri: this.#context.extensionUri,
-      connection: await this.#backendManager.ensureStarted(),
+      connection,
       initialRoute: "/_chat/",
     });
   }
@@ -88,10 +106,16 @@ class T3ConversationDocument implements vscode.CustomDocument {
 class T3ConversationEditorProvider implements vscode.CustomReadonlyEditorProvider<T3ConversationDocument> {
   readonly #context: vscode.ExtensionContext;
   readonly #backendManager: BackendManager;
+  readonly #outputChannel: vscode.OutputChannel;
 
-  constructor(context: vscode.ExtensionContext, backendManager: BackendManager) {
+  constructor(
+    context: vscode.ExtensionContext,
+    backendManager: BackendManager,
+    outputChannel: vscode.OutputChannel,
+  ) {
     this.#context = context;
     this.#backendManager = backendManager;
+    this.#outputChannel = outputChannel;
   }
 
   openCustomDocument(uri: vscode.Uri): T3ConversationDocument {
@@ -103,10 +127,17 @@ class T3ConversationEditorProvider implements vscode.CustomReadonlyEditorProvide
     webviewPanel: vscode.WebviewPanel,
   ): Promise<void> {
     configureWebview(webviewPanel.webview, this.#context.extensionUri);
+    const connection = await this.#backendManager.ensureStarted();
+    const bridgeDisposable = registerClientSettingsHostBridge({
+      webview: webviewPanel.webview,
+      persistence: createClientSettingsPersistence(resolveClientSettingsPath(connection.t3Home)),
+      outputChannel: this.#outputChannel,
+    });
+    webviewPanel.onDidDispose(() => bridgeDisposable.dispose());
     webviewPanel.webview.html = await renderT3Webview({
       webview: webviewPanel.webview,
       extensionUri: this.#context.extensionUri,
-      connection: await this.#backendManager.ensureStarted(),
+      connection,
       initialRoute: routeFromUri(document.uri),
     });
   }

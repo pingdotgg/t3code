@@ -56,13 +56,19 @@ Implemented so far:
   - use hash history in VS Code webviews
   - read bootstrap credentials from either bridge
   - use host-injected bearer auth for VS Code webview HTTP and WebSocket startup
+  - read and write `ClientSettings` through `window.t3HostBridge` when no desktop bridge is present
   - support `VITE_BASE_URL` so extension-local web assets can be built with relative paths
 - Added webview rendering that:
   - reads extension-local `dist/webview/index.html`
   - injects a `<base>` tag using `webview.asWebviewUri(...)`
   - injects `window.t3HostBridge`
+  - handles neutral host bridge requests for shared client settings persistence
   - initializes the hash route
   - applies a restrictive CSP with local backend HTTP and WebSocket connect sources
+- Added shared T3 Code app `ClientSettings` persistence for VS Code:
+  - persists to `<T3 home>/userdata/client-settings.json`
+  - uses the same raw client-settings file format as desktop
+  - preserves browser/localStorage fallback when no host persistence API is available
 - Added packaging that:
   - builds `apps/web`
   - builds `apps/server`
@@ -192,6 +198,27 @@ Reasoning:
 - The package can be rebuilt from source with `bun run --filter t3code-vscode package`.
 - Keeping generated assets out of git keeps the extension source package reviewable.
 
+### 2026-05-14: Share T3 Code Client Settings Through T3 Home
+
+Decision: keep favorite models and other UI-only preferences in `ClientSettings`, and have the VS Code extension persist them to the same shared T3 home source as desktop.
+
+Reasoning:
+
+- The existing app settings model deliberately separates server-authoritative settings from client-only settings.
+- `ServerSettings` owns backend-affecting behavior such as provider settings, provider instances, binary paths, custom models, default environment mode, and observability settings.
+- `ClientSettings` owns UI preferences such as favorite models, model ordering/visibility preferences, timestamp format, sidebar preferences, diff preferences, and confirmation toggles.
+- Moving favorites into `ServerSettings` would blur that documented boundary.
+- The extension should not introduce a separate VS Code-only preference environment for T3 Code app settings when it is attached to the same T3 home as desktop.
+
+Implementation direction:
+
+- Add a neutral host/backend persistence path for `ClientSettings` that VS Code can use without changing the existing desktop behavior. Implemented through `window.t3HostBridge.getClientSettings()` and `window.t3HostBridge.setClientSettings(...)`.
+- Persist VS Code `ClientSettings` under the same T3 home state directory as desktop. Implemented at `<T3 home>/userdata/client-settings.json`.
+- Use the same behavior on all extension platform targets. The only platform-specific difference should be path syntax and the OS user-home location.
+- Preserve the server/client settings boundary: shared client settings should not be folded into `settings.json` or the `ServerSettings` schema.
+- Keep the existing web app fallback behavior for non-hosted/browser contexts: when no host persistence API is available, browser storage remains the fallback.
+- Desktop should continue using its existing `window.desktopBridge` persistence path and file format.
+
 ## Plan
 
 ## Goal
@@ -295,6 +322,55 @@ Relevant T3 references:
   - Server serves the built web app and falls back to `index.html` for SPA routes.
 - `apps/web/vite.config.ts:81`
   - Web build currently injects selected runtime config through Vite `define`.
+
+### T3 Code App Settings Persistence Strategy
+
+The T3 Code app has two settings domains that the VS Code extension should preserve:
+
+- Server-authoritative settings live in backend state as `settings.json`.
+  - Implemented by `apps/server/src/serverSettings.ts`.
+  - The path is derived from the T3 home state directory, usually `~/.t3/userdata/settings.json` in production.
+  - These settings affect backend/runtime behavior: provider settings, provider instances, binary paths, custom models, default environment mode, observability settings, and related server behavior.
+- Client-only app settings use `ClientSettings`.
+  - Defined in `packages/contracts/src/settings.ts`.
+  - Includes favorite models, provider model ordering/visibility preferences, timestamp format, sidebar preferences, diff preferences, and confirmation toggles.
+  - The web app's `useSettings` hook intentionally merges server settings with client settings while routing writes to the correct backing store.
+
+Desktop currently persists `ClientSettings` through `window.desktopBridge` to the desktop state directory, usually:
+
+```text
+~/.t3/userdata/client-settings.json
+```
+
+Default production paths by platform:
+
+| Platform | Default T3 home       | Server settings                              | Client settings                                     |
+| -------- | --------------------- | -------------------------------------------- | --------------------------------------------------- |
+| macOS    | `/Users/<user>/.t3`   | `/Users/<user>/.t3/userdata/settings.json`   | `/Users/<user>/.t3/userdata/client-settings.json`   |
+| Linux    | `/home/<user>/.t3`    | `/home/<user>/.t3/userdata/settings.json`    | `/home/<user>/.t3/userdata/client-settings.json`    |
+| Windows  | `C:\Users\<user>\.t3` | `C:\Users\<user>\.t3\userdata\settings.json` | `C:\Users\<user>\.t3\userdata\client-settings.json` |
+
+If `T3CODE_HOME`, `--base-dir`, or the extension's `t3code.home` setting points at a custom T3 home, the same rule applies under that custom home:
+
+```text
+<T3 home>/userdata/settings.json
+<T3 home>/userdata/client-settings.json
+```
+
+The VS Code extension should provide an equivalent `ClientSettings` persistence capability through the neutral host/backend integration rather than creating a VS Code-only source of truth. When the VS Code extension uses the same T3 home as desktop, favorite models and other `ClientSettings` should come from the same shared T3 home state source.
+
+Expected implementation impact:
+
+- Desktop behavior should not change. It should keep using the existing `window.desktopBridge` persistence path and `client-settings.json` format.
+- The extension behavior should be the same across macOS, Linux, and Windows; platform-specific code should only resolve the default user home and normalize paths.
+- Browser/web app fallback behavior should not change. When no host persistence API is available, browser storage remains the fallback:
+
+```text
+t3code:client-settings:v1
+```
+
+- The VS Code extension should add the missing hosted persistence path so it does not fall into the browser-storage fallback for normal extension usage.
+- `ClientSettings` remains the owner of favorite models and other UI-only preferences. These preferences should not move into `ServerSettings` or `settings.json`.
 
 ### Why a Host Bridge Is Needed
 

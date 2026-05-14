@@ -45,6 +45,7 @@ describe("renderT3Webview", () => {
         bootstrapToken: "bootstrap-token",
         bearerToken: "bearer-token",
         cwd: "/workspace",
+        t3Home: "/home/user/.t3",
       },
       initialRoute: "/_chat/",
     });
@@ -57,6 +58,8 @@ describe("renderT3Webview", () => {
     expect(html).toContain(`<base href="vscode-resource:${extensionRoot}/dist/webview/">`);
     expect(html).toContain("window.__T3_IS_VSCODE_WEBVIEW = true");
     expect(html).toContain("window.t3HostBridge");
+    expect(html).toContain("getClientSettings()");
+    expect(html).toContain("setClientSettings(settings)");
     expect(html).toContain('"bootstrapToken":"bootstrap-token"');
     expect(html).toContain('"bearerToken":"bearer-token"');
     expect(html).toContain('window.history.replaceState(null, document.title, "#" + initialRoute)');
@@ -77,6 +80,7 @@ describe("renderT3Webview", () => {
         bootstrapToken: "bootstrap-token",
         bearerToken: "bearer-token",
         cwd: "/workspace",
+        t3Home: "/home/user/.t3",
       },
     });
 

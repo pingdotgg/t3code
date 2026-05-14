@@ -67,9 +67,44 @@ function makeBridgeScript(input: {
       const bootstrap = ${JSON.stringify(input.bootstrap)};
       const initialRoute = ${JSON.stringify(input.initialRoute)};
       window.__T3_IS_VSCODE_WEBVIEW = true;
+      const pendingRequests = new Map();
+      window.addEventListener("message", (event) => {
+        const message = event.data;
+        if (!message || message.type !== "t3.hostResponse") {
+          return;
+        }
+        const pending = pendingRequests.get(message.id);
+        if (!pending) {
+          return;
+        }
+        pendingRequests.delete(message.id);
+        if (message.ok) {
+          pending.resolve(message.result);
+        } else {
+          pending.reject(new Error(message.error || "T3 host bridge request failed."));
+        }
+      });
+      function requestHost(method, ...args) {
+        const id = String(Date.now()) + ":" + Math.random().toString(16).slice(2);
+        return new Promise((resolve, reject) => {
+          pendingRequests.set(id, { resolve, reject });
+          vscode.postMessage({
+            type: "t3.hostRequest",
+            id,
+            method,
+            args,
+          });
+        });
+      }
       window.t3HostBridge = {
         getLocalEnvironmentBootstrap() {
           return bootstrap;
+        },
+        getClientSettings() {
+          return requestHost("getClientSettings");
+        },
+        setClientSettings(settings) {
+          return requestHost("setClientSettings", settings);
         },
         postMessage(message) {
           vscode.postMessage(message);

@@ -237,6 +237,8 @@ export const DesktopEnvironmentBootstrapSchema = Schema.Struct({
 
 export interface T3HostBridge {
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
+  getClientSettings?: () => Promise<ClientSettings | null>;
+  setClientSettings?: (settings: ClientSettings) => Promise<void>;
   postMessage?: (message: unknown) => void;
 }
 

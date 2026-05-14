@@ -164,6 +164,7 @@ describe("BackendManager", () => {
       bootstrapToken: "303132333435363738396162636465663031323334353637",
       bearerToken: "vscode-bearer-token",
       cwd: "/workspace",
+      t3Home: path.join(os.homedir(), ".t3"),
     });
 
     expect(spawnMock).toHaveBeenCalledWith(

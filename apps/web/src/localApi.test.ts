@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   type ServerConfig,
   type ServerProvider,
+  type T3HostBridge,
   type TerminalAttachStreamEvent,
   type TerminalMetadataStreamEvent,
   ThreadId,
@@ -147,12 +148,24 @@ function emitEvent<T>(listeners: Set<(event: T) => void>, event: T) {
   }
 }
 
-function getWindowForTest(): Window & typeof globalThis & { desktopBridge?: unknown } {
+function getWindowForTest(): Window &
+  typeof globalThis & {
+    desktopBridge?: unknown;
+    t3HostBridge?: unknown;
+  } {
   const testGlobal = globalThis as typeof globalThis & {
-    window?: Window & typeof globalThis & { desktopBridge?: unknown };
+    window?: Window &
+      typeof globalThis & {
+        desktopBridge?: unknown;
+        t3HostBridge?: unknown;
+      };
   };
   if (!testGlobal.window) {
-    testGlobal.window = {} as Window & typeof globalThis & { desktopBridge?: unknown };
+    testGlobal.window = {} as Window &
+      typeof globalThis & {
+        desktopBridge?: unknown;
+        t3HostBridge?: unknown;
+      };
   }
   return testGlobal.window;
 }
@@ -330,6 +343,7 @@ beforeEach(() => {
   gitStatusListeners.clear();
   const testWindow = getWindowForTest();
   Reflect.deleteProperty(testWindow, "desktopBridge");
+  Reflect.deleteProperty(testWindow, "t3HostBridge");
   Object.defineProperty(testWindow, "localStorage", {
     configurable: true,
     value: createLocalStorageStub(),
@@ -686,6 +700,42 @@ describe("wsApi", () => {
     expect(getSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local");
     expect(setSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local", "bearer-token");
     expect(removeSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local");
+  });
+
+  it("reads and writes client settings through the neutral host bridge when desktop is missing", async () => {
+    const clientSettings = {
+      autoOpenPlanSidebar: false,
+      confirmThreadArchive: true,
+      confirmThreadDelete: false,
+      dismissedProviderUpdateNotificationKeys: [],
+      diffIgnoreWhitespace: true,
+      diffWordWrap: true,
+      favorites: [],
+      providerModelPreferences: {},
+      sidebarProjectGroupingMode: "repository_path" as const,
+      sidebarProjectGroupingOverrides: {},
+      sidebarProjectSortOrder: "manual" as const,
+      sidebarThreadSortOrder: "created_at" as const,
+      sidebarThreadPreviewCount: 6,
+      timestampFormat: "24-hour" as const,
+    };
+    const getClientSettings = vi.fn().mockResolvedValue(clientSettings);
+    const setClientSettings = vi.fn().mockResolvedValue(undefined);
+    const hostBridge: T3HostBridge = {
+      getLocalEnvironmentBootstrap: () => null,
+      getClientSettings,
+      setClientSettings,
+    };
+    getWindowForTest().t3HostBridge = hostBridge;
+
+    const { createLocalApi } = await import("./localApi");
+    const api = createLocalApi(rpcClientMock as never);
+
+    await expect(api.persistence.getClientSettings()).resolves.toEqual(clientSettings);
+    await api.persistence.setClientSettings(clientSettings);
+
+    expect(getClientSettings).toHaveBeenCalledWith();
+    expect(setClientSettings).toHaveBeenCalledWith(clientSettings);
   });
 
   it("falls back to browser storage for persistence when the desktop bridge is missing", async () => {
