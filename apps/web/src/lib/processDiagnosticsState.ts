@@ -1,16 +1,20 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { ServerProcessDiagnosticsResult } from "@t3tools/contracts";
+import type {
+  ServerProcessDiagnosticsResult,
+  ServerProcessResourceHistoryResult,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { ensureLocalApi } from "../localApi";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 
 const PROCESS_DIAGNOSTICS_STALE_TIME_MS = 2_000;
 const PROCESS_DIAGNOSTICS_IDLE_TTL_MS = 5 * 60_000;
+const PROCESS_RESOURCE_HISTORY_REFRESH_MS = 5_000;
 
 const processDiagnosticsAtom = Atom.make(
   Effect.promise(() => ensureLocalApi().server.getProcessDiagnostics()),
@@ -25,6 +29,13 @@ const processDiagnosticsAtom = Atom.make(
 
 export interface ProcessDiagnosticsState {
   readonly data: ServerProcessDiagnosticsResult | null;
+  readonly error: string | null;
+  readonly isPending: boolean;
+  readonly refresh: () => void;
+}
+
+export interface ProcessResourceHistoryState {
+  readonly data: ServerProcessResourceHistoryResult | null;
   readonly error: string | null;
   readonly isPending: boolean;
   readonly refresh: () => void;
@@ -62,4 +73,61 @@ export function useProcessDiagnostics(): ProcessDiagnosticsState {
     isPending: result.waiting,
     refresh,
   };
+}
+
+export function useProcessResourceHistory(input: {
+  readonly windowMs: number;
+  readonly bucketMs: number;
+}): ProcessResourceHistoryState {
+  const { bucketMs, windowMs } = input;
+  const [data, setData] = useState<ServerProcessResourceHistoryResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isPending, setIsPending] = useState(true);
+
+  const refresh = useCallback(() => {
+    setIsPending(true);
+    void ensureLocalApi()
+      .server.getProcessResourceHistory({ bucketMs, windowMs })
+      .then((result) => {
+        setData(result);
+        setError(null);
+      })
+      .catch((cause: unknown) => {
+        setError(formatProcessDiagnosticsError(cause));
+      })
+      .finally(() => {
+        setIsPending(false);
+      });
+  }, [bucketMs, windowMs]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const read = () => {
+      setIsPending(true);
+      void ensureLocalApi()
+        .server.getProcessResourceHistory({ bucketMs, windowMs })
+        .then((result) => {
+          if (!isMounted) return;
+          setData(result);
+          setError(null);
+        })
+        .catch((cause: unknown) => {
+          if (!isMounted) return;
+          setError(formatProcessDiagnosticsError(cause));
+        })
+        .finally(() => {
+          if (!isMounted) return;
+          setIsPending(false);
+        });
+    };
+
+    read();
+    const interval = window.setInterval(read, PROCESS_RESOURCE_HISTORY_REFRESH_MS);
+    return () => {
+      isMounted = false;
+      window.clearInterval(interval);
+    };
+  }, [bucketMs, windowMs]);
+
+  return { data, error, isPending, refresh };
 }

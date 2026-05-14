@@ -8,7 +8,11 @@ import {
   RefreshCwIcon,
 } from "lucide-react";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
-import type { ServerProcessDiagnosticsEntry, ServerProcessSignal } from "@t3tools/contracts";
+import type {
+  ServerProcessDiagnosticsEntry,
+  ServerProcessResourceHistorySummary,
+  ServerProcessSignal,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
@@ -17,7 +21,10 @@ import { cn } from "../../lib/utils";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTime } from "../../timestampFormat";
 import { useServerAvailableEditors, useServerObservability } from "../../rpc/serverState";
-import { useProcessDiagnostics } from "../../lib/processDiagnosticsState";
+import {
+  useProcessDiagnostics,
+  useProcessResourceHistory,
+} from "../../lib/processDiagnosticsState";
 import { useTraceDiagnostics } from "../../lib/traceDiagnosticsState";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
@@ -502,6 +509,195 @@ function ProcessDiagnosticsTable({
   );
 }
 
+const RESOURCE_HISTORY_WINDOWS = [
+  { label: "5m", windowMs: 5 * 60_000, bucketMs: 30_000 },
+  { label: "15m", windowMs: 15 * 60_000, bucketMs: 60_000 },
+  { label: "30m", windowMs: 30 * 60_000, bucketMs: 2 * 60_000 },
+  { label: "1h", windowMs: 60 * 60_000, bucketMs: 5 * 60_000 },
+] as const;
+
+function formatCpuTime(seconds: number): string {
+  if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 1 : 2)}s`;
+  const minutes = seconds / 60;
+  if (minutes < 60) return `${minutes.toFixed(minutes >= 10 ? 1 : 2)}m`;
+  return `${(minutes / 60).toFixed(2)}h`;
+}
+
+function formatShortProcessName(command: string): string {
+  const name = formatProcessName(command);
+  return name.length > 42 ? `${name.slice(0, 39)}...` : name;
+}
+
+function ProcessResourceHistoryChart({
+  buckets,
+}: {
+  buckets: ReadonlyArray<{
+    readonly startedAt: DateTime.Utc;
+    readonly avgCpuPercent: number;
+    readonly maxCpuPercent: number;
+  }>;
+}) {
+  const maxCpuPercent = Math.max(1, ...buckets.map((bucket) => bucket.maxCpuPercent));
+
+  return (
+    <div className="border-t border-border/60 px-4 py-3 sm:px-5">
+      <div className="flex h-28 items-end gap-1 overflow-hidden rounded-sm bg-muted/10 px-2 py-2">
+        {buckets.map((bucket) => {
+          const height = Math.max(2, (bucket.avgCpuPercent / maxCpuPercent) * 100);
+          return (
+            <Tooltip key={DateTime.formatIso(bucket.startedAt)}>
+              <TooltipTrigger
+                render={
+                  <div className="flex h-full min-w-1 flex-1 items-end">
+                    <div
+                      className="w-full rounded-t-sm bg-foreground/55 transition-colors hover:bg-foreground"
+                      style={{ height: `${height}%` }}
+                    />
+                  </div>
+                }
+              />
+              <TooltipPopup side="top">
+                Avg {bucket.avgCpuPercent.toFixed(1)}%, peak {bucket.maxCpuPercent.toFixed(1)}%
+              </TooltipPopup>
+            </Tooltip>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ResourceHistoryWindowSelector({
+  selectedWindowMs,
+  onSelect,
+}: {
+  selectedWindowMs: number;
+  onSelect: (windowMs: number) => void;
+}) {
+  return (
+    <div className="flex items-center rounded-md border border-border/60 p-0.5">
+      {RESOURCE_HISTORY_WINDOWS.map((option) => (
+        <button
+          key={option.windowMs}
+          type="button"
+          className={cn(
+            "h-6 rounded-sm px-2 text-[11px] font-medium text-muted-foreground hover:text-foreground",
+            selectedWindowMs === option.windowMs && "bg-muted text-foreground",
+          )}
+          onClick={() => onSelect(option.windowMs)}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ProcessResourceHistoryTable({
+  processes,
+  emptyLabel,
+}: {
+  processes: ReadonlyArray<ServerProcessResourceHistorySummary>;
+  emptyLabel: string;
+}) {
+  return (
+    <ScrollArea
+      chainVerticalScroll
+      scrollFade
+      hideScrollbars
+      className="w-full max-w-full border-t border-border/60"
+    >
+      <table className="w-full min-w-[980px] table-fixed text-left text-xs">
+        <colgroup>
+          <col className="w-[24%]" />
+          <col className="w-[10%]" />
+          <col className="w-[10%]" />
+          <col className="w-[10%]" />
+          <col className="w-[10%]" />
+          <col className="w-[10%]" />
+          <col className="w-[16%]" />
+          <col className="w-[10%]" />
+        </colgroup>
+        <thead className="border-b border-border/60 bg-muted/15 text-[11px] uppercase tracking-[0.08em] text-muted-foreground/70">
+          <tr>
+            <th className="px-4 py-2 font-semibold sm:pl-5">Process</th>
+            <th className="px-3 py-2 text-right font-semibold">CPU Time</th>
+            <th className="px-3 py-2 text-right font-semibold">Current</th>
+            <th className="px-3 py-2 text-right font-semibold">Average</th>
+            <th className="px-3 py-2 text-right font-semibold">Peak</th>
+            <th className="px-3 py-2 text-right font-semibold">Max Mem</th>
+            <th className="px-3 py-2 font-semibold">Command</th>
+            <th className="px-3 py-2 text-right font-semibold sm:pr-5">PID</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border/50">
+          {processes.length === 0 ? (
+            <tr>
+              <td colSpan={8} className="px-4 py-4 text-xs text-muted-foreground sm:px-5">
+                {emptyLabel}
+              </td>
+            </tr>
+          ) : null}
+          {processes.map((process) => (
+            <tr key={process.processKey} className="hover:bg-muted/20">
+              <td className="px-4 py-2 align-middle sm:pl-5">
+                <div
+                  className="flex min-w-0 items-center gap-2"
+                  style={{ paddingLeft: `${Math.min(process.depth, 8) * 14}px` }}
+                >
+                  <span
+                    className={cn(
+                      "inline-flex h-5 shrink-0 items-center rounded-sm border border-border/70 px-1.5 text-[10px] font-medium uppercase text-muted-foreground",
+                      process.isServerRoot &&
+                        "border-amber-500/50 text-amber-700 dark:text-amber-300",
+                    )}
+                  >
+                    {process.isServerRoot ? "Root" : "Child"}
+                  </span>
+                  <span className="min-w-0 truncate font-medium">
+                    {formatShortProcessName(process.command)}
+                  </span>
+                </div>
+              </td>
+              <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                {formatCpuTime(process.cpuSecondsApprox)}
+              </td>
+              <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                {process.currentCpuPercent.toFixed(1)}%
+              </td>
+              <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                {process.avgCpuPercent.toFixed(1)}%
+              </td>
+              <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                {process.maxCpuPercent.toFixed(1)}%
+              </td>
+              <td className="px-3 py-2 text-right align-middle font-mono tabular-nums">
+                {formatBytes(process.maxRssBytes)}
+              </td>
+              <td className="px-3 py-2 align-middle text-muted-foreground">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span className="block truncate">{process.command}</span>}
+                  />
+                  <TooltipPopup
+                    side="top"
+                    className="max-w-[min(440px,calc(100vw-2rem))] whitespace-normal break-words text-left font-mono text-[11px] leading-relaxed text-wrap"
+                  >
+                    {process.command}
+                  </TooltipPopup>
+                </Tooltip>
+              </td>
+              <td className="px-3 py-2 text-right align-middle font-mono tabular-nums text-muted-foreground sm:pr-5">
+                {process.pid}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </ScrollArea>
+  );
+}
+
 function DiagnosticsLastChecked({ checkedAt }: { checkedAt: DateTime.Utc | null }) {
   useRelativeTimeTick();
   const relative = checkedAt ? formatRelativeTime(DateTime.formatIso(checkedAt)) : null;
@@ -556,6 +752,10 @@ function DiagnosticsRefreshButton({
 export function DiagnosticsSettingsPanel() {
   const observability = useServerObservability();
   const availableEditors = useServerAvailableEditors();
+  const [resourceWindowMs, setResourceWindowMs] = useState(15 * 60_000);
+  const selectedResourceWindow =
+    RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
+    RESOURCE_HISTORY_WINDOWS[1];
   const { data, error, isPending, refresh } = useTraceDiagnostics();
   const {
     data: processData,
@@ -563,6 +763,15 @@ export function DiagnosticsSettingsPanel() {
     isPending: isProcessPending,
     refresh: refreshProcesses,
   } = useProcessDiagnostics();
+  const {
+    data: resourceData,
+    error: resourceError,
+    isPending: isResourcePending,
+    refresh: refreshResources,
+  } = useProcessResourceHistory({
+    windowMs: selectedResourceWindow.windowMs,
+    bucketMs: selectedResourceWindow.bucketMs,
+  });
   const [isOpeningLogsDirectory, setIsOpeningLogsDirectory] = useState(false);
   const [openLogsDirectoryError, setOpenLogsDirectoryError] = useState<string | null>(null);
   const [signalingPid, setSignalingPid] = useState<number | null>(null);
@@ -643,6 +852,7 @@ export function DiagnosticsSettingsPanel() {
   );
 
   const processDiagnosticsError = processData ? Option.getOrNull(processData.error) : null;
+  const processResourceError = resourceData ? Option.getOrNull(resourceData.error) : null;
   const traceDiagnosticsError = data ? Option.getOrNull(data.error) : null;
   const traceDiagnosticsPartialFailure = data
     ? Option.getOrElse(data.partialFailure, () => false)
@@ -707,6 +917,70 @@ export function DiagnosticsSettingsPanel() {
             isProcessInitialLoading
               ? "Loading live processes..."
               : "No live descendant processes found."
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection
+        title="Resource History"
+        headerAction={
+          <div className="flex items-center gap-1.5">
+            <ResourceHistoryWindowSelector
+              selectedWindowMs={resourceWindowMs}
+              onSelect={setResourceWindowMs}
+            />
+            <DiagnosticsLastChecked checkedAt={resourceData?.readAt ?? null} />
+            <DiagnosticsRefreshButton
+              isPending={isResourcePending}
+              label="Refresh resource history"
+              onClick={refreshResources}
+            />
+          </div>
+        }
+      >
+        <StatsGrid>
+          <StatBlock
+            label="CPU Time"
+            value={resourceData ? formatCpuTime(resourceData.totalCpuSecondsApprox) : "..."}
+            tooltip="Approximate cumulative CPU time for the T3 server root process and its descendant processes during the selected window."
+          />
+          <StatBlock
+            label="Samples"
+            value={resourceData ? formatCount(resourceData.retainedSampleCount) : "..."}
+            tooltip="In-memory process samples retained by the server. This resets when the server restarts."
+          />
+          <StatBlock
+            label="Interval"
+            value={resourceData ? formatDuration(resourceData.sampleIntervalMs) : "..."}
+          />
+          <StatBlock
+            label="Processes"
+            value={resourceData ? formatCount(resourceData.topProcesses.length) : "..."}
+          />
+        </StatsGrid>
+        {processResourceError || resourceError ? (
+          <div className="space-y-2 border-t border-border/60 px-4 py-3 text-xs text-muted-foreground sm:px-5">
+            {processResourceError ? (
+              <div className="flex items-start gap-2 text-destructive">
+                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+                <span>{processResourceError.message}</span>
+              </div>
+            ) : null}
+            {resourceError ? (
+              <div className="flex items-start gap-2 text-destructive">
+                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0" />
+                <span>{resourceError}</span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        <ProcessResourceHistoryChart buckets={resourceData?.buckets ?? []} />
+        <ProcessResourceHistoryTable
+          processes={resourceData?.topProcesses ?? []}
+          emptyLabel={
+            isResourcePending && resourceData === null
+              ? "Collecting process resource samples..."
+              : "No process resource samples found for this window."
           }
         />
       </SettingsSection>
