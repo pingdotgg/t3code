@@ -280,7 +280,7 @@ const runProcess = Effect.fn("runProcess")(
     const child = yield* spawner.spawn(
       ChildProcess.make(input.command, input.args, {
         cwd: process.cwd(),
-        shell: false,
+        shell: process.platform === "win32",
       }),
     );
     const [stdout, stderr, exitCode] = yield* Effect.all(
