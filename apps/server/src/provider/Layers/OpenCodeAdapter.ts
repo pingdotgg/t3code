@@ -64,6 +64,36 @@ type OpenCodeSubscribedEvent =
     ? TEvent
     : never;
 
+interface OpenCodeGlobalEventEnvelope {
+  readonly directory: string;
+  readonly payload: unknown;
+}
+
+interface OpenCodeGlobalEventClient {
+  readonly global?: {
+    readonly event?: (options: {
+      readonly signal: AbortSignal;
+    }) => Promise<{ readonly stream: AsyncIterable<OpenCodeGlobalEventEnvelope> }>;
+  };
+}
+
+function parseOpenCodeSubscribedEvent(payload: unknown): OpenCodeSubscribedEvent | undefined {
+  if (typeof payload !== "object" || payload === null) {
+    return undefined;
+  }
+  if (!("type" in payload) || typeof payload.type !== "string") {
+    return undefined;
+  }
+  if (
+    !("properties" in payload) ||
+    typeof payload.properties !== "object" ||
+    payload.properties === null
+  ) {
+    return undefined;
+  }
+  return payload as OpenCodeSubscribedEvent;
+}
+
 interface OpenCodeSessionContext {
   session: ProviderSession;
   readonly client: OpencodeClient;
@@ -89,7 +119,7 @@ interface OpenCodeSessionContext {
   /**
    * Sole lifecycle handle for the session. Closing this scope:
    *   - aborts the `AbortController` registered as a finalizer
-   *     (cancels the in-flight `event.subscribe` fetch),
+   *     (cancels the in-flight OpenCode event stream fetch),
    *   - interrupts the event-pump and server-exit fibers forked
    *     via `Effect.forkIn(sessionScope)`,
    *   - tears down the OpenCode server process for scope-owned servers.
@@ -398,6 +428,31 @@ function sessionErrorMessage(error: unknown): string {
   return typeof message === "string" && message.trim().length > 0
     ? message
     : "OpenCode session failed.";
+}
+
+function openCodeRuntimeErrorStatus(cause: OpenCodeRuntimeError): number | undefined {
+  const rawCause = cause.cause;
+  if (!rawCause || typeof rawCause !== "object" || !("response" in rawCause)) {
+    return undefined;
+  }
+  const response = rawCause.response;
+  if (!response || typeof response !== "object" || !("status" in response)) {
+    return undefined;
+  }
+  return typeof response.status === "number" ? response.status : undefined;
+}
+
+function isOpenCodeGlobalEventUnavailable(cause: OpenCodeRuntimeError): boolean {
+  if (openCodeRuntimeErrorStatus(cause) === 404) {
+    return true;
+  }
+
+  if (!(cause.cause instanceof TypeError)) {
+    return false;
+  }
+
+  const detail = cause.detail.toLowerCase();
+  return detail.includes("global") || detail.includes("event is not a function");
 }
 
 function updateProviderSession(
@@ -954,7 +1009,7 @@ export function makeOpenCodeAdapter(
     const startEventPump = Effect.fn("startEventPump")(function* (context: OpenCodeSessionContext) {
       // One AbortController per session scope. The finalizer fires when
       // the scope closes (explicit stop, unexpected exit, or layer
-      // shutdown) and cancels the in-flight `event.subscribe` fetch so
+      // shutdown) and cancels the in-flight `global.event`/`event.subscribe` fetch so
       // the async iterable unwinds cleanly.
       const eventsAbortController = new AbortController();
       yield* Scope.addFinalizer(
@@ -964,11 +1019,45 @@ export function makeOpenCodeAdapter(
 
       // Fibers forked into `context.sessionScope` are interrupted
       // automatically when the scope closes — no bookkeeping required.
-      yield* Effect.flatMap(
+      const globalEventClient: OpenCodeGlobalEventClient = context.client;
+      const runGlobalEvents = Effect.flatMap(
+        runOpenCodeSdk(
+          "global.event",
+          () =>
+            globalEventClient.global?.event?.({
+              signal: eventsAbortController.signal,
+            }) ?? Promise.reject(new TypeError("OpenCode global.event is unavailable.")),
+        ),
+        (subscription) =>
+          Stream.fromAsyncIterable(
+            subscription.stream,
+            (cause) =>
+              new OpenCodeRuntimeError({
+                operation: "global.event",
+                detail: openCodeRuntimeErrorDetail(cause),
+                cause,
+              }),
+          ).pipe(
+            Stream.runForEach((event) => {
+              if (event.directory !== context.directory) {
+                return Effect.void;
+              }
+              const payload = parseOpenCodeSubscribedEvent(event.payload);
+              if (payload === undefined) {
+                return Effect.void;
+              }
+              return handleSubscribedEvent(context, payload);
+            }),
+          ),
+      );
+      const runLegacyEvents = Effect.flatMap(
         runOpenCodeSdk("event.subscribe", () =>
-          context.client.event.subscribe(undefined, {
-            signal: eventsAbortController.signal,
-          }),
+          context.client.event.subscribe(
+            { directory: context.directory },
+            {
+              signal: eventsAbortController.signal,
+            },
+          ),
         ),
         (subscription) =>
           Stream.fromAsyncIterable(
@@ -980,7 +1069,10 @@ export function makeOpenCodeAdapter(
                 cause,
               }),
           ).pipe(Stream.runForEach((event) => handleSubscribedEvent(context, event))),
-      ).pipe(
+      );
+
+      yield* runGlobalEvents.pipe(
+        Effect.catchIf(isOpenCodeGlobalEventUnavailable, () => runLegacyEvents),
         Effect.exit,
         Effect.flatMap((exit) =>
           Effect.gen(function* () {
