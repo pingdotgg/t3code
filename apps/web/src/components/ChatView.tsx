@@ -2856,9 +2856,9 @@ export default function ChatView(props: ChatViewProps) {
       beginLocalDispatch({ preparingWorktree: false });
       await api.orchestration.dispatchCommand({
         type: "thread.turn.start",
+        delivery: "steer",
         commandId: newCommandId(),
         threadId: threadIdForSend,
-        delivery: "steer",
         message: {
           messageId: messageIdForSend,
           role: "user",
@@ -3172,9 +3172,9 @@ export default function ChatView(props: ChatViewProps) {
 
         await api.orchestration.dispatchCommand({
           type: "thread.turn.start",
+          delivery: "steer",
           commandId: newCommandId(),
           threadId: threadIdForSend,
-          delivery: "steer",
           message: {
             messageId: messageIdForSend,
             role: "user",
@@ -3298,9 +3298,9 @@ export default function ChatView(props: ChatViewProps) {
       .then(() => {
         return api.orchestration.dispatchCommand({
           type: "thread.turn.start",
+          delivery: "steer",
           commandId: newCommandId(),
           threadId: nextThreadId,
-          delivery: "steer",
           message: {
             messageId: newMessageId(),
             role: "user",

@@ -21,9 +21,9 @@ import {
   ThreadMetaUpdatedPayload,
   ThreadCreatedPayload,
   ThreadTurnDiff,
-  ThreadTurnDispatchFailedPayload,
-  ThreadTurnDispatchSentPayload,
-  ThreadTurnDispatchStartedPayload,
+  ThreadQueuedTurnSendFailedPayload,
+  ThreadQueuedTurnSendAcceptedPayload,
+  ThreadQueuedTurnSendStartedPayload,
   ThreadTurnQueuedPayload,
   ThreadTurnStartCommand,
   ThreadTurnStartRequestedPayload,
@@ -41,14 +41,14 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
 const decodeThreadTurnQueuedPayload = Schema.decodeUnknownEffect(ThreadTurnQueuedPayload);
-const decodeThreadTurnDispatchStartedPayload = Schema.decodeUnknownEffect(
-  ThreadTurnDispatchStartedPayload,
+const decodeThreadQueuedTurnSendStartedPayload = Schema.decodeUnknownEffect(
+  ThreadQueuedTurnSendStartedPayload,
 );
-const decodeThreadTurnDispatchSentPayload = Schema.decodeUnknownEffect(
-  ThreadTurnDispatchSentPayload,
+const decodeThreadQueuedTurnSendAcceptedPayload = Schema.decodeUnknownEffect(
+  ThreadQueuedTurnSendAcceptedPayload,
 );
-const decodeThreadTurnDispatchFailedPayload = Schema.decodeUnknownEffect(
-  ThreadTurnDispatchFailedPayload,
+const decodeThreadQueuedTurnSendFailedPayload = Schema.decodeUnknownEffect(
+  ThreadQueuedTurnSendFailedPayload,
 );
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
@@ -235,7 +235,7 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
     assert.strictEqual(parsed.modelSelection, undefined);
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
-    assert.strictEqual(parsed.delivery ?? DEFAULT_PROVIDER_TURN_DELIVERY_MODE, "steer");
+    assert.strictEqual(parsed.delivery, DEFAULT_PROVIDER_TURN_DELIVERY_MODE);
   }),
 );
 
@@ -616,19 +616,19 @@ it.effect("decodes thread.turn-queued defaults for runtime and interaction mode"
 
 it.effect("decodes queued turn dispatch lifecycle payloads", () =>
   Effect.gen(function* () {
-    const dispatchStarted = yield* decodeThreadTurnDispatchStartedPayload({
+    const dispatchStarted = yield* decodeThreadQueuedTurnSendStartedPayload({
       threadId: "thread-1",
       queueItemId: "queue-item-1",
       messageId: "msg-1",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
-    const dispatchSent = yield* decodeThreadTurnDispatchSentPayload({
+    const dispatchSent = yield* decodeThreadQueuedTurnSendAcceptedPayload({
       threadId: "thread-1",
       queueItemId: "queue-item-1",
       messageId: "msg-1",
       createdAt: "2026-01-01T00:00:01.000Z",
     });
-    const dispatchFailed = yield* decodeThreadTurnDispatchFailedPayload({
+    const dispatchFailed = yield* decodeThreadQueuedTurnSendFailedPayload({
       threadId: "thread-1",
       queueItemId: "queue-item-1",
       messageId: "msg-1",
@@ -664,15 +664,15 @@ it.effect("decodes queued turn orchestration events", () =>
     });
     const failed = yield* decodeOrchestrationEvent({
       sequence: 2,
-      eventId: "event-turn-dispatch-failed",
+      eventId: "event-queued-turn-send-failed",
       aggregateKind: "thread",
       aggregateId: "thread-1",
       occurredAt: "2026-01-01T00:00:01.000Z",
-      commandId: "cmd-turn-dispatch-failed",
+      commandId: "cmd-queued-turn-send-failed",
       causationEventId: null,
       correlationId: "cmd-turn-queue",
       metadata: {},
-      type: "thread.turn-dispatch-failed",
+      type: "thread.queued-turn-send-failed",
       payload: {
         threadId: "thread-1",
         queueItemId: "queue-item-1",
@@ -683,7 +683,7 @@ it.effect("decodes queued turn orchestration events", () =>
     });
 
     assert.strictEqual(queued.type, "thread.turn-queued");
-    assert.strictEqual(failed.type, "thread.turn-dispatch-failed");
+    assert.strictEqual(failed.type, "thread.queued-turn-send-failed");
   }),
 );
 

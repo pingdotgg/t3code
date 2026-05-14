@@ -271,6 +271,7 @@ describe("OrchestrationEngine", () => {
     await system.run(
       engine.dispatch({
         type: "thread.turn.start",
+        delivery: "steer",
         commandId: CommandId.make("cmd-turn-start-1"),
         threadId: ThreadId.make("thread-1"),
         message: {
@@ -827,6 +828,7 @@ describe("OrchestrationEngine", () => {
 
     const turnStartCommand = {
       type: "thread.turn.start" as const,
+      delivery: "steer" as const,
       commandId: CommandId.make("cmd-turn-start-atomic"),
       threadId: ThreadId.make("thread-atomic"),
       message: {
@@ -999,6 +1001,7 @@ describe("OrchestrationEngine", () => {
       system.run(
         engine.dispatch({
           type: "thread.turn.start",
+          delivery: "steer",
           commandId: CommandId.make("cmd-invariant-missing-thread"),
           threadId: ThreadId.make("thread-missing"),
           message: {

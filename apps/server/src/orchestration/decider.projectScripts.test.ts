@@ -156,6 +156,7 @@ describe("decider project scripts", () => {
       decideOrchestrationCommand({
         command: {
           type: "thread.turn.start",
+          delivery: "steer",
           commandId: CommandId.make("cmd-turn-start"),
           threadId: ThreadId.make("thread-1"),
           message: {

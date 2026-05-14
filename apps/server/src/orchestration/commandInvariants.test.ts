@@ -104,6 +104,7 @@ const readModel: OrchestrationReadModel = {
 
 const messageSendCommand: OrchestrationCommand = {
   type: "thread.turn.start",
+  delivery: "steer",
   commandId: CommandId.make("cmd-1"),
   threadId: ThreadId.make("thread-1"),
   message: {

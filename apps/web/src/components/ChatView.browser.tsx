@@ -2553,6 +2553,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(dispatchRequest).toMatchObject({
             _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
             type: "thread.turn.start",
+            delivery: "steer",
             bootstrap: {
               createThread: {
                 projectId: PROJECT_ID,
@@ -2780,6 +2781,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(turnStartRequest).toMatchObject({
             _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
             type: "thread.turn.start",
+            delivery: "steer",
             bootstrap: {
               prepareWorktree: {
                 projectCwd: "/repo/project",

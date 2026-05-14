@@ -3898,6 +3898,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           withWsRpcClient(wsUrl, (client) =>
             client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
               type: "thread.turn.start",
+              delivery: "steer",
               commandId: CommandId.make("cmd-bootstrap-turn-start"),
               threadId: ThreadId.make("thread-bootstrap"),
               message: {
@@ -4015,6 +4016,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.turn.start",
+            delivery: "steer",
             commandId: CommandId.make("cmd-bootstrap-turn-start-setup-failure"),
             threadId: ThreadId.make("thread-bootstrap-setup-failure"),
             message: {
@@ -4132,6 +4134,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.turn.start",
+            delivery: "steer",
             commandId: CommandId.make("cmd-bootstrap-turn-start-setup-activity-failure"),
             threadId: ThreadId.make("thread-bootstrap-setup-activity-failure"),
             message: {
@@ -4216,6 +4219,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
             type: "thread.turn.start",
+            delivery: "steer",
             commandId: CommandId.make("cmd-bootstrap-turn-start-defect"),
             threadId: ThreadId.make("thread-bootstrap-defect"),
             message: {

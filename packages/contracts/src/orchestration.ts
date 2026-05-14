@@ -568,23 +568,34 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
+const ThreadTurnStartMessage = Schema.Struct({
+  messageId: MessageId,
+  role: Schema.Literal("user"),
+  text: Schema.String,
+  attachments: Schema.Array(ChatAttachment),
+});
+
+const ClientThreadTurnStartMessage = Schema.Struct({
+  messageId: MessageId,
+  role: Schema.Literal("user"),
+  text: Schema.String,
+  attachments: Schema.Array(UploadChatAttachment),
+});
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
   threadId: ThreadId,
-  message: Schema.Struct({
-    messageId: MessageId,
-    role: Schema.Literal("user"),
-    text: Schema.String,
-    attachments: Schema.Array(ChatAttachment),
-  }),
+  message: ThreadTurnStartMessage,
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   interactionMode: ProviderInteractionMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
   ),
-  delivery: Schema.optionalKey(ProviderTurnDeliveryMode),
+  delivery: ProviderTurnDeliveryMode.pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(DEFAULT_PROVIDER_TURN_DELIVERY_MODE)),
+  ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
@@ -594,17 +605,14 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
   threadId: ThreadId,
-  message: Schema.Struct({
-    messageId: MessageId,
-    role: Schema.Literal("user"),
-    text: Schema.String,
-    attachments: Schema.Array(UploadChatAttachment),
-  }),
+  message: ClientThreadTurnStartMessage,
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
-  delivery: Schema.optionalKey(ProviderTurnDeliveryMode),
+  delivery: ProviderTurnDeliveryMode.pipe(
+    Schema.withDecodingDefaultTypeKey(Effect.succeed(DEFAULT_PROVIDER_TURN_DELIVERY_MODE)),
+  ),
   bootstrap: Schema.optional(ThreadTurnStartBootstrap),
   sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
   createdAt: IsoDateTime,
@@ -788,9 +796,9 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.message-sent",
   "thread.turn-start-requested",
   "thread.turn-queued",
-  "thread.turn-dispatch-started",
-  "thread.turn-dispatch-sent",
-  "thread.turn-dispatch-failed",
+  "thread.queued-turn-send-started",
+  "thread.queued-turn-send-accepted",
+  "thread.queued-turn-send-failed",
   "thread.turn-interrupt-requested",
   "thread.approval-response-requested",
   "thread.user-input-response-requested",
@@ -927,21 +935,21 @@ export const ThreadTurnQueuedPayload = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
-export const ThreadTurnDispatchStartedPayload = Schema.Struct({
+export const ThreadQueuedTurnSendStartedPayload = Schema.Struct({
   threadId: ThreadId,
   queueItemId: TurnQueueItemId,
   messageId: MessageId,
   createdAt: IsoDateTime,
 });
 
-export const ThreadTurnDispatchSentPayload = Schema.Struct({
+export const ThreadQueuedTurnSendAcceptedPayload = Schema.Struct({
   threadId: ThreadId,
   queueItemId: TurnQueueItemId,
   messageId: MessageId,
   createdAt: IsoDateTime,
 });
 
-export const ThreadTurnDispatchFailedPayload = Schema.Struct({
+export const ThreadQueuedTurnSendFailedPayload = Schema.Struct({
   threadId: ThreadId,
   queueItemId: TurnQueueItemId,
   messageId: MessageId,
@@ -1100,18 +1108,18 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
-    type: Schema.Literal("thread.turn-dispatch-started"),
-    payload: ThreadTurnDispatchStartedPayload,
+    type: Schema.Literal("thread.queued-turn-send-started"),
+    payload: ThreadQueuedTurnSendStartedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
-    type: Schema.Literal("thread.turn-dispatch-sent"),
-    payload: ThreadTurnDispatchSentPayload,
+    type: Schema.Literal("thread.queued-turn-send-accepted"),
+    payload: ThreadQueuedTurnSendAcceptedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
-    type: Schema.Literal("thread.turn-dispatch-failed"),
-    payload: ThreadTurnDispatchFailedPayload,
+    type: Schema.Literal("thread.queued-turn-send-failed"),
+    payload: ThreadQueuedTurnSendFailedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
