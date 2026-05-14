@@ -8,10 +8,12 @@ import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useThreadActions } from "../hooks/useThreadActions";
 import {
   startNewLocalThreadFromContext,
   startNewThreadFromContext,
 } from "../lib/chatThreadActions";
+import { shouldIgnoreChatGlobalShortcutEvent } from "../lib/chatGlobalShortcuts";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
@@ -27,6 +29,7 @@ function ChatRouteGlobalShortcuts() {
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
+  const { attemptArchiveThread } = useThreadActions();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const sidebarV2Enabled = useClientSettings((settings) => settings.sidebarV2Enabled);
   const projectCount = useProjects().length;
@@ -45,7 +48,7 @@ function ChatRouteGlobalShortcuts() {
   );
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (shouldIgnoreChatGlobalShortcutEvent(event)) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: isTerminalFocused(),
@@ -137,6 +140,15 @@ function ChatRouteGlobalShortcuts() {
                   ? "zoom-out"
                   : "reset-zoom";
         dispatchPreviewAction(action);
+        return;
+      }
+
+      if (command === "thread.archiveCurrent") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!routeThreadRef) return;
+        void attemptArchiveThread(routeThreadRef);
+        return;
       }
     };
 
@@ -147,6 +159,7 @@ function ChatRouteGlobalShortcuts() {
   }, [
     activeDraftThread,
     activeThread,
+    attemptArchiveThread,
     clearSelection,
     handleNewThread,
     keybindings,

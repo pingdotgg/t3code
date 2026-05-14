@@ -82,6 +82,12 @@ it.effect("parses keybinding rules", () =>
       command: "thread.previous",
     });
     assert.strictEqual(parsedThreadPrevious.command, "thread.previous");
+
+    const parsedArchiveCurrent = yield* decode(KeybindingRule, {
+      key: "mod+shift+a",
+      command: "thread.archiveCurrent",
+    });
+    assert.strictEqual(parsedArchiveCurrent.command, "thread.archiveCurrent");
   }),
 );
 

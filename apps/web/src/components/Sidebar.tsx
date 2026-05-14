@@ -1072,6 +1072,7 @@ interface SidebarProjectItemProps {
   newThreadShortcutLabel: string | null;
   handleNewThread: ReturnType<typeof useNewThreadHandler>;
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
+  attemptArchiveThread: ReturnType<typeof useThreadActions>["attemptArchiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   threadJumpLabelByKey: ReadonlyMap<string, string>;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
@@ -1092,6 +1093,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     newThreadShortcutLabel,
     handleNewThread,
     archiveThread,
+    attemptArchiveThread,
     deleteThread,
     threadJumpLabelByKey,
     attachThreadListAutoAnimateRef,
@@ -2010,23 +2012,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [createThreadForProjectMember, project.groupedProjectCount, project.memberProjects],
   );
 
-  const attemptArchiveThread = useCallback(
-    async (threadRef: ScopedThreadRef) => {
-      const result = await archiveThread(threadRef);
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Failed to archive thread",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          }),
-        );
-      }
-    },
-    [archiveThread],
-  );
-
   const cancelRename = useCallback(() => {
     setRenamingThreadKey(null);
     renamingInputRef.current = null;
@@ -2806,6 +2791,7 @@ interface SidebarProjectsContentProps {
   handleProjectDragCancel: (event: DragCancelEvent) => void;
   handleNewThread: ReturnType<typeof useNewThreadHandler>;
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
+  attemptArchiveThread: ReturnType<typeof useThreadActions>["attemptArchiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   sortedProjects: readonly SidebarProjectSnapshot[];
   expandedThreadListsByProject: ReadonlySet<string>;
@@ -2847,6 +2833,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleProjectDragCancel,
     handleNewThread,
     archiveThread,
+    attemptArchiveThread,
     deleteThread,
     sortedProjects,
     expandedThreadListsByProject,
@@ -2998,6 +2985,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                         newThreadShortcutLabel={newThreadShortcutLabel}
                         handleNewThread={handleNewThread}
                         archiveThread={archiveThread}
+                        attemptArchiveThread={attemptArchiveThread}
                         deleteThread={deleteThread}
                         threadJumpLabelByKey={threadJumpLabelByKey}
                         attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
@@ -3030,6 +3018,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 newThreadShortcutLabel={newThreadShortcutLabel}
                 handleNewThread={handleNewThread}
                 archiveThread={archiveThread}
+                attemptArchiveThread={attemptArchiveThread}
                 deleteThread={deleteThread}
                 threadJumpLabelByKey={threadJumpLabelByKey}
                 attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
@@ -3071,7 +3060,7 @@ export default function Sidebar() {
   const sidebarThreadPreviewCount = useClientSettings((s) => s.sidebarThreadPreviewCount);
   const updateSettings = useUpdateClientSettings();
   const handleNewThread = useNewThreadHandler();
-  const { archiveThread, deleteThread } = useThreadActions();
+  const { archiveThread, attemptArchiveThread, deleteThread } = useThreadActions();
   const { isMobile, setOpenMobile } = useSidebar();
   const routeTarget = useParams({
     strict: false,
@@ -3688,6 +3677,7 @@ export default function Sidebar() {
             handleProjectDragCancel={handleProjectDragCancel}
             handleNewThread={handleNewThread}
             archiveThread={archiveThread}
+            attemptArchiveThread={attemptArchiveThread}
             deleteThread={deleteThread}
             sortedProjects={sortedProjects}
             expandedThreadListsByProject={expandedThreadListsByProject}
