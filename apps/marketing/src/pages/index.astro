@@ -1,26 +1,372 @@
 ---
 import Layout from "../layouts/Layout.astro";
+import TuxIcon from "../components/TuxIcon.astro";
+import { tweets } from "../lib/tweets";
+
+const desktopEndorsementRows = [
+  tweets.filter((_, index) => index % 2 === 0),
+  tweets.filter((_, index) => index % 2 === 1),
+];
+
+const mobileEndorsementRows = [
+  tweets.filter((_, index) => index % 3 === 0),
+  tweets.filter((_, index) => index % 3 === 1),
+  tweets.filter((_, index) => index % 3 === 2),
+];
 ---
 
 <Layout>
-  <h1 class="tagline">T3 Code is the best way to code with AI.</h1>
+  <!-- ── Hero ──────────────────────────────────────────────────── -->
+  <section class="hero">
+    <div class="hero-grid" aria-hidden="true"></div>
 
-  <a
-    id="download-btn"
-    href="https://github.com/pingdotgg/t3code/releases"
-    class="hero-button"
-  >
-    <svg class="hero-button-icon hero-button-icon--apple" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 814 1000" aria-hidden="true"><path fill="currentColor" d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76.5 0-103.7 40.8-165.9 40.8s-105.6-57-155.5-127C46.7 790.7 0 663 0 541.8c0-194.4 126.4-297.5 250.8-297.5 66.1 0 121.2 43.4 162.7 43.4 39.5 0 101.1-46 176.3-46 28.5 0 130.9 2.6 198.3 99.2zm-234-181.5c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.6-55.1 135.5 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.5-71.3z"/></svg>
-    <svg class="hero-button-icon hero-button-icon--windows" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" aria-hidden="true"><path fill="currentColor" d="m0 12.402 35.687-4.86.016 34.423-35.67.203zm35.67 33.529.028 34.453L.028 75.48.026 45.7zm4.326-39.025L87.314 0v41.527l-47.318.376zm47.329 39.349-.011 41.34-47.318-6.678-.066-34.739z"/></svg>
-    <svg class="hero-button-icon hero-button-icon--linux" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 295" aria-hidden="true"><defs><linearGradient id="lt0" x1="48.548%" x2="51.047%" y1="115.276%" y2="41.364%"><stop offset="0%" stop-color="#FFEED7"/><stop offset="100%" stop-color="#BDBFC2"/></linearGradient><linearGradient id="lt6" x1="49.984%" x2="49.984%" y1="89.845%" y2="40.632%"><stop offset="0%" stop-color="#FFEED7"/><stop offset="100%" stop-color="#BDBFC2"/></linearGradient><linearGradient id="lt8" x1="49.841%" x2="50.241%" y1="13.229%" y2="94.673%"><stop offset="0%" stop-color="#FFF" stop-opacity=".8"/><stop offset="100%" stop-color="#FFF" stop-opacity="0"/></linearGradient><linearGradient id="ltc" x1="53.467%" x2="38.949%" y1="48.921%" y2="98.1%"><stop offset="0%" stop-color="#FFA63F"/><stop offset="100%" stop-color="#FF0"/></linearGradient><linearGradient id="lte" x1="30.581%" x2="65.887%" y1="34.024%" y2="89.175%"><stop offset="0%" stop-color="#FFA63F"/><stop offset="100%" stop-color="#FF0"/></linearGradient><linearGradient id="lti" x1="49.733%" x2="50.558%" y1="17.609%" y2="99.385%"><stop offset="0%" stop-color="#FFA63F"/><stop offset="100%" stop-color="#FF0"/></linearGradient></defs><g fill="none"><path fill="#000" d="M63.213 215.474c-11.387-16.346-13.591-69.606 12.947-102.39C89.292 97.383 92.69 86.455 93.7 71.67c.734-16.805-11.846-66.851 35.537-70.616 48.027-3.857 45.364 43.526 45.088 68.596-.183 21.12 15.52 33.15 26.355 49.68 19.927 30.303 18.274 82.461-3.765 110.745-27.916 35.354-51.791 20.018-67.678 21.304-29.752 1.745-30.762 17.54-66.024-35.905"/><path fill="url(#lt6)" d="M81.027 145.684c6.52-14.785 20.386-40.772 20.662-60.883 0-15.978 47.843-19.835 51.7-3.856 3.856 15.978 13.59 39.853 19.834 51.424 6.245 11.478 24.335 48.118 5.051 80.074-17.356 28.284-69.973 50.69-98.073-3.856-9.55-18.917-7.806-42.333.826-62.903"/><path fill="url(#lt8)" d="M166.428 151.285c0 16.162-15.519 37.1-42.15 36.916-27.456.183-39.118-20.754-39.118-36.916 0-16.161 18.182-29.293 40.588-29.293 22.498.092 40.68 13.132 40.68 29.293"/><path fill="#000" stroke="#000" stroke-width=".977" d="M176.805 117.86c13.59 11.02 38.292 49.587 2.204 74.748-11.846 7.806 10.468 32.508 23.049 19.927 43.618-43.894-1.102-94.308-16.53-111.664-13.774-15.151-25.987 3.49-8.723 16.989z"/><path fill="#000" stroke="#000" stroke-width="1.25" d="M79.925 122.727c-8.907 14.509-30.211 48.669-1.652 66.484 38.384 23.6 27.548 47.108-7.53 25.895-49.404-29.568-5.97-89.257 13.774-112.03 22.59-25.529 4.316 4.683-4.592 19.65z"/><path fill="url(#ltc)" stroke="#E68C3F" stroke-width="6.25" d="M51.835 258.542c-20.57-10.928-50.414 2.112-39.578-27.457 2.204-6.704-3.214-16.805.275-23.325 4.133-7.989 13.04-6.244 18.366-11.57 5.234-5.51 8.54-15.06 18.366-13.59 9.734 1.468 16.254 13.406 23.049 28.099 5.05 10.468 22.865 25.253 21.672 37.007-1.47 17.998-21.948 21.396-42.15 10.836z" transform="translate(10)"/><path fill="url(#lte)" stroke="#E68C3F" stroke-width="6.251" d="M194.445 253.49c15.06-18.273 48.578-14.508 25.988-39.577-4.775-5.418-3.306-16.989-9.183-21.947-6.887-6.061-14.509-1.102-21.488-4.224-6.979-3.398-14.325-9.918-22.865-5.327-8.54 4.684-9.459 16.805-10.285 32.783-.735 11.479-11.203 30.671-5.602 41.231 8.081 16.346 29.11 14.142 43.435-2.938z" transform="translate(10)"/><path fill="url(#lti)" stroke="#E68C3F" stroke-width="3.75" d="M97.107 66.344c3.673-3.398 12.58-13.774 29.477-2.939 3.122 2.02 5.693 2.204 11.662 4.775 12.03 4.96 6.336 16.897-6.52 20.937-5.51 1.745-10.468 8.449-20.386 7.806-8.54-.46-10.744-6.06-15.978-9.091-9.275-5.234-10.652-12.305-5.602-16.07 5.051-3.765 6.98-5.143 7.347-5.418z" transform="translate(10)"/><path fill="#000" d="M133.186 57.712c-.092 5.234 2.48 9.458 5.877 9.458 3.306 0 6.153-4.224 6.245-9.366.091-5.234-2.48-9.459-5.878-9.459-3.397 0-6.152 4.225-6.244 9.367m-21.212.092c.459 4.316-1.194 7.989-3.582 8.356-2.387.276-4.683-2.938-5.142-7.254-.46-4.316 1.194-7.99 3.581-8.357 2.388-.275 4.684 2.939 5.143 7.255"/></g></svg>
-    <span id="download-label">Download now</span>
-  </a>
+    <div class="hero-float" aria-hidden="true">
+      <span class="hero-float-mark hf-claude" title="Claude Code">
+        <img src="/harnesses/claude-ai-icon.svg" alt="" />
+      </span>
+      <span class="hero-float-mark hf-codex" title="Codex">
+        <img src="/harnesses/openai_dark.svg" alt="" />
+      </span>
+      <span class="hero-float-mark hf-opencode" title="OpenCode">
+        <img src="/harnesses/opencode-dark.svg" alt="" />
+      </span>
+      <span class="hero-float-mark hf-cursor" title="Cursor">
+        <img src="/harnesses/cursor_light.svg" alt="" />
+      </span>
+    </div>
 
-  <a href="/download" class="other-platforms">Other platforms</a>
+    <div class="container hero-inner">
+      <h1 class="hero-title display">
+        The open-source<br />control plane<br />for coding agents.
+      </h1>
 
-  <div class="screenshot-wrap">
-    <img src="/screenshot.jpeg" alt="T3 Code" class="screenshot" />
-  </div>
+      <p class="hero-sub">
+        Orchestrate Claude Code, Codex, OpenCode and Cursor from one surface.
+        Bring your own subscription. Fork the whole thing.
+      </p>
+
+      <div class="hero-actions">
+        <a
+          id="download-btn"
+          href="https://github.com/pingdotgg/t3code/releases"
+          class="btn btn-primary btn-lg"
+        >
+          <svg class="dl-icon dl-icon--apple" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 814 1000" aria-hidden="true"><path fill="currentColor" d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76.5 0-103.7 40.8-165.9 40.8s-105.6-57-155.5-127C46.7 790.7 0 663 0 541.8c0-194.4 126.4-297.5 250.8-297.5 66.1 0 121.2 43.4 162.7 43.4 39.5 0 101.1-46 176.3-46 28.5 0 130.9 2.6 198.3 99.2zm-234-181.5c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.6-55.1 135.5 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.5-71.3z"/></svg>
+          <svg class="dl-icon dl-icon--windows" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" aria-hidden="true"><path fill="currentColor" d="m0 12.402 35.687-4.86.016 34.423-35.67.203zm35.67 33.529.028 34.453L.028 75.48.026 45.7zm4.326-39.025L87.314 0v41.527l-47.318.376zm47.329 39.349-.011 41.34-47.318-6.678-.066-34.739z"/></svg>
+          <TuxIcon class="dl-icon dl-icon--linux" idPrefix="hero-linux-" />
+          <span id="download-label">Download for macOS</span>
+        </a>
+        <a href="https://github.com/pingdotgg/t3code" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-lg">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 007.86 10.93c.58.1.79-.25.79-.56v-2c-3.2.69-3.88-1.37-3.88-1.37-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.76 2.68 1.25 3.33.96.1-.75.4-1.25.72-1.54-2.55-.29-5.24-1.27-5.24-5.67 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.15 1.18a10.96 10.96 0 015.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.57.23 2.73.11 3.02.74.8 1.18 1.83 1.18 3.08 0 4.41-2.7 5.38-5.27 5.66.41.36.78 1.06.78 2.13v3.16c0 .31.21.67.8.56A11.5 11.5 0 0023.5 12C23.5 5.65 18.35.5 12 .5z"/>
+          </svg>
+          Star on GitHub
+        </a>
+      </div>
+
+      <div class="hero-preview">
+        <figure class="hero-screenshot-frame">
+          <img
+            src="/updated-screenshot.webp"
+            alt="T3 Code app showing multiple coding agent threads in one workspace"
+            width="2508"
+            height="1682"
+            loading="eager"
+            decoding="async"
+          />
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Endorsements ─────────────────────────────────────────── -->
+  <section id="endorsements" class="sec-endorsements" aria-labelledby="endorsements-title">
+    <div class="container">
+      <div class="endorsements-head">
+        <h2 id="endorsements-title">Developers love T3 Code</h2>
+        <p>Real reactions from people building with T3 Code today.</p>
+      </div>
+    </div>
+
+    <div class="endorsement-carousel endorsement-carousel--desktop" aria-label="Developer endorsements">
+        {
+          desktopEndorsementRows.map((row, rowIndex) => (
+            <div class:list={["endorsement-row", rowIndex === 1 && "is-reverse"]}>
+              <div class="endorsement-track">
+                {[0, 1].map((groupIndex) => (
+                  <div class="endorsement-track-group" aria-hidden={groupIndex === 1 ? "true" : undefined}>
+                    {row.map((tweet) => (
+                      <a
+                        class="endorsement-card"
+                        href={tweet.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Read ${tweet.handle}'s post on X`}
+                        tabindex={groupIndex === 1 ? "-1" : undefined}
+                      >
+                        <div class="endorsement-author">
+                          <img
+                            src={`/pfps/${tweet.handle}.webp`}
+                            alt=""
+                            width="28"
+                            height="28"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          <div class="endorsement-handle">@{tweet.handle}</div>
+                        </div>
+                        <p>{tweet.excerpt ?? tweet.content}</p>
+                      </a>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))
+        }
+    </div>
+
+    <div class="endorsement-carousel endorsement-carousel--mobile" aria-label="Developer endorsements">
+        {
+          mobileEndorsementRows.map((row, rowIndex) => (
+            <div class:list={["endorsement-row", rowIndex === 1 && "is-reverse"]}>
+              <div class="endorsement-track">
+                {[0, 1].map((groupIndex) => (
+                  <div class="endorsement-track-group" aria-hidden={groupIndex === 1 ? "true" : undefined}>
+                    {row.map((tweet) => (
+                      <a
+                        class="endorsement-card"
+                        href={tweet.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`Read ${tweet.handle}'s post on X`}
+                        tabindex={groupIndex === 1 ? "-1" : undefined}
+                      >
+                        <div class="endorsement-author">
+                          <img
+                            src={`/pfps/${tweet.handle}.webp`}
+                            alt=""
+                            width="28"
+                            height="28"
+                            loading="lazy"
+                            decoding="async"
+                          />
+                          <div class="endorsement-handle">@{tweet.handle}</div>
+                        </div>
+                        <p>{tweet.excerpt ?? tweet.content}</p>
+                      </a>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))
+        }
+    </div>
+  </section>
+
+  <!-- ── Harnesses ─────────────────────────────────────────────── -->
+  <section id="harnesses" class="sec-harness">
+    <div class="container">
+      <div class="section-head">
+        <h2>Bring your own sub</h2>
+        <p>
+          T3 Code doesn't resell tokens. Plug in Claude Code, Codex, OpenCode,
+          or Cursor with the credentials you already have — we orchestrate
+          them, you keep your plan.
+        </p>
+      </div>
+
+      <div class="harness-grid">
+        <div class="harness">
+          <div class="harness-mark"><img src="/harnesses/claude-ai-icon.svg" alt="" /></div>
+          <div class="harness-meta">
+            <div class="harness-name">Claude Code</div>
+            <div class="harness-tag">claude auth login</div>
+          </div>
+        </div>
+        <div class="harness">
+          <div class="harness-mark"><img src="/harnesses/openai_dark.svg" alt="" /></div>
+          <div class="harness-meta">
+            <div class="harness-name">Codex CLI</div>
+            <div class="harness-tag">codex login</div>
+          </div>
+        </div>
+        <div class="harness">
+          <div class="harness-mark"><img src="/harnesses/opencode-dark.svg" alt="" /></div>
+          <div class="harness-meta">
+            <div class="harness-name">OpenCode</div>
+            <div class="harness-tag">opencode auth</div>
+          </div>
+        </div>
+        <div class="harness">
+          <div class="harness-mark"><img src="/harnesses/cursor_light.svg" alt="" /></div>
+          <div class="harness-meta">
+            <div class="harness-name">Cursor</div>
+            <div class="harness-tag">cursor-agent</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="harness-footer">
+        <div class="harness-footer-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> No keys resold. No quota caps.</div>
+        <div class="harness-footer-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> Switch models mid-thread.</div>
+        <div class="harness-footer-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> More harnesses shipping weekly.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Git ──────────────────────────────────────────────────── -->
+  <section id="git" class="sec-git">
+    <div class="container git-inner">
+      <div class="git-visual">
+        <div class="pr-card tile">
+          <div class="pr-head">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M6 8v8M18 8v5a3 3 0 01-3 3h-3M13 13l-2 3 2 3"/></svg>
+            <span class="pr-title">Add marketing hero animation</span>
+            <span class="pr-status">Ready</span>
+          </div>
+          <div class="pr-meta">
+            <span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M6 8v8M6 12a6 6 0 006-6h6"/></svg> feat/marketing-hero → main</span>
+            <span>+142 −38</span>
+            <span>3 commits</span>
+          </div>
+          <div class="pr-files">
+            <div><code>apps/marketing/src/pages/index.astro</code> <span>+14 −2</span></div>
+            <div><code>apps/marketing/src/layouts/Layout.astro</code> <span>+8 −0</span></div>
+            <div><code>apps/marketing/public/hero.css</code> <span>+120 −36</span></div>
+          </div>
+          <div class="pr-foot">
+            <button class="btn btn-ghost" style="font-size:12px;padding:6px 10px">View diff</button>
+            <button class="btn btn-primary" style="font-size:12px;padding:6px 12px">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 007.86 10.93c.58.1.79-.25.79-.56v-2c-3.2.69-3.88-1.37-3.88-1.37-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.76 2.68 1.25 3.33.96.1-.75.4-1.25.72-1.54-2.55-.29-5.24-1.27-5.24-5.67 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.15 1.18a10.96 10.96 0 015.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.57.23 2.73.11 3.02.74.8 1.18 1.83 1.18 3.08 0 4.41-2.7 5.38-5.27 5.66.41.36.78 1.06.78 2.13v3.16c0 .31.21.67.8.56A11.5 11.5 0 0023.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
+              Open pull request
+            </button>
+          </div>
+        </div>
+        <div class="pr-trail">
+          <div class="pr-trail-dot"></div>
+          <div class="pr-trail-line"></div>
+          <div class="pr-trail-dot"></div>
+        </div>
+        <div class="pr-button-shell">
+          <button class="pr-button">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M6 8v8M18 8v5a3 3 0 01-3 3h-3M13 13l-2 3 2 3"/></svg>
+            Commit &amp; push
+            <span class="pr-button-kbd">⌘⏎</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="git-copy">
+        <div class="section-head" style="margin-bottom:0">
+          <h2>One button to commit, push, and make a PR.</h2>
+          <p>
+            Every agent thread writes to its own branch. When it's good, one
+            button opens the PR on GitHub with a generated title, body and
+            changelog. No terminal dance required.
+          </p>
+          <ul class="checklist" style="margin-top:24px">
+            <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> Auto-generated PR titles &amp; bodies</li>
+            <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> Inline diff review before you push</li>
+            <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> Draft PRs, stack PRs, amend PRs</li>
+            <li><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> Works with your existing GitHub auth</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Open source ───────────────────────────────────────────── -->
+  <section id="open" class="sec-open">
+    <div class="container">
+      <div class="section-head open-head">
+        <div class="eyebrow">Open source</div>
+        <h2>If you don't like something, fork it.</h2>
+        <p>
+          T3 Code is as open as they come. We built this app to be modifiable,
+          customizable, and forkable. Go nuts - that's the whole point.
+        </p>
+      </div>
+
+      <div class="open-grid">
+        <div class="tile open-term">
+          <div class="open-term-head">
+            <span></span><span></span><span></span>
+            <span class="open-term-title">~/code</span>
+          </div>
+          <div class="open-term-body">
+            <div><span class="prompt">$</span> gh repo fork pingdotgg/t3code --clone</div>
+            <div class="dim">✓ Cloned t3code into ./t3code</div>
+            <div><span class="prompt">$</span> cd t3code &amp;&amp; bun install</div>
+            <div class="dim">✓ 1 284 packages installed in 4.2s</div>
+            <div><span class="prompt">$</span> bun dev</div>
+            <div class="dim">▲ T3 Code dev server → <span class="accent">http://localhost:4001</span></div>
+            <div class="cursor"><span class="prompt">$</span><span class="caret"></span></div>
+          </div>
+        </div>
+
+        <div class="open-stats">
+          <div class="tile open-stat">
+            <div class="open-stat-val">MIT</div>
+            <div class="open-stat-lbl">License · commercial-friendly</div>
+          </div>
+          <div class="tile open-stat">
+            <div class="open-stat-val">TypeScript</div>
+            <div class="open-stat-lbl">End-to-end, strictly typed</div>
+          </div>
+          <div class="tile open-stat">
+            <div class="open-stat-val">1 monorepo</div>
+            <div class="open-stat-lbl">Desktop · web · server · harnesses</div>
+          </div>
+          <div class="tile open-stat">
+            <div class="open-stat-val">No telemetry</div>
+            <div class="open-stat-lbl">Unless you opt in. Full stop.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="open-ctas">
+        <a class="btn btn-ghost" href="https://github.com/pingdotgg/t3code" target="_blank" rel="noopener noreferrer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 007.86 10.93c.58.1.79-.25.79-.56v-2c-3.2.69-3.88-1.37-3.88-1.37-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.76 2.68 1.25 3.33.96.1-.75.4-1.25.72-1.54-2.55-.29-5.24-1.27-5.24-5.67 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.15 1.18a10.96 10.96 0 015.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.57.23 2.73.11 3.02.74.8 1.18 1.83 1.18 3.08 0 4.41-2.7 5.38-5.27 5.66.41.36.78 1.06.78 2.13v3.16c0 .31.21.67.8.56A11.5 11.5 0 0023.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
+          Star on GitHub
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M8 7h9v9"/></svg>
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/pingdotgg/t3code/fork" target="_blank" rel="noopener noreferrer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2.2"/><circle cx="18" cy="5" r="2.2"/><circle cx="12" cy="19" r="2.2"/><path d="M6 7.2v2A3 3 0 009 12.2h6A3 3 0 0018 9.2v-2M12 14v2.8"/></svg>
+          Fork the repo
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M8 7h9v9"/></svg>
+        </a>
+        <a class="btn btn-ghost" href="https://github.com/pingdotgg/t3code/blob/main/CONTRIBUTING.md" target="_blank" rel="noopener noreferrer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="4.5" width="19" height="15" rx="2"/><path d="M7 10l3 2-3 2M12 16h5"/></svg>
+          Read CONTRIBUTING.md
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17L17 7M8 7h9v9"/></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Final CTA ─────────────────────────────────────────────── -->
+  <section id="download" class="sec-cta">
+    <div class="container cta-inner">
+      <h2 class="display cta-title">
+        Your agents deserve better than a terminal.
+      </h2>
+      <p class="cta-sub">
+        T3 Code is free, open source and fast. Install it, plug in the harness
+        you already pay for, and let your agents get to work.
+      </p>
+      <div class="cta-actions">
+        <a id="cta-download-btn" class="btn btn-primary btn-lg" href="https://github.com/pingdotgg/t3code/releases">
+          <svg class="dl-icon dl-icon--apple" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 814 1000" aria-hidden="true"><path fill="currentColor" d="M788.1 340.9c-5.8 4.5-108.2 62.2-108.2 190.5 0 148.4 130.3 200.9 134.2 202.2-.6 3.2-20.7 71.9-68.7 141.9-42.8 61.6-87.5 123.1-155.5 123.1s-85.5-39.5-164-39.5c-76.5 0-103.7 40.8-165.9 40.8s-105.6-57-155.5-127C46.7 790.7 0 663 0 541.8c0-194.4 126.4-297.5 250.8-297.5 66.1 0 121.2 43.4 162.7 43.4 39.5 0 101.1-46 176.3-46 28.5 0 130.9 2.6 198.3 99.2zm-234-181.5c31.1-36.9 53.1-88.1 53.1-139.3 0-7.1-.6-14.3-1.9-20.1-50.6 1.9-110.8 33.7-147.1 75.8-28.5 32.4-55.1 83.6-55.1 135.5 0 7.8 1.3 15.6 1.9 18.1 3.2.6 8.4 1.3 13.6 1.3 45.4 0 102.5-30.4 135.5-71.3z"/></svg>
+          <svg class="dl-icon dl-icon--windows" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" aria-hidden="true"><path fill="currentColor" d="m0 12.402 35.687-4.86.016 34.423-35.67.203zm35.67 33.529.028 34.453L.028 75.48.026 45.7zm4.326-39.025L87.314 0v41.527l-47.318.376zm47.329 39.349-.011 41.34-47.318-6.678-.066-34.739z"/></svg>
+          <TuxIcon class="dl-icon dl-icon--linux" idPrefix="cta-linux-" />
+          <span id="cta-download-label">Download for macOS</span>
+        </a>
+        <a class="btn btn-ghost btn-lg" href="/download">Windows · Linux · other</a>
+      </div>
+    </div>
+  </section>
 </Layout>
 
 <script>
@@ -32,11 +378,7 @@ import Layout from "../layouts/Layout.astro";
     const ua = navigator.userAgent;
     if (/Win/i.test(ua)) return { os: "win", label: "Download for Windows" };
     if (/Mac/i.test(ua)) {
-      return {
-        os: "mac",
-        label: `Download for macOS`,
-        arch: "arm64",
-      };
+      return { os: "mac", label: "Download for macOS", arch: "arm64" };
     }
     if (/Linux/i.test(ua)) return { os: "linux", label: "Download for Linux" };
     return null;
@@ -44,23 +386,15 @@ import Layout from "../layouts/Layout.astro";
 
   function pickAsset(assets: ReleaseAsset[], platform: Platform): string | null {
     if (platform.os === "win") {
-      return (
-        assets.find((a) => a.name.endsWith("-x64.exe"))
-          ?.browser_download_url ?? null
-      );
+      return assets.find((a) => a.name.endsWith("-x64.exe"))?.browser_download_url ?? null;
     }
     if (platform.os === "mac") {
-      const preferred = assets.find((a) =>
-        a.name.endsWith(`-${platform.arch}.dmg`),
-      );
+      const preferred = assets.find((a) => a.name.endsWith(`-${platform.arch}.dmg`));
       const fallback = assets.find((a) => a.name.endsWith(".dmg"));
       return (preferred ?? fallback)?.browser_download_url ?? null;
     }
     if (platform.os === "linux") {
-      return (
-        assets.find((a) => a.name.endsWith(".AppImage"))
-          ?.browser_download_url ?? null
-      );
+      return assets.find((a) => a.name.endsWith(".AppImage"))?.browser_download_url ?? null;
     }
     return null;
   }
@@ -68,24 +402,33 @@ import Layout from "../layouts/Layout.astro";
   async function init() {
     const btn = document.getElementById("download-btn") as HTMLAnchorElement | null;
     const label = document.getElementById("download-label");
-    if (!btn || !label) return;
+    const ctaBtn = document.getElementById("cta-download-btn") as HTMLAnchorElement | null;
+    const ctaLabel = document.getElementById("cta-download-label");
 
     const platform = detectPlatform();
     if (!platform) return;
-
     document.documentElement.dataset.platform = platform.os;
-    label.textContent = platform.label;
+    if (label) label.textContent = platform.label;
+    if (ctaLabel) ctaLabel.textContent = platform.label;
 
     try {
       const release = await fetchLatestRelease();
       const url = pickAsset(release.assets ?? [], platform);
       if (url) {
-        btn.href = url;
-        btn.removeAttribute("target");
-        btn.removeAttribute("rel");
+        if (btn) {
+          btn.href = url;
+          btn.removeAttribute("target");
+          btn.removeAttribute("rel");
+        }
+        if (ctaBtn) {
+          ctaBtn.href = url;
+          ctaBtn.removeAttribute("target");
+          ctaBtn.removeAttribute("rel");
+        }
       }
     } catch {
-      btn.href = RELEASES_URL;
+      if (btn) btn.href = RELEASES_URL;
+      if (ctaBtn) ctaBtn.href = RELEASES_URL;
     }
   }
 
@@ -93,145 +436,693 @@ import Layout from "../layouts/Layout.astro";
 </script>
 
 <style>
-  .main {
-    padding-top: 10vh;
+  /* ── Section base ─────────────────────────────────────────── */
+  section {
+    position: relative;
+    padding: 96px 0;
+    border-top: 1px solid var(--border);
   }
 
-  /* ── Tagline ── */
+  .section-head {
+    margin-bottom: 56px;
+    max-width: 720px;
+  }
 
-  .tagline {
+  .section-head .eyebrow {
+    margin-bottom: 14px;
+    display: block;
+  }
+
+  .section-head h2 {
+    font-size: clamp(32px, 4vw, 48px);
     font-weight: 500;
-    font-size: clamp(2rem, 5vw, 3.5rem);
     letter-spacing: -0.035em;
-    line-height: 1.15;
-    text-align: center;
-    margin: 0 0 6vh;
-    opacity: 0;
-    animation: fade-in 1s ease-out forwards;
+    line-height: 1.05;
+    margin-bottom: 18px;
   }
 
-  /* ── Hero button ── */
+  .section-head p {
+    color: var(--fg-muted);
+    font-size: 18px;
+    max-width: 620px;
+    letter-spacing: -0.005em;
+  }
 
-  .hero-button {
-    display: inline-flex;
+  .checklist {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .checklist li {
+    display: flex;
     align-items: center;
-    gap: 0.55rem;
-    background: #fafafa;
-    color: #09090b;
-    padding: 0.75rem 2rem;
-    border-radius: 999px;
-    font-weight: 600;
-    font-size: 0.9rem;
-    margin-bottom: 1.25rem;
-    opacity: 0;
-    animation: fade-in 1s ease-out 0.15s forwards;
-    transition: transform 0.25s ease, box-shadow 0.25s ease;
+    gap: 10px;
+    color: var(--fg-muted);
+    font-size: 15px;
   }
 
-  .hero-button:hover {
-    transform: scale(1.03);
-    box-shadow: 0 0 24px rgba(255, 255, 255, 0.08);
-  }
-
-  .hero-button:active {
-    transform: scale(0.98);
-  }
-
-  .hero-button-icon {
-    display: none;
-    width: 1em;
-    height: 1em;
+  .checklist li svg {
+    color: var(--ok);
     flex-shrink: 0;
   }
 
-  :global([data-platform="mac"]) .hero-button-icon--apple {
-    display: block;
+  /* ── Hero ─────────────────────────────────────────────────── */
+  .hero {
+    padding: 72px 0 60px;
+    position: relative;
+    overflow: hidden;
+    border-top: 0;
   }
 
-  :global([data-platform="win"]) .hero-button-icon--windows {
-    display: block;
+  .hero-grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, black 40%, transparent 100%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 40%, black 40%, transparent 100%);
   }
 
-  :global([data-platform="linux"]) .hero-button-icon--linux {
-    display: block;
+  .hero-inner {
+    position: relative;
+    text-align: center;
   }
 
-  /* ── Other platforms link ── */
-
-  .other-platforms {
-    font-size: 0.825rem;
-    color: var(--fg-dim);
-    margin-bottom: 5vh;
-    opacity: 0;
-    animation: fade-in 1s ease-out 0.3s forwards;
-    transition: color 0.3s ease;
-    text-decoration: underline;
-    text-decoration-color: rgba(113, 113, 122, 0.4);
-    text-underline-offset: 3px;
+  .hero-title {
+    font-size: clamp(38px, 5.6vw, 76px);
+    margin: 28px auto 22px;
+    max-width: 20ch;
+    text-wrap: balance;
   }
 
-  .other-platforms:hover {
+  .hero-sub {
     color: var(--fg-muted);
-    text-decoration-color: var(--fg-muted);
+    font-size: clamp(16px, 1.4vw, 19px);
+    max-width: 640px;
+    margin: 0 auto 36px;
+    letter-spacing: -0.005em;
+    line-height: 1.55;
   }
 
-  /* ── Screenshot ── */
+  .hero-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 56px;
+  }
 
-  .screenshot-wrap {
+  /* Download button icons (platform-aware) */
+  .dl-icon {
+    display: none;
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+  }
+
+  :global([data-platform="mac"]) .dl-icon--apple { display: block; }
+  :global([data-platform="win"]) .dl-icon--windows { display: block; }
+  :global([data-platform="linux"]) .dl-icon--linux { display: block; }
+  :global(:not([data-platform])) .dl-icon--apple { display: block; }
+
+  /* Floating harness marks */
+  .hero-float {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .hero-float-mark {
+    position: absolute;
+    width: 96px;
+    height: 96px;
+    border-radius: 24px;
+    display: grid;
+    place-items: center;
+    background: rgba(20, 20, 24, 0.9);
+    border: 1px solid var(--border);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow:
+      0 20px 48px -16px rgba(0, 0, 0, 0.65),
+      0 2px 0 0 rgba(255, 255, 255, 0.04) inset;
+    animation: floatDrift 9s ease-in-out infinite;
+  }
+
+  .hero-float-mark img {
+    width: 54px;
+    height: 54px;
+    display: block;
+    object-fit: contain;
+  }
+
+  .hero-float-mark.hf-claude   { background: radial-gradient(circle at 30% 25%, rgba(217, 119, 87, 0.22), rgba(20, 20, 24, 0.92) 65%); top: 8%;  left: 7%;  animation-delay: 0s;    transform: rotate(-8deg); }
+  .hero-float-mark.hf-codex    { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.08), rgba(20, 20, 24, 0.92) 65%); top: 6%;  right: 7%; animation-delay: -2.5s; transform: rotate(6deg); }
+  .hero-float-mark.hf-opencode { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.06), rgba(20, 20, 24, 0.92) 65%); top: 32%; left: 5%;  animation-delay: -5s;   transform: rotate(4deg); }
+  .hero-float-mark.hf-cursor   { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.08), rgba(20, 20, 24, 0.92) 65%); top: 30%; right: 5%; animation-delay: -7s;   transform: rotate(-5deg); }
+
+  @media (max-width: 1180px) {
+    .hero-float-mark { width: 76px; height: 76px; border-radius: 20px; }
+    .hero-float-mark img { width: 42px; height: 42px; }
+    .hero-float-mark.hf-claude   { top: 4%;  left: 3%; }
+    .hero-float-mark.hf-codex    { top: 2%;  right: 3%; }
+    .hero-float-mark.hf-opencode { top: 26%; left: 2%; }
+    .hero-float-mark.hf-cursor   { top: 24%; right: 2%; }
+  }
+
+  @media (max-width: 820px) {
+    .hero {
+      padding-top: 132px;
+    }
+
+    .hero-title {
+      font-size: clamp(40px, 11vw, 56px);
+      margin-top: 14px;
+    }
+
+    .hero-actions {
+      margin-bottom: 96px;
+    }
+
+    .hero-float {
+      position: absolute;
+      inset: 0;
+      display: block;
+    }
+
+    .hero-float-mark {
+      position: absolute;
+      width: 78px;
+      height: 78px;
+      border-radius: 20px;
+    }
+
+    .hero-float-mark img {
+      width: 44px;
+      height: 44px;
+    }
+
+    /* Two above the title, two flanking the call-to-action area. */
+    .hero-float-mark.hf-claude {
+      top: 44px;
+      left: 10px;
+      transform: rotate(-10deg);
+    }
+
+    .hero-float-mark.hf-codex {
+      top: 44px;
+      right: 10px;
+      transform: rotate(8deg);
+    }
+
+    .hero-float-mark.hf-opencode {
+      top: 474px;
+      left: 4px;
+      right: auto;
+      transform: rotate(-6deg);
+    }
+
+    .hero-float-mark.hf-cursor {
+      top: 474px;
+      right: 4px;
+      left: auto;
+      transform: rotate(7deg);
+    }
+  }
+
+  .hero-preview {
+    max-width: 1180px;
     margin: 0 auto;
-    width: min(95vw, 1400px);
-    opacity: 0;
-    transform: scale(0.98);
-    animation: screenshot-in 1s ease-out 0.15s forwards;
+    transform: perspective(2000px) rotateX(2deg);
+    transition: transform 0.6s ease;
   }
 
-  .screenshot {
-    width: 100%;
+  .hero-preview:hover {
+    transform: perspective(2000px) rotateX(0deg);
+  }
+
+  .hero-screenshot-frame {
+    position: relative;
+    overflow: hidden;
+    aspect-ratio: 2508 / 1682;
+    border-radius: 14px;
+    background: #0a0a0c;
+    box-shadow: 0 28px 64px -28px rgba(0, 0, 0, 0.75);
+  }
+
+  .hero-screenshot-frame picture {
     display: block;
-    border-radius: 16px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
-    -webkit-mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+    width: 100%;
+    height: 100%;
   }
 
-  .screenshot-wrap::after {
+  .hero-screenshot-frame img {
+    width: calc(100% + 4px);
+    height: calc(100% + 4px);
+    margin: -2px;
+    object-fit: cover;
+    object-position: center top;
+  }
+
+  /* ── Harnesses ─────────────────────────────────────────── */
+  .sec-harness { background: #09090b; }
+
+  .harness-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .harness {
+    padding: 22px 20px;
+    display: flex; align-items: center; gap: 14px;
+    border-right: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), transparent);
+    transition: background 0.2s ease;
+  }
+  .harness:last-child { border-right: 0; }
+  .harness:hover { background: rgba(255, 255, 255, 0.025); }
+
+  .harness-mark {
+    color: var(--fg); opacity: 0.95;
+    flex-shrink: 0; width: 28px; height: 28px;
+    display: grid; place-items: center;
+  }
+  .harness-mark img { width: 22px; height: 22px; object-fit: contain; }
+
+  .harness-meta { flex: 1; min-width: 0; }
+  .harness-name {
+    font-size: 14px; font-weight: 500;
+    letter-spacing: -0.01em; margin-bottom: 2px;
+  }
+  .harness-tag {
+    font-family: var(--font-mono);
+    font-size: 11px; color: var(--fg-dim);
+  }
+
+  .harness-footer {
+    display: flex; gap: 24px; flex-wrap: wrap;
+    margin-top: 28px; padding-top: 24px;
+    border-top: 1px dashed var(--border);
+    font-size: 13px; color: var(--fg-muted);
+  }
+  .harness-footer-item {
+    display: inline-flex; gap: 8px; align-items: center;
+    color: var(--fg-muted);
+  }
+  .harness-footer-item svg { color: var(--ok); }
+
+  /* ── Endorsements ─────────────────────────────────────── */
+  .sec-endorsements {
+    overflow: hidden;
+  }
+
+  .endorsements-head {
+    max-width: 720px;
+    margin-bottom: 56px;
+  }
+
+  .endorsements-head h2 {
+    font-size: clamp(32px, 4vw, 48px);
+    font-weight: 500;
+    letter-spacing: -0.035em;
+    line-height: 1.05;
+    margin-bottom: 18px;
+  }
+
+  .endorsements-head p {
+    color: var(--fg-muted);
+    font-size: 18px;
+    max-width: 620px;
+    letter-spacing: -0.005em;
+  }
+
+  .endorsement-carousel {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .endorsement-carousel--mobile {
+    display: none;
+  }
+
+  .endorsement-carousel::before,
+  .endorsement-carousel::after {
     content: "";
-    display: block;
-    width: 100%;
-    height: 120px;
-    background: inherit;
-    margin-top: -1px;
-    opacity: 0.04;
-    transform: scaleY(-1);
-    mask-image: linear-gradient(to bottom, black 0%, transparent 60%);
-    -webkit-mask-image: linear-gradient(to bottom, black 0%, transparent 60%);
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 2;
+    width: max(48px, calc((100vw - 1240px) / 2 + 56px));
     pointer-events: none;
   }
 
-  @keyframes screenshot-in {
+  .endorsement-carousel::before {
+    left: 0;
+    background: linear-gradient(90deg, var(--bg), transparent);
+  }
+
+  .endorsement-carousel::after {
+    right: 0;
+    background: linear-gradient(270deg, var(--bg), transparent);
+  }
+
+  .endorsement-row {
+    overflow: hidden;
+  }
+
+  .endorsement-track {
+    width: max-content;
+    display: flex;
+    animation: endorsementMarquee 76s linear infinite;
+    will-change: transform;
+  }
+
+  .endorsement-track-group {
+    display: flex;
+    gap: 12px;
+    padding-right: 12px;
+  }
+
+  .endorsement-row.is-reverse .endorsement-track {
+    animation-direction: reverse;
+    animation-duration: 84s;
+  }
+
+  .endorsement-carousel:hover .endorsement-track,
+  .endorsement-carousel:focus-within .endorsement-track {
+    animation-play-state: paused;
+  }
+
+  .endorsement-card {
+    position: relative;
+    width: clamp(264px, 22vw, 308px);
+    height: 132px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.012);
+    transition:
+      border-color 0.18s ease,
+      background 0.18s ease;
+  }
+
+  .endorsement-card:hover {
+    border-color: var(--border-strong);
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .endorsement-author {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .endorsement-author img {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+
+  .endorsement-handle {
+    color: var(--fg-muted);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: -0.005em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .endorsement-card p {
+    color: var(--fg);
+    font-size: 13.5px;
+    line-height: 1.4;
+    letter-spacing: -0.003em;
+    display: -webkit-box;
+    overflow: hidden;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+  }
+
+  /* ── Git ──────────────────────────────────────────────── */
+  .git-inner {
+    display: grid;
+    grid-template-columns: 1.1fr 1fr;
+    gap: 64px; align-items: center;
+  }
+
+  .git-visual {
+    position: relative;
+    display: flex; flex-direction: column;
+    align-items: stretch; gap: 20px;
+  }
+
+  .pr-card { padding: 20px; }
+  .pr-head {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 12px;
+  }
+  .pr-head svg { color: var(--ok); }
+  .pr-title { font-weight: 500; font-size: 15px; flex: 1; }
+  .pr-status {
+    font-family: var(--font-mono); font-size: 10px;
+    color: var(--ok); padding: 2px 8px;
+    border: 1px solid var(--ok); border-radius: 999px;
+    letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .pr-meta {
+    display: flex; gap: 14px;
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--fg-dim); margin-bottom: 14px; flex-wrap: wrap;
+  }
+  .pr-meta span { display: inline-flex; align-items: center; gap: 5px; }
+  .pr-files {
+    border: 1px solid var(--border); border-radius: 8px;
+    overflow: hidden; margin-bottom: 16px;
+  }
+  .pr-files > div {
+    display: flex; justify-content: space-between;
+    padding: 8px 12px; font-family: var(--font-mono);
+    font-size: 11px; border-top: 1px solid var(--border);
+    color: var(--fg-muted);
+  }
+  .pr-files > div:first-child { border-top: 0; }
+  .pr-files span { color: var(--fg-dim); }
+  .pr-foot { display: flex; justify-content: flex-end; gap: 8px; }
+
+  .pr-trail {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 0; margin: -4px 0;
+  }
+  .pr-trail-dot {
+    width: 8px; height: 8px; border-radius: 999px;
+    background: var(--border-strong);
+  }
+  .pr-trail-line {
+    width: 1px; height: 28px;
+    background: linear-gradient(180deg, var(--border-strong), var(--accent));
+  }
+
+  .pr-button-shell { display: flex; justify-content: center; }
+  .pr-button {
+    display: inline-flex; align-items: center; gap: 10px;
+    padding: 12px 20px;
+    background: var(--fg); color: #09090b;
+    font-weight: 600; font-size: 13px;
+    border-radius: 10px;
+    box-shadow: 0 8px 24px -8px rgba(255, 255, 255, 0.2);
+  }
+  .pr-button-kbd {
+    font-family: var(--font-mono); font-size: 10px;
+    background: rgba(0, 0, 0, 0.1);
+    padding: 2px 6px; border-radius: 4px;
+  }
+
+  /* ── Open source ──────────────────────────────────────── */
+  .open-head {
+    text-align: center;
+    margin: 0 auto 56px;
+  }
+  .open-head p { margin: 0 auto; }
+
+  .open-grid {
+    display: grid;
+    grid-template-columns: 1.25fr 1fr;
+    gap: 20px; margin-bottom: 32px;
+  }
+
+  .open-term { padding: 0; overflow: hidden; }
+  .open-term-head {
+    display: flex; align-items: center; gap: 6px;
+    padding: 10px 14px; border-bottom: 1px solid var(--border);
+    background: rgba(255, 255, 255, 0.02);
+  }
+  .open-term-head span {
+    width: 10px; height: 10px; border-radius: 999px;
+    background: #2a2a30; display: block;
+  }
+  .open-term-title {
+    margin-left: 10px;
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--fg-dim); flex: 1; text-align: center;
+    background: transparent !important;
+    width: auto !important; height: auto !important;
+    border-radius: 0 !important;
+  }
+
+  .open-term-body {
+    padding: 20px 22px;
+    font-family: var(--font-mono); font-size: 13px;
+    line-height: 1.7; color: var(--fg);
+  }
+  .open-term-body > div {
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .open-term-body .prompt { color: var(--accent); margin-right: 8px; }
+  .open-term-body .dim { color: var(--fg-dim); }
+  .open-term-body .accent { color: var(--accent); }
+  .open-term-body .cursor { display: flex; align-items: center; }
+  .caret {
+    display: inline-block;
+    width: 7px; height: 14px;
+    background: var(--fg);
+    margin-left: 4px;
+    animation: blink 1s steps(2) infinite;
+  }
+
+  .open-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .open-stat {
+    padding: 22px;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .open-stat-val {
+    font-size: 22px; font-weight: 500;
+    letter-spacing: -0.015em;
+  }
+  .open-stat-lbl {
+    font-family: var(--font-mono); font-size: 10.5px;
+    color: var(--fg-dim); letter-spacing: 0.04em;
+  }
+
+  .open-ctas {
+    display: flex; gap: 10px;
+    justify-content: center; flex-wrap: wrap;
+  }
+
+  /* ── Final CTA ────────────────────────────────────────── */
+  .sec-cta {
+    text-align: center;
+    padding: 120px 0;
+    position: relative;
+    overflow: hidden;
+  }
+  .sec-cta::before {
+    content: "";
+    position: absolute;
+    inset: auto 0 -50% 0;
+    height: 60%;
+    background: radial-gradient(ellipse at center, var(--accent-dim) 0%, transparent 60%);
+    pointer-events: none;
+    opacity: 0.6;
+  }
+  .cta-inner { position: relative; }
+  .cta-title {
+    font-size: clamp(40px, 6vw, 72px);
+  }
+  .cta-sub {
+    color: var(--fg-muted);
+    font-size: 18px;
+    max-width: 560px;
+    margin: 20px auto 36px;
+    line-height: 1.55;
+    letter-spacing: -0.005em;
+  }
+  .cta-actions {
+    display: flex; gap: 10px;
+    justify-content: center; flex-wrap: wrap;
+    margin-bottom: 24px;
+  }
+
+  @keyframes endorsementMarquee {
     from {
-      opacity: 0;
-      transform: scale(0.98);
+      transform: translateX(0);
     }
     to {
-      opacity: 1;
-      transform: scale(1);
+      transform: translateX(-50%);
     }
   }
 
-  /* ── Mobile ── */
-
-  @media (max-width: 640px) {
-    .main {
-      padding-top: 7vh;
+  /* ── Responsive ────────────────────────────────────────── */
+  @media (max-width: 960px) {
+    .hero-preview {
+      width: min(860px, calc(100vw - 24px));
+      margin-left: 50%;
+      transform: translateX(-50%) perspective(1600px) rotateX(1.5deg);
     }
-
-    .tagline {
-      margin-bottom: 4vh;
+    .hero-preview:hover {
+      transform: translateX(-50%) perspective(1600px) rotateX(0deg);
     }
+    .harness-grid { grid-template-columns: 1fr 1fr; }
+    .harness { border-right: 0; border-bottom: 1px solid var(--border); }
+    .harness:nth-child(odd) { border-right: 1px solid var(--border); }
+    .git-inner { grid-template-columns: 1fr; gap: 40px; }
+    .open-grid { grid-template-columns: 1fr; }
+  }
 
-    .screenshot-wrap {
-      width: 95vw;
+  @media (max-width: 820px) {
+    section { padding: 64px 0; }
+    .sec-cta { padding: 96px 0; }
+    .container { padding-left: 20px; padding-right: 20px; }
+    .hero-preview { display: none; }
+    .endorsements-head {
+      margin-bottom: 40px;
+    }
+    .endorsement-carousel--desktop {
+      display: none;
+    }
+    .endorsement-carousel--mobile {
+      display: flex;
+    }
+    .endorsement-carousel::before,
+    .endorsement-carousel::after {
+      width: 28px;
+    }
+    .endorsement-track {
+      animation-duration: 68s;
+    }
+    .endorsement-row.is-reverse .endorsement-track {
+      animation-duration: 76s;
+    }
+    .endorsement-card {
+      width: 268px;
+      height: 132px;
+      padding: 14px;
+    }
+    .endorsement-card p {
+      font-size: 13px;
     }
   }
 </style>
