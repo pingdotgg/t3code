@@ -6,7 +6,9 @@
  *
  * @module PtyAdapter
  */
-import { Effect, Schema, Context } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as Context from "effect/Context";
 
 /**
  * PtyError - Error type for PTY adapter operations.

@@ -11,7 +11,7 @@ vi.mock("../wsRpcClient", () => ({
 }));
 
 import type { InfiniteData } from "@tanstack/react-query";
-import { EnvironmentId, type GitListBranchesResult } from "@t3tools/contracts";
+import { EnvironmentId, type VcsListRefsResult } from "@t3tools/contracts";
 
 import {
   gitBranchSearchInfiniteQueryOptions,
@@ -22,15 +22,15 @@ import {
   invalidateGitQueries,
 } from "./gitReactQuery";
 
-const BRANCH_QUERY_RESULT: GitListBranchesResult = {
-  branches: [],
+const BRANCH_QUERY_RESULT: VcsListRefsResult = {
+  refs: [],
   isRepo: true,
-  hasOriginRemote: true,
+  hasPrimaryRemote: true,
   nextCursor: null,
   totalCount: 0,
 };
 
-const BRANCH_SEARCH_RESULT: InfiniteData<GitListBranchesResult, number> = {
+const BRANCH_SEARCH_RESULT: InfiniteData<VcsListRefsResult, number> = {
   pages: [BRANCH_QUERY_RESULT],
   pageParams: [0],
 };

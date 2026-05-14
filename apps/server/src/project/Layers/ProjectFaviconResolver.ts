@@ -1,4 +1,7 @@
-import { Effect, FileSystem, Layer, Path } from "effect";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import {
   ProjectFaviconResolver,
@@ -27,6 +30,7 @@ const FAVICON_CANDIDATES = [
   "assets/icon.png",
   "assets/logo.svg",
   "assets/logo.png",
+  ".idea/icon.svg",
 ] as const;
 
 // Files that may contain a <link rel="icon"> or icon metadata declaration.

@@ -7,8 +7,9 @@ import {
   ThreadId,
   type OrchestrationCommand,
   type OrchestrationReadModel,
+  ProviderInstanceId,
 } from "@t3tools/contracts";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 
 import {
   findThreadById,
@@ -18,7 +19,7 @@ import {
   requireThreadAbsent,
 } from "./commandInvariants.ts";
 
-const now = new Date().toISOString();
+const now = "2026-01-01T00:00:00.000Z";
 
 const readModel: OrchestrationReadModel = {
   snapshotSequence: 2,
@@ -29,7 +30,7 @@ const readModel: OrchestrationReadModel = {
       title: "Project A",
       workspaceRoot: "/tmp/project-a",
       defaultModelSelection: {
-        provider: "codex",
+        instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",
       },
       scripts: [],
@@ -42,7 +43,7 @@ const readModel: OrchestrationReadModel = {
       title: "Project B",
       workspaceRoot: "/tmp/project-b",
       defaultModelSelection: {
-        provider: "codex",
+        instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",
       },
       scripts: [],
@@ -57,7 +58,7 @@ const readModel: OrchestrationReadModel = {
       projectId: ProjectId.make("project-a"),
       title: "Thread A",
       modelSelection: {
-        provider: "codex",
+        instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",
       },
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -80,7 +81,7 @@ const readModel: OrchestrationReadModel = {
       projectId: ProjectId.make("project-b"),
       title: "Thread B",
       modelSelection: {
-        provider: "codex",
+        instanceId: ProviderInstanceId.make("codex"),
         model: "gpt-5-codex",
       },
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -157,7 +158,7 @@ describe("commandInvariants", () => {
           projectId: ProjectId.make("project-a"),
           title: "new",
           modelSelection: {
-            provider: "codex",
+            instanceId: ProviderInstanceId.make("codex"),
             model: "gpt-5-codex",
           },
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -181,7 +182,7 @@ describe("commandInvariants", () => {
             projectId: ProjectId.make("project-a"),
             title: "dup",
             modelSelection: {
-              provider: "codex",
+              instanceId: ProviderInstanceId.make("codex"),
               model: "gpt-5-codex",
             },
             interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,

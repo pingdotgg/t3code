@@ -1,5 +1,6 @@
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
 import type { ScopedProjectRef, SidebarProjectGroupingMode } from "@t3tools/contracts";
+import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 import type { Project } from "./types";
 
@@ -9,6 +10,13 @@ export interface ProjectGroupingSettings {
 }
 
 export type ProjectGroupingMode = SidebarProjectGroupingMode;
+
+export function selectProjectGroupingSettings(settings: UnifiedSettings): ProjectGroupingSettings {
+  return {
+    sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
+    sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
+  };
+}
 
 function uniqueNonEmptyValues(values: ReadonlyArray<string | null | undefined>): string[] {
   const seen = new Set<string>();
@@ -62,6 +70,13 @@ export function derivePhysicalProjectKey(project: Pick<Project, "environmentId" 
 export function deriveProjectGroupingOverrideKey(
   project: Pick<Project, "environmentId" | "cwd">,
 ): string {
+  return derivePhysicalProjectKey(project);
+}
+
+// Key under which a project's manual sort order (projectOrder) is stored.
+// Must stay aligned with the writer side in `uiStateStore.syncProjects` and
+// the drag handlers in `Sidebar` so readers and writers agree.
+export function getProjectOrderKey(project: Pick<Project, "environmentId" | "cwd">): string {
   return derivePhysicalProjectKey(project);
 }
 

@@ -1,12 +1,16 @@
 import { CommandId, EventId, ProjectId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
-import { Effect, Layer, Schema, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { PersistenceDecodeError } from "../Errors.ts";
 import { OrchestrationEventStore } from "../Services/OrchestrationEventStore.ts";
 import { OrchestrationEventStoreLive } from "./OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
+const isPersistenceDecodeError = Schema.is(PersistenceDecodeError);
 
 const layer = it.layer(
   OrchestrationEventStoreLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
@@ -17,7 +21,7 @@ layer("OrchestrationEventStore", (it) => {
     Effect.gen(function* () {
       const eventStore = yield* OrchestrationEventStore;
       const sql = yield* SqlClient.SqlClient;
-      const now = new Date().toISOString();
+      const now = "2026-01-01T00:00:00.000Z";
 
       const appended = yield* eventStore.append({
         type: "project.created",
@@ -69,7 +73,7 @@ layer("OrchestrationEventStore", (it) => {
     Effect.gen(function* () {
       const eventStore = yield* OrchestrationEventStore;
       const sql = yield* SqlClient.SqlClient;
-      const now = new Date().toISOString();
+      const now = "2026-01-01T00:00:00.000Z";
 
       yield* sql`
         INSERT INTO orchestration_events (
@@ -107,7 +111,7 @@ layer("OrchestrationEventStore", (it) => {
       );
       assert.equal(replayResult._tag, "Failure");
       if (replayResult._tag === "Failure") {
-        assert.ok(Schema.is(PersistenceDecodeError)(replayResult.failure));
+        assert.ok(isPersistenceDecodeError(replayResult.failure));
         assert.ok(
           replayResult.failure.operation.includes(
             "OrchestrationEventStore.readFromSequence:decodeRows",

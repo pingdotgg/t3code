@@ -12,7 +12,7 @@ export default defineConfig([
     ...shared,
     entry: ["src/main.ts"],
     clean: true,
-    noExternal: (id) => id.startsWith("@t3tools/") || id.startsWith("effect-acp"),
+    noExternal: (id) => id.startsWith("@t3tools/"),
   },
   {
     ...shared,

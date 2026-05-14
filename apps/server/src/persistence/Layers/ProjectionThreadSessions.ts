@@ -1,6 +1,7 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { Effect, Layer } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import { toPersistenceSqlError } from "../Errors.ts";
 
@@ -23,6 +24,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
           thread_id,
           status,
           provider_name,
+          provider_instance_id,
           runtime_mode,
           active_turn_id,
           last_error,
@@ -32,6 +34,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
           ${row.threadId},
           ${row.status},
           ${row.providerName},
+          ${row.providerInstanceId},
           ${row.runtimeMode},
           ${row.activeTurnId},
           ${row.lastError},
@@ -41,6 +44,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
         DO UPDATE SET
           status = excluded.status,
           provider_name = excluded.provider_name,
+          provider_instance_id = excluded.provider_instance_id,
           runtime_mode = excluded.runtime_mode,
           active_turn_id = excluded.active_turn_id,
           last_error = excluded.last_error,
@@ -57,6 +61,7 @@ const makeProjectionThreadSessionRepository = Effect.gen(function* () {
           thread_id AS "threadId",
           status,
           provider_name AS "providerName",
+          provider_instance_id AS "providerInstanceId",
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",

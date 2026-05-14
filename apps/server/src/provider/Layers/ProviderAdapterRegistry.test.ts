@@ -1,24 +1,34 @@
-import type { ProviderKind } from "@t3tools/contracts";
+import {
+  defaultInstanceIdForDriver,
+  ProviderDriverKind,
+  type ServerProvider,
+} from "@t3tools/contracts";
 import { it, assert, vi } from "@effect/vitest";
-import { assertFailure } from "@effect/vitest/utils";
 
-import { Effect, Layer, Stream } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as PubSub from "effect/PubSub";
+import * as Stream from "effect/Stream";
 
-import { ClaudeAdapter } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
-import { CodexAdapter } from "../Services/CodexAdapter.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
-import { CursorAdapter } from "../Services/CursorAdapter.ts";
 import type { CursorAdapterShape } from "../Services/CursorAdapter.ts";
-import { OpenCodeAdapter } from "../Services/OpenCodeAdapter.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import { ProviderAdapterRegistry } from "../Services/ProviderAdapterRegistry.ts";
+import { ProviderInstanceRegistry } from "../Services/ProviderInstanceRegistry.ts";
+import type { ProviderInstance } from "../ProviderDriver.ts";
+import { makeManualOnlyProviderMaintenanceCapabilities } from "../providerMaintenance.ts";
+import type { TextGenerationShape } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAdapterRegistryLive } from "./ProviderAdapterRegistry.ts";
-import { ProviderUnsupportedError } from "../Errors.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 
+const CODEX_DRIVER = ProviderDriverKind.make("codex");
+const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
+const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
+const CURSOR_DRIVER = ProviderDriverKind.make("cursor");
+
 const fakeCodexAdapter: CodexAdapterShape = {
-  provider: "codex",
+  provider: CODEX_DRIVER,
   capabilities: { sessionModelSwitch: "in-session" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
@@ -35,7 +45,7 @@ const fakeCodexAdapter: CodexAdapterShape = {
 };
 
 const fakeClaudeAdapter: ClaudeAdapterShape = {
-  provider: "claudeAgent",
+  provider: CLAUDE_AGENT_DRIVER,
   capabilities: { sessionModelSwitch: "in-session" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
@@ -52,7 +62,7 @@ const fakeClaudeAdapter: ClaudeAdapterShape = {
 };
 
 const fakeOpenCodeAdapter: OpenCodeAdapterShape = {
-  provider: "opencode",
+  provider: OPENCODE_DRIVER,
   capabilities: { sessionModelSwitch: "in-session" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
@@ -69,7 +79,7 @@ const fakeOpenCodeAdapter: OpenCodeAdapterShape = {
 };
 
 const fakeCursorAdapter: CursorAdapterShape = {
-  provider: "cursor",
+  provider: CURSOR_DRIVER,
   capabilities: { sessionModelSwitch: "in-session" },
   startSession: vi.fn(),
   sendTurn: vi.fn(),
@@ -85,44 +95,98 @@ const fakeCursorAdapter: CursorAdapterShape = {
   streamEvents: Stream.empty,
 };
 
-const layer = it.layer(
-  Layer.mergeAll(
-    Layer.provide(
-      ProviderAdapterRegistryLive,
-      Layer.mergeAll(
-        Layer.succeed(CodexAdapter, fakeCodexAdapter),
-        Layer.succeed(ClaudeAdapter, fakeClaudeAdapter),
-        Layer.succeed(OpenCodeAdapter, fakeOpenCodeAdapter),
-        Layer.succeed(CursorAdapter, fakeCursorAdapter),
-      ),
-    ),
-    NodeServices.layer,
-  ),
+// ProviderAdapterRegistryLive is now a facade over ProviderInstanceRegistry —
+// it walks `listInstances` once at boot and surfaces the default-instance
+// adapter keyed by its driver kind. To test the facade we supply four fake
+// instances whose `instanceId === defaultInstanceIdForDriver(driverKind)` so
+// they pass the default-instance filter.
+const makeFakeInstance = (
+  driverKindString: "codex" | "claudeAgent" | "cursor" | "opencode",
+  adapter: ProviderInstance["adapter"],
+): ProviderInstance => {
+  const driverKind = ProviderDriverKind.make(driverKindString);
+  return {
+    instanceId: defaultInstanceIdForDriver(driverKind),
+    driverKind,
+    continuationIdentity: {
+      driverKind,
+      continuationKey: `${driverKind}:instance:${defaultInstanceIdForDriver(driverKind)}`,
+    },
+    displayName: undefined,
+    enabled: true,
+    snapshot: {
+      maintenanceCapabilities: makeManualOnlyProviderMaintenanceCapabilities({
+        provider: driverKind,
+        packageName: null,
+      }),
+      getSnapshot: Effect.succeed({} as unknown as ServerProvider),
+      refresh: Effect.succeed({} as unknown as ServerProvider),
+      streamChanges: Stream.empty,
+    },
+    adapter,
+    textGeneration: {} as unknown as TextGenerationShape,
+  };
+};
+
+const fakeInstances: ReadonlyArray<ProviderInstance> = [
+  makeFakeInstance("codex", fakeCodexAdapter),
+  makeFakeInstance("claudeAgent", fakeClaudeAdapter),
+  makeFakeInstance("opencode", fakeOpenCodeAdapter),
+  makeFakeInstance("cursor", fakeCursorAdapter),
+];
+
+const fakeInstanceRegistryLayer = Layer.succeed(ProviderInstanceRegistry, {
+  getInstance: (instanceId) =>
+    Effect.succeed(fakeInstances.find((instance) => instance.instanceId === instanceId)),
+  listInstances: Effect.succeed(fakeInstances),
+  listUnavailable: Effect.succeed([]),
+  streamChanges: Stream.empty,
+  // Tests never drive changes through this fake; acquire a throwaway
+  // subscription on an unused PubSub so the shape is satisfied.
+  subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) => PubSub.subscribe(pubsub)),
+});
+
+const layer = Layer.mergeAll(
+  Layer.provide(ProviderAdapterRegistryLive, fakeInstanceRegistryLayer),
+  NodeServices.layer,
 );
 
-layer("ProviderAdapterRegistryLive", (it) => {
-  it.effect("resolves a registered provider adapter", () =>
+it.layer(layer)("ProviderAdapterRegistryLive", (it) => {
+  it("resolves adapters and routing metadata from provider instances", () =>
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry;
-      const codex = yield* registry.getByProvider("codex");
-      const claude = yield* registry.getByProvider("claudeAgent");
-      const openCode = yield* registry.getByProvider("opencode");
-      const cursor = yield* registry.getByProvider("cursor");
-      assert.equal(codex, fakeCodexAdapter);
-      assert.equal(claude, fakeClaudeAdapter);
-      assert.equal(openCode, fakeOpenCodeAdapter);
-      assert.equal(cursor, fakeCursorAdapter);
+      const claudeInstanceId = defaultInstanceIdForDriver(CLAUDE_AGENT_DRIVER);
+
+      const adapter = yield* registry.getByInstance(claudeInstanceId);
+      assert.strictEqual(adapter, fakeClaudeAdapter);
+
+      const info = yield* registry.getInstanceInfo(claudeInstanceId);
+      assert.deepStrictEqual(info, {
+        instanceId: claudeInstanceId,
+        driverKind: CLAUDE_AGENT_DRIVER,
+        displayName: undefined,
+        accentColor: undefined,
+        enabled: true,
+        continuationIdentity: {
+          driverKind: CLAUDE_AGENT_DRIVER,
+          continuationKey: "claudeAgent:instance:claudeAgent",
+        },
+      });
+
+      const instances = yield* registry.listInstances();
+      assert.deepStrictEqual(instances, [
+        defaultInstanceIdForDriver(CODEX_DRIVER),
+        claudeInstanceId,
+        defaultInstanceIdForDriver(OPENCODE_DRIVER),
+        defaultInstanceIdForDriver(CURSOR_DRIVER),
+      ]);
 
       const providers = yield* registry.listProviders();
-      assert.deepEqual(providers, ["codex", "claudeAgent", "opencode", "cursor"]);
-    }),
-  );
-
-  it.effect("fails with ProviderUnsupportedError for unknown providers", () =>
-    Effect.gen(function* () {
-      const registry = yield* ProviderAdapterRegistry;
-      const adapter = yield* registry.getByProvider("unknown" as ProviderKind).pipe(Effect.result);
-      assertFailure(adapter, new ProviderUnsupportedError({ provider: "unknown" }));
-    }),
-  );
+      assert.deepStrictEqual(providers, [
+        CODEX_DRIVER,
+        CLAUDE_AGENT_DRIVER,
+        OPENCODE_DRIVER,
+        CURSOR_DRIVER,
+      ]);
+    }));
 });

@@ -10,7 +10,7 @@ import {
   useWsConnectionStatus,
   WS_RECONNECT_MAX_ATTEMPTS,
 } from "../rpc/wsConnectionState";
-import { toastManager } from "./ui/toast";
+import { stackedThreadToast, toastManager } from "./ui/toast";
 import { getPrimaryEnvironmentConnection } from "../environments/runtime";
 
 const FORCED_WS_RECONNECT_DEBOUNCE_MS = 5_000;
@@ -53,8 +53,16 @@ function describeExhaustedToast(): string {
   return "Retries exhausted trying to reconnect";
 }
 
-function buildReconnectTitle(_status: WsConnectionStatus): string {
-  return "Disconnected from T3 Server";
+function getConnectionDisplayName(status: WsConnectionStatus): string {
+  return status.connectionLabel?.trim() || "T3 Server";
+}
+
+function buildReconnectTitle(status: WsConnectionStatus): string {
+  return `Disconnected from ${getConnectionDisplayName(status)}`;
+}
+
+function buildRecoveredTitle(status: WsConnectionStatus): string {
+  return `Reconnected to ${getConnectionDisplayName(status)}`;
 }
 
 function describeRecoveredToast(
@@ -75,11 +83,32 @@ function describeRecoveredToast(
   return "Connection restored.";
 }
 
-function describeSlowRpcAckToast(requests: ReadonlyArray<SlowRpcAckRequest>): ReactNode {
+function describeSlowRpcAckToast(requests: ReadonlyArray<SlowRpcAckRequest>): string {
   const count = requests.length;
   const thresholdSeconds = Math.round((requests[0]?.thresholdMs ?? 0) / 1000);
 
   return `${count} request${count === 1 ? "" : "s"} waiting longer than ${thresholdSeconds}s.`;
+}
+
+function SlowRpcAckRequestDetails({ requests }: { requests: ReadonlyArray<SlowRpcAckRequest> }) {
+  return (
+    <ul className="space-y-2.5 text-xs text-muted-foreground">
+      {requests.map((req) => (
+        <li
+          className="min-w-0 border-border/50 border-b pb-2 last:border-b-0 last:pb-0"
+          key={req.requestId}
+        >
+          <div className="wrap-break-word font-medium text-foreground">{req.tag}</div>
+          <div className="mt-0.5 font-mono text-[10px] leading-snug opacity-90">
+            {req.requestId}
+          </div>
+          <div className="mt-0.5 text-[10px] opacity-75">
+            Started {formatConnectionMoment(req.startedAt) ?? req.startedAt}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 export function shouldAutoReconnect(
@@ -138,15 +167,18 @@ export function WebSocketConnectionCoordinator() {
           console.warn("Automatic WebSocket reconnect failed", { error });
           return;
         }
-        toastManager.add({
-          type: "error",
-          title: "Reconnect failed",
-          description: error instanceof Error ? error.message : "Unable to restart the WebSocket.",
-          data: {
-            dismissAfterVisibleMs: 8_000,
-            hideCopyButton: true,
-          },
-        });
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Reconnect failed",
+            description:
+              error instanceof Error ? error.message : "Unable to restart the WebSocket.",
+            data: {
+              dismissAfterVisibleMs: 8_000,
+              hideCopyButton: true,
+            },
+          }),
+        );
       });
   });
   const syncBrowserOnlineStatus = useEffectEvent(() => {
@@ -253,33 +285,36 @@ export function WebSocketConnectionCoordinator() {
 
     if (shouldShowReconnectToast || shouldShowOfflineToast || shouldShowExhaustedToast) {
       const toastPayload = shouldShowOfflineToast
-        ? {
-            description: describeOfflineToast(),
-            timeout: 0,
-            title: "Offline",
-            type: "warning" as const,
+        ? stackedThreadToast({
             data: {
               hideCopyButton: true,
             },
-          }
+            description: describeOfflineToast(),
+            timeout: 0,
+            title: "Offline",
+            type: "warning",
+          })
         : shouldShowExhaustedToast
-          ? {
+          ? stackedThreadToast({
               actionProps: {
                 children: "Retry",
                 onClick: triggerManualReconnect,
               },
-              description: describeExhaustedToast(),
-              timeout: 0,
-              title: "Disconnected from T3 Server",
-              type: "error" as const,
               data: {
                 hideCopyButton: true,
               },
-            }
-          : {
+              description: describeExhaustedToast(),
+              timeout: 0,
+              title: buildReconnectTitle(status),
+              type: "error",
+            })
+          : stackedThreadToast({
               actionProps: {
                 children: "Retry now",
                 onClick: triggerManualReconnect,
+              },
+              data: {
+                hideCopyButton: true,
               },
               description:
                 status.nextRetryAt === null
@@ -287,11 +322,8 @@ export function WebSocketConnectionCoordinator() {
                   : `Reconnecting in ${formatRetryCountdown(status.nextRetryAt, nowMs)}... ${formatReconnectAttemptLabel(status)}`,
               timeout: 0,
               title: buildReconnectTitle(status),
-              type: "loading" as const,
-              data: {
-                hideCopyButton: true,
-              },
-            };
+              type: "loading",
+            });
 
       if (toastIdRef.current) {
         toastManager.update(toastIdRef.current, toastPayload);
@@ -310,7 +342,7 @@ export function WebSocketConnectionCoordinator() {
     ) {
       const successToast = {
         description: describeRecoveredToast(previousDisconnectedAt, status.connectedAt),
-        title: "Reconnected to T3 Server",
+        title: buildRecoveredTitle(status),
         type: "success" as const,
         timeout: 0,
         data: {
@@ -369,6 +401,11 @@ export function SlowRpcAckToastCoordinator() {
     }
 
     const nextToast = {
+      data: {
+        expandableContent: <SlowRpcAckRequestDetails requests={slowRequests} />,
+        expandableDescriptionTrigger: true,
+        expandableLabels: { collapse: "Hide requests", expand: "Show requests" },
+      },
       description: describeSlowRpcAckToast(slowRequests),
       timeout: 0,
       title: "Some requests are slow",

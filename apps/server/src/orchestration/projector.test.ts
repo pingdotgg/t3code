@@ -2,10 +2,11 @@ import {
   CommandId,
   EventId,
   ProjectId,
+  ProviderDriverKind,
   ThreadId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
-import { Effect } from "effect";
+import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vitest";
 
 import { createEmptyReadModel, projectEvent } from "./projector.ts";
@@ -39,7 +40,7 @@ function makeEvent(input: {
 
 describe("orchestration projector", () => {
   it("applies thread.created events", async () => {
-    const now = new Date().toISOString();
+    const now = "2026-01-01T00:00:00.000Z";
     const model = createEmptyReadModel(now);
 
     const next = await Effect.runPromise(
@@ -57,7 +58,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5-codex",
             },
             runtimeMode: "full-access",
@@ -77,7 +78,7 @@ describe("orchestration projector", () => {
         projectId: "project-1",
         title: "demo",
         modelSelection: {
-          provider: "codex",
+          instanceId: "codex",
           model: "gpt-5-codex",
         },
         runtimeMode: "full-access",
@@ -99,7 +100,7 @@ describe("orchestration projector", () => {
   });
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {
-    const now = new Date().toISOString();
+    const now = "2026-01-01T00:00:00.000Z";
     const model = createEmptyReadModel(now);
 
     await expect(
@@ -118,7 +119,7 @@ describe("orchestration projector", () => {
               projectId: "project-1",
               title: "demo",
               modelSelection: {
-                provider: "codex",
+                provider: ProviderDriverKind.make("codex"),
                 model: "gpt-5-codex",
               },
               branch: null,
@@ -133,8 +134,8 @@ describe("orchestration projector", () => {
   });
 
   it("applies thread.archived and thread.unarchived events", async () => {
-    const now = new Date().toISOString();
-    const later = new Date(Date.parse(now) + 1_000).toISOString();
+    const now = "2026-01-01T00:00:00.000Z";
+    const later = "2026-01-01T00:00:01.000Z";
     const created = await Effect.runPromise(
       projectEvent(
         createEmptyReadModel(now),
@@ -150,7 +151,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5-codex",
             },
             runtimeMode: "full-access",
@@ -205,7 +206,7 @@ describe("orchestration projector", () => {
   });
 
   it("keeps projector forward-compatible for unhandled event types", async () => {
-    const now = new Date().toISOString();
+    const now = "2026-01-01T00:00:00.000Z";
     const model = createEmptyReadModel(now);
 
     const next = await Effect.runPromise(
@@ -253,7 +254,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5.3-codex",
             },
             runtimeMode: "full-access",
@@ -319,7 +320,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5.3-codex",
             },
             runtimeMode: "full-access",
@@ -376,7 +377,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5.3-codex",
             },
             runtimeMode: "full-access",
@@ -463,7 +464,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5.3-codex",
             },
             runtimeMode: "full-access",
@@ -678,7 +679,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "demo",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5.3-codex",
             },
             runtimeMode: "full-access",
@@ -831,7 +832,7 @@ describe("orchestration projector", () => {
             projectId: "project-1",
             title: "capped",
             modelSelection: {
-              provider: "codex",
+              provider: ProviderDriverKind.make("codex"),
               model: "gpt-5-codex",
             },
             runtimeMode: "full-access",

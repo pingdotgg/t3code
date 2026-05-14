@@ -1,12 +1,17 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import fsPromises from "node:fs/promises";
-
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it, afterEach, describe, expect, vi } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path, PlatformError } from "effect";
+import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 
 import { ServerConfig } from "../../config.ts";
-import { GitCoreLive } from "../../git/Layers/GitCore.ts";
-import { GitCore } from "../../git/Services/GitCore.ts";
+import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
+import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import { WorkspaceEntries } from "../Services/WorkspaceEntries.ts";
 import { WorkspaceEntriesLive } from "./WorkspaceEntries.ts";
 import { WorkspacePathsLive } from "./WorkspacePaths.ts";
@@ -14,7 +19,8 @@ import { WorkspacePathsLive } from "./WorkspacePaths.ts";
 const TestLayer = Layer.empty.pipe(
   Layer.provideMerge(WorkspaceEntriesLive.pipe(Layer.provide(WorkspacePathsLive))),
   Layer.provideMerge(WorkspacePathsLive),
-  Layer.provideMerge(GitCoreLive),
+  Layer.provideMerge(VcsProcess.layer),
+  Layer.provideMerge(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProcess.layer))),
   Layer.provide(
     ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-workspace-entries-test-",
@@ -25,12 +31,11 @@ const TestLayer = Layer.empty.pipe(
 
 const makeTempDir = Effect.fn(function* (opts?: { prefix?: string; git?: boolean }) {
   const fileSystem = yield* FileSystem.FileSystem;
-  const gitCore = yield* GitCore;
   const dir = yield* fileSystem.makeTempDirectoryScoped({
     prefix: opts?.prefix ?? "t3code-workspace-entries-",
   });
   if (opts?.git) {
-    yield* gitCore.initRepo({ cwd: dir });
+    yield* git(dir, ["init"]);
   }
   return dir;
 });
@@ -51,9 +56,10 @@ function writeTextFile(
 
 const git = (cwd: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
   Effect.gen(function* () {
-    const gitCore = yield* GitCore;
-    const result = yield* gitCore.execute({
+    const process = yield* VcsProcess.VcsProcess;
+    const result = yield* process.run({
       operation: "WorkspaceEntries.test.git",
+      command: "git",
       cwd,
       args,
       ...(env ? { env } : {}),
@@ -221,25 +227,37 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
         yield* writeTextFile(cwd, "src/components/Composer.tsx");
 
         let rootReadCount = 0;
+        let releaseRootRead: (() => void) | undefined;
+        const rootReadGate = new Promise<void>((resolve) => {
+          releaseRootRead = resolve;
+        });
         const originalReaddir = fsPromises.readdir.bind(fsPromises);
         vi.spyOn(fsPromises, "readdir").mockImplementation((async (
           ...args: Parameters<typeof fsPromises.readdir>
         ) => {
           if (args[0] === cwd) {
             rootReadCount += 1;
-            await new Promise((resolve) => setTimeout(resolve, 20));
+            await rootReadGate;
           }
           return originalReaddir(...args);
         }) as typeof fsPromises.readdir);
 
-        yield* Effect.all(
+        const searches = yield* Effect.all(
           [
             searchWorkspaceEntries({ cwd, query: "", limit: 100 }),
             searchWorkspaceEntries({ cwd, query: "comp", limit: 100 }),
             searchWorkspaceEntries({ cwd, query: "src", limit: 100 }),
           ],
           { concurrency: "unbounded" },
-        );
+        ).pipe(Effect.forkScoped);
+        for (let attempt = 0; attempt < 50; attempt += 1) {
+          if (rootReadCount > 0) {
+            break;
+          }
+          yield* Effect.yieldNow;
+        }
+        releaseRootRead?.();
+        yield* Fiber.join(searches);
 
         expect(rootReadCount).toBe(1);
       }),
@@ -256,6 +274,10 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
 
         let activeReads = 0;
         let peakReads = 0;
+        let releaseReads: (() => void) | undefined;
+        const readsGate = new Promise<void>((resolve) => {
+          releaseReads = resolve;
+        });
         const originalReaddir = fsPromises.readdir.bind(fsPromises);
         vi.spyOn(fsPromises, "readdir").mockImplementation((async (
           ...args: Parameters<typeof fsPromises.readdir>
@@ -264,7 +286,7 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
           if (typeof target === "string" && target.startsWith(cwd)) {
             activeReads += 1;
             peakReads = Math.max(peakReads, activeReads);
-            await new Promise((resolve) => setTimeout(resolve, 4));
+            await readsGate;
             try {
               return await originalReaddir(...args);
             } finally {
@@ -274,7 +296,17 @@ it.layer(TestLayer)("WorkspaceEntriesLive", (it) => {
           return originalReaddir(...args);
         }) as typeof fsPromises.readdir);
 
-        yield* searchWorkspaceEntries({ cwd, query: "", limit: 200 });
+        const search = yield* searchWorkspaceEntries({ cwd, query: "", limit: 200 }).pipe(
+          Effect.forkScoped,
+        );
+        for (let attempt = 0; attempt < 50; attempt += 1) {
+          if (activeReads > 0) {
+            break;
+          }
+          yield* Effect.yieldNow;
+        }
+        releaseReads?.();
+        yield* Fiber.join(search);
 
         expect(peakReads).toBeLessThanOrEqual(32);
       }),

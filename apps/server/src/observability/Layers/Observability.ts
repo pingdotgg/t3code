@@ -1,11 +1,13 @@
-import { Effect, Layer, References, Tracer } from "effect";
+import { makeLocalFileTracer, makeTraceSink } from "@t3tools/shared/observability";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as References from "effect/References";
+import * as Tracer from "effect/Tracer";
 import { OtlpMetrics, OtlpSerialization, OtlpTracer } from "effect/unstable/observability";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerLoggerLive } from "../../serverLogger.ts";
-import { makeLocalFileTracer } from "../LocalFileTracer.ts";
 import { BrowserTraceCollector } from "../Services/BrowserTraceCollector.ts";
-import { makeTraceSink } from "../TraceSink.ts";
 
 const otlpSerializationLayer = OtlpSerialization.layerJson;
 

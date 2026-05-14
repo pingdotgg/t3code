@@ -1,5 +1,7 @@
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 import { NonNegativeInt, PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
+import { VcsDriverKind } from "./vcs.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
@@ -40,18 +42,10 @@ const GitPushStepStatus = Schema.Literals([
 ]);
 const GitBranchStepStatus = Schema.Literals(["created", "skipped_not_requested"]);
 const GitPrStepStatus = Schema.Literals(["created", "opened_existing", "skipped_not_requested"]);
-const GitStatusPrState = Schema.Literals(["open", "closed", "merged"]);
+const VcsStatusChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
-export const GitHostingProviderKind = Schema.Literals(["github", "gitlab", "unknown"]);
-export type GitHostingProviderKind = typeof GitHostingProviderKind.Type;
-export const GitHostingProvider = Schema.Struct({
-  kind: GitHostingProviderKind,
-  name: TrimmedNonEmptyStringSchema,
-  baseUrl: Schema.String,
-});
-export type GitHostingProvider = typeof GitHostingProvider.Type;
 export const GitRunStackedActionToastRunAction = Schema.Struct({
   kind: GitStackedAction,
 });
@@ -79,7 +73,7 @@ const GitRunStackedActionToast = Schema.Struct({
 });
 export type GitRunStackedActionToast = typeof GitRunStackedActionToast.Type;
 
-export const GitBranch = Schema.Struct({
+export const VcsRef = Schema.Struct({
   name: TrimmedNonEmptyStringSchema,
   isRemote: Schema.optional(Schema.Boolean),
   remoteName: Schema.optional(TrimmedNonEmptyStringSchema),
@@ -87,11 +81,11 @@ export const GitBranch = Schema.Struct({
   isDefault: Schema.Boolean,
   worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
-export type GitBranch = typeof GitBranch.Type;
+export type VcsRef = typeof VcsRef.Type;
 
-const GitWorktree = Schema.Struct({
+const VcsWorktree = Schema.Struct({
   path: TrimmedNonEmptyStringSchema,
-  branch: TrimmedNonEmptyStringSchema,
+  refName: TrimmedNonEmptyStringSchema,
 });
 const GitResolvedPullRequest = Schema.Struct({
   number: PositiveInt,
@@ -105,15 +99,15 @@ export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
 // RPC Inputs
 
-export const GitStatusInput = Schema.Struct({
+export const VcsStatusInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
 });
-export type GitStatusInput = typeof GitStatusInput.Type;
+export type VcsStatusInput = typeof VcsStatusInput.Type;
 
-export const GitPullInput = Schema.Struct({
+export const VcsPullInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
 });
-export type GitPullInput = typeof GitPullInput.Type;
+export type VcsPullInput = typeof VcsPullInput.Type;
 
 export const GitRunStackedActionInput = Schema.Struct({
   actionId: TrimmedNonEmptyStringSchema,
@@ -127,7 +121,7 @@ export const GitRunStackedActionInput = Schema.Struct({
 });
 export type GitRunStackedActionInput = typeof GitRunStackedActionInput.Type;
 
-export const GitListBranchesInput = Schema.Struct({
+export const VcsListRefsInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   query: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(256))),
   cursor: Schema.optional(NonNegativeInt),
@@ -135,15 +129,15 @@ export const GitListBranchesInput = Schema.Struct({
     PositiveInt.check(Schema.isLessThanOrEqualTo(GIT_LIST_BRANCHES_MAX_LIMIT)),
   ),
 });
-export type GitListBranchesInput = typeof GitListBranchesInput.Type;
+export type VcsListRefsInput = typeof VcsListRefsInput.Type;
 
-export const GitCreateWorktreeInput = Schema.Struct({
+export const VcsCreateWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
-  branch: TrimmedNonEmptyStringSchema,
-  newBranch: Schema.optional(TrimmedNonEmptyStringSchema),
+  refName: TrimmedNonEmptyStringSchema,
+  newRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   path: Schema.NullOr(TrimmedNonEmptyStringSchema),
 });
-export type GitCreateWorktreeInput = typeof GitCreateWorktreeInput.Type;
+export type VcsCreateWorktreeInput = typeof VcsCreateWorktreeInput.Type;
 
 export const GitPullRequestRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -159,53 +153,54 @@ export const GitPreparePullRequestThreadInput = Schema.Struct({
 });
 export type GitPreparePullRequestThreadInput = typeof GitPreparePullRequestThreadInput.Type;
 
-export const GitRemoveWorktreeInput = Schema.Struct({
+export const VcsRemoveWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   path: TrimmedNonEmptyStringSchema,
   force: Schema.optional(Schema.Boolean),
 });
-export type GitRemoveWorktreeInput = typeof GitRemoveWorktreeInput.Type;
+export type VcsRemoveWorktreeInput = typeof VcsRemoveWorktreeInput.Type;
 
-export const GitCreateBranchInput = Schema.Struct({
+export const VcsCreateRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
-  branch: TrimmedNonEmptyStringSchema,
-  checkout: Schema.optional(Schema.Boolean),
+  refName: TrimmedNonEmptyStringSchema,
+  switchRef: Schema.optional(Schema.Boolean),
 });
-export type GitCreateBranchInput = typeof GitCreateBranchInput.Type;
+export type VcsCreateRefInput = typeof VcsCreateRefInput.Type;
 
-export const GitCreateBranchResult = Schema.Struct({
-  branch: TrimmedNonEmptyStringSchema,
+export const VcsCreateRefResult = Schema.Struct({
+  refName: TrimmedNonEmptyStringSchema,
 });
-export type GitCreateBranchResult = typeof GitCreateBranchResult.Type;
+export type VcsCreateRefResult = typeof VcsCreateRefResult.Type;
 
-export const GitCheckoutInput = Schema.Struct({
+export const VcsSwitchRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
-  branch: TrimmedNonEmptyStringSchema,
+  refName: TrimmedNonEmptyStringSchema,
 });
-export type GitCheckoutInput = typeof GitCheckoutInput.Type;
+export type VcsSwitchRefInput = typeof VcsSwitchRefInput.Type;
 
-export const GitInitInput = Schema.Struct({
+export const VcsInitInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  kind: Schema.optional(VcsDriverKind),
 });
-export type GitInitInput = typeof GitInitInput.Type;
+export type VcsInitInput = typeof VcsInitInput.Type;
 
 // RPC Results
 
-const GitStatusPr = Schema.Struct({
+const VcsStatusChangeRequest = Schema.Struct({
   number: PositiveInt,
   title: TrimmedNonEmptyStringSchema,
   url: Schema.String,
-  baseBranch: TrimmedNonEmptyStringSchema,
-  headBranch: TrimmedNonEmptyStringSchema,
-  state: GitStatusPrState,
+  baseRef: TrimmedNonEmptyStringSchema,
+  headRef: TrimmedNonEmptyStringSchema,
+  state: VcsStatusChangeRequestState,
 });
 
-const GitStatusLocalShape = {
+const VcsStatusLocalShape = {
   isRepo: Schema.Boolean,
-  hostingProvider: Schema.optional(GitHostingProvider),
-  hasOriginRemote: Schema.Boolean,
-  isDefaultBranch: Schema.Boolean,
-  branch: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  sourceControlProvider: Schema.optional(SourceControlProviderInfo),
+  hasPrimaryRemote: Schema.Boolean,
+  isDefaultRef: Schema.Boolean,
+  refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
   hasWorkingTreeChanges: Schema.Boolean,
   workingTree: Schema.Struct({
     files: Schema.Array(
@@ -220,52 +215,53 @@ const GitStatusLocalShape = {
   }),
 };
 
-const GitStatusRemoteShape = {
+const VcsStatusRemoteShape = {
   hasUpstream: Schema.Boolean,
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
-  pr: Schema.NullOr(GitStatusPr),
+  aheadOfDefaultCount: Schema.optional(NonNegativeInt),
+  pr: Schema.NullOr(VcsStatusChangeRequest),
 };
 
-export const GitStatusLocalResult = Schema.Struct(GitStatusLocalShape);
-export type GitStatusLocalResult = typeof GitStatusLocalResult.Type;
+export const VcsStatusLocalResult = Schema.Struct(VcsStatusLocalShape);
+export type VcsStatusLocalResult = typeof VcsStatusLocalResult.Type;
 
-export const GitStatusRemoteResult = Schema.Struct(GitStatusRemoteShape);
-export type GitStatusRemoteResult = typeof GitStatusRemoteResult.Type;
+export const VcsStatusRemoteResult = Schema.Struct(VcsStatusRemoteShape);
+export type VcsStatusRemoteResult = typeof VcsStatusRemoteResult.Type;
 
-export const GitStatusResult = Schema.Struct({
-  ...GitStatusLocalShape,
-  ...GitStatusRemoteShape,
+export const VcsStatusResult = Schema.Struct({
+  ...VcsStatusLocalShape,
+  ...VcsStatusRemoteShape,
 });
-export type GitStatusResult = typeof GitStatusResult.Type;
+export type VcsStatusResult = typeof VcsStatusResult.Type;
 
-export const GitStatusStreamEvent = Schema.Union([
+export const VcsStatusStreamEvent = Schema.Union([
   Schema.TaggedStruct("snapshot", {
-    local: GitStatusLocalResult,
-    remote: Schema.NullOr(GitStatusRemoteResult),
+    local: VcsStatusLocalResult,
+    remote: Schema.NullOr(VcsStatusRemoteResult),
   }),
   Schema.TaggedStruct("localUpdated", {
-    local: GitStatusLocalResult,
+    local: VcsStatusLocalResult,
   }),
   Schema.TaggedStruct("remoteUpdated", {
-    remote: Schema.NullOr(GitStatusRemoteResult),
+    remote: Schema.NullOr(VcsStatusRemoteResult),
   }),
 ]);
-export type GitStatusStreamEvent = typeof GitStatusStreamEvent.Type;
+export type VcsStatusStreamEvent = typeof VcsStatusStreamEvent.Type;
 
-export const GitListBranchesResult = Schema.Struct({
-  branches: Schema.Array(GitBranch),
+export const VcsListRefsResult = Schema.Struct({
+  refs: Schema.Array(VcsRef),
   isRepo: Schema.Boolean,
-  hasOriginRemote: Schema.Boolean,
+  hasPrimaryRemote: Schema.Boolean,
   nextCursor: NonNegativeInt.pipe(Schema.NullOr),
   totalCount: NonNegativeInt,
 });
-export type GitListBranchesResult = typeof GitListBranchesResult.Type;
+export type VcsListRefsResult = typeof VcsListRefsResult.Type;
 
-export const GitCreateWorktreeResult = Schema.Struct({
-  worktree: GitWorktree,
+export const VcsCreateWorktreeResult = Schema.Struct({
+  worktree: VcsWorktree,
 });
-export type GitCreateWorktreeResult = typeof GitCreateWorktreeResult.Type;
+export type VcsCreateWorktreeResult = typeof VcsCreateWorktreeResult.Type;
 
 export const GitResolvePullRequestResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,
@@ -279,10 +275,10 @@ export const GitPreparePullRequestThreadResult = Schema.Struct({
 });
 export type GitPreparePullRequestThreadResult = typeof GitPreparePullRequestThreadResult.Type;
 
-export const GitCheckoutResult = Schema.Struct({
-  branch: Schema.NullOr(TrimmedNonEmptyStringSchema),
+export const VcsSwitchRefResult = Schema.Struct({
+  refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
 });
-export type GitCheckoutResult = typeof GitCheckoutResult.Type;
+export type VcsSwitchRefResult = typeof VcsSwitchRefResult.Type;
 
 export const GitRunStackedActionResult = Schema.Struct({
   action: GitStackedAction,
@@ -313,12 +309,12 @@ export const GitRunStackedActionResult = Schema.Struct({
 });
 export type GitRunStackedActionResult = typeof GitRunStackedActionResult.Type;
 
-export const GitPullResult = Schema.Struct({
+export const VcsPullResult = Schema.Struct({
   status: Schema.Literals(["pulled", "skipped_up_to_date"]),
-  branch: TrimmedNonEmptyStringSchema,
-  upstreamBranch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
+  refName: TrimmedNonEmptyStringSchema,
+  upstreamRef: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
-export type GitPullResult = typeof GitPullResult.Type;
+export type VcsPullResult = typeof VcsPullResult.Type;
 
 // RPC / domain errors
 export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()("GitCommandError", {
@@ -330,16 +326,6 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
 }) {
   override get message(): string {
     return `Git command failed in ${this.operation}: ${this.command} (${this.cwd}) - ${this.detail}`;
-  }
-}
-
-export class GitHubCliError extends Schema.TaggedErrorClass<GitHubCliError>()("GitHubCliError", {
-  operation: Schema.String,
-  detail: Schema.String,
-  cause: Schema.optional(Schema.Defect),
-}) {
-  override get message(): string {
-    return `GitHub CLI failed in ${this.operation}: ${this.detail}`;
   }
 }
 
@@ -369,7 +355,7 @@ export class GitManagerError extends Schema.TaggedErrorClass<GitManagerError>()(
 export const GitManagerServiceError = Schema.Union([
   GitManagerError,
   GitCommandError,
-  GitHubCliError,
+  SourceControlProviderError,
   TextGenerationError,
 ]);
 export type GitManagerServiceError = typeof GitManagerServiceError.Type;

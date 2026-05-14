@@ -1,6 +1,6 @@
 import type { EnvironmentId, ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
-import { Context } from "effect";
-import type { Effect } from "effect";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
 
 export interface ServerEnvironmentShape {
   readonly getEnvironmentId: Effect.Effect<EnvironmentId>;

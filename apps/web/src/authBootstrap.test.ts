@@ -353,6 +353,34 @@ describe("resolveInitialServerAuthGateState", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("surfaces a friendly error message when an invalid pairing token is submitted", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      jsonResponse(
+        {
+          error: "Invalid bootstrap credential.",
+        },
+        {
+          status: 401,
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { submitServerAuthCredential } = await import("./environments/primary");
+
+    await expect(submitServerAuthCredential("bad-token")).rejects.toThrow(
+      "Invalid pairing token. Check the token and try again.",
+    );
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost/api/auth/bootstrap", {
+      body: JSON.stringify({ credential: "bad-token" }),
+      credentials: "include",
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    });
+  });
+
   it("waits for the authenticated session to become observable after silent desktop bootstrap", async () => {
     vi.useFakeTimers();
     const fetchMock = vi

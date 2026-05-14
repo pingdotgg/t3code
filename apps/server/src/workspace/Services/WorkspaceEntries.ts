@@ -6,8 +6,9 @@
  *
  * @module WorkspaceEntries
  */
-import { Schema, Context } from "effect";
-import type { Effect } from "effect";
+import * as Schema from "effect/Schema";
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
 
 import type {
   FilesystemBrowseInput,

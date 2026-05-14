@@ -1,14 +1,12 @@
-import {
-  Cause,
-  Duration,
-  Effect,
-  Exit,
-  Layer,
-  ManagedRuntime,
-  Option,
-  Scope,
-  Stream,
-} from "effect";
+import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Option from "effect/Option";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import { RpcClient } from "effect/unstable/rpc";
 
 import { ClientTracingLive } from "../observability/clientTracing";
@@ -25,6 +23,7 @@ import { isTransportConnectionErrorMessage } from "./transportError";
 interface SubscribeOptions {
   readonly retryDelay?: Duration.Input;
   readonly onResubscribe?: () => void;
+  readonly tag?: string;
 }
 
 interface RequestOptions {
@@ -40,6 +39,12 @@ interface TransportSession {
   readonly runtime: ManagedRuntime.ManagedRuntime<RpcClient.Protocol, never>;
 }
 
+interface StreamRequestStartInfo {
+  readonly id: string;
+  readonly tag: string;
+  readonly stream: boolean;
+}
+
 function formatErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
@@ -52,8 +57,13 @@ export class WsTransport {
   private readonly lifecycleHandlers: WsProtocolLifecycleHandlers | undefined;
   private disposed = false;
   private hasReportedTransportDisconnect = false;
+  private intentionalCloseDepth = 0;
   private reconnectChain: Promise<void> = Promise.resolve();
+  private nextSessionId = 0;
+  private activeSessionId = 0;
   private session: TransportSession;
+  private lastHeartbeatPongAt = 0;
+  private readonly streamRequestStartListeners = new Set<(info: StreamRequestStartInfo) => void>();
 
   constructor(
     url: WsRpcProtocolSocketUrlProvider,
@@ -124,18 +134,24 @@ export class WsTransport {
 
         const session = this.session;
         try {
-          if (hasReceivedValue) {
-            try {
-              options?.onResubscribe?.();
-            } catch {
-              // Swallow reconnect hook errors so the stream can recover.
-            }
-          }
-
           const runningStream = this.runStreamOnSession(
             session,
             connect,
             listener,
+            {
+              ...(options?.tag === undefined ? {} : { tag: options.tag }),
+              ...(hasReceivedValue
+                ? {
+                    onStarted: () => {
+                      try {
+                        options?.onResubscribe?.();
+                      } catch {
+                        // Swallow reconnect hook errors so the stream can recover.
+                      }
+                    },
+                  }
+                : {}),
+            },
             () => active,
             () => {
               this.hasReportedTransportDisconnect = false;
@@ -191,6 +207,7 @@ export class WsTransport {
       }
 
       clearAllTrackedRpcRequests();
+      this.lastHeartbeatPongAt = 0;
       const previousSession = this.session;
       this.session = this.createSession();
       await this.closeSession(previousSession);
@@ -198,6 +215,10 @@ export class WsTransport {
 
     this.reconnectChain = reconnectOperation.catch(() => undefined);
     await reconnectOperation;
+  }
+
+  isHeartbeatFresh(maxAgeMs = 15_000): boolean {
+    return this.lastHeartbeatPongAt > 0 && Date.now() - this.lastHeartbeatPongAt <= maxAgeMs;
   }
 
   async dispose() {
@@ -209,14 +230,42 @@ export class WsTransport {
   }
 
   private closeSession(session: TransportSession) {
+    this.intentionalCloseDepth += 1;
     return session.runtime.runPromise(Scope.close(session.clientScope, Exit.void)).finally(() => {
+      this.intentionalCloseDepth -= 1;
       session.runtime.dispose();
     });
   }
 
   private createSession(): TransportSession {
+    const sessionId = this.nextSessionId + 1;
+    this.nextSessionId = sessionId;
+    this.activeSessionId = sessionId;
     const runtime = ManagedRuntime.make(
-      Layer.mergeAll(createWsRpcProtocolLayer(this.url, this.lifecycleHandlers), ClientTracingLive),
+      Layer.mergeAll(
+        createWsRpcProtocolLayer(this.url, {
+          ...this.lifecycleHandlers,
+          isActive: () => !this.disposed && this.activeSessionId === sessionId,
+          isCloseIntentional: () =>
+            this.disposed ||
+            this.intentionalCloseDepth > 0 ||
+            this.lifecycleHandlers?.isCloseIntentional?.() === true,
+          onHeartbeatPong: () => {
+            this.lastHeartbeatPongAt = Date.now();
+            this.lifecycleHandlers?.onHeartbeatPong?.();
+          },
+          onRequestStart: (info) => {
+            this.lifecycleHandlers?.onRequestStart?.(info);
+            if (!info.stream) {
+              return;
+            }
+            for (const listener of this.streamRequestStartListeners) {
+              listener(info);
+            }
+          },
+        }),
+        ClientTracingLive,
+      ),
     );
     const clientScope = runtime.runSync(Scope.make());
     return {
@@ -230,6 +279,10 @@ export class WsTransport {
     session: TransportSession,
     connect: (client: WsRpcProtocolClient) => Stream.Stream<TValue, Error, never>,
     listener: (value: TValue) => void,
+    requestStart: {
+      readonly tag?: string;
+      readonly onStarted?: () => void;
+    },
     isActive: () => boolean,
     markValueReceived: () => void,
   ): {
@@ -242,6 +295,23 @@ export class WsTransport {
       resolveCompleted = resolve;
       rejectCompleted = reject;
     });
+    let requestStartListener: ((info: StreamRequestStartInfo) => void) | null = null;
+    if (requestStart.onStarted) {
+      requestStartListener = (info) => {
+        if (!isActive() || !info.stream) {
+          return;
+        }
+        if (requestStart.tag !== undefined && info.tag !== requestStart.tag) {
+          return;
+        }
+        requestStart.onStarted?.();
+        if (requestStartListener) {
+          this.streamRequestStartListeners.delete(requestStartListener);
+          requestStartListener = null;
+        }
+      };
+      this.streamRequestStartListeners.add(requestStartListener);
+    }
     const cancel = session.runtime.runCallback(
       Effect.promise(() => session.clientPromise).pipe(
         Effect.flatMap((client) =>
@@ -263,6 +333,10 @@ export class WsTransport {
       ),
       {
         onExit: (exit) => {
+          if (requestStartListener) {
+            this.streamRequestStartListeners.delete(requestStartListener);
+            requestStartListener = null;
+          }
           if (Exit.isSuccess(exit)) {
             resolveCompleted();
             return;

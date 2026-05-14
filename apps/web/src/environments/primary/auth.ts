@@ -16,7 +16,8 @@ import {
 } from "../../pairingUrl";
 
 import { resolvePrimaryEnvironmentHttpUrl } from "./target";
-import { Data, Predicate } from "effect";
+import * as Data from "effect/Data";
+import * as Predicate from "effect/Predicate";
 
 export class BootstrapHttpError extends Data.TaggedError("BootstrapHttpError")<{
   readonly message: string;
@@ -110,6 +111,40 @@ async function readErrorMessage(response: Response, fallbackMessage: string): Pr
   return text || fallbackMessage;
 }
 
+const INVALID_BOOTSTRAP_CREDENTIAL_MESSAGES = new Set([
+  "Invalid bootstrap credential.",
+  "Unknown bootstrap credential.",
+]);
+
+function parseBootstrapErrorMessage(message: string): string {
+  const trimmed = message.trim();
+  if (trimmed.length === 0) {
+    return "";
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      error?: unknown;
+    };
+    if (typeof parsed.error === "string" && parsed.error.trim().length > 0) {
+      return parsed.error.trim();
+    }
+  } catch {
+    // Not JSON; fall back to plain text.
+  }
+
+  return trimmed;
+}
+
+function toFriendlyBootstrapErrorMessage(status: number, message: string): string {
+  const parsedMessage = parseBootstrapErrorMessage(message);
+  if (status === 401 && INVALID_BOOTSTRAP_CREDENTIAL_MESSAGES.has(parsedMessage)) {
+    return "Invalid pairing token. Check the token and try again.";
+  }
+
+  return parsedMessage;
+}
+
 async function exchangeBootstrapCredential(credential: string): Promise<AuthBootstrapResult> {
   return retryTransientBootstrap(async () => {
     const payload: AuthBootstrapInput = { credential };
@@ -123,7 +158,7 @@ async function exchangeBootstrapCredential(credential: string): Promise<AuthBoot
     });
 
     if (!response.ok) {
-      const message = await response.text();
+      const message = toFriendlyBootstrapErrorMessage(response.status, await response.text());
       throw new BootstrapHttpError({
         message: message || `Failed to bootstrap auth session (${response.status}).`,
         status: response.status,

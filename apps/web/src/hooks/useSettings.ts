@@ -10,27 +10,35 @@
  * store.
  */
 import { useCallback, useMemo, useSyncExternalStore } from "react";
-import { ServerSettings, ServerSettingsPatch } from "@t3tools/contracts";
+import { ServerSettings, type ServerSettingsPatch } from "@t3tools/contracts";
 import {
+  type ClientSettingsPatch,
   type ClientSettings,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_UNIFIED_SETTINGS,
   UnifiedSettings,
 } from "@t3tools/contracts/settings";
 import { ensureLocalApi } from "~/localApi";
-import { Struct } from "effect";
+import * as Struct from "effect/Struct";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { applySettingsUpdated, getServerConfig, useServerSettings } from "~/rpc/serverState";
 
 const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 
 const clientSettingsListeners = new Set<() => void>();
+const clientSettingsHydrationListeners = new Set<() => void>();
 let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
 let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
+    listener();
+  }
+}
+
+function emitClientSettingsHydrationChange() {
+  for (const listener of clientSettingsHydrationListeners) {
     listener();
   }
 }
@@ -44,11 +52,31 @@ function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   emitClientSettingsChange();
 }
 
+function setClientSettingsHydrated(nextHydrated: boolean): void {
+  if (clientSettingsHydrated === nextHydrated) {
+    return;
+  }
+  clientSettingsHydrated = nextHydrated;
+  emitClientSettingsHydrationChange();
+}
+
 function subscribeClientSettings(listener: () => void): () => void {
   clientSettingsListeners.add(listener);
   void hydrateClientSettings();
   return () => {
     clientSettingsListeners.delete(listener);
+  };
+}
+
+function getClientSettingsHydratedSnapshot(): boolean {
+  return clientSettingsHydrated;
+}
+
+function subscribeClientSettingsHydration(listener: () => void): () => void {
+  clientSettingsHydrationListeners.add(listener);
+  void hydrateClientSettings();
+  return () => {
+    clientSettingsHydrationListeners.delete(listener);
   };
 }
 
@@ -69,7 +97,7 @@ async function hydrateClientSettings(): Promise<void> {
     } catch (error) {
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} hydrate failed`, error);
     } finally {
-      clientSettingsHydrated = true;
+      setClientSettingsHydrated(true);
     }
   })();
 
@@ -98,7 +126,7 @@ const SERVER_SETTINGS_KEYS = new Set<string>(Struct.keys(ServerSettings.fields))
 
 function splitPatch(patch: Partial<UnifiedSettings>): {
   serverPatch: ServerSettingsPatch;
-  clientPatch: Partial<ClientSettings>;
+  clientPatch: ClientSettingsPatch;
 } {
   const serverPatch: Record<string, unknown> = {};
   const clientPatch: Record<string, unknown> = {};
@@ -111,7 +139,7 @@ function splitPatch(patch: Partial<UnifiedSettings>): {
   }
   return {
     serverPatch: serverPatch as ServerSettingsPatch,
-    clientPatch: clientPatch as Partial<ClientSettings>,
+    clientPatch: clientPatch as ClientSettingsPatch,
   };
 }
 
@@ -121,6 +149,23 @@ function splitPatch(patch: Partial<UnifiedSettings>): {
  * Read merged settings. Selector narrows the subscription so components
  * only re-render when the slice they care about changes.
  */
+
+/**
+ * Non-hook accessor for the current merged client settings snapshot.
+ * Used by non-React code paths (e.g. runtime services) that need the latest
+ * settings without subscribing.
+ */
+export function getClientSettings(): ClientSettings {
+  return getClientSettingsSnapshot();
+}
+
+export function useClientSettingsHydrated(): boolean {
+  return useSyncExternalStore(
+    subscribeClientSettingsHydration,
+    getClientSettingsHydratedSnapshot,
+    () => false,
+  );
+}
 
 export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings) => T): T {
   const serverSettings = useServerSettings();
@@ -183,4 +228,5 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrated = false;
   clientSettingsHydrationPromise = null;
   clientSettingsListeners.clear();
+  clientSettingsHydrationListeners.clear();
 }

@@ -15,6 +15,12 @@ class RemoteEnvironmentAuthHttpError extends Error {
   }
 }
 
+export function isRemoteEnvironmentAuthHttpError(
+  error: unknown,
+): error is RemoteEnvironmentAuthHttpError {
+  return error instanceof RemoteEnvironmentAuthHttpError;
+}
+
 function remoteEndpointUrl(httpBaseUrl: string, pathname: string): string {
   const url = new URL(httpBaseUrl);
   url.pathname = pathname;

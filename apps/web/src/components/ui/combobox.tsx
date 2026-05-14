@@ -22,9 +22,9 @@ function Combobox<Value, Multiple extends boolean | undefined = false>(
   const chipsRef = React.useRef<Element | null>(null);
   const value = React.useMemo(() => ({ chipsRef, multiple: !!props.multiple }), [props.multiple]);
   return (
-    <ComboboxContext.Provider value={value}>
+    <ComboboxContext value={value}>
       <ComboboxPrimitive.Root {...props} />
-    </ComboboxContext.Provider>
+    </ComboboxContext>
   );
 }
 
@@ -151,7 +151,7 @@ function ComboboxPopup({
   side?: ComboboxPrimitive.Positioner.Props["side"];
   anchor?: ComboboxPrimitive.Positioner.Props["anchor"];
 }) {
-  const { chipsRef } = React.useContext(ComboboxContext);
+  const { chipsRef } = React.use(ComboboxContext);
   const anchor = anchorProp ?? chipsRef;
 
   return (
@@ -186,10 +186,12 @@ function ComboboxPopup({
 
 function ComboboxItem({
   className,
+  contentClassName,
   children,
   hideIndicator = false,
   ...props
 }: ComboboxPrimitive.Item.Props & {
+  contentClassName?: string;
   hideIndicator?: boolean;
 }) {
   return (
@@ -204,7 +206,14 @@ function ComboboxItem({
       <ComboboxPrimitive.ItemIndicator className={cn("col-start-1", hideIndicator && "hidden")}>
         <CheckIcon />
       </ComboboxPrimitive.ItemIndicator>
-      <div className={hideIndicator ? "col-start-1 col-span-full" : "col-start-2"}>{children}</div>
+      <div
+        className={cn(
+          hideIndicator ? "col-start-1 col-span-full" : "col-start-2",
+          contentClassName,
+        )}
+      >
+        {children}
+      </div>
     </ComboboxPrimitive.Item>
   );
 }
@@ -264,10 +273,7 @@ function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
   return (
     <ScrollArea scrollbarGutter scrollFade>
       <ComboboxPrimitive.List
-        className={cn(
-          "not-empty:scroll-py-1 not-empty:px-1 not-empty:py-1 in-data-has-overflow-y:pe-3",
-          className,
-        )}
+        className={cn("not-empty:scroll-py-1 not-empty:px-1 not-empty:py-1", className)}
         data-slot="combobox-list"
         {...props}
       />
@@ -318,7 +324,7 @@ function ComboboxChips({
 }: ComboboxPrimitive.Chips.Props & {
   startAddon?: React.ReactNode;
 }) {
-  const { chipsRef } = React.useContext(ComboboxContext);
+  const { chipsRef } = React.use(ComboboxContext);
 
   return (
     <ComboboxPrimitive.Chips

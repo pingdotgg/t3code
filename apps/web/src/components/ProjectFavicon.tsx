@@ -10,14 +10,28 @@ export function ProjectFavicon(input: {
   cwd: string;
   className?: string;
 }) {
-  const src = resolveEnvironmentHttpUrl({
-    environmentId: input.environmentId,
-    pathname: "/api/project-favicon",
-    searchParams: { cwd: input.cwd },
-  });
+  const src = (() => {
+    try {
+      return resolveEnvironmentHttpUrl({
+        environmentId: input.environmentId,
+        pathname: "/api/project-favicon",
+        searchParams: { cwd: input.cwd },
+      });
+    } catch {
+      return null;
+    }
+  })();
   const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>
-    loadedProjectFaviconSrcs.has(src) ? "loaded" : "loading",
+    src && loadedProjectFaviconSrcs.has(src) ? "loaded" : "loading",
   );
+
+  if (!src) {
+    return (
+      <FolderIcon
+        className={`size-3.5 shrink-0 text-muted-foreground/50 ${input.className ?? ""}`}
+      />
+    );
+  }
 
   return (
     <>

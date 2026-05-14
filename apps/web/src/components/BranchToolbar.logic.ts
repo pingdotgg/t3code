@@ -1,5 +1,5 @@
-import type { EnvironmentId, GitBranch, ProjectId } from "@t3tools/contracts";
-import { Schema } from "effect";
+import type { EnvironmentId, VcsRef, ProjectId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 export {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
@@ -100,24 +100,24 @@ export function resolveBranchToolbarValue(input: {
 export function resolveBranchSelectionTarget(input: {
   activeProjectCwd: string;
   activeWorktreePath: string | null;
-  branch: Pick<GitBranch, "isDefault" | "worktreePath">;
+  refName: Pick<VcsRef, "isDefault" | "worktreePath">;
 }): {
   checkoutCwd: string;
   nextWorktreePath: string | null;
   reuseExistingWorktree: boolean;
 } {
-  const { activeProjectCwd, activeWorktreePath, branch } = input;
+  const { activeProjectCwd, activeWorktreePath, refName } = input;
 
-  if (branch.worktreePath) {
+  if (refName.worktreePath) {
     return {
-      checkoutCwd: branch.worktreePath,
-      nextWorktreePath: branch.worktreePath === activeProjectCwd ? null : branch.worktreePath,
+      checkoutCwd: refName.worktreePath,
+      nextWorktreePath: refName.worktreePath === activeProjectCwd ? null : refName.worktreePath,
       reuseExistingWorktree: true,
     };
   }
 
   const nextWorktreePath =
-    activeWorktreePath !== null && branch.isDefault ? null : activeWorktreePath;
+    activeWorktreePath !== null && refName.isDefault ? null : activeWorktreePath;
 
   return {
     checkoutCwd: nextWorktreePath ?? activeProjectCwd,
