@@ -219,41 +219,13 @@ const mobileEndorsementRows = [
   <section id="git" class="sec-git">
     <div class="container git-inner">
       <div class="git-visual">
-        <div class="pr-card tile">
-          <div class="pr-head">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M6 8v8M18 8v5a3 3 0 01-3 3h-3M13 13l-2 3 2 3"/></svg>
-            <span class="pr-title">Add marketing hero animation</span>
-            <span class="pr-status">Ready</span>
-          </div>
-          <div class="pr-meta">
-            <span><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M6 8v8M6 12a6 6 0 006-6h6"/></svg> feat/marketing-hero → main</span>
-            <span>+142 −38</span>
-            <span>3 commits</span>
-          </div>
-          <div class="pr-files">
-            <div><code>apps/marketing/src/pages/index.astro</code> <span>+14 −2</span></div>
-            <div><code>apps/marketing/src/layouts/Layout.astro</code> <span>+8 −0</span></div>
-            <div><code>apps/marketing/public/hero.css</code> <span>+120 −36</span></div>
-          </div>
-          <div class="pr-foot">
-            <button class="btn btn-ghost" style="font-size:12px;padding:6px 10px">View diff</button>
-            <button class="btn btn-primary" style="font-size:12px;padding:6px 12px">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 007.86 10.93c.58.1.79-.25.79-.56v-2c-3.2.69-3.88-1.37-3.88-1.37-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.76 2.68 1.25 3.33.96.1-.75.4-1.25.72-1.54-2.55-.29-5.24-1.27-5.24-5.67 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.15 1.18a10.96 10.96 0 015.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.57.23 2.73.11 3.02.74.8 1.18 1.83 1.18 3.08 0 4.41-2.7 5.38-5.27 5.66.41.36.78 1.06.78 2.13v3.16c0 .31.21.67.8.56A11.5 11.5 0 0023.5 12C23.5 5.65 18.35.5 12 .5z"/></svg>
-              Open pull request
-            </button>
-          </div>
-        </div>
-        <div class="pr-trail">
-          <div class="pr-trail-dot"></div>
-          <div class="pr-trail-line"></div>
-          <div class="pr-trail-dot"></div>
-        </div>
-        <div class="pr-button-shell">
-          <button class="pr-button">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="6" r="2.2"/><path d="M6 8v8M18 8v5a3 3 0 01-3 3h-3M13 13l-2 3 2 3"/></svg>
-            Commit &amp; push
-            <span class="pr-button-kbd">⌘⏎</span>
-          </button>
+        <div class="git-image-shell">
+          <img
+            class="git-image"
+            src="/git-pr-workflow.png"
+            alt="Screenshot of T3 Code creating a commit, push, and pull request"
+            loading="lazy"
+          />
         </div>
       </div>
 
@@ -891,70 +863,17 @@ const mobileEndorsementRows = [
 
   .git-visual {
     position: relative;
-    display: flex; flex-direction: column;
-    align-items: stretch; gap: 20px;
+    display: flex;
   }
 
-  .pr-card { padding: 20px; }
-  .pr-head {
-    display: flex; align-items: center; gap: 10px;
-    margin-bottom: 12px;
-  }
-  .pr-head svg { color: var(--ok); }
-  .pr-title { font-weight: 500; font-size: 15px; flex: 1; }
-  .pr-status {
-    font-family: var(--font-mono); font-size: 10px;
-    color: var(--ok); padding: 2px 8px;
-    border: 1px solid var(--ok); border-radius: 999px;
-    letter-spacing: 0.08em; text-transform: uppercase;
-  }
-  .pr-meta {
-    display: flex; gap: 14px;
-    font-family: var(--font-mono); font-size: 11px;
-    color: var(--fg-dim); margin-bottom: 14px; flex-wrap: wrap;
-  }
-  .pr-meta span { display: inline-flex; align-items: center; gap: 5px; }
-  .pr-files {
-    border: 1px solid var(--border); border-radius: 8px;
-    overflow: hidden; margin-bottom: 16px;
-  }
-  .pr-files > div {
-    display: flex; justify-content: space-between;
-    padding: 8px 12px; font-family: var(--font-mono);
-    font-size: 11px; border-top: 1px solid var(--border);
-    color: var(--fg-muted);
-  }
-  .pr-files > div:first-child { border-top: 0; }
-  .pr-files span { color: var(--fg-dim); }
-  .pr-foot { display: flex; justify-content: flex-end; gap: 8px; }
-
-  .pr-trail {
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    gap: 0; margin: -4px 0;
-  }
-  .pr-trail-dot {
-    width: 8px; height: 8px; border-radius: 999px;
-    background: var(--border-strong);
-  }
-  .pr-trail-line {
-    width: 1px; height: 28px;
-    background: linear-gradient(180deg, var(--border-strong), var(--accent));
+  .git-image-shell {
+    width: 100%;
   }
 
-  .pr-button-shell { display: flex; justify-content: center; }
-  .pr-button {
-    display: inline-flex; align-items: center; gap: 10px;
-    padding: 12px 20px;
-    background: var(--fg); color: #09090b;
-    font-weight: 600; font-size: 13px;
-    border-radius: 10px;
-    box-shadow: 0 8px 24px -8px rgba(255, 255, 255, 0.2);
-  }
-  .pr-button-kbd {
-    font-family: var(--font-mono); font-size: 10px;
-    background: rgba(0, 0, 0, 0.1);
-    padding: 2px 6px; border-radius: 4px;
+  .git-image {
+    display: block;
+    width: 100%;
+    height: auto;
   }
 
   /* ── Open source ──────────────────────────────────────── */
