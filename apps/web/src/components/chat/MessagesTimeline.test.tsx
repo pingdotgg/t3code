@@ -238,4 +238,27 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("t3code/apps/web/src/session-logic.ts");
     expect(markup).not.toContain("C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts");
   });
+
+  it("opts work log expansion controls out of scroll anchoring", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={Array.from({ length: 7 }, (_, index) => ({
+          id: `entry-${index + 1}`,
+          kind: "work" as const,
+          createdAt: "2026-03-17T19:12:28.000Z",
+          entry: {
+            id: `work-${index + 1}`,
+            createdAt: "2026-03-17T19:12:28.000Z",
+            label: `Tool call ${index + 1}`,
+            tone: "tool" as const,
+          },
+        }))}
+      />,
+    );
+
+    expect(markup).toContain("Show 1 more");
+    expect(markup).toContain("data-scroll-anchor-ignore");
+  });
 });

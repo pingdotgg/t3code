@@ -35,6 +35,7 @@ import {
   ZapIcon,
 } from "lucide-react";
 import { Button } from "../ui/button";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { buildExpandedImagePreview, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { ChangedFilesTree } from "./ChangedFilesTree";
@@ -601,35 +602,50 @@ const WorkGroupSection = memo(function WorkGroupSection({
   const { workspaceRoot } = use(TimelineRowCtx);
   const [isExpanded, setIsExpanded] = useState(false);
   const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
-  const visibleEntries =
-    hasOverflow && !isExpanded
-      ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
-      : groupedEntries;
-  const hiddenCount = groupedEntries.length - visibleEntries.length;
+  const overflowEntries = hasOverflow ? groupedEntries.slice(0, -MAX_VISIBLE_WORK_LOG_ENTRIES) : [];
+  const alwaysVisibleEntries = hasOverflow
+    ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
+    : groupedEntries;
   const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
   const showHeader = hasOverflow || !onlyToolEntries;
   const groupLabel = onlyToolEntries ? "Tool calls" : "Work log";
 
   return (
-    <div className="rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
+    <Collapsible
+      open={isExpanded}
+      onOpenChange={setIsExpanded}
+      className="rounded-xl border border-border/45 bg-card/25 px-2 py-1.5"
+    >
       {showHeader && (
         <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
           <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
             {groupLabel} ({groupedEntries.length})
           </p>
           {hasOverflow && (
-            <button
-              type="button"
+            <CollapsibleTrigger
               className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"
-              onClick={() => setIsExpanded((v) => !v)}
+              data-scroll-anchor-ignore
             >
-              {isExpanded ? "Show less" : `Show ${hiddenCount} more`}
-            </button>
+              {isExpanded ? "Show less" : `Show ${overflowEntries.length} more`}
+            </CollapsibleTrigger>
           )}
         </div>
       )}
       <div className="space-y-0.5">
-        {visibleEntries.map((workEntry) => (
+        {hasOverflow && (
+          <CollapsiblePanel keepMounted>
+            <div className="space-y-0.5">
+              {overflowEntries.map((workEntry) => (
+                <SimpleWorkEntryRow
+                  key={`work-row:${workEntry.id}`}
+                  workEntry={workEntry}
+                  workspaceRoot={workspaceRoot}
+                />
+              ))}
+            </div>
+          </CollapsiblePanel>
+        )}
+        {alwaysVisibleEntries.map((workEntry) => (
           <SimpleWorkEntryRow
             key={`work-row:${workEntry.id}`}
             workEntry={workEntry}
@@ -637,7 +653,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
           />
         ))}
       </div>
-    </div>
+    </Collapsible>
   );
 });
 
