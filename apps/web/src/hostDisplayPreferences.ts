@@ -38,6 +38,18 @@ function normalizeDisplayPreferences(
   return resolveHostDisplayPreferences({ isVscodeWebview, preferences });
 }
 
+function areDisplayPreferencesEqual(
+  left: T3HostDisplayPreferences,
+  right: T3HostDisplayPreferences,
+): boolean {
+  return (
+    left.showOpenInPicker === right.showOpenInPicker &&
+    left.showCheckoutModeIndicator === right.showCheckoutModeIndicator &&
+    left.showBranchSelector === right.showBranchSelector &&
+    left.enableTerminal === right.enableTerminal
+  );
+}
+
 let currentDisplayPreferences = normalizeDisplayPreferences(
   typeof window === "undefined" ? null : window.t3HostBridge?.getDisplayPreferences?.(),
 );
@@ -46,11 +58,22 @@ const subscribers = new Set<() => void>();
 let subscribedHostBridge: T3HostBridge | null = null;
 let unsubscribeDisplayPreferences: (() => void) | null = null;
 
-function emitDisplayPreferencesChanged(nextPreferences: T3HostDisplayPreferences): void {
-  currentDisplayPreferences = normalizeDisplayPreferences(nextPreferences);
+function setDisplayPreferences(
+  nextPreferences: Partial<T3HostDisplayPreferences> | null | undefined,
+): void {
+  const normalizedPreferences = normalizeDisplayPreferences(nextPreferences);
+  if (areDisplayPreferencesEqual(currentDisplayPreferences, normalizedPreferences)) {
+    return;
+  }
+
+  currentDisplayPreferences = normalizedPreferences;
   for (const subscriber of subscribers) {
     subscriber();
   }
+}
+
+function emitDisplayPreferencesChanged(nextPreferences: T3HostDisplayPreferences): void {
+  setDisplayPreferences(nextPreferences);
 }
 
 function ensureDisplayPreferencesBridgeSubscription(): void {
@@ -66,11 +89,11 @@ function ensureDisplayPreferencesBridgeSubscription(): void {
   unsubscribeDisplayPreferences?.();
   subscribedHostBridge = bridge;
   unsubscribeDisplayPreferences = null;
+  setDisplayPreferences(bridge?.getDisplayPreferences?.() ?? null);
   if (!bridge) {
     return;
   }
 
-  currentDisplayPreferences = normalizeDisplayPreferences(bridge.getDisplayPreferences?.());
   unsubscribeDisplayPreferences =
     bridge.onDisplayPreferencesChanged?.(emitDisplayPreferencesChanged) ?? null;
 }
@@ -79,7 +102,7 @@ if (typeof window !== "undefined") {
   ensureDisplayPreferencesBridgeSubscription();
 }
 
-function subscribeDisplayPreferences(callback: () => void): () => void {
+export function subscribeHostDisplayPreferences(callback: () => void): () => void {
   ensureDisplayPreferencesBridgeSubscription();
   subscribers.add(callback);
   return () => {
@@ -94,7 +117,7 @@ export function readHostDisplayPreferences(): T3HostDisplayPreferences {
 
 export function useHostDisplayPreferences(): T3HostDisplayPreferences {
   return useSyncExternalStore(
-    subscribeDisplayPreferences,
+    subscribeHostDisplayPreferences,
     readHostDisplayPreferences,
     readHostDisplayPreferences,
   );

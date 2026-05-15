@@ -18,9 +18,26 @@ function normalizeHostAppearance(
   };
 }
 
+function areHostAppearancesEqual(left: T3HostAppearance, right: T3HostAppearance): boolean {
+  return left.themeSource === right.themeSource && left.colorScheme === right.colorScheme;
+}
+
 let currentHostAppearance = normalizeHostAppearance(
   typeof window === "undefined" ? null : window.t3HostBridge?.getHostAppearance?.(),
 );
+
+function setHostAppearance(nextAppearance: Partial<T3HostAppearance> | null | undefined): void {
+  const normalizedAppearance = normalizeHostAppearance(nextAppearance);
+  if (areHostAppearancesEqual(currentHostAppearance, normalizedAppearance)) {
+    return;
+  }
+
+  currentHostAppearance = normalizedAppearance;
+  applyHostAppearanceToDocument(currentHostAppearance);
+  for (const subscriber of subscribers) {
+    subscriber();
+  }
+}
 
 function ensureHostAppearanceBridgeSubscription(): void {
   if (typeof window === "undefined") {
@@ -35,20 +52,16 @@ function ensureHostAppearanceBridgeSubscription(): void {
   unsubscribeHostAppearance?.();
   subscribedHostBridge = bridge;
   unsubscribeHostAppearance = null;
+  setHostAppearance(bridge?.getHostAppearance?.() ?? null);
   if (!bridge) {
     return;
   }
 
-  currentHostAppearance = normalizeHostAppearance(bridge.getHostAppearance?.());
   unsubscribeHostAppearance = bridge.onHostAppearanceChanged?.(emitHostAppearanceChanged) ?? null;
 }
 
 function emitHostAppearanceChanged(nextAppearance: T3HostAppearance): void {
-  currentHostAppearance = normalizeHostAppearance(nextAppearance);
-  applyHostAppearanceToDocument(currentHostAppearance);
-  for (const subscriber of subscribers) {
-    subscriber();
-  }
+  setHostAppearance(nextAppearance);
 }
 
 if (typeof window !== "undefined") {

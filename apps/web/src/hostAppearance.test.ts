@@ -1,3 +1,4 @@
+import type { T3HostAppearance, T3HostBridge } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { applyHostAppearanceToDocument, resolveHostResolvedTheme } from "./hostAppearance";
@@ -67,6 +68,41 @@ describe("host appearance", () => {
     );
 
     expect(documentStub.documentElement.dataset.t3HostTheme).toBeUndefined();
+    expect(documentStub.documentElement.classList.contains("dark")).toBe(true);
+  });
+
+  it("applies and notifies subscribers when the host bridge changes appearance", async () => {
+    vi.resetModules();
+    const documentStub = createDocumentStub();
+    vi.stubGlobal("document", documentStub);
+
+    const defaultAppearance: T3HostAppearance = {
+      themeSource: "default",
+      colorScheme: "light",
+    };
+    const vscodeAppearance: T3HostAppearance = {
+      themeSource: "vscode",
+      colorScheme: "dark",
+    };
+    const firstBridge: T3HostBridge = {
+      getLocalEnvironmentBootstrap: () => null,
+      getHostAppearance: () => defaultAppearance,
+    };
+    const secondBridge: T3HostBridge = {
+      getLocalEnvironmentBootstrap: () => null,
+      getHostAppearance: () => vscodeAppearance,
+    };
+    vi.stubGlobal("window", { t3HostBridge: firstBridge });
+
+    const module = await import("./hostAppearance");
+    const subscriber = vi.fn();
+    module.subscribeHostAppearance(subscriber);
+
+    vi.stubGlobal("window", { t3HostBridge: secondBridge });
+    expect(module.readHostAppearance()).toEqual(vscodeAppearance);
+
+    expect(subscriber).toHaveBeenCalledTimes(1);
+    expect(documentStub.documentElement.dataset.t3HostTheme).toBe("vscode");
     expect(documentStub.documentElement.classList.contains("dark")).toBe(true);
   });
 });

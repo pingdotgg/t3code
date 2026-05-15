@@ -88,4 +88,32 @@ describe("host display preference subscription", () => {
 
     expect(module.readHostDisplayPreferences()).toEqual(allVisiblePreferences);
   });
+
+  it("notifies subscribers when the host bridge changes preferences", async () => {
+    vi.resetModules();
+    const firstBridge: T3HostBridge = {
+      getLocalEnvironmentBootstrap: () => null,
+      getDisplayPreferences: () => allHiddenPreferences,
+    };
+    const secondBridge: T3HostBridge = {
+      getLocalEnvironmentBootstrap: () => null,
+      getDisplayPreferences: () => allVisiblePreferences,
+    };
+    vi.stubGlobal("window", {
+      __T3_IS_VSCODE_WEBVIEW: true,
+      t3HostBridge: firstBridge,
+    });
+
+    const module = await import("./hostDisplayPreferences");
+    const subscriber = vi.fn();
+    module.subscribeHostDisplayPreferences(subscriber);
+
+    vi.stubGlobal("window", {
+      __T3_IS_VSCODE_WEBVIEW: true,
+      t3HostBridge: secondBridge,
+    });
+    expect(module.readHostDisplayPreferences()).toEqual(allVisiblePreferences);
+
+    expect(subscriber).toHaveBeenCalledTimes(1);
+  });
 });

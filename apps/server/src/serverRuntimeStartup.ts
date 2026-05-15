@@ -284,7 +284,7 @@ function makeFallbackWorkspaceTarget(
   readonly uriAuthority: string;
 } {
   return {
-    key: `cwd:${cwd}`,
+    key: `cwd:${encodeURIComponent(cwd)}`,
     name: path.basename(cwd) || "project",
     cwd,
     uriScheme: "file",

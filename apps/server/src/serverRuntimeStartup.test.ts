@@ -184,7 +184,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
       bootstrapThreadId,
       bootstrapProjects: [
         {
-          workspaceFolderKey: "cwd:/tmp/startup-project",
+          workspaceFolderKey: "cwd:%2Ftmp%2Fstartup-project",
           workspaceFolderName: "startup-project",
           cwd: "/tmp/startup-project",
           projectId: bootstrapProjectId,
