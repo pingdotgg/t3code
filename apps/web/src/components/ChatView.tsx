@@ -147,7 +147,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
-import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
+import { getExpandedImagePreviewKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
@@ -3773,7 +3773,11 @@ export default function ChatView(props: ChatViewProps) {
       ) : null}
 
       {expandedImage && (
-        <ExpandedImageDialog preview={expandedImage} onClose={closeExpandedImage} />
+        <ExpandedImageDialog
+          key={getExpandedImagePreviewKey(expandedImage)}
+          preview={expandedImage}
+          onClose={closeExpandedImage}
+        />
       )}
     </div>
   );

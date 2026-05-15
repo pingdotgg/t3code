@@ -8,27 +8,20 @@ interface ExpandedImageDialogProps {
   onClose: () => void;
 }
 
-export const ExpandedImageDialog = memo(function ExpandedImageDialog({
-  preview: initialPreview,
+function clampImageIndex(index: number, imageCount: number): number {
+  if (imageCount <= 0) return 0;
+  return Math.min(Math.max(index, 0), imageCount - 1);
+}
+
+function useExpandedImageDialogKeyboardNavigation({
+  imageCount,
+  navigateImage,
   onClose,
-}: ExpandedImageDialogProps) {
-  const [preview, setPreview] = useState(initialPreview);
-
-  // Sync when the parent hands us a new preview reference.
-  useEffect(() => {
-    setPreview(initialPreview);
-  }, [initialPreview]);
-
-  const navigateImage = useCallback((direction: -1 | 1) => {
-    setPreview((existing) => {
-      if (existing.images.length <= 1) return existing;
-      const nextIndex =
-        (existing.index + direction + existing.images.length) % existing.images.length;
-      if (nextIndex === existing.index) return existing;
-      return { ...existing, index: nextIndex };
-    });
-  }, []);
-
+}: {
+  imageCount: number;
+  navigateImage: (direction: -1 | 1) => void;
+  onClose: () => void;
+}) {
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -37,7 +30,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         onClose();
         return;
       }
-      if (preview.images.length <= 1) return;
+      if (imageCount <= 1) return;
       if (event.key === "ArrowLeft") {
         event.preventDefault();
         event.stopPropagation();
@@ -51,9 +44,40 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigateImage, onClose, preview.images.length]);
+  }, [imageCount, navigateImage, onClose]);
+}
 
-  const item = preview.images[preview.index];
+export const ExpandedImageDialog = memo(function ExpandedImageDialog({
+  preview,
+  onClose,
+}: ExpandedImageDialogProps) {
+  const imageCount = preview.images.length;
+  const [imageIndex, setImageIndex] = useState(() => clampImageIndex(preview.index, imageCount));
+  const activeImageIndex = clampImageIndex(imageIndex, imageCount);
+
+  const navigateImage = useCallback(
+    (direction: -1 | 1) => {
+      setImageIndex((existing) => {
+        if (imageCount <= 1) return existing;
+        return (existing + direction + imageCount) % imageCount;
+      });
+    },
+    [imageCount],
+  );
+  const navigateToPreviousImage = useCallback(() => {
+    navigateImage(-1);
+  }, [navigateImage]);
+  const navigateToNextImage = useCallback(() => {
+    navigateImage(1);
+  }, [navigateImage]);
+
+  useExpandedImageDialogKeyboardNavigation({
+    imageCount,
+    navigateImage,
+    onClose,
+  });
+
+  const item = preview.images[activeImageIndex];
   if (!item) return null;
 
   return (
@@ -69,14 +93,14 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         aria-label="Close image preview"
         onClick={onClose}
       />
-      {preview.images.length > 1 && (
+      {imageCount > 1 && (
         <Button
           type="button"
           size="icon"
           variant="ghost"
           className="absolute left-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:left-6"
           aria-label="Previous image"
-          onClick={() => navigateImage(-1)}
+          onClick={navigateToPreviousImage}
         >
           <ChevronLeftIcon className="size-5" />
         </Button>
@@ -100,17 +124,17 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
         />
         <p className="mt-2 max-w-[92vw] truncate text-center text-xs text-muted-foreground/80">
           {item.name}
-          {preview.images.length > 1 ? ` (${preview.index + 1}/${preview.images.length})` : ""}
+          {imageCount > 1 ? ` (${activeImageIndex + 1}/${imageCount})` : ""}
         </p>
       </div>
-      {preview.images.length > 1 && (
+      {imageCount > 1 && (
         <Button
           type="button"
           size="icon"
           variant="ghost"
           className="absolute right-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white sm:right-6"
           aria-label="Next image"
-          onClick={() => navigateImage(1)}
+          onClick={navigateToNextImage}
         >
           <ChevronRightIcon className="size-5" />
         </Button>

@@ -8,6 +8,11 @@ export interface ExpandedImagePreview {
   index: number;
 }
 
+export function getExpandedImagePreviewKey(preview: ExpandedImagePreview): string {
+  const selectedImage = preview.images[preview.index];
+  return `${preview.index}:${preview.images.length}:${selectedImage?.src ?? ""}`;
+}
+
 export function buildExpandedImagePreview(
   images: ReadonlyArray<{ id: string; name: string; previewUrl?: string }>,
   selectedImageId: string,
