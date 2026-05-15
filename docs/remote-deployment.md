@@ -16,18 +16,18 @@ https://<your-convex-site>/slack/webhook
 
 Convex then calls the local T3 execution bridge at `https://t3.olumbe.com`.
 
-## Windows Tasks
+## Windows Services
 
 `t3code-server`:
 
 ```text
-node apps/server/dist/bin.mjs --port 3773 --host 127.0.0.1 --no-browser
+NSSM Windows service wrapping scripts\start-t3code-server.cmd
 ```
 
-`t3code-tunnel`:
+`cloudflared-t3code`:
 
 ```text
-C:\Program Files (x86)\cloudflared\cloudflared.exe tunnel run t3code-local
+Cloudflare Windows service running tunnel t3code-local
 ```
 
 Start the whole local stack:
@@ -43,8 +43,8 @@ Local T3 server:
 ```text
 ORCHESTRATOR_BASE_URL=https://<your-convex-site>
 T3_EXECUTION_BRIDGE_SHARED_SECRET=<shared-secret>
-T3_DEFAULT_PROVIDER_INSTANCE_ID=claudeAgent
-T3_DEFAULT_MODEL=claude-sonnet-4-6
+T3_DEFAULT_PROVIDER_INSTANCE_ID=codex
+T3_DEFAULT_MODEL=gpt-5.5
 ```
 
 Convex:
@@ -58,8 +58,8 @@ LINEAR_DEFAULT_WORKSPACE_ROOT=C:\Users\Vivek\Affil\t3code
 ## Checks
 
 ```powershell
-schtasks /query /tn t3code-server /fo LIST /v
-schtasks /query /tn t3code-tunnel /fo LIST /v
+Get-Service t3code-server
+Get-Service cloudflared-t3code
 curl.exe -i http://127.0.0.1:3773/
 curl.exe -i https://t3.olumbe.com/
 curl.exe -i -X POST https://t3.olumbe.com/api/execution/runs/status
@@ -71,9 +71,26 @@ Expected unauthenticated bridge response:
 - `503`: route is live but local T3 is missing `T3_EXECUTION_BRIDGE_SHARED_SECRET`
 - `404`: running server build does not include the bridge route, or the tunnel is not reaching it
 
+## Updating The Server
+
+Use the scripted update path from an elevated PowerShell:
+
+```powershell
+cd C:\Users\Vivek\Affil\t3code
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\scripts\update-t3code-server.ps1
+```
+
+By default this fetches and merges `pingdotgg/main`, runs `bun install`, runs
+`bun run build`, restarts the `t3code-server` service, and runs the orchestrator
+health check. It refuses to merge over a dirty worktree unless `-AllowDirty` is
+passed.
+
 ## Provider Auth
 
-Authenticate Codex/Claude on this Windows user account because the scheduled task runs as this user. The local T3 server launches provider sessions from the same machine and worktree paths.
+Authenticate Codex/Claude on this Windows user account because the service runs
+under the configured local account. The local T3 server launches provider
+sessions from the same machine and worktree paths.
 
 ## Notes
 

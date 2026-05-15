@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
-import { ThreadId, type TaskRuntimeMaterializeResponse } from "@t3tools/contracts";
+import { ModelSelection, ThreadId, type TaskRuntimeMaterializeResponse } from "@t3tools/contracts";
 
 import { createT3ExecutionBridgeClient } from "../src/t3/client.ts";
 import { internal, api } from "./_generated/api.js";
@@ -9,6 +9,26 @@ import type { Id } from "./_generated/dataModel.js";
 import { action, internalMutation, internalQuery } from "./_generated/server.js";
 
 const decodeThreadId = Schema.decodeUnknownSync(ThreadId);
+const decodeModelSelection = Schema.decodeUnknownSync(ModelSelection);
+const modelSelectionArg = v.object({
+  instanceId: v.string(),
+  model: v.string(),
+  options: v.optional(
+    v.array(
+      v.object({
+        id: v.string(),
+        value: v.union(v.string(), v.boolean()),
+      }),
+    ),
+  ),
+});
+const uploadImageAttachmentArg = v.object({
+  type: v.literal("image"),
+  name: v.string(),
+  mimeType: v.string(),
+  sizeBytes: v.number(),
+  dataUrl: v.string(),
+});
 
 function errorSummary(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -62,7 +82,9 @@ export const materializeTaskRuntime = action({
   args: {
     taskId: v.id("tasks"),
     initialPrompt: v.string(),
+    attachments: v.optional(v.array(uploadImageAttachmentArg)),
     startCodingAgent: v.optional(v.boolean()),
+    modelSelection: v.optional(modelSelectionArg),
   },
   returns: v.object({
     taskId: v.string(),
@@ -83,6 +105,8 @@ export const materializeTaskRuntime = action({
     }
 
     const requestedStartCodingAgent = args.startCodingAgent ?? true;
+    const modelSelection =
+      args.modelSelection === undefined ? undefined : decodeModelSelection(args.modelSelection);
     const workSessionSeed = await ctx.runMutation(internal.t3Runtime.prepareWorkSessionSeed, {
       taskId: args.taskId,
       startCodingAgent: requestedStartCodingAgent,
@@ -102,6 +126,15 @@ export const materializeTaskRuntime = action({
         workspaceRoot: tree.project.workspaceRoot,
         defaultBranch: tree.project.defaultBranch,
         startCodingAgent: requestedStartCodingAgent,
+        attachmentCount: args.attachments?.length ?? 0,
+        ...(modelSelection !== undefined
+          ? {
+              modelSelection: {
+                instanceId: modelSelection.instanceId,
+                model: modelSelection.model,
+              },
+            }
+          : {}),
       },
     });
 
@@ -111,10 +144,12 @@ export const materializeTaskRuntime = action({
         taskId: String(args.taskId),
         workSessionId: String(workSessionSeed.workSessionId),
         initialPrompt: args.initialPrompt,
+        ...(args.attachments !== undefined ? { attachments: args.attachments } : {}),
         title: tree.task.title,
         runtimeMode: "full-access",
         interactionMode: "default",
         startCodingAgent: requestedStartCodingAgent,
+        ...(modelSelection !== undefined ? { modelSelection } : {}),
         idempotencyKey,
         project: {
           repoName: tree.project.repoName,
@@ -353,6 +388,7 @@ export const continueTaskRuntime = action({
     workSessionId: v.id("workSessions"),
     t3ThreadId: v.string(),
     prompt: v.string(),
+    attachments: v.optional(v.array(uploadImageAttachmentArg)),
   },
   returns: v.object({
     taskId: v.string(),
@@ -405,6 +441,7 @@ export const continueTaskRuntime = action({
       payload: {
         t3ThreadId: args.t3ThreadId,
         promptPreview: args.prompt.slice(0, 120),
+        attachmentCount: args.attachments?.length ?? 0,
       },
     });
     const response = await client.continueExecutionRun({
@@ -412,6 +449,7 @@ export const continueTaskRuntime = action({
       executionRunId: String(args.workSessionId),
       t3ThreadId,
       prompt: args.prompt,
+      ...(args.attachments !== undefined ? { attachments: args.attachments } : {}),
       taskRuntime: true,
       runtimeMode: "full-access",
       interactionMode: "default",
@@ -440,6 +478,71 @@ export const continueTaskRuntime = action({
       taskId: String(args.taskId),
       workSessionId: String(response.executionRunId),
       t3ThreadId: String(response.t3ThreadId),
+      acceptedAt: response.acceptedAt,
+    };
+  },
+});
+
+export const respondTaskRuntimeUserInput = action({
+  args: {
+    eventId: v.string(),
+    taskId: v.id("tasks"),
+    workSessionId: v.id("workSessions"),
+    t3ThreadId: v.string(),
+    requestId: v.string(),
+    answersJson: v.string(),
+  },
+  returns: v.object({
+    taskId: v.string(),
+    workSessionId: v.string(),
+    t3ThreadId: v.string(),
+    requestId: v.string(),
+    acceptedAt: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    await ctx.runQuery(internal.t3Runtime.getTaskRuntimeContinuationRoute, {
+      taskId: args.taskId,
+      workSessionId: args.workSessionId,
+      t3ThreadId: args.t3ThreadId,
+    });
+
+    const client = createT3ExecutionBridgeClient();
+    await logOrchestratorEvent(ctx, {
+      kind: "t3.runtime.user-input-response-requested",
+      summary: "Calling local T3 bridge to answer provider user-input request.",
+      eventKey: `${args.eventId}:runtime-user-input:bridge-requested`,
+      taskId: args.taskId,
+      workSessionId: args.workSessionId,
+      payload: {
+        t3ThreadId: args.t3ThreadId,
+        requestId: args.requestId,
+      },
+    });
+    const response = await client.respondToTaskRuntimeUserInput({
+      taskId: String(args.taskId),
+      workSessionId: String(args.workSessionId),
+      t3ThreadId: decodeThreadId(args.t3ThreadId),
+      requestId: args.requestId as any,
+      answers: JSON.parse(args.answersJson) as Record<string, unknown>,
+    });
+
+    await logOrchestratorEvent(ctx, {
+      kind: "t3.runtime.user-input-response-accepted",
+      summary: "Local T3 bridge accepted provider user-input response.",
+      eventKey: `${args.eventId}:runtime-user-input:bridge-accepted`,
+      taskId: args.taskId,
+      workSessionId: args.workSessionId,
+      payload: {
+        t3ThreadId: String(response.t3ThreadId),
+        requestId: String(response.requestId),
+      },
+    });
+
+    return {
+      taskId: String(response.taskId),
+      workSessionId: String(response.workSessionId),
+      t3ThreadId: String(response.t3ThreadId),
+      requestId: String(response.requestId),
       acceptedAt: response.acceptedAt,
     };
   },
@@ -477,6 +580,31 @@ export const ensureTaskPullRequest = action({
     }
 
     const idempotencyKey = `task-pr:${String(args.taskId)}:${String(args.workSessionId)}:${seed.branch}`;
+    const hasMergedPullRequest = await ctx.runQuery(
+      internal.githubData.hasMergedPullRequestForTask,
+      {
+        taskId: args.taskId,
+      },
+    );
+    if (hasMergedPullRequest) {
+      await logOrchestratorEvent(ctx, {
+        kind: "t3.pr.ensure-skipped",
+        summary: "Skipped pull request ensure because this task already has a merged PR.",
+        eventKey: `${idempotencyKey}:skipped:merged-pr`,
+        taskId: args.taskId,
+        workSessionId: args.workSessionId,
+        payload: {
+          reason: args.reason ?? "unspecified",
+          branch: seed.branch,
+          worktreePath: seed.worktreePath,
+        },
+      });
+      return {
+        status: "skipped" as const,
+        summary: "Task already has a merged pull request.",
+      };
+    }
+
     await logOrchestratorEvent(ctx, {
       kind: "t3.pr.ensure-requested",
       summary: "Preparing to call local T3 bridge to ensure task pull request.",

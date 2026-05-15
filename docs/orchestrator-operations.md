@@ -5,6 +5,7 @@ This runbook is for the current Vevin pilot topology:
 - Convex dev is the canonical live orchestrator deployment until production cutover.
 - Slack and GitHub webhooks point at the active Convex site URL.
 - Local T3 runs on this Windows machine and is exposed through Cloudflare at `https://t3.olumbe.com`.
+- `t3code-server` and `cloudflared-t3code` should both run as Windows services.
 
 Use this with `apps/orchestrator/AGENTS.md` and `docs/orchestrator-deployment.md`.
 
@@ -21,7 +22,8 @@ bun run health:orchestrator
 The command checks:
 
 - `t3code-server` scheduled task
-- `t3code-tunnel` scheduled task
+- `t3code-server` Windows service
+- `cloudflared-t3code` Windows service
 - local T3 at `http://127.0.0.1:3773`
 - public T3/Cloudflare at `https://t3.olumbe.com`
 - unauthenticated bridge status at `/api/execution/runs/status`
@@ -231,11 +233,11 @@ bunx convex run taskEvents:listTaskEvents -- '{ "taskId": "<convex task id>", "l
 
 ## Local T3 Or Cloudflare Down
 
-Check Windows scheduled tasks:
+Check the local server and Cloudflare Windows services:
 
 ```powershell
-schtasks /query /tn t3code-server /fo LIST /v
-schtasks /query /tn t3code-tunnel /fo LIST /v
+Get-Service t3code-server
+Get-Service cloudflared-t3code
 ```
 
 Check local and tunnel reachability:
@@ -251,6 +253,45 @@ Expected unauthenticated bridge result:
 - `401`: route exists and shared secret is configured
 - `503`: route exists but local server is missing `T3_EXECUTION_BRIDGE_SHARED_SECRET`
 - `404`: running server build does not include the bridge route, or Cloudflare is not reaching it
+- Cloudflare `530`: Cloudflare is reachable but no tunnel connector is connected
+
+The current production-like services are:
+
+- `t3code-server`: NSSM-wrapped Windows service that runs
+  `scripts\start-t3code-server.cmd`
+- `cloudflared-t3code`: Cloudflare Tunnel Windows service
+
+The Cloudflare tunnel config should forward to `http://127.0.0.1:3773`, not
+`http://localhost:3773`. On Windows, `localhost` can resolve to IPv6 and hit a
+parallel hot-reload server instead of the production-like service.
+
+The old `t3code-server` and `t3code-tunnel` scheduled tasks should remain
+disabled after both services are healthy.
+
+Useful service commands:
+
+```powershell
+Get-Service t3code-server
+Restart-Service t3code-server
+sc.exe qc t3code-server
+Get-Service cloudflared-t3code
+Restart-Service cloudflared-t3code
+sc.exe qc cloudflared-t3code
+sc.exe qfailure cloudflared-t3code
+```
+
+If either service needs to be installed or repaired, run an elevated PowerShell:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+C:\Users\Vivek\Affil\t3code\scripts\install-t3code-server-service.ps1
+C:\Users\Vivek\Affil\t3code\scripts\install-cloudflared-t3code-service.ps1
+```
+
+On 2026-05-15 the old scheduled tunnel task was found stopped because Task
+Scheduler had `Stop Task If Runs X Hours and X Mins` set to 72 hours. The fix was
+to disable that execution limit and replace the tunnel scheduled task with the
+`cloudflared-t3code` service.
 
 For active local development:
 
@@ -258,7 +299,92 @@ For active local development:
 bun run dev:local-cloudflare
 ```
 
-Stop or pause the `t3code-server` scheduled task first so the hot-reload server can bind `3773`.
+Stop `t3code-server` first so the hot-reload server can bind `3773`. Set
+`T3CODE_SKIP_CLOUDFLARE=1` when the `cloudflared-t3code` service is already
+running. Use `bun run dev:local-cloudflare`, not `bun run dev:server`, when the
+public Cloudflare URL should point at the hot-reload server; the local Cloudflare
+dev wrapper keeps the stable pairing token armed in the dev auth database.
+
+## Updating T3 Code Server From Upstream
+
+The services run this local checkout. Use the scripted path from an elevated
+PowerShell:
+
+```powershell
+cd C:\Users\Vivek\Affil\t3code
+Set-ExecutionPolicy -Scope Process Bypass -Force
+.\scripts\update-t3code-server.ps1
+```
+
+The script refuses to merge over a dirty worktree unless `-AllowDirty` is
+passed. It fetches/merges `pingdotgg/main`, installs dependencies, builds,
+restarts `t3code-server`, and runs `bun run health:orchestrator`.
+
+Manual equivalent:
+
+```powershell
+cd C:\Users\Vivek\Affil\t3code
+git fetch pingdotgg main
+git merge pingdotgg/main
+bun install
+bun run build
+Restart-Service t3code-server
+curl.exe -i http://127.0.0.1:3773/
+curl.exe -i https://t3.olumbe.com/
+curl.exe -i -X POST https://t3.olumbe.com/api/execution/runs/status
+```
+
+Expected bridge result is `401` without auth. If it returns `404`, the running
+server build does not include the bridge route or the tunnel is not reaching the
+server. If it returns `503`, the server is missing the bridge shared secret.
+
+The Cloudflare service usually does not need a restart when T3 code changes,
+because it only forwards traffic to the local port.
+
+## Health Monitor Slack Alerts
+
+`bun run health:orchestrator` can post failure alerts through Convex to Slack.
+The local monitor does not use Slack credentials directly. It sends a signed
+request to Convex, and Convex posts to Slack through the Chat SDK.
+
+Current alert destination:
+
+```text
+#infrastructure
+T3_OPS_SLACK_ALERT_CHANNEL_ID=slack:C08JGQQMJCQ
+```
+
+Required env:
+
+```text
+T3_OPS_ALERT_SECRET=<shared local monitor to Convex secret>
+T3_OPS_SLACK_ALERT_CHANNEL_ID=slack:C08JGQQMJCQ
+```
+
+Convex dev must have the same values:
+
+```powershell
+cd C:\Users\Vivek\Affil\t3code\apps\orchestrator
+bunx convex env set T3_OPS_ALERT_SECRET "<secret>"
+bunx convex env set T3_OPS_SLACK_ALERT_CHANNEL_ID "slack:C08JGQQMJCQ"
+```
+
+Run the notifying monitor once:
+
+```powershell
+cd C:\Users\Vivek\Affil\t3code
+.\scripts\run-orchestrator-health-monitor.cmd
+```
+
+Install the recurring Windows scheduled task from an elevated PowerShell:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass -Force
+C:\Users\Vivek\Affil\t3code\scripts\install-orchestrator-health-monitor-task.ps1
+```
+
+The scheduled task runs every five minutes by default and posts only when a
+health check fails.
 
 ## Replay Notes
 

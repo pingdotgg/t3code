@@ -24,16 +24,20 @@ export function buildTaskIntakeTitle(message: TaskIntakeMessage): string {
 
 function buildTaskIntakeRelayPrompt(message: TaskIntakeMessage): string {
   const text = message.text.trim();
+  const nativeImageCount =
+    message.attachments?.filter((attachment) => "dataUrl" in attachment).length ?? 0;
   const attachmentLines =
     message.attachments
-      ?.map((attachment, index) => {
+      ?.filter((attachment) => !("dataUrl" in attachment) && attachment.url !== undefined)
+      .map((attachment, index) => {
         const label = attachment.name?.trim() || `Attachment ${index + 1}`;
         return `${label}: ${attachment.url}`;
       })
       .filter((line) => line.length > 0) ?? [];
 
   if (attachmentLines.length === 0) {
-    return text.length > 0 ? text : "(empty message body)";
+    if (text.length > 0) return text;
+    return nativeImageCount > 0 ? "(image attachment)" : "(empty message body)";
   }
 
   return [text.length > 0 ? text : "(empty message body)", "", ...attachmentLines].join("\n");

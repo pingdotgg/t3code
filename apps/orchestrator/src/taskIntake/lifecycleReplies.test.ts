@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildTaskLifecycleReplyBody,
   buildTaskPullRequestStatusReplyBody,
+  buildTaskUserInputRequestReplyBody,
   taskPullRequestStatusReplyEventKey,
   taskStartedStatusReplyEventKey,
 } from "../../convex/taskEvents.ts";
@@ -92,6 +93,37 @@ describe("chatSdkThreadIdForLifecycleReply", () => {
         "Pull request: https://github.com/acme/app/pull/42",
         "Preview (Preview - nextcard-web): https://nextcard-web-abc123.nextcard.com",
         "Preview (Preview - nextcard-mcp): https://nextcard-mcp-abc123.nextcard.com",
+      ].join("\n"),
+    );
+  });
+
+  it("relays provider user-input questions without extra orchestration framing", () => {
+    expect(
+      buildTaskUserInputRequestReplyBody({
+        questions: [
+          {
+            id: "confirm",
+            header: "Confirm approach",
+            question: "Should I update the seed branch prefixes now?",
+            options: [
+              {
+                label: "Yes",
+                description: "Apply the change.",
+              },
+              {
+                label: "No",
+                description: "Leave it unchanged.",
+              },
+            ],
+          },
+        ],
+      }),
+    ).toBe(
+      [
+        "*Confirm approach*",
+        "Should I update the seed branch prefixes now?",
+        "- Yes: Apply the change.",
+        "- No: Leave it unchanged.",
       ].join("\n"),
     );
   });

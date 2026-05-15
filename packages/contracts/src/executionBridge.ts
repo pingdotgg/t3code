@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
+  ApprovalRequestId,
   IsoDateTime,
   MessageId,
   ProjectId,
@@ -14,9 +15,12 @@ import {
   DEFAULT_RUNTIME_MODE,
   ModelSelection,
   ProviderInteractionMode,
+  UploadChatAttachment,
+  ProviderUserInputAnswers,
   RuntimeMode,
 } from "./orchestration.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
+import { UserInputQuestion } from "./providerRuntime.ts";
 
 export const ExecutionRunId = TrimmedNonEmptyString;
 export type ExecutionRunId = typeof ExecutionRunId.Type;
@@ -36,6 +40,7 @@ export const ExecutionRunCreateRequest = Schema.Struct({
   controlThreadId: ControlThreadExternalId,
   executionRunId: ExecutionRunId,
   initialPrompt: Schema.String,
+  attachments: Schema.optional(Schema.Array(UploadChatAttachment)),
   workspaceRoot: TrimmedNonEmptyString,
   title: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
@@ -88,6 +93,7 @@ export const ExecutionRunContinueRequest = Schema.Struct({
   executionRunId: ExecutionRunId,
   t3ThreadId: ThreadId,
   prompt: Schema.String,
+  attachments: Schema.optional(Schema.Array(UploadChatAttachment)),
   taskRuntime: Schema.optional(Schema.Boolean),
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
   interactionMode: ProviderInteractionMode.pipe(
@@ -142,6 +148,7 @@ export const TaskRuntimeMaterializeRequest = Schema.Struct({
   taskId: TrimmedNonEmptyString,
   workSessionId: TaskRuntimeMaterializationId,
   initialPrompt: Schema.String,
+  attachments: Schema.optional(Schema.Array(UploadChatAttachment)),
   project: Schema.Struct({
     repoName: TrimmedNonEmptyString,
     workspaceRoot: TrimmedNonEmptyString,
@@ -195,6 +202,36 @@ export const TaskRuntimeAssistantMessageEvent = Schema.Struct({
   assistantMessage: TrimmedNonEmptyString,
 });
 export type TaskRuntimeAssistantMessageEvent = typeof TaskRuntimeAssistantMessageEvent.Type;
+
+export const TaskRuntimeUserInputRequestEvent = Schema.Struct({
+  eventId: TrimmedNonEmptyString,
+  taskId: TrimmedNonEmptyString,
+  workSessionId: TaskRuntimeMaterializationId,
+  occurredAt: IsoDateTime,
+  t3ThreadId: ThreadId,
+  t3TurnId: Schema.optional(TurnId),
+  requestId: ApprovalRequestId,
+  questions: Schema.Array(UserInputQuestion),
+});
+export type TaskRuntimeUserInputRequestEvent = typeof TaskRuntimeUserInputRequestEvent.Type;
+
+export const TaskRuntimeUserInputRespondRequest = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  workSessionId: TaskRuntimeMaterializationId,
+  t3ThreadId: ThreadId,
+  requestId: ApprovalRequestId,
+  answers: ProviderUserInputAnswers,
+});
+export type TaskRuntimeUserInputRespondRequest = typeof TaskRuntimeUserInputRespondRequest.Type;
+
+export const TaskRuntimeUserInputRespondResponse = Schema.Struct({
+  taskId: TrimmedNonEmptyString,
+  workSessionId: TaskRuntimeMaterializationId,
+  t3ThreadId: ThreadId,
+  requestId: ApprovalRequestId,
+  acceptedAt: IsoDateTime,
+});
+export type TaskRuntimeUserInputRespondResponse = typeof TaskRuntimeUserInputRespondResponse.Type;
 
 export const TaskPullRequestEnsureRequest = Schema.Struct({
   taskId: TrimmedNonEmptyString,

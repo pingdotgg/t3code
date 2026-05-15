@@ -57,6 +57,40 @@ describe("Task Intake contracts", () => {
     );
   });
 
+  it("decodes native image attachments for chat intake", () => {
+    const message = decodeTaskIntakeMessage({
+      eventId: "slack:event:image",
+      source: "slack",
+      conversation: {
+        source: "slack",
+        externalLinkKind: "slack_thread",
+        externalId: "T123:C123:1712345678.000100",
+      },
+      messageId: "1712345678.000300",
+      text: "What changed in this screenshot?",
+      attachments: [
+        {
+          type: "image",
+          name: "screenshot.png",
+          mimeType: "image/png",
+          sizeBytes: 4,
+          dataUrl: "data:image/png;base64,dGVzdA==",
+          url: "https://files.slack.com/files-pri/T123-F123/screenshot.png",
+        },
+      ],
+      receivedAt: "2026-05-02T16:00:00.000Z",
+    });
+
+    expect(message.attachments?.[0]).toMatchObject({
+      type: "image",
+      name: "screenshot.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+      url: "https://files.slack.com/files-pri/T123-F123/screenshot.png",
+    });
+    expect(message.attachments?.[0]).toHaveProperty("dataUrl", "data:image/png;base64,dGVzdA==");
+  });
+
   it("decodes a Linear issue comment into the shared intake shape", () => {
     const message = decodeTaskIntakeMessage({
       eventId: "linear:webhook:1",

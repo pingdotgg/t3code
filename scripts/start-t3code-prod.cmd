@@ -1,23 +1,22 @@
 @echo off
 setlocal
 
-REM Start all three prod pieces of the t3code setup via Windows Task Scheduler:
-REM   - t3code-server  : local t3 server on 127.0.0.1:3773
-REM   - t3code-tunnel  : cloudflared tunnel exposing it at the public URL
-REM   - t3code-desktop : the packaged desktop app
+REM Start all three prod pieces of the t3code setup:
+REM   - t3code-server       : Windows service when installed, otherwise scheduled task fallback
+REM   - cloudflared-t3code  : Windows service exposing https://t3.olumbe.com
+REM   - t3code-desktop      : packaged desktop app scheduled task
 REM
-REM Safe to run if they're already running (schtasks /run is a no-op on a
-REM running task). Intended for local use; the tasks themselves auto-fire
-REM at user login via Windows Task Scheduler.
+REM Safe to run if already running. Intended for local use; services/tasks
+REM auto-start at boot/login.
 
 set "REPO_ROOT=%~dp0.."
 set "LOG_FILE=%REPO_ROOT%\logs\t3code-server.log"
 
 echo Starting t3code-server...
-schtasks /run /tn t3code-server >nul 2>&1
+powershell -NoProfile -Command "if (Get-Service t3code-server -ErrorAction SilentlyContinue) { Start-Service t3code-server } else { schtasks /run /tn t3code-server | Out-Null }" >nul 2>&1
 
-echo Starting t3code-tunnel...
-schtasks /run /tn t3code-tunnel >nul 2>&1
+echo Starting cloudflared-t3code...
+powershell -NoProfile -Command "if (Get-Service cloudflared-t3code -ErrorAction SilentlyContinue) { Start-Service cloudflared-t3code } else { schtasks /run /tn t3code-tunnel | Out-Null }" >nul 2>&1
 
 echo Starting t3code-desktop...
 schtasks /run /tn t3code-desktop >nul 2>&1

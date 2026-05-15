@@ -41,6 +41,58 @@ function t3WebAppBaseUrl() {
   );
 }
 
+function toConvexModelSelection(
+  modelSelection:
+    | {
+        readonly instanceId: string;
+        readonly model: string;
+        readonly options?: readonly {
+          readonly id: string;
+          readonly value: string | boolean;
+        }[];
+      }
+    | undefined,
+) {
+  if (modelSelection === undefined) return undefined;
+
+  return {
+    instanceId: modelSelection.instanceId,
+    model: modelSelection.model,
+    ...(modelSelection.options !== undefined
+      ? {
+          options: modelSelection.options.map((option) => ({
+            id: option.id,
+            value: option.value,
+          })),
+        }
+      : {}),
+  };
+}
+
+function stripTeamAppMention(text: string) {
+  let next = text;
+  const botUserId = process.env.SLACK_BOT_USER_ID?.trim();
+  if (botUserId) {
+    next = next.replace(new RegExp(`<@${botUserId}(?:\\|[^>]+)?>`, "gi"), "");
+    next = next.replace(new RegExp(`(^|\\s)@${botUserId}\\b`, "gi"), " ");
+  }
+  const botUserName = process.env.SLACK_BOT_USERNAME?.trim() || "Vevin";
+  next = next.replace(
+    new RegExp(`(^|\\s)@${botUserName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"),
+    " ",
+  );
+  return next.replace(/[ \t]{2,}/g, " ").trim();
+}
+
+function buildUserInputAnswers(questionsJson: string, answerText: string) {
+  const questions = JSON.parse(questionsJson) as Array<{ readonly id?: unknown }>;
+  const questionIds = questions
+    .map((question) => (typeof question.id === "string" ? question.id.trim() : ""))
+    .filter((id) => id.length > 0);
+  const ids = questionIds.length > 0 ? questionIds : ["answer"];
+  return Object.fromEntries(ids.map((id) => [id, answerText]));
+}
+
 function errorSummary(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -331,6 +383,15 @@ export const handleChatSdkWebhook = internalAction({
     const bot = createTaskIntakeChatSdkBot({
       sources: new Set([args.source]),
       state: chatSdkState(ctx),
+      onAttachmentFetchFailure(failure) {
+        void logOrchestratorEvent(ctx, {
+          kind: "slack.attachment.fetch-failed",
+          severity: "warn",
+          summary: "Slack image attachment could not be fetched as native bytes.",
+          eventKey: `slack:attachment-fetch-failed:${crypto.randomUUID()}`,
+          payload: failure,
+        });
+      },
       async onMessage({ thread, message, intakeMessage }) {
         try {
           console.log("taskIntake.message.received", {
@@ -342,6 +403,10 @@ export const handleChatSdkWebhook = internalAction({
             externalLinkKind: intakeMessage.conversation.externalLinkKind,
             externalId: intakeMessage.conversation.externalId,
             textPreview: intakeMessage.text.slice(0, 120),
+            attachmentCount: intakeMessage.attachments?.length ?? 0,
+            nativeImageAttachmentCount:
+              intakeMessage.attachments?.filter((attachment) => "dataUrl" in attachment).length ??
+              0,
           });
           await logOrchestratorEvent(ctx, {
             kind: "slack.message.received",
@@ -358,6 +423,17 @@ export const handleChatSdkWebhook = internalAction({
               externalId: intakeMessage.conversation.externalId,
               isMention: message.isMention,
               textPreview: intakeMessage.text.slice(0, 120),
+              chatSdkAttachmentCount: message.attachments.length,
+              chatSdkAttachmentTypes: message.attachments.map((attachment) => ({
+                type: attachment.type,
+                name: attachment.name,
+                mimeType: attachment.mimeType,
+                hasFetchData: attachment.fetchData !== undefined,
+              })),
+              attachmentCount: intakeMessage.attachments?.length ?? 0,
+              nativeImageAttachmentCount:
+                intakeMessage.attachments?.filter((attachment) => "dataUrl" in attachment).length ??
+                0,
             },
           });
           const rawSlackMessage = message.raw as {
@@ -395,6 +471,108 @@ export const handleChatSdkWebhook = internalAction({
             }
             return;
           }
+
+          const pendingUserInput = await ctx.runQuery(
+            internal.taskEvents.findOpenTaskUserInputForExternalLink,
+            {
+              kind: "slack_thread",
+              externalId: intakeMessage.conversation.externalId,
+            },
+          );
+          if (pendingUserInput !== null) {
+            const answerText = stripTeamAppMention(intakeMessage.text);
+            if (answerText.length === 0) {
+              await thread
+                .post(
+                  postableReplyBody({
+                    kind: "slack_thread",
+                    body: "I need a little more detail to answer Vevin's pending question.",
+                  }),
+                )
+                .catch(() => undefined);
+              return;
+            }
+
+            const answers = buildUserInputAnswers(pendingUserInput.questionsJson, answerText);
+            const claim = await ctx.runMutation(internal.taskEvents.claimTaskUserInputAnswer, {
+              taskId: pendingUserInput.taskId,
+              workSessionId: pendingUserInput.workSessionId,
+              requestId: pendingUserInput.requestId,
+              sourceEventId: intakeMessage.eventId,
+              answerText,
+            });
+            if (!claim.claimed) {
+              return;
+            }
+
+            await logOrchestratorEvent(ctx, {
+              kind: "task-intake.user-input-answer.claimed",
+              summary: "Slack message is answering a pending provider user-input request.",
+              eventKey: `${intakeMessage.eventId}:user-input-answer-claimed`,
+              taskId: pendingUserInput.taskId,
+              workSessionId: pendingUserInput.workSessionId,
+              externalId: intakeMessage.conversation.externalId,
+              payload: {
+                requestId: pendingUserInput.requestId,
+                answerPreview: answerText.slice(0, 120),
+              },
+            });
+
+            try {
+              const response = await ctx.runAction(api.t3Runtime.respondTaskRuntimeUserInput, {
+                eventId: intakeMessage.eventId,
+                taskId: pendingUserInput.taskId,
+                workSessionId: pendingUserInput.workSessionId,
+                t3ThreadId: pendingUserInput.t3ThreadId,
+                requestId: pendingUserInput.requestId,
+                answersJson: JSON.stringify(answers),
+              });
+              await ctx.runMutation(internal.taskEvents.recordTaskUserInputResolved, {
+                taskId: pendingUserInput.taskId,
+                workSessionId: pendingUserInput.workSessionId,
+                requestId: pendingUserInput.requestId,
+                answerEventKey: claim.eventKey,
+                answersJson: JSON.stringify(answers),
+              });
+              await logOrchestratorEvent(ctx, {
+                kind: "task-intake.user-input-answer.accepted",
+                summary: "Provider user-input answer was accepted by T3.",
+                eventKey: `${intakeMessage.eventId}:user-input-answer-accepted`,
+                taskId: pendingUserInput.taskId,
+                workSessionId: pendingUserInput.workSessionId,
+                externalId: intakeMessage.conversation.externalId,
+                payload: {
+                  requestId: response.requestId,
+                  t3ThreadId: response.t3ThreadId,
+                  acceptedAt: response.acceptedAt,
+                },
+              });
+            } catch (error) {
+              await thread
+                .post(
+                  postableReplyBody({
+                    kind: "slack_thread",
+                    body: `I could not send that answer to Vevin: ${errorSummary(error)}`,
+                  }),
+                )
+                .catch(() => undefined);
+              await logOrchestratorEvent(ctx, {
+                kind: "task-intake.user-input-answer.failed",
+                severity: "error",
+                summary: "Failed to send provider user-input answer to T3.",
+                eventKey: `${intakeMessage.eventId}:user-input-answer-failed`,
+                taskId: pendingUserInput.taskId,
+                workSessionId: pendingUserInput.workSessionId,
+                externalId: intakeMessage.conversation.externalId,
+                payload: {
+                  requestId: pendingUserInput.requestId,
+                  error: errorSummary(error),
+                },
+              });
+            }
+            return;
+          }
+
           const existingSlackLink = await ctx.runQuery(api.taskExternalLinks.findTaskExternalLink, {
             kind: "slack_thread",
             externalId: intakeMessage.conversation.externalId,
@@ -475,9 +653,18 @@ export const handleChatSdkWebhook = internalAction({
               },
               runtime: {
                 async materializeTaskRuntime(input) {
+                  const convexModelSelection = toConvexModelSelection(input.modelSelection);
                   console.log("taskIntake.runtime.materialize.start", {
                     taskId: input.taskId,
+                    modelSelection:
+                      convexModelSelection === undefined
+                        ? undefined
+                        : {
+                            instanceId: convexModelSelection.instanceId,
+                            model: convexModelSelection.model,
+                          },
                     promptPreview: input.initialPrompt.slice(0, 120),
+                    attachmentCount: input.attachments?.length ?? 0,
                   });
                   await logOrchestratorEvent(ctx, {
                     kind: "task-intake.runtime.materialize-started",
@@ -486,14 +673,33 @@ export const handleChatSdkWebhook = internalAction({
                     payload: {
                       taskId: input.taskId,
                       startCodingAgent: input.startCodingAgent,
+                      ...(convexModelSelection !== undefined
+                        ? {
+                            modelSelection: {
+                              instanceId: convexModelSelection.instanceId,
+                              model: convexModelSelection.model,
+                            },
+                          }
+                        : {}),
                       promptPreview: input.initialPrompt.slice(0, 120),
+                      attachmentCount: input.attachments?.length ?? 0,
                     },
                   });
-                  const materialized = await ctx.runAction(api.t3Runtime.materializeTaskRuntime, {
+                  const materializeArgs = {
                     taskId: input.taskId as Id<"tasks">,
                     initialPrompt: input.initialPrompt,
+                    ...(input.attachments !== undefined
+                      ? { attachments: [...input.attachments] }
+                      : {}),
                     startCodingAgent: input.startCodingAgent,
-                  });
+                    ...(convexModelSelection !== undefined
+                      ? { modelSelection: convexModelSelection }
+                      : {}),
+                  };
+                  const materialized = await ctx.runAction(
+                    api.t3Runtime.materializeTaskRuntime,
+                    materializeArgs,
+                  );
                   console.log("taskIntake.runtime.materialize.done", {
                     taskId: input.taskId,
                     t3ThreadId: materialized.t3ThreadId,
@@ -522,6 +728,7 @@ export const handleChatSdkWebhook = internalAction({
                     workSessionId: input.workSessionId,
                     t3ThreadId: input.t3ThreadId,
                     promptPreview: input.prompt.slice(0, 120),
+                    attachmentCount: input.attachments?.length ?? 0,
                   });
                   await logOrchestratorEvent(ctx, {
                     kind: "task-intake.runtime.continue-started",
@@ -535,6 +742,7 @@ export const handleChatSdkWebhook = internalAction({
                       workSessionId: input.workSessionId,
                       t3ThreadId: input.t3ThreadId,
                       promptPreview: input.prompt.slice(0, 120),
+                      attachmentCount: input.attachments?.length ?? 0,
                     },
                   });
                   const continued = await ctx.runAction(api.t3Runtime.continueTaskRuntime, {
@@ -543,6 +751,9 @@ export const handleChatSdkWebhook = internalAction({
                     workSessionId: input.workSessionId as Id<"workSessions">,
                     t3ThreadId: input.t3ThreadId,
                     prompt: input.prompt,
+                    ...(input.attachments !== undefined
+                      ? { attachments: [...input.attachments] }
+                      : {}),
                   });
                   console.log("taskIntake.runtime.continue.done", {
                     eventId: input.eventId,
@@ -1220,6 +1431,140 @@ export const postTaskRuntimeAssistantMessage = internalAction({
 
     if (postedIds.length === 0) {
       return { posted: false, reason: "all_assistant_message_replies_failed" };
+    }
+    return {
+      posted: true,
+      ...(postedIds[0] !== undefined ? { externalMessageId: postedIds[0] } : {}),
+    };
+  },
+});
+
+export const postTaskRuntimeUserInputRequest = internalAction({
+  args: {
+    eventId: v.string(),
+    taskId: v.id("tasks"),
+    workSessionId: v.id("workSessions"),
+    occurredAt: v.string(),
+    t3ThreadId: v.string(),
+    t3TurnId: v.optional(v.string()),
+    requestId: v.string(),
+    questionsJson: v.string(),
+  },
+  returns: v.object({
+    posted: v.boolean(),
+    reason: v.optional(v.string()),
+    externalMessageId: v.optional(v.string()),
+  }),
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    readonly posted: boolean;
+    readonly reason?: string;
+    readonly externalMessageId?: string;
+  }> => {
+    const claims = await ctx.runMutation(internal.taskEvents.claimTaskUserInputRequestReplies, {
+      eventId: args.eventId,
+      taskId: args.taskId,
+      workSessionId: args.workSessionId,
+      occurredAt: args.occurredAt,
+      t3ThreadId: args.t3ThreadId,
+      ...(args.t3TurnId !== undefined ? { t3TurnId: args.t3TurnId } : {}),
+      requestId: args.requestId,
+      questionsJson: args.questionsJson,
+    });
+    await logOrchestratorEvent(ctx, {
+      kind: "task-intake.user-input-request.claimed",
+      summary: "Claimed user-input request delivery targets.",
+      eventKey: `${args.eventId}:user-input-request-claimed`,
+      taskId: args.taskId,
+      workSessionId: args.workSessionId,
+      payload: {
+        requestId: args.requestId,
+        claimCount: claims.length,
+      },
+    });
+    if (claims.length === 0) {
+      return { posted: false, reason: "no_unclaimed_slack_links" };
+    }
+
+    const bot = createTaskIntakeChatSdkBot({
+      sources: new Set(["slack"]),
+      state: chatSdkState(ctx),
+      async onMessage() {},
+    });
+    await bot.initialize();
+
+    const postedIds: string[] = [];
+    for (const claim of claims) {
+      try {
+        await logOrchestratorEvent(ctx, {
+          kind: "task-intake.user-input-request.delivery-started",
+          summary: "Posting user-input request to Slack.",
+          eventKey: `${claim.claimEventKey}:orchestrator-started`,
+          taskId: claim.taskId,
+          workSessionId: claim.workSessionId,
+          externalId: claim.externalId,
+          payload: {
+            claimEventKey: claim.claimEventKey,
+            linkId: claim.linkId,
+            requestId: args.requestId,
+          },
+        });
+        const posted: { readonly id: string } = await bot
+          .thread(
+            chatSdkThreadIdForLifecycleReply({
+              kind: claim.kind,
+              externalId: claim.externalId,
+            }),
+          )
+          .post(postableReplyBody({ kind: claim.kind, body: claim.body }));
+        postedIds.push(posted.id);
+        await ctx.runMutation(internal.taskEvents.recordTaskUserInputRequestReplyDelivered, {
+          taskId: claim.taskId,
+          claimEventKey: claim.claimEventKey,
+          linkId: claim.linkId,
+          externalMessageId: posted.id,
+        });
+        await logOrchestratorEvent(ctx, {
+          kind: "task-intake.user-input-request.delivered",
+          summary: "Delivered user-input request to Slack.",
+          eventKey: `${claim.claimEventKey}:orchestrator-delivered`,
+          taskId: claim.taskId,
+          workSessionId: claim.workSessionId,
+          externalId: claim.externalId,
+          payload: {
+            claimEventKey: claim.claimEventKey,
+            linkId: claim.linkId,
+            externalMessageId: posted.id,
+          },
+        });
+      } catch (error) {
+        await ctx.runMutation(internal.taskEvents.recordTaskUserInputRequestReplyFailed, {
+          taskId: claim.taskId,
+          claimEventKey: claim.claimEventKey,
+          linkId: claim.linkId,
+          error: errorSummary(error),
+        });
+        await logOrchestratorEvent(ctx, {
+          kind: "task-intake.user-input-request.failed",
+          severity: "error",
+          summary: "Failed to deliver user-input request to Slack.",
+          eventKey: `${claim.claimEventKey}:orchestrator-failed`,
+          taskId: claim.taskId,
+          workSessionId: claim.workSessionId,
+          externalId: claim.externalId,
+          payload: {
+            claimEventKey: claim.claimEventKey,
+            linkId: claim.linkId,
+            error: errorSummary(error),
+          },
+        });
+      }
+    }
+
+    if (postedIds.length === 0) {
+      return { posted: false, reason: "all_user_input_request_replies_failed" };
     }
     return {
       posted: true,

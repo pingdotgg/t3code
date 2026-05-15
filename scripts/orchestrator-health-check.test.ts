@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { classifyBridgeStatus, defaultHealthCheckConfig } from "./orchestrator-health-check.ts";
+import {
+  classifyBridgeStatus,
+  defaultHealthCheckConfig,
+  parseEnvFileContents,
+} from "./orchestrator-health-check.ts";
 
 describe("orchestrator-health-check", () => {
   it("classifies unauthenticated bridge status codes", () => {
@@ -15,13 +19,36 @@ describe("orchestrator-health-check", () => {
   });
 
   it("resolves defaults with env overrides", () => {
+    const config = defaultHealthCheckConfig({
+      T3CODE_HEALTH_LOCAL_BASE_URL: "http://localhost:4773",
+      T3CODE_HEALTH_PUBLIC_BASE_URL: "https://example.com",
+      T3CODE_HEALTH_CONVEX_SITE_URL: "https://convex.example",
+      T3_OPS_ALERT_SECRET: "ops-secret",
+      T3CODE_HEALTH_NOTIFY: "1",
+      T3CODE_HEALTH_SERVER_SERVICE: "custom-server",
+      T3CODE_HEALTH_TUNNEL_SERVICE: "custom-tunnel",
+      T3CODE_HEALTH_TIMEOUT_MS: "1234",
+    });
+
+    expect(config.timeoutMs).toBe(1234);
+    expect(config.serverServiceName).toBe("custom-server");
+    expect(config.tunnelServiceName).toBe("custom-tunnel");
+    expect(config.notifyOnFailure).toBe(true);
+    expect(config.alertSecret).toBe("ops-secret");
+    expect(config.alertEndpointUrl).toBe("https://convex.example/ops/health-alert");
+  });
+
+  it("parses local env file values used by the CLI health check", () => {
     expect(
-      defaultHealthCheckConfig({
-        T3CODE_HEALTH_LOCAL_BASE_URL: "http://localhost:4773",
-        T3CODE_HEALTH_PUBLIC_BASE_URL: "https://example.com",
-        T3CODE_HEALTH_CONVEX_SITE_URL: "https://convex.example",
-        T3CODE_HEALTH_TIMEOUT_MS: "1234",
-      }).timeoutMs,
-    ).toBe(1234);
+      parseEnvFileContents(`
+# ignored
+ORCHESTRATOR_BASE_URL=https://scrupulous-fly-947.convex.site
+CONVEX_DEPLOYMENT=dev:scrupulous-fly-947 # team: affil, project: engineering
+bad-line
+`),
+    ).toEqual([
+      ["ORCHESTRATOR_BASE_URL", "https://scrupulous-fly-947.convex.site"],
+      ["CONVEX_DEPLOYMENT", "dev:scrupulous-fly-947"],
+    ]);
   });
 });

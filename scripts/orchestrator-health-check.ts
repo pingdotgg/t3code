@@ -1,18 +1,23 @@
 #!/usr/bin/env node
 // @effect-diagnostics globalConsole:off
+// @effect-diagnostics globalDate:off
 // @effect-diagnostics globalTimers:off
 // @effect-diagnostics nodeBuiltinImport:off
 
 import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 export interface HealthCheckConfig {
   readonly localBaseUrl: string;
   readonly publicBaseUrl: string;
   readonly convexSiteUrl?: string | undefined;
+  readonly alertEndpointUrl?: string | undefined;
+  readonly alertSecret?: string | undefined;
+  readonly notifyOnFailure: boolean;
   readonly orchestratorDir: string;
-  readonly serverTaskName: string;
-  readonly tunnelTaskName: string;
+  readonly serverServiceName: string;
+  readonly tunnelServiceName: string;
   readonly timeoutMs: number;
 }
 
@@ -22,19 +27,64 @@ export interface CheckResult {
   readonly details: string;
 }
 
-function envValue(name: string) {
-  const value = process.env[name]?.trim();
+function envValue(env: NodeJS.ProcessEnv, name: string) {
+  const value = env[name]?.trim();
   return value && value.length > 0 ? value : undefined;
 }
 
+function stripInlineEnvComment(value: string): string {
+  const commentIndex = value.search(/\s#/);
+  return commentIndex === -1 ? value : value.slice(0, commentIndex).trimEnd();
+}
+
+export function parseEnvFileContents(contents: string): ReadonlyArray<readonly [string, string]> {
+  return contents
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("#"))
+    .flatMap((line) => {
+      const separatorIndex = line.indexOf("=");
+      if (separatorIndex <= 0) {
+        return [];
+      }
+
+      const key = line.slice(0, separatorIndex).trim();
+      const value = stripInlineEnvComment(line.slice(separatorIndex + 1));
+      return key.length > 0 ? [[key, value] as const] : [];
+    });
+}
+
+export function loadLocalEnvFiles(env: NodeJS.ProcessEnv = process.env): void {
+  for (const fileName of [".env.local", ".env"]) {
+    if (!existsSync(fileName)) {
+      continue;
+    }
+
+    for (const [key, value] of parseEnvFileContents(readFileSync(fileName, "utf8"))) {
+      if (env[key] === undefined) {
+        env[key] = value;
+      }
+    }
+  }
+}
+
 export function defaultHealthCheckConfig(env: NodeJS.ProcessEnv = process.env): HealthCheckConfig {
+  const convexSiteUrl =
+    envValue(env, "T3CODE_HEALTH_CONVEX_SITE_URL") ?? envValue(env, "ORCHESTRATOR_BASE_URL");
   return {
     localBaseUrl: env.T3CODE_HEALTH_LOCAL_BASE_URL ?? "http://127.0.0.1:3773",
     publicBaseUrl: env.T3CODE_HEALTH_PUBLIC_BASE_URL ?? "https://t3.olumbe.com",
-    convexSiteUrl: envValue("T3CODE_HEALTH_CONVEX_SITE_URL") ?? envValue("ORCHESTRATOR_BASE_URL"),
+    convexSiteUrl,
+    alertEndpointUrl:
+      envValue(env, "T3CODE_HEALTH_ALERT_URL") ??
+      (convexSiteUrl === undefined
+        ? undefined
+        : `${convexSiteUrl.replace(/\/$/, "")}/ops/health-alert`),
+    alertSecret: envValue(env, "T3_OPS_ALERT_SECRET"),
+    notifyOnFailure: env.T3CODE_HEALTH_NOTIFY === "1",
     orchestratorDir: env.T3CODE_HEALTH_ORCHESTRATOR_DIR ?? "apps/orchestrator",
-    serverTaskName: env.T3CODE_HEALTH_SERVER_TASK ?? "t3code-server",
-    tunnelTaskName: env.T3CODE_HEALTH_TUNNEL_TASK ?? "t3code-tunnel",
+    serverServiceName: env.T3CODE_HEALTH_SERVER_SERVICE ?? "t3code-server",
+    tunnelServiceName: env.T3CODE_HEALTH_TUNNEL_SERVICE ?? "cloudflared-t3code",
     timeoutMs: Number(env.T3CODE_HEALTH_TIMEOUT_MS ?? "10000"),
   };
 }
@@ -152,40 +202,37 @@ function runCommand(
   });
 }
 
-async function checkScheduledTask(taskName: string, timeoutMs: number): Promise<CheckResult> {
+async function checkWindowsService(serviceName: string, timeoutMs: number): Promise<CheckResult> {
   if (process.platform !== "win32") {
     return {
-      name: `scheduled task ${taskName}`,
+      name: `windows service ${serviceName}`,
       ok: true,
       details: "skipped on non-Windows platform",
     };
   }
 
   const result = await runCommand(
-    "schtasks.exe",
-    ["/query", "/tn", taskName, "/fo", "LIST", "/v"],
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-Command",
+      [
+        `$service = Get-Service -Name '${serviceName.replaceAll("'", "''")}' -ErrorAction SilentlyContinue`,
+        "if (-not $service) { Write-Output 'missing'; exit 1 }",
+        "Write-Output ($service.Name + ':' + $service.Status + ':' + $service.StartType)",
+        "exit ([int]($service.Status -ne 'Running'))",
+      ].join("; "),
+    ],
     { timeoutMs },
   );
   return {
-    name: `scheduled task ${taskName}`,
+    name: `windows service ${serviceName}`,
     ok: result.code === 0,
     details:
       result.code === 0
-        ? firstMatchingLine(result.stdout, ["TaskName:", "Status:", "Task To Run:"]) ||
-          "task exists"
-        : (result.stderr || result.stdout || `schtasks exited ${result.code}`).trim(),
+        ? result.stdout.trim() || "service is running"
+        : (result.stderr || result.stdout || `powershell exited ${result.code}`).trim(),
   };
-}
-
-function firstMatchingLine(output: string, labels: ReadonlyArray<string>) {
-  const lines = output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  return labels
-    .map((label) => lines.find((line) => line.toLowerCase().startsWith(label.toLowerCase())))
-    .filter((line): line is string => line !== undefined)
-    .join("; ");
 }
 
 async function checkConvex(config: HealthCheckConfig): Promise<ReadonlyArray<CheckResult>> {
@@ -231,8 +278,8 @@ function summarizeConvexRun(output: string) {
 
 export async function runHealthChecks(config: HealthCheckConfig) {
   const results: CheckResult[] = [];
-  results.push(await checkScheduledTask(config.serverTaskName, config.timeoutMs));
-  results.push(await checkScheduledTask(config.tunnelTaskName, config.timeoutMs));
+  results.push(await checkWindowsService(config.serverServiceName, config.timeoutMs));
+  results.push(await checkWindowsService(config.tunnelServiceName, config.timeoutMs));
   results.push(await checkFetch("local T3", config.localBaseUrl, config.timeoutMs));
   results.push(await checkFetch("public T3", config.publicBaseUrl, config.timeoutMs));
   results.push(await checkBridge(config));
@@ -246,8 +293,50 @@ function printResults(results: ReadonlyArray<CheckResult>) {
   }
 }
 
+async function notifyHealthAlert(config: HealthCheckConfig, results: ReadonlyArray<CheckResult>) {
+  const failing = results.filter((result) => !result.ok);
+  if (!config.notifyOnFailure || failing.length === 0) {
+    return;
+  }
+  if (config.alertEndpointUrl === undefined || config.alertSecret === undefined) {
+    console.warn(
+      "WARN ops alert: set T3CODE_HEALTH_ALERT_URL/ORCHESTRATOR_BASE_URL and T3_OPS_ALERT_SECRET",
+    );
+    return;
+  }
+
+  const checkedAt = new Date().toISOString();
+  const response = await fetchWithTimeout(
+    config.alertEndpointUrl,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.alertSecret}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        checkedAt,
+        status: "failing",
+        summary: `${failing.length} orchestrator health check${failing.length === 1 ? "" : "s"} failed.`,
+        results,
+      }),
+    },
+    config.timeoutMs,
+    "ops health alert",
+  );
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    console.warn(`WARN ops alert: ${config.alertEndpointUrl} -> HTTP ${response.status} ${body}`);
+    return;
+  }
+  console.log(`PASS ops alert: posted failure alert to ${config.alertEndpointUrl}`);
+}
+
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const results = await runHealthChecks(defaultHealthCheckConfig());
+  loadLocalEnvFiles();
+  const config = defaultHealthCheckConfig();
+  const results = await runHealthChecks(config);
   printResults(results);
+  await notifyHealthAlert(config, results);
   process.exitCode = results.every((result) => result.ok) ? 0 : 1;
 }

@@ -97,6 +97,20 @@ export const findPullRequestByExternalId = internalQuery({
   },
 });
 
+export const hasMergedPullRequestForTask = internalQuery({
+  args: {
+    taskId: v.id("tasks"),
+  },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("githubPullRequests")
+      .filter((q) => q.eq(q.field("taskId"), args.taskId))
+      .collect();
+    return rows.some((row) => row.state === "merged" || row.mergedAt !== undefined);
+  },
+});
+
 export const recordPullRequestMerged = internalMutation({
   args: {
     externalId: v.string(),
@@ -123,6 +137,29 @@ export const recordPullRequestMerged = internalMutation({
       ...(args.headSha !== undefined ? { headSha: args.headSha } : {}),
       ...(args.headBranch !== undefined ? { headBranch: args.headBranch } : {}),
     });
+
+    const task = await ctx.db.get(row.taskId);
+    if (task !== null && task.status !== "done") {
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      await ctx.db.patch(row.taskId, {
+        status: "done",
+        statusReason: `Pull request merged: ${row.url}`,
+        archivedAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("taskEvents", {
+        taskId: row.taskId,
+        eventKey: `${args.externalId}:task-done`,
+        kind: "status.changed",
+        summary: `Task status changed from ${task.status} to done.`,
+        payloadJson: JSON.stringify({
+          from: task.status,
+          to: "done",
+          reason: `Pull request merged: ${row.url}`,
+        }),
+        createdAt: now,
+      });
+    }
 
     return null;
   },

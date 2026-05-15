@@ -1,10 +1,12 @@
 import { v } from "convex/values";
 import * as DateTime from "effect/DateTime";
 
-import { internalMutation, query } from "./_generated/server.js";
+import { internalMutation, internalQuery, query } from "./_generated/server.js";
 
 const lifecycleReplyStatus = v.union(v.literal("completed"), v.literal("failed"));
 const lifecycleReplyLinkKind = v.union(v.literal("linear_issue"), v.literal("slack_thread"));
+const mutedExplicitReplyWindowMs = 2 * 60 * 60 * 1000;
+type LifecycleReplyLinkKind = "linear_issue" | "slack_thread";
 
 export interface TaskLifecycleReplyInput {
   readonly taskId: string;
@@ -34,6 +36,29 @@ export function taskAssistantMessageReplyEventKey(input: {
   readonly linkId: string;
 }) {
   return `task-assistant-message-reply:${input.workSessionId}:${input.t3MessageId}:${input.linkId}`;
+}
+
+export function taskUserInputRequestEventKey(input: {
+  readonly workSessionId: string;
+  readonly requestId: string;
+}) {
+  return `task-user-input-request:${input.workSessionId}:${input.requestId}`;
+}
+
+export function taskUserInputRequestReplyEventKey(input: {
+  readonly workSessionId: string;
+  readonly requestId: string;
+  readonly linkId: string;
+}) {
+  return `task-user-input-request-reply:${input.workSessionId}:${input.requestId}:${input.linkId}`;
+}
+
+export function taskUserInputAnswerEventKey(input: {
+  readonly workSessionId: string;
+  readonly requestId: string;
+  readonly sourceEventId: string;
+}) {
+  return `task-user-input-answer:${input.workSessionId}:${input.requestId}:${input.sourceEventId}`;
 }
 
 export function taskPullRequestStatusReplyEventKey(input: {
@@ -66,6 +91,41 @@ export function githubPullRequestMergedNotificationEventKey(input: {
   readonly linkId: string;
 }) {
   return `github-pr-merged:${input.taskId}:${input.pullRequestExternalId}:${input.linkId}`;
+}
+
+export function buildTaskUserInputRequestReplyBody(input: {
+  readonly questions: ReadonlyArray<{
+    readonly id: string;
+    readonly header: string;
+    readonly question: string;
+    readonly options?: ReadonlyArray<{
+      readonly label: string;
+      readonly description: string;
+    }>;
+    readonly multiSelect?: boolean;
+  }>;
+}) {
+  const lines: string[] = [];
+  for (const question of input.questions) {
+    if (lines.length > 0) {
+      lines.push("");
+    }
+    const header = question.header.trim();
+    if (header) {
+      lines.push(`*${header}*`);
+    }
+    lines.push(question.question);
+    const options = question.options ?? [];
+    if (options.length > 0) {
+      for (const option of options) {
+        lines.push(`- ${option.label}: ${option.description}`);
+      }
+    }
+    if (question.multiSelect === true) {
+      lines.push("_You can answer with one or more options._");
+    }
+  }
+  return lines.join("\n");
 }
 
 export function buildTaskPullRequestStatusReplyBody(input: {
@@ -139,6 +199,73 @@ function hasDeliveredAssistantMessageReply(input: {
       return false;
     }
   });
+}
+
+function payloadJsonTextPreview(payloadJson: string | undefined) {
+  if (payloadJson === undefined) {
+    return undefined;
+  }
+  try {
+    const payload = JSON.parse(payloadJson) as { readonly textPreview?: unknown };
+    return typeof payload.textPreview === "string" ? payload.textPreview : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isExplicitVevinInvocation(payloadJson: string | undefined) {
+  const textPreview = payloadJsonTextPreview(payloadJson)?.toLowerCase();
+  if (textPreview === undefined) {
+    return false;
+  }
+
+  const botUserId = process.env.SLACK_BOT_USER_ID?.trim();
+  const botUserName = process.env.SLACK_BOT_USERNAME?.trim().toLowerCase() || "vevin";
+  return (
+    (botUserId !== undefined &&
+      botUserId.length > 0 &&
+      textPreview.includes(`<@${botUserId.toLowerCase()}`)) ||
+    textPreview.includes(`@${botUserName}`)
+  );
+}
+
+async function canDeliverToExternalLink(
+  ctx: any,
+  input: {
+    readonly taskId: any;
+    readonly link: { readonly kind: string; readonly muted?: boolean };
+    readonly now: number;
+  },
+) {
+  if (input.link.kind !== "linear_issue" && input.link.kind !== "slack_thread") {
+    return false;
+  }
+  if (input.link.muted !== true) {
+    return true;
+  }
+  if (input.link.kind !== "slack_thread") {
+    return false;
+  }
+
+  const recentEvents = await ctx.db
+    .query("taskEvents")
+    .withIndex("by_task_created", (q: any) => q.eq("taskId", input.taskId))
+    .order("desc")
+    .take(100);
+
+  for (const event of recentEvents) {
+    if (input.now - event.createdAt > mutedExplicitReplyWindowMs) {
+      continue;
+    }
+    if (event.kind === "user-input.resolved") {
+      return true;
+    }
+    if (event.kind === "task-intake.follow-up" && isExplicitVevinInvocation(event.payloadJson)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function taskEventReturn() {
@@ -253,9 +380,11 @@ export const claimTaskLifecycleReplies = internalMutation({
     const claimed = [];
 
     for (const link of links) {
-      if (link.muted || (link.kind !== "linear_issue" && link.kind !== "slack_thread")) {
+      if (!(await canDeliverToExternalLink(ctx, { taskId: args.taskId, link, now }))) {
         continue;
       }
+      const linkKind: LifecycleReplyLinkKind =
+        link.kind === "linear_issue" ? "linear_issue" : "slack_thread";
       if (
         args.status === "completed" &&
         hasDeliveredAssistantMessageReply({
@@ -285,12 +414,12 @@ export const claimTaskLifecycleReplies = internalMutation({
         taskId: args.taskId,
         eventKey: claimEventKey,
         kind: "lifecycle-reply.claimed",
-        summary: `Claimed ${args.status} reply for ${link.kind}.`,
+        summary: `Claimed ${args.status} reply for ${linkKind}.`,
         payloadJson: JSON.stringify({
           taskId: args.taskId,
           workSessionId: args.workSessionId,
           linkId: link._id,
-          kind: link.kind,
+          kind: linkKind,
           externalId: link.externalId,
           status: args.status,
           occurredAt: args.occurredAt,
@@ -304,7 +433,7 @@ export const claimTaskLifecycleReplies = internalMutation({
         claimEventKey,
         taskId: args.taskId,
         linkId: link._id,
-        kind: link.kind,
+        kind: linkKind,
         externalId: link.externalId,
         body: replyBody,
       });
@@ -397,9 +526,11 @@ export const claimTaskPullRequestStatusReplies = internalMutation({
     const claimed = [];
 
     for (const link of links) {
-      if (link.muted || (link.kind !== "linear_issue" && link.kind !== "slack_thread")) {
+      if (link.kind !== "linear_issue" && link.kind !== "slack_thread") {
         continue;
       }
+      const linkKind: LifecycleReplyLinkKind =
+        link.kind === "linear_issue" ? "linear_issue" : "slack_thread";
 
       const claimEventKey = taskPullRequestStatusReplyEventKey({
         workSessionId: String(args.workSessionId),
@@ -418,12 +549,12 @@ export const claimTaskPullRequestStatusReplies = internalMutation({
         taskId: args.taskId,
         eventKey: claimEventKey,
         kind: "pr-status-reply.claimed",
-        summary: `Claimed pull request status reply for ${link.kind}.`,
+        summary: `Claimed pull request status reply for ${linkKind}.`,
         payloadJson: JSON.stringify({
           taskId: args.taskId,
           workSessionId: args.workSessionId,
           linkId: link._id,
-          kind: link.kind,
+          kind: linkKind,
           externalId: link.externalId,
           pullRequestExternalId: args.pullRequestExternalId,
           pullRequestUrl: args.pullRequestUrl,
@@ -443,7 +574,7 @@ export const claimTaskPullRequestStatusReplies = internalMutation({
         claimEventKey,
         taskId: args.taskId,
         linkId: link._id,
-        kind: link.kind,
+        kind: linkKind,
         externalId: link.externalId,
         body,
         pullRequestUrl: args.pullRequestUrl,
@@ -597,9 +728,11 @@ export const claimTaskAssistantMessageReplies = internalMutation({
     const claimed = [];
 
     for (const link of links) {
-      if (link.muted || (link.kind !== "linear_issue" && link.kind !== "slack_thread")) {
+      if (!(await canDeliverToExternalLink(ctx, { taskId: args.taskId, link, now }))) {
         continue;
       }
+      const linkKind: LifecycleReplyLinkKind =
+        link.kind === "linear_issue" ? "linear_issue" : "slack_thread";
 
       const claimEventKey = taskAssistantMessageReplyEventKey({
         workSessionId: String(args.workSessionId),
@@ -618,13 +751,13 @@ export const claimTaskAssistantMessageReplies = internalMutation({
         taskId: args.taskId,
         eventKey: claimEventKey,
         kind: "assistant-message-reply.claimed",
-        summary: `Claimed assistant message reply for ${link.kind}.`,
+        summary: `Claimed assistant message reply for ${linkKind}.`,
         payloadJson: JSON.stringify({
           eventId: args.eventId,
           taskId: args.taskId,
           workSessionId: args.workSessionId,
           linkId: link._id,
-          kind: link.kind,
+          kind: linkKind,
           externalId: link.externalId,
           occurredAt: args.occurredAt,
           t3ThreadId: args.t3ThreadId,
@@ -639,13 +772,361 @@ export const claimTaskAssistantMessageReplies = internalMutation({
         taskId: args.taskId,
         workSessionId: args.workSessionId,
         linkId: link._id,
-        kind: link.kind,
+        kind: linkKind,
         externalId: link.externalId,
         body,
       });
     }
 
     return claimed;
+  },
+});
+
+export const claimTaskUserInputRequestReplies = internalMutation({
+  args: {
+    eventId: v.string(),
+    taskId: v.id("tasks"),
+    workSessionId: v.id("workSessions"),
+    occurredAt: v.string(),
+    t3ThreadId: v.string(),
+    t3TurnId: v.optional(v.string()),
+    requestId: v.string(),
+    questionsJson: v.string(),
+  },
+  returns: v.array(
+    v.object({
+      claimEventKey: v.string(),
+      taskId: v.id("tasks"),
+      workSessionId: v.id("workSessions"),
+      linkId: v.id("taskExternalLinks"),
+      kind: v.literal("slack_thread"),
+      externalId: v.string(),
+      body: v.string(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.taskId);
+    if (task === null) {
+      throw new Error(`Task ${args.taskId} does not exist`);
+    }
+
+    const workSession = await ctx.db.get(args.workSessionId);
+    if (workSession === null) {
+      throw new Error(`Work Session ${args.workSessionId} does not exist`);
+    }
+    if (String(workSession.taskId) !== String(args.taskId)) {
+      throw new Error(`Work Session ${args.workSessionId} does not belong to Task ${args.taskId}`);
+    }
+
+    const questions = JSON.parse(args.questionsJson) as Array<{
+      readonly id: string;
+      readonly header: string;
+      readonly question: string;
+      readonly options?: ReadonlyArray<{
+        readonly label: string;
+        readonly description: string;
+      }>;
+      readonly multiSelect?: boolean;
+    }>;
+    const body = buildTaskUserInputRequestReplyBody({ questions });
+    const requestEventKey = taskUserInputRequestEventKey({
+      workSessionId: String(args.workSessionId),
+      requestId: args.requestId,
+    });
+    const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+    const existingRequest = await ctx.db
+      .query("taskEvents")
+      .withIndex("by_event_key", (q: any) => q.eq("eventKey", requestEventKey))
+      .unique();
+    if (existingRequest === null) {
+      await ctx.db.insert("taskEvents", {
+        taskId: args.taskId,
+        eventKey: requestEventKey,
+        kind: "user-input.requested",
+        summary: "Provider requested user input.",
+        payloadJson: JSON.stringify({
+          eventId: args.eventId,
+          taskId: args.taskId,
+          workSessionId: args.workSessionId,
+          occurredAt: args.occurredAt,
+          t3ThreadId: args.t3ThreadId,
+          ...(args.t3TurnId !== undefined ? { t3TurnId: args.t3TurnId } : {}),
+          requestId: args.requestId,
+          questions,
+        }),
+        createdAt: now,
+      });
+      await ctx.db.patch(args.taskId, {
+        status: "needs_input",
+        updatedAt: now,
+      });
+    }
+
+    const links = await ctx.db
+      .query("taskExternalLinks")
+      .withIndex("by_task", (q: any) => q.eq("taskId", args.taskId))
+      .collect();
+    const claimed = [];
+
+    for (const link of links) {
+      if (link.kind !== "slack_thread") {
+        continue;
+      }
+
+      const claimEventKey = taskUserInputRequestReplyEventKey({
+        workSessionId: String(args.workSessionId),
+        requestId: args.requestId,
+        linkId: String(link._id),
+      });
+      const existingClaim = await ctx.db
+        .query("taskEvents")
+        .withIndex("by_event_key", (q: any) => q.eq("eventKey", claimEventKey))
+        .unique();
+      if (existingClaim !== null) {
+        continue;
+      }
+
+      await ctx.db.insert("taskEvents", {
+        taskId: args.taskId,
+        eventKey: claimEventKey,
+        kind: "user-input-request-reply.claimed",
+        summary: "Claimed user-input request reply for Slack.",
+        payloadJson: JSON.stringify({
+          taskId: args.taskId,
+          workSessionId: args.workSessionId,
+          linkId: link._id,
+          kind: link.kind,
+          externalId: link.externalId,
+          requestId: args.requestId,
+        }),
+        createdAt: now,
+      });
+
+      claimed.push({
+        claimEventKey,
+        taskId: args.taskId,
+        workSessionId: args.workSessionId,
+        linkId: link._id,
+        kind: "slack_thread" as const,
+        externalId: link.externalId,
+        body,
+      });
+    }
+
+    return claimed;
+  },
+});
+
+export const findOpenTaskUserInputForExternalLink = internalQuery({
+  args: {
+    kind: v.literal("slack_thread"),
+    externalId: v.string(),
+  },
+  returns: v.union(
+    v.null(),
+    v.object({
+      taskId: v.id("tasks"),
+      workSessionId: v.id("workSessions"),
+      t3ThreadId: v.string(),
+      t3TurnId: v.optional(v.string()),
+      requestId: v.string(),
+      questionsJson: v.string(),
+    }),
+  ),
+  handler: async (ctx, args) => {
+    const link = await ctx.db
+      .query("taskExternalLinks")
+      .withIndex("by_kind_external_id", (q: any) =>
+        q.eq("kind", args.kind).eq("externalId", args.externalId),
+      )
+      .unique();
+    if (link === null) {
+      return null;
+    }
+
+    const events = await ctx.db
+      .query("taskEvents")
+      .withIndex("by_task_created", (q: any) => q.eq("taskId", link.taskId))
+      .order("desc")
+      .take(100);
+    const resolvedRequestIds = new Set<string>();
+    for (const event of events) {
+      if (event.kind !== "user-input.resolved" || event.payloadJson === undefined) {
+        continue;
+      }
+      try {
+        const payload = JSON.parse(event.payloadJson) as { readonly requestId?: unknown };
+        if (typeof payload.requestId === "string") {
+          resolvedRequestIds.add(payload.requestId);
+        }
+      } catch {
+        // Ignore malformed historical payloads.
+      }
+    }
+
+    for (const event of events) {
+      if (event.kind !== "user-input.requested" || event.payloadJson === undefined) {
+        continue;
+      }
+      try {
+        const payload = JSON.parse(event.payloadJson) as {
+          readonly workSessionId?: unknown;
+          readonly t3ThreadId?: unknown;
+          readonly t3TurnId?: unknown;
+          readonly requestId?: unknown;
+          readonly questions?: unknown;
+        };
+        if (
+          typeof payload.requestId !== "string" ||
+          typeof payload.workSessionId !== "string" ||
+          typeof payload.t3ThreadId !== "string" ||
+          resolvedRequestIds.has(payload.requestId)
+        ) {
+          continue;
+        }
+        return {
+          taskId: link.taskId,
+          workSessionId: payload.workSessionId as any,
+          t3ThreadId: payload.t3ThreadId,
+          ...(typeof payload.t3TurnId === "string" ? { t3TurnId: payload.t3TurnId } : {}),
+          requestId: payload.requestId,
+          questionsJson: JSON.stringify(Array.isArray(payload.questions) ? payload.questions : []),
+        };
+      } catch {
+        // Ignore malformed historical payloads.
+      }
+    }
+
+    return null;
+  },
+});
+
+export const recordTaskUserInputRequestReplyDelivered = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    claimEventKey: v.string(),
+    linkId: v.id("taskExternalLinks"),
+    externalMessageId: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.db.insert("taskEvents", {
+      taskId: args.taskId,
+      eventKey: `${args.claimEventKey}:delivered`,
+      kind: "user-input-request-reply.delivered",
+      summary: "Delivered user-input request reply.",
+      payloadJson: JSON.stringify({
+        claimEventKey: args.claimEventKey,
+        linkId: args.linkId,
+        externalMessageId: args.externalMessageId,
+      }),
+      createdAt: DateTime.toEpochMillis(DateTime.nowUnsafe()),
+    });
+    return null;
+  },
+});
+
+export const recordTaskUserInputRequestReplyFailed = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    claimEventKey: v.string(),
+    linkId: v.id("taskExternalLinks"),
+    error: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await ctx.db.insert("taskEvents", {
+      taskId: args.taskId,
+      eventKey: `${args.claimEventKey}:failed`,
+      kind: "user-input-request-reply.failed",
+      summary: "Failed to deliver user-input request reply.",
+      payloadJson: JSON.stringify({
+        claimEventKey: args.claimEventKey,
+        linkId: args.linkId,
+        error: args.error,
+      }),
+      createdAt: DateTime.toEpochMillis(DateTime.nowUnsafe()),
+    });
+    return null;
+  },
+});
+
+export const claimTaskUserInputAnswer = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    workSessionId: v.id("workSessions"),
+    requestId: v.string(),
+    sourceEventId: v.string(),
+    answerText: v.string(),
+  },
+  returns: v.object({
+    claimed: v.boolean(),
+    eventKey: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const eventKey = taskUserInputAnswerEventKey({
+      workSessionId: String(args.workSessionId),
+      requestId: args.requestId,
+      sourceEventId: args.sourceEventId,
+    });
+    const existing = await ctx.db
+      .query("taskEvents")
+      .withIndex("by_event_key", (q: any) => q.eq("eventKey", eventKey))
+      .unique();
+    if (existing !== null) {
+      return { claimed: false, eventKey };
+    }
+
+    await ctx.db.insert("taskEvents", {
+      taskId: args.taskId,
+      eventKey,
+      kind: "user-input-answer.claimed",
+      summary: "Claimed Slack answer for provider user-input request.",
+      payloadJson: JSON.stringify({
+        workSessionId: args.workSessionId,
+        requestId: args.requestId,
+        sourceEventId: args.sourceEventId,
+        answerPreview:
+          args.answerText.length > 240 ? `${args.answerText.slice(0, 237)}...` : args.answerText,
+      }),
+      createdAt: DateTime.toEpochMillis(DateTime.nowUnsafe()),
+    });
+    return { claimed: true, eventKey };
+  },
+});
+
+export const recordTaskUserInputResolved = internalMutation({
+  args: {
+    taskId: v.id("tasks"),
+    workSessionId: v.id("workSessions"),
+    requestId: v.string(),
+    answerEventKey: v.string(),
+    answersJson: v.string(),
+    externalMessageId: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+    await ctx.db.insert("taskEvents", {
+      taskId: args.taskId,
+      eventKey: `${args.answerEventKey}:resolved`,
+      kind: "user-input.resolved",
+      summary: "Provider user-input request answered from Slack.",
+      payloadJson: JSON.stringify({
+        workSessionId: args.workSessionId,
+        requestId: args.requestId,
+        answers: JSON.parse(args.answersJson),
+        ...(args.externalMessageId !== undefined
+          ? { externalMessageId: args.externalMessageId }
+          : {}),
+      }),
+      createdAt: now,
+    });
+    await ctx.db.patch(args.taskId, {
+      status: "working",
+      updatedAt: now,
+    });
+    return null;
   },
 });
 
@@ -681,9 +1162,11 @@ export const claimGitHubDeploymentReadyReplies = internalMutation({
     const claimed = [];
 
     for (const link of links) {
-      if (link.muted || (link.kind !== "linear_issue" && link.kind !== "slack_thread")) {
+      if (!(await canDeliverToExternalLink(ctx, { taskId: args.taskId, link, now }))) {
         continue;
       }
+      const linkKind: LifecycleReplyLinkKind =
+        link.kind === "linear_issue" ? "linear_issue" : "slack_thread";
 
       const claimEventKey = githubDeploymentReadyReplyEventKey({
         taskId: String(args.taskId),
@@ -703,11 +1186,11 @@ export const claimGitHubDeploymentReadyReplies = internalMutation({
         taskId: args.taskId,
         eventKey: claimEventKey,
         kind: "github-deployment-ready-reply.claimed",
-        summary: `Claimed GitHub deployment ready reply for ${link.kind}.`,
+        summary: `Claimed GitHub deployment ready reply for ${linkKind}.`,
         payloadJson: JSON.stringify({
           taskId: args.taskId,
           linkId: link._id,
-          kind: link.kind,
+          kind: linkKind,
           externalId: link.externalId,
           deploymentId: args.deploymentId,
           ...(args.environment !== undefined ? { environment: args.environment } : {}),
@@ -720,7 +1203,7 @@ export const claimGitHubDeploymentReadyReplies = internalMutation({
         claimEventKey,
         taskId: args.taskId,
         linkId: link._id,
-        kind: link.kind,
+        kind: linkKind,
         externalId: link.externalId,
         ...(args.environment !== undefined ? { environment: args.environment } : {}),
         url: args.url,
@@ -761,9 +1244,11 @@ export const claimGitHubPullRequestMergedNotifications = internalMutation({
     const claimed = [];
 
     for (const link of links) {
-      if (link.muted || (link.kind !== "linear_issue" && link.kind !== "slack_thread")) {
+      if (!(await canDeliverToExternalLink(ctx, { taskId: args.taskId, link, now }))) {
         continue;
       }
+      const linkKind: LifecycleReplyLinkKind =
+        link.kind === "linear_issue" ? "linear_issue" : "slack_thread";
 
       const claimEventKey = githubPullRequestMergedNotificationEventKey({
         taskId: String(args.taskId),
@@ -782,11 +1267,11 @@ export const claimGitHubPullRequestMergedNotifications = internalMutation({
         taskId: args.taskId,
         eventKey: claimEventKey,
         kind: "github-pr-merged-notification.claimed",
-        summary: `Claimed GitHub PR merged notification for ${link.kind}.`,
+        summary: `Claimed GitHub PR merged notification for ${linkKind}.`,
         payloadJson: JSON.stringify({
           taskId: args.taskId,
           linkId: link._id,
-          kind: link.kind,
+          kind: linkKind,
           externalId: link.externalId,
           pullRequestExternalId: args.pullRequestExternalId,
           pullRequestUrl: args.pullRequestUrl,
@@ -798,7 +1283,7 @@ export const claimGitHubPullRequestMergedNotifications = internalMutation({
         claimEventKey,
         taskId: args.taskId,
         linkId: link._id,
-        kind: link.kind,
+        kind: linkKind,
         externalId: link.externalId,
         pullRequestUrl: args.pullRequestUrl,
       });

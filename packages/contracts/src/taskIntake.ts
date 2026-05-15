@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { IsoDateTime, NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "./orchestration.ts";
 
 export const TaskIntakeSource = Schema.Literals(["slack", "linear", "support_email", "webhook"]);
 export type TaskIntakeSource = typeof TaskIntakeSource.Type;
@@ -20,10 +21,29 @@ export const TaskIntakeActor = Schema.Struct({
 });
 export type TaskIntakeActor = typeof TaskIntakeActor.Type;
 
-export const TaskIntakeAttachment = Schema.Struct({
+export const TaskIntakeLinkedAttachment = Schema.Struct({
   name: Schema.optional(TrimmedNonEmptyString),
   url: TrimmedNonEmptyString,
+  type: Schema.optional(Schema.Literals(["image", "file", "video", "audio"])),
+  mimeType: Schema.optional(TrimmedNonEmptyString),
+  sizeBytes: Schema.optional(Schema.Number),
 });
+export type TaskIntakeLinkedAttachment = typeof TaskIntakeLinkedAttachment.Type;
+
+export const TaskIntakeImageAttachment = Schema.Struct({
+  type: Schema.Literal("image"),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(255)),
+  mimeType: TrimmedNonEmptyString.check(Schema.isMaxLength(100), Schema.isPattern(/^image\//i)),
+  sizeBytes: NonNegativeInt.check(Schema.isLessThanOrEqualTo(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES)),
+  dataUrl: TrimmedNonEmptyString,
+  url: Schema.optional(TrimmedNonEmptyString),
+});
+export type TaskIntakeImageAttachment = typeof TaskIntakeImageAttachment.Type;
+
+export const TaskIntakeAttachment = Schema.Union([
+  TaskIntakeImageAttachment,
+  TaskIntakeLinkedAttachment,
+]);
 export type TaskIntakeAttachment = typeof TaskIntakeAttachment.Type;
 
 export const TaskIntakeConversationRef = Schema.Struct({

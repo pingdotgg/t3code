@@ -1,3 +1,9 @@
+import {
+  ProviderInstanceId,
+  type ModelSelection,
+  type UploadChatAttachment,
+} from "@t3tools/contracts";
+
 import type { TaskIntakeMessage, TaskIntakeResolution } from "./contracts.ts";
 import { decodeTaskIntakeMessage } from "./contracts.ts";
 import type { TaskIntakeReplyTransport, TaskIntakeRuntime, TaskIntakeStore } from "./ports.ts";
@@ -36,8 +42,56 @@ export interface TaskIntakeIngressOptions {
   readonly initialPromptContext?: string;
 }
 
+const CODEX_ROUTING_MARKER = /\[codex\]/i;
+
+const DEFAULT_CHAT_MODEL_SELECTION = {
+  instanceId: ProviderInstanceId.make("codex"),
+  model: "gpt-5.5",
+  options: [{ id: "fastMode", value: true }],
+} as const satisfies ModelSelection;
+
 function errorSummary(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function withoutCodexRoutingMarker(text: string) {
+  return text
+    .replace(/\[codex\]/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function resolveInitialMessageRouting(message: TaskIntakeMessage): {
+  readonly message: TaskIntakeMessage;
+  readonly modelSelection: ModelSelection;
+} {
+  if (!CODEX_ROUTING_MARKER.test(message.text)) {
+    return { message, modelSelection: DEFAULT_CHAT_MODEL_SELECTION };
+  }
+
+  return {
+    message: {
+      ...message,
+      text: withoutCodexRoutingMarker(message.text),
+    },
+    modelSelection: DEFAULT_CHAT_MODEL_SELECTION,
+  };
+}
+
+function nativeImageAttachments(message: TaskIntakeMessage): ReadonlyArray<UploadChatAttachment> {
+  return (
+    message.attachments
+      ?.filter((attachment): attachment is UploadChatAttachment => {
+        return "dataUrl" in attachment && attachment.type === "image";
+      })
+      .map((attachment) => ({
+        type: "image" as const,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        sizeBytes: attachment.sizeBytes,
+        dataUrl: attachment.dataUrl,
+      })) ?? []
+  );
 }
 
 async function postReplyBestEffort(
@@ -85,12 +139,14 @@ export async function handleTaskIntakeMessage(
   options: TaskIntakeIngressOptions = {},
 ): Promise<TaskIntakeIngressResult> {
   const message = decodeTaskIntakeMessage(rawMessage);
+  const initialRouting = resolveInitialMessageRouting(message);
+  const storageMessage = initialRouting.message;
   const externalLink = toTaskIntakeExternalLinkIdentity(message.conversation);
 
   const stored = await dependencies.store.resolveMessage({
-    message,
+    message: storageMessage,
     externalLink,
-    title: buildTaskIntakeTitle(message),
+    title: buildTaskIntakeTitle(storageMessage),
   });
 
   if (stored.status === "duplicate") {
@@ -114,6 +170,7 @@ export async function handleTaskIntakeMessage(
           workSessionId: stored.workSessionId,
           t3ThreadId: stored.t3ThreadId,
           prompt: buildTaskIntakeFollowUpPrompt(message),
+          attachments: nativeImageAttachments(message),
         });
       } catch (error) {
         const summary = errorSummary(error);
@@ -155,12 +212,14 @@ export async function handleTaskIntakeMessage(
     await acknowledgeAcceptedBestEffort(dependencies, message);
     const initialPrompt =
       options.initialPromptContext === undefined
-        ? buildTaskIntakeInitialPrompt(message)
-        : buildTaskIntakeInitialPrompt(message, { context: options.initialPromptContext });
+        ? buildTaskIntakeInitialPrompt(storageMessage)
+        : buildTaskIntakeInitialPrompt(storageMessage, { context: options.initialPromptContext });
     const materialized = await dependencies.runtime.materializeTaskRuntime({
       taskId: stored.taskId,
       initialPrompt,
+      attachments: nativeImageAttachments(storageMessage),
       startCodingAgent: true,
+      modelSelection: initialRouting.modelSelection,
     });
     await postTaskStartedCardBestEffort(dependencies, {
       message,
@@ -175,7 +234,7 @@ export async function handleTaskIntakeMessage(
       resolution: {
         type: "create_task",
         initialPrompt,
-        title: buildTaskIntakeTitle(message),
+        title: buildTaskIntakeTitle(storageMessage),
       },
     };
   } catch (error) {

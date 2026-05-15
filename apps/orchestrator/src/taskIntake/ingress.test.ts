@@ -112,6 +112,153 @@ describe("handleTaskIntakeMessage", () => {
     expect(acknowledgements[0]?.messageId).toBe("comment-1");
   });
 
+  it("passes native image attachments into new task materialization", async () => {
+    let materializedAttachments: unknown;
+    const deps = dependencies({
+      runtime: {
+        async materializeTaskRuntime(input) {
+          materializedAttachments = input.attachments;
+          return {
+            taskId: input.taskId,
+            workSessionId: "session-123",
+            t3ProjectId: "project-456",
+            t3ThreadId: "thread-456",
+            branch: "ai/task-123",
+            worktreePath: "/tmp/worktree",
+            acceptedAt: "2026-04-12T12:00:01.000Z",
+          };
+        },
+      },
+    });
+
+    await handleTaskIntakeMessage(
+      baseMessage({
+        attachments: [
+          {
+            type: "image",
+            name: "screenshot.png",
+            mimeType: "image/png",
+            sizeBytes: 4,
+            dataUrl: "data:image/png;base64,dGVzdA==",
+          },
+          {
+            type: "file",
+            name: "notes.pdf",
+            url: "https://files.slack.com/files-pri/T123-F124/notes.pdf",
+          },
+        ],
+      }),
+      deps,
+    );
+
+    expect(materializedAttachments).toEqual([
+      {
+        type: "image",
+        name: "screenshot.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+        dataUrl: "data:image/png;base64,dGVzdA==",
+      },
+    ]);
+  });
+
+  it("routes new tasks with a [codex] marker to Codex GPT-5.5 fast mode without relaying the marker", async () => {
+    let storedTitle: string | undefined;
+    let storedText: string | undefined;
+    let materialized:
+      | {
+          readonly initialPrompt: string;
+          readonly modelSelection: unknown;
+        }
+      | undefined;
+    const deps = dependencies({
+      store: {
+        async resolveMessage(input) {
+          storedTitle = input.title;
+          storedText = input.message.text;
+          return {
+            status: "created",
+            taskId: "task-123",
+            projectId: "project-123",
+          };
+        },
+      },
+      runtime: {
+        async materializeTaskRuntime(input) {
+          materialized = {
+            initialPrompt: input.initialPrompt,
+            modelSelection: input.modelSelection,
+          };
+          return {
+            taskId: "task-123",
+            workSessionId: "session-123",
+            t3ProjectId: "project-456",
+            t3ThreadId: "thread-456",
+            branch: "ai/task-123",
+            worktreePath: "/tmp/worktree",
+            acceptedAt: "2026-04-12T12:00:01.000Z",
+          };
+        },
+      },
+    });
+
+    const result = await handleTaskIntakeMessage(
+      baseMessage({
+        text: "@Vevin [codex] please inspect the dashboard dependencies",
+      }),
+      deps,
+    );
+
+    expect(result.resolution.type).toBe("create_task");
+    expect(storedTitle).toBe("@Vevin please inspect the dashboard dependencies");
+    expect(storedText).toBe("@Vevin please inspect the dashboard dependencies");
+    expect(materialized?.initialPrompt).toBe("@Vevin please inspect the dashboard dependencies");
+    expect(materialized?.modelSelection).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.5",
+      options: [{ id: "fastMode", value: true }],
+    });
+  });
+
+  it("routes new tasks to Codex GPT-5.5 fast mode by default", async () => {
+    let materialized:
+      | {
+          readonly modelSelection: unknown;
+        }
+      | undefined;
+    const deps = dependencies({
+      runtime: {
+        async materializeTaskRuntime(input) {
+          materialized = {
+            modelSelection: input.modelSelection,
+          };
+          return {
+            taskId: "task-123",
+            workSessionId: "session-123",
+            t3ProjectId: "project-456",
+            t3ThreadId: "thread-456",
+            branch: "ai/task-123",
+            worktreePath: "/tmp/worktree",
+            acceptedAt: "2026-04-12T12:00:01.000Z",
+          };
+        },
+      },
+    });
+
+    await handleTaskIntakeMessage(
+      baseMessage({
+        text: "@Vevin please inspect the dashboard dependencies",
+      }),
+      deps,
+    );
+
+    expect(materialized?.modelSelection).toEqual({
+      instanceId: "codex",
+      model: "gpt-5.5",
+      options: [{ id: "fastMode", value: true }],
+    });
+  });
+
   it("posts an optional task started card after materialization", async () => {
     const startedCards: Array<{ readonly taskId: string; readonly t3ThreadId: string }> = [];
     const deps = dependencies();
@@ -143,6 +290,7 @@ describe("handleTaskIntakeMessage", () => {
           readonly workSessionId: string;
           readonly t3ThreadId: string;
           readonly prompt: string;
+          readonly attachments?: unknown;
         }
       | undefined;
     const postedReplies: TaskIntakeReply[] = [];
@@ -182,6 +330,15 @@ describe("handleTaskIntakeMessage", () => {
         eventId: "linear:event-2",
         messageId: "comment-2",
         text: "Actually also update the failing cart test.",
+        attachments: [
+          {
+            type: "image",
+            name: "cart.png",
+            mimeType: "image/png",
+            sizeBytes: 4,
+            dataUrl: "data:image/png;base64,Y2FydA==",
+          },
+        ],
       }),
       deps,
     );
@@ -194,6 +351,15 @@ describe("handleTaskIntakeMessage", () => {
       t3ThreadId: "thread-existing",
     });
     expect(continued?.prompt).toBe("Actually also update the failing cart test.");
+    expect(continued?.attachments).toEqual([
+      {
+        type: "image",
+        name: "cart.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+        dataUrl: "data:image/png;base64,Y2FydA==",
+      },
+    ]);
     expect(result.resolution.type).toBe("route_existing_task");
     expect(result.taskId).toBe("task-existing");
     expect(postedReplies).toHaveLength(0);

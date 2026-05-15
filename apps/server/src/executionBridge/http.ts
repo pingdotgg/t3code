@@ -2,12 +2,14 @@ import {
   type ExecutionRunActivityEvent,
   type ExecutionRunLifecycleEvent,
   type TaskRuntimeAssistantMessageEvent,
+  type TaskRuntimeUserInputRequestEvent,
   ExecutionRunContinueRequest,
   ExecutionRunCreateRequest,
   ExecutionRunInterruptRequest,
   ExecutionRunStatusQuery,
   TaskPullRequestEnsureRequest,
   TaskRuntimeMaterializeRequest,
+  TaskRuntimeUserInputRespondRequest,
   type OrchestrationEvent,
   type ThreadId,
   type TurnId,
@@ -31,6 +33,7 @@ import {
   ExecutionBridgeRunStartError,
   interruptExecutionRun,
   materializeTaskRuntime,
+  respondToTaskRuntimeUserInput,
   startExecutionRun,
   type ExecutionLifecycleCheckpoint,
   type TrackedExecutionRun,
@@ -97,6 +100,9 @@ const postTaskRuntimeLifecycleEvent = (event: ReturnType<typeof buildTaskRuntime
 
 const postTaskRuntimeAssistantMessageEvent = (event: TaskRuntimeAssistantMessageEvent) =>
   postToOrchestrator("/t3/task-runtime-assistant-messages", event);
+
+const postTaskRuntimeUserInputRequestEvent = (event: TaskRuntimeUserInputRequestEvent) =>
+  postToOrchestrator("/t3/task-runtime-user-input-requests", event);
 
 const MAX_LIFECYCLE_ASSISTANT_RESPONSE_CHARS = 12_000;
 
@@ -426,6 +432,24 @@ export const executionBridgeInterruptRouteLayer = HttpRouter.add(
   ),
 );
 
+export const taskRuntimeUserInputRespondRouteLayer = HttpRouter.add(
+  "POST",
+  "/api/tasks/user-input/respond",
+  Effect.gen(function* () {
+    yield* authenticateExecutionBridgeRequest;
+    const request = yield* HttpServerRequest.schemaBodyJson(TaskRuntimeUserInputRespondRequest);
+    const result = yield* respondToTaskRuntimeUserInput(request);
+    return HttpServerResponse.jsonUnsafe(result, { status: 202 });
+  }).pipe(
+    Effect.catchTag("ExecutionBridgeAuthError", (error) =>
+      Effect.succeed(respondToExecutionBridgeError(error)),
+    ),
+    Effect.catchTag("ExecutionBridgeRunStartError", (error) =>
+      Effect.succeed(respondToExecutionBridgeError(error)),
+    ),
+  ),
+);
+
 function toActivityEvent(
   event: Extract<OrchestrationEvent, { type: "thread.activity-appended" }>,
   trackedRun: TrackedExecutionRun,
@@ -475,6 +499,44 @@ function toActivityEvent(
   }
 
   return null;
+}
+
+function toTaskRuntimeUserInputRequestEvent(
+  event: Extract<OrchestrationEvent, { type: "thread.activity-appended" }>,
+  trackedRun: TrackedExecutionRun,
+): TaskRuntimeUserInputRequestEvent | null {
+  if (
+    trackedRun.kind !== "task" ||
+    trackedRun.taskId === null ||
+    trackedRun.workSessionId === null
+  ) {
+    return null;
+  }
+
+  const { activity } = event.payload;
+  if (activity.kind !== "user-input.requested") {
+    return null;
+  }
+  const payload =
+    typeof activity.payload === "object" && activity.payload !== null
+      ? (activity.payload as Record<string, unknown>)
+      : null;
+  const requestId = typeof payload?.requestId === "string" ? payload.requestId : null;
+  const questions = Array.isArray(payload?.questions) ? payload.questions : null;
+  if (requestId === null || questions === null) {
+    return null;
+  }
+
+  return {
+    eventId: event.eventId,
+    taskId: trackedRun.taskId,
+    workSessionId: trackedRun.workSessionId,
+    occurredAt: event.occurredAt,
+    t3ThreadId: trackedRun.threadId,
+    ...(activity.turnId !== null ? { t3TurnId: activity.turnId } : {}),
+    requestId,
+    questions,
+  } as unknown as TaskRuntimeUserInputRequestEvent;
 }
 
 export const executionBridgeLifecycleCallbacksLive = Layer.effectDiscard(
@@ -532,7 +594,15 @@ export const executionBridgeLifecycleCallbacksLive = Layer.effectDiscard(
         if (event.type === "thread.activity-appended") {
           return Effect.gen(function* () {
             const trackedRun = yield* runRegistry.getTrackedRun(event.payload.threadId);
-            if (trackedRun === null || trackedRun.kind !== "execution") {
+            if (trackedRun === null) {
+              return;
+            }
+
+            if (trackedRun.kind === "task") {
+              const userInputRequest = toTaskRuntimeUserInputRequestEvent(event, trackedRun);
+              if (userInputRequest !== null) {
+                yield* postTaskRuntimeUserInputRequestEvent(userInputRequest);
+              }
               return;
             }
 

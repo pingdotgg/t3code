@@ -15,6 +15,8 @@ import {
   type TaskRuntimeLifecycleEvent,
   type TaskRuntimeMaterializeRequest,
   type TaskRuntimeMaterializeResponse,
+  type TaskRuntimeUserInputRespondRequest,
+  type TaskRuntimeUserInputRespondResponse,
   type VcsCreateWorktreeInput,
   ThreadId,
   TurnId,
@@ -32,6 +34,7 @@ import * as Schema from "effect/Schema";
 import { GitManager } from "../git/GitManager.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
+import { normalizeUploadChatAttachments } from "../orchestration/Normalizer.ts";
 import { ServerEnvironment } from "../environment/Services/ServerEnvironment.ts";
 import { GitVcsDriver, type GitVcsDriverShape } from "../vcs/GitVcsDriver.ts";
 import { resolveExecutionBridgeModelSelection } from "./requestDefaults.ts";
@@ -275,6 +278,10 @@ export const startExecutionRun = (request: ExecutionRunCreateRequest) =>
     }
 
     const threadId = ThreadId.make(crypto.randomUUID());
+    const attachments = yield* normalizeUploadChatAttachments({
+      threadId,
+      attachments: request.attachments ?? [],
+    });
     const title = deriveThreadTitle(request);
     yield* orchestrationEngine.dispatch({
       type: "thread.create",
@@ -312,7 +319,7 @@ export const startExecutionRun = (request: ExecutionRunCreateRequest) =>
         messageId: MessageId.make(`execution-run:${request.executionRunId}`),
         role: "user",
         text: request.initialPrompt,
-        attachments: [],
+        attachments,
       },
       modelSelection,
       titleSeed: title,
@@ -344,6 +351,10 @@ export const continueExecutionRun = (request: ExecutionRunContinueRequest) =>
     const runRegistry = yield* ExecutionBridgeRunRegistry;
     const now = yield* currentIsoTimestamp;
     const messageNonce = crypto.randomUUID();
+    const attachments = yield* normalizeUploadChatAttachments({
+      threadId: request.t3ThreadId,
+      attachments: request.attachments ?? [],
+    });
 
     yield* orchestrationEngine.dispatch({
       type: "thread.turn.start",
@@ -357,7 +368,7 @@ export const continueExecutionRun = (request: ExecutionRunContinueRequest) =>
         ),
         role: "user",
         text: request.prompt,
-        attachments: [],
+        attachments,
       },
       runtimeMode: request.runtimeMode,
       interactionMode: request.interactionMode ?? DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -433,6 +444,43 @@ export const interruptExecutionRun = (request: ExecutionRunInterruptRequest) =>
     ),
   );
 
+export const respondToTaskRuntimeUserInput = (request: TaskRuntimeUserInputRespondRequest) =>
+  Effect.gen(function* () {
+    const orchestrationEngine = yield* OrchestrationEngineService;
+    const now = yield* currentIsoTimestamp;
+    const commandNonce = crypto.randomUUID();
+
+    yield* orchestrationEngine.dispatch({
+      type: "thread.user-input.respond",
+      commandId: CommandId.make(
+        `task-runtime:user-input:respond:${request.workSessionId}:${request.requestId}:${commandNonce}`,
+      ),
+      threadId: request.t3ThreadId,
+      requestId: request.requestId,
+      answers: request.answers,
+      createdAt: now,
+    });
+
+    return {
+      taskId: request.taskId,
+      workSessionId: request.workSessionId,
+      t3ThreadId: request.t3ThreadId,
+      requestId: request.requestId,
+      acceptedAt: now,
+    } satisfies TaskRuntimeUserInputRespondResponse;
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ExecutionBridgeRunStartError({
+          message:
+            cause instanceof Error
+              ? cause.message
+              : "Failed to dispatch task runtime user input response.",
+          status: 400,
+        }),
+    ),
+  );
+
 export const materializeTaskRuntime = (request: TaskRuntimeMaterializeRequest) =>
   Effect.gen(function* () {
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -446,6 +494,10 @@ export const materializeTaskRuntime = (request: TaskRuntimeMaterializeRequest) =
     const existing = yield* runRegistry.getMaterializedTaskRuntime(idempotencyKey);
     if (existing) {
       if (request.startCodingAgent && !existing.threadStarted) {
+        const attachments = yield* normalizeUploadChatAttachments({
+          threadId: existing.response.t3ThreadId,
+          attachments: request.attachments ?? [],
+        });
         yield* runRegistry.trackAcceptedTaskRuntime({
           taskId: request.taskId,
           workSessionId: request.workSessionId,
@@ -463,7 +515,7 @@ export const materializeTaskRuntime = (request: TaskRuntimeMaterializeRequest) =
             messageId: MessageId.make(`task-runtime:${request.workSessionId}`),
             role: "user",
             text: request.initialPrompt,
-            attachments: [],
+            attachments,
           },
           modelSelection: request.modelSelection,
           titleSeed: request.title,
@@ -502,6 +554,10 @@ export const materializeTaskRuntime = (request: TaskRuntimeMaterializeRequest) =
     const branch = buildTemporaryWorktreeBranchName();
     const worktree = yield* git.createWorktree(taskRuntimeWorktreeCreateInput(request, branch));
     const threadId = ThreadId.make(crypto.randomUUID());
+    const attachments = yield* normalizeUploadChatAttachments({
+      threadId,
+      attachments: request.attachments ?? [],
+    });
 
     yield* orchestrationEngine.dispatch({
       type: "thread.create",
@@ -532,7 +588,7 @@ export const materializeTaskRuntime = (request: TaskRuntimeMaterializeRequest) =
           messageId: MessageId.make(`task-runtime:${request.workSessionId}`),
           role: "user",
           text: request.initialPrompt,
-          attachments: [],
+          attachments,
         },
         modelSelection,
         titleSeed: request.title,

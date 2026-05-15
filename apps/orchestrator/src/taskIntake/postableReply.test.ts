@@ -4,6 +4,7 @@ import {
   buildT3ThreadUrl,
   flattenMarkdownTablesForSlack,
   postableDeploymentReady,
+  postableOpsHealthAlert,
   postablePullRequestStatus,
   postableReplyBody,
   postableTaskStartedStatus,
@@ -199,5 +200,32 @@ describe("postableReplyBody", () => {
         url: "https://nextcard-web-preview.nextcard.com",
       }),
     ).toBe("Deployment ready (Preview - nextcard-web): https://nextcard-web-preview.nextcard.com");
+  });
+
+  it("builds a Slack ops health alert card", () => {
+    const message = postableOpsHealthAlert({
+      title: "Vevin health check failing (1)",
+      summary: "One orchestrator health check failed.",
+      status: "failing",
+      checkedAt: "2026-05-15T21:00:00.000Z",
+      failingChecks: [
+        {
+          name: "public T3",
+          details: "https://t3.olumbe.com -> HTTP 530",
+        },
+      ],
+      allChecks: [
+        {
+          name: "public T3",
+          ok: false,
+          details: "https://t3.olumbe.com -> HTTP 530",
+        },
+      ],
+    });
+
+    const json = JSON.stringify(message);
+    expect(json).toContain("Vevin health check failing");
+    expect(json).toContain("public T3");
+    expect(json).toContain("HTTP 530");
   });
 });

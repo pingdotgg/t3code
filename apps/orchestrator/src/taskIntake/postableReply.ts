@@ -31,6 +31,22 @@ export interface DeploymentReadyMessage {
   readonly url: string;
 }
 
+export interface OpsHealthAlertMessage {
+  readonly title: string;
+  readonly summary: string;
+  readonly status: "failing" | "recovered";
+  readonly checkedAt: string;
+  readonly failingChecks: ReadonlyArray<{
+    readonly name: string;
+    readonly details: string;
+  }>;
+  readonly allChecks?: ReadonlyArray<{
+    readonly name: string;
+    readonly ok: boolean;
+    readonly details: string;
+  }>;
+}
+
 function isMarkdownTableSeparator(line: string): boolean {
   const cells = line
     .trim()
@@ -249,6 +265,40 @@ export function postableDeploymentReady(input: DeploymentReadyMessage): Postable
           }),
         ]),
       ],
+    }),
+    fallbackText: body,
+  };
+}
+
+export function postableOpsHealthAlert(input: OpsHealthAlertMessage): PostableMessage {
+  const failingLines = input.failingChecks.map((check) => `- **${check.name}:** ${check.details}`);
+  const body = [
+    `**${input.title}**`,
+    input.summary,
+    `Checked: ${input.checkedAt}`,
+    ...failingLines,
+  ].join("\n");
+
+  const fields = [
+    Field({ label: "Status", value: input.status }),
+    Field({ label: "Failing checks", value: String(input.failingChecks.length) }),
+    Field({ label: "Checked", value: input.checkedAt }),
+  ];
+  const allChecks = input.allChecks ?? [];
+  const passingCount = allChecks.filter((check) => check.ok).length;
+  if (allChecks.length > 0) {
+    fields.push(Field({ label: "Passing checks", value: `${passingCount}/${allChecks.length}` }));
+  }
+
+  const failureText =
+    input.failingChecks.length === 0
+      ? "No failing checks."
+      : input.failingChecks.map((check) => `- **${check.name}:** ${check.details}`).join("\n");
+
+  return {
+    card: Card({
+      title: input.title,
+      children: [Fields(fields), CardText(failureText)],
     }),
     fallbackText: body,
   };

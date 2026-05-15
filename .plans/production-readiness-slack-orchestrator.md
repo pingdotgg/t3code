@@ -36,10 +36,13 @@ cutover checklist.
 2. Convex receives `/slack/webhook`, `/github/webhook`, and T3 runtime callbacks.
 3. Convex calls the local T3 execution bridge at `T3_EXECUTION_BRIDGE_BASE_URL`.
 4. The Windows local machine runs:
-   - `t3code-server`: T3 server on `127.0.0.1:3773`
-   - `t3code-tunnel`: Cloudflare tunnel `t3code-local`
+   - `t3code-server`: NSSM-wrapped Windows service for T3 on
+     `127.0.0.1:3773`
+   - `cloudflared-t3code`: Windows service running Cloudflare tunnel
+     `t3code-local`
    - optional local dev command for hot reloading when iterating
-5. T3 creates worktrees, runs Claude Opus 4.7, commits/pushes changes, and
+5. T3 creates worktrees, runs Codex GPT-5.5 fast mode by default,
+   commits/pushes changes, and
    creates or finds the PR.
 6. GitHub sends PR and deployment events to Convex so Slack can receive PR,
    deployment-ready, and merged-status cards.
@@ -126,10 +129,11 @@ execution host.
 
 Tasks:
 
-1. Ensure `t3code-server` scheduled task starts:
-   `node apps/server/dist/bin.mjs --port 3773 --host 127.0.0.1 --no-browser`.
-2. Ensure `t3code-tunnel` scheduled task starts:
-   `C:\Program Files (x86)\cloudflared\cloudflared.exe tunnel run t3code-local`.
+1. Ensure `t3code-server` Windows service starts automatically and wraps:
+   `scripts\start-t3code-server.cmd`.
+2. Ensure `cloudflared-t3code` Windows service starts automatically and runs:
+   `C:\Program Files (x86)\cloudflared\cloudflared.exe --config C:\Users\Vivek\.cloudflared\config.yml tunnel run t3code-local`.
+   The old `t3code-tunnel` scheduled task should remain disabled.
 3. Add an operator runbook for:
    - start
    - stop
@@ -145,11 +149,29 @@ Tasks:
 
 Acceptance criteria:
 
-- `schtasks /query /tn t3code-server /fo LIST /v` shows the expected command.
-- `schtasks /query /tn t3code-tunnel /fo LIST /v` shows the expected command.
+- `Get-Service t3code-server` shows `Running`.
+- `Get-Service cloudflared-t3code` shows `Running`.
 - `curl.exe -i http://127.0.0.1:3773/` reaches local T3.
 - `curl.exe -i https://t3.olumbe.com/` reaches Cloudflare/T3.
 - An unauthenticated bridge call returns `401`, not `404`.
+
+Current hardening status:
+
+- On 2026-05-15, the old `t3code-tunnel` scheduled task was replaced by the
+  `cloudflared-t3code` Windows service.
+- `scripts\install-t3code-server-service.ps1` was added to install/repair the
+  `t3code-server` NSSM service.
+- `scripts\update-t3code-server.ps1` was added as the documented upstream update
+  path: fetch/merge `pingdotgg/main`, install, build, restart service, run
+  health checks.
+- `scripts\install-cloudflared-t3code-service.ps1` installs/repairs the
+  Cloudflare service.
+- Services start automatically and are configured to restart on failure.
+- The old scheduled tunnel/server tasks should be disabled after services are
+  healthy.
+- Both old scheduled tasks had a 72-hour execution time limit; that was the root
+  cause of the tunnel stopping and `https://t3.olumbe.com` returning Cloudflare
+  `530`.
 
 ## Phase 3: Slack Production Behavior
 

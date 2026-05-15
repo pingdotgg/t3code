@@ -1,6 +1,10 @@
 import { httpRouter } from "convex/server";
 import * as Schema from "effect/Schema";
-import { TaskRuntimeAssistantMessageEvent, TaskRuntimeLifecycleEvent } from "@t3tools/contracts";
+import {
+  TaskRuntimeAssistantMessageEvent,
+  TaskRuntimeLifecycleEvent,
+  TaskRuntimeUserInputRequestEvent,
+} from "@t3tools/contracts";
 
 import { api, internal } from "./_generated/api.js";
 import type { Id } from "./_generated/dataModel.js";
@@ -11,6 +15,9 @@ const decodeTaskRuntimeAssistantMessageEvent = Schema.decodeUnknownSync(
   TaskRuntimeAssistantMessageEvent,
 );
 const decodeTaskRuntimeLifecycleEvent = Schema.decodeUnknownSync(TaskRuntimeLifecycleEvent);
+const decodeTaskRuntimeUserInputRequestEvent = Schema.decodeUnknownSync(
+  TaskRuntimeUserInputRequestEvent,
+);
 
 function requireBridgeAuthorization(request: Request) {
   const secret = process.env.T3_EXECUTION_BRIDGE_SHARED_SECRET?.trim();
@@ -28,6 +35,28 @@ function requireBridgeAuthorization(request: Request) {
       ok: false as const,
       status: 401,
       message: "Unauthorized execution bridge callback",
+    };
+  }
+
+  return { ok: true as const };
+}
+
+function requireOpsAlertAuthorization(request: Request) {
+  const secret = process.env.T3_OPS_ALERT_SECRET?.trim();
+  if (!secret) {
+    return {
+      ok: false as const,
+      status: 503,
+      message: "Missing ops alert secret",
+    };
+  }
+
+  const authorization = request.headers.get("authorization");
+  if (authorization !== `Bearer ${secret}`) {
+    return {
+      ok: false as const,
+      status: 401,
+      message: "Unauthorized ops alert request",
     };
   }
 
@@ -95,6 +124,10 @@ function timingSafeEqualString(actual: string, expected: string) {
     diff |= actual.charCodeAt(index) ^ expected.charCodeAt(index);
   }
   return diff === 0;
+}
+
+function objectField(input: object, field: string) {
+  return (input as Record<string, unknown>)[field];
 }
 
 async function verifyGitHubWebhookSignature(body: string, signature: string | null) {
@@ -226,6 +259,104 @@ http.route({
 });
 
 http.route({
+  path: "/ops/health-alert",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const auth = requireOpsAlertAuthorization(request);
+    if (!auth.ok) {
+      await logHttpEvent(ctx, {
+        kind: "http.ops-health-alert.auth-failed",
+        source: "ops",
+        severity: auth.status >= 500 ? "error" : "warn",
+        summary: auth.message,
+        payload: {
+          status: auth.status,
+        },
+      });
+      return Response.json({ error: auth.message }, { status: auth.status });
+    }
+
+    type OpsHealthAlertPayload = {
+      readonly checkedAt?: unknown;
+      readonly status?: unknown;
+      readonly results?: unknown;
+      readonly summary?: unknown;
+    };
+    let body: OpsHealthAlertPayload;
+    try {
+      body = (await request.json()) as OpsHealthAlertPayload;
+    } catch (error) {
+      await logHttpEvent(ctx, {
+        kind: "http.ops-health-alert.invalid-json",
+        source: "ops",
+        severity: "warn",
+        summary: "Invalid ops health alert JSON.",
+        payload: {
+          error: errorSummary(error),
+        },
+      });
+      return Response.json({ error: "Invalid JSON" }, { status: 400 });
+    }
+    if (
+      typeof body.checkedAt !== "string" ||
+      (body.status !== "failing" && body.status !== "recovered") ||
+      !Array.isArray(body.results)
+    ) {
+      await logHttpEvent(ctx, {
+        kind: "http.ops-health-alert.invalid-payload",
+        source: "ops",
+        severity: "warn",
+        summary: "Invalid ops health alert payload.",
+      });
+      return Response.json({ error: "Invalid ops health alert payload" }, { status: 400 });
+    }
+
+    const results = body.results.flatMap((result) => {
+      if (
+        result === null ||
+        typeof result !== "object" ||
+        typeof objectField(result, "name") !== "string" ||
+        typeof objectField(result, "ok") !== "boolean" ||
+        typeof objectField(result, "details") !== "string"
+      ) {
+        return [];
+      }
+      return [
+        {
+          name: objectField(result, "name") as string,
+          ok: objectField(result, "ok") as boolean,
+          details: objectField(result, "details") as string,
+        },
+      ];
+    });
+    if (results.length !== body.results.length) {
+      return Response.json({ error: "Invalid ops health check result" }, { status: 400 });
+    }
+
+    await logHttpEvent(ctx, {
+      kind: "http.ops-health-alert.received",
+      source: "ops",
+      severity: body.status === "failing" ? "warn" : "info",
+      summary: "Received ops health alert.",
+      payload: {
+        status: body.status,
+        checkedAt: body.checkedAt,
+        resultCount: results.length,
+        failingCount: results.filter((result) => !result.ok).length,
+      },
+    });
+
+    const posted = await ctx.runAction(internal.ops.postHealthAlert, {
+      checkedAt: body.checkedAt,
+      status: body.status,
+      results,
+      ...(typeof body.summary === "string" ? { summary: body.summary } : {}),
+    });
+    return Response.json(posted, { status: posted.posted ? 200 : 502 });
+  }),
+});
+
+http.route({
   path: "/t3/task-runtime-assistant-messages",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
@@ -265,6 +396,56 @@ http.route({
       t3MessageId: String(payload.t3MessageId),
       ...(payload.t3TurnId !== undefined ? { t3TurnId: String(payload.t3TurnId) } : {}),
       assistantMessage: payload.assistantMessage,
+    });
+
+    return Response.json({
+      accepted: true,
+      ...result,
+    });
+  }),
+});
+
+http.route({
+  path: "/t3/task-runtime-user-input-requests",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const auth = requireBridgeAuthorization(request);
+    if (!auth.ok) {
+      await logHttpEvent(ctx, {
+        kind: "http.t3-user-input-request.auth-failed",
+        source: "t3",
+        severity: auth.status >= 500 ? "error" : "warn",
+        summary: auth.message,
+        payload: { status: auth.status },
+      });
+      return Response.json({ error: auth.message }, { status: auth.status });
+    }
+
+    const payload = decodeTaskRuntimeUserInputRequestEvent(await request.json());
+    await logHttpEvent(ctx, {
+      kind: "http.t3-user-input-request.received",
+      source: "t3",
+      summary: "Received T3 user-input request callback.",
+      eventKey: `${String(payload.eventId)}:http-received`,
+      taskId: payload.taskId as Id<"tasks">,
+      workSessionId: payload.workSessionId as Id<"workSessions">,
+      payload: {
+        eventId: payload.eventId,
+        t3ThreadId: String(payload.t3ThreadId),
+        t3TurnId: payload.t3TurnId === undefined ? undefined : String(payload.t3TurnId),
+        requestId: String(payload.requestId),
+        questionCount: payload.questions.length,
+      },
+    });
+    const result = await ctx.runAction(internal.taskIntake.postTaskRuntimeUserInputRequest, {
+      eventId: payload.eventId,
+      taskId: payload.taskId as Id<"tasks">,
+      workSessionId: payload.workSessionId as Id<"workSessions">,
+      occurredAt: payload.occurredAt,
+      t3ThreadId: String(payload.t3ThreadId),
+      ...(payload.t3TurnId !== undefined ? { t3TurnId: String(payload.t3TurnId) } : {}),
+      requestId: String(payload.requestId),
+      questionsJson: JSON.stringify(payload.questions),
     });
 
     return Response.json({

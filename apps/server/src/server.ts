@@ -92,6 +92,7 @@ import {
   executionBridgeStatusQueryRouteLayer,
   taskPullRequestEnsureRouteLayer,
   taskRuntimeMaterializeRouteLayer,
+  taskRuntimeUserInputRespondRouteLayer,
 } from "./executionBridge/http.ts";
 import { ExecutionBridgeRunRegistryLive } from "./executionBridge/runStart.ts";
 import {
@@ -326,6 +327,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   serverEnvironmentRouteLayer,
   taskPullRequestEnsureRouteLayer,
   taskRuntimeMaterializeRouteLayer,
+  taskRuntimeUserInputRespondRouteLayer,
   staticAndDevRouteLayer,
   websocketRpcRouteLayer,
 ).pipe(Layer.provide(browserApiCorsLayer));

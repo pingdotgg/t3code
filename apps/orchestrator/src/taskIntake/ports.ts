@@ -1,3 +1,5 @@
+import type { ModelSelection, UploadChatAttachment } from "@t3tools/contracts";
+
 import type {
   TaskIntakeDeliveryResult,
   TaskIntakeExternalLinkKind,
@@ -62,7 +64,9 @@ export interface TaskIntakeRuntime {
   readonly materializeTaskRuntime: (input: {
     readonly taskId: string;
     readonly initialPrompt: string;
+    readonly attachments?: ReadonlyArray<UploadChatAttachment>;
     readonly startCodingAgent: boolean;
+    readonly modelSelection?: ModelSelection;
   }) => Promise<TaskIntakeRuntimeMaterialization>;
 
   readonly continueTaskRuntime: (input: {
@@ -71,6 +75,7 @@ export interface TaskIntakeRuntime {
     readonly workSessionId: string;
     readonly t3ThreadId: string;
     readonly prompt: string;
+    readonly attachments?: ReadonlyArray<UploadChatAttachment>;
   }) => Promise<{
     readonly taskId: string;
     readonly workSessionId: string;

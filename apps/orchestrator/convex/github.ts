@@ -485,7 +485,26 @@ export const handleWebhook = internalAction({
             if (messageId === undefined) {
               throw new Error(`Invalid Slack thread external id: ${claim.externalId}`);
             }
-            await thread.adapter.addReaction(threadId, messageId, "white_check_mark");
+            let reactionDelivered = false;
+            try {
+              await thread.adapter.addReaction(threadId, messageId, "white_check_mark");
+              reactionDelivered = true;
+            } catch (error) {
+              await logOrchestratorEvent(ctx, {
+                kind: "github.pull-request.merge-slack-reaction-failed",
+                severity: "warn",
+                summary: "Failed to react to original Slack message for merged PR.",
+                eventKey: `${claim.claimEventKey}:reaction-failed`,
+                taskId: claim.taskId,
+                externalId: claim.externalId,
+                payload: {
+                  claimEventKey: claim.claimEventKey,
+                  linkId: claim.linkId,
+                  messageId,
+                  error: errorSummary(error),
+                },
+              });
+            }
             const posted: { readonly id: string } = await thread.post(
               postablePullRequestStatus({
                 kind: claim.kind,
@@ -497,7 +516,9 @@ export const handleWebhook = internalAction({
                 ...(event.headBranch !== undefined ? { branch: event.headBranch } : {}),
               }),
             );
-            externalMessageId = `${messageId}:reaction:white_check_mark;${posted.id}`;
+            externalMessageId = reactionDelivered
+              ? `${messageId}:reaction:white_check_mark;${posted.id}`
+              : posted.id;
           }
           delivered += 1;
           await ctx.runMutation(internal.taskEvents.appendTaskEvent, {
