@@ -36,6 +36,7 @@ export interface SidebarWorktreeThreadGroup<TThread> {
 export interface SidebarThreadRenderModel<TThread> {
   groups: SidebarWorktreeThreadGroup<TThread>[];
   hiddenGroupCount: number;
+  hiddenGroupThreads: TThread[];
   hiddenThreads: TThread[];
   hasOverflowingGroups: boolean;
   hasOverflowingThreads: boolean;
@@ -409,6 +410,7 @@ export function buildSidebarThreadRenderModel<
         },
       ],
       hiddenGroupCount: 0,
+      hiddenGroupThreads: [],
       hiddenThreads: input.threads.filter((thread) => !visibleThreadSet.has(thread)),
       hasOverflowingGroups: false,
       hasOverflowingThreads,
@@ -447,6 +449,7 @@ export function buildSidebarThreadRenderModel<
         },
       ],
       hiddenGroupCount: 0,
+      hiddenGroupThreads: [],
       hiddenThreads: group.threads.filter((thread) => !visibleThreadSet.has(thread)),
       hasOverflowingGroups: false,
       hasOverflowingThreads,
@@ -499,12 +502,13 @@ export function buildSidebarThreadRenderModel<
     ];
   });
   const hiddenGroups = allGroups.filter((_, index) => !visibleGroupIndexes.has(index));
+  const hiddenGroupThreads = hiddenGroups.flatMap((group) => group.threads);
   const renderedThreadSet = new Set(visibleGroups.flatMap((group) => group.threads));
   const hiddenThreads = [
     ...allGroups
       .filter((_, index) => visibleGroupIndexes.has(index))
       .flatMap((group) => group.threads.filter((thread) => !renderedThreadSet.has(thread))),
-    ...hiddenGroups.flatMap((group) => group.threads),
+    ...hiddenGroupThreads,
   ];
   const hasOverflowingGroups = allGroups.length > input.worktreePreviewCount;
   const hasOverflowingThreads =
@@ -513,6 +517,7 @@ export function buildSidebarThreadRenderModel<
   return {
     groups: visibleGroups,
     hiddenGroupCount: hiddenGroups.length,
+    hiddenGroupThreads,
     hiddenThreads,
     hasOverflowingGroups,
     hasOverflowingThreads,
@@ -559,6 +564,7 @@ export function buildSidebarProjectThreadRenderState<
     : {
         groups: [],
         hiddenGroupCount: 0,
+        hiddenGroupThreads: [],
         hiddenThreads: [],
         hasOverflowingGroups: false,
         hasOverflowingThreads: false,

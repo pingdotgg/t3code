@@ -339,6 +339,27 @@ describe("buildSidebarThreadRenderModel", () => {
     expect(model.groups[0]?.hiddenThreadCount).toBe(1);
   });
 
+  it("separates hidden worktree threads from hidden rows inside visible worktrees", () => {
+    const threads = [
+      { id: "a1", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "b1", branch: "feature/b", worktreePath: "/repo/b" },
+      { id: "a2", branch: "feature/a", worktreePath: "/repo/a" },
+      { id: "c1", branch: "feature/c", worktreePath: "/repo/c" },
+    ];
+
+    const model = buildSidebarThreadRenderModel({
+      threads,
+      groupingMode: "worktree",
+      expanded: false,
+      threadPreviewCount: 1,
+      worktreePreviewCount: 2,
+    });
+
+    expect(model.groups.map((group) => group.key)).toEqual(["/repo/a", "/repo/b"]);
+    expect(model.hiddenThreads.map((thread) => thread.id)).toEqual(["a2", "c1"]);
+    expect(model.hiddenGroupThreads.map((thread) => thread.id)).toEqual(["c1"]);
+  });
+
   it("keeps overflow true after grouped worktree rows are expanded", () => {
     const threads = [
       { id: "1", branch: "feature/a", worktreePath: "/repo/a" },

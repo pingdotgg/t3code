@@ -1301,6 +1301,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     });
     const { pinnedCollapsedThread, renderModel } = renderState;
     const worktreeStatusByKey = new Map<string, ThreadStatusPill | null>();
+    const hiddenStatusThreads =
+      threadGroupingMode === "worktree" && renderModel.hasOverflowingGroups
+        ? renderModel.hiddenGroupThreads
+        : renderModel.hiddenThreads;
     if (threadGroupingMode === "worktree") {
       const sourceThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : visibleProjectThreads;
       for (const group of renderModel.groups) {
@@ -1316,7 +1320,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       hasOverflowingWorktrees: renderState.hasOverflowingWorktrees,
       hiddenWorktreeCount: renderState.hiddenWorktreeCount,
       hiddenThreadStatus: resolveProjectStatusIndicator(
-        renderModel.hiddenThreads.map((thread) => resolveProjectThreadStatus(thread)),
+        hiddenStatusThreads.map((thread) => resolveProjectThreadStatus(thread)),
       ),
       orderedProjectThreadKeys: renderState.orderedThreadKeys,
       renderedThreadGroups: renderModel.groups.map((group) =>
