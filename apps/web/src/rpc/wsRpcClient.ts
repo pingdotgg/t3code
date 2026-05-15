@@ -97,6 +97,9 @@ export interface WsRpcClient {
     readonly removeWorktree: RpcUnaryMethod<typeof WS_METHODS.vcsRemoveWorktree>;
     readonly createRef: RpcUnaryMethod<typeof WS_METHODS.vcsCreateRef>;
     readonly switchRef: RpcUnaryMethod<typeof WS_METHODS.vcsSwitchRef>;
+    readonly stashAndSwitch: RpcUnaryMethod<typeof WS_METHODS.vcsStashAndSwitch>;
+    readonly stashDrop: RpcUnaryMethod<typeof WS_METHODS.vcsStashDrop>;
+    readonly stashInfo: RpcUnaryMethod<typeof WS_METHODS.vcsStashInfo>;
     readonly init: RpcUnaryMethod<typeof WS_METHODS.vcsInit>;
   };
   /**
@@ -219,6 +222,10 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.vcsRemoveWorktree](input)),
       createRef: (input) => transport.request((client) => client[WS_METHODS.vcsCreateRef](input)),
       switchRef: (input) => transport.request((client) => client[WS_METHODS.vcsSwitchRef](input)),
+      stashAndSwitch: (input) =>
+        transport.request((client) => client[WS_METHODS.vcsStashAndSwitch](input)),
+      stashDrop: (input) => transport.request((client) => client[WS_METHODS.vcsStashDrop](input)),
+      stashInfo: (input) => transport.request((client) => client[WS_METHODS.vcsStashInfo](input)),
       init: (input) => transport.request((client) => client[WS_METHODS.vcsInit](input)),
     },
     git: {

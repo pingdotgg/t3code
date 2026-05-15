@@ -23,6 +23,10 @@ import {
   type VcsListRefsResult,
   type VcsPullResult,
   type VcsRemoveWorktreeInput,
+  type VcsStashAndSwitchInput,
+  type VcsStashDropInput,
+  type VcsStashInfoInput,
+  type VcsStashInfoResult,
   type VcsStatusInput,
   type VcsStatusResult,
 } from "@t3tools/contracts";
@@ -212,6 +216,11 @@ export interface GitVcsDriverShape {
   readonly switchRef: (
     input: VcsSwitchRefInput,
   ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
+  readonly stashAndSwitch: (input: VcsStashAndSwitchInput) => Effect.Effect<void, GitCommandError>;
+  readonly stashDrop: (input: VcsStashDropInput) => Effect.Effect<void, GitCommandError>;
+  readonly stashInfo: (
+    input: VcsStashInfoInput,
+  ) => Effect.Effect<VcsStashInfoResult, GitCommandError>;
   readonly initRepo: (input: VcsInitInput) => Effect.Effect<void, GitCommandError>;
   readonly listLocalBranchNames: (cwd: string) => Effect.Effect<string[], GitCommandError>;
 }

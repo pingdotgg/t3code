@@ -2916,6 +2916,62 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("routes websocket rpc vcs.stashAndSwitch errors after refreshing vcs status", () =>
+    Effect.gen(function* () {
+      const gitError = new GitCommandError({
+        operation: "stashAndSwitch",
+        command: "git stash pop",
+        cwd: "/tmp/repo",
+        detail: "stash pop conflict",
+      });
+      const refreshed = yield* Deferred.make<void>();
+      let refreshCalls = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          gitVcsDriver: {
+            stashAndSwitch: () => Effect.fail(gitError),
+          },
+          vcsStatusBroadcaster: {
+            refreshStatus: (cwd: string) =>
+              Effect.sync(() => {
+                assert.equal(cwd, "/tmp/repo");
+                refreshCalls += 1;
+              }).pipe(
+                Effect.andThen(Deferred.succeed(refreshed, undefined)),
+                Effect.as({
+                  isRepo: true,
+                  hasPrimaryRemote: true,
+                  isDefaultRef: false,
+                  refName: "feature/demo",
+                  hasWorkingTreeChanges: true,
+                  workingTree: { files: [], insertions: 0, deletions: 0 },
+                  hasUpstream: true,
+                  aheadCount: 0,
+                  behindCount: 0,
+                  aheadOfDefaultCount: 0,
+                  pr: null,
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.vcsStashAndSwitch]({
+            cwd: "/tmp/repo",
+            refName: "feature/demo",
+          }).pipe(Effect.result),
+        ),
+      );
+
+      assertFailure(result, gitError);
+      yield* Deferred.await(refreshed).pipe(Effect.timeout(Duration.seconds(1)));
+      assert.equal(refreshCalls, 1);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc git.runStackedAction errors after refreshing git status", () =>
     Effect.gen(function* () {
       const gitError = new GitCommandError({

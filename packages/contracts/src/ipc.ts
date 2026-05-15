@@ -13,6 +13,10 @@ import type {
   VcsPullInput,
   VcsPullResult,
   VcsRemoveWorktreeInput,
+  VcsStashAndSwitchInput,
+  VcsStashDropInput,
+  VcsStashInfoInput,
+  VcsStashInfoResult,
   GitResolvePullRequestResult,
   VcsStatusInput,
   VcsStatusResult,
@@ -527,6 +531,9 @@ export interface EnvironmentApi {
     removeWorktree: (input: VcsRemoveWorktreeInput) => Promise<void>;
     createRef: (input: VcsCreateRefInput) => Promise<VcsCreateRefResult>;
     switchRef: (input: VcsSwitchRefInput) => Promise<VcsSwitchRefResult>;
+    stashAndSwitch: (input: VcsStashAndSwitchInput) => Promise<void>;
+    stashDrop: (input: VcsStashDropInput) => Promise<void>;
+    stashInfo: (input: VcsStashInfoInput) => Promise<VcsStashInfoResult>;
     init: (input: VcsInitInput) => Promise<void>;
     pull: (input: VcsPullInput) => Promise<VcsPullResult>;
     refreshStatus: (input: VcsStatusInput) => Promise<VcsStatusResult>;

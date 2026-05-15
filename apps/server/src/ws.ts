@@ -1094,6 +1094,22 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             gitWorkflow.switchRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "vcs" },
           ),
+        [WS_METHODS.vcsStashAndSwitch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsStashAndSwitch,
+            gitWorkflow.stashAndSwitch(input).pipe(Effect.ensuring(refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsStashDrop]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.vcsStashDrop,
+            gitWorkflow.stashDrop(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.vcsStashInfo]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsStashInfo, gitWorkflow.stashInfo(input), {
+            "rpc.aggregate": "vcs",
+          }),
         [WS_METHODS.vcsInit]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsInit,

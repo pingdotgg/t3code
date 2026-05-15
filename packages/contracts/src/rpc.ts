@@ -11,6 +11,7 @@ import {
 } from "./filesystem.ts";
 import {
   GitActionProgressEvent,
+  GitCheckoutDirtyWorktreeError,
   VcsSwitchRefInput,
   VcsSwitchRefResult,
   GitCommandError,
@@ -30,6 +31,10 @@ import {
   VcsRemoveWorktreeInput,
   GitResolvePullRequestResult,
   GitRunStackedActionInput,
+  VcsStashAndSwitchInput,
+  VcsStashDropInput,
+  VcsStashInfoInput,
+  VcsStashInfoResult,
   VcsStatusInput,
   VcsStatusResult,
   VcsStatusStreamEvent,
@@ -121,6 +126,9 @@ export const WS_METHODS = {
   vcsRemoveWorktree: "vcs.removeWorktree",
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
+  vcsStashAndSwitch: "vcs.stashAndSwitch",
+  vcsStashDrop: "vcs.stashDrop",
+  vcsStashInfo: "vcs.stashInfo",
   vcsInit: "vcs.init",
 
   // Git workflow methods
@@ -351,6 +359,22 @@ export const WsVcsCreateRefRpc = Rpc.make(WS_METHODS.vcsCreateRef, {
 export const WsVcsSwitchRefRpc = Rpc.make(WS_METHODS.vcsSwitchRef, {
   payload: VcsSwitchRefInput,
   success: VcsSwitchRefResult,
+  error: Schema.Union([GitCommandError, GitCheckoutDirtyWorktreeError]),
+});
+
+export const WsVcsStashAndSwitchRpc = Rpc.make(WS_METHODS.vcsStashAndSwitch, {
+  payload: VcsStashAndSwitchInput,
+  error: GitCommandError,
+});
+
+export const WsVcsStashDropRpc = Rpc.make(WS_METHODS.vcsStashDrop, {
+  payload: VcsStashDropInput,
+  error: GitCommandError,
+});
+
+export const WsVcsStashInfoRpc = Rpc.make(WS_METHODS.vcsStashInfo, {
+  payload: VcsStashInfoInput,
+  success: VcsStashInfoResult,
   error: GitCommandError,
 });
 
@@ -503,6 +527,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsRemoveWorktreeRpc,
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
+  WsVcsStashAndSwitchRpc,
+  WsVcsStashDropRpc,
+  WsVcsStashInfoRpc,
   WsVcsInitRpc,
   WsTerminalOpenRpc,
   WsTerminalWriteRpc,

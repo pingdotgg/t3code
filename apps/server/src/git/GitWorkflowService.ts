@@ -19,6 +19,10 @@ import {
   type GitPullRequestRefInput,
   type VcsPullResult,
   type VcsRemoveWorktreeInput,
+  type VcsStashAndSwitchInput,
+  type VcsStashDropInput,
+  type VcsStashInfoInput,
+  type VcsStashInfoResult,
   type GitResolvePullRequestResult,
   type GitRunStackedActionInput,
   type GitRunStackedActionResult,
@@ -67,6 +71,11 @@ export interface GitWorkflowServiceShape {
   readonly switchRef: (
     input: VcsSwitchRefInput,
   ) => Effect.Effect<VcsSwitchRefResult, GitCommandError>;
+  readonly stashAndSwitch: (input: VcsStashAndSwitchInput) => Effect.Effect<void, GitCommandError>;
+  readonly stashDrop: (input: VcsStashDropInput) => Effect.Effect<void, GitCommandError>;
+  readonly stashInfo: (
+    input: VcsStashInfoInput,
+  ) => Effect.Effect<VcsStashInfoResult, GitCommandError>;
   readonly renameBranch: (input: {
     readonly cwd: string;
     readonly oldBranch: string;
@@ -305,6 +314,18 @@ export const make = Effect.fn("makeGitWorkflowService")(function* () {
     switchRef: (input) =>
       ensureGitCommand("GitWorkflowService.switchRef", input.cwd).pipe(
         Effect.andThen(Effect.scoped(git.switchRef(input))),
+      ),
+    stashAndSwitch: (input) =>
+      ensureGitCommand("GitWorkflowService.stashAndSwitch", input.cwd).pipe(
+        Effect.andThen(Effect.scoped(git.stashAndSwitch(input))),
+      ),
+    stashDrop: (input) =>
+      ensureGitCommand("GitWorkflowService.stashDrop", input.cwd).pipe(
+        Effect.andThen(git.stashDrop(input)),
+      ),
+    stashInfo: (input) =>
+      ensureGitCommand("GitWorkflowService.stashInfo", input.cwd).pipe(
+        Effect.andThen(git.stashInfo(input)),
       ),
     renameBranch: (input) =>
       ensureGit("GitWorkflowService.renameBranch", input.cwd).pipe(

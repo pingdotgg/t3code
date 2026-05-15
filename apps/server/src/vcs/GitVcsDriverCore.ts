@@ -1,4 +1,5 @@
 import * as Cache from "effect/Cache";
+import * as Cause from "effect/Cause";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -16,7 +17,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { GitCommandError, type VcsRef } from "@t3tools/contracts";
+import { GitCheckoutDirtyWorktreeError, GitCommandError, type VcsRef } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
@@ -37,6 +38,7 @@ const PREPARED_COMMIT_PATCH_MAX_OUTPUT_BYTES = 49_000;
 const RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES = 19_000;
 const RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES = 59_000;
+const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
@@ -46,6 +48,7 @@ const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
 } satisfies NodeJS.ProcessEnv);
 const DEFAULT_BASE_BRANCH_CANDIDATES = ["main", "master"] as const;
 const GIT_LIST_BRANCHES_DEFAULT_LIMIT = 100;
+const isGitCheckoutDirtyWorktreeError = Schema.is(GitCheckoutDirtyWorktreeError);
 const NON_REPOSITORY_STATUS_DETAILS = Object.freeze<GitVcsDriver.GitStatusDetails>({
   isRepo: false,
   hasOriginRemote: false,
@@ -64,6 +67,17 @@ type TraceTailState = {
   processedChars: number;
   remainder: string;
 };
+
+function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
+  const parts = input.split("\0");
+  if (parts.length === 0) return [];
+
+  if (truncated && parts[parts.length - 1]?.length) {
+    parts.pop();
+  }
+
+  return parts.filter((value) => value.length > 0);
+}
 
 class StatusRemoteRefreshCacheKey extends Data.Class<{
   gitCommonDir: string;
@@ -297,6 +311,19 @@ function parseDefaultBranchFromRemoteHeadRef(value: string, remoteName: string):
   return refName.length > 0 ? refName : null;
 }
 
+function dirtyWorktreeDetailsFromCause(
+  cause: unknown,
+): { branch: string; conflictingFiles: ReadonlyArray<string> } | undefined {
+  if (!isGitCheckoutDirtyWorktreeError(cause)) {
+    return undefined;
+  }
+
+  return {
+    branch: cause.branch,
+    conflictingFiles: [...cause.conflictingFiles],
+  };
+}
+
 function createGitCommandError(
   operation: string,
   cwd: string,
@@ -304,13 +331,83 @@ function createGitCommandError(
   detail: string,
   cause?: unknown,
 ): GitCommandError {
+  const dirtyWorktree = dirtyWorktreeDetailsFromCause(cause);
   return new GitCommandError({
     operation,
     command: commandLabel(args),
     cwd,
     detail,
+    ...(dirtyWorktree ? { dirtyWorktree } : {}),
     ...(cause !== undefined ? { cause } : {}),
   });
+}
+
+const DIRTY_WORKTREE_PATTERN =
+  /Your local changes to the following files would be overwritten by (?:checkout|merge):\s*([\s\S]*?)Please commit your changes or stash them/;
+
+const UNTRACKED_OVERWRITE_PATTERN =
+  /The following untracked working tree files would be overwritten by checkout:\s*([\s\S]*?)Please move or remove them/;
+
+function parseDirtyWorktreeFiles(stderr: string): string[] | null {
+  const match = DIRTY_WORKTREE_PATTERN.exec(stderr) ?? UNTRACKED_OVERWRITE_PATTERN.exec(stderr);
+  if (!match?.[1]) return null;
+  return match[1]
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+interface TrackedPathIndex {
+  readonly files: ReadonlySet<string>;
+  readonly directories: ReadonlySet<string>;
+}
+
+function splitPathSegments(path: string): string[] {
+  return path
+    .trim()
+    .split("/")
+    .filter((segment) => segment.length > 0);
+}
+
+function buildTrackedPathIndex(paths: readonly string[]): TrackedPathIndex {
+  const files = new Set<string>();
+  const directories = new Set<string>();
+
+  for (const path of paths) {
+    const segments = splitPathSegments(path);
+    if (segments.length === 0) continue;
+    files.add(segments.join("/"));
+
+    // Record only strict ancestor directories; the leaf is a file, not a dir.
+    let prefix = "";
+    for (let i = 0; i < segments.length - 1; i++) {
+      prefix = prefix.length > 0 ? `${prefix}/${segments[i]!}` : segments[i]!;
+      directories.add(prefix);
+    }
+  }
+
+  return { files, directories };
+}
+
+// Reports a conflict only when an ignored path would collide with git's
+// checkout: same-path file collision, ignored file living at a path git wants
+// to populate as a directory, or an ancestor of the ignored path being a
+// tracked file (file/directory conflict).
+function pathConflictsWithTrackedIndex(path: string, index: TrackedPathIndex): boolean {
+  const segments = splitPathSegments(path);
+  if (segments.length === 0) return false;
+
+  const fullPath = segments.join("/");
+  if (index.files.has(fullPath)) return true;
+  if (index.directories.has(fullPath)) return true;
+
+  let prefix = "";
+  for (let i = 0; i < segments.length - 1; i++) {
+    prefix = prefix.length > 0 ? `${prefix}/${segments[i]!}` : segments[i]!;
+    if (index.files.has(prefix)) return true;
+  }
+
+  return false;
 }
 
 function quoteGitCommand(args: ReadonlyArray<string>): string {
@@ -325,6 +422,14 @@ function isMissingGitCwdError(error: GitCommandError): boolean {
     normalized.includes("enoent") ||
     normalized.includes("not a directory")
   );
+}
+
+function parseNonEmptyLineList(input: string): string[] {
+  return input
+    .trim()
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
 function toGitCommandError(
@@ -1997,85 +2102,133 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const resolveSwitchRefPlan = Effect.fn("resolveSwitchRefPlan")(function* (input: {
+    cwd: string;
+    refName: string;
+  }) {
+    const [localInputExists, remoteExists] = yield* Effect.all(
+      [
+        executeGit(
+          "GitVcsDriver.switchRef.localInputExists",
+          input.cwd,
+          ["show-ref", "--verify", "--quiet", `refs/heads/${input.refName}`],
+          {
+            timeoutMs: 5_000,
+            allowNonZeroExit: true,
+          },
+        ).pipe(Effect.map((result) => result.exitCode === 0)),
+        executeGit(
+          "GitVcsDriver.switchRef.remoteExists",
+          input.cwd,
+          ["show-ref", "--verify", "--quiet", `refs/remotes/${input.refName}`],
+          {
+            timeoutMs: 5_000,
+            allowNonZeroExit: true,
+          },
+        ).pipe(Effect.map((result) => result.exitCode === 0)),
+      ],
+      { concurrency: "unbounded" },
+    );
+
+    const localTrackingBranch = remoteExists
+      ? yield* executeGit(
+          "GitVcsDriver.switchRef.localTrackingBranch",
+          input.cwd,
+          ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)", "refs/heads"],
+          {
+            timeoutMs: 5_000,
+            allowNonZeroExit: true,
+          },
+        ).pipe(
+          Effect.map((result) =>
+            result.exitCode === 0
+              ? parseTrackingBranchByUpstreamRef(result.stdout, input.refName)
+              : null,
+          ),
+        )
+      : null;
+
+    const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(input.refName);
+    const localTrackedBranchTargetExists =
+      remoteExists && localTrackedBranchCandidate
+        ? yield* executeGit(
+            "GitVcsDriver.switchRef.localTrackedBranchTargetExists",
+            input.cwd,
+            ["show-ref", "--verify", "--quiet", `refs/heads/${localTrackedBranchCandidate}`],
+            {
+              timeoutMs: 5_000,
+              allowNonZeroExit: true,
+            },
+          ).pipe(Effect.map((result) => result.exitCode === 0))
+        : false;
+
+    const checkoutArgs = localInputExists
+      ? ["checkout", input.refName]
+      : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
+        ? ["checkout", input.refName]
+        : remoteExists && !localTrackingBranch
+          ? ["checkout", "--track", input.refName]
+          : remoteExists && localTrackingBranch
+            ? ["checkout", localTrackingBranch]
+            : ["checkout", input.refName];
+
+    const checkoutRef = localTrackingBranch ?? input.refName;
+
+    return { checkoutArgs, checkoutRef };
+  });
+
+  const switchRefWithArgs = Effect.fn("switchRefWithArgs")(function* (
+    input: { cwd: string; refName: string },
+    checkoutArgs: readonly string[],
+  ) {
+    const checkoutResult = yield* executeGit(
+      "GitVcsDriver.switchRef.checkout",
+      input.cwd,
+      checkoutArgs,
+      { timeoutMs: 10_000, allowNonZeroExit: true },
+    );
+    if (checkoutResult.exitCode !== 0) {
+      const dirtyFiles = parseDirtyWorktreeFiles(checkoutResult.stderr);
+      if (dirtyFiles && dirtyFiles.length > 0) {
+        return yield* new GitCheckoutDirtyWorktreeError({
+          branch: input.refName,
+          cwd: input.cwd,
+          conflictingFiles: dirtyFiles,
+        });
+      }
+      const stderr = checkoutResult.stderr.trim();
+      return yield* createGitCommandError(
+        "GitVcsDriver.switchRef.checkout",
+        input.cwd,
+        checkoutArgs,
+        stderr.length > 0 ? stderr : "git checkout failed",
+      );
+    }
+
+    const refName = yield* runGitStdout("GitVcsDriver.switchRef.currentBranch", input.cwd, [
+      "branch",
+      "--show-current",
+    ]).pipe(Effect.map((stdout) => stdout.trim() || null));
+
+    return { refName };
+  });
+
   const switchRef: GitVcsDriver.GitVcsDriverShape["switchRef"] = Effect.fn("switchRef")(
     function* (input) {
-      const [localInputExists, remoteExists] = yield* Effect.all(
-        [
-          executeGit(
-            "GitVcsDriver.switchRef.localInputExists",
-            input.cwd,
-            ["show-ref", "--verify", "--quiet", `refs/heads/${input.refName}`],
-            {
-              timeoutMs: 5_000,
-              allowNonZeroExit: true,
-            },
-          ).pipe(Effect.map((result) => result.exitCode === 0)),
-          executeGit(
-            "GitVcsDriver.switchRef.remoteExists",
-            input.cwd,
-            ["show-ref", "--verify", "--quiet", `refs/remotes/${input.refName}`],
-            {
-              timeoutMs: 5_000,
-              allowNonZeroExit: true,
-            },
-          ).pipe(Effect.map((result) => result.exitCode === 0)),
-        ],
-        { concurrency: "unbounded" },
-      );
-
-      const localTrackingBranch = remoteExists
-        ? yield* executeGit(
-            "GitVcsDriver.switchRef.localTrackingBranch",
-            input.cwd,
-            ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)", "refs/heads"],
-            {
-              timeoutMs: 5_000,
-              allowNonZeroExit: true,
-            },
-          ).pipe(
-            Effect.map((result) =>
-              result.exitCode === 0
-                ? parseTrackingBranchByUpstreamRef(result.stdout, input.refName)
-                : null,
-            ),
-          )
-        : null;
-
-      const localTrackedBranchCandidate = deriveLocalBranchNameFromRemoteRef(input.refName);
-      const localTrackedBranchTargetExists =
-        remoteExists && localTrackedBranchCandidate
-          ? yield* executeGit(
-              "GitVcsDriver.switchRef.localTrackedBranchTargetExists",
+      const { checkoutArgs } = yield* resolveSwitchRefPlan(input);
+      return yield* switchRefWithArgs(input, checkoutArgs).pipe(
+        Effect.catchTag("GitCheckoutDirtyWorktreeError", (e) =>
+          Effect.fail(
+            createGitCommandError(
+              "GitVcsDriver.switchRef.checkout",
               input.cwd,
-              ["show-ref", "--verify", "--quiet", `refs/heads/${localTrackedBranchCandidate}`],
-              {
-                timeoutMs: 5_000,
-                allowNonZeroExit: true,
-              },
-            ).pipe(Effect.map((result) => result.exitCode === 0))
-          : false;
-
-      const checkoutArgs = localInputExists
-        ? ["checkout", input.refName]
-        : remoteExists && !localTrackingBranch && localTrackedBranchTargetExists
-          ? ["checkout", input.refName]
-          : remoteExists && !localTrackingBranch
-            ? ["checkout", "--track", input.refName]
-            : remoteExists && localTrackingBranch
-              ? ["checkout", localTrackingBranch]
-              : ["checkout", input.refName];
-
-      yield* executeGit("GitVcsDriver.switchRef.checkout", input.cwd, checkoutArgs, {
-        timeoutMs: 10_000,
-        fallbackErrorMessage: "git checkout failed",
-      });
-
-      const refName = yield* runGitStdout("GitVcsDriver.switchRef.currentBranch", input.cwd, [
-        "branch",
-        "--show-current",
-      ]).pipe(Effect.map((stdout) => stdout.trim() || null));
-
-      return { refName };
+              checkoutArgs,
+              e.message,
+              e,
+            ),
+          ),
+        ),
+      );
     },
   );
 
@@ -2092,6 +2245,240 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { refName: input.refName };
     },
   );
+
+  const stashAndSwitch: GitVcsDriver.GitVcsDriverShape["stashAndSwitch"] = (input) =>
+    Effect.gen(function* () {
+      const { checkoutArgs, checkoutRef } = yield* resolveSwitchRefPlan(input);
+
+      const cleanupFailedStashPop = () =>
+        Effect.gen(function* () {
+          const stashFiles = yield* executeGit(
+            "GitVcsDriver.stashAndSwitch.stashFileList",
+            input.cwd,
+            ["stash", "show", "--include-untracked", "--name-only"],
+            { timeoutMs: 5_000, allowNonZeroExit: true },
+          );
+          yield* executeGit(
+            "GitVcsDriver.stashAndSwitch.resetIndex",
+            input.cwd,
+            ["reset", "HEAD"],
+            {
+              timeoutMs: 10_000,
+              allowNonZeroExit: true,
+            },
+          );
+          yield* executeGit(
+            "GitVcsDriver.stashAndSwitch.restoreWorktree",
+            input.cwd,
+            ["checkout", "--", "."],
+            { timeoutMs: 10_000, allowNonZeroExit: true },
+          );
+          if (stashFiles.exitCode !== 0 || stashFiles.stdout.trim().length === 0) {
+            return;
+          }
+
+          const filePaths = parseNonEmptyLineList(stashFiles.stdout);
+          if (filePaths.length === 0) {
+            return;
+          }
+
+          yield* executeGit(
+            "GitVcsDriver.stashAndSwitch.cleanStashRemnants",
+            input.cwd,
+            ["clean", "-f", "--", ...filePaths],
+            { timeoutMs: 10_000, allowNonZeroExit: true },
+          );
+        });
+      const readStashList = () =>
+        runGitStdout("GitVcsDriver.stashAndSwitch.stashList", input.cwd, ["stash", "list"]).pipe(
+          Effect.map((stdout) => stdout.trim()),
+        );
+
+      const stashListBefore = yield* readStashList();
+
+      yield* executeGit(
+        "GitVcsDriver.stashAndSwitch.stash",
+        input.cwd,
+        ["stash", "push", "-u", "-m", `t3code: stash before switching to ${input.refName}`],
+        { timeoutMs: 15_000, fallbackErrorMessage: "git stash failed" },
+      );
+      const stashEntryCreated = (yield* readStashList()) !== stashListBefore;
+
+      const ignoredFilesResult = yield* executeGit(
+        "GitVcsDriver.stashAndSwitch.ignoredFiles",
+        input.cwd,
+        ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"],
+        {
+          timeoutMs: 10_000,
+          allowNonZeroExit: true,
+          maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+          appendTruncationMarker: true,
+        },
+      );
+      const ignoredFiles =
+        ignoredFilesResult.exitCode === 0
+          ? splitNullSeparatedPaths(ignoredFilesResult.stdout, ignoredFilesResult.stdoutTruncated)
+          : [];
+      const ignoredCheckoutConflicts =
+        ignoredFiles.length === 0
+          ? []
+          : yield* executeGit(
+              "GitVcsDriver.stashAndSwitch.checkoutTree",
+              input.cwd,
+              ["ls-tree", "-r", "--name-only", "-z", checkoutRef],
+              {
+                timeoutMs: 10_000,
+                allowNonZeroExit: true,
+                maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+                appendTruncationMarker: true,
+              },
+            ).pipe(
+              Effect.map((result) =>
+                result.exitCode === 0
+                  ? splitNullSeparatedPaths(result.stdout, result.stdoutTruncated)
+                  : [],
+              ),
+              Effect.map((trackedPaths) => {
+                if (trackedPaths.length === 0) {
+                  return [];
+                }
+
+                const trackedIndex = buildTrackedPathIndex(trackedPaths);
+                return ignoredFiles.filter((path) =>
+                  pathConflictsWithTrackedIndex(path, trackedIndex),
+                );
+              }),
+            );
+
+      const dirtyWorktreeError =
+        ignoredCheckoutConflicts.length > 0
+          ? new GitCheckoutDirtyWorktreeError({
+              branch: checkoutRef,
+              cwd: input.cwd,
+              conflictingFiles: ignoredCheckoutConflicts,
+            })
+          : null;
+
+      const checkoutExit = yield* Effect.exit(
+        dirtyWorktreeError
+          ? Effect.fail(
+              createGitCommandError(
+                "GitVcsDriver.stashAndSwitch.checkout",
+                input.cwd,
+                ["checkout", input.refName],
+                dirtyWorktreeError.message,
+                dirtyWorktreeError,
+              ),
+            )
+          : switchRefWithArgs(input, checkoutArgs).pipe(
+              Effect.catchTag("GitCheckoutDirtyWorktreeError", (e) =>
+                Effect.fail(
+                  createGitCommandError(
+                    "GitVcsDriver.stashAndSwitch.checkout",
+                    input.cwd,
+                    ["checkout", input.refName],
+                    e.message,
+                    e,
+                  ),
+                ),
+              ),
+            ),
+      );
+      if (Exit.isFailure(checkoutExit)) {
+        if (!stashEntryCreated) {
+          return yield* Effect.failCause(checkoutExit.cause);
+        }
+
+        const restoreResult = yield* executeGit(
+          "GitVcsDriver.stashAndSwitch.restoreOriginalBranch",
+          input.cwd,
+          ["stash", "pop"],
+          { timeoutMs: 15_000, allowNonZeroExit: true },
+        );
+        if (restoreResult.exitCode !== 0) {
+          yield* cleanupFailedStashPop();
+          return yield* createGitCommandError(
+            "GitVcsDriver.stashAndSwitch.checkout",
+            input.cwd,
+            ["checkout", input.refName],
+            "Branch switch failed after stashing. Your changes are saved in the stash.",
+            Cause.squash(checkoutExit.cause),
+          );
+        }
+
+        return yield* Effect.failCause(checkoutExit.cause);
+      }
+
+      if (!stashEntryCreated) {
+        return;
+      }
+
+      const popResult = yield* executeGit(
+        "GitVcsDriver.stashAndSwitch.stashPop",
+        input.cwd,
+        ["stash", "pop"],
+        { timeoutMs: 15_000, allowNonZeroExit: true },
+      );
+      if (popResult.exitCode !== 0) {
+        yield* cleanupFailedStashPop();
+        return yield* createGitCommandError(
+          "GitVcsDriver.stashAndSwitch.stashPop",
+          input.cwd,
+          ["stash", "pop"],
+          "Stash could not be applied to this branch. Your changes are saved in the stash.",
+        );
+      }
+    });
+
+  const stashDrop: GitVcsDriver.GitVcsDriverShape["stashDrop"] = (input) =>
+    executeGit("GitVcsDriver.stashDrop", input.cwd, ["stash", "drop"], {
+      timeoutMs: 10_000,
+      fallbackErrorMessage: "git stash drop failed",
+    }).pipe(Effect.asVoid);
+
+  const stashInfo: GitVcsDriver.GitVcsDriverShape["stashInfo"] = (input) =>
+    Effect.gen(function* () {
+      const stashLine = (yield* runGitStdout("GitVcsDriver.stashInfo.list", input.cwd, [
+        "stash",
+        "list",
+        "-n",
+        "1",
+        "--format=%gd%x09%gs",
+      ])).trim();
+      const separatorIndex = stashLine.indexOf("\t");
+      const stashRef =
+        separatorIndex >= 0 ? stashLine.slice(0, separatorIndex).trim() : stashLine.trim();
+      const message =
+        separatorIndex >= 0 ? stashLine.slice(separatorIndex + 1).trim() : stashLine.trim();
+      if (stashRef.length === 0 || message.length === 0) {
+        return yield* createGitCommandError(
+          "GitVcsDriver.stashInfo",
+          input.cwd,
+          ["stash", "list", "-n", "1", "--format=%gd%x09%gs"],
+          "No stash entry is available.",
+        );
+      }
+
+      const branchOutput = yield* runGitStdout("GitVcsDriver.stashInfo.branch", input.cwd, [
+        "branch",
+        "--show-current",
+      ]).pipe(Effect.catch(() => Effect.succeed("")));
+      const filesOutput = yield* runGitStdout("GitVcsDriver.stashInfo.files", input.cwd, [
+        "stash",
+        "show",
+        "--include-untracked",
+        "--name-only",
+        stashRef,
+      ]).pipe(Effect.catch(() => Effect.succeed("")));
+
+      return {
+        cwd: input.cwd,
+        branch: branchOutput.trim() || null,
+        stashRef,
+        message,
+        files: parseNonEmptyLineList(filesOutput),
+      };
+    });
 
   const initRepo: GitVcsDriver.GitVcsDriverShape["initRepo"] = (input) =>
     executeGit("GitVcsDriver.initRepo", input.cwd, ["init"], {
@@ -2137,6 +2524,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     renameBranch,
     createRef,
     switchRef,
+    stashAndSwitch,
+    stashDrop,
+    stashInfo,
     initRepo,
     listLocalBranchNames,
   });

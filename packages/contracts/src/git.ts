@@ -178,6 +178,22 @@ export const VcsSwitchRefInput = Schema.Struct({
 });
 export type VcsSwitchRefInput = typeof VcsSwitchRefInput.Type;
 
+export const VcsStashAndSwitchInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  refName: TrimmedNonEmptyStringSchema,
+});
+export type VcsStashAndSwitchInput = typeof VcsStashAndSwitchInput.Type;
+
+export const VcsStashDropInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type VcsStashDropInput = typeof VcsStashDropInput.Type;
+
+export const VcsStashInfoInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+});
+export type VcsStashInfoInput = typeof VcsStashInfoInput.Type;
+
 export const VcsInitInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   kind: Schema.optional(VcsDriverKind),
@@ -280,6 +296,15 @@ export const VcsSwitchRefResult = Schema.Struct({
 });
 export type VcsSwitchRefResult = typeof VcsSwitchRefResult.Type;
 
+export const VcsStashInfoResult = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  branch: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
+  stashRef: TrimmedNonEmptyStringSchema,
+  message: TrimmedNonEmptyStringSchema,
+  files: Schema.Array(TrimmedNonEmptyStringSchema),
+});
+export type VcsStashInfoResult = typeof VcsStashInfoResult.Type;
+
 export const GitRunStackedActionResult = Schema.Struct({
   action: GitStackedAction,
   branch: Schema.Struct({
@@ -317,11 +342,18 @@ export const VcsPullResult = Schema.Struct({
 export type VcsPullResult = typeof VcsPullResult.Type;
 
 // RPC / domain errors
+export const GitDirtyWorktreeDetails = Schema.Struct({
+  branch: Schema.String,
+  conflictingFiles: Schema.Array(Schema.String),
+});
+export type GitDirtyWorktreeDetails = typeof GitDirtyWorktreeDetails.Type;
+
 export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()("GitCommandError", {
   operation: Schema.String,
   command: Schema.String,
   cwd: Schema.String,
   detail: Schema.String,
+  dirtyWorktree: Schema.optional(GitDirtyWorktreeDetails),
   cause: Schema.optional(Schema.Defect),
 }) {
   override get message(): string {
@@ -352,11 +384,29 @@ export class GitManagerError extends Schema.TaggedErrorClass<GitManagerError>()(
   }
 }
 
+export class GitCheckoutDirtyWorktreeError extends Schema.TaggedErrorClass<GitCheckoutDirtyWorktreeError>()(
+  "GitCheckoutDirtyWorktreeError",
+  {
+    branch: Schema.String,
+    cwd: Schema.String,
+    conflictingFiles: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    // Use a newline-separated list so that file paths containing a
+    // `", "` sequence round-trip safely through the error message. The
+    // structured `conflictingFiles` field remains the authoritative source.
+    const fileList = this.conflictingFiles.map((file) => `  - ${file}`).join("\n");
+    return `Uncommitted changes block checkout to ${this.branch}:\n${fileList}`;
+  }
+}
+
 export const GitManagerServiceError = Schema.Union([
   GitManagerError,
   GitCommandError,
   SourceControlProviderError,
   TextGenerationError,
+  GitCheckoutDirtyWorktreeError,
 ]);
 export type GitManagerServiceError = typeof GitManagerServiceError.Type;
 

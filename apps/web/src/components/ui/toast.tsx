@@ -273,7 +273,9 @@ function deriveToastBodyDescriptor(toast: {
   const secondaryActionVariant: NonNullable<ThreadToastData["secondaryActionVariant"]> =
     toast.data?.secondaryActionVariant ?? "outline";
   const copyErrorText =
-    toast.type === "error" && typeof toast.description === "string" && !toast.data?.hideCopyButton
+    (toast.type === "error" || toast.type === "warning") &&
+    typeof toast.description === "string" &&
+    !toast.data?.hideCopyButton
       ? toast.description
       : null;
   const hasSecondaryAction = toast.data?.secondaryActionProps !== undefined;
