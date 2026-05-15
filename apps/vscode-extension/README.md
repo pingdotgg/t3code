@@ -5,7 +5,7 @@ Experimental VS Code shell for T3 Code. It starts a local T3 backend, injects a 
 Build a local VSIX from the repository root:
 
 ```sh
-bun run --filter t3code-vscode package
+VSCE_PUBLISHER=<publisher-id> bun run --filter t3code-vscode package
 ```
 
 Install the generated `.vsix` with VS Code's "Install from VSIX..." command, or from the repository root:
@@ -13,6 +13,14 @@ Install the generated `.vsix` with VS Code's "Install from VSIX..." command, or 
 ```sh
 code --install-extension $(ls -t apps/vscode-extension/*.vsix | head -1)
 ```
+
+Build a platform-targeted VSIX:
+
+```sh
+VSCE_PUBLISHER=<publisher-id> bun run --filter t3code-vscode package -- --target darwin-arm64 --out release-publish/t3code-vscode-darwin-arm64.vsix
+```
+
+For Marketplace publishing, the release workflow uses `@vscode/vsce` with a Visual Studio Marketplace Personal Access Token. Configure the GitHub repository variable `VSCE_PUBLISHER` with the Marketplace publisher id and the GitHub secret `VSCE_PAT` with a token that can publish for that publisher. Stable releases publish normal VSIX packages, and nightly/prerelease releases publish with `--pre-release`.
 
 ## Auth Transport
 
@@ -77,7 +85,7 @@ Run it from the VS Code command palette as "T3 Code: Clean Virtual Workspace Cac
 
 ## Implementation Status
 
-Current status: locally installable experimental VSIX exists and uses stable VS Code APIs only.
+Current status: locally installable experimental VSIX exists, uses stable VS Code APIs only, and is wired into the release workflow for platform-targeted VSIX builds and Marketplace publishing.
 
 Implemented so far:
 
@@ -167,7 +175,18 @@ Implemented so far:
   - copies `apps/web/dist` to `apps/vscode-extension/dist/webview`
   - copies `apps/server/dist` to `apps/vscode-extension/dist/server`
   - stages extension runtime dependencies under `apps/vscode-extension/dist/node_modules`
-  - creates `apps/vscode-extension/t3code-vscode-0.0.1.vsix`
+  - supports `--target`, `--out`, and `--pre-release` package options
+  - includes extension-local Marketplace metadata for repository and license
+  - creates a versioned `apps/vscode-extension/t3code-vscode-<version>.vsix`
+- Added release workflow distribution that:
+  - aligns `apps/vscode-extension/package.json` to the release version before packaging
+  - stamps the package publisher from `VSCE_PUBLISHER` during packaging without committing it to source
+  - builds platform-targeted VSIX artifacts for `darwin-arm64`, `darwin-x64`, `linux-x64`, and `win32-x64`
+  - marks nightly/prerelease VSIX builds with `vsce package --pre-release`
+  - uploads VSIX artifacts to the GitHub release alongside desktop artifacts
+  - publishes all built VSIX artifacts to the VS Code Marketplace with `vsce publish --packagePath ...`
+  - uses `VSCE_PUBLISHER` as the required GitHub repository variable for the Marketplace publisher id
+  - uses `VSCE_PAT` as the required GitHub secret for Marketplace auth
 - Verified:
   - `bun fmt`
   - `bun lint` (passes with existing unrelated warnings)
@@ -184,9 +203,8 @@ Deferred until there is a concrete UX need:
 Not implemented yet:
 
 - Containing keybinding collisions between T3 webview shortcuts and VS Code native keybindings. See the decision log entry below.
-- Platform-specific VSIX build matrix.
 - Package size optimization.
-- Marketplace publishing hardening.
+- Linux arm64 and Windows arm64 VSIX publishing. The current release matrix matches the platform set already validated for desktop release runners.
 
 Known packaging notes:
 
@@ -195,7 +213,9 @@ Known packaging notes:
 - The current local VSIX includes staged runtime dependencies and is still larger than a normal webview-only extension. The initial working artifact was around 119 MB on macOS arm64; pruning runtime-dead staged dependency files reduced the local artifact to around 22 MB.
 - VS Code packaging removes the backend's duplicated `dist/server/client` static web app after copying `apps/server/dist`. The extension webview loads `dist/webview` directly, so the packaged backend does not need its standalone static-client copy.
 - `bun install --production` reports a blocked `node-pty` postinstall in the staged extension runtime, but the installed package includes `node-pty` prebuilds for macOS and Windows. Linux packaging still needs explicit validation.
-- The current package is not yet platform-targeted with `vsce --target`.
+- Release packaging is platform-targeted with `vsce --target` because the staged backend runtime includes native dependencies such as `node-pty`.
+- The release workflow currently builds Marketplace VSIX artifacts for `darwin-arm64`, `darwin-x64`, `linux-x64`, and `win32-x64`. Add `linux-arm64` and `win32-arm64` only after native runtime staging has been validated on matching runners.
+- Marketplace publishing uses the `VSCE_PUBLISHER` GitHub repository variable and `VSCE_PAT` GitHub secret. Per the VS Code publishing docs, `vsce` publishes with a Visual Studio Marketplace Personal Access Token; the token should be scoped so it can publish for the configured publisher.
 
 ## Decision Log
 
@@ -523,7 +543,38 @@ Deviation from original plan:
 
 - Packaging is not yet optimized.
 - The VS Code package currently strips `dist/server/client` as a packaging-only shortcut. A cleaner longer-term fix would split the server build so extension packaging can build/copy the backend without producing the standalone web client at all.
-- The current VSIX is not platform-specific, although platform-specific VSIXs are still the recommended direction if `node-pty` remains required.
+- A local package without `--target` is still useful for development, but release distribution should use platform-specific VSIXs while `node-pty` remains required.
+
+### 2026-05-15: Publish Platform-targeted VSIXs from Release CI
+
+Decision: build platform-targeted VSIX artifacts in the main release workflow and publish those artifacts to the Visual Studio Marketplace with `@vscode/vsce`.
+
+Reasoning:
+
+- The extension packages the server runtime and staged production dependencies, including native dependencies such as `node-pty`. A single universal VSIX is higher risk because native binaries and postinstall behavior vary by platform.
+- `vsce package --target` lets the VSIX metadata declare the platform it was built for, and Marketplace can serve matching platform packages to VS Code clients.
+- Publishing the exact VSIX files produced by CI keeps GitHub release artifacts and Marketplace artifacts aligned.
+- Marketplace auth should be a release secret, not an interactive login. `vsce publish` accepts a Personal Access Token through `--pat` or the `VSCE_PAT` environment variable.
+- Stable and nightly channels already flow through the release workflow. Passing `--pre-release` for nightly/prerelease builds maps that existing channel split to VS Code Marketplace prereleases.
+
+Implemented:
+
+- `apps/vscode-extension/scripts/package.mjs` accepts `--target`, `--out`, and `--pre-release`, then forwards those options to `vsce package`.
+- The package script requires `VSCE_PUBLISHER`, writes that publisher into `package.json` only for the duration of packaging, and restores the source manifest afterward.
+- `apps/vscode-extension/package.json` includes Marketplace repository metadata and the packaged extension includes an extension-local `LICENSE`.
+- `scripts/update-release-package-versions.ts` now includes `apps/vscode-extension/package.json`, so Marketplace releases do not repeat `0.0.1`.
+- `.github/workflows/release.yml` builds `darwin-arm64`, `darwin-x64`, `linux-x64`, and `win32-x64` VSIX artifacts after preflight.
+- GitHub releases include the generated `.vsix` files alongside desktop release assets.
+- The `publish_vscode_extension` job downloads all VSIX artifacts and publishes them in one `vsce publish --packagePath ...` invocation.
+- The build and publish jobs require `VSCE_PUBLISHER`; missing publisher configuration fails the release instead of producing a VSIX with a placeholder publisher.
+- The publish job requires the GitHub secret `VSCE_PAT`; missing auth fails the release instead of silently skipping Marketplace deployment.
+- Nightly/prerelease builds package and publish with `--pre-release`.
+
+Deferred work:
+
+- Add `linux-arm64` and `win32-arm64` once matching native dependency staging has been validated on real runners.
+- Add Marketplace/Open VSX split publishing only if the product needs non-Microsoft VS Code-compatible distributions.
+- Revisit VSIX signing if Marketplace or enterprise distribution policy requires signed VSIX artifacts beyond the normal Marketplace publishing path.
 
 ### 2026-05-14: Keep Built Artifacts Out of Git
 
@@ -1163,8 +1214,8 @@ vsce publish --target win32-x64 win32-arm64
 
 Packaging recommendation:
 
-- Assume platform-specific VSIX builds are viable.
-- Start with the local development platform first.
-- Add CI targets for macOS arm64/x64, Linux x64/arm64, and Windows x64/arm64 once the extension works.
-- Use a universal fallback only if the backend can avoid native dependencies or ship optional native binaries cleanly.
+- Use platform-specific VSIX builds for release distribution.
+- Build the currently validated Marketplace targets in CI: `darwin-arm64`, `darwin-x64`, `linux-x64`, and `win32-x64`.
+- Add CI targets for Linux arm64 and Windows arm64 once matching native runtime staging has been validated.
+- Keep the universal/local package path for development only.
 - If `node-pty` remains required at runtime, platform-specific VSIXs are the cleaner distribution model.

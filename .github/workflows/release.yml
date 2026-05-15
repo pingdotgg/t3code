@@ -463,10 +463,81 @@ jobs:
       - name: Publish CLI package
         run: node apps/server/scripts/cli.ts publish --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --app-version "${{ needs.preflight.outputs.version }}" --verbose
 
+  build_vscode_extension:
+    name: Build VS Code extension ${{ matrix.target }}
+    needs: preflight
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            runner: blacksmith-12vcpu-macos-26
+          - target: darwin-x64
+            runner: blacksmith-12vcpu-macos-26
+          - target: linux-x64
+            runner: blacksmith-32vcpu-ubuntu-2404
+          - target: win32-x64
+            runner: blacksmith-32vcpu-windows-2025
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+
+      - name: Package VS Code extension
+        shell: bash
+        env:
+          VSCE_PUBLISHER: ${{ vars.VSCE_PUBLISHER }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${VSCE_PUBLISHER:-}" ]]; then
+            echo "Missing required VS Code Marketplace variable: VSCE_PUBLISHER." >&2
+            exit 1
+          fi
+
+          mkdir -p apps/vscode-extension/release-publish
+          args=(
+            --target "${{ matrix.target }}"
+            --out "release-publish/t3code-vscode-${{ needs.preflight.outputs.version }}-${{ matrix.target }}.vsix"
+          )
+
+          if [[ "${{ needs.preflight.outputs.is_prerelease }}" == "true" ]]; then
+            args+=(--pre-release)
+          fi
+
+          bun run --filter t3code-vscode package -- "${args[@]}"
+
+      - name: Upload VS Code extension artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: vscode-extension-${{ matrix.target }}
+          path: apps/vscode-extension/release-publish/*.vsix
+          if-no-files-found: error
+
   release:
     name: Publish GitHub Release
-    needs: [preflight, build, publish_cli]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' }}
+    needs: [preflight, build, publish_cli, build_vscode_extension]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.publish_cli.result == 'success' && needs.build_vscode_extension.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -500,6 +571,13 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           pattern: desktop-*
+          merge-multiple: true
+          path: release-assets
+
+      - name: Download VS Code extension artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: vscode-extension-*
           merge-multiple: true
           path: release-assets
 
@@ -561,6 +639,7 @@ jobs:
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
+            release-assets/*.vsix
           fail_on_unmatched_files: true
           token: ${{ steps.app_token.outputs.token }}
 
@@ -581,8 +660,72 @@ jobs:
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
+            release-assets/*.vsix
           fail_on_unmatched_files: true
           token: ${{ steps.app_token.outputs.token }}
+
+  publish_vscode_extension:
+    name: Publish VS Code extension to Marketplace
+    needs: [preflight, build_vscode_extension, release]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build_vscode_extension.result == 'success' && needs.release.result == 'success' }}
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 10
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      VSCE_PUBLISHER: ${{ vars.VSCE_PUBLISHER }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: package.json
+
+      - name: Install VS Code publishing tooling
+        run: bun install --frozen-lockfile --filter=t3code-vscode
+
+      - name: Download VS Code extension artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: vscode-extension-*
+          merge-multiple: true
+          path: vscode-extension-vsix
+
+      - name: Publish VS Code extension
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${VSCE_PAT:-}" ]]; then
+            echo "Missing required VS Code Marketplace secret: VSCE_PAT." >&2
+            exit 1
+          fi
+          if [[ -z "${VSCE_PUBLISHER:-}" ]]; then
+            echo "Missing required VS Code Marketplace variable: VSCE_PUBLISHER." >&2
+            exit 1
+          fi
+
+          shopt -s nullglob
+          packages=("$PWD"/vscode-extension-vsix/*.vsix)
+          if (( ${#packages[@]} == 0 )); then
+            echo "No VS Code extension VSIX artifacts found." >&2
+            exit 1
+          fi
+
+          args=(publish --packagePath "${packages[@]}" --pat "$VSCE_PAT")
+          if [[ "${{ needs.preflight.outputs.is_prerelease }}" == "true" ]]; then
+            args+=(--pre-release)
+          fi
+
+          (cd apps/vscode-extension && bun x vsce "${args[@]}")
 
   deploy_web:
     name: Deploy hosted web app
@@ -730,7 +873,7 @@ jobs:
 
       - name: Format package.json files
         if: steps.update_versions.outputs.changed == 'true'
-        run: bunx oxfmt@0.40.0 apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
+        run: bunx oxfmt@0.40.0 apps/server/package.json apps/desktop/package.json apps/web/package.json apps/vscode-extension/package.json packages/contracts/package.json
 
       - name: Refresh lockfile
         if: steps.update_versions.outputs.changed == 'true'
@@ -742,7 +885,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
         run: |
-          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json bun.lock; then
+          if git diff --quiet -- apps/server/package.json apps/desktop/package.json apps/web/package.json apps/vscode-extension/package.json packages/contracts/package.json bun.lock; then
             echo "No version changes to commit."
             exit 0
           fi
@@ -750,7 +893,7 @@ jobs:
           git config user.name "${{ steps.app_bot.outputs.name }}"
           git config user.email "${{ steps.app_bot.outputs.email }}"
 
-          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json bun.lock
+          git add apps/server/package.json apps/desktop/package.json apps/web/package.json apps/vscode-extension/package.json packages/contracts/package.json bun.lock
           git commit -m "chore(release): prepare $RELEASE_TAG"
           git push origin HEAD:main
 
@@ -760,9 +903,10 @@ jobs:
       always() && !cancelled() &&
       needs.preflight.result == 'success' &&
       needs.release.result == 'success' &&
+      needs.publish_vscode_extension.result == 'success' &&
       needs.deploy_web.result == 'success' &&
       (needs.finalize.result == 'success' || needs.finalize.result == 'skipped')
-    needs: [preflight, release, deploy_web, finalize]
+    needs: [preflight, release, publish_vscode_extension, deploy_web, finalize]
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:

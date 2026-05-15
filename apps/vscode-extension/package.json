@@ -8,10 +8,15 @@
     "Other"
   ],
   "license": "MIT",
-  "publisher": "t3tools",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/t3tools/t3code.git",
+    "directory": "apps/vscode-extension"
+  },
   "files": [
     "dist",
     "resources",
+    "LICENSE",
     "README.md"
   ],
   "type": "module",
