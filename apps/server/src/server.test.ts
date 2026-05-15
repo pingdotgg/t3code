@@ -10,7 +10,7 @@ import {
   GitCommandError,
   KeybindingRule,
   MessageId,
-  OpenError,
+  ExternalLauncherError,
   type OrchestrationThreadShell,
   TerminalNotRunningError,
   type OrchestrationCommand,
@@ -63,7 +63,7 @@ import {
 } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { GitManager, type GitManagerShape } from "./git/GitManager.ts";
 import { Keybindings, type KeybindingsShape } from "./keybindings.ts";
-import { Open, type OpenShape } from "./open.ts";
+import * as ExternalLauncher from "./process/externalLauncher.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -115,6 +115,7 @@ import * as SourceControlRepositoryService from "./sourceControl/SourceControlRe
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
+import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as Data from "effect/Data";
 
@@ -319,7 +320,7 @@ const buildAppUnderTest = (options?: {
     keybindings?: Partial<KeybindingsShape>;
     providerRegistry?: Partial<ProviderRegistryShape>;
     serverSettings?: Partial<ServerSettingsShape>;
-    open?: Partial<OpenShape>;
+    externalLauncher?: Partial<ExternalLauncher.ExternalLauncherShape>;
     vcsDriver?: Partial<VcsDriver.VcsDriverShape>;
     vcsDriverRegistry?: Partial<VcsDriverRegistry.VcsDriverRegistryShape>;
     gitVcsDriver?: Partial<GitVcsDriver.GitVcsDriverShape>;
@@ -540,8 +541,8 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provide(
-        Layer.mock(Open)({
-          ...options?.layers?.open,
+        Layer.mock(ExternalLauncher.ExternalLauncher)({
+          ...options?.layers?.externalLauncher,
         }),
       ),
       Layer.provide(
@@ -561,6 +562,22 @@ const buildAppUnderTest = (options?: {
               signal: input.signal,
               signaled: true,
               message: Option.none(),
+            }),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(ProcessResourceMonitor.ProcessResourceMonitor)({
+          readHistory: (input) =>
+            Effect.succeed({
+              readAt: TEST_EPOCH,
+              windowMs: input.windowMs,
+              bucketMs: input.bucketMs,
+              sampleIntervalMs: 5_000,
+              retainedSampleCount: 0,
+              totalCpuSecondsApprox: 0,
+              buckets: [],
+              topProcesses: [],
+              error: Option.none(),
             }),
         }),
       ),
@@ -2517,8 +2534,8 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       let openedInput: { cwd: string; editor: EditorId } | null = null;
       yield* buildAppUnderTest({
         layers: {
-          open: {
-            openInEditor: (input) =>
+          externalLauncher: {
+            launchEditor: (input) =>
               Effect.sync(() => {
                 openedInput = input;
               }),
@@ -2542,11 +2559,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
   it.effect("routes websocket rpc shell.openInEditor errors", () =>
     Effect.gen(function* () {
-      const openError = new OpenError({ message: "Editor command not found: cursor" });
+      const externalLauncherError = new ExternalLauncherError({
+        message: "Editor command not found: cursor",
+      });
       yield* buildAppUnderTest({
         layers: {
-          open: {
-            openInEditor: () => Effect.fail(openError),
+          externalLauncher: {
+            launchEditor: () => Effect.fail(externalLauncherError),
           },
         },
       });
@@ -2561,7 +2580,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ).pipe(Effect.result),
       );
 
-      assertFailure(result, openError);
+      assertFailure(result, externalLauncherError);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

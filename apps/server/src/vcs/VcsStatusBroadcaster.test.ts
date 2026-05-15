@@ -310,6 +310,29 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
+  it("backs off remote refresh failures exponentially and honors larger configured intervals", () => {
+    assert.equal(
+      Duration.toMillis(VcsStatusBroadcaster.remoteRefreshFailureDelay(1, Duration.seconds(1))),
+      30_000,
+    );
+    assert.equal(
+      Duration.toMillis(VcsStatusBroadcaster.remoteRefreshFailureDelay(2, Duration.seconds(1))),
+      60_000,
+    );
+    assert.equal(
+      Duration.toMillis(VcsStatusBroadcaster.remoteRefreshFailureDelay(3, Duration.seconds(1))),
+      120_000,
+    );
+    assert.equal(
+      Duration.toMillis(VcsStatusBroadcaster.remoteRefreshFailureDelay(1, Duration.minutes(5))),
+      300_000,
+    );
+    assert.equal(
+      Duration.toMillis(VcsStatusBroadcaster.remoteRefreshFailureDelay(20, Duration.seconds(1))),
+      900_000,
+    );
+  });
+
   it.effect("stops the remote poller after the last stream subscriber disconnects", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,

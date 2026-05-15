@@ -40,7 +40,7 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { ServerConfig } from "./config.ts";
 import { Keybindings } from "./keybindings.ts";
-import { Open, resolveAvailableEditors } from "./open.ts";
+import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -66,6 +66,7 @@ import { RepositoryIdentityResolver } from "./project/Services/RepositoryIdentit
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
+import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as SourceControlDiscoveryLayer from "./sourceControl/SourceControlDiscovery.ts";
 import { SourceControlRepositoryService } from "./sourceControl/SourceControlRepositoryService.ts";
@@ -163,7 +164,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const orchestrationEngine = yield* OrchestrationEngineService;
       const checkpointDiffQuery = yield* CheckpointDiffQuery;
       const keybindings = yield* Keybindings;
-      const open = yield* Open;
+      const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const gitWorkflow = yield* GitWorkflowService;
       const vcsProvisioning = yield* VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
@@ -193,6 +194,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const bootstrapCredentials = yield* BootstrapCredentialService;
       const sessions = yield* SessionCredentialService;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
+      const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const serverCommandId = (tag: string) =>
         CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -583,7 +585,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
           providers,
-          availableEditors: resolveAvailableEditors(),
+          availableEditors: ExternalLauncher.resolveAvailableEditors(),
           observability: {
             logsDirectoryPath: config.logsDir,
             localTracingEnabled: true,
@@ -909,6 +911,14 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.serverGetProcessDiagnostics, processDiagnostics.read, {
             "rpc.aggregate": "server",
           }),
+        [WS_METHODS.serverGetProcessResourceHistory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.serverGetProcessResourceHistory,
+            processResourceMonitor.readHistory(input),
+            {
+              "rpc.aggregate": "server",
+            },
+          ),
         [WS_METHODS.serverSignalProcess]: (input) =>
           observeRpcEffect(WS_METHODS.serverSignalProcess, processDiagnostics.signal(input), {
             "rpc.aggregate": "server",
@@ -970,7 +980,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.shellOpenInEditor]: (input) =>
-          observeRpcEffect(WS_METHODS.shellOpenInEditor, open.openInEditor(input), {
+          observeRpcEffect(WS_METHODS.shellOpenInEditor, externalLauncher.launchEditor(input), {
             "rpc.aggregate": "workspace",
           }),
         [WS_METHODS.filesystemBrowse]: (input) =>

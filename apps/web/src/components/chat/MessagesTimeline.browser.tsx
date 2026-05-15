@@ -13,18 +13,16 @@ const getStateSpy = vi.fn(() => ({ isAtEnd: true }));
 vi.mock("@legendapp/list/react", async () => {
   const React = await import("react");
 
-  const LegendList = React.forwardRef(function MockLegendList(
-    props: {
-      data: Array<{ id: string }>;
-      keyExtractor: (item: { id: string }) => string;
-      renderItem: (args: { item: { id: string } }) => React.ReactNode;
-      ListHeaderComponent?: React.ReactNode;
-      ListFooterComponent?: React.ReactNode;
-    },
-    ref: React.ForwardedRef<LegendListRef>,
-  ) {
+  function LegendList(props: {
+    data: Array<{ id: string }>;
+    keyExtractor: (item: { id: string }) => string;
+    renderItem: (args: { item: { id: string } }) => React.ReactNode;
+    ListHeaderComponent?: React.ReactNode;
+    ListFooterComponent?: React.ReactNode;
+    ref?: React.Ref<LegendListRef>;
+  }) {
     React.useImperativeHandle(
-      ref,
+      props.ref,
       () =>
         ({
           scrollToEnd: scrollToEndSpy,
@@ -41,7 +39,7 @@ vi.mock("@legendapp/list/react", async () => {
         {props.ListFooterComponent}
       </div>
     );
-  });
+  }
 
   return { LegendList };
 });

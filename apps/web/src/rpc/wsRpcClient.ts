@@ -56,6 +56,7 @@ interface GitRunStackedActionOptions {
 export interface WsRpcClient {
   readonly dispose: () => Promise<void>;
   readonly reconnect: () => Promise<void>;
+  readonly isHeartbeatFresh: () => boolean;
   readonly terminal: {
     readonly open: RpcUnaryMethod<typeof WS_METHODS.terminalOpen>;
     readonly write: RpcUnaryMethod<typeof WS_METHODS.terminalWrite>;
@@ -134,6 +135,9 @@ export interface WsRpcClient {
     readonly getProcessDiagnostics: RpcUnaryNoArgMethod<
       typeof WS_METHODS.serverGetProcessDiagnostics
     >;
+    readonly getProcessResourceHistory: RpcUnaryMethod<
+      typeof WS_METHODS.serverGetProcessResourceHistory
+    >;
     readonly signalProcess: RpcUnaryMethod<typeof WS_METHODS.serverSignalProcess>;
     readonly subscribeConfig: RpcStreamMethod<typeof WS_METHODS.subscribeServerConfig>;
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
@@ -158,6 +162,7 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       resetWsReconnectBackoff();
       await transport.reconnect();
     },
+    isHeartbeatFresh: () => transport.isHeartbeatFresh(),
     terminal: {
       open: (input) => transport.request((client) => client[WS_METHODS.terminalOpen](input)),
       write: (input) => transport.request((client) => client[WS_METHODS.terminalWrite](input)),
@@ -263,6 +268,12 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       getProcessDiagnostics: () =>
         transport.request((client) =>
           client[WS_METHODS.serverGetProcessDiagnostics]({}).pipe(Effect.withTracerEnabled(false)),
+        ),
+      getProcessResourceHistory: (input) =>
+        transport.request((client) =>
+          client[WS_METHODS.serverGetProcessResourceHistory](input).pipe(
+            Effect.withTracerEnabled(false),
+          ),
         ),
       signalProcess: (input) =>
         transport.request((client) =>
