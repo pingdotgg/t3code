@@ -101,6 +101,26 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenIdentifier("terminalFocus"),
   },
   {
+    shortcut: { key: "tab", metaKey: false, ctrlKey: true, shiftKey: false, altKey: false, modKey: false },
+    command: "terminal.next",
+    whenAst: whenIdentifier("terminalFocus"),
+  },
+  {
+    shortcut: { key: "tab", metaKey: false, ctrlKey: true, shiftKey: true, altKey: false, modKey: false },
+    command: "terminal.previous",
+    whenAst: whenIdentifier("terminalFocus"),
+  },
+  {
+    shortcut: modShortcut("arrowleft", { altKey: true }),
+    command: "terminal.focusLeft",
+    whenAst: whenIdentifier("terminalFocus"),
+  },
+  {
+    shortcut: modShortcut("arrowright", { altKey: true }),
+    command: "terminal.focusRight",
+    whenAst: whenIdentifier("terminalFocus"),
+  },
+  {
     shortcut: modShortcut("d"),
     command: "diff.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
@@ -257,6 +277,120 @@ describe("split/new/close terminal shortcuts", () => {
       isTerminalNewShortcut(event({ key: "m", ctrlKey: true }), keybindings, {
         platform: "Linux",
       }),
+    );
+  });
+});
+
+describe("terminal.next / terminal.previous", () => {
+  const tabEvent = (overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike =>
+    event({ key: "Tab", ctrlKey: true, ...overrides });
+
+  it("resolves ctrl+tab to terminal.next when terminal is focused", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(tabEvent(), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+      "terminal.next",
+    );
+  });
+
+  it("resolves ctrl+shift+tab to terminal.previous when terminal is focused", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(tabEvent({ shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+      "terminal.previous",
+    );
+  });
+
+  it("does not fire ctrl+tab when terminal is not focused", () => {
+    assert.isNull(
+      resolveShortcutCommand(tabEvent(), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isNull(
+      resolveShortcutCommand(tabEvent({ shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+    );
+  });
+
+  it("uses ctrl+tab and ctrl+shift+tab on Linux/Windows", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(tabEvent(), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+      "terminal.next",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(tabEvent({ shiftKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+      "terminal.previous",
+    );
+  });
+});
+
+describe("terminal split focus shortcuts", () => {
+  it("resolves cmd+alt+arrow to focusLeft/focusRight on macOS", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "ArrowLeft", metaKey: true, altKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: true } },
+      ),
+      "terminal.focusLeft",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "ArrowRight", metaKey: true, altKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: true } },
+      ),
+      "terminal.focusRight",
+    );
+  });
+
+  it("resolves ctrl+alt+arrow to focusLeft/focusRight on Linux/Windows", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "ArrowLeft", ctrlKey: true, altKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "Linux", context: { terminalFocus: true } },
+      ),
+      "terminal.focusLeft",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "ArrowRight", ctrlKey: true, altKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "Linux", context: { terminalFocus: true } },
+      ),
+      "terminal.focusRight",
+    );
+  });
+
+  it("does not fire when terminal is not focused", () => {
+    assert.isNull(
+      resolveShortcutCommand(
+        event({ key: "ArrowLeft", metaKey: true, altKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: false } },
+      ),
+    );
+    assert.isNull(
+      resolveShortcutCommand(
+        event({ key: "ArrowRight", metaKey: true, altKey: true }),
+        DEFAULT_BINDINGS,
+        { platform: "MacIntel", context: { terminalFocus: false } },
+      ),
     );
   });
 });

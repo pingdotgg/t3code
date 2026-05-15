@@ -23,6 +23,10 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
   { "key": "mod+d", "command": "terminal.split", "when": "terminalFocus" },
   { "key": "mod+n", "command": "terminal.new", "when": "terminalFocus" },
   { "key": "mod+w", "command": "terminal.close", "when": "terminalFocus" },
+  { "key": "ctrl+tab", "command": "terminal.next", "when": "terminalFocus" },
+  { "key": "ctrl+shift+tab", "command": "terminal.previous", "when": "terminalFocus" },
+  { "key": "mod+alt+arrowleft", "command": "terminal.focusLeft", "when": "terminalFocus" },
+  { "key": "mod+alt+arrowright", "command": "terminal.focusRight", "when": "terminalFocus" },
   { "key": "mod+k", "command": "commandPalette.toggle", "when": "!terminalFocus" },
   { "key": "mod+n", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
@@ -51,11 +55,17 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `terminal.split`: split terminal (in focused terminal context by default)
 - `terminal.new`: create new terminal (in focused terminal context by default)
 - `terminal.close`: close/kill the focused terminal (in focused terminal context by default)
+- `terminal.next`: cycle to the next terminal (wraps around)
+- `terminal.previous`: cycle to the previous terminal (wraps around)
+- `terminal.focusLeft`: focus the terminal to the left of the active one within the current split (no wrap)
+- `terminal.focusRight`: focus the terminal to the right of the active one within the current split (no wrap)
 - `commandPalette.toggle`: open or close the global command palette
 - `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
 - `editor.openFavorite`: open current project/worktree in the last-used editor
 - `script.{id}.run`: run a project script by id (for example `script.test.run`)
+
+Browser note: `ctrl+tab` and `cmd+alt+arrow` are reserved by most browsers and cannot be intercepted in the web app variant. These defaults target the desktop app. If you use the web app, override them in your custom keybindings with shortcuts that work for your browser and OS.
 
 ### Key Syntax
 

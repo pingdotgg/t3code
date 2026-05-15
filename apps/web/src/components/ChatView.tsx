@@ -102,6 +102,7 @@ import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { nextCycleIndex, nextDirectionalIndex } from "../terminalNavigation";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
@@ -1813,6 +1814,54 @@ export default function ChatView(props: ChatViewProps) {
     storeNewTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
   }, [activeThreadRef, storeNewTerminal]);
+  const cycleTerminal = useCallback(
+    (direction: "next" | "previous") => {
+      if (!activeThreadRef) return;
+      const groups = terminalState.terminalGroups;
+      const currentIndex = groups.findIndex(
+        (group) => group.id === terminalState.activeTerminalGroupId,
+      );
+      const nextIndex = nextCycleIndex(currentIndex, groups.length, direction);
+      if (nextIndex === null) return;
+      const targetTerminalId = groups[nextIndex]?.terminalIds[0];
+      if (!targetTerminalId) return;
+      storeSetActiveTerminal(activeThreadRef, targetTerminalId);
+      setTerminalFocusRequestId((value) => value + 1);
+    },
+    [
+      activeThreadRef,
+      storeSetActiveTerminal,
+      terminalState.activeTerminalGroupId,
+      terminalState.terminalGroups,
+    ],
+  );
+  const focusSplit = useCallback(
+    (direction: "left" | "right") => {
+      if (!activeThreadRef) return;
+      const activeGroup = terminalState.terminalGroups.find(
+        (group) => group.id === terminalState.activeTerminalGroupId,
+      );
+      if (!activeGroup) return;
+      const currentIndex = activeGroup.terminalIds.indexOf(terminalState.activeTerminalId);
+      const nextIndex = nextDirectionalIndex(
+        currentIndex,
+        activeGroup.terminalIds.length,
+        direction,
+      );
+      if (nextIndex === null) return;
+      const targetTerminalId = activeGroup.terminalIds[nextIndex];
+      if (!targetTerminalId) return;
+      storeSetActiveTerminal(activeThreadRef, targetTerminalId);
+      setTerminalFocusRequestId((value) => value + 1);
+    },
+    [
+      activeThreadRef,
+      storeSetActiveTerminal,
+      terminalState.activeTerminalGroupId,
+      terminalState.activeTerminalId,
+      terminalState.terminalGroups,
+    ],
+  );
   const closeTerminal = useCallback(
     (terminalId: string) => {
       const api = readEnvironmentApi(environmentId);
@@ -2510,6 +2559,34 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "terminal.next") {
+        event.preventDefault();
+        event.stopPropagation();
+        cycleTerminal("next");
+        return;
+      }
+
+      if (command === "terminal.previous") {
+        event.preventDefault();
+        event.stopPropagation();
+        cycleTerminal("previous");
+        return;
+      }
+
+      if (command === "terminal.focusLeft") {
+        event.preventDefault();
+        event.stopPropagation();
+        focusSplit("left");
+        return;
+      }
+
+      if (command === "terminal.focusRight") {
+        event.preventDefault();
+        event.stopPropagation();
+        focusSplit("right");
+        return;
+      }
+
       if (command === "diff.toggle") {
         event.preventDefault();
         event.stopPropagation();
@@ -2541,6 +2618,8 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadId,
     closeTerminal,
     createNewTerminal,
+    cycleTerminal,
+    focusSplit,
     setTerminalOpen,
     runProjectScript,
     splitTerminal,
