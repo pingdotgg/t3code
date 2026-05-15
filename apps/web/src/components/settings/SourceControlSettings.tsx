@@ -1,6 +1,7 @@
-import { GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
-import { Option } from "effect";
-import { type ReactNode } from "react";
+import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon } from "lucide-react";
+import * as Duration from "effect/Duration";
+import * as Option from "effect/Option";
+import { useState, type ReactNode } from "react";
 import type {
   SourceControlProviderKind,
   SourceControlDiscoveryResult,
@@ -9,7 +10,9 @@ import type {
   VcsDriverKind,
   VcsDiscoveryItem,
 } from "@t3tools/contracts";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
+import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import {
   refreshSourceControlDiscovery,
@@ -17,6 +20,7 @@ import {
 } from "../../lib/sourceControlDiscoveryState";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import {
   Empty,
   EmptyContent,
@@ -26,6 +30,13 @@ import {
   EmptyTitle,
 } from "../ui/empty";
 import { Skeleton } from "../ui/skeleton";
+import {
+  NumberField,
+  NumberFieldDecrement,
+  NumberFieldGroup,
+  NumberFieldIncrement,
+  NumberFieldInput,
+} from "../ui/number-field";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -38,7 +49,7 @@ import {
   type Icon,
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
-import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
@@ -57,6 +68,20 @@ const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
   jj: JujutsuIcon,
 };
 
+const SOURCE_CONTROL_SKELETON_ROWS = ["primary", "secondary"] as const;
+const GIT_FETCH_INTERVAL_STEP_SECONDS = 5;
+
+function durationToSeconds(duration: Duration.Duration): number {
+  return Math.round(Duration.toMillis(duration) / 1_000);
+}
+
+function normalizeFetchIntervalSeconds(value: number | null): number {
+  if (value === null || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.round(value));
+}
+
 function optionLabel(value: Option.Option<string>): string | null {
   return Option.getOrNull(value);
 }
@@ -67,17 +92,21 @@ function isProviderDiscoveryItem(
   return "auth" in item;
 }
 
+function isVcsNotReady(item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem): boolean {
+  return !isProviderDiscoveryItem(item) && !item.implemented;
+}
+
 function authPresentation(auth: SourceControlProviderAuth): {
   readonly label: string;
   readonly badge: "warning" | null;
 } {
   if (auth.status === "authenticated") {
-    return { label: "Signed in", badge: null };
+    return { label: "Authenticated", badge: null };
   }
   if (auth.status === "unauthenticated") {
-    return { label: "Sign in", badge: "warning" };
+    return { label: "Not authenticated", badge: "warning" };
   }
-  return { label: "Sign in", badge: null };
+  return { label: "Status unknown", badge: null };
 }
 
 function RedactedAccount(props: { readonly account: string | null }) {
@@ -92,7 +121,7 @@ function RedactedAccount(props: { readonly account: string | null }) {
 }
 
 function itemStatusDot(item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem): string {
-  if (!item.implemented) return "bg-muted-foreground/35";
+  if (isVcsNotReady(item)) return "bg-muted-foreground/35";
   if (item.status !== "available") return "bg-warning";
   if (isProviderDiscoveryItem(item) && item.auth.status !== "authenticated") return "bg-warning";
   return "bg-success";
@@ -135,12 +164,12 @@ function itemSummary({
   readonly auth: SourceControlProviderAuth | null;
   readonly authAccount: string | null;
 }) {
-  if (!item.implemented) {
+  if (isVcsNotReady(item)) {
     return <span>Support for {item.label} is coming soon.</span>;
   }
 
   if (item.status !== "available") {
-    return <span>Not found - {item.installHint}</span>;
+    return <span>Not available on this server: {item.installHint}</span>;
   }
 
   if (auth) {
@@ -157,12 +186,23 @@ function itemSummary({
         </>
       );
     }
+
+    if (!item.executable) {
+      return <span>{item.installHint}</span>;
+    }
+
     if (auth.status === "unauthenticated") {
-      return <span>Sign in with the {item.executable} CLI to enable pull request actions.</span>;
+      return (
+        <span>
+          {item.label} is not authenticated on this server. Sign in or configure credentials using
+          the <code className="rounded bg-muted px-1 py-px text-[11px]">{item.executable}</code>{" "}
+          tool on the server host to enable pull request features.
+        </span>
+      );
     }
     return (
       <span>
-        Install and sign in with the {item.executable} CLI to enable pull request actions.
+        Could not verify {item.label}. {item.installHint}
       </span>
     );
   }
@@ -172,20 +212,25 @@ function itemSummary({
 
 function DiscoveryItemRow({
   item,
+  children,
 }: {
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
+  readonly children?: ReactNode;
 }) {
   const version = optionLabel(item.version);
-  const enabled = item.implemented && item.status === "available";
+  const enabled =
+    item.status === "available" && (isProviderDiscoveryItem(item) || item.implemented);
   const auth = isProviderDiscoveryItem(item) ? item.auth : null;
   const authStatus = auth ? authPresentation(auth) : null;
   const authAccount = auth ? optionLabel(auth.account) : null;
+  const [isExpanded, setIsExpanded] = useState(false);
+  const hasDetails = children !== undefined;
 
   return (
     <div
       className={cn(
         "border-t border-border/60 first:border-t-0",
-        !item.implemented && "opacity-80",
+        isVcsNotReady(item) && "opacity-80",
       )}
     >
       <div className="px-4 py-3.5 sm:px-5">
@@ -193,11 +238,11 @@ function DiscoveryItemRow({
           <div className="min-w-0 flex-1 space-y-1">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <SourceControlItemMark item={item} />
-              <h3 className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">
+              <span className="truncate text-[13px] font-semibold tracking-[-0.01em] text-foreground">
                 {item.label}
-              </h3>
+              </span>
               {version ? <code className="text-xs text-muted-foreground">{version}</code> : null}
-              {!item.implemented ? (
+              {isVcsNotReady(item) ? (
                 <Badge variant="warning" size="sm">
                   Coming Soon
                 </Badge>
@@ -208,15 +253,103 @@ function DiscoveryItemRow({
                 </Badge>
               ) : null}
             </div>
-            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground">
+            <p className="flex min-w-0 flex-wrap items-center gap-x-1 text-xs text-muted-foreground/80">
               {itemSummary({ item, auth, authAccount })}
             </p>
           </div>
           <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
-            {item.implemented ? (
+            {hasDetails ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => setIsExpanded((open) => !open)}
+                aria-expanded={isExpanded}
+                aria-label={`Toggle ${item.label} details`}
+              >
+                <ChevronDownIcon
+                  className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
+                />
+              </Button>
+            ) : null}
+            {!isVcsNotReady(item) ? (
               <Switch checked={enabled} disabled aria-label={`${item.label} availability`} />
             ) : null}
           </div>
+        </div>
+      </div>
+
+      {hasDetails ? (
+        <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
+          <CollapsibleContent>
+            <div className="border-t border-border/60 px-4 py-3 sm:px-5">{children}</div>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : null}
+    </div>
+  );
+}
+
+function GitFetchIntervalSettings() {
+  const automaticGitFetchInterval = useSettings((settings) => settings.automaticGitFetchInterval);
+  const { updateSettings } = useUpdateSettings();
+  const automaticGitFetchIntervalSeconds = durationToSeconds(automaticGitFetchInterval);
+  const defaultAutomaticGitFetchIntervalSeconds = durationToSeconds(
+    DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+  );
+  const canResetFetchInterval =
+    automaticGitFetchIntervalSeconds !== defaultAutomaticGitFetchIntervalSeconds;
+
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <div className="flex min-w-0 items-center gap-1">
+            <span className="text-xs font-medium text-foreground">Fetch interval</span>
+            <span
+              className={cn(
+                "inline-flex size-5 shrink-0 items-center justify-center transition-opacity",
+                canResetFetchInterval ? "opacity-100" : "pointer-events-none opacity-0",
+              )}
+              aria-hidden={!canResetFetchInterval}
+            >
+              {canResetFetchInterval ? (
+                <SettingResetButton
+                  label="fetch interval"
+                  onClick={() =>
+                    updateSettings({
+                      automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+                    })
+                  }
+                />
+              ) : null}
+            </span>
+          </div>
+          <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
+            Refresh remote branch status in the background. Set this to 0 seconds if Git credentials
+            or security keys should only be prompted by explicit Git actions.
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <NumberField
+            value={automaticGitFetchIntervalSeconds}
+            min={0}
+            step={GIT_FETCH_INTERVAL_STEP_SECONDS}
+            size="sm"
+            className="w-32"
+            onValueChange={(value) =>
+              updateSettings({
+                automaticGitFetchInterval: Duration.seconds(normalizeFetchIntervalSeconds(value)),
+              })
+            }
+          >
+            <NumberFieldGroup>
+              <NumberFieldDecrement aria-label="Decrease fetch interval" />
+              <NumberFieldInput aria-label="Automatic Git fetch interval in seconds" />
+              <NumberFieldIncrement aria-label="Increase fetch interval" />
+            </NumberFieldGroup>
+          </NumberField>
+          <span className="text-xs text-muted-foreground">seconds</span>
         </div>
       </div>
     </div>
@@ -232,8 +365,8 @@ function SourceControlSectionSkeleton({
 }) {
   return (
     <SettingsSection title={title} headerAction={headerAction}>
-      {Array.from({ length: 2 }, (_, index) => (
-        <div key={index} className="border-t border-border/60 px-4 py-3.5 first:border-t-0 sm:px-5">
+      {SOURCE_CONTROL_SKELETON_ROWS.map((row) => (
+        <div key={row} className="border-t border-border/60 px-4 py-3.5 first:border-t-0 sm:px-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0 flex-1 space-y-2">
               <div className="flex items-center gap-2">
@@ -272,17 +405,19 @@ function EmptySourceControlDiscovery({
   const hasError = error !== null;
 
   return (
-    <SettingsSection title="Detected tools">
+    <SettingsSection title="Server environment">
       <Empty className="min-h-88">
         <EmptyMedia variant="icon">
           <GitPullRequestIcon />
         </EmptyMedia>
         <EmptyHeader>
           <EmptyTitle>
-            {hasError ? "Could not scan source control" : "No source control tools found"}
+            {hasError ? "Could not scan the server environment" : "Nothing detected yet"}
           </EmptyTitle>
           <EmptyDescription>
-            {hasError ? error : "Install a supported Git or pull request CLI, then scan again."}
+            {hasError
+              ? error
+              : "Install Git on the server, add optional hosting integrations or credentials your workspace needs, then rescan."}
           </EmptyDescription>
         </EmptyHeader>
         <EmptyContent>
@@ -304,7 +439,6 @@ function EmptySourceControlDiscovery({
 
 export function SourceControlSettingsPanel() {
   const discovery = useSourceControlDiscovery();
-
   const result = discovery.data ?? EMPTY_DISCOVERY_RESULT;
   const hasDiscoveryItems =
     result.versionControlSystems.length > 0 || result.sourceControlProviders.length > 0;
@@ -322,13 +456,13 @@ export function SourceControlSettingsPanel() {
             className="size-5 rounded-sm p-0 text-muted-foreground hover:text-foreground"
             onClick={handleScan}
             disabled={discovery.isPending}
-            aria-label="Scan source control tools"
+            aria-label="Rescan server environment"
           >
             <RefreshCwIcon className={cn("size-3", discovery.isPending && "animate-spin")} />
           </Button>
         }
       />
-      <TooltipPopup side="top">Scan source control tools</TooltipPopup>
+      <TooltipPopup side="top">Rescan Git and hosting integrations</TooltipPopup>
     </Tooltip>
   );
 
@@ -344,7 +478,9 @@ export function SourceControlSettingsPanel() {
           {result.versionControlSystems.length > 0 ? (
             <SettingsSection title="Version Control" headerAction={scanButton}>
               {result.versionControlSystems.map((item) => (
-                <DiscoveryItemRow key={`vcs:${item.kind}`} item={item} />
+                <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
+                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
+                </DiscoveryItemRow>
               ))}
             </SettingsSection>
           ) : null}

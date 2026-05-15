@@ -1,19 +1,24 @@
-import { assert, it } from "@effect/vitest";
+import { assert, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { Deferred, Effect, Exit, FileSystem, Layer, Option, Path, Scope, Stream } from "effect";
+import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Scope from "effect/Scope";
+import * as Stream from "effect/Stream";
 import type {
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
-import { describe } from "vitest";
 
-import {
-  VcsStatusBroadcaster,
-  layer as VcsStatusBroadcasterLayer,
-} from "./VcsStatusBroadcaster.ts";
-import { GitWorkflowService, type GitWorkflowServiceShape } from "../git/GitWorkflowService.ts";
+import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 
 const baseLocalStatus: VcsStatusLocalResult = {
   isRepo: true,
@@ -49,9 +54,10 @@ function makeTestLayer(state: {
   localInvalidationCalls: number;
   remoteInvalidationCalls: number;
 }) {
-  return VcsStatusBroadcasterLayer.pipe(
+  return VcsStatusBroadcaster.layer.pipe(
+    Layer.provideMerge(NodeServices.layer),
     Layer.provide(
-      Layer.mock(GitWorkflowService)({
+      Layer.mock(GitWorkflowService.GitWorkflowService)({
         localStatus: () =>
           Effect.sync(() => {
             state.localStatusCalls += 1;
@@ -87,7 +93,7 @@ describe("VcsStatusBroadcaster", () => {
     };
 
     return Effect.gen(function* () {
-      const broadcaster = yield* VcsStatusBroadcaster;
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
 
       const first = yield* broadcaster.getStatus({ cwd: "/repo" });
       const second = yield* broadcaster.getStatus({ cwd: "/repo" });
@@ -112,7 +118,7 @@ describe("VcsStatusBroadcaster", () => {
     };
 
     return Effect.gen(function* () {
-      const broadcaster = yield* VcsStatusBroadcaster;
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const initial = yield* broadcaster.getStatus({ cwd: "/repo" });
 
       state.currentLocalStatus = {
@@ -153,7 +159,7 @@ describe("VcsStatusBroadcaster", () => {
     };
 
     return Effect.gen(function* () {
-      const broadcaster = yield* VcsStatusBroadcaster;
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const initial = yield* broadcaster.getStatus({ cwd: "/repo" });
 
       state.currentLocalStatus = {
@@ -188,9 +194,10 @@ describe("VcsStatusBroadcaster", () => {
       localInvalidationCalls: 0,
       remoteInvalidationCalls: 0,
     };
-    const testLayer = VcsStatusBroadcasterLayer.pipe(
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
       Layer.provide(
-        Layer.mock(GitWorkflowService)({
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
           localStatus: (input) =>
             Effect.sync(() => {
               seenCwds.push(input.cwd);
@@ -211,7 +218,7 @@ describe("VcsStatusBroadcaster", () => {
             Effect.sync(() => {
               state.remoteInvalidationCalls += 1;
             }),
-        } satisfies Partial<GitWorkflowServiceShape>),
+        } satisfies Partial<GitWorkflowService.GitWorkflowServiceShape>),
       ),
     );
 
@@ -228,14 +235,14 @@ describe("VcsStatusBroadcaster", () => {
       yield* fileSystem.symlink(realDir, linkDir);
       const realPath = yield* fileSystem.realPath(realDir);
 
-      const broadcaster = yield* VcsStatusBroadcaster;
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       yield* broadcaster.getStatus({ cwd: linkDir });
       yield* broadcaster.getStatus({ cwd: realDir });
 
       assert.deepStrictEqual(seenCwds, [realPath, realPath]);
       assert.equal(state.localStatusCalls, 1);
       assert.equal(state.remoteStatusCalls, 1);
-    }).pipe(Effect.provide(Layer.mergeAll(testLayer, NodeServices.layer)));
+    }).pipe(Effect.provide(testLayer));
   });
 
   it.effect("streams a local snapshot first and remote updates later", () => {
@@ -249,7 +256,7 @@ describe("VcsStatusBroadcaster", () => {
     };
 
     return Effect.gen(function* () {
-      const broadcaster = yield* VcsStatusBroadcaster;
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const snapshotDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
       const remoteUpdatedDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
       yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) => {
@@ -278,6 +285,54 @@ describe("VcsStatusBroadcaster", () => {
     }).pipe(Effect.provide(makeTestLayer(state)));
   });
 
+  it.effect("does not start automatic remote refreshes when disabled", () => {
+    const state = {
+      currentLocalStatus: baseLocalStatus,
+      currentRemoteStatus: baseRemoteStatus,
+      localStatusCalls: 0,
+      remoteStatusCalls: 0,
+      localInvalidationCalls: 0,
+      remoteInvalidationCalls: 0,
+    };
+
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const snapshot = yield* Stream.runHead(
+        broadcaster.streamStatus(
+          { cwd: "/repo" },
+          { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
+        ),
+      );
+
+      assert.isTrue(Option.isSome(snapshot));
+      assert.equal(state.remoteStatusCalls, 0);
+      assert.equal(state.remoteInvalidationCalls, 0);
+    }).pipe(Effect.provide(makeTestLayer(state)));
+  });
+
+  it("backs off remote refresh failures exponentially and honors larger configured intervals", () => {
+    assert.equal(
+      Duration.toMillis(VcsStatusBroadcaster.remoteRefreshFailureDelay(1, Duration.seconds(1))),
+      30_000,
+    );
+    assert.equal(
+      Duration.toMillis(VcsStatusBroadcaster.remoteRefreshFailureDelay(2, Duration.seconds(1))),
+      60_000,
+    );
+    assert.equal(
+      Duration.toMillis(VcsStatusBroadcaster.remoteRefreshFailureDelay(3, Duration.seconds(1))),
+      120_000,
+    );
+    assert.equal(
+      Duration.toMillis(VcsStatusBroadcaster.remoteRefreshFailureDelay(1, Duration.minutes(5))),
+      300_000,
+    );
+    assert.equal(
+      Duration.toMillis(VcsStatusBroadcaster.remoteRefreshFailureDelay(20, Duration.seconds(1))),
+      900_000,
+    );
+  });
+
   it.effect("stops the remote poller after the last stream subscriber disconnects", () => {
     const state = {
       currentLocalStatus: baseLocalStatus,
@@ -289,9 +344,10 @@ describe("VcsStatusBroadcaster", () => {
     };
     let remoteInterruptedDeferred: Deferred.Deferred<void, never> | null = null;
     let remoteStartedDeferred: Deferred.Deferred<void, never> | null = null;
-    const testLayer = VcsStatusBroadcasterLayer.pipe(
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
       Layer.provide(
-        Layer.mock(GitWorkflowService)({
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
           localStatus: () =>
             Effect.sync(() => {
               state.localStatusCalls += 1;
@@ -321,7 +377,7 @@ describe("VcsStatusBroadcaster", () => {
             Effect.sync(() => {
               state.remoteInvalidationCalls += 1;
             }),
-        } satisfies Partial<GitWorkflowServiceShape>),
+        } satisfies Partial<GitWorkflowService.GitWorkflowServiceShape>),
       ),
     );
 
@@ -331,7 +387,7 @@ describe("VcsStatusBroadcaster", () => {
       remoteInterruptedDeferred = remoteInterrupted;
       remoteStartedDeferred = remoteStarted;
 
-      const broadcaster = yield* VcsStatusBroadcaster;
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const firstSnapshot = yield* Deferred.make<VcsStatusStreamEvent>();
       const secondSnapshot = yield* Deferred.make<VcsStatusStreamEvent>();
       const firstScope = yield* Scope.make();

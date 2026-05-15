@@ -33,7 +33,9 @@ import {
   type ProviderInstanceConfigMap,
   ProviderInstanceId,
 } from "@t3tools/contracts";
-import { Effect, Layer } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../../config.ts";
 import { ClaudeDriver } from "../Drivers/ClaudeDriver.ts";
@@ -43,6 +45,13 @@ import { OpenCodeDriver } from "../Drivers/OpenCodeDriver.ts";
 import { OpenCodeRuntimeLive } from "../opencodeRuntime.ts";
 import { NoOpProviderEventLoggers, ProviderEventLoggers } from "./ProviderEventLoggers.ts";
 import { makeProviderInstanceRegistry } from "./ProviderInstanceRegistryLive.ts";
+
+const TestHttpClientLive = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) =>
+    Effect.succeed(HttpClientResponse.fromWeb(request, Response.json({ version: "0.0.0" }))),
+  ),
+);
 
 const makeCodexConfig = (overrides: Partial<CodexSettings>): CodexSettings => ({
   enabled: false,
@@ -89,6 +98,7 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
     prefix: "provider-instance-registry-test",
   }).pipe(
     Layer.provideMerge(NodeServices.layer),
+    Layer.provideMerge(TestHttpClientLive),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
   );
 
@@ -225,6 +235,7 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
     prefix: "provider-instance-registry-all-drivers-test",
   }).pipe(
     Layer.provideMerge(infraLayer),
+    Layer.provideMerge(TestHttpClientLive),
     Layer.provideMerge(Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers)),
   );
 

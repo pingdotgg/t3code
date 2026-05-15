@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
 import { DEFAULT_SERVER_SETTINGS, ServerSettings, ServerSettingsPatch } from "./settings.ts";
 
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
+const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
@@ -90,5 +91,63 @@ describe("ServerSettingsPatch.providerInstances", () => {
     });
     const ollamaId = ProviderInstanceId.make("ollama_local");
     expect(patch.providerInstances?.[ollamaId]?.driver).toBe("ollama");
+  });
+});
+
+describe("ServerSettingsPatch string normalization", () => {
+  it("trims string settings while decoding patches", () => {
+    const patch = decodeServerSettingsPatch({
+      addProjectBaseDirectory: "  ~/Development  ",
+      textGenerationModelSelection: { model: "  gpt-5.4-mini  " },
+      observability: {
+        otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
+      },
+      providers: {
+        codex: {
+          binaryPath: "  /opt/homebrew/bin/codex  ",
+          homePath: "  ~/.codex  ",
+        },
+      },
+      providerInstances: {
+        codex_personal: {
+          driver: "  codex  ",
+          displayName: "  Codex Personal  ",
+          config: { homePath: "  ~/.codex-personal  " },
+        },
+      },
+    });
+
+    expect(patch.addProjectBaseDirectory).toBe("~/Development");
+    expect(patch.textGenerationModelSelection?.model).toBe("gpt-5.4-mini");
+    expect(patch.observability?.otlpTracesUrl).toBe("http://localhost:4318/v1/traces");
+    expect(patch.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
+    expect(patch.providers?.codex?.homePath).toBe("~/.codex");
+    expect(patch.providerInstances?.[ProviderInstanceId.make("codex_personal")]?.driver).toBe(
+      "codex",
+    );
+    expect(patch.providerInstances?.[ProviderInstanceId.make("codex_personal")]?.displayName).toBe(
+      "Codex Personal",
+    );
+    expect(patch.providerInstances?.[ProviderInstanceId.make("codex_personal")]?.config).toEqual({
+      homePath: "  ~/.codex-personal  ",
+    });
+  });
+
+  it("trims encoded server settings values before validation", () => {
+    const defaultSettings = decodeServerSettings({});
+    const encoded = encodeServerSettings({
+      ...defaultSettings,
+      addProjectBaseDirectory: "  ~/Development  ",
+      providers: {
+        ...defaultSettings.providers,
+        codex: {
+          ...defaultSettings.providers.codex,
+          binaryPath: "  /opt/homebrew/bin/codex  ",
+        },
+      },
+    });
+
+    expect(encoded.addProjectBaseDirectory).toBe("~/Development");
+    expect(encoded.providers?.codex?.binaryPath).toBe("/opt/homebrew/bin/codex");
   });
 });

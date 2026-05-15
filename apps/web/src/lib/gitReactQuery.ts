@@ -2,6 +2,7 @@ import {
   type EnvironmentId,
   type GitActionProgressEvent,
   type GitStackedAction,
+  type SourceControlPublishRepositoryInput,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -36,6 +37,8 @@ export const gitMutationKeys = {
     ["git", "mutation", "pull", environmentId ?? null, cwd] as const,
   preparePullRequestThread: (environmentId: EnvironmentId | null, cwd: string | null) =>
     ["git", "mutation", "prepare-pull-request-thread", environmentId ?? null, cwd] as const,
+  publishRepository: (environmentId: EnvironmentId | null, cwd: string | null) =>
+    ["git", "mutation", "publish-repository", environmentId ?? null, cwd] as const,
 };
 
 export function invalidateGitQueries(
@@ -221,6 +224,26 @@ export function gitPullMutationOptions(input: {
       if (!input.cwd || !input.environmentId) throw new Error("Git pull is unavailable.");
       const api = ensureEnvironmentApi(input.environmentId);
       return api.vcs.pull({ cwd: input.cwd });
+    },
+    onSuccess: async () => {
+      await invalidateGitBranchQueries(input.queryClient, input.environmentId, input.cwd);
+    },
+  });
+}
+
+export function sourceControlPublishRepositoryMutationOptions(input: {
+  environmentId: EnvironmentId | null;
+  cwd: string | null;
+  queryClient: QueryClient;
+}) {
+  return mutationOptions({
+    mutationKey: gitMutationKeys.publishRepository(input.environmentId, input.cwd),
+    mutationFn: async (args: Omit<SourceControlPublishRepositoryInput, "cwd">) => {
+      if (!input.cwd || !input.environmentId) {
+        throw new Error("Repository publishing is unavailable.");
+      }
+      const api = ensureEnvironmentApi(input.environmentId);
+      return api.sourceControl.publishRepository({ cwd: input.cwd, ...args });
     },
     onSuccess: async () => {
       await invalidateGitBranchQueries(input.queryClient, input.environmentId, input.cwd);

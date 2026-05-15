@@ -1,4 +1,9 @@
-import { Context, Effect, FileSystem, Layer, Path, Schema } from "effect";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import { VcsDriverKind, type VcsDriverKind as VcsDriverKindType } from "@t3tools/contracts";
 
@@ -10,6 +15,7 @@ const ProjectVcsConfig = Schema.Struct({
   ),
   vcsKind: Schema.optional(VcsDriverKind),
 });
+const isProjectVcsConfig = Schema.is(ProjectVcsConfig);
 
 interface ProjectVcsConfigFile {
   readonly vcs?:
@@ -42,7 +48,7 @@ function configuredKind(config: ProjectVcsConfigFile): VcsDriverKindType | "auto
 function parseConfig(raw: string): ProjectVcsConfigFile | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
-    return Schema.is(ProjectVcsConfig)(parsed) ? parsed : null;
+    return isProjectVcsConfig(parsed) ? parsed : null;
   } catch {
     return null;
   }

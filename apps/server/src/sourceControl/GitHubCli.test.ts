@@ -1,13 +1,13 @@
-import { assert, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { VcsProcessExitError, type VcsError } from "@t3tools/contracts";
-import { afterEach, describe, expect, vi } from "vitest";
+import { VcsProcessExitError } from "@t3tools/contracts";
 
-import { VcsProcess, type VcsProcessInput, type VcsProcessOutput } from "../vcs/VcsProcess.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubCli from "./GitHubCli.ts";
 
-const processOutput = (stdout: string): VcsProcessOutput => ({
+const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
   exitCode: ChildProcessSpawner.ExitCode(0),
   stdout,
   stderr: "",
@@ -15,11 +15,11 @@ const processOutput = (stdout: string): VcsProcessOutput => ({
   stderrTruncated: false,
 });
 
-const mockRun = vi.fn<(input: VcsProcessInput) => Effect.Effect<VcsProcessOutput, VcsError>>();
+const mockRun = vi.fn<VcsProcess.VcsProcessShape["run"]>();
 
 const layer = GitHubCli.layer.pipe(
   Layer.provide(
-    Layer.mock(VcsProcess)({
+    Layer.mock(VcsProcess.VcsProcess)({
       run: mockRun,
     }),
   ),
@@ -35,6 +35,7 @@ describe("GitHubCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               number: 42,
               title: "Add PR thread creation",
@@ -93,6 +94,7 @@ describe("GitHubCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               number: 42,
               title: "  Add PR thread creation  \n",
@@ -138,6 +140,7 @@ describe("GitHubCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 number: 0,
@@ -188,6 +191,7 @@ describe("GitHubCli.layer", () => {
       mockRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               nameWithOwner: "octocat/codething-mvp",
               url: "https://github.com/octocat/codething-mvp",
@@ -201,6 +205,58 @@ describe("GitHubCli.layer", () => {
       const result = yield* gh.getRepositoryCloneUrls({
         cwd: "/repo",
         repository: "octocat/codething-mvp",
+      });
+
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "octocat/codething-mvp",
+        url: "https://github.com/octocat/codething-mvp",
+        sshUrl: "git@github.com:octocat/codething-mvp.git",
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("creates repositories and parses clone URLs from create output", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(
+        Effect.succeed(
+          processOutput(
+            "✓ Created repository octocat/codething-mvp on github.com\nhttps://github.com/octocat/codething-mvp\n",
+          ),
+        ),
+      );
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.createRepository({
+        cwd: "/repo",
+        repository: "octocat/codething-mvp",
+        visibility: "private",
+      });
+
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "octocat/codething-mvp",
+        url: "https://github.com/octocat/codething-mvp",
+        sshUrl: "git@github.com:octocat/codething-mvp.git",
+      });
+      expect(mockRun).toHaveBeenCalledTimes(1);
+      expect(mockRun).toHaveBeenNthCalledWith(1, {
+        operation: "GitHubCli.execute",
+        command: "gh",
+        args: ["repo", "create", "octocat/codething-mvp", "--private"],
+        cwd: "/repo",
+        timeoutMs: 30_000,
+      });
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("falls back to constructed URLs when create output omits a URL", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("")));
+
+      const gh = yield* GitHubCli.GitHubCli;
+      const result = yield* gh.createRepository({
+        cwd: "/repo",
+        repository: "octocat/codething-mvp",
+        visibility: "private",
       });
 
       assert.deepStrictEqual(result, {

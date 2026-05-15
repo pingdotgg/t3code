@@ -1,11 +1,15 @@
 import { assert, it } from "@effect/vitest";
-import { Effect, Layer, Option } from "effect";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
-import { GitLabCli, type GitLabCliShape } from "./GitLabCli.ts";
+import * as GitLabCli from "./GitLabCli.ts";
 import * as GitLabSourceControlProvider from "./GitLabSourceControlProvider.ts";
 
-function makeProvider(gitlab: Partial<GitLabCliShape>) {
-  return GitLabSourceControlProvider.make().pipe(Effect.provide(Layer.mock(GitLabCli)(gitlab)));
+function makeProvider(gitlab: Partial<GitLabCli.GitLabCliShape>) {
+  return GitLabSourceControlProvider.make().pipe(
+    Effect.provide(Layer.mock(GitLabCli.GitLabCli)(gitlab)),
+  );
 }
 
 it.effect("maps GitLab MR summaries into provider-neutral change requests", () =>
@@ -48,7 +52,7 @@ it.effect("maps GitLab MR summaries into provider-neutral change requests", () =
 
 it.effect("lists GitLab MRs through provider-neutral input names", () =>
   Effect.gen(function* () {
-    let listInput: Parameters<GitLabCliShape["listMergeRequests"]>[0] | null = null;
+    let listInput: Parameters<GitLabCli.GitLabCliShape["listMergeRequests"]>[0] | null = null;
     const provider = yield* makeProvider({
       listMergeRequests: (input) => {
         listInput = input;
@@ -74,7 +78,7 @@ it.effect("lists GitLab MRs through provider-neutral input names", () =>
 
 it.effect("creates GitLab MRs through provider-neutral input names", () =>
   Effect.gen(function* () {
-    let createInput: Parameters<GitLabCliShape["createMergeRequest"]>[0] | null = null;
+    let createInput: Parameters<GitLabCli.GitLabCliShape["createMergeRequest"]>[0] | null = null;
     const provider = yield* makeProvider({
       createMergeRequest: (input) => {
         createInput = input;

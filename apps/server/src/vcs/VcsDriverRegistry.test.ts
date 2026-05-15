@@ -1,13 +1,14 @@
-import { assert, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { assert, it, describe } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { describe } from "vitest";
 
-import { VcsProcess, type VcsProcessInput, type VcsProcessOutput } from "./VcsProcess.ts";
-import { VcsProjectConfig } from "./VcsProjectConfig.ts";
-import { VcsDriverRegistry, make as makeVcsDriverRegistry } from "./VcsDriverRegistry.ts";
+import * as VcsProcess from "./VcsProcess.ts";
+import * as VcsProjectConfig from "./VcsProjectConfig.ts";
+import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";
 
-const processOutput = (stdout: string): VcsProcessOutput => ({
+const processOutput = (stdout: string): VcsProcess.VcsProcessOutput => ({
   exitCode: ChildProcessSpawner.ExitCode(0),
   stdout,
   stderr: "",
@@ -15,23 +16,27 @@ const processOutput = (stdout: string): VcsProcessOutput => ({
   stderrTruncated: false,
 });
 
+const normalizeGitArgs = (args: ReadonlyArray<string>): ReadonlyArray<string> =>
+  args[0] === "-C" && args.length >= 2 ? args.slice(2) : args;
+
 describe("VcsDriverRegistry", () => {
   it.effect("routes directly by VCS driver kind for non-repository workflows", () => {
-    const layer = Layer.effect(VcsDriverRegistry, makeVcsDriverRegistry()).pipe(
+    const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make()).pipe(
+      Layer.provide(NodeServices.layer),
       Layer.provide(
-        Layer.mock(VcsProjectConfig)({
+        Layer.mock(VcsProjectConfig.VcsProjectConfig)({
           resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
         }),
       ),
       Layer.provide(
-        Layer.mock(VcsProcess)({
+        Layer.mock(VcsProcess.VcsProcess)({
           run: () => Effect.succeed(processOutput("")),
         }),
       ),
     );
 
     return Effect.gen(function* () {
-      const registry = yield* VcsDriverRegistry;
+      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
       const driver = yield* registry.get("git");
 
       assert.strictEqual(driver.capabilities.kind, "git");
@@ -39,19 +44,22 @@ describe("VcsDriverRegistry", () => {
   });
 
   it.effect("caches repository detection for repeated resolves in the same cwd and kind", () => {
-    const calls: VcsProcessInput[] = [];
-    const layer = Layer.effect(VcsDriverRegistry, makeVcsDriverRegistry()).pipe(
+    const calls: VcsProcess.VcsProcessInput[] = [];
+    const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make()).pipe(
+      Layer.provide(NodeServices.layer),
       Layer.provide(
-        Layer.mock(VcsProjectConfig)({
+        Layer.mock(VcsProjectConfig.VcsProjectConfig)({
           resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
         }),
       ),
       Layer.provide(
-        Layer.mock(VcsProcess)({
+        Layer.mock(VcsProcess.VcsProcess)({
           run: (input) =>
             Effect.sync(() => {
               calls.push(input);
-              const command = input.args.join(" ");
+              const normalizedArgs =
+                input.args[0] === "-C" && input.args.length >= 2 ? input.args.slice(2) : input.args;
+              const command = normalizedArgs.join(" ");
               if (command === "rev-parse --is-inside-work-tree") {
                 return processOutput("true\n");
               }
@@ -68,14 +76,14 @@ describe("VcsDriverRegistry", () => {
     );
 
     return Effect.gen(function* () {
-      const registry = yield* VcsDriverRegistry;
+      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
       const first = yield* registry.resolve({ cwd: "/repo", requestedKind: "git" });
       const second = yield* registry.resolve({ cwd: "/repo", requestedKind: "git" });
 
       assert.equal(first.repository.rootPath, "/repo");
       assert.equal(second.repository.rootPath, "/repo");
       assert.deepStrictEqual(
-        calls.map((call) => call.args.join(" ")),
+        calls.map((call) => normalizeGitArgs(call.args).join(" ")),
         [
           "rev-parse --is-inside-work-tree",
           "rev-parse --show-toplevel",

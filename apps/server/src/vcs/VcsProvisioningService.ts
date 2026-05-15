@@ -1,4 +1,6 @@
-import { Context, Effect, Layer } from "effect";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import {
   type VcsDriverKind,
@@ -6,7 +8,7 @@ import {
   type VcsInitInput,
   VcsUnsupportedOperationError,
 } from "@t3tools/contracts";
-import { VcsDriverRegistry } from "./VcsDriverRegistry.ts";
+import * as VcsDriverRegistry from "./VcsDriverRegistry.ts";
 
 export interface VcsProvisioningServiceShape {
   readonly initRepository: (input: VcsInitInput) => Effect.Effect<void, VcsError>;
@@ -36,7 +38,7 @@ function resolveRequestedKind(
 }
 
 export const make = Effect.fn("makeVcsProvisioningService")(function* () {
-  const registry = yield* VcsDriverRegistry;
+  const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
 
   const initRepository: VcsProvisioningServiceShape["initRepository"] = Effect.fn(
     "VcsProvisioningService.initRepository",

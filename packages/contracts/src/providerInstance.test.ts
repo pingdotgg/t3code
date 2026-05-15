@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 
 import {
   ProviderDriverKind,
@@ -107,6 +107,22 @@ describe("ProviderInstanceConfig", () => {
     expect(decoded.accentColor).toBe("#dc2626");
     expect(decoded.enabled).toBe(true);
     expect(decoded.config).toEqual(opaqueConfig);
+  });
+
+  it("trims provider instance envelope fields", () => {
+    const decoded = decodeProviderInstanceConfig({
+      driver: "  codex  ",
+      displayName: "  Codex Personal  ",
+      accentColor: "  #dc2626  ",
+      environment: [{ name: "  OPENROUTER_API_KEY  ", value: "  sk-or-test  " }],
+    });
+
+    expect(decoded).toMatchObject({
+      driver: "codex",
+      displayName: "Codex Personal",
+      accentColor: "#dc2626",
+      environment: [{ name: "OPENROUTER_API_KEY", value: "  sk-or-test  " }],
+    });
   });
 
   it("decodes generic environment variables on the instance envelope", () => {

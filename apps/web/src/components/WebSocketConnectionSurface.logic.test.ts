@@ -8,6 +8,7 @@ function makeStatus(overrides: Partial<WsConnectionStatus> = {}): WsConnectionSt
     attemptCount: 0,
     closeCode: null,
     closeReason: null,
+    connectionLabel: null,
     connectedAt: null,
     disconnectedAt: null,
     hasConnected: false,

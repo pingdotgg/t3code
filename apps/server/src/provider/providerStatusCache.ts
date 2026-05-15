@@ -4,7 +4,11 @@ import {
   type ServerProvider,
   ServerProvider as ServerProviderSchema,
 } from "@t3tools/contracts";
-import { Cause, Effect, FileSystem, Path, Schema } from "effect";
+import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import { writeFileStringAtomically } from "../atomicWrite.ts";
 
@@ -140,8 +144,10 @@ export const readProviderStatusCache = (filePath: string) =>
 export const writeProviderStatusCache = (input: {
   readonly filePath: string;
   readonly provider: ServerProvider;
-}) =>
-  writeFileStringAtomically({
+}) => {
+  const { updateState: _updateState, ...cacheableProvider } = input.provider;
+  return writeFileStringAtomically({
     filePath: input.filePath,
-    contents: `${JSON.stringify(input.provider, null, 2)}\n`,
+    contents: `${JSON.stringify(cacheableProvider, null, 2)}\n`,
   });
+};

@@ -1,4 +1,6 @@
-import { Effect, Schema, SchemaTransformation } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderDriverKind } from "./providerInstance.ts";
 
@@ -97,10 +99,10 @@ function coerceLegacyOptionsObjectToArray(
   const entries: Array<ProviderOptionSelection> = [];
   for (const [rawKey, rawValue] of Object.entries(record)) {
     const id = typeof rawKey === "string" ? rawKey.trim() : "";
-    if (!id) continue;
+    if (id.length === 0) continue;
     if (typeof rawValue === "string") {
       const trimmed = rawValue.trim();
-      if (trimmed) entries.push({ id, value: trimmed });
+      if (trimmed.length > 0) entries.push({ id, value: trimmed });
     } else if (typeof rawValue === "boolean") {
       entries.push({ id, value: rawValue });
     }

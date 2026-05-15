@@ -1,25 +1,25 @@
-import { assert, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { assert, it, afterEach, expect, vi } from "@effect/vitest";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { afterEach, expect, vi } from "vitest";
 
 import { VcsProcessExitError } from "@t3tools/contracts";
 
-import { VcsProcess, type VcsProcessOutput, type VcsProcessShape } from "../vcs/VcsProcess.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 
-const mockedRun = vi.fn<VcsProcessShape["run"]>();
+const mockedRun = vi.fn<VcsProcess.VcsProcessShape["run"]>();
 const layer = it.layer(
   GitLabCli.layer.pipe(
     Layer.provide(
-      Layer.mock(VcsProcess)({
+      Layer.mock(VcsProcess.VcsProcess)({
         run: mockedRun,
       }),
     ),
   ),
 );
 
-function processOutput(stdout: string): VcsProcessOutput {
+function processOutput(stdout: string): VcsProcess.VcsProcessOutput {
   return {
     exitCode: ChildProcessSpawner.ExitCode(0),
     stdout,
@@ -39,6 +39,7 @@ layer("GitLabCli.layer", (it) => {
       mockedRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               iid: 42,
               title: "Add MR thread creation",
@@ -90,6 +91,7 @@ layer("GitLabCli.layer", (it) => {
       mockedRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify([
               {
                 iid: 0,
@@ -155,6 +157,7 @@ layer("GitLabCli.layer", (it) => {
       mockedRun.mockReturnValueOnce(
         Effect.succeed(
           processOutput(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
             JSON.stringify({
               path_with_namespace: "octocat/t3code",
               web_url: "https://gitlab.com/octocat/t3code",
@@ -175,7 +178,7 @@ layer("GitLabCli.layer", (it) => {
 
       assert.deepStrictEqual(result, {
         nameWithOwner: "octocat/t3code",
-        url: "https://gitlab.com/octocat/t3code.git",
+        url: "https://gitlab.com/octocat/t3code",
         sshUrl: "git@gitlab.com:octocat/t3code.git",
       });
     }),
@@ -211,6 +214,76 @@ layer("GitLabCli.layer", (it) => {
             "title=Provider MR",
             "--field",
             "description=@/tmp/t3-mr-body.md",
+          ],
+        }),
+      );
+    }),
+  );
+
+  it.effect("creates repositories under an explicit namespace", () =>
+    Effect.gen(function* () {
+      mockedRun
+
+        .mockReturnValueOnce(
+          Effect.succeed(
+            processOutput(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({ id: 1234 }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            processOutput(
+              // @effect-diagnostics-next-line preferSchemaOverJson:off
+              JSON.stringify({
+                path_with_namespace: "octocat/t3code",
+                web_url: "https://gitlab.com/octocat/t3code",
+                http_url_to_repo: "https://gitlab.com/octocat/t3code.git",
+                ssh_url_to_repo: "git@gitlab.com:octocat/t3code.git",
+              }),
+            ),
+          ),
+        );
+
+      const glab = yield* GitLabCli.GitLabCli;
+      const result = yield* glab.createRepository({
+        cwd: "/repo",
+        repository: "octocat/t3code",
+        visibility: "public",
+      });
+
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "octocat/t3code",
+        url: "https://gitlab.com/octocat/t3code",
+        sshUrl: "git@gitlab.com:octocat/t3code.git",
+      });
+      expect(mockedRun).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          command: "glab",
+          cwd: "/repo",
+          args: ["api", "namespaces/octocat"],
+        }),
+      );
+      expect(mockedRun).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          command: "glab",
+          cwd: "/repo",
+          args: [
+            "api",
+            "--method",
+            "POST",
+            "projects",
+            "--raw-field",
+            "path=t3code",
+            "--raw-field",
+            "name=t3code",
+            "--raw-field",
+            "visibility=public",
+            "--raw-field",
+            "namespace_id=1234",
           ],
         }),
       );

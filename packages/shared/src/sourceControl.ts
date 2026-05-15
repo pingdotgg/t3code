@@ -7,7 +7,7 @@ export interface ChangeRequestPresentation {
   readonly longName: string;
   readonly pluralLongName: string;
   readonly providerLongName: string;
-  readonly checkoutCommandExample: string;
+  readonly checkoutCommandExample?: string;
   readonly urlExample: string;
 }
 
@@ -61,7 +61,6 @@ const BITBUCKET_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   longName: "pull request",
   pluralLongName: "pull requests",
   providerLongName: "Bitbucket pull request",
-  checkoutCommandExample: "bb pr checkout 123",
   urlExample: "https://bitbucket.org/workspace/repo/pull-requests/42",
 };
 
@@ -72,7 +71,6 @@ const GENERIC_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   longName: "change request",
   pluralLongName: "change requests",
   providerLongName: "change request",
-  checkoutCommandExample: "123",
   urlExample: "#42",
 };
 

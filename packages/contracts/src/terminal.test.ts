@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -164,6 +164,8 @@ describe("TerminalCloseInput", () => {
 });
 
 describe("TerminalSessionSnapshot", () => {
+  const isoTimestamp = "2026-01-01T00:00:00.000Z";
+
   it("accepts running snapshots", () => {
     expect(
       decodes(TerminalSessionSnapshot, {
@@ -176,20 +178,22 @@ describe("TerminalSessionSnapshot", () => {
         history: "hello\n",
         exitCode: null,
         exitSignal: null,
-        updatedAt: new Date().toISOString(),
+        updatedAt: isoTimestamp,
       }),
     ).toBe(true);
   });
 });
 
 describe("TerminalEvent", () => {
+  const isoTimestamp = "2026-01-01T00:00:00.000Z";
+
   it("accepts output events", () => {
     expect(
       decodes(TerminalEvent, {
         type: "output",
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
-        createdAt: new Date().toISOString(),
+        createdAt: isoTimestamp,
         data: "line\n",
       }),
     ).toBe(true);
@@ -201,7 +205,7 @@ describe("TerminalEvent", () => {
         type: "exited",
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
-        createdAt: new Date().toISOString(),
+        createdAt: isoTimestamp,
         exitCode: 0,
         exitSignal: null,
       }),
@@ -214,7 +218,7 @@ describe("TerminalEvent", () => {
         type: "activity",
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
-        createdAt: new Date().toISOString(),
+        createdAt: isoTimestamp,
         hasRunningSubprocess: true,
       }),
     ).toBe(true);
@@ -226,7 +230,7 @@ describe("TerminalEvent", () => {
         type: "started",
         threadId: "thread-1",
         terminalId: DEFAULT_TERMINAL_ID,
-        createdAt: new Date().toISOString(),
+        createdAt: isoTimestamp,
         snapshot: {
           threadId: "thread-1",
           terminalId: DEFAULT_TERMINAL_ID,
@@ -237,7 +241,7 @@ describe("TerminalEvent", () => {
           history: "",
           exitCode: null,
           exitSignal: null,
-          updatedAt: new Date().toISOString(),
+          updatedAt: isoTimestamp,
         },
       }),
     ).toBe(true);
