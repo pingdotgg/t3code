@@ -800,13 +800,13 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
     });
 
     const stopSession = (threadId: ThreadId) =>
-      Effect.promise(async () => {
+      Effect.gen(function* () {
         const context = sessions.get(threadId);
         if (!context) return;
         sessions.delete(threadId);
         context.activeAbort?.abort();
-        await context.droid.close();
-        await emitNow({
+        yield* Effect.tryPromise(() => context.droid.close()).pipe(Effect.ignore);
+        yield* emit({
           ...eventBase(context),
           type: "session.exited",
           payload: { reason: "Session stopped", recoverable: false, exitKind: "graceful" },

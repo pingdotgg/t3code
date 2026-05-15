@@ -40,6 +40,7 @@ function fakeSession(input: {
   readonly sessionId?: string;
   readonly messages?: ReadonlyArray<DroidMessage>;
   readonly onStream?: () => AsyncGenerator<DroidMessage, void, undefined>;
+  readonly onClose?: () => Promise<void>;
   readonly onEnterSpecMode?: (params: unknown) => void;
   readonly onUpdateSettings?: (params: unknown) => void;
 }): DroidSession {
@@ -65,7 +66,7 @@ function fakeSession(input: {
       success: true,
     }),
     interrupt: async () => undefined,
-    close: async () => undefined,
+    close: input.onClose ?? (async () => undefined),
     updateSettings: async (params: unknown) => {
       input.onUpdateSettings?.(params);
       return {};
@@ -441,6 +442,53 @@ it.effect("routes Droid permission requests through adapter approvals", () =>
       const completed = yield* Fiber.join(completedFiber).pipe(Effect.timeout("2 seconds"));
       assert.equal(completed._tag, "Some");
       assert.equal(permissionResult, ToolConfirmationOutcome.ProceedAlways);
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("continues stopping Droid sessions when one close fails", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const closedSessionIds: string[] = [];
+      const adapter = yield* makeDroidAdapter(settings, {
+        sdk: {
+          createSession: async () => fakeSession({}),
+          resumeSession: async (sessionId) =>
+            fakeSession({
+              sessionId,
+              onClose: async () => {
+                closedSessionIds.push(sessionId);
+                if (sessionId === "droid-session-fails-close") {
+                  throw new Error("close failed");
+                }
+              },
+            }),
+        },
+      });
+
+      const firstThreadId = ThreadId.make("thread-droid-close-1");
+      const secondThreadId = ThreadId.make("thread-droid-close-2");
+      yield* adapter.startSession({
+        threadId: firstThreadId,
+        provider: ProviderDriverKind.make("droid"),
+        runtimeMode: "full-access",
+        resumeCursor: "droid-session-fails-close",
+      });
+      yield* adapter.startSession({
+        threadId: secondThreadId,
+        provider: ProviderDriverKind.make("droid"),
+        runtimeMode: "full-access",
+        resumeCursor: "droid-session-closes",
+      });
+
+      yield* adapter.stopAll();
+
+      assert.deepEqual(closedSessionIds.toSorted(), [
+        "droid-session-closes",
+        "droid-session-fails-close",
+      ]);
+      const sessions = yield* adapter.listSessions();
+      assert.deepEqual(sessions, []);
     }),
   ).pipe(Effect.provide(testLayer)),
 );
