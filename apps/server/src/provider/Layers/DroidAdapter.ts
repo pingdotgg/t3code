@@ -4,6 +4,7 @@ import {
   type AskUserRequestParams,
   type AskUserResult,
   type Base64ImageSource,
+  type ContentBlock,
   createSession,
   type CreateSessionOptions,
   DroidInteractionMode,
@@ -77,6 +78,7 @@ interface DroidContext {
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
   activeAbort: AbortController | undefined;
   activeAssistantItems: Map<string, string>;
+  activeCompletedAssistantItems: Set<string>;
   activeTokenUsage: TokenUsageUpdate | undefined;
 }
 
@@ -147,9 +149,17 @@ function toAutonomyLevel(input: ProviderSessionStartInput): AutonomyLevel {
       return AutonomyLevel.Off;
     case "auto-accept-edits":
       return AutonomyLevel.Low;
+    case "medium-access":
+      return AutonomyLevel.Medium;
     case "full-access":
       return AutonomyLevel.High;
   }
+}
+
+function contentBlockText(block: ContentBlock): string {
+  if (block.type === "text") return block.text;
+  if (block.type === "thinking") return block.thinking;
+  return "";
 }
 
 function toRequestType(params: RequestPermissionRequestParams): CanonicalRequestType {
@@ -477,6 +487,7 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
           turns: [],
           activeAbort: undefined,
           activeAssistantItems: new Map(),
+          activeCompletedAssistantItems: new Set(),
           activeTokenUsage: undefined,
         };
         contextRef = context;
@@ -496,7 +507,7 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
       },
     );
 
-    const handleMessage = (context: DroidContext, turnId: TurnId, message: DroidMessage) => {
+    const handleMessage = async (context: DroidContext, turnId: TurnId, message: DroidMessage) => {
       const base = (itemId?: string) =>
         eventBase(context, { turnId, raw: message, ...(itemId ? { itemId } : {}) });
       switch (message.type) {
@@ -518,6 +529,57 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
             type: "content.delta",
             payload: { streamKind, delta: message.text },
           });
+        }
+        case DroidMessageType.CreateMessage: {
+          if (message.role !== "assistant") {
+            return;
+          }
+          for (const [index, block] of message.content.entries()) {
+            const text = contentBlockText(block);
+            if (text.length === 0) {
+              continue;
+            }
+            const itemId = block.id ?? `${message.messageId}-${index}`;
+            if (block.type === "text") {
+              const previousText = context.activeAssistantItems.get(itemId) ?? "";
+              const delta = text.startsWith(previousText) ? text.slice(previousText.length) : text;
+              if (delta.length > 0) {
+                await emitNow({
+                  ...base(itemId),
+                  type: "content.delta",
+                  payload: { streamKind: "assistant_text", delta },
+                });
+              }
+              context.activeAssistantItems.set(itemId, text);
+              continue;
+            }
+            if (block.type === "thinking") {
+              await emitNow({
+                ...base(itemId),
+                type: "content.delta",
+                payload: { streamKind: "reasoning_text", delta: text },
+              });
+            }
+          }
+
+          const firstTextIndex = message.content.findIndex((block) => block.type === "text");
+          const firstTextBlock = message.content[firstTextIndex];
+          const completedItemId =
+            firstTextBlock?.id ??
+            (firstTextIndex >= 0 ? `${message.messageId}-${firstTextIndex}` : message.messageId);
+          if (!context.activeCompletedAssistantItems.has(completedItemId)) {
+            context.activeCompletedAssistantItems.add(completedItemId);
+            return emitNow({
+              ...base(completedItemId),
+              type: "item.completed",
+              payload: {
+                itemType: "assistant_message",
+                status: "completed",
+                ...(firstTextBlock ? { detail: contentBlockText(firstTextBlock) } : {}),
+              },
+            });
+          }
+          return;
         }
         case DroidMessageType.ToolUse:
           return emitNow({
@@ -648,6 +710,7 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
       const abort = new AbortController();
       context.activeAbort = abort;
       context.activeAssistantItems = new Map();
+      context.activeCompletedAssistantItems = new Set();
       context.activeTokenUsage = undefined;
       context.turns.push({ id: turnId, items: [] });
       updateContextSession(context, {
@@ -664,17 +727,24 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
 
       yield* Effect.promise(async () => {
         try {
-          if (input.interactionMode === "plan") {
-            await context.droid.enterSpecMode();
-          }
           const modelId = toModelId(input.modelSelection?.model);
           const reasoningEffort = toReasoningEffort(
             getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort"),
           );
+          if (input.interactionMode === "plan") {
+            await context.droid.enterSpecMode({
+              ...(modelId ? { specModeModelId: modelId } : {}),
+              ...(reasoningEffort ? { specModeReasoningEffort: reasoningEffort } : {}),
+            });
+          }
           if (modelId || reasoningEffort) {
             await context.droid.updateSettings({
               ...(modelId ? { modelId } : {}),
               ...(reasoningEffort ? { reasoningEffort } : {}),
+              ...(input.interactionMode === "plan" && modelId ? { specModeModelId: modelId } : {}),
+              ...(input.interactionMode === "plan" && reasoningEffort
+                ? { specModeReasoningEffort: reasoningEffort }
+                : {}),
             });
           }
           const messageOptions: MessageOptions = {
@@ -688,6 +758,9 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
             await handleMessage(context, turnId, message);
           }
           for (const [itemId, detail] of context.activeAssistantItems) {
+            if (context.activeCompletedAssistantItems.has(itemId)) {
+              continue;
+            }
             await emitNow({
               ...eventBase(context, { turnId, itemId }),
               type: "item.completed",

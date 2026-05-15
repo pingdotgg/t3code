@@ -1,4 +1,4 @@
-import { ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
+import type { ProviderDriverKind, ProviderInteractionMode, RuntimeMode } from "@t3tools/contracts";
 import { memo, type ReactNode } from "react";
 import { EllipsisIcon, ListTodoIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -11,12 +11,14 @@ import {
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
+import { getRuntimeModeConfig, getRuntimeModeOptions } from "./runtimeModePresentation";
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   activePlan: boolean;
   interactionMode: ProviderInteractionMode;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
+  provider: ProviderDriverKind;
   runtimeMode: RuntimeMode;
   showInteractionModeToggle: boolean;
   traitsMenuContent?: ReactNode;
@@ -24,6 +26,9 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   onTogglePlanSidebar: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
+  const runtimeModeConfig = getRuntimeModeConfig(props.provider);
+  const runtimeModeOptions = getRuntimeModeOptions(props.provider);
+
   return (
     <Menu>
       <MenuTrigger
@@ -69,9 +74,11 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             props.onRuntimeModeChange(value as RuntimeMode);
           }}
         >
-          <MenuRadioItem value="approval-required">Supervised</MenuRadioItem>
-          <MenuRadioItem value="auto-accept-edits">Auto-accept edits</MenuRadioItem>
-          <MenuRadioItem value="full-access">Full access</MenuRadioItem>
+          {runtimeModeOptions.map((mode) => (
+            <MenuRadioItem key={mode} value={mode}>
+              {runtimeModeConfig[mode].label}
+            </MenuRadioItem>
+          ))}
         </MenuRadioGroup>
         {props.activePlan ? (
           <>

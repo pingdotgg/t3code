@@ -40,6 +40,8 @@ function fakeSession(input: {
   readonly sessionId?: string;
   readonly messages?: ReadonlyArray<DroidMessage>;
   readonly onStream?: () => AsyncGenerator<DroidMessage, void, undefined>;
+  readonly onEnterSpecMode?: (params: unknown) => void;
+  readonly onUpdateSettings?: (params: unknown) => void;
 }): DroidSession {
   return {
     sessionId: input.sessionId ?? "droid-session-1",
@@ -64,8 +66,14 @@ function fakeSession(input: {
     }),
     interrupt: async () => undefined,
     close: async () => undefined,
-    updateSettings: async () => ({}),
-    enterSpecMode: async () => ({}),
+    updateSettings: async (params: unknown) => {
+      input.onUpdateSettings?.(params);
+      return {};
+    },
+    enterSpecMode: async (params: unknown) => {
+      input.onEnterSpecMode?.(params);
+      return {};
+    },
   } as unknown as DroidSession;
 }
 
@@ -165,6 +173,207 @@ it.effect("maps Droid SDK stream messages into canonical runtime events", () =>
           "turn.completed",
         ],
       );
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("maps Droid medium access to medium autonomy", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let createOptions: CreateSessionOptions | undefined;
+      const adapter = yield* makeDroidAdapter(settings, {
+        sdk: {
+          createSession: async (options) => {
+            createOptions = options;
+            return fakeSession({
+              messages: [{ type: DroidMessageType.TurnComplete, tokenUsage: null }],
+            });
+          },
+          resumeSession: async () => fakeSession({}),
+        },
+      });
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("droid"),
+        runtimeMode: "medium-access",
+      });
+
+      assert.equal(createOptions?.autonomyLevel, AutonomyLevel.Medium);
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("uses final Droid create_message content when deltas are absent", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const adapter = yield* makeDroidAdapter(settings, {
+        sdk: {
+          createSession: async () =>
+            fakeSession({
+              messages: [
+                {
+                  type: DroidMessageType.CreateMessage,
+                  messageId: "assistant-final",
+                  role: "assistant",
+                  content: [
+                    { type: "thinking", signature: "test-signature", thinking: "final thought" },
+                    { type: "text", text: "final text" },
+                  ],
+                },
+                { type: DroidMessageType.TurnComplete, tokenUsage: null },
+              ],
+            }),
+          resumeSession: async () => fakeSession({}),
+        },
+      });
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(6),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("droid"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "hello" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("2 seconds")));
+      const deltas = events.filter((event) => event.type === "content.delta");
+      assert.deepEqual(
+        deltas.map((event) => (event.type === "content.delta" ? event.payload : undefined)),
+        [
+          { streamKind: "reasoning_text", delta: "final thought" },
+          { streamKind: "assistant_text", delta: "final text" },
+        ],
+      );
+      const completed = events.find((event) => event.type === "item.completed");
+      assert.equal(completed?.type, "item.completed");
+      if (completed?.type === "item.completed") {
+        assert.equal(completed.payload.itemType, "assistant_message");
+        assert.equal(completed.payload.detail, "final text");
+      }
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("does not duplicate Droid final create_message text after streaming deltas", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const adapter = yield* makeDroidAdapter(settings, {
+        sdk: {
+          createSession: async () =>
+            fakeSession({
+              messages: [
+                {
+                  type: DroidMessageType.AssistantTextDelta,
+                  messageId: "assistant-streamed",
+                  blockIndex: 0,
+                  text: "stre",
+                },
+                {
+                  type: DroidMessageType.AssistantTextDelta,
+                  messageId: "assistant-streamed",
+                  blockIndex: 0,
+                  text: "am",
+                },
+                {
+                  type: DroidMessageType.CreateMessage,
+                  messageId: "assistant-streamed",
+                  role: "assistant",
+                  content: [{ type: "text", text: "stream" }],
+                },
+                { type: DroidMessageType.TurnComplete, tokenUsage: null },
+              ],
+            }),
+          resumeSession: async () => fakeSession({}),
+        },
+      });
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(7),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("droid"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "hello" });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("2 seconds")));
+      const deltas = events.filter((event) => event.type === "content.delta");
+      assert.deepEqual(
+        deltas.map((event) => (event.type === "content.delta" ? event.payload.delta : undefined)),
+        ["stre", "am"],
+      );
+      const completed = events.find((event) => event.type === "item.completed");
+      assert.equal(completed?.type, "item.completed");
+      if (completed?.type === "item.completed") {
+        assert.equal(completed.payload.detail, "stream");
+      }
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);
+
+it.effect("passes custom model reasoning into Droid spec mode", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      let enterSpecModeParams: unknown;
+      let updateSettingsParams: unknown;
+      const adapter = yield* makeDroidAdapter(settings, {
+        sdk: {
+          createSession: async () =>
+            fakeSession({
+              messages: [{ type: DroidMessageType.TurnComplete, tokenUsage: null }],
+              onEnterSpecMode: (params) => {
+                enterSpecModeParams = params;
+              },
+              onUpdateSettings: (params) => {
+                updateSettingsParams = params;
+              },
+            }),
+          resumeSession: async () => fakeSession({}),
+        },
+      });
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type === "turn.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("droid"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "plan",
+        interactionMode: "plan",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("droid"),
+          "custom:Direct-GPT-5.5-xhigh-27",
+          [{ id: "reasoningEffort", value: "xhigh" }],
+        ),
+      });
+
+      const completed = yield* Fiber.join(completedFiber).pipe(Effect.timeout("2 seconds"));
+      assert.equal(completed._tag, "Some");
+      assert.deepEqual(enterSpecModeParams, {
+        specModeModelId: "custom:Direct-GPT-5.5-xhigh-27",
+        specModeReasoningEffort: ReasoningEffort.ExtraHigh,
+      });
+      assert.deepEqual(updateSettingsParams, {
+        modelId: "custom:Direct-GPT-5.5-xhigh-27",
+        reasoningEffort: ReasoningEffort.ExtraHigh,
+        specModeModelId: "custom:Direct-GPT-5.5-xhigh-27",
+        specModeReasoningEffort: ReasoningEffort.ExtraHigh,
+      });
     }),
   ).pipe(Effect.provide(testLayer)),
 );

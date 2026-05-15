@@ -139,6 +139,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
       interactionMode="default"
       planSidebarLabel="Plan"
       planSidebarOpen={false}
+      provider={provider}
       runtimeMode="approval-required"
       showInteractionModeToggle
       traitsMenuContent={
@@ -301,6 +302,7 @@ describe("CompactComposerControlsMenu", () => {
         interactionMode="default"
         planSidebarLabel="Plan"
         planSidebarOpen={false}
+        provider={ProviderDriverKind.make("claudeAgent")}
         runtimeMode="approval-required"
         showInteractionModeToggle={false}
         onToggleInteractionMode={vi.fn()}
