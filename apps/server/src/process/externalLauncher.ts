@@ -135,13 +135,12 @@ function resolveEditorArgs(
   return [...baseArgs, ...resolveCommandEditorArgs(editor, target)];
 }
 
-function resolveMacApplicationDirectories(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
+export function resolveMacApplicationDirectories(env: NodeJS.ProcessEnv): ReadonlyArray<string> {
   const home = env.HOME?.trim();
-  if (!home) return [];
-  return [`${home}/Applications`, "/Applications"];
+  return home ? [`${home}/Applications`, "/Applications"] : ["/Applications"];
 }
 
-function resolveMacEditorApplication(
+export function resolveMacEditorApplication(
   editorId: EditorId,
   env: NodeJS.ProcessEnv,
   fileExists: FileExists = existsSync,
