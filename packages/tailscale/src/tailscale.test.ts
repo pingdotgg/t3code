@@ -1,8 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
@@ -29,6 +33,31 @@ function mockHandle(result: { stdout?: string; stderr?: string; code?: number })
     stdin: Sink.drain,
     stdout: Stream.make(encoder.encode(result.stdout ?? "")),
     stderr: Stream.make(encoder.encode(result.stderr ?? "")),
+    all: Stream.empty,
+    getInputFd: () => Sink.drain,
+    getOutputFd: () => Stream.empty,
+  });
+}
+
+function mockNeverFinishingHandle() {
+  let finish: ((exitCode: ChildProcessSpawner.ExitCode) => void) | null = null;
+  return ChildProcessSpawner.makeHandle({
+    pid: ChildProcessSpawner.ProcessId(1),
+    exitCode: Effect.callback<ChildProcessSpawner.ExitCode>((resume) => {
+      finish = (exitCode) => resume(Effect.succeed(exitCode));
+      return Effect.sync(() => {
+        finish = null;
+      });
+    }),
+    isRunning: Effect.succeed(true),
+    kill: () =>
+      Effect.sync(() => {
+        finish?.(ChildProcessSpawner.ExitCode(143));
+      }),
+    unref: Effect.succeed(Effect.void),
+    stdin: Sink.drain,
+    stdout: Stream.empty,
+    stderr: Stream.empty,
     all: Stream.empty,
     getInputFd: () => Sink.drain,
     getOutputFd: () => Stream.empty,
@@ -110,6 +139,27 @@ describe("tailscale", () => {
         tailnetIpv4Addresses: ["100.90.1.2"],
       });
     });
+  });
+
+  it.effect("times out status reads using the test clock", () => {
+    const spawnerLayer = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make(() => Effect.succeed(mockNeverFinishingHandle())),
+    );
+    const layer = Layer.mergeAll(spawnerLayer, TestClock.layer());
+
+    return Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(Effect.result(readTailscaleStatus));
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust(Duration.seconds(2));
+
+      const result = yield* Fiber.join(fiber);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result)) {
+        assert.equal(result.failure._tag, "TailscaleCommandError");
+        assert.equal(result.failure.message, "Tailscale status timed out.");
+      }
+    }).pipe(Effect.provide(layer));
   });
 
   it.effect("configures tailscale serve through the process spawner service", () => {
