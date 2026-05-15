@@ -2651,12 +2651,14 @@ export default function ChatView(props: ChatViewProps) {
         draftText: trimmed,
         planMarkdown: activeProposedPlan.planMarkdown,
       });
+      const planFollowUpImages = [...composerImages];
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
       await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
+        images: planFollowUpImages,
       });
       return;
     }
@@ -3088,9 +3090,11 @@ export default function ChatView(props: ChatViewProps) {
     async ({
       text,
       interactionMode: nextInteractionMode,
+      images = [],
     }: {
       text: string;
       interactionMode: "default" | "plan";
+      images?: ReadonlyArray<ComposerImageAttachment>;
     }) => {
       const api = readEnvironmentApi(environmentId);
       if (
@@ -3132,6 +3136,27 @@ export default function ChatView(props: ChatViewProps) {
         text: trimmed,
       });
 
+      const turnAttachmentsPromise =
+        images.length > 0
+          ? Promise.all(
+              images.map(async (image) => ({
+                type: "image" as const,
+                name: image.name,
+                mimeType: image.mimeType,
+                sizeBytes: image.sizeBytes,
+                dataUrl: await readFileAsDataUrl(image.file),
+              })),
+            )
+          : Promise.resolve([]);
+      const optimisticAttachments = images.map((image) => ({
+        type: "image" as const,
+        id: image.id,
+        name: image.name,
+        mimeType: image.mimeType,
+        sizeBytes: image.sizeBytes,
+        previewUrl: image.previewUrl,
+      }));
+
       sendInFlightRef.current = true;
       beginLocalDispatch({ preparingWorktree: false });
       setThreadError(threadIdForSend, null);
@@ -3148,12 +3173,15 @@ export default function ChatView(props: ChatViewProps) {
           id: messageIdForSend,
           role: "user",
           text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
           createdAt: messageCreatedAt,
           streaming: false,
         },
       ]);
 
       try {
+        const turnAttachments = await turnAttachmentsPromise;
+
         await persistThreadSettingsForNextTurn({
           threadId: threadIdForSend,
           createdAt: messageCreatedAt,
@@ -3177,7 +3205,7 @@ export default function ChatView(props: ChatViewProps) {
             messageId: messageIdForSend,
             role: "user",
             text: outgoingMessageText,
-            attachments: [],
+            attachments: turnAttachments,
           },
           modelSelection: ctxSelectedModelSelection,
           titleSeed: activeThread.title,
