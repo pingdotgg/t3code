@@ -1,7 +1,7 @@
 {
   "name": "t3code-vscode",
   "displayName": "T3 Code",
-  "version": "0.0.1",
+  "version": "0.0.24",
   "private": true,
   "description": "Run T3 Code inside VS Code.",
   "categories": [
