@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   clearThreadUi,
+  hydrateDiffSettings,
   hydratePersistedProjectState,
   markThreadVisited,
   markThreadUnread,
@@ -11,8 +12,13 @@ import {
   persistState,
   reorderProjects,
   setDefaultAdvertisedEndpointKey,
+  setDiffIgnoreWhitespace,
+  setDiffRenderMode,
+  setDiffWordWrap,
   setProjectExpanded,
   setThreadChangedFilesExpanded,
+  setThreadDiffFullWidth,
+  setThreadDiffOpen,
   syncProjects,
   syncThreads,
   type UiState,
@@ -25,6 +31,12 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
+    threadDiffFullWidthById: {},
+    threadDiffOpenById: {},
+    diffRenderMode: "stacked",
+    diffWordWrap: false,
+    diffIgnoreWhitespace: false,
+    diffSettingsHydrated: false,
     ...overrides,
   };
 }
@@ -352,6 +364,14 @@ describe("uiStateStore pure functions", () => {
           "turn-2": false,
         },
       },
+      threadDiffFullWidthById: {
+        [thread1]: true,
+        [thread2]: true,
+      },
+      threadDiffOpenById: {
+        [thread1]: true,
+        [thread2]: true,
+      },
     });
 
     const next = syncThreads(initialState, [{ key: thread1 }]);
@@ -363,6 +383,12 @@ describe("uiStateStore pure functions", () => {
       [thread1]: {
         "turn-1": false,
       },
+    });
+    expect(next.threadDiffFullWidthById).toEqual({
+      [thread1]: true,
+    });
+    expect(next.threadDiffOpenById).toEqual({
+      [thread1]: true,
     });
   });
 
@@ -408,12 +434,20 @@ describe("uiStateStore pure functions", () => {
           "turn-1": false,
         },
       },
+      threadDiffFullWidthById: {
+        [thread1]: true,
+      },
+      threadDiffOpenById: {
+        [thread1]: true,
+      },
     });
 
     const next = clearThreadUi(initialState, thread1);
 
     expect(next.threadLastVisitedAtById).toEqual({});
     expect(next.threadChangedFilesExpandedById).toEqual({});
+    expect(next.threadDiffFullWidthById).toEqual({});
+    expect(next.threadDiffOpenById).toEqual({});
   });
 
   it("setThreadChangedFilesExpanded stores collapsed turns per thread", () => {
@@ -443,6 +477,182 @@ describe("uiStateStore pure functions", () => {
 
     expect(next.threadChangedFilesExpandedById).toEqual({});
   });
+
+  it("setThreadDiffFullWidth stores full-width preference per thread", () => {
+    const threadKey = "env-1:thread-1";
+    const initialState = makeUiState();
+
+    const next = setThreadDiffFullWidth(initialState, threadKey, true);
+
+    expect(next.threadDiffFullWidthById).toEqual({
+      [threadKey]: true,
+    });
+  });
+
+  it("setThreadDiffFullWidth removes the thread entry when collapsing back to split", () => {
+    const threadKey = "env-1:thread-1";
+    const initialState = makeUiState({
+      threadDiffFullWidthById: {
+        [threadKey]: true,
+      },
+    });
+
+    const next = setThreadDiffFullWidth(initialState, threadKey, false);
+
+    expect(next.threadDiffFullWidthById).toEqual({});
+  });
+
+  it("setThreadDiffFullWidth is a no-op when value is unchanged", () => {
+    const threadKey = "env-1:thread-1";
+    const initialState = makeUiState({
+      threadDiffFullWidthById: {
+        [threadKey]: true,
+      },
+    });
+
+    const next = setThreadDiffFullWidth(initialState, threadKey, true);
+
+    expect(next).toBe(initialState);
+  });
+
+  it("setThreadDiffFullWidth keeps each thread's preference independent", () => {
+    const threadA = "env-1:thread-A";
+    const threadB = "env-1:thread-B";
+
+    let state = makeUiState();
+    state = setThreadDiffFullWidth(state, threadA, true);
+    state = setThreadDiffFullWidth(state, threadB, true);
+    state = setThreadDiffFullWidth(state, threadA, false);
+
+    expect(state.threadDiffFullWidthById).toEqual({
+      [threadB]: true,
+    });
+  });
+
+  it("setDiffRenderMode updates the render mode", () => {
+    const initialState = makeUiState();
+
+    const next = setDiffRenderMode(initialState, "split");
+
+    expect(next.diffRenderMode).toBe("split");
+  });
+
+  it("setDiffRenderMode is a no-op when value is unchanged", () => {
+    const initialState = makeUiState({ diffRenderMode: "split" });
+
+    const next = setDiffRenderMode(initialState, "split");
+
+    expect(next).toBe(initialState);
+  });
+
+  it("setDiffWordWrap updates the wrap value and marks settings hydrated", () => {
+    const initialState = makeUiState();
+
+    const next = setDiffWordWrap(initialState, true);
+
+    expect(next.diffWordWrap).toBe(true);
+    expect(next.diffSettingsHydrated).toBe(true);
+  });
+
+  it("setDiffWordWrap still marks hydrated when toggling matches initial value", () => {
+    // The initial value is false; calling setDiffWordWrap(false) before any
+    // hydration must still mark hydrated so a later settings-default sync
+    // does not re-override the user's explicit "off" choice.
+    const initialState = makeUiState();
+
+    const next = setDiffWordWrap(initialState, false);
+
+    expect(next.diffWordWrap).toBe(false);
+    expect(next.diffSettingsHydrated).toBe(true);
+  });
+
+  it("setDiffIgnoreWhitespace updates the value and marks settings hydrated", () => {
+    const initialState = makeUiState();
+
+    const next = setDiffIgnoreWhitespace(initialState, true);
+
+    expect(next.diffIgnoreWhitespace).toBe(true);
+    expect(next.diffSettingsHydrated).toBe(true);
+  });
+
+  it("hydrateDiffSettings seeds wrap and ignoreWhitespace from settings on first call", () => {
+    const initialState = makeUiState();
+
+    const next = hydrateDiffSettings(initialState, {
+      diffWordWrap: true,
+      diffIgnoreWhitespace: true,
+    });
+
+    expect(next.diffWordWrap).toBe(true);
+    expect(next.diffIgnoreWhitespace).toBe(true);
+    expect(next.diffSettingsHydrated).toBe(true);
+  });
+
+  it("hydrateDiffSettings is a no-op once user has toggled wrap", () => {
+    let state = makeUiState();
+    state = setDiffWordWrap(state, false);
+
+    const next = hydrateDiffSettings(state, {
+      diffWordWrap: true,
+      diffIgnoreWhitespace: true,
+    });
+
+    expect(next).toBe(state);
+    expect(next.diffWordWrap).toBe(false);
+    expect(next.diffIgnoreWhitespace).toBe(false);
+  });
+
+  it("setThreadDiffOpen stores open state per thread", () => {
+    const threadKey = "env-1:thread-1";
+    const initialState = makeUiState();
+
+    const next = setThreadDiffOpen(initialState, threadKey, true);
+
+    expect(next.threadDiffOpenById).toEqual({
+      [threadKey]: true,
+    });
+  });
+
+  it("setThreadDiffOpen removes the thread entry when closing", () => {
+    const threadKey = "env-1:thread-1";
+    const initialState = makeUiState({
+      threadDiffOpenById: {
+        [threadKey]: true,
+      },
+    });
+
+    const next = setThreadDiffOpen(initialState, threadKey, false);
+
+    expect(next.threadDiffOpenById).toEqual({});
+  });
+
+  it("setThreadDiffOpen is a no-op when value is unchanged", () => {
+    const threadKey = "env-1:thread-1";
+    const initialState = makeUiState({
+      threadDiffOpenById: {
+        [threadKey]: true,
+      },
+    });
+
+    const next = setThreadDiffOpen(initialState, threadKey, true);
+
+    expect(next).toBe(initialState);
+  });
+
+  it("setThreadDiffOpen keeps each thread's open state independent", () => {
+    const threadA = "env-1:thread-A";
+    const threadB = "env-1:thread-B";
+
+    let state = makeUiState();
+    state = setThreadDiffOpen(state, threadA, true);
+    state = setThreadDiffOpen(state, threadB, true);
+    state = setThreadDiffOpen(state, threadA, false);
+
+    expect(state.threadDiffOpenById).toEqual({
+      [threadB]: true,
+    });
+  });
+
 });
 
 function createLocalStorageStub(): Storage {
@@ -577,6 +787,43 @@ describe("uiStateStore persistence round-trip", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(persisted.defaultAdvertisedEndpointKey).toBe("desktop-core:lan:http");
+  });
+
+  it("persists per-thread diff full-width preferences", () => {
+    const threadKey = "env-1:thread-1";
+    const otherThreadKey = "env-1:thread-2";
+
+    let state = makeUiState();
+    state = setThreadDiffFullWidth(state, threadKey, true);
+    // Setting and unsetting another thread should not leak into persisted state.
+    state = setThreadDiffFullWidth(state, otherThreadKey, true);
+    state = setThreadDiffFullWidth(state, otherThreadKey, false);
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.threadDiffFullWidthById).toEqual({
+      [threadKey]: true,
+    });
+  });
+
+  it("persists per-thread diff open state", () => {
+    const threadA = "env-1:thread-A";
+    const threadB = "env-1:thread-B";
+
+    let state = makeUiState();
+    state = setThreadDiffOpen(state, threadA, true);
+    state = setThreadDiffOpen(state, threadB, true);
+    state = setThreadDiffOpen(state, threadB, false);
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.threadDiffOpenById).toEqual({
+      [threadA]: true,
+    });
   });
 
   it("preserves expand state across restart when project's logical key changes", () => {
