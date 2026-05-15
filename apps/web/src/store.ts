@@ -150,6 +150,7 @@ function mapProjectScripts(scripts: ReadonlyArray<Project["scripts"][number]>): 
 function mapSession(session: OrchestrationSession): ThreadSession {
   return {
     provider: toLegacyProvider(session.providerName),
+    providerName: session.providerName ?? undefined,
     providerInstanceId: session.providerInstanceId ?? undefined,
     status: toLegacySessionStatus(session.status),
     orchestrationStatus: session.status,

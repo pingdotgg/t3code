@@ -520,6 +520,51 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Working", pulse: true });
   });
 
+  it("exposes the codex provider when a codex thread is running", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          session: {
+            ...baseThread.session,
+            provider: ProviderDriverKind.make("codex"),
+            status: "running",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Working", workingProvider: "codex", pulse: true });
+  });
+
+  it("exposes the claude provider when a claude thread is running", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          session: {
+            ...baseThread.session,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            status: "running",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Working", workingProvider: "claudeAgent", pulse: true });
+  });
+
+  it("preserves the raw cursor provider name when a cursor thread is running", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          session: {
+            ...baseThread.session,
+            providerName: "cursorCli",
+            status: "running",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Working", workingProvider: "cursorCli", pulse: true });
+  });
+
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
     expect(
       resolveThreadStatusPill({
@@ -569,6 +614,44 @@ describe("resolveThreadStatusPill", () => {
         },
       }),
     ).toMatchObject({ label: "Completed", pulse: false });
+  });
+
+  it("exposes the provider when a completed thread has an unseen completion", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default",
+          latestTurn: makeLatestTurn(),
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          session: {
+            ...baseThread.session,
+            provider: ProviderDriverKind.make("claudeAgent"),
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Completed", workingProvider: "claudeAgent", pulse: false });
+  });
+
+  it("preserves the raw opencode provider name for completed threads", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          interactionMode: "default",
+          latestTurn: makeLatestTurn(),
+          lastVisitedAt: "2026-03-09T10:04:00.000Z",
+          session: {
+            ...baseThread.session,
+            providerName: "opencode",
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Completed", workingProvider: "opencode", pulse: false });
   });
 });
 

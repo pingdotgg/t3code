@@ -36,6 +36,7 @@ export interface ThreadStatusPill {
   colorClass: string;
   dotClass: string;
   pulse: boolean;
+  workingProvider?: string;
 }
 
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
@@ -330,6 +331,7 @@ export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
 }): ThreadStatusPill | null {
   const { thread } = input;
+  const workingProvider = thread.session?.providerName ?? thread.session?.provider;
 
   if (thread.hasPendingApprovals) {
     return {
@@ -355,6 +357,7 @@ export function resolveThreadStatusPill(input: {
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,
+      ...(workingProvider ? { workingProvider } : {}),
     };
   }
 
@@ -364,6 +367,7 @@ export function resolveThreadStatusPill(input: {
       colorClass: "text-sky-600 dark:text-sky-300/80",
       dotClass: "bg-sky-500 dark:bg-sky-300/80",
       pulse: true,
+      ...(workingProvider ? { workingProvider } : {}),
     };
   }
 
@@ -387,6 +391,7 @@ export function resolveThreadStatusPill(input: {
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
       dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
       pulse: false,
+      ...(workingProvider ? { workingProvider } : {}),
     };
   }
 

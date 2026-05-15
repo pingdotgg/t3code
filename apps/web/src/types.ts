@@ -160,6 +160,7 @@ export interface SidebarThreadSummary {
 
 export interface ThreadSession {
   provider: ProviderDriverKind;
+  providerName?: string | undefined;
   providerInstanceId?: ProviderInstanceId | undefined;
   status: SessionPhase | "error" | "closed";
   activeTurnId?: TurnId | undefined;
