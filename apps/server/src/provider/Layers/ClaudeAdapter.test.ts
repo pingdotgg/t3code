@@ -1647,7 +1647,6 @@ describe("ClaudeAdapterLive", () => {
             lastUsedTokens: 24542,
             inputTokens: 23863,
             outputTokens: 679,
-            maxTokens: 200000,
           },
         });
       }
@@ -1657,7 +1656,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("clamps oversized Claude usage to the reported context window", () => {
+  it.effect("keeps oversized Claude result totals when no context-accurate usage exists", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -1707,10 +1706,8 @@ describe("ClaudeAdapterLive", () => {
       if (usageEvent?.type === "thread.token-usage.updated") {
         assert.deepEqual(usageEvent.payload, {
           usage: {
-            usedTokens: 200000,
-            lastUsedTokens: 200000,
-            totalProcessedTokens: 535000,
-            maxTokens: 200000,
+            usedTokens: 535000,
+            lastUsedTokens: 535000,
           },
         });
       }

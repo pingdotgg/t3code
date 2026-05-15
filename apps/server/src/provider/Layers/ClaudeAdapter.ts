@@ -359,7 +359,23 @@ function normalizeClaudeTokenUsage(
     (typeof usage.total_tokens === "number" && Number.isFinite(usage.total_tokens)
       ? usage.total_tokens
       : undefined) ?? (derivedTotalProcessedTokens > 0 ? derivedTotalProcessedTokens : undefined);
-  if (totalProcessedTokens === undefined || totalProcessedTokens <= 0) {
+  const directUsedTokens =
+    (typeof usage.used_tokens === "number" && Number.isFinite(usage.used_tokens)
+      ? usage.used_tokens
+      : undefined) ??
+    (typeof usage.usedTokens === "number" && Number.isFinite(usage.usedTokens)
+      ? usage.usedTokens
+      : undefined) ??
+    (typeof usage.last_used_tokens === "number" && Number.isFinite(usage.last_used_tokens)
+      ? usage.last_used_tokens
+      : undefined) ??
+    (typeof usage.lastUsedTokens === "number" && Number.isFinite(usage.lastUsedTokens)
+      ? usage.lastUsedTokens
+      : undefined);
+  if (
+    (totalProcessedTokens === undefined || totalProcessedTokens <= 0) &&
+    (directUsedTokens === undefined || directUsedTokens <= 0)
+  ) {
     return undefined;
   }
 
@@ -367,16 +383,23 @@ function normalizeClaudeTokenUsage(
     typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0
       ? contextWindow
       : undefined;
-  const usedTokens =
-    maxTokens !== undefined ? Math.min(totalProcessedTokens, maxTokens) : totalProcessedTokens;
+  const hasDirectContextUsedTokens = directUsedTokens !== undefined && directUsedTokens > 0;
+  const usedTokens = (() => {
+    if (hasDirectContextUsedTokens) {
+      return maxTokens !== undefined ? Math.min(directUsedTokens, maxTokens) : directUsedTokens;
+    }
+    return totalProcessedTokens ?? 0;
+  })();
 
   return {
     usedTokens,
     lastUsedTokens: usedTokens,
-    ...(totalProcessedTokens > usedTokens ? { totalProcessedTokens } : {}),
+    ...(totalProcessedTokens !== undefined && totalProcessedTokens > usedTokens
+      ? { totalProcessedTokens }
+      : {}),
     ...(inputTokens > 0 ? { inputTokens } : {}),
     ...(outputTokens > 0 ? { outputTokens } : {}),
-    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(maxTokens !== undefined && hasDirectContextUsedTokens ? { maxTokens } : {}),
     ...(typeof usage.tool_uses === "number" && Number.isFinite(usage.tool_uses)
       ? { toolUses: usage.tool_uses }
       : {}),
@@ -1435,10 +1458,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // This does NOT represent the current context window size.
     // Instead, use the last known context-window-accurate usage from task_progress
     // events and treat the accumulated total as totalProcessedTokens.
-    const accumulatedSnapshot = normalizeClaudeTokenUsage(
-      result?.usage,
-      resultContextWindow ?? context.lastKnownContextWindow,
-    );
+    const accumulatedSnapshot = normalizeClaudeTokenUsage(result?.usage);
     const accumulatedTotalProcessedTokens =
       accumulatedSnapshot?.totalProcessedTokens ?? accumulatedSnapshot?.usedTokens;
     const lastGoodUsage = context.lastKnownTokenUsage;
