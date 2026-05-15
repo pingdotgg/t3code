@@ -1905,6 +1905,12 @@ export function ConnectionsSettings() {
     },
     [savedBackendMode, savedDesktopSshEnvironmentsByAlias],
   );
+  const connectDiscoveredSshHost = useCallback(
+    (target: DesktopDiscoveredSshHost) => {
+      void handleConnectSshHost(target);
+    },
+    [handleConnectSshHost],
+  );
 
   useEffect(() => {
     if (!desktopBridge || !addBackendDialogOpen || savedBackendMode !== "ssh") {
@@ -2284,7 +2290,7 @@ export function ConnectionsSettings() {
                 key={`${target.alias}:${target.hostname}:${target.port ?? ""}`}
                 target={target}
                 connectingHostAlias={connectingSshHostAlias}
-                onConnect={(nextTarget) => void handleConnectSshHost(nextTarget)}
+                onConnect={connectDiscoveredSshHost}
               />
             ))}
             {hasLoadedDiscoveredSshHosts &&
