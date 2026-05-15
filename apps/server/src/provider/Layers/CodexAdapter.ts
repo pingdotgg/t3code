@@ -235,7 +235,7 @@ function toCanonicalItemType(raw: string | undefined | null): CanonicalItemType 
   return "unknown";
 }
 
-function itemTitle(itemType: CanonicalItemType): string | undefined {
+function itemTitle(itemType: CanonicalItemType, started = false): string | undefined {
   switch (itemType) {
     case "assistant_message":
       return "Assistant message";
@@ -246,7 +246,7 @@ function itemTitle(itemType: CanonicalItemType): string | undefined {
     case "plan":
       return "Plan";
     case "command_execution":
-      return "Ran command";
+      return started ? "Running command" : "Ran command";
     case "file_change":
       return "File change";
     case "mcp_tool_call":
@@ -469,6 +469,7 @@ function mapItemLifecycle(
       : lifecycle === "item.completed"
         ? "completed"
         : undefined;
+  const title = itemTitle(itemType, lifecycle === "item.started");
 
   return {
     ...runtimeEventBase(event, canonicalThreadId),
@@ -476,7 +477,7 @@ function mapItemLifecycle(
     payload: {
       itemType,
       ...(status ? { status } : {}),
-      ...(itemTitle(itemType) ? { title: itemTitle(itemType) } : {}),
+      ...(title ? { title } : {}),
       ...(detail ? { detail } : {}),
       ...(event.payload !== undefined ? { data: event.payload } : {}),
     },
