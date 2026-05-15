@@ -18,6 +18,7 @@
     "dev": "node --watch src/bin.ts",
     "build": "node scripts/cli.ts build",
     "build:bundle": "tsdown",
+    "smoke:cli-bundle": "node scripts/smoke-cli-bundle.ts",
     "start": "node dist/bin.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
