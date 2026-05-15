@@ -273,9 +273,99 @@ function ensureRuntimeError(
     : new OpenCodeRuntimeError({ operation, detail, cause });
 }
 
+function commandBasename(commandPath: string): string {
+  return commandPath.split(/[\\/]/).at(-1) ?? commandPath;
+}
+
+function isMatchingOpenCodeServeCommand(input: {
+  readonly command: string;
+  readonly binaryPath: string;
+  readonly hostname: string;
+  readonly port: number;
+}): boolean {
+  const executable = commandBasename(input.binaryPath);
+  const command = input.command;
+  return (
+    command.includes(executable) &&
+    /\bserve\b/.test(command) &&
+    command.includes(`--hostname=${input.hostname}`) &&
+    command.includes(`--port=${input.port}`)
+  );
+}
+
 const makeOpenCodeRuntime = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const netService = yield* NetService.NetService;
+
+  const listProcessCommands: Effect.Effect<
+    ReadonlyArray<{ readonly pid: number; readonly command: string }>
+  > = Effect.gen(function* () {
+    const child = yield* spawner.spawn(ChildProcess.make("ps", ["-axo", "pid=,command="]));
+    const [stdout, code] = yield* Effect.all(
+      [collectStreamAsString(child.stdout), child.exitCode],
+      {
+        concurrency: "unbounded",
+      },
+    );
+    if (Number(code) !== 0) {
+      return [];
+    }
+    return stdout
+      .split("\n")
+      .flatMap((line) => {
+        const match = line.trim().match(/^(\d+)\s+(.+)$/);
+        const command = match?.[2];
+        if (!match || command === undefined) {
+          return [];
+        }
+        return [{ pid: Number(match[1]), command }];
+      })
+      .filter((entry) => Number.isInteger(entry.pid) && entry.pid > 0);
+  }).pipe(
+    Effect.scoped,
+    Effect.catch(() => Effect.succeed([])),
+  );
+
+  const terminateMatchingOpenCodeServeProcesses = (input: {
+    readonly binaryPath: string;
+    readonly hostname: string;
+    readonly port: number;
+    readonly signal: NodeJS.Signals;
+  }): Effect.Effect<void> => {
+    if (process.platform === "win32") {
+      return Effect.void;
+    }
+
+    return listProcessCommands.pipe(
+      Effect.flatMap((processes) =>
+        Effect.forEach(
+          processes,
+          (entry) => {
+            if (
+              entry.pid === process.pid ||
+              !isMatchingOpenCodeServeCommand({
+                command: entry.command,
+                binaryPath: input.binaryPath,
+                hostname: input.hostname,
+                port: input.port,
+              })
+            ) {
+              return Effect.void;
+            }
+            return Effect.sync(() => {
+              try {
+                process.kill(entry.pid, input.signal);
+              } catch {
+                // The process may have exited between `ps` and `kill`.
+              }
+            });
+          },
+          { discard: true },
+        ),
+      ),
+      Effect.ignore,
+    );
+  };
 
   const runOpenCodeCommand: OpenCodeRuntimeShape["runOpenCodeCommand"] = (input) =>
     Effect.gen(function* () {
@@ -370,9 +460,34 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
                 // any serve process left in that group.
               }
             });
-      const terminateChild = killOpenCodeProcessGroup("SIGTERM").pipe(
+      const killDirectChild = (signal: NodeJS.Signals) =>
+        child.kill({ killSignal: signal, forceKillAfter: "1 second" }).pipe(Effect.asVoid);
+      const killMatchingServeProcesses = (signal: NodeJS.Signals) =>
+        terminateMatchingOpenCodeServeProcesses({
+          binaryPath: input.binaryPath,
+          hostname,
+          port,
+          signal,
+        });
+      const terminateChild = Effect.all(
+        [
+          killOpenCodeProcessGroup("SIGTERM"),
+          killDirectChild("SIGTERM"),
+          killMatchingServeProcesses("SIGTERM"),
+        ],
+        { concurrency: "unbounded", discard: true },
+      ).pipe(
         Effect.andThen(Effect.sleep("1 second")),
-        Effect.andThen(killOpenCodeProcessGroup("SIGKILL")),
+        Effect.andThen(
+          Effect.all(
+            [
+              killOpenCodeProcessGroup("SIGKILL"),
+              killDirectChild("SIGKILL"),
+              killMatchingServeProcesses("SIGKILL"),
+            ],
+            { concurrency: "unbounded", discard: true },
+          ),
+        ),
         Effect.ignore,
       );
       yield* Scope.addFinalizer(runtimeScope, terminateChild);

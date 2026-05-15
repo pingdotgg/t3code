@@ -34,6 +34,7 @@ const runtimeMock = {
     runVersionError: null as Error | null,
     versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
+    closeError: null as Error | null,
     closeCalls: 0,
     inventory: {
       providerList: { connected: [] as string[], all: [] as unknown[], default: {} },
@@ -44,6 +45,7 @@ const runtimeMock = {
     this.state.runVersionError = null;
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
+    this.state.closeError = null;
     this.state.closeCalls = 0;
     this.state.inventory = {
       providerList: { connected: [], all: [] as unknown[], default: {} },
@@ -64,6 +66,9 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         yield* Effect.addFinalizer(() =>
           Effect.sync(() => {
             runtimeMock.state.closeCalls += 1;
+            if (runtimeMock.state.closeError) {
+              throw runtimeMock.state.closeError;
+            }
           }),
         );
       }
@@ -199,6 +204,41 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
 
       assert.equal(runtimeMock.state.closeCalls, 1);
+    }),
+  );
+
+  it.effect("preserves a successful provider refresh when probe teardown throws", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["openai"],
+          all: [
+            {
+              id: "openai",
+              name: "OpenAI",
+              models: {
+                "gpt-5": {
+                  id: "gpt-5",
+                  name: "GPT-5",
+                  variants: {},
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+      };
+      runtimeMock.state.closeError = new Error("close failed");
+
+      const snapshot = yield* checkOpenCodeProviderStatus(makeOpenCodeSettings(), process.cwd());
+
+      assert.equal(runtimeMock.state.closeCalls, 1);
+      assert.equal(snapshot.status, "ready");
+      assert.equal(
+        snapshot.models.some((model) => model.slug === "openai/gpt-5"),
+        true,
+      );
     }),
   );
 });
