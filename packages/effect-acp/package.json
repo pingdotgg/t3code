@@ -33,8 +33,6 @@
     }
   },
   "scripts": {
-    "dev": "tsdown src/client.ts src/agent.ts src/_generated/schema.gen.ts src/rpc.ts src/protocol.ts src/terminal.ts --format esm,cjs --dts --watch --clean",
-    "build": "tsdown src/client.ts src/agent.ts src/_generated/schema.gen.ts src/rpc.ts src/protocol.ts src/terminal.ts --format esm,cjs --dts --clean",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "generate": "bun run scripts/generate.ts"
@@ -47,7 +45,6 @@
     "@effect/openapi-generator": "catalog:",
     "@effect/platform-node": "catalog:",
     "@effect/vitest": "catalog:",
-    "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

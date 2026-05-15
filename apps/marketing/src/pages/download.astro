@@ -4,6 +4,7 @@ import { RELEASES_URL } from "../lib/releases";
 ---
 
 <Layout title="Download — T3 Code" description="Download T3 Code for macOS, Windows, or Linux.">
+  <div class="download-page">
   <h1 class="heading">Download T3 Code</h1>
   <p class="subheading">
     <span id="version-label">Loading latest release&hellip;</span>
@@ -64,6 +65,7 @@ import { RELEASES_URL } from "../lib/releases";
       GitHub releases page<span aria-hidden="true"> &#8599;</span>
     </a>
   </p>
+  </div>
 </Layout>
 
 <script>
@@ -111,7 +113,11 @@ import { RELEASES_URL } from "../lib/releases";
 </script>
 
 <style>
-  .main {
+  .download-page {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     padding: 8vh 1.5rem 4rem;
   }
 
@@ -257,7 +263,7 @@ import { RELEASES_URL } from "../lib/releases";
   /* ── Mobile ── */
 
   @media (max-width: 640px) {
-    .main {
+    .download-page {
       padding: 5vh 1.25rem 4rem;
     }
 

@@ -1,4 +1,4 @@
-import { createAdvertisedEndpoint } from "@t3tools/client-runtime";
+import { createAdvertisedEndpoint } from "@t3tools/shared/advertisedEndpoint";
 import type { AdvertisedEndpoint, AdvertisedEndpointProvider } from "@t3tools/contracts";
 import {
   buildTailscaleHttpsBaseUrl,

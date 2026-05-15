@@ -20,6 +20,10 @@
       "version": "0.0.23",
       "dependencies": {
         "@effect/platform-node": "catalog:",
+        "@t3tools/contracts": "workspace:*",
+        "@t3tools/shared": "workspace:*",
+        "@t3tools/ssh": "workspace:*",
+        "@t3tools/tailscale": "workspace:*",
         "effect": "catalog:",
         "electron": "41.5.0",
         "electron-updater": "^6.6.2",
@@ -27,13 +31,7 @@
       "devDependencies": {
         "@effect/language-service": "catalog:",
         "@effect/vitest": "catalog:",
-        "@t3tools/client-runtime": "workspace:*",
-        "@t3tools/contracts": "workspace:*",
-        "@t3tools/shared": "workspace:*",
-        "@t3tools/ssh": "workspace:*",
-        "@t3tools/tailscale": "workspace:*",
         "@types/node": "catalog:",
-        "effect-acp": "workspace:*",
         "tsdown": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",
@@ -60,6 +58,7 @@
         "@anthropic-ai/claude-agent-sdk": "^0.2.111",
         "@effect/platform-bun": "catalog:",
         "@effect/platform-node": "catalog:",
+        "@effect/platform-node-shared": "catalog:",
         "@effect/sql-sqlite-bun": "catalog:",
         "@opencode-ai/sdk": "^1.3.15",
         "@pierre/diffs": "catalog:",
@@ -153,9 +152,9 @@
     },
     "packages/client-runtime": {
       "name": "@t3tools/client-runtime",
-      "version": "0.0.0-alpha.1",
       "dependencies": {
         "@t3tools/contracts": "workspace:*",
+        "@t3tools/shared": "workspace:*",
         "effect": "catalog:",
       },
       "devDependencies": {
@@ -173,7 +172,6 @@
       "devDependencies": {
         "@effect/language-service": "catalog:",
         "@effect/vitest": "catalog:",
-        "tsdown": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",
       },
@@ -188,7 +186,6 @@
         "@effect/openapi-generator": "catalog:",
         "@effect/platform-node": "catalog:",
         "@effect/vitest": "catalog:",
-        "tsdown": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",
       },
@@ -203,14 +200,12 @@
         "@effect/openapi-generator": "catalog:",
         "@effect/platform-node": "catalog:",
         "@effect/vitest": "catalog:",
-        "tsdown": "catalog:",
         "typescript": "catalog:",
         "vitest": "catalog:",
       },
     },
     "packages/shared": {
       "name": "@t3tools/shared",
-      "version": "0.0.0-alpha.1",
       "dependencies": {
         "@t3tools/contracts": "workspace:*",
         "effect": "catalog:",
@@ -226,7 +221,6 @@
     },
     "packages/ssh": {
       "name": "@t3tools/ssh",
-      "version": "0.0.0-alpha.1",
       "dependencies": {
         "@t3tools/contracts": "workspace:*",
         "@t3tools/shared": "workspace:*",
@@ -243,7 +237,6 @@
     },
     "packages/tailscale": {
       "name": "@t3tools/tailscale",
-      "version": "0.0.0-alpha.1",
       "dependencies": {
         "@effect/platform-node": "catalog:",
         "effect": "catalog:",
