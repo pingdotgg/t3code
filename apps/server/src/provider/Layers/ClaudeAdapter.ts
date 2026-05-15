@@ -47,6 +47,7 @@ import {
 import {
   applyClaudePromptEffortPrefix,
   getModelSelectionBooleanOptionValue,
+  getProviderOptionCurrentValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
   resolvePromptInjectedEffort,
@@ -258,6 +259,35 @@ function normalizeClaudeStreamMessages(
 function getEffectiveClaudeAgentEffort(effort: string | null | undefined): ClaudeSdkEffort | null {
   const normalized = normalizeClaudeCliEffort(effort);
   return normalized ? (normalized as ClaudeSdkEffort) : null;
+}
+
+function resolveClaudeOneMillionContextDisabled(
+  descriptors: ReadonlyArray<ReturnType<typeof getProviderOptionDescriptors>[number]>,
+): boolean | undefined {
+  const contextWindowDescriptor = descriptors.find(
+    (descriptor) => descriptor.type === "select" && descriptor.id === "contextWindow",
+  );
+  if (!contextWindowDescriptor) {
+    return undefined;
+  }
+  return getProviderOptionCurrentValue(contextWindowDescriptor) !== "1m";
+}
+
+function withClaudeContextWindowEnvironment(
+  env: NodeJS.ProcessEnv,
+  oneMillionContextDisabled: boolean | undefined,
+): NodeJS.ProcessEnv {
+  if (oneMillionContextDisabled === true) {
+    return {
+      ...env,
+      CLAUDE_CODE_DISABLE_1M_CONTEXT: "1",
+    };
+  }
+  if (oneMillionContextDisabled === false) {
+    const { CLAUDE_CODE_DISABLE_1M_CONTEXT: _unused, ...rest } = env;
+    return rest;
+  }
+  return env;
 }
 
 function isClaudeInterruptedMessage(message: string): boolean {
@@ -2871,10 +2901,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const modelSelection =
         input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
       const caps = getClaudeModelCapabilities(modelSelection?.model);
-      const descriptors = getProviderOptionDescriptors({ caps });
+      const descriptors = getProviderOptionDescriptors({
+        caps,
+        selections: modelSelection?.options,
+      });
       const apiModelId = modelSelection ? resolveClaudeApiModelId(modelSelection) : undefined;
       const rawEffort = getModelSelectionStringOptionValue(modelSelection, "effort");
       const effort = resolveClaudeEffort(caps, rawEffort) ?? null;
+      const oneMillionContextDisabled = resolveClaudeOneMillionContextDisabled(descriptors);
       const fastModeSupported = descriptors.some(
         (descriptor) => descriptor.type === "boolean" && descriptor.id === "fastMode",
       );
@@ -2919,7 +2953,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
-        env: claudeEnvironment,
+        env: withClaudeContextWindowEnvironment(claudeEnvironment, oneMillionContextDisabled),
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
       };
@@ -2946,6 +2980,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "claude.query.setting_sources": [...CLAUDE_SETTING_SOURCES],
         "claude.query.settings_json": encodeJsonStringForDiagnostics(settings) ?? "",
         "claude.query.extra_args_json": encodeJsonStringForDiagnostics(extraArgs) ?? "",
+        "claude.query.one_million_context_disabled": oneMillionContextDisabled ?? "",
         "claude.query.path_to_executable": claudeBinaryPath,
       });
 
