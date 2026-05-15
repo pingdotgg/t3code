@@ -1657,12 +1657,12 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("clamps oversized Claude usage to the reported context window", () => {
+  it.effect("does not infer current context from accumulated-only Claude result totals", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
 
-      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 7).pipe(
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
         Stream.runCollect,
         Effect.forkChild,
       );
@@ -1703,14 +1703,113 @@ describe("ClaudeAdapterLive", () => {
 
       const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
       const usageEvent = runtimeEvents.find((event) => event.type === "thread.token-usage.updated");
-      assert.equal(usageEvent?.type, "thread.token-usage.updated");
-      if (usageEvent?.type === "thread.token-usage.updated") {
-        assert.deepEqual(usageEvent.payload, {
+      assert.equal(usageEvent, undefined);
+
+      const completionEvent = runtimeEvents.find((event) => event.type === "turn.completed");
+      assert.equal(completionEvent?.type, "turn.completed");
+      if (completionEvent?.type === "turn.completed") {
+        assert.deepEqual(completionEvent.payload.usage, {
+          total_tokens: 535000,
+        });
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("prefers Claude stream usage snapshots over accumulated result totals", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 8).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: "claudeAgent",
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId: THREAD_ID,
+        input: "hello",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-result-usage-accumulated",
+        uuid: "stream-usage-1",
+        parent_tool_use_id: null,
+        event: {
+          type: "message_delta",
+          delta: {
+            stop_reason: "end_turn",
+            stop_sequence: null,
+            stop_details: null,
+          },
           usage: {
-            usedTokens: 200000,
-            lastUsedTokens: 200000,
-            totalProcessedTokens: 535000,
-            maxTokens: 200000,
+            input_tokens: 1,
+            cache_creation_input_tokens: 627,
+            cache_read_input_tokens: 222320,
+            output_tokens: 847,
+          },
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        duration_ms: 1234,
+        duration_api_ms: 1200,
+        num_turns: 52,
+        result: "done",
+        stop_reason: "end_turn",
+        session_id: "sdk-session-result-usage-accumulated",
+        usage: {
+          input_tokens: 54,
+          cache_creation_input_tokens: 37312,
+          cache_read_input_tokens: 10215493,
+          output_tokens: 23808,
+          iterations: [
+            {
+              input_tokens: 1,
+              cache_creation_input_tokens: 627,
+              cache_read_input_tokens: 222320,
+              output_tokens: 847,
+              type: "message",
+            },
+          ],
+        },
+        modelUsage: {
+          "claude-opus-4-7[1m]": {
+            contextWindow: 1000000,
+            maxOutputTokens: 64000,
+          },
+        },
+      } as unknown as SDKMessage);
+      harness.query.finish();
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const usageEvents = runtimeEvents.filter(
+        (event) => event.type === "thread.token-usage.updated",
+      );
+      const finalUsageEvent = usageEvents.at(-1);
+      assert.equal(finalUsageEvent?.type, "thread.token-usage.updated");
+      if (finalUsageEvent?.type === "thread.token-usage.updated") {
+        assert.deepEqual(finalUsageEvent.payload, {
+          usage: {
+            usedTokens: 223795,
+            lastUsedTokens: 223795,
+            totalProcessedTokens: 10276667,
+            inputTokens: 222948,
+            outputTokens: 847,
+            maxTokens: 1000000,
           },
         });
       }

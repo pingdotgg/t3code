@@ -329,10 +329,14 @@ function maxClaudeContextWindowFromModelUsage(
   return maxContextWindow;
 }
 
-function normalizeClaudeTokenUsage(
-  value: unknown,
-  contextWindow?: number,
-): ThreadTokenUsageSnapshot | undefined {
+function readClaudeUsageStats(value: unknown):
+  | {
+      readonly usage: Record<string, unknown>;
+      readonly inputTokens: number;
+      readonly outputTokens: number;
+      readonly totalProcessedTokens: number;
+    }
+  | undefined {
   if (!value || typeof value !== "object") {
     return undefined;
   }
@@ -363,6 +367,24 @@ function normalizeClaudeTokenUsage(
     return undefined;
   }
 
+  return {
+    usage,
+    inputTokens,
+    outputTokens,
+    totalProcessedTokens,
+  };
+}
+
+function normalizeClaudeTokenUsage(
+  value: unknown,
+  contextWindow?: number,
+): ThreadTokenUsageSnapshot | undefined {
+  const stats = readClaudeUsageStats(value);
+  if (!stats) {
+    return undefined;
+  }
+
+  const { usage, inputTokens, outputTokens, totalProcessedTokens } = stats;
   const maxTokens =
     typeof contextWindow === "number" && Number.isFinite(contextWindow) && contextWindow > 0
       ? contextWindow
@@ -384,6 +406,69 @@ function normalizeClaudeTokenUsage(
       ? { durationMs: usage.duration_ms }
       : {}),
   };
+}
+
+function extractClaudeTotalProcessedTokens(value: unknown): number | undefined {
+  return readClaudeUsageStats(value)?.totalProcessedTokens;
+}
+
+function hasClaudeDetailedUsageBreakdown(value: unknown): boolean {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const usage = value as Record<string, unknown>;
+  return (
+    (typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens)) ||
+    (typeof usage.cache_creation_input_tokens === "number" &&
+      Number.isFinite(usage.cache_creation_input_tokens)) ||
+    (typeof usage.cache_read_input_tokens === "number" &&
+      Number.isFinite(usage.cache_read_input_tokens)) ||
+    (typeof usage.output_tokens === "number" && Number.isFinite(usage.output_tokens))
+  );
+}
+
+function extractClaudeResultIterationUsage(value: unknown): unknown {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const usage = value as { iterations?: unknown };
+  if (!Array.isArray(usage.iterations)) {
+    return undefined;
+  }
+
+  for (let index = usage.iterations.length - 1; index >= 0; index -= 1) {
+    const iteration = usage.iterations[index];
+    if (iteration && typeof iteration === "object") {
+      return iteration;
+    }
+  }
+
+  return undefined;
+}
+
+function extractClaudeStreamUsage(event: unknown): unknown {
+  if (!event || typeof event !== "object") {
+    return undefined;
+  }
+
+  const streamEvent = event as {
+    type?: unknown;
+    usage?: unknown;
+    message?: {
+      usage?: unknown;
+    };
+  };
+
+  switch (streamEvent.type) {
+    case "message_start":
+      return streamEvent.message?.usage;
+    case "message_delta":
+      return streamEvent.usage;
+    default:
+      return undefined;
+  }
 }
 
 function asCanonicalTurnId(value: TurnId): TurnId {
@@ -1107,6 +1192,33 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     };
   });
 
+  const recordClaudeUsageSnapshot = Effect.fn("recordClaudeUsageSnapshot")(function* (
+    context: ClaudeSessionContext,
+    value: unknown,
+  ) {
+    const normalizedUsage = normalizeClaudeTokenUsage(value, context.lastKnownContextWindow);
+    if (!normalizedUsage) {
+      return undefined;
+    }
+
+    context.lastKnownTokenUsage = normalizedUsage;
+    const usageStamp = yield* makeEventStamp();
+    yield* offerRuntimeEvent({
+      type: "thread.token-usage.updated",
+      eventId: usageStamp.eventId,
+      provider: PROVIDER,
+      createdAt: usageStamp.createdAt,
+      threadId: context.session.threadId,
+      ...(context.turnState ? { turnId: asCanonicalTurnId(context.turnState.turnId) } : {}),
+      payload: {
+        usage: normalizedUsage,
+      },
+      providerRefs: nativeProviderRefs(context),
+    });
+
+    return normalizedUsage;
+  });
+
   const ensureAssistantTextBlock = Effect.fn("ensureAssistantTextBlock")(function* (
     context: ClaudeSessionContext,
     blockIndex: number,
@@ -1433,31 +1545,33 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // The SDK result.usage contains *accumulated* totals across all API calls
     // (input_tokens, cache_read_input_tokens, etc. summed over every request).
     // This does NOT represent the current context window size.
-    // Instead, use the last known context-window-accurate usage from task_progress
-    // events and treat the accumulated total as totalProcessedTokens.
-    const accumulatedSnapshot = normalizeClaudeTokenUsage(
-      result?.usage,
-      resultContextWindow ?? context.lastKnownContextWindow,
-    );
-    const accumulatedTotalProcessedTokens =
-      accumulatedSnapshot?.totalProcessedTokens ?? accumulatedSnapshot?.usedTokens;
+    // Instead, prefer the last known context-window-accurate usage from live
+    // events and treat the accumulated total as totalProcessedTokens only.
+    const accumulatedTotalProcessedTokens = extractClaudeTotalProcessedTokens(result?.usage);
     const lastGoodUsage = context.lastKnownTokenUsage;
     const maxTokens = resultContextWindow ?? context.lastKnownContextWindow;
-    const usageSnapshot: ThreadTokenUsageSnapshot | undefined = lastGoodUsage
+    const resultIterationUsage = extractClaudeResultIterationUsage(result?.usage);
+    const resultUsageFallback =
+      normalizeClaudeTokenUsage(resultIterationUsage, maxTokens) ??
+      (hasClaudeDetailedUsageBreakdown(result?.usage)
+        ? normalizeClaudeTokenUsage(result?.usage, maxTokens)
+        : undefined);
+    const baseUsageSnapshot = lastGoodUsage ?? resultUsageFallback;
+    const usageSnapshot: ThreadTokenUsageSnapshot | undefined = baseUsageSnapshot
       ? {
-          ...lastGoodUsage,
+          ...baseUsageSnapshot,
           ...(typeof maxTokens === "number" && Number.isFinite(maxTokens) && maxTokens > 0
             ? { maxTokens }
             : {}),
           ...(typeof accumulatedTotalProcessedTokens === "number" &&
           Number.isFinite(accumulatedTotalProcessedTokens) &&
-          accumulatedTotalProcessedTokens > lastGoodUsage.usedTokens
+          accumulatedTotalProcessedTokens > baseUsageSnapshot.usedTokens
             ? {
                 totalProcessedTokens: accumulatedTotalProcessedTokens,
               }
             : {}),
         }
-      : accumulatedSnapshot;
+      : undefined;
 
     const turnState = context.turnState;
     if (!turnState) {
@@ -1603,6 +1717,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     const { event } = message;
+    const streamUsage = extractClaudeStreamUsage(event);
+    if (streamUsage) {
+      yield* recordClaudeUsageSnapshot(context, streamUsage);
+    }
 
     if (event.type === "content_block_delta") {
       if (
@@ -2164,23 +2282,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return;
       case "task_progress":
         if (message.usage) {
-          const normalizedUsage = normalizeClaudeTokenUsage(
-            message.usage,
-            context.lastKnownContextWindow,
-          );
-          if (normalizedUsage) {
-            context.lastKnownTokenUsage = normalizedUsage;
-            const usageStamp = yield* makeEventStamp();
-            yield* offerRuntimeEvent({
-              ...base,
-              eventId: usageStamp.eventId,
-              createdAt: usageStamp.createdAt,
-              type: "thread.token-usage.updated",
-              payload: {
-                usage: normalizedUsage,
-              },
-            });
-          }
+          yield* recordClaudeUsageSnapshot(context, message.usage);
         }
         yield* offerRuntimeEvent({
           ...base,
@@ -2196,23 +2298,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         return;
       case "task_notification":
         if (message.usage) {
-          const normalizedUsage = normalizeClaudeTokenUsage(
-            message.usage,
-            context.lastKnownContextWindow,
-          );
-          if (normalizedUsage) {
-            context.lastKnownTokenUsage = normalizedUsage;
-            const usageStamp = yield* makeEventStamp();
-            yield* offerRuntimeEvent({
-              ...base,
-              eventId: usageStamp.eventId,
-              createdAt: usageStamp.createdAt,
-              type: "thread.token-usage.updated",
-              payload: {
-                usage: normalizedUsage,
-              },
-            });
-          }
+          yield* recordClaudeUsageSnapshot(context, message.usage);
         }
         yield* offerRuntimeEvent({
           ...base,
