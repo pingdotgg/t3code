@@ -16,7 +16,9 @@ import {
   syncProjects,
   syncThreads,
   type UiState,
+  useUiStateStore,
 } from "./uiStateStore";
+import { createLocalStorageStub } from "./test/createLocalStorageStub";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
@@ -445,26 +447,6 @@ describe("uiStateStore pure functions", () => {
   });
 });
 
-function createLocalStorageStub(): Storage {
-  const store = new Map<string, string>();
-  return {
-    clear: () => {
-      store.clear();
-    },
-    getItem: (key) => store.get(key) ?? null,
-    key: (index) => [...store.keys()][index] ?? null,
-    get length() {
-      return store.size;
-    },
-    removeItem: (key) => {
-      store.delete(key);
-    },
-    setItem: (key, value) => {
-      store.set(key, value);
-    },
-  };
-}
-
 describe("uiStateStore persistence round-trip", () => {
   let localStorageStub: Storage;
 
@@ -606,5 +588,22 @@ describe("uiStateStore persistence round-trip", () => {
     ]);
 
     expect(rehydrated.projectExpandedById[nextLogicalKey]).toBe(false);
+  });
+  it("persists project collapse immediately when using the store actions", () => {
+    const projectA = { key: "kA", logicalKey: "kA", cwd: "/projA" };
+    const projectB = { key: "kB", logicalKey: "kB", cwd: "/projB" };
+
+    useUiStateStore.setState(makeUiState());
+    useUiStateStore.getState().syncProjects([projectA, projectB]);
+
+    localStorageStub.clear();
+    useUiStateStore.getState().setProjectExpanded(projectB.logicalKey, false);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+
+    expect(persisted.collapsedProjectCwds).toEqual([projectB.cwd]);
+    expect(persisted.expandedProjectCwds).toEqual([projectA.cwd]);
   });
 });

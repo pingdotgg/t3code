@@ -1,6 +1,8 @@
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { createLocalStorageStub } from "./test/createLocalStorageStub";
+
 const testEnvironmentId = EnvironmentId.make("environment-1");
 
 const savedRegistryRecord: PersistedSavedEnvironmentRecord = {
@@ -17,26 +19,6 @@ const savedRegistryRecord: PersistedSavedEnvironmentRecord = {
     port: 22,
   },
 };
-
-function createLocalStorageStub(): Storage {
-  const store = new Map<string, string>();
-  return {
-    getItem: (key) => store.get(key) ?? null,
-    setItem: (key, value) => {
-      store.set(key, value);
-    },
-    removeItem: (key) => {
-      store.delete(key);
-    },
-    clear: () => {
-      store.clear();
-    },
-    key: (index) => [...store.keys()][index] ?? null,
-    get length() {
-      return store.size;
-    },
-  };
-}
 
 function getTestWindow(): Window & typeof globalThis {
   const localStorage = createLocalStorageStub();

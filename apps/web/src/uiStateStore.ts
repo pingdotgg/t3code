@@ -135,7 +135,6 @@ function sanitizePersistedThreadChangedFilesExpanded(
 
   return nextState;
 }
-
 export function hydratePersistedProjectState(parsed: PersistedUiState): void {
   persistedCollapsedProjectCwds.clear();
   persistedExpandedProjectCwds.clear();
@@ -290,6 +289,8 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
   const persistedOrderByCwd = new Map(
     persistedProjectOrderCwds.map((cwd, index) => [cwd, index] as const),
   );
+  const defaultToCollapsedOnLegacyUpgrade =
+    persistedProjectStateUsesLegacyShape && persistedExpandedProjectCwds.size > 0;
   const mappedProjects = projects.map((project, index) => {
     if (!(project.logicalKey in nextExpandedById)) {
       const groupCwds = currentProjectCwdsByLogicalKey.get(project.logicalKey) ?? [project.cwd];
@@ -312,10 +313,7 @@ export function syncProjects(state: UiState, projects: readonly SyncProjectInput
         if (groupCwds.some((cwd) => persistedCollapsedProjectCwds.has(cwd))) {
           return false;
         }
-        if (persistedProjectStateUsesLegacyShape && persistedExpandedProjectCwds.size > 0) {
-          return false;
-        }
-        return true;
+        return !defaultToCollapsedOnLegacyUpgrade;
       })();
       const expanded =
         previousExpandedById[project.logicalKey] ??
@@ -638,9 +636,15 @@ interface UiStateStore extends UiState {
   ) => void;
 }
 
-export const useUiStateStore = create<UiStateStore>((set) => ({
+export const useUiStateStore = create<UiStateStore>((set, get) => ({
   ...readPersistedState(),
-  syncProjects: (projects) => set((state) => syncProjects(state, projects)),
+  syncProjects: (projects) => {
+    const previousState = get();
+    set((state) => syncProjects(state, projects));
+    if (get() !== previousState) {
+      persistState(get());
+    }
+  },
   syncThreads: (threads) => set((state) => syncThreads(state, threads)),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
@@ -651,11 +655,27 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
-  toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),
-  setProjectExpanded: (projectId, expanded) =>
-    set((state) => setProjectExpanded(state, projectId, expanded)),
-  reorderProjects: (draggedProjectIds, targetProjectIds) =>
-    set((state) => reorderProjects(state, draggedProjectIds, targetProjectIds)),
+  toggleProject: (projectId) => {
+    const previousState = get();
+    set((state) => toggleProject(state, projectId));
+    if (get() !== previousState) {
+      persistState(get());
+    }
+  },
+  setProjectExpanded: (projectId, expanded) => {
+    const previousState = get();
+    set((state) => setProjectExpanded(state, projectId, expanded));
+    if (get() !== previousState) {
+      persistState(get());
+    }
+  },
+  reorderProjects: (draggedProjectIds, targetProjectIds) => {
+    const previousState = get();
+    set((state) => reorderProjects(state, draggedProjectIds, targetProjectIds));
+    if (get() !== previousState) {
+      persistState(get());
+    }
+  },
 }));
 
 useUiStateStore.subscribe((state) => debouncedPersistState.maybeExecute(state));
