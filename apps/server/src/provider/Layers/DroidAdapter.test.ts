@@ -235,3 +235,41 @@ it.effect("routes Droid permission requests through adapter approvals", () =>
     }),
   ).pipe(Effect.provide(testLayer)),
 );
+
+it.effect("reads and rolls back Droid thread snapshots", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const adapter = yield* makeDroidAdapter(settings, {
+        sdk: {
+          createSession: async () =>
+            fakeSession({
+              messages: [{ type: DroidMessageType.TurnComplete, tokenUsage: null }],
+            }),
+          resumeSession: async () => fakeSession({}),
+        },
+      });
+
+      const missing = yield* adapter
+        .readThread(ThreadId.make("missing-droid-thread"))
+        .pipe(Effect.exit);
+      assert.equal(missing._tag, "Failure");
+
+      yield* adapter.startSession({
+        threadId,
+        provider: ProviderDriverKind.make("droid"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId, input: "first" });
+      yield* adapter.sendTurn({ threadId, input: "second" });
+
+      const before = yield* adapter.readThread(threadId);
+      assert.equal(before.turns.length, 2);
+      const after = yield* adapter.rollbackThread(threadId, 1);
+      assert.equal(after.turns.length, 1);
+      assert.equal(after.turns[0]?.id, before.turns[0]?.id);
+
+      const invalid = yield* adapter.rollbackThread(threadId, 0).pipe(Effect.exit);
+      assert.equal(invalid._tag, "Failure");
+    }),
+  ).pipe(Effect.provide(testLayer)),
+);

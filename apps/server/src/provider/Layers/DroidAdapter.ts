@@ -51,6 +51,7 @@ import { ServerConfig } from "../../config.ts";
 import {
   type ProviderAdapterError,
   ProviderAdapterRequestError,
+  ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
 } from "../Errors.ts";
 import type { ProviderAdapterShape } from "../Services/ProviderAdapter.ts";
@@ -117,14 +118,24 @@ function toModelId(model: string | undefined): string | undefined {
 
 function toReasoningEffort(value: string | undefined): ReasoningEffort | undefined {
   switch (value) {
+    case "none":
+      return ReasoningEffort.None;
+    case "dynamic":
+      return ReasoningEffort.Dynamic;
+    case "off":
+      return ReasoningEffort.Off;
+    case "minimal":
+      return ReasoningEffort.Minimal;
     case "low":
       return ReasoningEffort.Low;
+    case "medium":
+      return ReasoningEffort.Medium;
     case "high":
       return ReasoningEffort.High;
     case "xhigh":
       return ReasoningEffort.ExtraHigh;
-    case "medium":
-      return ReasoningEffort.Medium;
+    case "max":
+      return ReasoningEffort.Max;
     default:
       return undefined;
   }
@@ -311,6 +322,16 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
       ...(input?.raw !== undefined
         ? { raw: { source: "droid.sdk.message" as const, payload: input.raw } }
         : {}),
+    });
+    const requireSession = Effect.fn("requireDroidSession")(function* (threadId: ThreadId) {
+      const context = sessions.get(threadId);
+      if (!context) {
+        return yield* new ProviderAdapterSessionNotFoundError({
+          provider: PROVIDER,
+          threadId,
+        });
+      }
+      return context;
     });
 
     type DroidAdapterShape = ProviderAdapterShape<ProviderAdapterError>;
@@ -772,9 +793,24 @@ export function makeDroidAdapter(settings: DroidSettings, options?: DroidAdapter
       listSessions: () => Effect.succeed([...sessions.values()].map((context) => context.session)),
       hasSession: (threadId) => Effect.succeed(sessions.has(threadId)),
       readThread: (threadId) =>
-        Effect.succeed({ threadId, turns: sessions.get(threadId)?.turns ?? [] }),
-      rollbackThread: (threadId) =>
-        Effect.succeed({ threadId, turns: sessions.get(threadId)?.turns ?? [] }),
+        Effect.gen(function* () {
+          const context = yield* requireSession(threadId);
+          return { threadId, turns: context.turns };
+        }),
+      rollbackThread: (threadId, numTurns) =>
+        Effect.gen(function* () {
+          const context = yield* requireSession(threadId);
+          if (!Number.isInteger(numTurns) || numTurns < 1) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "rollbackThread",
+              issue: "numTurns must be an integer >= 1.",
+            });
+          }
+          const nextLength = Math.max(0, context.turns.length - numTurns);
+          context.turns.splice(nextLength);
+          return { threadId, turns: context.turns };
+        }),
       stopAll: () =>
         Effect.forEach([...sessions.keys()], stopSession, {
           concurrency: "unbounded",
