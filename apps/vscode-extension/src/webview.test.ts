@@ -68,6 +68,7 @@ describe("renderT3Webview", () => {
     expect(html).toContain('"bootstrapToken":"bootstrap-token"');
     expect(html).toContain('"bearerToken":"bearer-token"');
     expect(html).toContain('window.history.replaceState(null, document.title, "#" + initialRoute)');
+    expect(html).not.toContain("!window.location.hash");
   });
 
   it("defaults to the chat index route when no initial route is provided", async () => {

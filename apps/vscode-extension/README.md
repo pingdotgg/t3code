@@ -28,6 +28,7 @@ The VS Code webview hides T3 Code controls that duplicate VS Code-native surface
 - Checkout mode indicator: VS Code already shows the active workspace/checkouts.
 - Branch/ref selector: VS Code already owns branch/ref selection through its source-control UI.
 - Terminal drawer toggle: VS Code already owns terminal surfaces.
+- Project management chrome: VS Code already scopes the webview to the active workspace folder.
 
 Each control can be restored individually with extension settings:
 
@@ -37,6 +38,16 @@ Each control can be restored individually with extension settings:
 - `t3code.ui.showTerminalToggle`
 
 All four settings default to `false`. Values are passed to the React app through `window.t3HostBridge.getDisplayPreferences()` at startup and through `window.t3HostBridge.onDisplayPreferencesChanged(...)` while the webview is open, so changes apply without reopening the T3 Code view.
+
+Project management chrome is not configurable in the VS Code extension. The extension backend is started for one workspace folder, so the React app treats the VS Code surface as a single-project view: it filters the sidebar to the bootstrapped workspace project, hides the add-project button, hides the "Projects" group label, hides the current project row label, removes the thread group rail, and renders only that project's threads. This avoids showing unrelated desktop-app projects inside a workspace-scoped editor surface.
+
+The sidebar toggle remains visible in VS Code webviews at all viewport widths. In desktop/browser surfaces the existing responsive behavior is preserved, but inside VS Code the user must always have a visible control for closing or reopening the thread-history sidebar.
+
+When the thread-history sidebar is open, the VS Code webview shows only the sidebar-local toggle before the T3 Code wordmark, using the close-sidebar icon. The main header toggle before the thread title is hidden until the sidebar is closed, so the view never presents two equivalent sidebar controls at once.
+
+The thread-history sidebar open/closed state is stored in shared `ClientSettings`. In VS Code this goes through the host bridge to `<T3 home>/userdata/client-settings.json`, so reloading the VS Code window restores the previous sidebar state.
+
+The webview startup route is reset to the T3 chat home each time the extension renders the view. This intentionally ignores any stale hash route VS Code may have retained from an earlier webview instance, then lets the authenticated backend welcome event choose the current workspace's startup thread. In VS Code, startup selection is constrained to the bootstrapped project: the app prefers the most recently visited thread for that project, falls back to the newest active thread for that project, and otherwise remains on the no-active-thread/new-thread screen.
 
 ## Implementation Status
 
@@ -77,6 +88,14 @@ Implemented so far:
   - read bootstrap credentials from either bridge
   - use host-injected bearer auth for VS Code webview HTTP and WebSocket startup
   - hide VS Code-duplicated controls by default based on host display preferences
+  - keep the sidebar toggle visible at all VS Code webview widths
+  - scope the sidebar to the bootstrapped VS Code workspace project
+  - hide project-management chrome in VS Code single-project mode
+  - remove the thread group rail in VS Code single-project mode
+  - show only one thread-sidebar toggle at a time
+  - persist the thread-sidebar open state in shared `ClientSettings`
+  - reset VS Code webview startup routing before React initializes
+  - choose only a current-project thread during VS Code first-load navigation
   - read and write `ClientSettings` through `window.t3HostBridge` when no desktop bridge is present
   - support `VITE_BASE_URL` so extension-local web assets can be built with relative paths
 - Added webview rendering that:
@@ -87,6 +106,7 @@ Implemented so far:
   - broadcasts display preference changes to open T3 Code webviews
   - handles neutral host bridge requests for shared client settings persistence
   - initializes the hash route
+  - overwrites stale retained hash routes with the requested initial route
   - applies a restrictive CSP with local backend HTTP and WebSocket connect sources
 - Added extension settings for restoring VS Code-hidden T3 Code controls:
   - `t3code.ui.showOpenInPicker`
@@ -137,6 +157,89 @@ Known packaging notes:
 - The current package is not yet platform-targeted with `vsce --target`.
 
 ## Decision Log
+
+### 2026-05-14: Treat VS Code as a Single-Workspace Surface
+
+Decision: when running inside the VS Code webview, the T3 web app presents only the project that the extension-owned backend bootstrapped from the current workspace folder.
+
+Reasoning:
+
+- VS Code already defines the active workspace/repository context. Showing the desktop app's full project list inside that context makes it possible to accidentally navigate into unrelated repositories.
+- The extension starts a backend for the selected workspace folder with `--auto-bootstrap-project-from-cwd`, so the web UI has a concrete current-project identity from the welcome payload and server config.
+- A single-workspace sidebar keeps thread history useful without duplicating project-management UI that belongs in the desktop app or the command palette.
+
+Implemented:
+
+- The React sidebar filters projects to the VS Code welcome `bootstrapProjectId`, falling back to the backend `cwd` while the welcome payload is still settling.
+- The sidebar hides the add-project button, "Projects" label, and current-project row label in VS Code webviews.
+- The sidebar removes the thin thread group rail in VS Code webviews because there is no visible next project boundary to communicate.
+- Thread rows remain visible and are limited to the current workspace project.
+- The sidebar toggle is visible in VS Code webviews at all viewport widths.
+
+### 2026-05-15: Remove the VS Code Thread Group Rail
+
+Decision: remove the thin left rail beside thread rows when the sidebar is running in VS Code single-project mode.
+
+Reasoning:
+
+- The rail exists in the desktop/browser sidebar to visually group threads beneath a project and show where one project's thread list ends before the next project begins.
+- VS Code shows only the current workspace project, so the rail no longer communicates a useful project boundary and reads as stray chrome.
+- Keeping the desktop/browser rail unchanged preserves the multi-project grouping affordance where it still has meaning.
+
+Implemented:
+
+- The React sidebar passes the same VS Code project-chrome hiding state into the thread list.
+- The thread list adds `border-l-0` only for that single-project VS Code mode.
+- Automated coverage verifies the thread list class keeps the rail in normal sidebars and removes it in VS Code single-project mode.
+
+### 2026-05-15: Persist and De-duplicate the VS Code Sidebar Toggle
+
+Decision: keep one visible thread-sidebar toggle at a time and persist the thread-history sidebar open state in client settings.
+
+Reasoning:
+
+- VS Code makes the sidebar toggle visible at all viewport widths, so showing one before the T3 Code wordmark and another before the thread title creates duplicate controls for the same action.
+- The sidebar-local toggle is the right visible control while the sidebar is open because it is spatially attached to the panel being closed.
+- The main header toggle is the right visible control while the sidebar is closed because it remains available in the main view.
+- VS Code webview reloads should preserve whether the user prefers the thread history open or hidden, and shared `ClientSettings` already persists VS Code client preferences through the host bridge.
+
+Implemented:
+
+- The shared sidebar trigger now uses the close-sidebar icon when the desktop sidebar is open, not only when the mobile sheet is open.
+- Main-view header triggers render only when the thread-history sidebar is closed.
+- `threadSidebarOpen` is part of `ClientSettings`, defaults to `true`, and is persisted through the existing browser, desktop, and VS Code host persistence paths.
+- Automated coverage verifies main-header trigger visibility and the sidebar trigger open/close labels.
+
+### 2026-05-14: Reset VS Code Webview Startup Routing
+
+Decision: each VS Code webview render overwrites any retained hash route with the extension-provided initial route, then first-load navigation is constrained to the current workspace project.
+
+Reasoning:
+
+- VS Code can retain a webview hash route across reloads. If that route points at a thread from another project, the embedded app can initially open the wrong repository context.
+- Resetting to chat home before React initializes avoids browser-style route restoration inside a workspace-scoped editor surface.
+- The backend welcome payload provides the bootstrapped project identity, so the client can choose a startup thread without crossing project boundaries.
+
+Implemented:
+
+- The injected webview bridge now calls `history.replaceState(..., "#/_chat/")` whenever an initial route is provided, even if a hash already exists.
+- The React event router, when in VS Code, resolves the first thread route from current-project candidates only.
+- Startup selection prefers the most recently visited current-project thread, then the newest active current-project thread, then the existing no-active-thread/new-thread state.
+
+### 2026-05-14: Make the Sidebar Wordmark a Button in VS Code-Safe Navigation
+
+Decision: replace the sidebar wordmark router link with a button that calls router navigation programmatically.
+
+Reasoning:
+
+- VS Code webviews can treat anchors with file-backed webview URLs as external links.
+- The wordmark is an in-app command, not an external document link.
+- Rendering a button avoids exposing an `href` that VS Code can attempt to open in the user's browser while preserving the intended "go to T3 home" behavior.
+
+Implemented:
+
+- The "T3 Code" wordmark renders as `type="button"` and navigates with TanStack Router's `navigate({ to: "/" })`.
+- Automated coverage verifies the wordmark control does not render an anchor or `href`.
 
 ### 2026-05-14: Hide VS Code-Duplicated Web UI by Default
 

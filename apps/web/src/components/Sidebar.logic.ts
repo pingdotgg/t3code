@@ -6,9 +6,11 @@ import {
   toSortableTimestamp,
   type ThreadSortInput,
 } from "../lib/threadSort";
-import type { SidebarThreadSummary, Thread } from "../types";
+import type { Project, SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
+import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -21,6 +23,11 @@ type SidebarProject = {
   name: string;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
+};
+export type VscodeProjectScope = {
+  environmentId: EnvironmentId | null;
+  projectId?: ProjectId | null | undefined;
+  cwd?: string | null | undefined;
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
@@ -259,6 +266,70 @@ export function getSidebarThreadIdsToPrewarm<TThreadId>(
   return visibleThreadIds.slice(0, Math.max(0, limit));
 }
 
+export function filterProjectsForVscodeScope<
+  TProject extends Pick<Project, "cwd" | "environmentId" | "id">,
+>(projects: readonly TProject[], scope: VscodeProjectScope): TProject[] {
+  if (!scope.environmentId) {
+    return [];
+  }
+
+  return projects.filter((project) => {
+    if (project.environmentId !== scope.environmentId) {
+      return false;
+    }
+    if (scope.projectId) {
+      return project.id === scope.projectId;
+    }
+    return Boolean(scope.cwd) && project.cwd === scope.cwd;
+  });
+}
+
+export function resolveVscodeInitialThreadRef(input: {
+  threads: readonly SidebarThreadSummary[];
+  threadLastVisitedAtById: Readonly<Record<string, string>>;
+  scope: VscodeProjectScope;
+}): ScopedThreadRef | null {
+  if (!input.scope.environmentId || !input.scope.projectId) {
+    return null;
+  }
+
+  const candidates = input.threads.filter(
+    (thread) =>
+      thread.environmentId === input.scope.environmentId &&
+      thread.projectId === input.scope.projectId &&
+      thread.archivedAt === null,
+  );
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const sorted = candidates.toSorted((left, right) => {
+    const leftVisitedAt =
+      toSortableTimestamp(
+        input.threadLastVisitedAtById[scopedThreadKey(scopeThreadRef(left.environmentId, left.id))],
+      ) ?? Number.NEGATIVE_INFINITY;
+    const rightVisitedAt =
+      toSortableTimestamp(
+        input.threadLastVisitedAtById[
+          scopedThreadKey(scopeThreadRef(right.environmentId, right.id))
+        ],
+      ) ?? Number.NEGATIVE_INFINITY;
+    if (leftVisitedAt !== rightVisitedAt) {
+      return rightVisitedAt - leftVisitedAt;
+    }
+
+    const rightTimestamp = getThreadSortTimestamp(right, "updated_at");
+    const leftTimestamp = getThreadSortTimestamp(left, "updated_at");
+    if (rightTimestamp !== leftTimestamp) {
+      return rightTimestamp - leftTimestamp;
+    }
+
+    return right.id.localeCompare(left.id);
+  });
+  const thread = sorted[0];
+  return thread ? scopeThreadRef(thread.environmentId, thread.id) : null;
+}
+
 export function resolveAdjacentThreadId<T>(input: {
   threadIds: readonly T[];
   currentThreadId: T | null;
@@ -324,6 +395,13 @@ export function resolveThreadRowClassName(input: {
   }
 
   return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-foreground");
+}
+
+export function resolveThreadListClassName(input: { hideThreadGroupRail: boolean }): string {
+  return cn(
+    "mx-0.5 my-0 w-full translate-x-0 gap-0.5 overflow-hidden px-1 py-0 sm:mx-1 sm:px-1.5",
+    input.hideThreadGroupRail && "border-l-0",
+  );
 }
 
 export function resolveThreadStatusPill(input: {

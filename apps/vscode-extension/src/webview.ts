@@ -145,7 +145,7 @@ function makeBridgeScript(input: {
           vscode.postMessage(message);
         },
       };
-      if (initialRoute && !window.location.hash) {
+      if (initialRoute) {
         window.history.replaceState(null, document.title, "#" + initialRoute);
       }
     })();

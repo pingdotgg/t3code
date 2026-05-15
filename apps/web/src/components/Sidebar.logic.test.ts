@@ -3,6 +3,7 @@ import { ProviderDriverKind } from "@t3tools/contracts";
 
 import {
   createThreadJumpHintVisibilityController,
+  filterProjectsForVscodeScope,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -15,6 +16,8 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveThreadListClassName,
+  resolveVscodeInitialThreadRef,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -32,10 +35,12 @@ import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
+  type SidebarThreadSummary,
   type Thread,
 } from "../types";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+const remoteEnvironmentId = EnvironmentId.make("environment-remote");
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -140,6 +145,141 @@ describe("getSidebarThreadIdsToPrewarm", () => {
 
   it("returns no thread ids when the limit is zero", () => {
     expect(getSidebarThreadIdsToPrewarm(["t1", "t2"], 0)).toEqual([]);
+  });
+});
+
+describe("filterProjectsForVscodeScope", () => {
+  it("keeps only the current VS Code project by environment and bootstrap project id", () => {
+    const project1 = {
+      id: ProjectId.make("project-1"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/current",
+    };
+    const project2 = {
+      id: ProjectId.make("project-2"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/other",
+    };
+    const remoteProject = {
+      id: ProjectId.make("project-1"),
+      environmentId: remoteEnvironmentId,
+      cwd: "/repo/current",
+    };
+
+    expect(
+      filterProjectsForVscodeScope([project1, project2, remoteProject], {
+        environmentId: localEnvironmentId,
+        projectId: ProjectId.make("project-1"),
+        cwd: "/repo/current",
+      }),
+    ).toEqual([project1]);
+  });
+
+  it("falls back to the current backend cwd before the bootstrap project id is known", () => {
+    const currentProject = {
+      id: ProjectId.make("project-current"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/current",
+    };
+    const otherProject = {
+      id: ProjectId.make("project-other"),
+      environmentId: localEnvironmentId,
+      cwd: "/repo/other",
+    };
+
+    expect(
+      filterProjectsForVscodeScope([otherProject, currentProject], {
+        environmentId: localEnvironmentId,
+        cwd: "/repo/current",
+      }),
+    ).toEqual([currentProject]);
+  });
+});
+
+function makeSidebarThread(
+  overrides: Partial<SidebarThreadSummary> & Pick<SidebarThreadSummary, "id" | "projectId">,
+): SidebarThreadSummary {
+  return {
+    environmentId: localEnvironmentId,
+    title: "Thread",
+    createdAt: "2026-03-09T10:00:00.000Z",
+    updatedAt: "2026-03-09T10:00:00.000Z",
+    archivedAt: null,
+    latestUserMessageAt: null,
+    latestTurn: null,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    hasActionableProposedPlan: false,
+    interactionMode: DEFAULT_INTERACTION_MODE,
+    session: null,
+    branch: null,
+    worktreePath: null,
+    ...overrides,
+  } as SidebarThreadSummary;
+}
+
+describe("resolveVscodeInitialThreadRef", () => {
+  it("selects the most recently visited thread within the current VS Code project", () => {
+    const currentOlder = makeSidebarThread({
+      id: ThreadId.make("thread-current-older"),
+      projectId: ProjectId.make("project-current"),
+      updatedAt: "2026-03-09T10:10:00.000Z",
+    });
+    const currentLastOpen = makeSidebarThread({
+      id: ThreadId.make("thread-current-last-open"),
+      projectId: ProjectId.make("project-current"),
+      updatedAt: "2026-03-09T10:05:00.000Z",
+    });
+    const otherProjectRecent = makeSidebarThread({
+      id: ThreadId.make("thread-other-recent"),
+      projectId: ProjectId.make("project-other"),
+      updatedAt: "2026-03-09T10:20:00.000Z",
+    });
+
+    expect(
+      resolveVscodeInitialThreadRef({
+        threads: [otherProjectRecent, currentOlder, currentLastOpen],
+        threadLastVisitedAtById: {
+          [`${localEnvironmentId}:${currentOlder.id}`]: "2026-03-09T10:11:00.000Z",
+          [`${localEnvironmentId}:${currentLastOpen.id}`]: "2026-03-09T10:30:00.000Z",
+          [`${localEnvironmentId}:${otherProjectRecent.id}`]: "2026-03-09T10:40:00.000Z",
+        },
+        scope: {
+          environmentId: localEnvironmentId,
+          projectId: ProjectId.make("project-current"),
+        },
+      }),
+    ).toEqual({
+      environmentId: localEnvironmentId,
+      threadId: currentLastOpen.id,
+    });
+  });
+
+  it("falls back to the newest current-project thread when no visit state exists", () => {
+    const older = makeSidebarThread({
+      id: ThreadId.make("thread-older"),
+      projectId: ProjectId.make("project-current"),
+      updatedAt: "2026-03-09T10:00:00.000Z",
+    });
+    const newer = makeSidebarThread({
+      id: ThreadId.make("thread-newer"),
+      projectId: ProjectId.make("project-current"),
+      updatedAt: "2026-03-09T11:00:00.000Z",
+    });
+
+    expect(
+      resolveVscodeInitialThreadRef({
+        threads: [older, newer],
+        threadLastVisitedAtById: {},
+        scope: {
+          environmentId: localEnvironmentId,
+          projectId: ProjectId.make("project-current"),
+        },
+      }),
+    ).toEqual({
+      environmentId: localEnvironmentId,
+      threadId: newer.id,
+    });
   });
 });
 
@@ -593,6 +733,20 @@ describe("resolveThreadRowClassName", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
     expect(className).toContain("bg-accent/85");
     expect(className).toContain("hover:bg-accent");
+  });
+});
+
+describe("resolveThreadListClassName", () => {
+  it("keeps the project grouping rail for normal multi-project sidebars", () => {
+    const className = resolveThreadListClassName({ hideThreadGroupRail: false });
+
+    expect(className).not.toContain("border-l-0");
+  });
+
+  it("removes the project grouping rail for VS Code single-project sidebars", () => {
+    const className = resolveThreadListClassName({ hideThreadGroupRail: true });
+
+    expect(className).toContain("border-l-0");
   });
 });
 

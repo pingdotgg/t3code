@@ -43,7 +43,7 @@ import {
   useServerConfigUpdatedSubscription,
   useServerWelcomeSubscription,
 } from "../rpc/serverState";
-import { useStore } from "../store";
+import { selectSidebarThreadsForProjectRef, useStore } from "../store";
 import { useUiStateStore } from "../uiStateStore";
 import { syncBrowserChromeTheme } from "../hooks/useTheme";
 import {
@@ -62,6 +62,8 @@ import {
   updatePrimaryEnvironmentDescriptor,
 } from "../environments/primary";
 import { hasHostedPairingRequest, isHostedStaticApp } from "../hostedPairing";
+import { isVscodeWebview } from "../env";
+import { resolveVscodeInitialThreadRef } from "../components/Sidebar.logic";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -326,11 +328,28 @@ function EventRouter() {
       if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
         return;
       }
+      const initialThreadRef = isVscodeWebview
+        ? resolveVscodeInitialThreadRef({
+            threads: selectSidebarThreadsForProjectRef(
+              useStore.getState(),
+              scopeProjectRef(payload.environment.environmentId, payload.bootstrapProjectId),
+            ),
+            threadLastVisitedAtById: useUiStateStore.getState().threadLastVisitedAtById,
+            scope: {
+              environmentId: payload.environment.environmentId,
+              projectId: payload.bootstrapProjectId,
+              cwd: payload.cwd,
+            },
+          })
+        : null;
+      const targetEnvironmentId =
+        initialThreadRef?.environmentId ?? payload.environment.environmentId;
+      const targetThreadId = initialThreadRef?.threadId ?? payload.bootstrapThreadId;
       await navigate({
         to: "/$environmentId/$threadId",
         params: {
-          environmentId: payload.environment.environmentId,
-          threadId: payload.bootstrapThreadId,
+          environmentId: targetEnvironmentId,
+          threadId: targetThreadId,
         },
         replace: true,
       });

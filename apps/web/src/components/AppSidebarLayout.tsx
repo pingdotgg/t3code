@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useCallback, useEffect, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 
 import ThreadSidebar from "./Sidebar";
@@ -7,12 +7,21 @@ import {
   clearShortcutModifierState,
   syncShortcutModifierStateFromKeyboardEvent,
 } from "../shortcutModifierState";
+import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 
 const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
 const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
 const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
+  const threadSidebarOpen = useSettings((settings) => settings.threadSidebarOpen);
+  const { updateSettings } = useUpdateSettings();
+  const handleThreadSidebarOpenChange = useCallback(
+    (open: boolean) => {
+      updateSettings({ threadSidebarOpen: open });
+    },
+    [updateSettings],
+  );
 
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
@@ -54,7 +63,12 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   }, [navigate]);
 
   return (
-    <SidebarProvider className="h-dvh! min-h-0!" defaultOpen>
+    <SidebarProvider
+      className="h-dvh! min-h-0!"
+      defaultOpen={threadSidebarOpen}
+      open={threadSidebarOpen}
+      onOpenChange={handleThreadSidebarOpenChange}
+    >
       <Sidebar
         side="left"
         collapsible="offcanvas"

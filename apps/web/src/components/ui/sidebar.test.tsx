@@ -6,6 +6,7 @@ import {
   SidebarMenuButton,
   SidebarMenuSubButton,
   SidebarProvider,
+  SidebarTrigger,
 } from "./sidebar";
 
 function renderSidebarButton(className?: string) {
@@ -49,5 +50,27 @@ describe("sidebar interactive cursors", () => {
 
     expect(html).toContain('data-slot="sidebar-menu-sub-button"');
     expect(html).toContain("cursor-pointer");
+  });
+});
+
+describe("SidebarTrigger", () => {
+  it("renders as a close control when the desktop sidebar is open", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider defaultOpen>
+        <SidebarTrigger />
+      </SidebarProvider>,
+    );
+
+    expect(html).toContain('aria-label="Close sidebar"');
+  });
+
+  it("renders as an open control when the desktop sidebar is closed", () => {
+    const html = renderToStaticMarkup(
+      <SidebarProvider defaultOpen={false}>
+        <SidebarTrigger />
+      </SidebarProvider>,
+    );
+
+    expect(html).toContain('aria-label="Open sidebar"');
   });
 });
