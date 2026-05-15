@@ -8,6 +8,7 @@ import { PlainTextPlugin } from "@lexical/react/LexicalPlainTextPlugin";
 import { type ServerProviderSkill } from "@t3tools/contracts";
 import {
   $applyNodeReplacement,
+  $createRangeSelectionFromDom,
   $createRangeSelection,
   $getSelection,
   $setSelection,
@@ -22,6 +23,7 @@ import {
   KEY_ARROW_LEFT_COMMAND,
   KEY_ARROW_RIGHT_COMMAND,
   KEY_ARROW_UP_COMMAND,
+  KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
   KEY_TAB_COMMAND,
   COMMAND_PRIORITY_HIGH,
@@ -62,7 +64,7 @@ import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
 } from "~/lib/terminalContext";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { basenameOfPath, getVscodeIconUrlForEntry, inferEntryKindFromPath } from "~/vscode-icons";
 import {
   COMPOSER_INLINE_CHIP_CLASS_NAME,
@@ -1023,6 +1025,53 @@ function ComposerInlineTokenArrowPlugin() {
   return null;
 }
 
+function ComposerHomeEndKeyPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    return editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event) => {
+        if (!isMacPlatform(navigator.platform)) {
+          return false;
+        }
+        if (event.key !== "Home" && event.key !== "End") {
+          return false;
+        }
+        if (event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
+          return false;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const rootElement = editor.getRootElement();
+        const selection = window.getSelection();
+        const anchorNode = selection?.anchorNode;
+        if (!rootElement || !selection || !anchorNode || !rootElement.contains(anchorNode)) {
+          return true;
+        }
+        if (selection.rangeCount === 0 || typeof selection.modify !== "function") {
+          return true;
+        }
+
+        selection.modify(
+          event.shiftKey ? "extend" : "move",
+          event.key === "Home" ? "backward" : "forward",
+          "lineboundary",
+        );
+        editor.update(() => {
+          $setSelection($createRangeSelectionFromDom(selection, editor));
+        });
+        return true;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
+  }, [editor]);
+
+  return null;
+}
+
 function ComposerInlineTokenSelectionNormalizePlugin() {
   const [editor] = useLexicalComposerContext();
 
@@ -1632,6 +1681,7 @@ function ComposerPromptEditorInner({
         <OnChangePlugin onChange={handleEditorChange} />
         <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
         <ComposerSurroundSelectionPlugin terminalContexts={terminalContexts} skills={skills} />
+        <ComposerHomeEndKeyPlugin />
         <ComposerInlineTokenArrowPlugin />
         <ComposerInlineTokenSelectionNormalizePlugin />
         <ComposerInlineTokenBackspacePlugin />
