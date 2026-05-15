@@ -39,6 +39,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useShallow } from "zustand/react/shallow";
 import { useGitStatus } from "~/lib/gitStatusState";
+import { resolveThreadBranchAutoLink } from "~/lib/threadBranchTracking";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
@@ -153,6 +154,7 @@ import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./Branch
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { useThreadBranchTracking } from "./chat/useThreadBranchTracking";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
@@ -1660,6 +1662,25 @@ export default function ChatView(props: ChatViewProps) {
       : (storeServerTerminalLaunchContext ?? null);
   // Default true while loading to avoid toolbar flicker.
   const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  // Branch-tracking glue: auto-link the chat to its first observed branch
+  // and surface a mismatch banner with checkout/relink actions when the
+  // working tree drifts. Only meaningful for server threads inside a repo.
+  const { mismatchBannerItem: branchMismatchBannerItem } = useThreadBranchTracking({
+    threadRef: isServerThread ? activeThreadRef : null,
+    threadBranch: activeThread?.branch ?? null,
+    worktreePath: activeThread?.worktreePath ?? null,
+    projectCwd: activeProject?.cwd ?? null,
+    gitStatus: isGitRepo ? (gitStatusQuery.data ?? null) : null,
+    isSendInFlight: isSendBusy,
+  });
+  const composerBannerItemsWithBranchMismatch = useMemo<ComposerBannerStackItem[]>(() => {
+    if (!branchMismatchBannerItem) {
+      return composerBannerItems;
+    }
+    // Mismatch goes first: it actively blocks the user's mental model of
+    // "where will this run?" and we want it to be the front-of-stack item.
+    return [branchMismatchBannerItem, ...composerBannerItems];
+  }, [branchMismatchBannerItem, composerBannerItems]);
   const terminalShortcutLabelOptions = useMemo(
     () => ({
       context: {
@@ -2335,6 +2356,18 @@ export default function ChatView(props: ChatViewProps) {
     canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
       ? pendingServerThreadBranch
       : (activeThread?.branch ?? null);
+  const liveThreadBranch =
+    resolveThreadBranchAutoLink({
+      threadBranch: null,
+      gitStatus: gitStatusQuery.data ?? null,
+    })?.branch ?? null;
+  // First-send binding happens here, not when a new draft is opened. Drafts
+  // may carry a seeded branch from the previous chat or from the toolbar, but
+  // the actual chat link should reflect the working tree at send time.
+  const initialThreadBranch =
+    activeThread?.messages.length === 0
+      ? (liveThreadBranch ?? activeThreadBranch)
+      : (activeThreadBranch ?? liveThreadBranch);
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
     isGitRepo,
@@ -2692,14 +2725,14 @@ export default function ChatView(props: ChatViewProps) {
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
-        ? activeThreadBranch
+        ? initialThreadBranch
         : null;
 
     // In worktree mode, require an explicit base branch so we don't silently
     // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThreadBranch) {
+    if (shouldCreateWorktree && !initialThreadBranch) {
       setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
       return;
     }
@@ -2835,7 +2868,7 @@ export default function ChatView(props: ChatViewProps) {
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
                       interactionMode,
-                      branch: activeThreadBranch,
+                      branch: initialThreadBranch,
                       worktreePath: activeThread.worktreePath,
                       createdAt: activeThread.createdAt,
                     },
@@ -3289,7 +3322,7 @@ export default function ChatView(props: ChatViewProps) {
         modelSelection: nextThreadModelSelection,
         runtimeMode,
         interactionMode: "default",
-        branch: activeThreadBranch,
+        branch: initialThreadBranch,
         worktreePath: activeThread.worktreePath,
         createdAt,
       })
@@ -3352,7 +3385,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeProject,
     activeProposedPlan,
-    activeThreadBranch,
+    initialThreadBranch,
     activeThread,
     beginLocalDispatch,
     activeEnvironmentUnavailable,
@@ -3604,7 +3637,10 @@ export default function ChatView(props: ChatViewProps) {
             )}
           >
             <div className="relative isolate">
-              <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
+              <ComposerBannerStack
+                className="relative z-0"
+                items={composerBannerItemsWithBranchMismatch}
+              />
               <div className="relative z-10">
                 <ChatComposer
                   composerRef={composerRef}

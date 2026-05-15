@@ -3,7 +3,6 @@ import type {
   GitStackedAction,
   VcsStatusResult,
 } from "@t3tools/contracts";
-import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import {
   DEFAULT_CHANGE_REQUEST_TERMINOLOGY,
   getChangeRequestTerminology,
@@ -373,35 +372,11 @@ export function resolveThreadBranchUpdate(
   };
 }
 
-export function resolveLiveThreadBranchUpdate(input: {
-  threadBranch: string | null;
-  gitStatus: VcsStatusResult | null;
-}): { branch: string | null } | null {
-  if (!input.gitStatus) {
-    return null;
-  }
-
-  if (input.gitStatus.refName === null && input.threadBranch !== null) {
-    return null;
-  }
-
-  if (input.threadBranch === input.gitStatus.refName) {
-    return null;
-  }
-
-  if (
-    input.threadBranch !== null &&
-    input.gitStatus.refName !== null &&
-    !isTemporaryWorktreeBranch(input.threadBranch) &&
-    isTemporaryWorktreeBranch(input.gitStatus.refName)
-  ) {
-    return null;
-  }
-
-  return {
-    branch: input.gitStatus.refName,
-  };
-}
+// NOTE: `resolveLiveThreadBranchUpdate` was removed. It silently rewrote a
+// chat's `branch` whenever the working tree was on a different ref, which
+// conflicts with explicit per-chat branch tracking. The mismatch is now
+// surfaced to the user via the chat-view banner instead. See
+// `apps/web/src/lib/threadBranchTracking.ts`.
 
 // Re-export from shared for backwards compatibility in this module's exports
 export { resolveAutoFeatureBranchName } from "@t3tools/shared/git";
