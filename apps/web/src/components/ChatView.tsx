@@ -184,6 +184,7 @@ import {
 } from "~/rpc/serverState";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
+import { ResizableRightPanel } from "./ResizableRightPanel";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { Button } from "./ui/button";
 import {
@@ -200,6 +201,7 @@ const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const PLAN_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_plan_sidebar_width_ratio";
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -3724,17 +3726,19 @@ export default function ChatView(props: ChatViewProps) {
 
         {/* Plan sidebar */}
         {planSidebarOpen && !shouldUsePlanSidebarSheet ? (
-          <PlanSidebar
-            activePlan={activePlan}
-            activeProposedPlan={sidebarProposedPlan}
-            label={planSidebarLabel}
-            environmentId={environmentId}
-            markdownCwd={gitCwd ?? undefined}
-            workspaceRoot={activeWorkspaceRoot}
-            timestampFormat={timestampFormat}
-            mode="sidebar"
-            onClose={closePlanSidebar}
-          />
+          <ResizableRightPanel storageKey={PLAN_INLINE_SIDEBAR_WIDTH_STORAGE_KEY}>
+            <PlanSidebar
+              activePlan={activePlan}
+              activeProposedPlan={sidebarProposedPlan}
+              label={planSidebarLabel}
+              environmentId={environmentId}
+              markdownCwd={gitCwd ?? undefined}
+              workspaceRoot={activeWorkspaceRoot}
+              timestampFormat={timestampFormat}
+              mode="sidebar"
+              onClose={closePlanSidebar}
+            />
+          </ResizableRightPanel>
         ) : null}
       </div>
       {/* end horizontal flex container */}

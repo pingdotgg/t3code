@@ -130,9 +130,7 @@ const PlanSidebar = memo(function PlanSidebar({
     <div
       className={cn(
         "flex min-h-0 flex-col bg-card/50",
-        mode === "sidebar"
-          ? "h-full w-[340px] shrink-0 border-l border-border/70"
-          : "h-full w-full",
+        mode === "sidebar" ? "h-full w-full border-l border-border/70" : "h-full w-full",
       )}
     >
       {/* Header */}
