@@ -152,6 +152,14 @@ export function writeBrowserSavedEnvironmentRegistry(
   );
 }
 
+export function removeBrowserSavedEnvironment(environmentId: EnvironmentIdValue): void {
+  const document = readBrowserSavedEnvironmentRegistryDocument();
+  writeBrowserSavedEnvironmentRegistryDocument({
+    version: document.version ?? 1,
+    records: (document.records ?? []).filter((record) => record.environmentId !== environmentId),
+  });
+}
+
 export function readBrowserSavedEnvironmentSecret(
   environmentId: EnvironmentIdValue,
 ): string | null {

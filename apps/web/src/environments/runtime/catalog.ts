@@ -244,6 +244,10 @@ export async function persistSavedEnvironmentRecord(record: SavedEnvironmentReco
   );
 }
 
+export async function removePersistedSavedEnvironment(environmentId: EnvironmentId): Promise<void> {
+  await ensureLocalApi().persistence.removeSavedEnvironment(environmentId);
+}
+
 export async function readSavedEnvironmentBearerToken(
   environmentId: EnvironmentId,
 ): Promise<string | null> {

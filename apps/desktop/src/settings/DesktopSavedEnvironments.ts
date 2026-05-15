@@ -15,6 +15,11 @@ import * as Ref from "effect/Ref";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
+import {
+  resolveLinuxSecretStorageUnavailableMessage,
+  type LinuxPasswordStorePreference,
+} from "../linuxSecretStorage.ts";
+import * as DesktopAppSettings from "./DesktopAppSettings.ts";
 
 type PersistedSavedEnvironmentDesktopSsh = NonNullable<
   PersistedSavedEnvironmentRecord["desktopSsh"]
@@ -91,12 +96,23 @@ export class DesktopSavedEnvironmentSecretDecodeError extends Data.TaggedError(
   }
 }
 
+export class DesktopSavedEnvironmentSecretUnavailableError extends Data.TaggedError(
+  "DesktopSavedEnvironmentSecretUnavailableError",
+)<{
+  readonly detail: string;
+}> {
+  override get message() {
+    return this.detail;
+  }
+}
+
 export type DesktopSavedEnvironmentsGetSecretError =
   | DesktopSavedEnvironmentSecretDecodeError
   | ElectronSafeStorage.ElectronSafeStorageAvailabilityError
   | ElectronSafeStorage.ElectronSafeStorageDecryptError;
 
 export type DesktopSavedEnvironmentsSetSecretError =
+  | DesktopSavedEnvironmentSecretUnavailableError
   | DesktopSavedEnvironmentsWriteError
   | ElectronSafeStorage.ElectronSafeStorageAvailabilityError
   | ElectronSafeStorage.ElectronSafeStorageEncryptError;
@@ -105,6 +121,9 @@ export interface DesktopSavedEnvironmentsShape {
   readonly getRegistry: Effect.Effect<readonly PersistedSavedEnvironmentRecord[]>;
   readonly setRegistry: (
     records: readonly PersistedSavedEnvironmentRecord[],
+  ) => Effect.Effect<void, DesktopSavedEnvironmentsWriteError>;
+  readonly removeEnvironment: (
+    environmentId: string,
   ) => Effect.Effect<void, DesktopSavedEnvironmentsWriteError>;
   readonly getSecret: (
     environmentId: string,
@@ -240,12 +259,29 @@ function decodeSecretBytes(
   );
 }
 
+function secretStorageUnavailableMessage(input: {
+  readonly platform: NodeJS.Platform;
+  readonly linuxPasswordStore: LinuxPasswordStorePreference;
+  readonly selectedBackend: Option.Option<string>;
+}): string {
+  if (input.platform !== "linux") {
+    return "Unable to persist saved environment credentials.";
+  }
+
+  return resolveLinuxSecretStorageUnavailableMessage({
+    configuredPreference: input.linuxPasswordStore,
+    selectedBackend: Option.getOrNull(input.selectedBackend),
+    env: process.env,
+  });
+}
+
 export const layer = Layer.effect(
   DesktopSavedEnvironments,
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const settings = yield* DesktopAppSettings.DesktopAppSettings;
     const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
 
     const writeDocument = (document: SavedEnvironmentRegistryDocument) =>
@@ -270,6 +306,23 @@ export const layer = Layer.effect(
         );
         yield* writeDocument(preserveExistingSecrets(currentDocument, records));
       }),
+      removeEnvironment: Effect.fn("desktop.savedEnvironments.removeEnvironment")(
+        function* (environmentId) {
+          yield* Effect.annotateCurrentSpan({ environmentId });
+          const document = yield* readRegistryDocument(
+            fileSystem,
+            environment.savedEnvironmentRegistryPath,
+          );
+          if (!document.records.some((record) => record.environmentId === environmentId)) {
+            return;
+          }
+
+          yield* writeDocument({
+            version: document.version,
+            records: document.records.filter((record) => record.environmentId !== environmentId),
+          });
+        },
+      ),
       getSecret: Effect.fn("desktop.savedEnvironments.getSecret")(function* (environmentId) {
         yield* Effect.annotateCurrentSpan({ environmentId });
         const document = yield* readRegistryDocument(
@@ -296,7 +349,15 @@ export const layer = Layer.effect(
         );
 
         if (!(yield* safeStorage.isEncryptionAvailable)) {
-          return false;
+          const desktopSettings = yield* settings.get;
+          const selectedBackend = yield* safeStorage.selectedStorageBackend;
+          return yield* new DesktopSavedEnvironmentSecretUnavailableError({
+            detail: secretStorageUnavailableMessage({
+              platform: environment.platform,
+              linuxPasswordStore: desktopSettings.linuxPasswordStore,
+              selectedBackend,
+            }),
+          });
         }
 
         const encryptedBearerToken = Encoding.encodeBase64(
@@ -362,6 +423,18 @@ export const layerTest = (input?: {
       return DesktopSavedEnvironments.of({
         getRegistry: Ref.get(recordsRef),
         setRegistry: (records) => Ref.set(recordsRef, records),
+        removeEnvironment: (environmentId) =>
+          Ref.update(recordsRef, (records) =>
+            records.filter((record) => record.environmentId !== environmentId),
+          ).pipe(
+            Effect.andThen(
+              Ref.update(secretsRef, (secrets) => {
+                const nextSecrets = new Map(secrets);
+                nextSecrets.delete(environmentId);
+                return nextSecrets;
+              }),
+            ),
+          ),
         getSecret: (environmentId) =>
           Ref.get(secretsRef).pipe(
             Effect.map((secrets) => Option.fromNullishOr(secrets.get(environmentId))),

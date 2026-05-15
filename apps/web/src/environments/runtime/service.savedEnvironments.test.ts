@@ -89,6 +89,7 @@ vi.mock("~/localApi", () => ({
   ensureLocalApi: vi.fn(() => ({
     persistence: {
       setSavedEnvironmentRegistry: vi.fn(async () => undefined),
+      removeSavedEnvironment: vi.fn(async () => undefined),
     },
   })),
 }));

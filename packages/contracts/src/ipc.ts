@@ -378,6 +378,7 @@ export interface DesktopBridge {
   setSavedEnvironmentRegistry: (
     records: readonly PersistedSavedEnvironmentRecord[],
   ) => Promise<void>;
+  removeSavedEnvironment: (environmentId: EnvironmentId) => Promise<void>;
   getSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<string | null>;
   setSavedEnvironmentSecret: (environmentId: EnvironmentId, secret: string) => Promise<boolean>;
   removeSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<void>;
@@ -455,6 +456,7 @@ export interface LocalApi {
     setSavedEnvironmentRegistry: (
       records: readonly PersistedSavedEnvironmentRecord[],
     ) => Promise<void>;
+    removeSavedEnvironment: (environmentId: EnvironmentId) => Promise<void>;
     getSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<string | null>;
     setSavedEnvironmentSecret: (environmentId: EnvironmentId, secret: string) => Promise<boolean>;
     removeSavedEnvironmentSecret: (environmentId: EnvironmentId) => Promise<void>;

@@ -370,6 +370,7 @@ const createDesktopBridgeStub = (overrides?: {
     setClientSettings: vi.fn().mockResolvedValue(undefined),
     getSavedEnvironmentRegistry: vi.fn().mockResolvedValue([]),
     setSavedEnvironmentRegistry: vi.fn().mockResolvedValue(undefined),
+    removeSavedEnvironment: vi.fn().mockResolvedValue(undefined),
     getSavedEnvironmentSecret: vi.fn().mockResolvedValue(null),
     setSavedEnvironmentSecret: vi.fn().mockResolvedValue(true),
     removeSavedEnvironmentSecret: vi.fn().mockResolvedValue(undefined),

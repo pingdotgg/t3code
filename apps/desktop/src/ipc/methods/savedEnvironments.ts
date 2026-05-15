@@ -39,6 +39,16 @@ export const setSavedEnvironmentRegistry = makeIpcMethod({
   }),
 });
 
+export const removeSavedEnvironment = makeIpcMethod({
+  channel: IpcChannels.REMOVE_SAVED_ENVIRONMENT_CHANNEL,
+  payload: EnvironmentId,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.savedEnvironments.removeEnvironment")(function* (environmentId) {
+    const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+    yield* savedEnvironments.removeEnvironment(environmentId);
+  }),
+});
+
 export const getSavedEnvironmentSecret = makeIpcMethod({
   channel: IpcChannels.GET_SAVED_ENVIRONMENT_SECRET_CHANNEL,
   payload: EnvironmentId,

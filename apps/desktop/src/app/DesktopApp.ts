@@ -9,6 +9,7 @@ import * as NetService from "@t3tools/shared/Net";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
+import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
@@ -16,6 +17,7 @@ import * as DesktopBackendManager from "../backend/DesktopBackendManager.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
 import * as DesktopObservability from "./DesktopObservability.ts";
+import * as DesktopPreReadyPlatform from "./DesktopPreReadyPlatform.ts";
 import * as DesktopServerExposure from "../backend/DesktopServerExposure.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
@@ -191,6 +193,8 @@ const startup = Effect.gen(function* () {
   const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
   const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const preReadyElectronOptions = yield* DesktopPreReadyPlatform.DesktopPreReadyElectronOptions;
+  const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
 
@@ -200,8 +204,13 @@ const startup = Effect.gen(function* () {
   yield* logStartupInfo("runtime logging configured", { logDir: environment.logDir });
   yield* desktopSettings.load;
 
-  if (environment.platform === "linux") {
-    yield* electronApp.appendCommandLineSwitch("class", environment.linuxWmClass);
+  const linuxPreReadyOptions = preReadyElectronOptions.linux;
+  if (linuxPreReadyOptions !== null) {
+    yield* logStartupInfo("linux password store configured", {
+      passwordStore: linuxPreReadyOptions.passwordStore ?? "electron-default",
+      xdgCurrentDesktop: process.env.XDG_CURRENT_DESKTOP ?? null,
+      xdgSessionDesktop: process.env.XDG_SESSION_DESKTOP ?? null,
+    });
   }
 
   yield* appIdentity.configure;
@@ -212,6 +221,16 @@ const startup = Effect.gen(function* () {
     Effect.catchCause((cause) => fatalStartupCause("whenReady", cause)),
   );
   yield* logStartupInfo("app ready");
+  if (environment.platform === "linux") {
+    const selectedBackend = yield* safeStorage.selectedStorageBackend;
+    const encryptionAvailable = yield* safeStorage.isEncryptionAvailable.pipe(
+      Effect.catch(() => Effect.succeed(false)),
+    );
+    yield* logStartupInfo("safe storage ready", {
+      backend: Option.getOrElse(selectedBackend, () => "unknown"),
+      encryptionAvailable,
+    });
+  }
   yield* appIdentity.configure;
   yield* applicationMenu.configure;
   yield* electronProtocol.registerDesktopFileProtocol;

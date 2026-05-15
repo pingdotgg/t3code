@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
@@ -57,6 +58,7 @@ function withProcessEnv<A, E, R>(
 
 function runShellEnvironment(input: {
   readonly env: NodeJS.ProcessEnv;
+  readonly existingPaths?: ReadonlySet<string>;
   readonly platform: NodeJS.Platform;
   readonly handler: (command: ChildProcess.Command) => string;
 }) {
@@ -70,6 +72,9 @@ function runShellEnvironment(input: {
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make((command) => Effect.succeed(makeProcess(input.handler(command)))),
   );
+  const fileSystemLayer = FileSystem.layerNoop({
+    exists: (candidate) => Effect.succeed(input.existingPaths?.has(candidate) ?? false),
+  });
 
   const program = Effect.gen(function* () {
     const shellEnvironment = yield* DesktopShellEnvironment.DesktopShellEnvironment;
@@ -77,7 +82,7 @@ function runShellEnvironment(input: {
   }).pipe(
     Effect.provide(
       DesktopShellEnvironment.layer.pipe(
-        Layer.provide(Layer.mergeAll(environmentLayer, spawnerLayer)),
+        Layer.provide(Layer.mergeAll(environmentLayer, fileSystemLayer, spawnerLayer)),
       ),
     ),
   );
@@ -157,6 +162,69 @@ describe("DesktopShellEnvironment", () => {
 
       assert.equal(env.PATH, "/home/linuxbrew/.linuxbrew/bin:/usr/bin");
       assert.equal(env.SSH_AUTH_SOCK, "/tmp/secretive.sock");
+    }),
+  );
+
+  it.effect("hydrates missing DBUS_SESSION_BUS_ADDRESS from the linux runtime bus", () =>
+    Effect.gen(function* () {
+      const runtimeDir = "/run/user/1234";
+      const env: NodeJS.ProcessEnv = {
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        XDG_RUNTIME_DIR: runtimeDir,
+      };
+
+      yield* runShellEnvironment({
+        env,
+        existingPaths: new Set([`${runtimeDir}/bus`]),
+        platform: "linux",
+        handler: () =>
+          envOutput({
+            PATH: "/usr/bin",
+          }),
+      });
+
+      assert.equal(env.DBUS_SESSION_BUS_ADDRESS, `unix:path=${runtimeDir}/bus`);
+    }),
+  );
+
+  it("resolves the default linux DBus session bus from the user runtime dir", () => {
+    const busPaths: string[] = [];
+    const address = DesktopShellEnvironment.resolveDefaultLinuxDbusSessionBusAddress({
+      env: {},
+      exists: (busPath) => {
+        busPaths.push(busPath);
+        return true;
+      },
+      uid: 1000,
+    });
+
+    assert.equal(address, "unix:path=/run/user/1000/bus");
+    assert.deepEqual(busPaths, ["/run/user/1000/bus"]);
+  });
+
+  it.effect("preserves inherited linux DBUS_SESSION_BUS_ADDRESS", () =>
+    Effect.gen(function* () {
+      const runtimeDir = "/run/user/1234";
+      const env: NodeJS.ProcessEnv = {
+        DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/custom/bus",
+        SHELL: "/bin/zsh",
+        PATH: "/usr/bin",
+        XDG_RUNTIME_DIR: runtimeDir,
+      };
+
+      yield* runShellEnvironment({
+        env,
+        existingPaths: new Set([`${runtimeDir}/bus`]),
+        platform: "linux",
+        handler: () =>
+          envOutput({
+            DBUS_SESSION_BUS_ADDRESS: `unix:path=${runtimeDir}/bus`,
+            PATH: "/usr/bin",
+          }),
+      });
+
+      assert.equal(env.DBUS_SESSION_BUS_ADDRESS, "unix:path=/run/custom/bus");
     }),
   );
 

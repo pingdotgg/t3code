@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
+import * as DesktopAppSettings from "./DesktopAppSettings.ts";
 import * as DesktopSavedEnvironments from "./DesktopSavedEnvironments.ts";
 
 const textDecoder = new TextDecoder();
@@ -43,6 +44,7 @@ function makeSafeStorageLayer(input: {
   readonly availabilityError?: unknown;
   readonly encryptError?: unknown;
   readonly decryptError?: unknown;
+  readonly selectedStorageBackend?: string;
 }) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
     isEncryptionAvailable:
@@ -80,6 +82,7 @@ function makeSafeStorageLayer(input: {
       }
       return Effect.succeed(decoded.slice("enc:".length));
     },
+    selectedStorageBackend: Effect.succeed(Option.fromNullishOr(input.selectedStorageBackend)),
   } satisfies ElectronSafeStorage.ElectronSafeStorageShape);
 }
 
@@ -90,12 +93,14 @@ function makeLayer(
     readonly availabilityError?: unknown;
     readonly encryptError?: unknown;
     readonly decryptError?: unknown;
+    readonly platform?: NodeJS.Platform;
+    readonly selectedStorageBackend?: string;
   },
 ) {
   const environmentLayer = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
-    platform: "darwin",
+    platform: options?.platform ?? "darwin",
     processArch: "x64",
     appVersion: "1.2.3",
     appPath: "/repo",
@@ -116,8 +121,12 @@ function makeLayer(
         availabilityError: options?.availabilityError,
         encryptError: options?.encryptError,
         decryptError: options?.decryptError,
+        ...(options?.selectedStorageBackend === undefined
+          ? {}
+          : { selectedStorageBackend: options.selectedStorageBackend }),
       }),
     ),
+    Layer.provideMerge(DesktopAppSettings.layerTest()),
     Layer.provideMerge(NodeServices.layer),
   );
 }
@@ -129,6 +138,8 @@ const withSavedEnvironments = <A, E, R>(
     readonly availabilityError?: unknown;
     readonly encryptError?: unknown;
     readonly decryptError?: unknown;
+    readonly platform?: NodeJS.Platform;
+    readonly selectedStorageBackend?: string;
   },
 ) =>
   Effect.gen(function* () {
@@ -215,20 +226,30 @@ describe("DesktopSavedEnvironments", () => {
     ),
   );
 
-  it.effect("returns false when writing secrets while encryption is unavailable", () =>
+  it.effect("surfaces remediation when writing secrets while encryption is unavailable", () =>
     withSavedEnvironments(
       Effect.gen(function* () {
         const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
         yield* savedEnvironments.setRegistry([savedRegistryRecord]);
 
-        assert.isFalse(
-          yield* savedEnvironments.setSecret({
+        const error = yield* savedEnvironments
+          .setSecret({
             environmentId: savedRegistryRecord.environmentId,
             secret: "next-token",
-          }),
+          })
+          .pipe(Effect.flip);
+
+        assert.instanceOf(
+          error,
+          DesktopSavedEnvironments.DesktopSavedEnvironmentSecretUnavailableError,
         );
+        assert.include(error.message, "GNOME Keyring");
       }),
-      { availableSecretStorage: false },
+      {
+        availableSecretStorage: false,
+        platform: "linux",
+        selectedStorageBackend: "gnome_libsecret",
+      },
     ),
   );
 
@@ -265,6 +286,26 @@ describe("DesktopSavedEnvironments", () => {
 
         yield* savedEnvironments.removeSecret(savedRegistryRecord.environmentId);
 
+        assert.isTrue(
+          Option.isNone(yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId)),
+        );
+      }),
+    ),
+  );
+
+  it.effect("removes saved environment metadata and its embedded secret atomically", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        yield* savedEnvironments.setRegistry([savedRegistryRecord]);
+        yield* savedEnvironments.setSecret({
+          environmentId: savedRegistryRecord.environmentId,
+          secret: "bearer-token",
+        });
+
+        yield* savedEnvironments.removeEnvironment(savedRegistryRecord.environmentId);
+
+        assert.deepEqual(yield* savedEnvironments.getRegistry, []);
         assert.isTrue(
           Option.isNone(yield* savedEnvironments.getSecret(savedRegistryRecord.environmentId)),
         );

@@ -2,6 +2,7 @@ import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 
@@ -37,6 +38,7 @@ export class ElectronSafeStorageDecryptError extends Data.TaggedError(
 
 export interface ElectronSafeStorageShape {
   readonly isEncryptionAvailable: Effect.Effect<boolean, ElectronSafeStorageAvailabilityError>;
+  readonly selectedStorageBackend: Effect.Effect<Option.Option<string>>;
   readonly encryptString: (
     value: string,
   ) => Effect.Effect<Uint8Array, ElectronSafeStorageEncryptError>;
@@ -54,6 +56,16 @@ const make = ElectronSafeStorage.of({
   isEncryptionAvailable: Effect.try({
     try: () => Electron.safeStorage.isEncryptionAvailable(),
     catch: (cause) => new ElectronSafeStorageAvailabilityError({ cause }),
+  }),
+  selectedStorageBackend: Effect.sync(() => {
+    if (process.platform !== "linux") {
+      return Option.none();
+    }
+    try {
+      return Option.fromNullishOr(Electron.safeStorage.getSelectedStorageBackend());
+    } catch {
+      return Option.none();
+    }
   }),
   encryptString: (value) =>
     Effect.try({

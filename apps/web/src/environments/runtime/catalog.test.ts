@@ -22,6 +22,7 @@ describe("environment runtime catalog stores", () => {
           setClientSettings: async () => undefined,
           getSavedEnvironmentRegistry: async () => [],
           setSavedEnvironmentRegistry: async () => undefined,
+          removeSavedEnvironment: async () => undefined,
           getSavedEnvironmentSecret: async () => null,
           setSavedEnvironmentSecret: async () => true,
           removeSavedEnvironmentSecret: async () => undefined,
@@ -109,6 +110,7 @@ describe("environment runtime catalog stores", () => {
               resolveRegistryRead = () => resolve([]);
             }),
           setSavedEnvironmentRegistry: async () => undefined,
+          removeSavedEnvironment: async () => undefined,
           getSavedEnvironmentSecret: async () => null,
           setSavedEnvironmentSecret: async () => true,
           removeSavedEnvironmentSecret: async () => undefined,

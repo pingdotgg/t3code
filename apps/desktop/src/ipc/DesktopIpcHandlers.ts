@@ -5,6 +5,7 @@ import { getClientSettings, setClientSettings } from "./methods/clientSettings.t
 import {
   getSavedEnvironmentRegistry,
   getSavedEnvironmentSecret,
+  removeSavedEnvironment,
   removeSavedEnvironmentSecret,
   setSavedEnvironmentRegistry,
   setSavedEnvironmentSecret,
@@ -52,6 +53,7 @@ export const installDesktopIpcHandlers = Effect.gen(function* () {
   yield* ipc.handle(setClientSettings);
   yield* ipc.handle(getSavedEnvironmentRegistry);
   yield* ipc.handle(setSavedEnvironmentRegistry);
+  yield* ipc.handle(removeSavedEnvironment);
   yield* ipc.handle(getSavedEnvironmentSecret);
   yield* ipc.handle(setSavedEnvironmentSecret);
   yield* ipc.handle(removeSavedEnvironmentSecret);

@@ -1,7 +1,7 @@
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as NodeOS from "node:os";
+import { homedir } from "node:os";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -37,6 +37,7 @@ import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
 import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
 import * as DesktopAppSettings from "./settings/DesktopAppSettings.ts";
+import * as DesktopPreReadyPlatform from "./app/DesktopPreReadyPlatform.ts";
 import * as DesktopShellEnvironment from "./shell/DesktopShellEnvironment.ts";
 import * as DesktopSshEnvironment from "./ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./ssh/DesktopSshPasswordPrompts.ts";
@@ -45,6 +46,34 @@ import * as DesktopState from "./app/DesktopState.ts";
 import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
 
+const configureElectronBeforeReady = Effect.sync(
+  (): DesktopPreReadyPlatform.DesktopPreReadyElectronOptionsShape => {
+    const linux =
+      process.platform === "linux"
+        ? DesktopPreReadyPlatform.resolveEarlyLinuxElectronOptionsFromProcess()
+        : null;
+
+    if (linux !== null) {
+      if (linux.dbusSessionBusAddress !== null) {
+        process.env.DBUS_SESSION_BUS_ADDRESS = linux.dbusSessionBusAddress;
+      }
+      if (linux.passwordStore !== null) {
+        Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
+      }
+
+      Electron.app.commandLine.appendSwitch("class", linux.linuxWmClass);
+    }
+
+    ElectronProtocol.registerDesktopSchemePrivilegesSync();
+    return { linux };
+  },
+).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));
+
+const desktopElectronPreReadyLayer = Layer.effect(
+  DesktopPreReadyPlatform.DesktopPreReadyElectronOptions,
+  configureElectronBeforeReady,
+);
+
 const desktopEnvironmentLayer = Layer.unwrap(
   Effect.gen(function* () {
     const metadata = yield* Effect.service(ElectronApp.ElectronApp).pipe(
@@ -52,7 +81,7 @@ const desktopEnvironmentLayer = Layer.unwrap(
     );
     return DesktopEnvironment.layer({
       dirname: __dirname,
-      homeDirectory: NodeOS.homedir(),
+      homeDirectory: homedir(),
       platform: process.platform,
       processArch: process.arch,
       ...metadata,
@@ -106,15 +135,18 @@ const electronLayer = Layer.mergeAll(
   Layer.succeed(DesktopIpc.DesktopIpc, DesktopIpc.make(Electron.ipcMain)),
 );
 
-const desktopFoundationLayer = Layer.mergeAll(
+const desktopFoundationBaseLayer = Layer.mergeAll(
   DesktopState.layer,
   DesktopLifecycle.layerShutdown,
   DesktopAppSettings.layer,
   DesktopClientSettings.layer,
-  DesktopSavedEnvironments.layer,
   DesktopAssets.layer,
   DesktopObservability.layer,
 ).pipe(Layer.provideMerge(desktopEnvironmentLayer));
+
+const desktopFoundationLayer = DesktopSavedEnvironments.layer.pipe(
+  Layer.provideMerge(desktopFoundationBaseLayer),
+);
 
 const desktopSshLayer = Layer.mergeAll(desktopSshEnvironmentLayer, DesktopSshRemoteApi.layer).pipe(
   Layer.provideMerge(DesktopSshPasswordPrompts.layer()),
@@ -140,15 +172,13 @@ const desktopApplicationLayer = Layer.mergeAll(
   desktopSshLayer,
 ).pipe(Layer.provideMerge(DesktopUpdates.layer), Layer.provideMerge(desktopBackendLayer));
 
-const desktopRuntimeLayer = ElectronProtocol.layerSchemePrivileges.pipe(
-  Layer.flatMap(() =>
-    desktopApplicationLayer.pipe(
-      Layer.provideMerge(NodeServices.layer),
-      Layer.provideMerge(NodeHttpClient.layerUndici),
-      Layer.provideMerge(NetService.layer),
-      Layer.provideMerge(electronLayer),
-    ),
-  ),
+// Electron requires these switches and scheme privileges before app ready.
+const desktopRuntimeLayer = desktopApplicationLayer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeHttpClient.layerUndici),
+  Layer.provideMerge(NetService.layer),
+  Layer.provideMerge(electronLayer),
+  Layer.provideMerge(desktopElectronPreReadyLayer),
 );
 
 DesktopApp.program.pipe(Effect.provide(desktopRuntimeLayer), NodeRuntime.runMain);

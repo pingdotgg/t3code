@@ -109,7 +109,7 @@ export const AuthBootstrapResult = Schema.Struct({
   authenticated: Schema.Literal(true),
   role: AuthSessionRole,
   sessionMethod: ServerAuthSessionMethod,
-  expiresAt: Schema.DateTimeUtc,
+  expiresAt: Schema.DateTimeUtcFromString,
 });
 export type AuthBootstrapResult = typeof AuthBootstrapResult.Type;
 
@@ -117,14 +117,14 @@ export const AuthBearerBootstrapResult = Schema.Struct({
   authenticated: Schema.Literal(true),
   role: AuthSessionRole,
   sessionMethod: Schema.Literal("bearer-session-token"),
-  expiresAt: Schema.DateTimeUtc,
+  expiresAt: Schema.DateTimeUtcFromString,
   sessionToken: TrimmedNonEmptyString,
 });
 export type AuthBearerBootstrapResult = typeof AuthBearerBootstrapResult.Type;
 
 export const AuthWebSocketTokenResult = Schema.Struct({
   token: TrimmedNonEmptyString,
-  expiresAt: Schema.DateTimeUtc,
+  expiresAt: Schema.DateTimeUtcFromString,
 });
 export type AuthWebSocketTokenResult = typeof AuthWebSocketTokenResult.Type;
 
@@ -261,6 +261,6 @@ export const AuthSessionState = Schema.Struct({
   auth: ServerAuthDescriptor,
   role: Schema.optionalKey(AuthSessionRole),
   sessionMethod: Schema.optionalKey(ServerAuthSessionMethod),
-  expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
+  expiresAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
 });
 export type AuthSessionState = typeof AuthSessionState.Type;

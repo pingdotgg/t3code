@@ -20,6 +20,7 @@ import {
   readBrowserClientSettings,
   readBrowserSavedEnvironmentRegistry,
   readBrowserSavedEnvironmentSecret,
+  removeBrowserSavedEnvironment,
   removeBrowserSavedEnvironmentSecret,
   writeBrowserClientSettings,
   writeBrowserSavedEnvironmentRegistry,
@@ -98,6 +99,12 @@ function createBrowserLocalApi(rpcClient?: WsRpcClient): LocalApi {
           return window.desktopBridge.setSavedEnvironmentRegistry(records);
         }
         writeBrowserSavedEnvironmentRegistry(records);
+      },
+      removeSavedEnvironment: async (environmentId) => {
+        if (window.desktopBridge) {
+          return window.desktopBridge.removeSavedEnvironment(environmentId);
+        }
+        removeBrowserSavedEnvironment(environmentId);
       },
       getSavedEnvironmentSecret: async (environmentId) => {
         if (window.desktopBridge) {

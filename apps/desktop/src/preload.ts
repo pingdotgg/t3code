@@ -41,6 +41,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.GET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL),
   setSavedEnvironmentRegistry: (records) =>
     ipcRenderer.invoke(IpcChannels.SET_SAVED_ENVIRONMENT_REGISTRY_CHANNEL, records),
+  removeSavedEnvironment: (environmentId) =>
+    ipcRenderer.invoke(IpcChannels.REMOVE_SAVED_ENVIRONMENT_CHANNEL, environmentId),
   getSavedEnvironmentSecret: (environmentId) =>
     ipcRenderer.invoke(IpcChannels.GET_SAVED_ENVIRONMENT_SECRET_CHANNEL, environmentId),
   setSavedEnvironmentSecret: (environmentId, secret) =>

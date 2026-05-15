@@ -176,6 +176,7 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     setClientSettings: async () => undefined,
     getSavedEnvironmentRegistry: async () => [],
     setSavedEnvironmentRegistry: async () => undefined,
+    removeSavedEnvironment: async () => undefined,
     getSavedEnvironmentSecret: async () => null,
     setSavedEnvironmentSecret: async () => true,
     removeSavedEnvironmentSecret: async () => undefined,
@@ -622,6 +623,7 @@ describe("wsApi", () => {
     const setClientSettings = vi.fn().mockResolvedValue(undefined);
     const getSavedEnvironmentRegistry = vi.fn().mockResolvedValue([]);
     const setSavedEnvironmentRegistry = vi.fn().mockResolvedValue(undefined);
+    const removeSavedEnvironment = vi.fn().mockResolvedValue(undefined);
     const getSavedEnvironmentSecret = vi.fn().mockResolvedValue("bearer-token");
     const setSavedEnvironmentSecret = vi.fn().mockResolvedValue(true);
     const removeSavedEnvironmentSecret = vi.fn().mockResolvedValue(undefined);
@@ -630,6 +632,7 @@ describe("wsApi", () => {
       setClientSettings,
       getSavedEnvironmentRegistry,
       setSavedEnvironmentRegistry,
+      removeSavedEnvironment,
       getSavedEnvironmentSecret,
       setSavedEnvironmentSecret,
       removeSavedEnvironmentSecret,
@@ -642,6 +645,7 @@ describe("wsApi", () => {
     await api.persistence.setClientSettings(clientSettings);
     await api.persistence.getSavedEnvironmentRegistry();
     await api.persistence.setSavedEnvironmentRegistry([]);
+    await api.persistence.removeSavedEnvironment(EnvironmentId.make("environment-local"));
     await api.persistence.getSavedEnvironmentSecret(EnvironmentId.make("environment-local"));
     await api.persistence.setSavedEnvironmentSecret(
       EnvironmentId.make("environment-local"),
@@ -653,6 +657,7 @@ describe("wsApi", () => {
     expect(setClientSettings).toHaveBeenCalledWith(clientSettings);
     expect(getSavedEnvironmentRegistry).toHaveBeenCalledWith();
     expect(setSavedEnvironmentRegistry).toHaveBeenCalledWith([]);
+    expect(removeSavedEnvironment).toHaveBeenCalledWith("environment-local");
     expect(getSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local");
     expect(setSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local", "bearer-token");
     expect(removeSavedEnvironmentSecret).toHaveBeenCalledWith("environment-local");
@@ -716,5 +721,9 @@ describe("wsApi", () => {
     await expect(
       api.persistence.getSavedEnvironmentSecret(EnvironmentId.make("environment-local")),
     ).resolves.toBeNull();
+
+    await api.persistence.removeSavedEnvironment(EnvironmentId.make("environment-local"));
+
+    await expect(api.persistence.getSavedEnvironmentRegistry()).resolves.toEqual([]);
   });
 });

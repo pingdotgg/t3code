@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -11,6 +12,7 @@ type EnvironmentPatch = Record<string, string>;
 
 interface ShellEnvironmentConfig {
   readonly env: NodeJS.ProcessEnv;
+  readonly fileSystem: FileSystem.FileSystem;
   readonly platform: NodeJS.Platform;
   readonly userShell: Option.Option<string>;
 }
@@ -30,12 +32,19 @@ export class DesktopShellEnvironment extends Context.Service<
 
 const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
+  "DBUS_SESSION_BUS_ADDRESS",
+  "DISPLAY",
   "SSH_AUTH_SOCK",
   "HOMEBREW_PREFIX",
   "HOMEBREW_CELLAR",
   "HOMEBREW_REPOSITORY",
   "XDG_CONFIG_HOME",
+  "XDG_CURRENT_DESKTOP",
   "XDG_DATA_HOME",
+  "XDG_RUNTIME_DIR",
+  "XDG_SESSION_DESKTOP",
+  "XDG_SESSION_TYPE",
+  "WAYLAND_DISPLAY",
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
 const WINDOWS_SHELL_CANDIDATES = ["pwsh.exe", "powershell.exe"] as const;
@@ -53,6 +62,32 @@ const pathDelimiter = (platform: NodeJS.Platform) => (platform === "win32" ? ";"
 
 const readEnvPath = (env: NodeJS.ProcessEnv): Option.Option<string> =>
   trimNonEmpty(env.PATH ?? env.Path ?? env.path);
+
+const linuxRuntimeDir = (env: NodeJS.ProcessEnv, uid: number | undefined): Option.Option<string> =>
+  trimNonEmpty(env.XDG_RUNTIME_DIR).pipe(
+    Option.orElse(() => (uid === undefined ? Option.none() : Option.some(`/run/user/${uid}`))),
+    Option.map((value) => value.replace(/\/+$/u, "")),
+    Option.filter((value) => value.length > 0),
+  );
+
+function resolveDefaultLinuxDbusSessionBusPath(input: {
+  readonly env: NodeJS.ProcessEnv;
+  readonly uid: number | undefined;
+}): string | null {
+  const runtimeDir = linuxRuntimeDir(input.env, input.uid);
+  if (Option.isNone(runtimeDir)) return null;
+
+  return `${runtimeDir.value}/bus`;
+}
+
+export function resolveDefaultLinuxDbusSessionBusAddress(input: {
+  readonly env: NodeJS.ProcessEnv;
+  readonly exists: (path: string) => boolean;
+  readonly uid: number | undefined;
+}): string | null {
+  const busPath = resolveDefaultLinuxDbusSessionBusPath(input);
+  return busPath !== null && input.exists(busPath) ? `unix:path=${busPath}` : null;
+}
 
 const pathComparisonKey = (entry: string, platform: NodeJS.Platform) => {
   const normalized = entry.trim().replace(/^"+|"+$/g, "");
@@ -312,14 +347,39 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     }
 
     for (const name of [
+      "DBUS_SESSION_BUS_ADDRESS",
+      "DISPLAY",
       "HOMEBREW_PREFIX",
       "HOMEBREW_CELLAR",
       "HOMEBREW_REPOSITORY",
       "XDG_CONFIG_HOME",
+      "XDG_CURRENT_DESKTOP",
       "XDG_DATA_HOME",
+      "XDG_RUNTIME_DIR",
+      "XDG_SESSION_DESKTOP",
+      "XDG_SESSION_TYPE",
+      "WAYLAND_DISPLAY",
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
+      }
+    }
+
+    if (
+      config.platform === "linux" &&
+      Option.isNone(trimNonEmpty(config.env.DBUS_SESSION_BUS_ADDRESS))
+    ) {
+      const dbusSessionBusPath = resolveDefaultLinuxDbusSessionBusPath({
+        env: config.env,
+        uid: process.getuid?.(),
+      });
+      if (dbusSessionBusPath !== null) {
+        const busExists = yield* config.fileSystem
+          .exists(dbusSessionBusPath)
+          .pipe(Effect.orElseSucceed(() => false));
+        if (busExists) {
+          config.env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${dbusSessionBusPath}`;
+        }
       }
     }
   },
@@ -341,10 +401,12 @@ export const layer = Layer.effect(
   DesktopShellEnvironment,
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const fileSystem = yield* FileSystem.FileSystem;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     return DesktopShellEnvironment.of({
       installIntoProcess: installShellEnvironment({
         env: process.env,
+        fileSystem,
         platform: environment.platform,
         userShell: Option.none(),
       }).pipe(
