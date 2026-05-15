@@ -41,8 +41,7 @@ describe("VcsProjectConfig", () => {
         yield* fileSystem.makeDirectory(nested, { recursive: true });
         yield* fileSystem.writeFileString(
           path.join(configDir, "vcs.json"),
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
-          JSON.stringify({ vcs: { kind: "jj" } }),
+          '{"vcs":{"kind":"jj"}}',
         );
 
         const config = yield* VcsProjectConfig.VcsProjectConfig;
@@ -60,6 +59,26 @@ describe("VcsProjectConfig", () => {
         const root = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-vcs-config-test-",
         });
+        const config = yield* VcsProjectConfig.VcsProjectConfig;
+        const kind = yield* config.resolveKind({ cwd: root });
+
+        assert.equal(kind, "auto");
+      }),
+    );
+  });
+
+  it.layer(TestLayer)("falls back to auto when config JSON is invalid", (it) => {
+    it.effect("returns auto", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-vcs-config-test-",
+        });
+        const configDir = path.join(root, ".t3code");
+        yield* fileSystem.makeDirectory(configDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(configDir, "vcs.json"), "{invalid-json");
+
         const config = yield* VcsProjectConfig.VcsProjectConfig;
         const kind = yield* config.resolveKind({ cwd: root });
 
