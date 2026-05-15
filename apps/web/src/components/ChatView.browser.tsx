@@ -4,6 +4,7 @@ import "../index.css";
 import {
   EventId,
   ORCHESTRATION_WS_METHODS,
+  type CheckpointRef,
   EnvironmentId,
   type EnvironmentApi,
   type MessageId,
@@ -378,6 +379,49 @@ function createSnapshotForTargetUser(options: {
       },
     ],
     updatedAt: NOW_ISO,
+  };
+}
+
+function createSnapshotWithRewindCheckpoint(
+  options: {
+    sessionStatus?: OrchestrationSessionStatus;
+  } = {},
+): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-rewind-target" as MessageId,
+    targetText: "add persistent checkpoint rewind menu",
+    ...(options.sessionStatus ? { sessionStatus: options.sessionStatus } : {}),
+  });
+  const thread = snapshot.threads[0];
+  if (!thread) {
+    throw new Error("Expected default thread.");
+  }
+
+  return {
+    ...snapshot,
+    threads: [
+      {
+        ...thread,
+        checkpoints: [
+          {
+            turnId: "turn-rewind-target" as TurnId,
+            checkpointTurnCount: 4,
+            checkpointRef: "refs/t3-checkpoints/thread-browser-test/4" as CheckpointRef,
+            status: "ready",
+            files: [
+              {
+                path: "apps/web/src/components/ChatView.tsx",
+                kind: "modified",
+                additions: 12,
+                deletions: 3,
+              },
+            ],
+            assistantMessageId: "msg-assistant-3" as MessageId,
+            completedAt: isoAt(30),
+          },
+        ],
+      },
+    ],
   };
 }
 
@@ -1221,6 +1265,18 @@ async function pressComposerKey(key: string): Promise<void> {
       data: key,
       inputType: "insertText",
       bubbles: true,
+    }),
+  );
+  await waitForLayout();
+}
+
+async function pressGlobalEscape(): Promise<void> {
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "Escape",
+      code: "Escape",
+      bubbles: true,
+      cancelable: true,
     }),
   );
   await waitForLayout();
@@ -6146,6 +6202,129 @@ describe("ChatView timeline estimator parity (full app)", () => {
       });
     } finally {
       releaseModShortcut("Control");
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens checkpoint rewind from double Escape and dispatches the revert command", async () => {
+    const escapeShortcut = {
+      key: "escape",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: false,
+    };
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithRewindCheckpoint(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "checkpoint.rewind",
+              shortcut: escapeShortcut,
+              sequence: [escapeShortcut, escapeShortcut],
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForComposerEditor();
+      await pressGlobalEscape();
+      await pressGlobalEscape();
+
+      await expect.element(page.getByText("Rewind checkpoint")).toBeVisible();
+      await expect.element(page.getByText("add persistent checkpoint rewind menu")).toBeVisible();
+
+      const restoreButton = await waitForButtonByText("Restore");
+      await restoreButton.click();
+
+      await vi.waitFor(() => {
+        const request = wsRequests.find(
+          (entry) =>
+            entry._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            entry.type === "thread.checkpoint.revert",
+        );
+        expect(request).toMatchObject({
+          threadId: THREAD_ID,
+          turnCount: 3,
+        });
+      });
+      expect(confirmSpy).not.toHaveBeenCalled();
+    } finally {
+      confirmSpy.mockRestore();
+      await mounted.cleanup();
+    }
+  });
+
+  it("closes checkpoint rewind when navigating to another thread", async () => {
+    const escapeShortcut = {
+      key: "escape",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: false,
+    };
+    const secondThreadId = "thread-rewind-navigation-target" as ThreadId;
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: addThreadToSnapshot(createSnapshotWithRewindCheckpoint(), secondThreadId),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "checkpoint.rewind",
+              shortcut: escapeShortcut,
+              sequence: [escapeShortcut, escapeShortcut],
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForComposerEditor();
+      await pressGlobalEscape();
+      await pressGlobalEscape();
+
+      await expect.element(page.getByText("Rewind checkpoint")).toBeVisible();
+      await expect.element(page.getByText("add persistent checkpoint rewind menu")).toBeVisible();
+
+      await mounted.router.navigate({
+        to: "/$environmentId/$threadId",
+        params: {
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          threadId: secondThreadId,
+        },
+      });
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath(secondThreadId),
+        "Route should switch to the second server thread.",
+      );
+      await expect.element(page.getByText("Rewind checkpoint")).not.toBeInTheDocument();
+      await expect
+        .element(page.getByText("add persistent checkpoint rewind menu"))
+        .not.toBeInTheDocument();
+    } finally {
       await mounted.cleanup();
     }
   });

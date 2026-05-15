@@ -71,6 +71,7 @@ function whenAnd(left: KeybindingWhenNode, right: KeybindingWhenNode): Keybindin
 
 interface TestBinding {
   shortcut: KeybindingShortcut;
+  sequence?: KeybindingShortcut[];
   command: KeybindingCommand;
   whenAst?: KeybindingWhenNode;
 }
@@ -79,6 +80,7 @@ function compile(bindings: TestBinding[]): ResolvedKeybindingsConfig {
   return bindings.map((binding) => ({
     command: binding.command,
     shortcut: binding.shortcut,
+    ...(binding.sequence ? { sequence: binding.sequence } : {}),
     ...(binding.whenAst ? { whenAst: binding.whenAst } : {}),
   }));
 }
@@ -590,6 +592,46 @@ describe("resolveShortcutCommand", () => {
       "thread.next",
     );
   });
+
+  it("matches double-Escape sequence bindings only after the second keypress", () => {
+    const escapeShortcut: KeybindingShortcut = {
+      key: "escape",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: false,
+    };
+    const bindings = compile([
+      {
+        shortcut: escapeShortcut,
+        sequence: [escapeShortcut, escapeShortcut],
+        command: "checkpoint.rewind",
+        whenAst: whenNot(whenIdentifier("terminalFocus")),
+      },
+    ]);
+    const escapeEvent = event({ key: "Escape" });
+
+    assert.isNull(
+      resolveShortcutCommand(escapeEvent, bindings, {
+        context: { terminalFocus: false },
+        sequence: [escapeEvent],
+      }),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(escapeEvent, bindings, {
+        context: { terminalFocus: false },
+        sequence: [escapeEvent, escapeEvent],
+      }),
+      "checkpoint.rewind",
+    );
+    assert.isNull(
+      resolveShortcutCommand(escapeEvent, bindings, {
+        context: { terminalFocus: true },
+        sequence: [escapeEvent, escapeEvent],
+      }),
+    );
+  });
 });
 
 describe("formatShortcutLabel", () => {
@@ -610,6 +652,28 @@ describe("formatShortcutLabel", () => {
   it("formats labels for plus key", () => {
     assert.strictEqual(formatShortcutLabel(modShortcut("+"), "MacIntel"), "⌘+");
     assert.strictEqual(formatShortcutLabel(modShortcut("+"), "Linux"), "Ctrl++");
+  });
+});
+
+describe("checkpoint rewind shortcut label", () => {
+  it("formats the double-Escape sequence label", () => {
+    const escapeShortcut: KeybindingShortcut = {
+      key: "escape",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: false,
+    };
+    const bindings = compile([
+      {
+        shortcut: escapeShortcut,
+        sequence: [escapeShortcut, escapeShortcut],
+        command: "checkpoint.rewind",
+      },
+    ]);
+
+    assert.strictEqual(shortcutLabelForCommand(bindings, "checkpoint.rewind", "Linux"), "Esc Esc");
   });
 });
 

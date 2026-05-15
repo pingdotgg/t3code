@@ -40,9 +40,84 @@ export type MessagesTimelineRow =
     }
   | { kind: "working"; id: string; createdAt: string | null };
 
+export interface RewindCheckpointCandidate {
+  readonly userMessageId: MessageId;
+  readonly prompt: string;
+  readonly createdAt: string;
+  readonly turnCount: number;
+  readonly assistantTurnId: TurnId | null;
+  readonly changedFileCount: number;
+  readonly additions: number;
+  readonly deletions: number;
+}
+
 export interface StableMessagesTimelineRowsState {
   byId: Map<string, MessagesTimelineRow>;
   result: MessagesTimelineRow[];
+}
+
+export function deriveRewindCheckpointCandidates(input: {
+  timelineEntries: ReadonlyArray<TimelineEntry>;
+  turnDiffSummaryByAssistantMessageId: ReadonlyMap<MessageId, TurnDiffSummary>;
+  revertTurnCountByUserMessageId: ReadonlyMap<MessageId, number>;
+}): RewindCheckpointCandidate[] {
+  const candidates: RewindCheckpointCandidate[] = [];
+
+  for (let index = 0; index < input.timelineEntries.length; index += 1) {
+    const entry = input.timelineEntries[index];
+    if (!entry || entry.kind !== "message" || entry.message.role !== "user") {
+      continue;
+    }
+
+    const turnCount = input.revertTurnCountByUserMessageId.get(entry.message.id);
+    if (typeof turnCount !== "number") {
+      continue;
+    }
+
+    let summary: TurnDiffSummary | undefined;
+    for (let nextIndex = index + 1; nextIndex < input.timelineEntries.length; nextIndex += 1) {
+      const nextEntry = input.timelineEntries[nextIndex];
+      if (!nextEntry || nextEntry.kind !== "message") {
+        continue;
+      }
+      if (nextEntry.message.role === "user") {
+        break;
+      }
+      if (nextEntry.message.role !== "assistant") {
+        continue;
+      }
+      summary = input.turnDiffSummaryByAssistantMessageId.get(nextEntry.message.id);
+      if (summary) {
+        break;
+      }
+    }
+
+    const stats = (summary?.files ?? []).reduce(
+      (total, file) => ({
+        additions: total.additions + (file.additions ?? 0),
+        deletions: total.deletions + (file.deletions ?? 0),
+      }),
+      { additions: 0, deletions: 0 },
+    );
+
+    candidates.push({
+      userMessageId: entry.message.id,
+      prompt: entry.message.text,
+      createdAt: entry.message.createdAt,
+      turnCount,
+      assistantTurnId: summary?.turnId ?? null,
+      changedFileCount: summary?.files.length ?? 0,
+      additions: stats.additions,
+      deletions: stats.deletions,
+    });
+  }
+
+  return candidates.toSorted(
+    (left, right) =>
+      right.createdAt.localeCompare(left.createdAt) ||
+      right.turnCount - left.turnCount ||
+      String(right.userMessageId).localeCompare(String(left.userMessageId)),
+  );
 }
 
 export function computeMessageDurationStart(

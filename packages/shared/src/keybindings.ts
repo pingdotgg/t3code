@@ -24,6 +24,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
   { key: "mod+w", command: "terminal.close", when: "terminalFocus" },
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
+  { key: "esc esc", command: "checkpoint.rewind", when: "!terminalFocus" },
   { key: "mod+k", command: "commandPalette.toggle", when: "!terminalFocus" },
   { key: "mod+n", command: "chat.new", when: "!terminalFocus" },
   { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" },
@@ -248,6 +249,28 @@ export function parseKeybindingWhenExpression(expression: string): KeybindingWhe
 }
 
 export function compileResolvedKeybindingRule(rule: KeybindingRule): ResolvedKeybindingRule | null {
+  if (rule.key.trim().toLowerCase() === "esc esc") {
+    if (rule.command !== "checkpoint.rewind") {
+      return null;
+    }
+    const escapeShortcut: KeybindingShortcut = {
+      key: "escape",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: false,
+    };
+    const whenAst = rule.when === undefined ? undefined : parseKeybindingWhenExpression(rule.when);
+    if (rule.when !== undefined && !whenAst) return null;
+    return {
+      command: rule.command,
+      shortcut: escapeShortcut,
+      sequence: [escapeShortcut, escapeShortcut],
+      ...(whenAst ? { whenAst } : {}),
+    };
+  }
+
   const shortcut = parseKeybindingShortcut(rule.key);
   if (!shortcut) return null;
 

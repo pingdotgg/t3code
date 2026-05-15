@@ -76,7 +76,19 @@ export const ResolvedKeybindingFromConfig = KeybindingRule.pipe(
 
       encode: (resolved) =>
         Effect.gen(function* () {
-          const key = encodeShortcut(resolved.shortcut);
+          const key =
+            resolved.sequence?.length === 2 &&
+            resolved.sequence.every(
+              (shortcut) =>
+                shortcut.key === "escape" &&
+                !shortcut.metaKey &&
+                !shortcut.ctrlKey &&
+                !shortcut.shiftKey &&
+                !shortcut.altKey &&
+                !shortcut.modKey,
+            )
+              ? "esc esc"
+              : encodeShortcut(resolved.shortcut);
           if (!key) {
             return yield* Effect.fail(
               new SchemaIssue.InvalidValue(Option.some(resolved), {

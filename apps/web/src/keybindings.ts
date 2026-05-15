@@ -36,6 +36,7 @@ export interface ShortcutMatchContext {
 interface ShortcutMatchOptions {
   platform?: string;
   context?: Partial<ShortcutMatchContext>;
+  sequence?: ReadonlyArray<ShortcutEventLike>;
 }
 
 interface ResolvedShortcutLabelOptions extends ShortcutMatchOptions {
@@ -153,6 +154,26 @@ function shortcutConflictKey(shortcut: KeybindingShortcut, platform = navigator.
   ].join("|");
 }
 
+function shortcutSequenceConflictKey(
+  sequence: ReadonlyArray<KeybindingShortcut> | undefined,
+  platform = navigator.platform,
+): string | null {
+  if (!sequence || sequence.length === 0) return null;
+  return sequence.map((shortcut) => shortcutConflictKey(shortcut, platform)).join(" ");
+}
+
+function matchesShortcutSequence(
+  events: ReadonlyArray<ShortcutEventLike>,
+  sequence: ReadonlyArray<KeybindingShortcut> | undefined,
+  platform = navigator.platform,
+): boolean {
+  if (!sequence || sequence.length === 0 || events.length < sequence.length) return false;
+  const offset = events.length - sequence.length;
+  return sequence.every((shortcut, index) =>
+    matchesShortcut(events[offset + index]!, shortcut, platform),
+  );
+}
+
 function findEffectiveShortcutForCommand(
   keybindings: ResolvedKeybindingsConfig,
   command: KeybindingCommand,
@@ -167,7 +188,9 @@ function findEffectiveShortcutForCommand(
     if (!binding) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
 
-    const conflictKey = shortcutConflictKey(binding.shortcut, platform);
+    const conflictKey =
+      shortcutSequenceConflictKey(binding.sequence, platform) ??
+      shortcutConflictKey(binding.shortcut, platform);
     if (claimedShortcuts.has(conflictKey)) {
       continue;
     }
@@ -202,7 +225,13 @@ export function resolveShortcutCommand(
     const binding = keybindings[index];
     if (!binding) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
-    if (!matchesShortcut(event, binding.shortcut, platform)) continue;
+    if (binding.sequence) {
+      if (!matchesShortcutSequence(options?.sequence ?? [event], binding.sequence, platform)) {
+        continue;
+      }
+    } else if (!matchesShortcut(event, binding.shortcut, platform)) {
+      continue;
+    }
     return binding.command;
   }
   return null;
@@ -243,6 +272,14 @@ export function formatShortcutLabel(
   return parts.join("+");
 }
 
+function formatShortcutSequenceLabel(
+  sequence: ReadonlyArray<KeybindingShortcut> | undefined,
+  platform = navigator.platform,
+): string | null {
+  if (!sequence || sequence.length === 0) return null;
+  return sequence.map((shortcut) => formatShortcutLabel(shortcut, platform)).join(" ");
+}
+
 export function shortcutLabelForCommand(
   keybindings: ResolvedKeybindingsConfig,
   command: KeybindingCommand,
@@ -253,6 +290,19 @@ export function shortcutLabelForCommand(
       ? ({ platform: options } satisfies ResolvedShortcutLabelOptions)
       : options;
   const platform = resolvePlatform(resolvedOptions);
+  const context = resolveContext(resolvedOptions);
+  const claimedShortcuts = new Set<string>();
+  for (let index = keybindings.length - 1; index >= 0; index -= 1) {
+    const binding = keybindings[index];
+    if (!binding?.sequence) continue;
+    if (!matchesWhenClause(binding.whenAst, context)) continue;
+    const conflictKey = shortcutSequenceConflictKey(binding.sequence, platform);
+    if (!conflictKey || claimedShortcuts.has(conflictKey)) continue;
+    claimedShortcuts.add(conflictKey);
+    if (binding.command === command) {
+      return formatShortcutSequenceLabel(binding.sequence, platform);
+    }
+  }
   const shortcut = findEffectiveShortcutForCommand(keybindings, command, resolvedOptions);
   return shortcut ? formatShortcutLabel(shortcut, platform) : null;
 }

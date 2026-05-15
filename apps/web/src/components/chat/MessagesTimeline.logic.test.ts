@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeStableMessagesTimelineRows,
   computeMessageDurationStart,
+  deriveRewindCheckpointCandidates,
   deriveMessagesTimelineRows,
   normalizeCompactToolLabel,
   resolveAssistantMessageCopyState,
@@ -380,6 +381,114 @@ describe("deriveMessagesTimelineRows", () => {
 
     expect(userRow?.revertTurnCount).toBe(1);
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
+  });
+});
+
+describe("deriveRewindCheckpointCandidates", () => {
+  it("maps user prompts to their following assistant checkpoint target newest first", () => {
+    const candidates = deriveRewindCheckpointCandidates({
+      timelineEntries: [
+        {
+          id: "user-1-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user",
+            text: "First prompt",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-1-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:10Z",
+          message: {
+            id: "assistant-1" as never,
+            role: "assistant",
+            text: "Done",
+            turnId: "turn-1" as never,
+            createdAt: "2026-01-01T00:00:10Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "user-2-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:01:00Z",
+          message: {
+            id: "user-2" as never,
+            role: "user",
+            text: "Second prompt",
+            turnId: null,
+            createdAt: "2026-01-01T00:01:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-2-entry",
+          kind: "message",
+          createdAt: "2026-01-01T00:01:10Z",
+          message: {
+            id: "assistant-2" as never,
+            role: "assistant",
+            text: "Done again",
+            turnId: "turn-2" as never,
+            createdAt: "2026-01-01T00:01:10Z",
+            streaming: false,
+          },
+        },
+      ],
+      turnDiffSummaryByAssistantMessageId: new Map([
+        [
+          "assistant-1" as never,
+          {
+            turnId: "turn-1" as never,
+            completedAt: "2026-01-01T00:00:20Z",
+            assistantMessageId: "assistant-1" as never,
+            checkpointTurnCount: 1,
+            files: [{ path: "a.ts", additions: 1, deletions: 0 }],
+          },
+        ],
+        [
+          "assistant-2" as never,
+          {
+            turnId: "turn-2" as never,
+            completedAt: "2026-01-01T00:01:20Z",
+            assistantMessageId: "assistant-2" as never,
+            checkpointTurnCount: 2,
+            files: [
+              { path: "b.ts", additions: 3, deletions: 1 },
+              { path: "c.ts", additions: 0, deletions: 2 },
+            ],
+          },
+        ],
+      ]),
+      revertTurnCountByUserMessageId: new Map([
+        ["user-1" as never, 0],
+        ["user-2" as never, 1],
+      ]),
+    });
+
+    expect(candidates.map((candidate) => candidate.userMessageId)).toEqual(["user-2", "user-1"]);
+    expect(candidates[0]).toMatchObject({
+      prompt: "Second prompt",
+      turnCount: 1,
+      assistantTurnId: "turn-2",
+      changedFileCount: 2,
+      additions: 3,
+      deletions: 3,
+    });
+    expect(candidates[1]).toMatchObject({
+      prompt: "First prompt",
+      turnCount: 0,
+      assistantTurnId: "turn-1",
+      changedFileCount: 1,
+      additions: 1,
+      deletions: 0,
+    });
   });
 });
 

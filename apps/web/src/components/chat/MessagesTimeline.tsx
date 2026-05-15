@@ -399,7 +399,7 @@ function RevertUserMessageButton({ messageId }: { messageId: MessageId }) {
       variant="outline"
       disabled={activity.isRevertingCheckpoint || activity.isWorking}
       onClick={() => ctx.onRevertUserMessage(messageId)}
-      title="Revert to this message"
+      title="Rewind to before this prompt"
     >
       <Undo2Icon className="size-3" />
     </Button>

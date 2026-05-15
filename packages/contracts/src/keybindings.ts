@@ -53,6 +53,7 @@ const STATIC_KEYBINDING_COMMANDS = [
   "terminal.new",
   "terminal.close",
   "diff.toggle",
+  "checkpoint.rewind",
   "commandPalette.toggle",
   "chat.new",
   "chat.newLocal",
@@ -139,6 +140,7 @@ export type KeybindingWhenNode =
 export const ResolvedKeybindingRule = Schema.Struct({
   command: KeybindingCommand,
   shortcut: KeybindingShortcut,
+  sequence: Schema.optional(Schema.Array(KeybindingShortcut).check(Schema.isMaxLength(2))),
   whenAst: Schema.optional(KeybindingWhenNode),
 }).annotate({ parseOptions: { onExcessProperty: "ignore" } });
 export type ResolvedKeybindingRule = typeof ResolvedKeybindingRule.Type;

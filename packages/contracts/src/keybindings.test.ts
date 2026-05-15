@@ -47,6 +47,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedCommandPalette.command, "commandPalette.toggle");
 
+    const parsedCheckpointRewind = yield* decode(KeybindingRule, {
+      key: "esc esc",
+      command: "checkpoint.rewind",
+    });
+    assert.strictEqual(parsedCheckpointRewind.command, "checkpoint.rewind");
+
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",
@@ -155,8 +161,37 @@ it.effect("parses resolved keybindings arrays", () =>
           modKey: true,
         },
       },
+      {
+        command: "checkpoint.rewind",
+        shortcut: {
+          key: "escape",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: false,
+        },
+        sequence: [
+          {
+            key: "escape",
+            metaKey: false,
+            ctrlKey: false,
+            shiftKey: false,
+            altKey: false,
+            modKey: false,
+          },
+          {
+            key: "escape",
+            metaKey: false,
+            ctrlKey: false,
+            shiftKey: false,
+            altKey: false,
+            modKey: false,
+          },
+        ],
+      },
     ]);
-    assert.lengthOf(parsed, 2);
+    assert.lengthOf(parsed, 3);
   }),
 );
 

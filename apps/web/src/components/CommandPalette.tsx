@@ -25,6 +25,7 @@ import {
   MessageSquareIcon,
   SettingsIcon,
   SquarePenIcon,
+  Undo2Icon,
 } from "lucide-react";
 import {
   useCallback,
@@ -394,6 +395,7 @@ function OpenCommandPaletteDialog() {
   const navigate = useNavigate();
   const setOpen = useCommandPaletteStore((store) => store.setOpen);
   const openIntent = useCommandPaletteStore((store) => store.openIntent);
+  const openCheckpointRewind = useCommandPaletteStore((store) => store.openCheckpointRewind);
   const clearOpenIntent = useCommandPaletteStore((store) => store.clearOpenIntent);
   const composerHandleRef = useComposerHandleContext();
   const [query, setQuery] = useState("");
@@ -1006,6 +1008,21 @@ function OpenCommandPaletteDialog() {
             defaultThreadEnvMode: settings.defaultThreadEnvMode,
             handleNewThread,
           });
+        },
+      });
+    }
+
+    if (activeThread) {
+      actionItems.push({
+        kind: "action",
+        value: "action:checkpoint-rewind",
+        searchTerms: ["rewind", "checkpoint", "revert", "restore", "undo"],
+        title: "Rewind checkpoint",
+        description: "Restore code and conversation",
+        icon: <Undo2Icon className={ITEM_ICON_CLASS} />,
+        shortcutCommand: "checkpoint.rewind",
+        run: async () => {
+          openCheckpointRewind();
         },
       });
     }
