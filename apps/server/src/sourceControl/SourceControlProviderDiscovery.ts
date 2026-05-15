@@ -1,17 +1,25 @@
 import type {
   SourceControlProviderAuth,
   SourceControlProviderDiscoveryItem,
+  SourceControlProviderInfo,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
+import type * as SourceControlProvider from "./SourceControlProvider.ts";
 import type * as VcsProcess from "../vcs/VcsProcess.ts";
 
 export interface SourceControlAuthProbeInput {
   readonly stdout: string;
   readonly stderr: string;
   readonly exitCode: VcsProcess.VcsProcessOutput["exitCode"];
+}
+
+export interface SourceControlUnknownRemoteRefinementInput {
+  readonly cwd: string;
+  readonly context: SourceControlProvider.SourceControlProviderContext;
+  readonly auth: SourceControlAuthProbeInput;
 }
 
 interface SourceControlDiscoverySpecBase {
@@ -26,6 +34,9 @@ export type SourceControlCliDiscoverySpec = SourceControlDiscoverySpecBase & {
   readonly versionArgs: ReadonlyArray<string>;
   readonly authArgs: ReadonlyArray<string>;
   readonly parseAuth: (input: SourceControlAuthProbeInput) => SourceControlProviderAuth;
+  readonly refineUnknownRemote?: (
+    input: SourceControlUnknownRemoteRefinementInput,
+  ) => SourceControlProviderInfo | null;
 };
 
 export type SourceControlApiDiscoverySpec = SourceControlDiscoverySpecBase & {
@@ -235,4 +246,51 @@ export function probeSourceControlProvider(input: {
         );
     }),
   );
+}
+
+export function refineUnknownRemoteProvider(input: {
+  readonly specs: ReadonlyArray<SourceControlProviderDiscoverySpec>;
+  readonly process: VcsProcess.VcsProcessShape;
+  readonly cwd: string;
+  readonly context: SourceControlProvider.SourceControlProviderContext | null;
+}): Effect.Effect<SourceControlProvider.SourceControlProviderContext | null> {
+  if (input.context === null || input.context.provider.kind !== "unknown") {
+    return Effect.succeed(input.context);
+  }
+  const context = input.context;
+
+  return Effect.gen(function* () {
+    for (const spec of input.specs) {
+      if (spec.type !== "cli" || !spec.refineUnknownRemote) continue;
+
+      const provider = yield* input.process
+        .run({
+          operation: "source-control.discovery.refine-unknown-remote",
+          command: spec.executable,
+          args: spec.authArgs,
+          cwd: input.cwd,
+          allowNonZeroExit: true,
+          timeoutMs: 5_000,
+          maxOutputBytes: 8_000,
+          truncateOutputAtMaxBytes: true,
+        })
+        .pipe(
+          Effect.map(
+            (auth) =>
+              spec.refineUnknownRemote?.({
+                cwd: input.cwd,
+                context,
+                auth,
+              }) ?? null,
+          ),
+          Effect.catch(() => Effect.succeed(null)),
+        );
+
+      if (provider) {
+        return { ...context, provider };
+      }
+    }
+
+    return context;
+  });
 }
