@@ -2,6 +2,8 @@ import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/con
 
 export type DesktopUpdateButtonAction = "download" | "install" | "none";
 
+const DESKTOP_UPDATE_RELEASES_URL = "https://github.com/pingdotgg/t3code/releases";
+
 export function resolveDesktopUpdateButtonAction(
   state: DesktopUpdateState,
 ): DesktopUpdateButtonAction {
@@ -74,6 +76,20 @@ export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string
     return state.message ?? "Update failed";
   }
   return "Up to date";
+}
+
+export function getDesktopUpdateLatestVersion(state: DesktopUpdateState): string | null {
+  return state.downloadedVersion ?? state.availableVersion;
+}
+
+export function getDesktopUpdateReleaseNotesUrl(state: DesktopUpdateState | null): string {
+  const latestVersion = state ? getDesktopUpdateLatestVersion(state) : null;
+  if (!state || !latestVersion) {
+    return DESKTOP_UPDATE_RELEASES_URL;
+  }
+
+  const tag = state.channel === "nightly" ? `nightly-v${latestVersion}` : `v${latestVersion}`;
+  return `${DESKTOP_UPDATE_RELEASES_URL}/tag/${encodeURIComponent(tag)}`;
 }
 
 export function getDesktopUpdateInstallConfirmationMessage(

@@ -24,6 +24,7 @@ import {
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
+import { DesktopUpdateTooltipPopup } from "../../components/DesktopUpdateTooltip";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import { isElectron } from "../../env";
@@ -309,7 +310,9 @@ function AboutVersionSection() {
                 </Button>
               }
             />
-            {buttonTooltip ? <TooltipPopup>{buttonTooltip}</TooltipPopup> : null}
+            {buttonTooltip ? (
+              <DesktopUpdateTooltipPopup state={updateState} summary={buttonTooltip} />
+            ) : null}
           </Tooltip>
         }
       />
