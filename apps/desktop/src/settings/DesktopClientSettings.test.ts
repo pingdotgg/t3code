@@ -24,6 +24,10 @@ const clientSettings: ClientSettings = {
   sidebarProjectGroupingOverrides: {
     "environment-1:/tmp/project-a": "separate",
   },
+  sidebarProjectColorizing: false,
+  sidebarProjectColorOverrides: {
+    "environment-1:/tmp/project-a": "indigo",
+  },
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
   sidebarThreadPreviewCount: 6,

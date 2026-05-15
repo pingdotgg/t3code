@@ -39,6 +39,24 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
 
+// Curated palette of muted hues used to tint sidebar project groups when
+// "Sidebar project colors" is enabled. The web app maps these literal keys to
+// concrete Tailwind classes; keeping the literal set in `contracts` keeps the
+// persisted override values strongly typed across the client/server boundary.
+export const SidebarProjectColor = Schema.Literals([
+  "slate",
+  "rose",
+  "orange",
+  "amber",
+  "emerald",
+  "teal",
+  "sky",
+  "indigo",
+  "violet",
+  "pink",
+]);
+export type SidebarProjectColor = typeof SidebarProjectColor.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -73,6 +91,10 @@ export const ClientSettingsSchema = Schema.Struct({
       modelOrder: Schema.Array(Schema.String).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  sidebarProjectColorizing: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  sidebarProjectColorOverrides: Schema.Record(TrimmedNonEmptyString, SidebarProjectColor).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -500,6 +522,10 @@ export const ClientSettingsPatch = Schema.Struct({
         ),
       }),
     ),
+  ),
+  sidebarProjectColorizing: Schema.optionalKey(Schema.Boolean),
+  sidebarProjectColorOverrides: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, SidebarProjectColor),
   ),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
